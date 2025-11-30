@@ -20,9 +20,7 @@ use std::ops::{AddAssign, SubAssign};
 /// # Examples
 ///
 /// ```
-/// use delaunay::core::triangulation_data_structure::Tds;
-/// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
-/// use delaunay::vertex;
+/// use delaunay::prelude::*;
 ///
 /// // Create a simple 3D triangulation (single tetrahedron)
 /// let vertices = vec![
@@ -31,7 +29,8 @@ use std::ops::{AddAssign, SubAssign};
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+/// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
 ///
 /// // Use the trait methods
 /// let boundary_facets = tds.boundary_facets().expect("Failed to get boundary facets");
@@ -64,9 +63,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -74,7 +71,8 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tds = dt.tds();
     ///
     /// // A single tetrahedron has 4 boundary facets (all facets are on the boundary)
     /// let boundary_facets_iter = tds.boundary_facets().expect("Failed to get boundary facets iterator");
@@ -106,9 +104,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -116,7 +112,8 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tds = dt.tds();
     ///
     /// // Get a boundary facet using the new iterator API
     /// let boundary_facets = tds.boundary_facets().unwrap();
@@ -154,9 +151,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -164,7 +159,8 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tds = dt.tds();
     ///
     /// // Build the facet map once for multiple queries (efficient for batch operations)
     /// let facet_to_cells = tds.build_facet_to_cells_map().expect("facet map should build");
@@ -202,9 +198,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -212,7 +206,8 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tds = dt.tds();
     ///
     /// // A single tetrahedron has 4 boundary facets
     /// assert_eq!(tds.number_of_boundary_facets().unwrap(), 4);

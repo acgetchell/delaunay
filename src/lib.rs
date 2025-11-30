@@ -166,7 +166,7 @@
 //!
 //! 5. **Duplicate vertex detection** - Duplicate and near-duplicate vertices (within `1e-10`
 //!    epsilon) are automatically detected and rejected with
-//!    [`InsertionError::InvalidVertex`](core::traits::InsertionError::InvalidVertex), preventing
+//!    [`InsertionError::InvalidVertex`](core::algorithms::incremental_insertion::InsertionError), preventing
 //!    numerical instabilities.
 //!
 //! When constructing a triangulation from a batch of vertices using
@@ -221,7 +221,7 @@
 //! cannot be inserted:
 //!
 //! - **Duplicate detection** - Exact and near-duplicate vertices are detected and rejected
-//!   with [`InsertionError::InvalidVertex`](core::traits::InsertionError::InvalidVertex)
+//!   with [`InsertionError::InvalidVertex`](core::algorithms::incremental_insertion::InsertionError)
 //! - **Geometric failures** - Degenerate configurations that would violate the Delaunay
 //!   property are rejected with appropriate error messages
 //! - **Validation failures** - If insertion would break structural invariants, the operation
@@ -276,7 +276,7 @@
 //!
 //! 1. **Degenerate geometry in higher dimensions** - Highly degenerate point configurations (e.g.,
 //!    many nearly collinear or coplanar points) in 4D and 5D may cause insertion to fail gracefully
-//!    with [`InsertionError::GeometricFailure`](core::traits::InsertionError::GeometricFailure).
+//!    with [`InsertionError`](core::algorithms::incremental_insertion::InsertionError).
 //!    This is a known limitation of incremental algorithms in high-dimensional spaces with
 //!    degenerate inputs.
 //!
@@ -327,7 +327,7 @@
 //! ```
 //!
 //! For implementation details on invariant validation and error handling, see
-//! [`core::traits::insertion_algorithm`].
+//! [`core::algorithms::incremental_insertion`].
 //!
 //! # References
 //!
@@ -361,20 +361,12 @@ extern crate derive_builder;
 pub mod core {
     /// Triangulation algorithms for construction, maintenance, and querying
     pub mod algorithms {
-        /// Pure incremental Bowyer-Watson algorithm for Delaunay triangulation
-        pub mod bowyer_watson;
         /// Bistellar flip operations - Phase 3 TODO
         pub mod flips;
         /// Incremental cavity-based insertion (Phase 3.6)
         pub mod incremental_insertion;
         /// Point location algorithms (facet walking)
         pub mod locate;
-        /// Robust Bowyer-Watson implementation with enhanced numerical stability
-        pub mod robust_bowyer_watson;
-        /// Internal unified fast+robust insertion pipeline for Stage 2
-        pub mod unified_insertion_pipeline;
-        pub use bowyer_watson::*;
-        pub use robust_bowyer_watson::*;
     }
     pub mod boundary;
     pub mod cell;
@@ -393,11 +385,9 @@ pub mod core {
         pub mod boundary_analysis;
         pub mod data_type;
         pub mod facet_cache;
-        pub mod insertion_algorithm;
         pub use boundary_analysis::*;
         pub use data_type::*;
         pub use facet_cache::*;
-        pub use insertion_algorithm::*;
     }
     // Re-export the `core` modules.
     pub use cell::*;
@@ -463,7 +453,7 @@ pub mod prelude {
         cell::*,
         delaunay_triangulation::*,
         facet::*,
-        traits::{boundary_analysis::*, data_type::*, insertion_algorithm::*},
+        traits::{boundary_analysis::*, data_type::*},
         triangulation_data_structure::*,
         util::*,
         vertex::*,
@@ -566,10 +556,10 @@ mod tests {
         let (cell_key, _) = dt.cells().next().unwrap();
 
         // Test that quality functions are accessible
-        let ratio = radius_ratio(dt.tds(), cell_key).unwrap();
+        let ratio = radius_ratio(dt.triangulation(), cell_key).unwrap();
         assert!(ratio > 0.0);
 
-        let norm_vol = normalized_volume(dt.tds(), cell_key).unwrap();
+        let norm_vol = normalized_volume(dt.triangulation(), cell_key).unwrap();
         assert!(norm_vol > 0.0);
     }
 

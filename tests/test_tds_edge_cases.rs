@@ -9,9 +9,8 @@
 //! - `tds_basic_integration.rs` - Basic TDS construction and neighbor assignment
 //! - Unit tests in source - Validation, neighbor symmetry, error handling
 
-#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
-
-use delaunay::core::triangulation_data_structure::{CellKey, Tds};
+use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+use delaunay::core::triangulation_data_structure::CellKey;
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::point::Point;
 use delaunay::geometry::traits::coordinate::Coordinate;
@@ -31,7 +30,8 @@ fn test_remove_single_cell() {
         vertex!([0.5, 0.5, 1.0]),
         vertex!([0.5, 0.5, -1.0]),
     ];
-    let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    let mut tds = dt.tds().clone();
 
     assert_eq!(tds.number_of_cells(), 2);
 
@@ -51,7 +51,8 @@ fn test_remove_nonexistent_cell() {
         vertex!([0.0, 1.0, 0.0]),
         vertex!([0.0, 0.0, 1.0]),
     ];
-    let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    let mut tds = dt.tds().clone();
 
     // Try to remove a cell that doesn't exist (using default key)
     let nonexistent_key = CellKey::default();
@@ -72,7 +73,8 @@ fn test_remove_multiple_cells() {
         vertex!([0.5, 0.5, -1.0]),
         vertex!([1.5, 0.5, 0.0]),
     ];
-    let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    let mut tds = dt.tds().clone();
 
     let initial_count = tds.number_of_cells();
     assert!(initial_count >= 2, "Should have at least 2 cells");
@@ -101,7 +103,8 @@ fn test_remove_cells_with_some_nonexistent() {
         vertex!([0.5, 0.5, 1.0]),
         vertex!([0.5, 0.5, -1.0]),
     ];
-    let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    let mut tds = dt.tds().clone();
 
     let existing_key = tds.cell_keys().next().unwrap();
     let nonexistent_key = CellKey::default();
@@ -127,7 +130,8 @@ fn test_remove_duplicate_cells_no_duplicates() {
         vertex!([0.0, 1.0, 0.0]),
         vertex!([0.0, 0.0, 1.0]),
     ];
-    let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    let mut tds = dt.tds().clone();
 
     let removed = tds.remove_duplicate_cells().unwrap();
 
@@ -149,7 +153,8 @@ fn test_clear_all_neighbors() {
         vertex!([0.5, 0.5, 1.0]),
         vertex!([0.5, 0.5, -1.0]),
     ];
-    let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    let mut tds = dt.tds().clone();
 
     // Initially should have neighbors assigned
     let has_neighbors_before = tds.cells().any(|(_, cell)| cell.neighbors().is_some());
@@ -179,7 +184,8 @@ fn test_reassign_neighbors_after_clearing() {
         vertex!([0.5, 0.5, 1.0]),
         vertex!([0.5, 0.5, -1.0]),
     ];
-    let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    let mut tds = dt.tds().clone();
 
     // Clear neighbors
     tds.clear_all_neighbors();
@@ -214,7 +220,8 @@ fn test_set_neighbors_by_key() {
         vertex!([0.5, 0.5, 1.0]),
         vertex!([0.5, 0.5, -1.0]),
     ];
-    let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    let mut tds = dt.tds().clone();
 
     let cell_key = tds.cell_keys().next().unwrap();
     let new_neighbors = vec![None, None, None, None];
@@ -239,7 +246,8 @@ fn test_find_cells_containing_vertex_by_key() {
         vertex!([0.5, 0.5, 1.0]),
         vertex!([0.5, 0.5, -1.0]),
     ];
-    let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    let tds = dt.tds();
 
     // Get first vertex key
     let vertex_key = tds.vertex_keys().next().unwrap();
@@ -270,7 +278,8 @@ fn test_build_facet_to_cells_map() {
         vertex!([0.0, 1.0, 0.0]),
         vertex!([0.0, 0.0, 1.0]),
     ];
-    let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    let tds = dt.tds();
 
     let facet_map = tds.build_facet_to_cells_map();
     assert!(facet_map.is_ok(), "Should build facet map successfully");
@@ -293,7 +302,8 @@ fn test_assign_incident_cells() {
         vertex!([0.5, 0.5, 1.0]),
         vertex!([0.5, 0.5, -1.0]),
     ];
-    let mut tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    let mut tds = dt.tds().clone();
 
     // Clear incident cells by modifying vertices through their keys
     let vertex_keys: Vec<_> = tds.vertex_keys().collect();
@@ -318,26 +328,26 @@ fn test_assign_incident_cells() {
 
 #[test]
 fn test_empty_tds() {
-    let tds: Tds<f64, (), (), 3> = Tds::empty();
-    assert_eq!(tds.number_of_vertices(), 0);
-    assert_eq!(tds.number_of_cells(), 0);
-    assert_eq!(tds.dim(), -1);
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    assert_eq!(dt.number_of_vertices(), 0);
+    assert_eq!(dt.number_of_cells(), 0);
+    assert_eq!(dt.triangulation().dim(), -1);
 }
 
 #[test]
 fn test_add_vertex_to_empty_tds() {
-    let mut tds: Tds<f64, (), (), 3> = Tds::empty();
-    let result = tds.add(vertex!([1.0, 2.0, 3.0]));
+    let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    let result = dt.insert(vertex!([1.0, 2.0, 3.0]));
     assert!(result.is_ok());
-    assert_eq!(tds.number_of_vertices(), 1);
-    assert_eq!(tds.dim(), 0);
+    assert_eq!(dt.number_of_vertices(), 1);
+    assert_eq!(dt.triangulation().dim(), 0);
 }
 
 #[test]
 fn test_add_duplicate_vertex() {
-    let mut tds: Tds<f64, (), (), 3> = Tds::empty();
-    tds.add(vertex!([1.0, 2.0, 3.0])).unwrap();
-    let result = tds.add(vertex!([1.0, 2.0, 3.0]));
+    let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    dt.insert(vertex!([1.0, 2.0, 3.0])).unwrap();
+    let result = dt.insert(vertex!([1.0, 2.0, 3.0]));
     assert!(result.is_err(), "Should error on duplicate coordinates");
 }
 
@@ -364,14 +374,17 @@ fn test_stress_1000_vertices_2d() {
         .collect();
     let vertices = Vertex::<f64, (), 2>::from_points(&points);
 
-    let tds = Tds::<f64, (), (), 2>::new(&vertices);
-    assert!(tds.is_ok(), "Should handle 1000 vertices in 2D");
+    let dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices);
+    assert!(dt.is_ok(), "Should handle 1000 vertices in 2D");
 
-    if let Ok(tds) = tds {
-        assert!(tds.is_valid().is_ok(), "1000-vertex 2D TDS should be valid");
+    if let Ok(dt) = dt {
+        assert!(
+            dt.tds().is_valid().is_ok(),
+            "1000-vertex 2D TDS should be valid"
+        );
         println!(
             "✓ Stress test 2D: 1000 vertices → {} cells",
-            tds.number_of_cells()
+            dt.number_of_cells()
         );
     }
 }
@@ -396,14 +409,17 @@ fn test_stress_1000_vertices_3d() {
         .collect();
     let vertices = Vertex::<f64, (), 3>::from_points(&points);
 
-    let tds = Tds::<f64, (), (), 3>::new(&vertices);
-    assert!(tds.is_ok(), "Should handle 1000 vertices in 3D");
+    let dt = DelaunayTriangulation::<_, (), (), 3>::new(&vertices);
+    assert!(dt.is_ok(), "Should handle 1000 vertices in 3D");
 
-    if let Ok(tds) = tds {
-        assert!(tds.is_valid().is_ok(), "1000-vertex 3D TDS should be valid");
+    if let Ok(dt) = dt {
+        assert!(
+            dt.tds().is_valid().is_ok(),
+            "1000-vertex 3D TDS should be valid"
+        );
         println!(
             "✓ Stress test 3D: 1000 vertices → {} cells",
-            tds.number_of_cells()
+            dt.number_of_cells()
         );
     }
 }
@@ -428,14 +444,17 @@ fn test_stress_5000_vertices_3d() {
         .collect();
     let vertices = Vertex::<f64, (), 3>::from_points(&points);
 
-    let tds = Tds::<f64, (), (), 3>::new(&vertices);
-    assert!(tds.is_ok(), "Should handle 5000 vertices in 3D");
+    let dt = DelaunayTriangulation::<_, (), (), 3>::new(&vertices);
+    assert!(dt.is_ok(), "Should handle 5000 vertices in 3D");
 
-    if let Ok(tds) = tds {
-        assert!(tds.is_valid().is_ok(), "5000-vertex 3D TDS should be valid");
+    if let Ok(dt) = dt {
+        assert!(
+            dt.tds().is_valid().is_ok(),
+            "5000-vertex 3D TDS should be valid"
+        );
         println!(
             "✓ Stress test 3D: 5000 vertices → {} cells",
-            tds.number_of_cells()
+            dt.number_of_cells()
         );
     }
 }
@@ -460,7 +479,8 @@ fn test_stress_removal_operations() {
         .collect();
     let vertices = Vertex::<f64, (), 3>::from_points(&points);
 
-    let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
+    let dt = DelaunayTriangulation::<_, (), (), 3>::new(&vertices).unwrap();
+    let mut tds = dt.tds().clone();
 
     let initial_cells = tds.number_of_cells();
     println!("Initial cells: {initial_cells}");

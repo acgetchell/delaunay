@@ -9,10 +9,9 @@
 //! The test helps determine if vertex loss is expected behavior (duplicate removal)
 //! or a bug in serialization/deserialization.
 
-#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
-
 use delaunay::assert_jaccard_gte;
-use delaunay::core::Tds;
+use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+use delaunay::core::triangulation_data_structure::Tds;
 use delaunay::core::util::extract_vertex_coordinate_set;
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::point::Point;
@@ -38,10 +37,12 @@ fn test_vertex_preservation_with_duplicates_3d() {
     println!("Unique input coordinates: {}", input_coords.len());
 
     // Construct triangulation
-    let tds = Tds::<f64, (), (), 3>::new(&vertices).expect("Tds construction failed");
+    let dt =
+        DelaunayTriangulation::<_, (), (), 3>::new(&vertices).expect("Tds construction failed");
+    let tds = dt.tds();
 
     let tds_vertex_count = tds.vertices().count();
-    let tds_coords = extract_vertex_coordinate_set(&tds);
+    let tds_coords = extract_vertex_coordinate_set(tds);
     println!("Vertices after Tds construction: {tds_vertex_count}");
     println!(
         "Unique coordinates after Tds construction: {}",
@@ -111,12 +112,14 @@ fn test_vertex_preservation_without_duplicates_3d() {
 
     println!("Input vertices (no duplicates): {}", vertices.len());
 
-    let tds = Tds::<f64, (), (), 3>::new(&vertices).expect("Tds construction failed");
+    let dt =
+        DelaunayTriangulation::<_, (), (), 3>::new(&vertices).expect("Tds construction failed");
+    let tds = dt.tds();
     let tds_vertex_count = tds.vertices().count();
     println!("Vertices after Tds construction: {tds_vertex_count}");
 
     // Extract vertex coordinate sets for Jaccard comparison
-    let before_coords = extract_vertex_coordinate_set(&tds);
+    let before_coords = extract_vertex_coordinate_set(tds);
 
     let json = serde_json::to_string(&tds).expect("Serialization failed");
     let deserialized: Tds<f64, (), (), 3> =
@@ -163,12 +166,14 @@ fn test_vertex_preservation_many_duplicates_3d() {
     let unique_coords_len = unique_coords.len();
     println!("Unique coordinates: {unique_coords_len}");
 
-    let tds = Tds::<f64, (), (), 3>::new(&vertices).expect("Tds construction failed");
+    let dt =
+        DelaunayTriangulation::<_, (), (), 3>::new(&vertices).expect("Tds construction failed");
+    let tds = dt.tds();
     let tds_vertex_count = tds.vertices().count();
     println!("Vertices after Tds construction: {tds_vertex_count}");
 
     // Extract vertex coordinate sets for Jaccard comparison
-    let before_coords = extract_vertex_coordinate_set(&tds);
+    let before_coords = extract_vertex_coordinate_set(tds);
 
     let json = serde_json::to_string(&tds).expect("Serialization failed");
     let deserialized: Tds<f64, (), (), 3> =
@@ -202,10 +207,12 @@ fn test_vertex_coordinate_preservation_3d() {
     ];
     let vertices = Vertex::<f64, (), 3>::from_points(&points);
 
-    let tds = Tds::<f64, (), (), 3>::new(&vertices).expect("Tds construction failed");
+    let dt =
+        DelaunayTriangulation::<_, (), (), 3>::new(&vertices).expect("Tds construction failed");
+    let tds = dt.tds();
 
     // Extract original vertex coordinates using canonical extraction
-    let original_coords = extract_vertex_coordinate_set(&tds);
+    let original_coords = extract_vertex_coordinate_set(tds);
 
     let json = serde_json::to_string(&tds).expect("Serialization failed");
     let deserialized: Tds<f64, (), (), 3> =

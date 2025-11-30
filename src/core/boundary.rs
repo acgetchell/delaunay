@@ -56,9 +56,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::*;
     ///
     /// // Create a simple 3D triangulation (single tetrahedron)
     /// let vertices = vec![
@@ -67,11 +65,10 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     ///
     /// // A single tetrahedron has 4 boundary facets (all facets are on the boundary)
-    /// let boundary_facets_iter = tds.boundary_facets().unwrap();
-    /// assert_eq!(boundary_facets_iter.count(), 4);
+    /// assert_eq!(dt.boundary_facets().count(), 4);
     /// ```
     fn boundary_facets(
         &self,
@@ -105,9 +102,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -115,13 +110,12 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     ///
     /// // Get boundary facets using the new iterator API
-    /// let boundary_facets = tds.boundary_facets().unwrap();
-    /// let first_facet = boundary_facets.into_iter().next().unwrap();
+    /// let first_facet = dt.boundary_facets().next().unwrap();
     /// // In a single tetrahedron, all facets are boundary facets
-    /// assert!(tds.is_boundary_facet(&first_facet).unwrap());
+    /// assert!(dt.tds().is_boundary_facet(&first_facet).unwrap());
     /// ```
     #[inline]
     fn is_boundary_facet(
@@ -150,9 +144,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -160,16 +152,15 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     ///
     /// // Build the facet map once for multiple queries
-    /// let facet_to_cells = tds.build_facet_to_cells_map()
+    /// let facet_to_cells = dt.tds().build_facet_to_cells_map()
     ///     .expect("Should build facet map");
     ///
     /// // Check boundary facets efficiently using the iterator API
-    /// let boundary_facets = tds.boundary_facets().unwrap();
-    /// for facet in boundary_facets {
-    ///     let is_boundary = tds.is_boundary_facet_with_map(&facet, &facet_to_cells)
+    /// for facet in dt.boundary_facets() {
+    ///     let is_boundary = dt.tds().is_boundary_facet_with_map(&facet, &facet_to_cells)
     ///         .expect("Should check if facet is boundary");
     ///     println!("Facet is boundary: {is_boundary}");
     /// }
@@ -208,9 +199,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -218,10 +207,10 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     ///
     /// // A single tetrahedron has 4 boundary facets
-    /// assert_eq!(tds.number_of_boundary_facets().unwrap(), 4);
+    /// assert_eq!(dt.boundary_facets().count(), 4);
     /// ```
     fn number_of_boundary_facets(&self) -> Result<usize, TriangulationValidationError> {
         self.build_facet_to_cells_map()
@@ -233,8 +222,9 @@ where
 #[allow(unnameable_test_items)]
 mod tests {
     use super::BoundaryAnalysis;
+    use crate::core::delaunay_triangulation::DelaunayTriangulation;
     use crate::core::facet::FacetError;
-    use crate::core::triangulation_data_structure::{Tds, TriangulationValidationError};
+    use crate::core::triangulation_data_structure::TriangulationValidationError;
     use crate::core::vertex::Vertex;
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};
 
@@ -255,26 +245,25 @@ mod tests {
                 Point::new([0.5, 1.0]),
             ];
             let vertices = Vertex::from_points(&points);
-            let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-            assert_eq!(tds.number_of_cells(), 1, "2D triangle should have 1 cell");
-            assert_eq!(tds.dim(), 2, "Should be 2-dimensional");
+            assert_eq!(dt.number_of_cells(), 1, "2D triangle should have 1 cell");
+            assert_eq!(dt.dim(), 2, "Should be 2-dimensional");
 
-            let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
-            let boundary_count = boundary_facets.clone().count();
+            let boundary_count = dt.boundary_facets().count();
             assert_eq!(
                 boundary_count, 3,
                 "2D triangle should have 3 boundary facets"
             );
-            assert_eq!(tds.number_of_boundary_facets().expect("Should count"), 3);
 
             // Verify all facets are boundary facets using cached map
-            let facet_to_cells = tds
+            let facet_to_cells = dt
+                .tds()
                 .build_facet_to_cells_map()
                 .expect("Should build facet map");
-            let mut boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
-            assert!(boundary_facets.all(|f| {
-                tds.is_boundary_facet_with_map(&f, &facet_to_cells)
+            assert!(dt.boundary_facets().all(|f| {
+                dt.tds()
+                    .is_boundary_facet_with_map(&f, &facet_to_cells)
                     .expect("Should not fail for valid facets")
             }));
         }
@@ -288,30 +277,25 @@ mod tests {
                 Point::new([0.0, 0.0, 1.0]),
             ];
             let vertices = Vertex::from_points(&points);
-            let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-            assert_eq!(
-                tds.number_of_cells(),
-                1,
-                "3D tetrahedron should have 1 cell"
-            );
-            assert_eq!(tds.dim(), 3, "Should be 3-dimensional");
+            assert_eq!(dt.number_of_cells(), 1, "3D tetrahedron should have 1 cell");
+            assert_eq!(dt.dim(), 3, "Should be 3-dimensional");
 
-            let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
-            let boundary_count = boundary_facets.clone().count();
+            let boundary_count = dt.boundary_facets().count();
             assert_eq!(
                 boundary_count, 4,
                 "3D tetrahedron should have 4 boundary facets"
             );
-            assert_eq!(tds.number_of_boundary_facets().expect("Should count"), 4);
 
             // Verify all facets are boundary facets
-            let facet_to_cells = tds
+            let facet_to_cells = dt
+                .tds()
                 .build_facet_to_cells_map()
                 .expect("Should build facet map");
-            let mut boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
-            assert!(boundary_facets.all(|f| {
-                tds.is_boundary_facet_with_map(&f, &facet_to_cells)
+            assert!(dt.boundary_facets().all(|f| {
+                dt.tds()
+                    .is_boundary_facet_with_map(&f, &facet_to_cells)
                     .expect("Should not fail for valid facets")
             }));
         }
@@ -326,26 +310,27 @@ mod tests {
                 Point::new([0.0, 0.0, 0.0, 1.0]),
             ];
             let vertices = Vertex::from_points(&points);
-            let tds: Tds<f64, (), (), 4> = Tds::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-            assert_eq!(tds.number_of_cells(), 1, "4D simplex should have 1 cell");
-            assert_eq!(tds.dim(), 4, "Should be 4-dimensional");
+            assert_eq!(dt.number_of_cells(), 1, "4D simplex should have 1 cell");
+            assert_eq!(dt.dim(), 4, "Should be 4-dimensional");
 
-            let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
-            let boundary_count = boundary_facets.clone().count();
+            let boundary_count = dt.boundary_facets().count();
             assert_eq!(
                 boundary_count, 5,
                 "4D simplex should have 5 boundary facets"
             );
-            assert_eq!(tds.number_of_boundary_facets().expect("Should count"), 5);
 
             // Verify all facets are boundary facets
-            let facet_to_cells = tds
+            let facet_to_cells = dt
+                .tds()
                 .build_facet_to_cells_map()
                 .expect("Should build facet map");
-            let confirmed_boundary = boundary_facets
+            let confirmed_boundary = dt
+                .boundary_facets()
                 .filter(|f| {
-                    tds.is_boundary_facet_with_map(f, &facet_to_cells)
+                    dt.tds()
+                        .is_boundary_facet_with_map(f, &facet_to_cells)
                         .expect("Should not fail for valid facets")
                 })
                 .count();
@@ -357,23 +342,17 @@ mod tests {
 
         // Test Case 4: Empty triangulation
         {
-            let tds: Tds<f64, (), (), 3> = Tds::empty();
+            let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
             assert_eq!(
-                tds.number_of_cells(),
+                dt.number_of_cells(),
                 0,
                 "Empty triangulation should have no cells"
             );
 
-            let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
-            let boundary_count = boundary_facets.count();
+            let boundary_count = dt.boundary_facets().count();
             assert_eq!(
                 boundary_count, 0,
                 "Empty triangulation should have no boundary facets"
-            );
-            assert_eq!(
-                tds.number_of_boundary_facets().expect("Should count"),
-                0,
-                "Count should be 0"
             );
         }
 
@@ -395,19 +374,18 @@ mod tests {
                 Point::new([0.0, 0.0, 1.0]),
             ];
             let vertices = Vertex::from_points(&points);
-            let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
             // Test boundary_facets() normal path
-            let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
-            let boundary_count = boundary_facets.clone().count();
+            let boundary_count = dt.boundary_facets().count();
             assert_eq!(
                 boundary_count, 4,
                 "Single tetrahedron has 4 boundary facets"
             );
 
             // Test is_boundary_facet() delegation (builds facet map internally)
-            if let Some(facet) = boundary_facets.clone().next() {
-                let result = tds.is_boundary_facet(&facet);
+            if let Some(facet) = dt.boundary_facets().next() {
+                let result = dt.tds().is_boundary_facet(&facet);
                 assert!(result.is_ok(), "Should not error on valid facet");
                 assert!(
                     result.unwrap(),
@@ -426,29 +404,21 @@ mod tests {
                 Point::new([0.5, 0.5, 0.5]), // Interior point
             ];
             let vertices = Vertex::from_points(&points);
-            let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
             // After robust cleanup and facet-sharing filtering, we may end up with a single cell
             assert!(
-                tds.number_of_cells() >= 1,
+                dt.number_of_cells() >= 1,
                 "Should have at least one cell for this test"
             );
 
             // Exercise capacity allocation, cache initialization, and vector push operations
-            let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
-            let boundary_count = boundary_facets.clone().count();
-            let is_empty = boundary_facets.clone().next().is_none();
-            assert!(!is_empty, "Should have boundary facets");
+            let boundary_count = dt.boundary_facets().count();
+            assert!(boundary_count > 0, "Should have boundary facets");
             assert!(
                 boundary_count >= 4,
                 "Should have at least 4 boundary facets"
             );
-
-            // Test count method delegation
-            let count = tds
-                .number_of_boundary_facets()
-                .expect("Should count boundary facets");
-            assert_eq!(count, boundary_count, "Count should match iterator count");
         }
 
         println!("✓ Boundary facets method coverage and delegation work correctly");
@@ -473,36 +443,30 @@ mod tests {
         ];
 
         let vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-        if tds.number_of_cells() > 0 {
+        if dt.number_of_cells() > 0 {
             println!(
                 "Performance test triangulation: {} vertices, {} cells",
-                tds.number_of_vertices(),
-                tds.number_of_cells()
+                dt.number_of_vertices(),
+                dt.number_of_cells()
             );
 
             // Time boundary_facets() method
             let start = Instant::now();
-            let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
+            let boundary_count_direct = dt.boundary_facets().count();
             let boundary_facets_time = start.elapsed();
 
-            // Time number_of_boundary_facets() method
-            let start = Instant::now();
-            let boundary_count = tds
-                .number_of_boundary_facets()
-                .expect("Should count boundary facets");
-            let boundary_count_time = start.elapsed();
-
             // Collect facets for multiple operations
-            let boundary_facets_vec: Vec<_> = boundary_facets.collect();
+            let boundary_facets_vec: Vec<_> = dt.boundary_facets().collect();
             let boundary_len = boundary_facets_vec.len();
 
             // Time is_boundary_facet() for each boundary facet
             let start = Instant::now();
             let mut confirmed_boundary = 0;
             for facet in &boundary_facets_vec {
-                if tds
+                if dt
+                    .tds()
                     .is_boundary_facet(facet)
                     .expect("Should not fail to check boundary facet")
                 {
@@ -512,26 +476,21 @@ mod tests {
             let is_boundary_time = start.elapsed();
 
             println!("Performance results:");
-            println!("  boundary_facets(): {boundary_facets_time:?} (found {boundary_len} facets)");
             println!(
-                "  number_of_boundary_facets(): {boundary_count_time:?} (count: {boundary_count})"
+                "  boundary_facets().count(): {boundary_facets_time:?} (found {boundary_len} facets)"
             );
             println!(
                 "  is_boundary_facet() × {boundary_len}: {is_boundary_time:?} (confirmed: {confirmed_boundary})"
             );
 
             // Verify consistency
-            assert_eq!(boundary_len, boundary_count);
+            assert_eq!(boundary_len, boundary_count_direct);
             assert_eq!(confirmed_boundary, boundary_len);
 
             // Performance should be reasonable (these are very loose bounds)
             assert!(
                 boundary_facets_time.as_millis() < 1000,
                 "boundary_facets() should complete quickly"
-            );
-            assert!(
-                boundary_count_time.as_millis() < 1000,
-                "number_of_boundary_facets() should complete quickly"
             );
             assert!(
                 is_boundary_time.as_millis() < 1000,
@@ -545,8 +504,7 @@ mod tests {
     #[test]
     #[cfg(feature = "bench")]
     fn benchmark_boundary_facets_performance() {
-        use crate::core::algorithms::robust_bowyer_watson::RobustBowyerWatson;
-        use crate::core::traits::insertion_algorithm::InsertionAlgorithm;
+        use crate::core::delaunay_triangulation::DelaunayTriangulation;
         use num_traits::cast::cast;
         use rand::Rng;
         use std::time::Instant;
@@ -554,7 +512,7 @@ mod tests {
         // Smaller point counts for reasonable test time
         let point_counts = [20, 40, 60, 80];
 
-        println!("\nBenchmarking boundary_facets() performance with robust triangulation:");
+        println!("\nBenchmarking boundary_facets() performance with DelaunayTriangulation:");
         println!(
             "Note: This demonstrates the O(N·F) complexity where N = cells, F = facets per cell"
         );
@@ -576,20 +534,14 @@ mod tests {
 
             let vertices = Vertex::from_points(&points);
 
-            // Use robust Bowyer-Watson algorithm to create triangulation from scratch
-            let mut robust_algorithm: RobustBowyerWatson<f64, (), (), 3> =
-                RobustBowyerWatson::new();
-
-            // Create triangulation using robust algorithm
-            let tds = match robust_algorithm.new_triangulation(&vertices) {
-                Ok(tds) => {
-                    println!("Successfully created robust triangulation with {n_points} vertices");
-                    tds
+            // Create triangulation using DelaunayTriangulation
+            let dt = match DelaunayTriangulation::new(&vertices) {
+                Ok(dt) => {
+                    println!("Successfully created triangulation with {n_points} vertices");
+                    dt
                 }
                 Err(e) => {
-                    println!(
-                        "Points: {n_points:3} | Skipped due to robust triangulation error: {e}"
-                    );
+                    println!("Points: {n_points:3} | Skipped due to triangulation error: {e}");
                     continue; // Skip this test case
                 }
             };
@@ -600,7 +552,7 @@ mod tests {
 
             for _ in 0..runs {
                 let start = Instant::now();
-                let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
+                let boundary_facets = dt.boundary_facets();
                 total_time += start.elapsed();
 
                 // Prevent optimization away
@@ -609,12 +561,12 @@ mod tests {
 
             let avg_time = total_time / runs;
 
+            let boundary_count = dt.boundary_facets().count();
             println!(
                 "Points: {:3} | Cells: {:4} | Boundary Facets: {:4} | Avg Time: {:?}",
                 n_points,
-                tds.number_of_cells(),
-                tds.number_of_boundary_facets()
-                    .expect("Should count boundary facets"),
+                dt.number_of_cells(),
+                boundary_count,
                 avg_time
             );
         }
@@ -693,17 +645,20 @@ mod tests {
             Point::new([0.0, 0.0, 1.0]),
         ];
         let vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
         // Build facet map
-        let facet_to_cells = tds.build_facet_to_cells_map().expect("Should build map");
+        let facet_to_cells = dt
+            .tds()
+            .build_facet_to_cells_map()
+            .expect("Should build map");
 
         // Get all boundary facets and verify they are correctly identified
-        let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
         let mut boundary_count = 0;
 
-        for boundary_facet in boundary_facets {
-            let is_boundary = tds
+        for boundary_facet in dt.boundary_facets() {
+            let is_boundary = dt
+                .tds()
                 .is_boundary_facet_with_map(&boundary_facet, &facet_to_cells)
                 .expect("Should successfully check boundary status");
 
@@ -720,10 +675,8 @@ mod tests {
             "Single tetrahedron should have 4 boundary facets"
         );
 
-        // Verify consistency with number_of_boundary_facets
-        let reported_count = tds
-            .number_of_boundary_facets()
-            .expect("Should count boundary facets");
+        // Verify consistency
+        let reported_count = dt.boundary_facets().count();
         assert_eq!(
             boundary_count, reported_count,
             "Boundary facet count should be consistent"
@@ -748,24 +701,17 @@ mod tests {
             Point::new([0.0, 0.0, 1.0]),
         ];
         let vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
         // Test that build_facet_to_cells_map succeeds on valid triangulation
-        let map_result = tds.build_facet_to_cells_map();
+        let map_result = dt.tds().build_facet_to_cells_map();
         assert!(
             map_result.is_ok(),
             "build_facet_to_cells_map should succeed on valid TDS"
         );
 
         // Test that boundary_facets succeeds when build_facet_to_cells_map succeeds
-        let boundary_result = tds.boundary_facets();
-        assert!(
-            boundary_result.is_ok(),
-            "boundary_facets should succeed when build_map succeeds"
-        );
-
-        let boundary_facets = boundary_result.unwrap();
-        let boundary_count = boundary_facets.count();
+        let boundary_count = dt.boundary_facets().count();
         assert_eq!(
             boundary_count, 4,
             "Single tetrahedron should have 4 boundary facets"
@@ -788,12 +734,12 @@ mod tests {
             Point::new([0.0, 0.0, 1.0]),
         ];
         let vertices = Vertex::from_points(&points);
-        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
         // Test both methods return consistent results
-        let boundary_facets = tds.boundary_facets().expect("Should get boundary facets");
-        let boundary_facets_count = boundary_facets.count();
-        let boundary_count = tds
+        let boundary_facets_count = dt.boundary_facets().count();
+        let boundary_count = dt
+            .tds()
             .number_of_boundary_facets()
             .expect("Should get boundary count");
 

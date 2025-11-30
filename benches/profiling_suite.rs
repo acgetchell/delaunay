@@ -53,7 +53,6 @@
 //! ```
 
 #![allow(missing_docs)]
-#![expect(deprecated)] // Benchmark uses deprecated Tds::new() until migration to DelaunayTriangulation
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::core::collections::SmallBuffer;
@@ -268,7 +267,8 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
                             points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                         },
                         |vertices| {
-                            black_box(Tds::<f64, (), (), 2>::new(&vertices).unwrap());
+                            let dt = DelaunayTriangulation::new(&vertices).unwrap();
+                            black_box(dt);
                         },
                         BatchSize::LargeInput,
                     );
@@ -315,7 +315,8 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
                             points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                         },
                         |vertices| {
-                            black_box(Tds::<f64, (), (), 3>::new(&vertices).unwrap());
+                            let dt = DelaunayTriangulation::new(&vertices).unwrap();
+                            black_box(dt);
                         },
                         BatchSize::LargeInput,
                     );
@@ -364,7 +365,8 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
                             points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                         },
                         |vertices| {
-                            black_box(Tds::<f64, (), (), 4>::new(&vertices).unwrap());
+                            let dt = DelaunayTriangulation::new(&vertices).unwrap();
+                            black_box(dt);
                         },
                         BatchSize::LargeInput,
                     );
@@ -412,7 +414,8 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
                             points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                         },
                         |vertices| {
-                            black_box(Tds::<f64, (), (), 5>::new(&vertices).unwrap());
+                            let dt = DelaunayTriangulation::new(&vertices).unwrap();
+                            black_box(dt);
                         },
                         BatchSize::LargeInput,
                     );
@@ -519,7 +522,8 @@ fn bench_memory_usage<const D: usize>(
                         );
                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                         actual_point_counts.push(points.len()); // Track actual count
-                        black_box(Tds::<f64, (), (), D>::new(&vertices).unwrap());
+                        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+                        black_box(dt);
                     });
 
                     total_time += start_time.elapsed();
@@ -649,7 +653,8 @@ fn benchmark_query_latency(c: &mut Criterion) {
                     DEFAULT_SEED,
                 );
                 let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                let tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
+                let dt = DelaunayTriangulation::new(&vertices).unwrap();
+                let tds = dt.tds();
 
                 // Generate query points
                 let query_points = generate_points_by_distribution::<3>(

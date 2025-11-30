@@ -4,9 +4,10 @@
 //! optimizations to confirm reduced overhead on representative triangulations.
 
 #![expect(missing_docs)]
-#![expect(deprecated)] // Benchmark uses deprecated Tds::new() until migration to DelaunayTriangulation
+// Benchmark migrated to DelaunayTriangulation::new()
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use delaunay::geometry::kernel::FastKernel;
 use delaunay::geometry::util::generate_random_points;
 use delaunay::prelude::*;
 use delaunay::vertex;
@@ -72,20 +73,21 @@ macro_rules! generate_assign_neighbors_benchmarks {
                             &n_points,
                             |b, &n_points| {
                                 b.iter_with_setup(
-                                    || {
-                                        let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
-                                        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                                        let mut tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
+                                     || {
+                                         let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
+                                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+                                         let dt = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new(&vertices).unwrap();
+                                         let mut tds = dt.tds().clone();
 
-                                        // Clear existing neighbors to benchmark the assignment process
-                                        tds.clear_all_neighbors();
-                                        tds
-                                    },
-                                    |mut tds| {
-                                        tds.assign_neighbors().unwrap();
-                                        black_box(tds);
-                                    },
-                                );
+                                         // Clear existing neighbors to benchmark the assignment process
+                                         tds.clear_all_neighbors();
+                                         tds
+                                     },
+                                     |mut tds| {
+                                         tds.assign_neighbors().unwrap();
+                                         black_box(tds);
+                                     },
+                                 );
                             },
                         );
                     }
@@ -108,10 +110,10 @@ macro_rules! generate_assign_neighbors_benchmarks {
                     for &n_points in &point_counts {
                         let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                        let tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
+                        let dt = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new(&vertices).unwrap();
 
-                        let num_cells = tds.number_of_cells();
-                        let num_vertices = tds.number_of_vertices();
+                        let num_cells = dt.number_of_cells();
+                        let num_vertices = dt.number_of_vertices();
 
                         #[expect(clippy::cast_precision_loss)]
                         let ratio = num_cells as f64 / n_points as f64;
@@ -137,7 +139,8 @@ macro_rules! generate_assign_neighbors_benchmarks {
                                     || {
                                         let points: Vec<Point<f64, $dim>> = generate_random_points(n_points, (-100.0, 100.0)).unwrap();
                                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                                        let mut tds = Tds::<f64, (), (), $dim>::new(&vertices).unwrap();
+                                        let dt = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new(&vertices).unwrap();
+                                        let mut tds = dt.tds().clone();
 
                                         // Clear existing neighbors to benchmark the assignment process
                                         tds.clear_all_neighbors();
@@ -180,15 +183,19 @@ fn benchmark_assign_neighbors_grid(c: &mut Criterion) {
                     || {
                         let points = generate_grid_points_3d(grid_size);
                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                        let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
+                        let mut dt =
+                            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new(&vertices)
+                                .unwrap()
+                                .tds()
+                                .clone();
 
                         // Clear existing neighbors to benchmark the assignment process
-                        tds.clear_all_neighbors();
-                        tds
+                        dt.clear_all_neighbors();
+                        dt
                     },
-                    |mut tds| {
-                        tds.assign_neighbors().unwrap();
-                        black_box(tds);
+                    |mut dt| {
+                        dt.assign_neighbors().unwrap();
+                        black_box(dt);
                     },
                 );
             },
@@ -215,15 +222,19 @@ fn benchmark_assign_neighbors_spherical(c: &mut Criterion) {
                     || {
                         let points = generate_spherical_points_3d(n_points);
                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                        let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
+                        let mut dt =
+                            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new(&vertices)
+                                .unwrap()
+                                .tds()
+                                .clone();
 
                         // Clear existing neighbors to benchmark the assignment process
-                        tds.clear_all_neighbors();
-                        tds
+                        dt.clear_all_neighbors();
+                        dt
                     },
-                    |mut tds| {
-                        tds.assign_neighbors().unwrap();
-                        black_box(tds);
+                    |mut dt| {
+                        dt.assign_neighbors().unwrap();
+                        black_box(dt);
                     },
                 );
             },
@@ -234,6 +245,7 @@ fn benchmark_assign_neighbors_spherical(c: &mut Criterion) {
 }
 
 /// Compare `assign_neighbors` performance across dimensions 2D through 5D
+#[allow(clippy::too_many_lines)]
 fn benchmark_assign_neighbors_multi_dimensional(c: &mut Criterion) {
     let point_counts = [10, 20, 30];
 
@@ -252,15 +264,19 @@ fn benchmark_assign_neighbors_multi_dimensional(c: &mut Criterion) {
                         let points: Vec<Point<f64, 2>> =
                             generate_random_points(n_points, (-100.0, 100.0)).unwrap();
                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                        let mut tds = Tds::<f64, (), (), 2>::new(&vertices).unwrap();
+                        let mut dt =
+                            DelaunayTriangulation::<FastKernel<f64>, (), (), 2>::new(&vertices)
+                                .unwrap()
+                                .tds()
+                                .clone();
 
                         // Clear existing neighbors
-                        tds.clear_all_neighbors();
-                        tds
+                        dt.clear_all_neighbors();
+                        dt
                     },
-                    |mut tds| {
-                        tds.assign_neighbors().unwrap();
-                        black_box(tds);
+                    |mut dt| {
+                        dt.assign_neighbors().unwrap();
+                        black_box(dt);
                     },
                 );
             },
@@ -276,7 +292,11 @@ fn benchmark_assign_neighbors_multi_dimensional(c: &mut Criterion) {
                         let points: Vec<Point<f64, 3>> =
                             generate_random_points(n_points, (-100.0, 100.0)).unwrap();
                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                        let mut tds = Tds::<f64, (), (), 3>::new(&vertices).unwrap();
+                        let mut tds =
+                            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new(&vertices)
+                                .unwrap()
+                                .tds()
+                                .clone();
 
                         // Clear existing neighbors
                         tds.clear_all_neighbors();
@@ -300,7 +320,11 @@ fn benchmark_assign_neighbors_multi_dimensional(c: &mut Criterion) {
                         let points: Vec<Point<f64, 4>> =
                             generate_random_points(n_points, (-100.0, 100.0)).unwrap();
                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                        let mut tds = Tds::<f64, (), (), 4>::new(&vertices).unwrap();
+                        let mut tds =
+                            DelaunayTriangulation::<FastKernel<f64>, (), (), 4>::new(&vertices)
+                                .unwrap()
+                                .tds()
+                                .clone();
 
                         // Clear existing neighbors
                         tds.clear_all_neighbors();
@@ -324,7 +348,11 @@ fn benchmark_assign_neighbors_multi_dimensional(c: &mut Criterion) {
                         let points: Vec<Point<f64, 5>> =
                             generate_random_points(n_points, (-100.0, 100.0)).unwrap();
                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                        let mut tds = Tds::<f64, (), (), 5>::new(&vertices).unwrap();
+                        let mut tds =
+                            DelaunayTriangulation::<FastKernel<f64>, (), (), 5>::new(&vertices)
+                                .unwrap()
+                                .tds()
+                                .clone();
 
                         // Clear existing neighbors
                         tds.clear_all_neighbors();

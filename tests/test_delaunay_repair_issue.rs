@@ -9,9 +9,8 @@
 //!
 //! See plan: "Implement Bistellar Flips for Efficient Delaunay Repair (v0.6.0)"
 
-#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
-
-use delaunay::core::triangulation_data_structure::Tds;
+use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+use delaunay::geometry::kernel::FastKernel;
 use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::vertex;
 
@@ -29,7 +28,7 @@ fn test_2d_1000v_seed42_range100() {
 
     // This should succeed but currently fails with:
     // "Global Delaunay repair exceeded the maximum of 128 iterations"
-    let result = Tds::<f64, (), (), 2>::new(&vertices);
+    let result = DelaunayTriangulation::<FastKernel<f64>, (), (), 2>::new(&vertices);
 
     match result {
         Ok(_tds) => {
@@ -54,7 +53,8 @@ fn test_2d_1000v_different_seed() {
         .expect("Failed to generate points");
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
 
-    let _tds = Tds::<f64, (), (), 2>::new(&vertices).expect("Failed to create triangulation");
+    let _dt = DelaunayTriangulation::<FastKernel<f64>, (), (), 2>::new(&vertices)
+        .expect("Failed to create triangulation");
 
     println!("✓ Triangulation with seed {seed} succeeded");
 }
@@ -71,7 +71,8 @@ fn test_2d_500v_seed42() {
         .expect("Failed to generate points");
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
 
-    let _tds = Tds::<f64, (), (), 2>::new(&vertices).expect("Failed to create triangulation");
+    let _dt = DelaunayTriangulation::<FastKernel<f64>, (), (), 2>::new(&vertices)
+        .expect("Failed to create triangulation");
 
     println!("✓ Triangulation with {n_points} vertices succeeded");
 }

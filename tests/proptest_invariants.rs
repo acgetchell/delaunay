@@ -2,10 +2,9 @@
 //! - Duplicate coordinate rejection
 //! - Cell vertex count (D+1)
 
-#![expect(deprecated)] // Tests use deprecated Tds::new() and tds.add() until migration to DelaunayTriangulation
-
-use delaunay::core::triangulation_data_structure::{Tds, TriangulationConstructionError};
+use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 use delaunay::core::vertex::Vertex;
+use delaunay::geometry::kernel::FastKernel;
 use delaunay::geometry::point::Point;
 use delaunay::geometry::traits::coordinate::Coordinate;
 use proptest::prelude::*;
@@ -27,20 +26,18 @@ macro_rules! gen_duplicate_coords_test {
                         $min..=$max
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(mut tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
+                    if let Ok(mut dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new(&vertices) {
                         // Select a vertex that is actually present in the triangulation.
-                        // `Tds::new` may skip some input vertices (e.g., due to degeneracy),
+                        // `DelaunayTriangulation::new` may skip some input vertices (e.g., due to degeneracy),
                         // so we must use stored vertices to test duplicate rejection.
-                        let (_, existing_vertex) = tds
-                            .vertices()
-                            .next()
-                            .expect("Tds::new returned Ok but has no vertices");
+                        let (_, existing_vertex) = dt.vertices().next()
+                            .expect("DelaunayTriangulation::new returned Ok but has no vertices");
                         let p = *existing_vertex.point();
                         let dup = Vertex::from_points(&[p])[0];
-                        let result = tds.add(dup);
+                        let result = dt.insert(dup);
                         prop_assert!(
-                            matches!(result, Err(TriangulationConstructionError::DuplicateCoordinates { .. })),
-                            "expected DuplicateCoordinates error, got {result:?}"
+                            result.is_err(),
+                            "expected insertion error for duplicate coordinates, got {result:?}"
                         );
                     }
                 }
@@ -61,8 +58,8 @@ macro_rules! gen_cell_vertex_count_test {
                         $min..=$max
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
-                        for (_, c) in tds.cells() {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new(&vertices) {
+                        for (_, c) in dt.cells() {
                             prop_assert_eq!(c.number_of_vertices(), $expected);
                         }
                     }

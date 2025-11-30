@@ -47,9 +47,9 @@
 //! - Large-scale operations
 //! - Serialization/deserialization
 
-#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
-
 use delaunay::assert_jaccard_gte;
+use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+use delaunay::core::triangulation_data_structure::Tds;
 use delaunay::core::util::extract_edge_set;
 use delaunay::prelude::*;
 use delaunay::vertex;
@@ -65,7 +65,8 @@ macro_rules! test_construction {
         #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
         fn $name() {
             let vertices: Vec<_> = $vertices;
-            let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices).unwrap();
+            let tds = dt.tds();
 
             assert_eq!(tds.number_of_vertices(), vertices.len());
             assert_eq!(tds.number_of_cells(), 1);
@@ -80,7 +81,8 @@ macro_rules! test_vertex_iteration {
         #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
         fn $name() {
             let vertices: Vec<_> = $vertices;
-            let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices).unwrap();
+            let tds = dt.tds();
 
             let vertex_count = tds.vertices().count();
             assert_eq!(vertex_count, vertices.len());
@@ -99,7 +101,8 @@ macro_rules! test_cell_iteration {
         #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
         fn $name() {
             let vertices: Vec<_> = $vertices;
-            let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices).unwrap();
+            let tds = dt.tds();
 
             let cell_count = tds.cells().count();
             assert!(cell_count > 0);
@@ -119,7 +122,8 @@ macro_rules! test_neighbor_access {
         #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
         fn $name() {
             let vertices: Vec<_> = $vertices;
-            let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices).unwrap();
+            let tds = dt.tds();
 
             for (_key, cell) in tds.cells() {
                 if let Some(neighbors) = cell.neighbors() {
@@ -153,7 +157,8 @@ macro_rules! test_serialization {
         #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
         fn $name() {
             let vertices: Vec<_> = $vertices;
-            let tds: Tds<f64, (), (), $dim> = Tds::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices).unwrap();
+            let tds = dt.tds();
 
             // Extract edge topology before serialization
             let edges_before = extract_edge_set(&tds).expect("edge extraction should not fail");
@@ -188,7 +193,11 @@ macro_rules! test_vertex_data {
         #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
         fn $name() {
             let vertices: Vec<_> = $vertices;
-            let tds: Tds<f64, Option<i32>, (), $dim> = Tds::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::<FastKernel<f64>, Option<i32>, (), $dim>::with_kernel(
+                FastKernel::default(),
+                &vertices
+            ).unwrap();
+            let tds = dt.tds();
 
             for (_key, vertex) in tds.vertices() {
                 assert!(vertex.data.is_some());
@@ -204,7 +213,11 @@ macro_rules! test_cell_data {
         #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
         fn $name() {
             let vertices: Vec<_> = $vertices;
-            let mut tds: Tds<f64, (), i32, $dim> = Tds::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::<FastKernel<f64>, (), i32, $dim>::with_kernel(
+                FastKernel::default(),
+                &vertices
+            ).unwrap();
+            let mut tds = dt.tds().clone();
 
             // Collect cell keys first to avoid borrow checker issues
             let cell_keys: Vec<_> = tds.cells().map(|(key, _)| key).collect();
@@ -405,7 +418,8 @@ fn test_storage_backend_large_scale_2d() {
         }
     }
 
-    let tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
+    let dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
+    let tds = dt.tds();
 
     assert_eq!(tds.number_of_vertices(), 900);
     assert!(tds.number_of_cells() > 0);
@@ -437,7 +451,8 @@ fn test_storage_backend_large_scale_3d() {
         }
     }
 
-    let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+    let dt = DelaunayTriangulation::<_, (), (), 3>::new(&vertices).unwrap();
+    let tds = dt.tds();
 
     assert_eq!(tds.number_of_vertices(), 900);
     assert!(tds.number_of_cells() > 0);
@@ -470,7 +485,8 @@ fn test_storage_backend_large_scale_4d() {
         }
     }
 
-    let tds: Tds<f64, (), (), 4> = Tds::new(&vertices).unwrap();
+    let dt = DelaunayTriangulation::<_, (), (), 4>::new(&vertices).unwrap();
+    let tds = dt.tds();
 
     assert_eq!(tds.number_of_vertices(), 500);
     assert!(tds.number_of_cells() > 0);
@@ -504,7 +520,8 @@ fn test_storage_backend_large_scale_5d() {
         }
     }
 
-    let tds: Tds<f64, (), (), 5> = Tds::new(&vertices).unwrap();
+    let dt = DelaunayTriangulation::<_, (), (), 5>::new(&vertices).unwrap();
+    let tds = dt.tds();
 
     assert_eq!(tds.number_of_vertices(), 256);
     assert!(tds.number_of_cells() > 0);
@@ -675,7 +692,8 @@ fn test_dense_slotmap_backend_active() {
         vertex!([0.0, 0.0, 0.0, 1.0]),
     ];
 
-    let tds: Tds<f64, (), (), 4> = Tds::new(&vertices).unwrap();
+    let dt = DelaunayTriangulation::<_, (), (), 4>::new(&vertices).unwrap();
+    let tds = dt.tds();
 
     assert_eq!(tds.number_of_vertices(), 5);
     assert_eq!(tds.number_of_cells(), 1);
@@ -695,7 +713,8 @@ fn test_slotmap_backend_active() {
         vertex!([0.0, 0.0, 0.0, 1.0]),
     ];
 
-    let tds: Tds<f64, (), (), 4> = Tds::new(&vertices).unwrap();
+    let dt = DelaunayTriangulation::<_, (), (), 4>::new(&vertices).unwrap();
+    let tds = dt.tds();
 
     assert_eq!(tds.number_of_vertices(), 5);
     assert_eq!(tds.number_of_cells(), 1);

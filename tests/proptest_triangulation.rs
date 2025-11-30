@@ -7,9 +7,7 @@
 //! - No duplicate cells in valid triangulations
 //! - Triangulation remains valid after vertex insertion
 
-#![expect(deprecated)] // Tests use deprecated Tds::new() and tds.add() until migration to DelaunayTriangulation
-
-use delaunay::core::triangulation_data_structure::Tds;
+use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 use delaunay::core::util::jaccard_index;
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::point::Point;
@@ -78,10 +76,10 @@ macro_rules! gen_triangulation_validity {
             proptest! {
                 #[test]
                 fn [<prop_triangulation_from_vertices_is_valid_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
-                        prop_assert!(tds.is_valid().is_ok(),
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                        prop_assert!(dt.is_valid().is_ok(),
                             "{}D triangulation should be valid: {:?}",
-                            $dim, tds.is_valid().err());
+                            $dim, dt.is_valid().err());
                     }
                 }
             }
@@ -95,8 +93,9 @@ macro_rules! gen_neighbor_symmetry {
             proptest! {
                 #[test]
                 fn [<prop_neighbor_symmetry_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
-                        for (cell_key, cell) in tds.cells() {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                        let tds = dt.tds();
+                        for (cell_key, cell) in dt.cells() {
                             if let Some(neighbors) = cell.neighbors() {
                                 for neighbor_key in neighbors.iter().flatten() {
                                     let found_reciprocal = tds
@@ -159,9 +158,10 @@ macro_rules! gen_neighbor_index_semantics {
                 fn [<prop_neighbor_index_semantics_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     // Use stack-allocated buffer for D facet vertices (D ≤ 7 typical)
                     use delaunay::core::collections::SimplexVertexBuffer;
-                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
-                        prop_assume!(tds.is_valid().is_ok());
-                        for (cell_key, cell) in tds.cells() {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                        prop_assume!(dt.is_valid().is_ok());
+                        let tds = dt.tds();
+                        for (cell_key, cell) in dt.cells() {
                             if let Some(neighbors) = cell.neighbors() {
                                 let a_vertices = cell.vertices();
                                 for (i, nb) in neighbors.iter().enumerate() {
@@ -203,9 +203,9 @@ macro_rules! gen_cell_vertices_exist_in_tds {
                 #[test]
                 fn [<prop_cell_vertices_exist_in_tds_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     use std::collections::HashSet;
-                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
-                        let all_vertex_keys: HashSet<_> = tds.vertex_keys().collect();
-                        for (_cell_key, cell) in tds.cells() {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                        let all_vertex_keys: HashSet<_> = dt.tds().vertex_keys().collect();
+                        for (_cell_key, cell) in dt.cells() {
                             for vertex_key in cell.vertices() {
                                 prop_assert!(all_vertex_keys.contains(vertex_key),
                                     "{}D cell vertex should exist in TDS", $dim);
@@ -226,9 +226,9 @@ macro_rules! gen_no_duplicate_cells {
                 fn [<prop_no_duplicate_cells_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     use std::collections::HashSet;
                     use delaunay::core::collections::CellVertexBuffer;
-                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
                         let mut seen = HashSet::new();
-                        for (_cell_key, cell) in tds.cells() {
+                        for (_cell_key, cell) in dt.cells() {
                             // Use stack-allocated buffer for D+1 vertices (D ≤ 7 typical)
                             let mut vs: CellVertexBuffer = cell.vertices().iter().copied().collect();
                             vs.sort_unstable();
@@ -251,11 +251,11 @@ macro_rules! gen_incremental_insertion_validity {
                     additional_point in [<vertex_ $dim d>](),
                 ) {
                     let initial_vertices = Vertex::from_points(&initial_points);
-                    if let Ok(mut tds) = Tds::<f64, (), (), $dim>::new(&initial_vertices) {
-                        prop_assert!(tds.is_valid().is_ok(), "Initial {}D triangulation should be valid", $dim);
+                    if let Ok(mut dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&initial_vertices) {
+                        prop_assert!(dt.is_valid().is_ok(), "Initial {}D triangulation should be valid", $dim);
                         let additional_vertex = vertex!(additional_point);
-                        if tds.add(additional_vertex).is_ok() {
-                            prop_assert!(tds.is_valid().is_ok(), "{}D triangulation should remain valid after insertion: {:?}", $dim, tds.is_valid().err());
+                        if dt.insert(additional_vertex).is_ok() {
+                            prop_assert!(dt.is_valid().is_ok(), "{}D triangulation should remain valid after insertion: {:?}", $dim, dt.is_valid().err());
                         }
                     }
                 }
@@ -270,9 +270,9 @@ macro_rules! gen_dimension_consistency {
             proptest! {
                 #[test]
                 fn [<prop_dimension_consistency_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
-                        if tds.number_of_vertices() >= $min_vertices && tds.number_of_cells() > 0 {
-                            prop_assert_eq!(tds.dim(), $dim as i32, "{}D triangulation dimension mismatch", $dim);
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                        if dt.number_of_vertices() >= $min_vertices && dt.number_of_cells() > 0 {
+                            prop_assert_eq!(dt.dim(), $dim as i32, "{}D triangulation dimension mismatch", $dim);
                         }
                     }
                 }
@@ -287,9 +287,9 @@ macro_rules! gen_vertex_count_consistency {
             proptest! {
                 #[test]
                 fn [<prop_vertex_count_consistency_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
-                        let keys = tds.vertex_keys().count();
-                        let n = tds.number_of_vertices();
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                        let keys = dt.tds().vertex_keys().count();
+                        let n = dt.number_of_vertices();
                         prop_assert_eq!(keys, n, "{}D vertex keys count should match number_of_vertices", $dim);
                     }
                 }

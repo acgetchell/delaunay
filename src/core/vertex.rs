@@ -491,6 +491,7 @@ where
     /// # Errors
     ///
     /// Returns `VertexValidationError::InvalidPoint` if the point has invalid coordinates.
+    #[allow(dead_code)]
     pub(crate) fn set_point(&mut self, point: Point<T, D>) -> Result<(), VertexValidationError>
     where
         Point<T, D>: Coordinate<T, D>,

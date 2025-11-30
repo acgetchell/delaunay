@@ -843,9 +843,8 @@ where
 /// # Examples
 ///
 /// ```
+/// use delaunay::prelude::*;
 /// use delaunay::core::util::extract_vertex_coordinate_set;
-/// use delaunay::core::Tds;
-/// use delaunay::vertex;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -853,9 +852,10 @@ where
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
 ///
-/// let coord_set = extract_vertex_coordinate_set(&tds);
+/// let coord_set = extract_vertex_coordinate_set(tds);
 /// assert_eq!(coord_set.len(), 4);
 /// ```
 #[must_use]
@@ -900,9 +900,8 @@ const fn canonical_edge(u: u128, v: u128) -> (u128, u128) {
 /// # Examples
 ///
 /// ```
+/// use delaunay::prelude::*;
 /// use delaunay::core::util::extract_edge_set;
-/// use delaunay::core::Tds;
-/// use delaunay::vertex;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -910,9 +909,10 @@ const fn canonical_edge(u: u128, v: u128) -> (u128, u128) {
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
 ///
-/// let edge_set = extract_edge_set(&tds).unwrap();
+/// let edge_set = extract_edge_set(tds).unwrap();
 /// // A tetrahedron has 6 edges
 /// assert_eq!(edge_set.len(), 6);
 /// ```
@@ -972,9 +972,8 @@ where
 /// # Examples
 ///
 /// ```
+/// use delaunay::prelude::*;
 /// use delaunay::core::util::extract_facet_identifier_set;
-/// use delaunay::core::Tds;
-/// use delaunay::vertex;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -982,9 +981,10 @@ where
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
 ///
-/// let facet_set = extract_facet_identifier_set(&tds).unwrap();
+/// let facet_set = extract_facet_identifier_set(tds).unwrap();
 /// // A tetrahedron has 4 facets
 /// assert_eq!(facet_set.len(), 4);
 /// ```
@@ -1269,9 +1269,8 @@ macro_rules! assert_jaccard_gte {
 /// # Examples
 ///
 /// ```
+/// use delaunay::prelude::*;
 /// use delaunay::core::util::derive_facet_key_from_vertex_keys;
-/// use delaunay::core::triangulation_data_structure::Tds;
-/// use delaunay::vertex;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -1279,7 +1278,8 @@ macro_rules! assert_jaccard_gte {
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
 ///
 /// // Get facet vertex keys from a cell - no need to materialize Vertex objects
 /// if let Some(cell) = tds.cells().map(|(_, cell)| cell).next() {
@@ -1643,9 +1643,8 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::prelude::*;
 /// use delaunay::core::util::is_delaunay;
-/// use delaunay::vertex;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -1654,10 +1653,11 @@ where
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
 ///
-/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
 ///
 /// // Check if triangulation is Delaunay
-/// assert!(is_delaunay(&tds).is_ok());
+/// assert!(is_delaunay(tds).is_ok());
 /// ```
 pub fn is_delaunay<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
@@ -1722,9 +1722,8 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::prelude::*;
 /// use delaunay::core::util::find_delaunay_violations;
-/// use delaunay::vertex;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -1733,10 +1732,11 @@ where
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
 ///
-/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
 ///
 /// // Find all violating cells (should be empty for valid Delaunay triangulation)
-/// let violations = find_delaunay_violations(&tds, None).unwrap();
+/// let violations = find_delaunay_violations(tds, None).unwrap();
 /// assert!(violations.is_empty());
 /// ```
 pub fn find_delaunay_violations<T, U, V, const D: usize>(
@@ -1952,7 +1952,7 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
 mod tests {
 
     use crate::core::facet::FacetView;
-    use crate::core::triangulation_data_structure::{Tds, VertexKey};
+    use crate::core::triangulation_data_structure::VertexKey;
     use crate::geometry::algorithms::convex_hull::ConvexHull;
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
@@ -2664,14 +2664,16 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+        let dt =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let tds = &dt.triangulation().tds;
 
         // Basic Delaunay helpers should report no violations.
         assert!(
-            is_delaunay(&tds).is_ok(),
+            is_delaunay(tds).is_ok(),
             "Simple tetrahedron should be Delaunay"
         );
-        let violations = find_delaunay_violations(&tds, None).unwrap();
+        let violations = find_delaunay_violations(tds, None).unwrap();
         assert!(
             violations.is_empty(),
             "find_delaunay_violations should report no violating cells for a tetrahedron"
@@ -2680,7 +2682,7 @@ mod tests {
         // Smoke test for the debug helper: it should not panic and should print a
         // summary indicating that no violations were found.
         #[cfg(any(test, debug_assertions))]
-        debug_print_first_delaunay_violation(&tds, None);
+        debug_print_first_delaunay_violation(tds, None);
     }
 
     #[test]
@@ -2695,7 +2697,9 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+        let dt =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let tds = &dt.triangulation().tds;
 
         // Test 1: Basic functionality - successful key derivation
         println!("  Testing basic functionality...");
@@ -2854,8 +2858,12 @@ mod tests {
         let mut vertices2 = shared_vertices;
         vertices2.push(vertex_b);
 
-        let tds1: Tds<f64, (), (), 3> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, (), (), 3> = Tds::new(&vertices2).unwrap();
+        let dt1 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices1).unwrap();
+        let dt2 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices2).unwrap();
+        let tds1 = &dt1.triangulation().tds;
+        let tds2 = &dt2.triangulation().tds;
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
@@ -2863,8 +2871,8 @@ mod tests {
         // Find the facets that correspond to the shared triangle
         // In tetrahedron 1, this is the facet opposite to vertex_a (index 3)
         // In tetrahedron 2, this is the facet opposite to vertex_b (index 3)
-        let facet_view1 = FacetView::new(&tds1, cell1_key, 3).unwrap();
-        let facet_view2 = FacetView::new(&tds2, cell2_key, 3).unwrap();
+        let facet_view1 = FacetView::new(tds1, cell1_key, 3).unwrap();
+        let facet_view2 = FacetView::new(tds2, cell2_key, 3).unwrap();
 
         assert!(
             facet_views_are_adjacent(&facet_view1, &facet_view2).unwrap(),
@@ -2876,8 +2884,8 @@ mod tests {
         println!("Test 2: Non-adjacent facets from same tetrahedra");
 
         // Different facets from the same tetrahedra (not sharing vertices)
-        let facet_view1_diff = FacetView::new(&tds1, cell1_key, 0).unwrap(); // Different facet
-        let facet_view2_diff = FacetView::new(&tds2, cell2_key, 1).unwrap(); // Different facet
+        let facet_view1_diff = FacetView::new(tds1, cell1_key, 0).unwrap(); // Different facet
+        let facet_view2_diff = FacetView::new(tds2, cell2_key, 1).unwrap(); // Different facet
 
         assert!(
             !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff).unwrap(),
@@ -2916,16 +2924,20 @@ mod tests {
         let mut vertices2 = shared_edge;
         vertices2.push(vertex_d);
 
-        let tds1: Tds<f64, (), (), 2> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, (), (), 2> = Tds::new(&vertices2).unwrap();
+        let dt1 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices1).unwrap();
+        let dt2 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices2).unwrap();
+        let tds1 = &dt1.triangulation().tds;
+        let tds2 = &dt2.triangulation().tds;
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
 
         // In 2D, facets are edges. Find the facets that correspond to the shared edge
         // This is the facet opposite to the non-shared vertex
-        let facet_view1 = FacetView::new(&tds1, cell1_key, 2).unwrap(); // Opposite to vertex_c
-        let facet_view2 = FacetView::new(&tds2, cell2_key, 2).unwrap(); // Opposite to vertex_d
+        let facet_view1 = FacetView::new(tds1, cell1_key, 2).unwrap(); // Opposite to vertex_c
+        let facet_view2 = FacetView::new(tds2, cell2_key, 2).unwrap(); // Opposite to vertex_d
 
         assert!(
             facet_views_are_adjacent(&facet_view1, &facet_view2).unwrap(),
@@ -2933,8 +2945,8 @@ mod tests {
         );
 
         // Test non-adjacent edges
-        let facet_view1_diff = FacetView::new(&tds1, cell1_key, 0).unwrap();
-        let facet_view2_diff = FacetView::new(&tds2, cell2_key, 1).unwrap();
+        let facet_view1_diff = FacetView::new(tds1, cell1_key, 0).unwrap();
+        let facet_view2_diff = FacetView::new(tds2, cell2_key, 1).unwrap();
 
         assert!(
             !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff).unwrap(),
@@ -2960,8 +2972,12 @@ mod tests {
         // Edge 2: shared_vertex to vertex_right
         let vertices2 = vec![shared_vertex, vertex_right];
 
-        let tds1: Tds<f64, (), (), 1> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, (), (), 1> = Tds::new(&vertices2).unwrap();
+        let dt1 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices1).unwrap();
+        let dt2 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices2).unwrap();
+        let tds1 = &dt1.triangulation().tds;
+        let tds2 = &dt2.triangulation().tds;
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
@@ -2972,11 +2988,11 @@ mod tests {
 
         // Both edges contain the shared vertex, so we need to find which facet index
         // corresponds to the shared vertex
-        let facet_view1_0 = FacetView::new(&tds1, cell1_key, 0).unwrap(); // Contains vertex_left
-        let facet_view1_1 = FacetView::new(&tds1, cell1_key, 1).unwrap(); // Contains shared_vertex
+        let facet_view1_0 = FacetView::new(tds1, cell1_key, 0).unwrap(); // Contains vertex_left
+        let facet_view1_1 = FacetView::new(tds1, cell1_key, 1).unwrap(); // Contains shared_vertex
 
-        let facet_view2_0 = FacetView::new(&tds2, cell2_key, 0).unwrap(); // Contains vertex_right
-        let facet_view2_1 = FacetView::new(&tds2, cell2_key, 1).unwrap(); // Contains shared_vertex
+        let facet_view2_0 = FacetView::new(tds2, cell2_key, 0).unwrap(); // Contains vertex_right
+        let facet_view2_1 = FacetView::new(tds2, cell2_key, 1).unwrap(); // Contains shared_vertex
 
         // The facets containing the shared vertex should be adjacent
         assert!(
@@ -3005,14 +3021,16 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+        let dt =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let tds = &dt.triangulation().tds;
         let cell_key = tds.cell_keys().next().unwrap();
 
         // All facets of the same tetrahedron should be different from each other
-        let facet0 = FacetView::new(&tds, cell_key, 0).unwrap();
-        let facet1 = FacetView::new(&tds, cell_key, 1).unwrap();
-        let facet2 = FacetView::new(&tds, cell_key, 2).unwrap();
-        let facet3 = FacetView::new(&tds, cell_key, 3).unwrap();
+        let facet0 = FacetView::new(tds, cell_key, 0).unwrap();
+        let facet1 = FacetView::new(tds, cell_key, 1).unwrap();
+        let facet2 = FacetView::new(tds, cell_key, 2).unwrap();
+        let facet3 = FacetView::new(tds, cell_key, 3).unwrap();
 
         // Each facet should be adjacent to itself
         assert!(facet_views_are_adjacent(&facet0, &facet0).unwrap());
@@ -3044,11 +3062,13 @@ mod tests {
             vertex!([1.0, 1.0, 2.0]),
         ];
 
-        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+        let dt =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let tds = &dt.triangulation().tds;
         let cell_key = tds.cell_keys().next().unwrap();
 
-        let facet1 = FacetView::new(&tds, cell_key, 0).unwrap();
-        let facet2 = FacetView::new(&tds, cell_key, 1).unwrap();
+        let facet1 = FacetView::new(tds, cell_key, 0).unwrap();
+        let facet2 = FacetView::new(tds, cell_key, 1).unwrap();
 
         // Run the adjacency check many times to measure performance
         let start = Instant::now();
@@ -3089,14 +3109,18 @@ mod tests {
             vertex!([10.0, 10.0, 11.0]),
         ];
 
-        let tds1: Tds<f64, (), (), 3> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, (), (), 3> = Tds::new(&vertices2).unwrap();
+        let dt1 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices1).unwrap();
+        let dt2 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices2).unwrap();
+        let tds1 = &dt1.triangulation().tds;
+        let tds2 = &dt2.triangulation().tds;
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
 
-        let facet1 = FacetView::new(&tds1, cell1_key, 0).unwrap();
-        let facet2 = FacetView::new(&tds2, cell2_key, 0).unwrap();
+        let facet1 = FacetView::new(tds1, cell1_key, 0).unwrap();
+        let facet2 = FacetView::new(tds2, cell2_key, 0).unwrap();
 
         // Facets from completely different geometries should not be adjacent
         assert!(
@@ -3119,14 +3143,18 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds1: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
-        let tds2: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+        let dt1 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt2 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let tds1 = &dt1.triangulation().tds;
+        let tds2 = &dt2.triangulation().tds;
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
 
-        let facet1 = FacetView::new(&tds1, cell1_key, 0).unwrap();
-        let facet2 = FacetView::new(&tds2, cell2_key, 0).unwrap();
+        let facet1 = FacetView::new(tds1, cell1_key, 0).unwrap();
+        let facet2 = FacetView::new(tds2, cell2_key, 0).unwrap();
 
         // Check if the UUID generation is deterministic based on coordinates
         let facet1_vertex_uuids: Vec<_> = match facet1.vertices() {
@@ -3177,16 +3205,20 @@ mod tests {
         let mut vertices2 = shared_tetrahedron;
         vertices2.push(vertex_f);
 
-        let tds1: Tds<f64, (), (), 4> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, (), (), 4> = Tds::new(&vertices2).unwrap();
+        let dt1 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices1).unwrap();
+        let dt2 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices2).unwrap();
+        let tds1 = &dt1.triangulation().tds;
+        let tds2 = &dt2.triangulation().tds;
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
 
         // In 4D, facets are tetrahedra. Find the facets that correspond to the shared tetrahedron
         // This is the facet opposite to the non-shared vertex (index 4)
-        let facet_view1 = FacetView::new(&tds1, cell1_key, 4).unwrap(); // Opposite to vertex_e
-        let facet_view2 = FacetView::new(&tds2, cell2_key, 4).unwrap(); // Opposite to vertex_f
+        let facet_view1 = FacetView::new(tds1, cell1_key, 4).unwrap(); // Opposite to vertex_e
+        let facet_view2 = FacetView::new(tds2, cell2_key, 4).unwrap(); // Opposite to vertex_f
 
         assert!(
             facet_views_are_adjacent(&facet_view1, &facet_view2).unwrap(),
@@ -3194,8 +3226,8 @@ mod tests {
         );
 
         // Test non-adjacent tetrahedra within the same 4D simplices
-        let facet_view1_diff = FacetView::new(&tds1, cell1_key, 0).unwrap();
-        let facet_view2_diff = FacetView::new(&tds2, cell2_key, 1).unwrap();
+        let facet_view1_diff = FacetView::new(tds1, cell1_key, 0).unwrap();
+        let facet_view2_diff = FacetView::new(tds2, cell2_key, 1).unwrap();
 
         assert!(
             !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff).unwrap(),
@@ -3229,16 +3261,20 @@ mod tests {
         let mut vertices2 = shared_4d_simplex;
         vertices2.push(vertex_h);
 
-        let tds1: Tds<f64, (), (), 5> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, (), (), 5> = Tds::new(&vertices2).unwrap();
+        let dt1 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices1).unwrap();
+        let dt2 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices2).unwrap();
+        let tds1 = &dt1.triangulation().tds;
+        let tds2 = &dt2.triangulation().tds;
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
 
         // In 5D, facets are 4D simplices. Find the facets that correspond to the shared 4D simplex
         // This is the facet opposite to the non-shared vertex (index 5)
-        let facet_view1 = FacetView::new(&tds1, cell1_key, 5).unwrap(); // Opposite to vertex_g
-        let facet_view2 = FacetView::new(&tds2, cell2_key, 5).unwrap(); // Opposite to vertex_h
+        let facet_view1 = FacetView::new(tds1, cell1_key, 5).unwrap(); // Opposite to vertex_g
+        let facet_view2 = FacetView::new(tds2, cell2_key, 5).unwrap(); // Opposite to vertex_h
 
         assert!(
             facet_views_are_adjacent(&facet_view1, &facet_view2).unwrap(),
@@ -3246,8 +3282,8 @@ mod tests {
         );
 
         // Test non-adjacent 4D simplices within the same 5D simplices
-        let facet_view1_diff = FacetView::new(&tds1, cell1_key, 0).unwrap();
-        let facet_view2_diff = FacetView::new(&tds2, cell2_key, 1).unwrap();
+        let facet_view1_diff = FacetView::new(tds1, cell1_key, 0).unwrap();
+        let facet_view2_diff = FacetView::new(tds2, cell2_key, 1).unwrap();
 
         assert!(
             !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff).unwrap(),
@@ -3503,10 +3539,12 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+        let dt =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let tds = &dt.triangulation().tds;
 
         // Sub-test: Vertex coordinate extraction
-        let coord_set = extract_vertex_coordinate_set(&tds);
+        let coord_set = extract_vertex_coordinate_set(tds);
         assert_eq!(coord_set.len(), 4, "Should have 4 unique coordinates");
         assert!(coord_set.contains(&Point::new([0.0, 0.0, 0.0])));
         assert!(coord_set.contains(&Point::new([1.0, 0.0, 0.0])));
@@ -3514,20 +3552,19 @@ mod tests {
         assert!(coord_set.contains(&Point::new([0.0, 0.0, 1.0])));
 
         // Sub-test: Edge extraction - tetrahedron has 6 edges (binomial(4,2))
-        let edge_set = extract_edge_set(&tds).unwrap();
+        let edge_set = extract_edge_set(tds).unwrap();
         assert_eq!(edge_set.len(), 6, "Tetrahedron should have 6 edges");
 
         // Sub-test: Facet identifier extraction - tetrahedron has 4 facets
-        let facet_set = extract_facet_identifier_set(&tds).unwrap();
+        let facet_set = extract_facet_identifier_set(tds).unwrap();
         assert_eq!(facet_set.len(), 4, "Tetrahedron should have 4 facets");
 
         // Sub-test: Hull facet extraction
-        let tri = crate::core::triangulation::Triangulation {
-            kernel: crate::geometry::kernel::FastKernel::new(),
-            tds: Tds::<f64, (), (), 3>::new(&vertices).unwrap(),
-        };
-        let hull = ConvexHull::from_triangulation(&tri).unwrap();
-        let hull_facet_set = extract_hull_facet_set(&hull, &tri).unwrap();
+        let dt_hull =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let tri = dt_hull.triangulation();
+        let hull = ConvexHull::from_triangulation(tri).unwrap();
+        let hull_facet_set = extract_hull_facet_set(&hull, tri).unwrap();
         assert_eq!(hull_facet_set.len(), 4, "Hull should have 4 facets");
     }
 }

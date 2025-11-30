@@ -9,14 +9,14 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
-#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
-
-use delaunay::core::triangulation_data_structure::{CellKey, Tds};
+use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+use delaunay::core::triangulation_data_structure::CellKey;
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::point::Point;
 use delaunay::geometry::quality::{normalized_volume, radius_ratio};
 use delaunay::geometry::traits::coordinate::Coordinate;
 use delaunay::geometry::util::{circumradius, inradius, safe_usize_to_scalar};
+use delaunay::prelude::FastKernel;
 use proptest::prelude::*;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -64,8 +64,8 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 /// 4. Compare quality metrics between matched cells
 /// 5. Track whether any cells were successfully matched (to avoid vacuous success)
 fn compare_transformed_cells<const D: usize, F>(
-    tds_orig: &Tds<f64, (), (), D>,
-    tds_transformed: &Tds<f64, (), (), D>,
+    dt_orig: &DelaunayTriangulation<FastKernel<f64>, (), (), D>,
+    dt_transformed: &DelaunayTriangulation<FastKernel<f64>, (), (), D>,
     uuid_map: &HashMap<Uuid, Uuid>,
     _metric_name: &str,
     _dimension: usize,
@@ -75,6 +75,8 @@ where
     F: FnMut(CellKey, CellKey) -> Result<(), TestCaseError>,
 {
     let mut matched_any = false;
+    let tds_orig = dt_orig.tds();
+    let tds_transformed = dt_transformed.tds();
 
     // Iterate through all cells in original triangulation
     for orig_key in tds_orig.cell_keys() {
@@ -198,9 +200,11 @@ macro_rules! test_quality_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &vertices) {
+                        let tds = dt.tds();
+                        let tri = dt.triangulation();
                         for cell_key in tds.cell_keys() {
-                            if let Ok(ratio) = radius_ratio(&tds, cell_key) {
+                            if let Ok(ratio) = radius_ratio(tri, cell_key) {
                                 prop_assert!(
                                     ratio > 0.0,
                                     "{}D radius ratio should be positive, got {}",
@@ -279,7 +283,7 @@ macro_rules! test_quality_properties {
                     ).prop_map(|v| Vertex::from_points(&v)),
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
-                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &vertices) {
                         // Translate all vertices
                         let translated_vertices: Vec<_> = vertices
                             .iter()
@@ -295,7 +299,7 @@ macro_rules! test_quality_properties {
 
                         let translated_vertices = Vertex::from_points(&translated_vertices);
 
-                        if let Ok(tds_translated) = Tds::<f64, (), (), $dim>::new(&translated_vertices) {
+                        if let Ok(dt_translated) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &translated_vertices) {
                             // Build mapping from original UUIDs to translated UUIDs
                             let uuid_map: HashMap<_, _> = vertices.iter()
                                 .zip(translated_vertices.iter())
@@ -304,15 +308,17 @@ macro_rules! test_quality_properties {
 
                             // Compare cells using helper function
                             let matched_any = compare_transformed_cells(
-                                &tds,
-                                &tds_translated,
+                                &dt,
+                                &dt_translated,
                                 &uuid_map,
                                 "radius_ratio",
                                 $dim,
                                 |orig_key, trans_key| {
+                                    let tri = dt.triangulation();
+                                    let tri_translated = dt_translated.triangulation();
                                     if let (Ok(ratio_orig), Ok(ratio_trans)) = (
-                                        radius_ratio(&tds, orig_key),
-                                        radius_ratio(&tds_translated, trans_key),
+                                        radius_ratio(tri, orig_key),
+                                        radius_ratio(tri_translated, trans_key),
                                     ) {
                                         let rel_diff = ((ratio_orig - ratio_trans).abs()
                                             / ratio_orig.max(1.0))
@@ -345,7 +351,7 @@ macro_rules! test_quality_properties {
                     ).prop_map(|v| Vertex::from_points(&v)),
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
-                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &vertices) {
                         // Translate all vertices
                         let translated_vertices: Vec<_> = vertices
                             .iter()
@@ -361,7 +367,7 @@ macro_rules! test_quality_properties {
 
                         let translated_vertices = Vertex::from_points(&translated_vertices);
 
-                        if let Ok(tds_translated) = Tds::<f64, (), (), $dim>::new(&translated_vertices) {
+                        if let Ok(dt_translated) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &translated_vertices) {
                             // Build UUID mapping
                             let uuid_map: HashMap<_, _> = vertices.iter()
                                 .zip(translated_vertices.iter())
@@ -370,15 +376,17 @@ macro_rules! test_quality_properties {
 
                             // Compare cells using helper function
                             let matched_any = compare_transformed_cells(
-                                &tds,
-                                &tds_translated,
+                                &dt,
+                                &dt_translated,
                                 &uuid_map,
                                 "normalized_volume",
                                 $dim,
                                 |orig_key, trans_key| {
+                                    let tri = dt.triangulation();
+                                    let tri_translated = dt_translated.triangulation();
                                     if let (Ok(vol_orig), Ok(vol_trans)) = (
-                                        normalized_volume(&tds, orig_key),
-                                        normalized_volume(&tds_translated, trans_key),
+                                        normalized_volume(tri, orig_key),
+                                        normalized_volume(tri_translated, trans_key),
                                     ) {
                                         let rel_diff = ((vol_orig - vol_trans).abs()
                                             / vol_orig.max(1e-6))
@@ -411,7 +419,7 @@ macro_rules! test_quality_properties {
                     ).prop_map(|v| Vertex::from_points(&v)),
                     scale in 0.1f64..10.0f64
                 ) {
-                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &vertices) {
                         // Scale all vertices uniformly
                         let scaled_vertices: Vec<_> = vertices
                             .iter()
@@ -427,7 +435,7 @@ macro_rules! test_quality_properties {
 
                         let scaled_vertices = Vertex::from_points(&scaled_vertices);
 
-                        if let Ok(tds_scaled) = Tds::<f64, (), (), $dim>::new(&scaled_vertices) {
+                        if let Ok(dt_scaled) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &scaled_vertices) {
                             // Build UUID mapping
                             let uuid_map: HashMap<_, _> = vertices.iter()
                                 .zip(scaled_vertices.iter())
@@ -436,15 +444,17 @@ macro_rules! test_quality_properties {
 
                             // Compare cells using helper function
                             let matched_any = compare_transformed_cells(
-                                &tds,
-                                &tds_scaled,
+                                &dt,
+                                &dt_scaled,
                                 &uuid_map,
                                 "normalized_volume",
                                 $dim,
                                 |orig_key, scaled_key| {
+                                    let tri = dt.triangulation();
+                                    let tri_scaled = dt_scaled.triangulation();
                                     if let (Ok(vol_orig), Ok(vol_scaled)) = (
-                                        normalized_volume(&tds, orig_key),
-                                        normalized_volume(&tds_scaled, scaled_key),
+                                        normalized_volume(tri, orig_key),
+                                        normalized_volume(tri_scaled, scaled_key),
                                     ) {
                                         let rel_diff = ((vol_orig - vol_scaled).abs()
                                             / vol_orig.max(1e-6))
@@ -476,10 +486,12 @@ macro_rules! test_quality_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &vertices) {
+                        let tds = dt.tds();
+                        let tri = dt.triangulation();
                         for cell_key in tds.cell_keys() {
-                            let rr_result = radius_ratio(&tds, cell_key);
-                            let nv_result = normalized_volume(&tds, cell_key);
+                            let rr_result = radius_ratio(tri, cell_key);
+                            let nv_result = normalized_volume(tri, cell_key);
 
                             // Both metrics should agree on degeneracy
                             // If one fails with DegenerateCell, both should fail

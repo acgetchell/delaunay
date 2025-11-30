@@ -389,8 +389,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -407,6 +406,38 @@ where
     /// ```
     pub fn cells(&self) -> impl Iterator<Item = (CellKey, &Cell<K::Scalar, U, V, D>)> {
         self.tri.tds.cells()
+    }
+
+    /// Returns an iterator over all vertices in the triangulation.
+    ///
+    /// This method provides access to the vertices stored in the underlying
+    /// triangulation data structure. The iterator yields `(VertexKey, &Vertex)`
+    /// pairs for each vertex in the triangulation.
+    ///
+    /// # Returns
+    ///
+    /// An iterator over `(VertexKey, &Vertex<K::Scalar, U, D>)` pairs.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// for (vertex_key, vertex) in dt.vertices() {
+    ///     println!("Vertex {:?} at {:?}", vertex_key, vertex.point());
+    /// }
+    /// ```
+    pub fn vertices(&self) -> impl Iterator<Item = (VertexKey, &Vertex<K::Scalar, U, D>)> {
+        self.tri.vertices()
     }
 
     /// Returns a reference to the underlying triangulation data structure.
@@ -615,7 +646,17 @@ where
                 // 7. Remove conflict cells (now that new cells are wired up)
                 let _removed_count = self.tri.tds.remove_cells_by_keys(&conflict_cells);
 
-                // 8. Cache last inserted cell for next locate hint
+                // 8. Repair any invalid facet sharing using geometric quality metrics
+                // This is usually not needed, but handles edge cases with degenerate geometry
+                #[cfg(debug_assertions)]
+                if let Err(e) = self.tri.fix_invalid_facet_sharing() {
+                    // Log but don't fail - the triangulation is still usable
+                    eprintln!("Warning: facet sharing repair failed after insertion: {e}");
+                }
+                #[cfg(not(debug_assertions))]
+                let _ = self.tri.fix_invalid_facet_sharing();
+
+                // 9. Cache last inserted cell for next locate hint
                 self.last_inserted_cell = new_cells.first().copied();
 
                 Ok(v_key)
@@ -636,6 +677,62 @@ where
                 })
             }
         }
+    }
+
+    /// Removes a vertex and all cells containing it from the triangulation.
+    ///
+    /// This operation:
+    /// 1. Finds all cells containing the vertex
+    /// 2. Removes those cells
+    /// 3. Rebuilds vertex-cell incidence to maintain consistency
+    /// 4. Removes the vertex
+    ///
+    /// The triangulation remains in a valid state after removal (though potentially incomplete).
+    /// This is useful for dynamic operations, mesh coarsening, or as part of flip-based algorithms.
+    ///
+    /// # Arguments
+    ///
+    /// * `vertex` - Reference to the vertex to remove
+    ///
+    /// # Returns
+    ///
+    /// The number of cells that were removed along with the vertex.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the vertex-cell incidence cannot be rebuilt, indicating data structure corruption.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    ///     vertex!([1.0, 1.0]),
+    /// ];
+    /// let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// // Get a vertex to remove
+    /// let vertex_to_remove = dt.vertices().next().unwrap().1.clone();
+    /// let cells_before = dt.number_of_cells();
+    ///
+    /// // Remove the vertex and all cells containing it
+    /// let cells_removed = dt.remove_vertex(&vertex_to_remove).unwrap();
+    /// println!("Removed {} cells along with the vertex", cells_removed);
+    ///
+    /// assert!(dt.is_valid().is_ok());
+    /// ```
+    pub fn remove_vertex(
+        &mut self,
+        vertex: &Vertex<K::Scalar, U, D>,
+    ) -> Result<usize, TriangulationValidationError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        self.tri.tds.remove_vertex(vertex)
     }
 
     /// Validate the combinatorial structure of the triangulation.
@@ -874,6 +971,25 @@ where
                 ),
             },
         })
+    }
+
+    /// Fixes invalid facet sharing by removing problematic cells using geometric quality metrics.
+    ///
+    /// Delegates to the underlying Triangulation layer.
+    ///
+    /// # Returns
+    ///
+    /// Number of cells removed.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if facet map cannot be built or topology repair fails.
+    pub fn fix_invalid_facet_sharing(&mut self) -> Result<usize, TriangulationValidationError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        // Delegate to Triangulation layer
+        self.tri.fix_invalid_facet_sharing()
     }
 }
 

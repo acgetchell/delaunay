@@ -1554,10 +1554,8 @@ where
 /// # Examples
 ///
 /// ```
+/// use delaunay::prelude::*;
 /// use delaunay::geometry::util::surface_measure;
-/// use delaunay::core::triangulation_data_structure::Tds;
-/// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
-/// use delaunay::vertex;
 ///
 /// // Create a triangulation and calculate surface measure of boundary facets
 /// let vertices = vec![
@@ -1566,7 +1564,8 @@ where
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
 ///
 /// // Get boundary facets as FacetViews
 /// let boundary_facets = tds.boundary_facets().unwrap().collect::<Vec<_>>();

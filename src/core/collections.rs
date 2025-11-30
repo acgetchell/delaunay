@@ -719,8 +719,7 @@ pub type CellToVertexUuidsMap = FastHashMap<Uuid, CellVertexUuidBuffer>;
 ///
 /// For Key → UUID lookups (less common), use direct `SlotMap` access:
 /// ```rust
-/// use delaunay::core::triangulation_data_structure::Tds;
-/// use delaunay::vertex;
+/// use delaunay::prelude::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -728,7 +727,8 @@ pub type CellToVertexUuidsMap = FastHashMap<Uuid, CellVertexUuidBuffer>;
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+/// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
 ///
 /// // Get first vertex key and its UUID
 /// let (vertex_key, _) = tds.vertices().next().unwrap();
@@ -750,8 +750,7 @@ pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 ///
 /// For Key → UUID lookups (less common), use direct `SlotMap` access:
 /// ```rust
-/// use delaunay::core::triangulation_data_structure::Tds;
-/// use delaunay::vertex;
+/// use delaunay::prelude::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -759,7 +758,8 @@ pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+/// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
 ///
 /// // Get first cell key and its UUID
 /// let (cell_key, _) = tds.cells().next().unwrap();
@@ -932,9 +932,7 @@ pub type KeyBasedVertexMap<V> = FastHashMap<VertexKey, V>;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::CellSecondaryMap;
-/// use delaunay::core::triangulation_data_structure::{Tds, CellKey};
-/// use delaunay::vertex;
+/// use delaunay::prelude::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -942,9 +940,11 @@ pub type KeyBasedVertexMap<V> = FastHashMap<VertexKey, V>;
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+/// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
 ///
 /// // Track which cells are in conflict with a new point
+/// use delaunay::core::collections::CellSecondaryMap;
 /// let mut in_conflict: CellSecondaryMap<bool> = CellSecondaryMap::new();
 /// for (cell_key, _) in tds.cells() {
 ///     in_conflict.insert(cell_key, true);
@@ -973,9 +973,7 @@ pub type CellSecondaryMap<V> = SparseSecondaryMap<CellKey, V>;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::VertexSecondaryMap;
-/// use delaunay::core::triangulation_data_structure::{Tds, VertexKey};
-/// use delaunay::vertex;
+/// use delaunay::prelude::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -983,9 +981,11 @@ pub type CellSecondaryMap<V> = SparseSecondaryMap<CellKey, V>;
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+/// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
 ///
 /// // Track vertex processing order
+/// use delaunay::core::collections::VertexSecondaryMap;
 /// let mut processing_order: VertexSecondaryMap<usize> = VertexSecondaryMap::new();
 /// for (idx, (vertex_key, _)) in tds.vertices().enumerate() {
 ///     processing_order.insert(vertex_key, idx);

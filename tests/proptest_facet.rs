@@ -8,11 +8,9 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
-#![expect(deprecated)] // Tests use deprecated Tds::new() until migration to DelaunayTriangulation
-
+use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 use delaunay::core::facet::FacetView;
 use delaunay::core::facet::facet_key_from_vertices;
-use delaunay::core::triangulation_data_structure::Tds;
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::point::Point;
 use delaunay::geometry::traits::coordinate::Coordinate;
@@ -45,7 +43,8 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                        let tds = dt.tds();
                         for cell_key in tds.cell_keys() {
                             // Each cell has D+1 facets (one opposite each vertex)
                             for facet_index in 0..=($dim as u8) {
@@ -74,7 +73,8 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                        let tds = dt.tds();
                         for cell_key in tds.cell_keys() {
                             if let Some(cell) = tds.get_cell(cell_key) {
                                 let cell_vertex_count = cell.vertices().len();
@@ -105,7 +105,8 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                        let tds = dt.tds();
                         // Check that each facet is valid
                         for cell_key in tds.cell_keys() {
                             for facet_index in 0..=($dim as u8) {
@@ -129,7 +130,8 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                        let tds = dt.tds();
                         for cell_key in tds.cell_keys() {
                             let mut facet_count = 0;
                             for facet_index in 0..=($dim as u8) {
@@ -171,7 +173,8 @@ macro_rules! test_facet_multiplicity {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                        let tds = dt.tds();
                         // Ensure we're checking a valid triangulation to avoid degenerate edge cases
                         prop_assume!(tds.is_valid().is_ok());
 

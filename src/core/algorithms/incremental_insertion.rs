@@ -53,6 +53,24 @@ pub enum InsertionError {
         /// Error message
         message: String,
     },
+
+    /// Attempted to insert a vertex with coordinates that already exist.
+    #[error(
+        "Duplicate coordinates: vertex with coordinates {coordinates} already exists in the triangulation"
+    )]
+    DuplicateCoordinates {
+        /// String representation of the duplicate coordinates.
+        coordinates: String,
+    },
+
+    /// Attempted to insert an entity with a UUID that already exists.
+    #[error("Duplicate UUID: {entity:?} with UUID {uuid} already exists")]
+    DuplicateUuid {
+        /// The type of entity.
+        entity: crate::core::triangulation_data_structure::EntityKind,
+        /// The UUID that was duplicated.
+        uuid: uuid::Uuid,
+    },
 }
 
 /// Fill cavity by creating new cells connecting boundary facets to new vertex.
@@ -442,6 +460,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::delaunay_triangulation::DelaunayTriangulation;
     use crate::vertex;
 
     #[test]
@@ -452,8 +471,8 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let mut tds: Tds<f64, (), (), 2> = Tds::new(&vertices).unwrap();
-        tds.assign_neighbors().unwrap();
+        let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let tds = &mut dt.tri.tds;
 
         // Insert new vertex
         let new_vertex = vertex!([0.5, 0.5]);
@@ -468,7 +487,7 @@ mod tests {
         ];
 
         // Fill cavity
-        let new_cells = fill_cavity(&mut tds, new_vkey, &boundary_facets).unwrap();
+        let new_cells = fill_cavity(tds, new_vkey, &boundary_facets).unwrap();
 
         // Should create 3 new cells (one for each boundary edge)
         assert_eq!(new_cells.len(), 3);
