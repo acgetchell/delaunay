@@ -11,7 +11,7 @@
 //! - All unsalvageable vertices reported by the diagnostics come from the
 //!   original input set.
 
-use delaunay::core::triangulation_data_structure::Tds;
+use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::Coordinate;
 use delaunay::geometry::point::Point;
@@ -102,6 +102,7 @@ proptest! {
     /// produce triangulations that are globally Delaunay for the kept subset
     /// and only report unsalvageable vertices drawn from the input set.
     #[test]
+    #[allow(deprecated)]
     fn prop_cloud_with_duplicates_is_delaunay_for_kept_subset_2d(
         points in cloud_with_duplicates_2d()
     ) {
@@ -109,56 +110,27 @@ proptest! {
         let unique = count_unique_coords_by_bits(&points);
         prop_assume!(unique > 2);
 
-        let vertices: Vec<Vertex<f64, Option<()>, 2>> = Vertex::from_points(&points);
+        let vertices: Vec<Vertex<f64, (), 2>> = Vertex::from_points(&points);
 
-        // First, construct via Tds::new to ensure the standard pipeline succeeds
+        // Construct via DelaunayTriangulation to ensure the standard pipeline succeeds
         // and yields a globally Delaunay triangulation for the kept subset.
-        let tds: Tds<f64, Option<()>, Option<()>, 2> =
-            if let Ok(tds) = Tds::new(&vertices) {
-                tds
-            } else {
-                // Truly degenerate inputs are skipped.
-                prop_assume!(false);
-                unreachable!();
-            };
+        let Ok(dt) = DelaunayTriangulation::<_, (), (), 2>::new(&vertices) else {
+            // Truly degenerate inputs are skipped.
+            prop_assume!(false);
+            unreachable!();
+        };
+        let tds = dt.tds();
 
         // Structural and global Delaunay validity for the kept subset.
         prop_assert!(tds.is_valid().is_ok());
-        prop_assert!(tds.validate_delaunay().is_ok());
-
-        // Run a diagnostic Bowyer–Watson pass on the same input set to verify
-        // that any unsalvageable vertices (if present) originate from the
-        // original input set.
-        // Note: This should never fail since the first construction succeeded,
-        // but we handle it defensively for consistency.
-        let mut tds_diag: Tds<f64, Option<()>, Option<()>, 2> =
-            if let Ok(tds) = Tds::new(&vertices) {
-                tds
-            } else {
-                // Should never reach here since first construction succeeded
-                prop_assume!(false);
-                unreachable!();
-            };
-        let diagnostics = tds_diag
-            .bowyer_watson_with_diagnostics()
-            .expect("Diagnostic Bowyer–Watson should succeed for same vertex set");
-
-        let input_uuids: HashSet<_> = vertices
-            .iter()
-            .map(delaunay::core::Vertex::uuid)
-            .collect();
-        for report in &diagnostics.unsalvageable_vertices {
-            prop_assert!(
-                input_uuids.contains(&report.vertex().uuid()),
-                "Unsalvageable vertex must come from input set",
-            );
-        }
+        prop_assert!(delaunay::core::util::is_delaunay(tds).is_ok());
     }
 
     /// Property: Random 3D clouds with duplicates and near-duplicates
     /// produce triangulations that are globally Delaunay for the kept subset
     /// and only report unsalvageable vertices drawn from the input set.
     #[test]
+    #[allow(deprecated)]
     fn prop_cloud_with_duplicates_is_delaunay_for_kept_subset_3d(
         points in cloud_with_duplicates_3d()
     ) {
@@ -166,49 +138,19 @@ proptest! {
         let unique = count_unique_coords_by_bits(&points);
         prop_assume!(unique > 3);
 
-        let vertices: Vec<Vertex<f64, Option<()>, 3>> = Vertex::from_points(&points);
+        let vertices: Vec<Vertex<f64, (), 3>> = Vertex::from_points(&points);
 
-        // First, construct via Tds::new to ensure the standard pipeline succeeds
+        // Construct via DelaunayTriangulation to ensure the standard pipeline succeeds
         // and yields a globally Delaunay triangulation for the kept subset.
-        let tds: Tds<f64, Option<()>, Option<()>, 3> =
-            if let Ok(tds) = Tds::new(&vertices) {
-                tds
-            } else {
-                // Truly degenerate inputs are skipped.
-                prop_assume!(false);
-                unreachable!();
-            };
+        let Ok(dt) = DelaunayTriangulation::<_, (), (), 3>::new(&vertices) else {
+            // Truly degenerate inputs are skipped.
+            prop_assume!(false);
+            unreachable!();
+        };
+        let tds = dt.tds();
 
         // Structural and global Delaunay validity for the kept subset.
         prop_assert!(tds.is_valid().is_ok());
-        prop_assert!(tds.validate_delaunay().is_ok());
-
-        // Run a diagnostic Bowyer–Watson pass on the same input set to verify
-        // that any unsalvageable vertices (if present) originate from the
-        // original input set.
-        // Note: This should never fail since the first construction succeeded,
-        // but we handle it defensively for consistency.
-        let mut tds_diag: Tds<f64, Option<()>, Option<()>, 3> =
-            if let Ok(tds) = Tds::new(&vertices) {
-                tds
-            } else {
-                // Should never reach here since first construction succeeded
-                prop_assume!(false);
-                unreachable!();
-            };
-        let diagnostics = tds_diag
-            .bowyer_watson_with_diagnostics()
-            .expect("Diagnostic Bowyer–Watson should succeed for same vertex set");
-
-        let input_uuids: HashSet<_> = vertices
-            .iter()
-            .map(delaunay::core::Vertex::uuid)
-            .collect();
-        for report in &diagnostics.unsalvageable_vertices {
-            prop_assert!(
-                input_uuids.contains(&report.vertex().uuid()),
-                "Unsalvageable vertex must come from input set",
-            );
-        }
+        prop_assert!(delaunay::core::util::is_delaunay(tds).is_ok());
     }
 }

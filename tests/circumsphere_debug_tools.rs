@@ -1164,7 +1164,7 @@ fn debug_4d_circumsphere_properties() {
     println!("\n=== 4D Symmetric Simplex Analysis ===");
 
     // Regular 4D simplex with vertices forming a specific pattern
-    let vertex1: Vertex<f64, Option<()>, 4> = vertex!([1.0, 1.0, 1.0, 1.0]);
+    let vertex1: Vertex<f64, (), 4> = vertex!([1.0, 1.0, 1.0, 1.0]);
     let vertex2 = vertex!([1.0, -1.0, -1.0, -1.0]);
     let vertex3 = vertex!([-1.0, 1.0, -1.0, -1.0]);
     let vertex4 = vertex!([-1.0, -1.0, 1.0, -1.0]);
@@ -1190,7 +1190,7 @@ fn debug_4d_circumsphere_properties() {
         distance_to_center_4d < radius_4d
     );
 
-    let origin_vertex: Vertex<f64, Option<()>, 4> = vertex!([0.0, 0.0, 0.0, 0.0]);
+    let origin_vertex: Vertex<f64, (), 4> = vertex!([0.0, 0.0, 0.0, 0.0]);
 
     let standard_result_4d =
         insphere_distance(&simplex_points_4d, Point::from(&origin_vertex)).unwrap();
@@ -1206,7 +1206,7 @@ fn compare_circumsphere_methods() {
     println!("\n=== Comparing Circumsphere Methods ===");
 
     // Compare results between standard and matrix methods
-    let vertex1: Vertex<f64, Option<()>, 2> = vertex!([0.0, 0.0]);
+    let vertex1: Vertex<f64, (), 2> = vertex!([0.0, 0.0]);
     let vertex2 = vertex!([1.0, 0.0]);
     let vertex3 = vertex!([0.0, 1.0]);
     let simplex_vertices = [vertex1, vertex2, vertex3];
@@ -1221,7 +1221,7 @@ fn compare_circumsphere_methods() {
     ];
 
     for (i, point) in test_points.iter().enumerate() {
-        let test_vertex: Vertex<f64, Option<()>, 2> = vertex!(point.to_array());
+        let test_vertex: Vertex<f64, (), 2> = vertex!(point.to_array());
         let simplex_points: Vec<Point<f64, 2>> = simplex_vertices.iter().map(Point::from).collect();
 
         let standard_result =

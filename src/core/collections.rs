@@ -102,6 +102,9 @@ use slotmap::SlotMap;
 #[cfg(feature = "dense-slotmap")]
 use slotmap::DenseSlotMap;
 
+// Import SparseSecondaryMap for auxiliary data tracking
+use slotmap::SparseSecondaryMap;
+
 // Import key types for use in type aliases
 use crate::core::facet::FacetHandle;
 use crate::core::triangulation_data_structure::{CellKey, VertexKey};
@@ -716,8 +719,7 @@ pub type CellToVertexUuidsMap = FastHashMap<Uuid, CellVertexUuidBuffer>;
 ///
 /// For Key → UUID lookups (less common), use direct `SlotMap` access:
 /// ```rust
-/// use delaunay::core::triangulation_data_structure::Tds;
-/// use delaunay::vertex;
+/// use delaunay::prelude::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -725,7 +727,8 @@ pub type CellToVertexUuidsMap = FastHashMap<Uuid, CellVertexUuidBuffer>;
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+/// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
 ///
 /// // Get first vertex key and its UUID
 /// let (vertex_key, _) = tds.vertices().next().unwrap();
@@ -747,8 +750,7 @@ pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 ///
 /// For Key → UUID lookups (less common), use direct `SlotMap` access:
 /// ```rust
-/// use delaunay::core::triangulation_data_structure::Tds;
-/// use delaunay::vertex;
+/// use delaunay::prelude::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -756,7 +758,8 @@ pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, (), (), 3> = Tds::new(&vertices).unwrap();
+/// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
 ///
 /// // Get first cell key and its UUID
 /// let (cell_key, _) = tds.cells().next().unwrap();
@@ -903,6 +906,92 @@ pub type KeyBasedVertexMap<V> = FastHashMap<VertexKey, V>;
 // - Cell.neighbors: Option<SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>>
 // - CellNeighborsMap: FastHashMap<CellKey, SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>>
 // Both types use CellKey for neighbor references, providing direct SlotMap access without UUID lookups.
+
+// =============================================================================
+// SLOTMAP SECONDARY MAPS FOR AUXILIARY DATA
+// =============================================================================
+
+/// Sparse secondary map for tracking auxiliary data associated with cells.
+///
+/// This is the idiomatic way to associate temporary data with `SlotMap` keys during algorithms.
+/// Only stores entries for cells that have associated data (sparse representation).
+///
+/// # Performance Benefits
+///
+/// - **Memory efficient**: Only allocates for cells with data (vs dense array)
+/// - **Type safe**: Can only use valid `CellKey` from the primary `SlotMap`
+/// - **Cache friendly**: Better locality than separate `HashMap<CellKey, V>`
+/// - **`SlotMap` integration**: Designed specifically for this use case
+///
+/// # Use Cases
+///
+/// - **Phase 3 algorithms**: Conflict region finding, cavity extraction
+/// - **Algorithm state**: Marking cells as "visited", "in conflict", "processed"
+/// - **Temporary data**: Associating algorithm-specific data with cells
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::*;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
+///
+/// // Track which cells are in conflict with a new point
+/// use delaunay::core::collections::CellSecondaryMap;
+/// let mut in_conflict: CellSecondaryMap<bool> = CellSecondaryMap::new();
+/// for (cell_key, _) in tds.cells() {
+///     in_conflict.insert(cell_key, true);
+/// }
+/// ```
+pub type CellSecondaryMap<V> = SparseSecondaryMap<CellKey, V>;
+
+/// Sparse secondary map for tracking auxiliary data associated with vertices.
+///
+/// This is the idiomatic way to associate temporary data with `SlotMap` keys during algorithms.
+/// Only stores entries for vertices that have associated data (sparse representation).
+///
+/// # Performance Benefits
+///
+/// - **Memory efficient**: Only allocates for vertices with data (vs dense array)
+/// - **Type safe**: Can only use valid `VertexKey` from the primary `SlotMap`
+/// - **Cache friendly**: Better locality than separate `HashMap<VertexKey, V>`
+/// - **`SlotMap` integration**: Designed specifically for this use case
+///
+/// # Use Cases
+///
+/// - **Algorithm state**: Marking vertices as "visited", "processed", "boundary"
+/// - **Distance tracking**: Shortest path, geodesic distance computations
+/// - **Temporary data**: Associating algorithm-specific data with vertices
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::*;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
+///
+/// // Track vertex processing order
+/// use delaunay::core::collections::VertexSecondaryMap;
+/// let mut processing_order: VertexSecondaryMap<usize> = VertexSecondaryMap::new();
+/// for (idx, (vertex_key, _)) in tds.vertices().enumerate() {
+///     processing_order.insert(vertex_key, idx);
+/// }
+/// ```
+pub type VertexSecondaryMap<V> = SparseSecondaryMap<VertexKey, V>;
 
 /// Size constant for batch point processing operations.
 /// 16 provides sufficient capacity for typical geometric algorithm batches.

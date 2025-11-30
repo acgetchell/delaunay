@@ -56,15 +56,15 @@ macro_rules! test_vertex_properties {
                 /// Property: Vertex equality is reflexive (v == v)
                 #[test]
                 fn [<prop_vertex_equality_reflexive_ $dim d>](coords in prop::array::[<uniform $dim>](finite_coordinate())) {
-                    let vertex: Vertex<f64, Option<()>, $dim> = vertex!(coords);
+                    let vertex: Vertex<f64, (), $dim> = vertex!(coords);
                     prop_assert_eq!(vertex, vertex, "{}D: Vertex should equal itself", $dim);
                 }
 
                 /// Property: Vertex equality is symmetric (v1 == v2 implies v2 == v1)
                 #[test]
                 fn [<prop_vertex_equality_symmetric_ $dim d>](coords in prop::array::[<uniform $dim>](finite_coordinate())) {
-                    let v1: Vertex<f64, Option<()>, $dim> = vertex!(coords);
-                    let v2: Vertex<f64, Option<()>, $dim> = vertex!(coords);
+                    let v1: Vertex<f64, (), $dim> = vertex!(coords);
+                    let v2: Vertex<f64, (), $dim> = vertex!(coords);
                     prop_assert_eq!(v1, v2, "{}D: Vertices with same coords should be equal", $dim);
                     prop_assert_eq!(v2, v1, "{}D: Equality should be symmetric", $dim);
                 }
@@ -72,9 +72,9 @@ macro_rules! test_vertex_properties {
                 /// Property: Vertex equality is transitive (v1 == v2 and v2 == v3 implies v1 == v3)
                 #[test]
                 fn [<prop_vertex_equality_transitive_ $dim d>](coords in prop::array::[<uniform $dim>](finite_coordinate())) {
-                    let v1: Vertex<f64, Option<()>, $dim> = vertex!(coords);
-                    let v2: Vertex<f64, Option<()>, $dim> = vertex!(coords);
-                    let v3: Vertex<f64, Option<()>, $dim> = vertex!(coords);
+                    let v1: Vertex<f64, (), $dim> = vertex!(coords);
+                    let v2: Vertex<f64, (), $dim> = vertex!(coords);
+                    let v3: Vertex<f64, (), $dim> = vertex!(coords);
 
                     prop_assert_eq!(v1, v2, "{}D: v1 should equal v2", $dim);
                     prop_assert_eq!(v2, v3, "{}D: v2 should equal v3", $dim);
@@ -84,8 +84,8 @@ macro_rules! test_vertex_properties {
                 /// Property: Equal vertices have equal hashes (Eq/Hash contract)
                 #[test]
                 fn [<prop_vertex_hash_consistency_ $dim d>](coords in prop::array::[<uniform $dim>](finite_coordinate())) {
-                    let v1: Vertex<f64, Option<()>, $dim> = vertex!(coords);
-                    let v2: Vertex<f64, Option<()>, $dim> = vertex!(coords);
+                    let v1: Vertex<f64, (), $dim> = vertex!(coords);
+                    let v2: Vertex<f64, (), $dim> = vertex!(coords);
 
                     prop_assert_eq!(v1, v2, "{}D: Vertices should be equal", $dim);
 
@@ -100,8 +100,8 @@ macro_rules! test_vertex_properties {
                 /// Property: Vertices with different coordinates have different equality
                 #[test]
                 fn [<prop_vertex_inequality_ $dim d>](coords1 in prop::array::[<uniform $dim>](finite_coordinate()), coords2 in prop::array::[<uniform $dim>](finite_coordinate())) {
-                    let v1: Vertex<f64, Option<()>, $dim> = vertex!(coords1);
-                    let v2: Vertex<f64, Option<()>, $dim> = vertex!(coords2);
+                    let v1: Vertex<f64, (), $dim> = vertex!(coords1);
+                    let v2: Vertex<f64, (), $dim> = vertex!(coords2);
 
                     // If coordinates differ (component-wise), vertices should not be equal
                     if coords1.iter().zip(coords2.iter()).any(|(a, b)| (a - b).abs() > 1e-12) {
@@ -112,7 +112,7 @@ macro_rules! test_vertex_properties {
                 /// Property: UUIDs are unique across generated vertices
                 #[test]
                 fn [<prop_vertex_uuid_uniqueness_ $dim d>](coords_list in prop::collection::vec(prop::array::[<uniform $dim>](finite_coordinate()), 1..=20_usize)) {
-                    let vertices: Vec<Vertex<f64, Option<()>, $dim>> = coords_list
+                    let vertices: Vec<Vertex<f64, (), $dim>> = coords_list
                         .into_iter()
                         .map(|coords| vertex!(coords))
                         .collect();
@@ -137,17 +137,17 @@ macro_rules! test_vertex_properties {
                 /// Property: Vertices can be stored in HashMap with consistent lookup
                 #[test]
                 fn [<prop_vertex_hashmap_usage_ $dim d>](coords_list in prop::collection::vec(prop::array::[<uniform $dim>](finite_coordinate()), 1..=10_usize)) {
-                    let mut map: HashMap<Vertex<f64, Option<()>, $dim>, usize> = HashMap::new();
+                    let mut map: HashMap<Vertex<f64, (), $dim>, usize> = HashMap::new();
 
                     // Insert vertices with their indices
                     for (i, coords) in coords_list.iter().enumerate() {
-                        let vertex: Vertex<f64, Option<()>, $dim> = vertex!(*coords);
+                        let vertex: Vertex<f64, (), $dim> = vertex!(*coords);
                         map.insert(vertex, i);
                     }
 
                     // Lookup using new vertices with same coordinates
                     for (expected_index, coords) in coords_list.iter().enumerate() {
-                        let lookup_vertex: Vertex<f64, Option<()>, $dim> = vertex!(*coords);
+                        let lookup_vertex: Vertex<f64, (), $dim> = vertex!(*coords);
                         if let Some(&actual_index) = map.get(&lookup_vertex) {
                             prop_assert_eq!(
                                 actual_index,
@@ -167,14 +167,14 @@ macro_rules! test_vertex_properties {
                 /// Property: Vertex dimension matches const parameter
                 #[test]
                 fn [<prop_vertex_dimension_ $dim d>](coords in prop::array::[<uniform $dim>](finite_coordinate())) {
-                    let vertex: Vertex<f64, Option<()>, $dim> = vertex!(coords);
+                    let vertex: Vertex<f64, (), $dim> = vertex!(coords);
                     prop_assert_eq!(vertex.dim(), $dim, "{}D: Vertex dimension should match D", $dim);
                 }
 
                 /// Property: Valid vertices pass validation
                 #[test]
                 fn [<prop_vertex_validation_ $dim d>](coords in prop::array::[<uniform $dim>](finite_coordinate())) {
-                    let vertex: Vertex<f64, Option<()>, $dim> = vertex!(coords);
+                    let vertex: Vertex<f64, (), $dim> = vertex!(coords);
                     prop_assert!(
                         vertex.is_valid().is_ok(),
                         "{}D: Vertex with finite coordinates should be valid",
@@ -185,8 +185,8 @@ macro_rules! test_vertex_properties {
                 /// Property: Vertex ordering is consistent with lexicographic coordinate order
                 #[test]
                 fn [<prop_vertex_ordering_ $dim d>](coords1 in prop::array::[<uniform $dim>](finite_coordinate()), coords2 in prop::array::[<uniform $dim>](finite_coordinate())) {
-                    let v1: Vertex<f64, Option<()>, $dim> = vertex!(coords1);
-                    let v2: Vertex<f64, Option<()>, $dim> = vertex!(coords2);
+                    let v1: Vertex<f64, (), $dim> = vertex!(coords1);
+                    let v2: Vertex<f64, (), $dim> = vertex!(coords2);
 
                     // Compare vertices
                     let vertex_cmp = v1.partial_cmp(&v2);
@@ -216,7 +216,7 @@ macro_rules! test_vertex_properties {
                 /// Property: Vertex point() returns correct coordinates
                 #[test]
                 fn [<prop_vertex_point_access_ $dim d>](coords in prop::array::[<uniform $dim>](finite_coordinate())) {
-                    let vertex: Vertex<f64, Option<()>, $dim> = vertex!(coords);
+                    let vertex: Vertex<f64, (), $dim> = vertex!(coords);
                     let point = vertex.point();
                     let point_coords: [f64; $dim] = point.into();
 
@@ -232,7 +232,7 @@ macro_rules! test_vertex_properties {
                 /// Property: Vertices can be converted to coordinate arrays
                 #[test]
                 fn [<prop_vertex_to_array_conversion_ $dim d>](coords in prop::array::[<uniform $dim>](finite_coordinate())) {
-                    let vertex: Vertex<f64, Option<()>, $dim> = vertex!(coords);
+                    let vertex: Vertex<f64, (), $dim> = vertex!(coords);
                     let array: [f64; $dim] = vertex.into();
 
                     for (i, (&original, &converted)) in coords.iter().zip(array.iter()).enumerate() {
@@ -279,7 +279,7 @@ proptest! {
 /// Property: Empty vertex (with nil UUID) should fail validation
 #[test]
 fn prop_empty_vertex_invalid_3d() {
-    let vertex: Vertex<f64, Option<()>, 3> = Vertex::empty();
+    let vertex: Vertex<f64, (), 3> = Vertex::empty();
     let validation_result = vertex.is_valid();
     assert!(
         validation_result.is_err(),

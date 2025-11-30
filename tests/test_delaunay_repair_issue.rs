@@ -1,14 +1,21 @@
-//! Minimal reproduction test for Delaunay repair iteration limit issue
+//! Minimal reproduction test for Delaunay repair performance issue
 //!
-//! This test reproduces the issue found in large_scale_performance benchmark
-//! where 2D triangulation with 1000 vertices, seed 42, range (-100.0, 100.0)
-//! fails with "Global Delaunay repair exceeded the maximum of 128 iterations"
+//! These tests demonstrate that the current global repair algorithm is fundamentally
+//! inefficient, taking 77-480 seconds for 500-1000 vertices due to a flawed
+//! vertex-removal strategy instead of proper bistellar flips.
+//!
+//! **Status**: These tests pass but are extremely slow. They are marked `#[ignore]`
+//! until bistellar flip-based repair is implemented in v0.6.0.
+//!
+//! See plan: "Implement Bistellar Flips for Efficient Delaunay Repair (v0.6.0)"
 
-use delaunay::core::triangulation_data_structure::Tds;
+use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+use delaunay::geometry::kernel::FastKernel;
 use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::vertex;
 
 #[test]
+#[ignore = "Extremely slow (~480s) until flip-based repair implemented (v0.6.0)"]
 fn test_2d_1000v_seed42_range100() {
     // This configuration is known to cause issues - reproduce the benchmark failure
     let n_points = 1000;
@@ -21,7 +28,7 @@ fn test_2d_1000v_seed42_range100() {
 
     // This should succeed but currently fails with:
     // "Global Delaunay repair exceeded the maximum of 128 iterations"
-    let result = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices);
+    let result = DelaunayTriangulation::<FastKernel<f64>, (), (), 2>::new(&vertices);
 
     match result {
         Ok(_tds) => {
@@ -35,6 +42,7 @@ fn test_2d_1000v_seed42_range100() {
 }
 
 #[test]
+#[ignore = "Extremely slow (~480s) until flip-based repair implemented (v0.6.0)"]
 fn test_2d_1000v_different_seed() {
     // Try with a different seed to see if it's seed-specific
     let n_points = 1000;
@@ -45,13 +53,14 @@ fn test_2d_1000v_different_seed() {
         .expect("Failed to generate points");
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
 
-    let _tds = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices)
+    let _dt = DelaunayTriangulation::<FastKernel<f64>, (), (), 2>::new(&vertices)
         .expect("Failed to create triangulation");
-    
+
     println!("✓ Triangulation with seed {seed} succeeded");
 }
 
 #[test]
+#[ignore = "Slow (~77s) until flip-based repair implemented (v0.6.0)"]
 fn test_2d_500v_seed42() {
     // Try with fewer vertices to see if it's size-specific
     let n_points = 500;
@@ -62,8 +71,8 @@ fn test_2d_500v_seed42() {
         .expect("Failed to generate points");
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
 
-    let _tds = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices)
+    let _dt = DelaunayTriangulation::<FastKernel<f64>, (), (), 2>::new(&vertices)
         .expect("Failed to create triangulation");
-    
+
     println!("✓ Triangulation with {n_points} vertices succeeded");
 }

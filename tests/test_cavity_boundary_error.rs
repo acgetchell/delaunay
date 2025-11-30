@@ -22,7 +22,7 @@ fn test_geometric_degeneracy_cases() {
     ];
 
     let vertices = Vertex::from_points(&near_coplanar_points);
-    match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
+    match DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new(&vertices) {
         Ok(_) => println!("  Near-coplanar points: Success"),
         Err(e) => println!("  Near-coplanar points: Failed with {e:?}"),
     }
@@ -37,7 +37,7 @@ fn test_geometric_degeneracy_cases() {
     ];
 
     let vertices = Vertex::from_points(&flat_tetrahedron);
-    match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
+    match DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new(&vertices) {
         Ok(_) => println!("  Flat tetrahedron: Success"),
         Err(e) => println!("  Flat tetrahedron: Failed with {e:?}"),
     }
@@ -58,7 +58,7 @@ fn test_geometric_degeneracy_cases() {
     }
 
     let vertices = Vertex::from_points(&clustered_points);
-    match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
+    match DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new(&vertices) {
         Ok(_) => println!("  Clustered points: Success"),
         Err(e) => println!("  Clustered points: Failed with {e:?}"),
     }
@@ -78,13 +78,13 @@ fn test_geometric_degeneracy_cases() {
     ];
 
     let vertices = Vertex::from_points(&problematic_points);
-    match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
-        Ok(tds) => {
+    match DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new(&vertices) {
+        Ok(dt) => {
             println!(
                 "  Problematic configuration: Success with {} cells",
-                tds.number_of_cells()
+                dt.number_of_cells()
             );
-            if let Err(e) = tds.is_valid() {
+            if let Err(e) = dt.is_valid() {
                 println!("  Warning: Triangulation is invalid: {e:?}");
             }
         }
@@ -125,7 +125,7 @@ fn test_reproduce_cavity_boundary_error_fast() {
 
         let vertices = Vertex::from_points(&points);
 
-        match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
+        match DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new(&vertices) {
             Ok(_) => {
                 println!("  Attempt {attempt}: Triangulation successful");
             }
@@ -184,16 +184,16 @@ fn test_reproduce_cavity_boundary_error_comprehensive() {
 
         let vertices = Vertex::from_points(&points);
 
-        match Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
-            Ok(tds) => {
+        match DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new(&vertices) {
+            Ok(dt) => {
                 println!(
                     "  Success: Created triangulation with {} vertices, {} cells",
-                    tds.number_of_vertices(),
-                    tds.number_of_cells()
+                    dt.number_of_vertices(),
+                    dt.number_of_cells()
                 );
 
                 // If we succeed, let's validate it
-                if let Err(e) = tds.is_valid() {
+                if let Err(e) = dt.is_valid() {
                     println!("  Warning: Triangulation is invalid: {e:?}");
                 }
             }
