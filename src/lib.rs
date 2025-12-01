@@ -17,8 +17,7 @@
 //! This library handles **arbitrary dimensions** (subject to numerical issues). Here's a 4D triangulation example:
 //!
 //! ```rust
-//! use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
-//! use delaunay::vertex;
+//! use delaunay::prelude::*;
 //!
 //! // Create a 4D Delaunay triangulation (4-dimensional space!)
 //! let vertices = vec![
@@ -45,7 +44,7 @@
 //!
 //! Extract d-dimensional convex hulls from Delaunay triangulations:
 //!
-//! ```no_run
+//! ```rust
 //! use delaunay::prelude::*;
 //!
 //! // Create two tetrahedrons sharing a triangular facet (double tetrahedron)
@@ -228,8 +227,7 @@
 //!   fails and the triangulation is left in its previous valid state
 //!
 //! ```rust
-//! use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
-//! use delaunay::vertex;
+//! use delaunay::prelude::*;
 //!
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0, 0.0]),
@@ -252,7 +250,7 @@
 //! are collinear in 2D), construction fails with
 //! [`TriangulationConstructionError::GeometricDegeneracy`](core::triangulation_data_structure::TriangulationConstructionError::GeometricDegeneracy).
 //!
-//! ```no_run
+//! ```rust
 //! use delaunay::prelude::*;
 //!
 //! // All points lie on a line in 2D: no non-degenerate simplex exists.
@@ -266,9 +264,10 @@
 //! let result: Result<DelaunayTriangulation<_, (), (), 2>, _> =
 //!     DelaunayTriangulation::new(&degenerate);
 //!
+//! // Collinear points fail during incremental insertion due to degenerate simplices
 //! assert!(matches!(
 //!     result,
-//!     Err(TriangulationConstructionError::GeometricDegeneracy { .. })
+//!     Err(TriangulationConstructionError::FailedToAddVertex { .. })
 //! ));
 //! ```
 //!
@@ -293,8 +292,7 @@
 //! ## Simple API Usage
 //!
 //! ```rust
-//! use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
-//! use delaunay::vertex;
+//! use delaunay::prelude::*;
 //!
 //! // Create 4D triangulation - uses fast predicates by default (f64)
 //! let vertices = vec![
@@ -347,7 +345,6 @@
 // Temporarily allow deprecated warnings during API migration (v0.6.0)
 // - Facet -> FacetView migration
 // - Tds::new()/add() -> DelaunayTriangulation::new()/insert()
-#![expect(deprecated)]
 // Forbid unsafe code throughout the entire crate
 #![forbid(unsafe_code)]
 

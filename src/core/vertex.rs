@@ -476,35 +476,6 @@ where
         &self.point
     }
 
-    /// Sets the vertex point with validation.
-    ///
-    /// # Arguments
-    ///
-    /// * `point` - The new point to set for this vertex
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` if the point is valid and was set successfully,
-    /// otherwise returns a `VertexValidationError::InvalidPoint` if the point
-    /// contains invalid coordinates (NaN or infinite values).
-    ///
-    /// # Errors
-    ///
-    /// Returns `VertexValidationError::InvalidPoint` if the point has invalid coordinates.
-    #[allow(dead_code)]
-    pub(crate) fn set_point(&mut self, point: Point<T, D>) -> Result<(), VertexValidationError>
-    where
-        Point<T, D>: Coordinate<T, D>,
-    {
-        // Validate the point before setting it
-        point
-            .validate()
-            .map_err(|source| VertexValidationError::InvalidPoint { source })?;
-
-        self.point = point;
-        Ok(())
-    }
-
     /// Returns the UUID of the vertex.
     ///
     /// # Returns
@@ -534,6 +505,9 @@ where
 
     /// Sets the vertex UUID with validation.
     ///
+    /// This is a test-only utility for creating vertices with specific UUIDs
+    /// to test error handling (e.g., duplicate UUID detection).
+    ///
     /// # Arguments
     ///
     /// * `uuid` - The new UUID to set for this vertex
@@ -547,7 +521,7 @@ where
     /// # Errors
     ///
     /// Returns `VertexValidationError::InvalidUuid` if the UUID is nil or invalid.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn set_uuid(&mut self, uuid: Uuid) -> Result<(), VertexValidationError> {
         // Validate the UUID before setting it
         validate_uuid(&uuid)?;

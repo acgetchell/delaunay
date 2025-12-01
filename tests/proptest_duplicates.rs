@@ -102,7 +102,6 @@ proptest! {
     /// produce triangulations that are globally Delaunay for the kept subset
     /// and only report unsalvageable vertices drawn from the input set.
     #[test]
-    #[allow(deprecated)]
     fn prop_cloud_with_duplicates_is_delaunay_for_kept_subset_2d(
         points in cloud_with_duplicates_2d()
     ) {
@@ -130,7 +129,6 @@ proptest! {
     /// produce triangulations that are globally Delaunay for the kept subset
     /// and only report unsalvageable vertices drawn from the input set.
     #[test]
-    #[allow(deprecated)]
     fn prop_cloud_with_duplicates_is_delaunay_for_kept_subset_3d(
         points in cloud_with_duplicates_3d()
     ) {

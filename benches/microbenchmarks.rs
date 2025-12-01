@@ -4,11 +4,10 @@
 //! in the delaunay triangulation library, particularly those that are performance-critical:
 //!
 //! 1. **`DelaunayTriangulation::with_kernel`**: Complete triangulation creation
-//! 2. **`remove_duplicate_cells`**: Duplicate cell removal and cleanup
-//! 3. **`is_valid`**: Complete triangulation validation performance
-//! 4. **Individual validation components**: Mapping validation, duplicate detection, etc.
-//! 5. **Incremental construction**: Performance of `insert()` method for vertex insertion
-//! 6. **Memory usage patterns**: Allocation and deallocation patterns
+//! 2. **`is_valid`**: Complete triangulation validation performance
+//! 3. **Individual validation components**: Mapping validation, duplicate detection, etc.
+//! 4. **Incremental construction**: Performance of `insert()` method for vertex insertion
+//! 5. **Memory usage patterns**: Allocation and deallocation patterns
 //!
 //! **Note:** `assign_neighbors` benchmarks have been moved to `assign_neighbors_performance.rs`
 //! for more comprehensive testing with multiple distributions (random, grid, spherical) and
@@ -16,22 +15,6 @@
 //!
 //! These benchmarks measure the effectiveness of the optimization implementations
 //! completed as part of the Pure Incremental Delaunay Triangulation refactoring project.
-//!
-//! # Safety and Invariant Violations
-//!
-//! **WARNING**: Some benchmarks in this file intentionally violate TDS invariants for
-//! performance testing purposes. Specifically:
-//!
-//! - `remove_duplicate_cells` benchmarks directly insert duplicate cells without updating
-//!   UUID mappings to create test scenarios for the cleanup algorithm.
-//!
-//! **THESE PATTERNS MUST NEVER BE USED IN**:
-//! - Production code
-//! - Correctness tests
-//! - Example code
-//! - Library documentation
-//!
-//! They exist solely for microbenchmarking internal cleanup performance.
 
 #![allow(missing_docs)] // Criterion macros generate undocumented functions
 

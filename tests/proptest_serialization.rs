@@ -9,10 +9,7 @@
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
 use approx::relative_eq;
-use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
-use delaunay::core::vertex::Vertex;
-use delaunay::geometry::point::Point;
-use delaunay::geometry::traits::coordinate::Coordinate;
+use delaunay::prelude::*;
 use proptest::prelude::*;
 
 /// Check if two points are approximately equal (coordinate-wise)

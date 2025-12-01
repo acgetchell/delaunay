@@ -209,8 +209,12 @@ where
     /// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
     /// let tds = dt.tds();
     ///
-    /// // A single tetrahedron has 4 boundary facets
+    /// // Direct API call (recommended for single queries)
     /// assert_eq!(tds.number_of_boundary_facets().unwrap(), 4);
+    ///
+    /// // Alternative: using iterator (useful for additional processing)
+    /// let count_via_iter = dt.boundary_facets().count();
+    /// assert_eq!(count_via_iter, 4);
     /// ```
     fn number_of_boundary_facets(&self) -> Result<usize, TriangulationValidationError>;
 }

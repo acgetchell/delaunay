@@ -202,8 +202,7 @@ where
 
         let mut total_removed = 0;
 
-        #[allow(unused_variables)] // iteration only used in debug_assertions
-        for iteration in 0..MAX_FIX_FACET_ITERATIONS {
+        for _iteration in 0..MAX_FIX_FACET_ITERATIONS {
             // Check if facet sharing is already valid
             if self.tds.validate_facet_sharing().is_ok() {
                 return Ok(total_removed);
@@ -344,6 +343,10 @@ where
 
             // Clean up duplicates
             let Ok(duplicate_cells_removed) = self.tds.remove_duplicate_cells() else {
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "Warning: remove_duplicate_cells failed during facet repair (removed {actually_removed} cells)"
+                );
                 total_removed += actually_removed;
                 continue;
             };
@@ -351,10 +354,18 @@ where
             // Rebuild topology if needed
             if actually_removed > 0 && duplicate_cells_removed == 0 {
                 if self.tds.assign_neighbors().is_err() {
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "Warning: assign_neighbors failed during facet repair (removed {actually_removed} cells)"
+                    );
                     total_removed += actually_removed;
                     continue;
                 }
                 if self.tds.assign_incident_cells().is_err() {
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "Warning: assign_incident_cells failed during facet repair (removed {actually_removed} cells)"
+                    );
                     total_removed += actually_removed;
                     continue;
                 }

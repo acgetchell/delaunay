@@ -78,7 +78,7 @@ proptest! {
                         $min_vertices..=$max_vertices
                     ).prop_map(|pts| dedup_vertices_by_coords::<$dim>(Vertex::from_points(&pts)))
                 ) {
-                    // Build Delaunay triangulation using Tds::new() which properly triangulates all vertices
+                    // Build Delaunay triangulation using DelaunayTriangulation::new() which properly triangulates all vertices
                     // This ensures the entire triangulation (including initial simplex) satisfies Delaunay property
 
                     // Require at least D+1 distinct vertices to form valid D-simplices
@@ -125,17 +125,17 @@ test_empty_circumsphere!(5, 7, 12);
 proptest! {
     /// Property: 2D Delaunay edge set is independent of insertion order (under general position).
     ///
-    /// **Status**: Ignored - requires algorithmic fixes to Tds::new() for insertion-order determinism.
+    /// **Status**: Ignored - requires algorithmic fixes to DelaunayTriangulation::new() for insertion-order determinism.
     ///
     /// Current findings:
-    /// - `Tds::new()` produces different triangulations (different vertex counts, cell counts)
+    /// - `DelaunayTriangulation::new()` produces different triangulations (different vertex counts, cell counts)
     ///   when the same vertices are provided in different orders
     /// - Both triangulations may be valid Delaunay, but structural differences are significant
     /// - Root cause: Delaunay triangulation is not unique for degenerate/co-circular points
     /// - Further investigation needed: why do vertex counts differ?
     ///
     /// See issue #120 for full context.
-    #[ignore = "Tds::new() has insertion-order dependency; requires algorithmic investigation"]
+    #[ignore = "DelaunayTriangulation::new() has insertion-order dependency; requires algorithmic investigation"]
     #[test]
     fn prop_insertion_order_invariance_2d(
         points in prop::collection::vec(

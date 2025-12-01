@@ -18,7 +18,7 @@ macro_rules! generate_memory_analysis {
 
             // Measure triangulation construction
             let start = Instant::now();
-            let (tds_res, tri_info) = measure_with_result(|| {
+            let (dt_res, tri_info) = measure_with_result(|| {
                 generate_random_triangulation::<f64, (), (), $dim>(
                     n_points,
                     BOUNDS,
@@ -26,7 +26,7 @@ macro_rules! generate_memory_analysis {
                     Some(seed),
                 )
             });
-            let dt = match tds_res {
+            let dt = match dt_res {
                 Ok(t) => t,
                 Err(e) => {
                     eprintln!("✗ Failed to build triangulation: {e}");

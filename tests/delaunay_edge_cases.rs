@@ -8,8 +8,7 @@
 //!
 //! Converted from legacy `Tds::new()` tests to use the new `DelaunayTriangulation` API.
 
-use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
-use delaunay::vertex;
+use delaunay::prelude::*;
 
 // =========================================================================
 // Regression Tests - Known Failing Configurations
@@ -365,6 +364,33 @@ fn test_robust_kernel_with_edge_case() {
 
     assert_eq!(dt.number_of_vertices(), 4);
     assert!(dt.number_of_cells() > 0);
+}
+
+// =========================================================================
+// Edge Cases - Degenerate Configurations
+// =========================================================================
+
+#[test]
+fn test_collinear_points_2d() {
+    // All points lie on a line in 2D: no non-degenerate simplex exists.
+    let collinear = vec![
+        vertex!([0.0, 0.0]),
+        vertex!([1.0, 0.0]),
+        vertex!([2.0, 0.0]),
+        vertex!([3.0, 0.0]),
+    ];
+
+    let result: Result<DelaunayTriangulation<_, (), (), 2>, _> =
+        DelaunayTriangulation::new(&collinear);
+
+    // Verify it fails with FailedToAddVertex due to degenerate simplex
+    assert!(
+        matches!(
+            result,
+            Err(TriangulationConstructionError::FailedToAddVertex { .. })
+        ),
+        "Expected FailedToAddVertex error for collinear points, got: {result:?}"
+    );
 }
 
 // =========================================================================

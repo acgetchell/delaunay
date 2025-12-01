@@ -1012,7 +1012,7 @@ mod tests {
 
         // Test invalid facet index (should be 0 or 1 for 1D, facet_index >= 2 is invalid)
         assert!(matches!(
-            FacetView::new(&dt.triangulation().tds, cell_key, 99),
+            FacetView::new(dt.tds(), cell_key, 99),
             Err(FacetError::InvalidFacetIndex { .. })
         ));
     }
@@ -1030,7 +1030,7 @@ mod tests {
         let cell_key = dt.cells().next().unwrap().0;
 
         // Create facet view for facet 0 (excludes vertex 0)
-        let facet = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap();
+        let facet = FacetView::new(dt.tds(), cell_key, 0).unwrap();
         assert_eq!(facet.cell_key(), cell_key);
         assert_eq!(facet.facet_index(), 0);
 
@@ -1052,7 +1052,7 @@ mod tests {
         ];
         let dt_2d = DelaunayTriangulation::new(&vertices_2d).unwrap();
         let cell_key_2d = dt_2d.cells().next().unwrap().0;
-        let result_2d = FacetView::new(&dt_2d.triangulation().tds, cell_key_2d, 0);
+        let result_2d = FacetView::new(dt_2d.tds(), cell_key_2d, 0);
 
         // Assert that the result is Ok
         assert!(result_2d.is_ok());
@@ -1063,7 +1063,7 @@ mod tests {
         let vertices_1d = vec![vertex!([0.0]), vertex!([1.0])];
         let dt_1d = DelaunayTriangulation::new(&vertices_1d).unwrap();
         let cell_key_1d = dt_1d.cells().next().unwrap().0;
-        let result_1d = FacetView::new(&dt_1d.triangulation().tds, cell_key_1d, 0);
+        let result_1d = FacetView::new(dt_1d.tds(), cell_key_1d, 0);
 
         // Assert that the result is Ok
         assert!(result_1d.is_ok());
@@ -1084,7 +1084,7 @@ mod tests {
         let cell_key = dt.cells().next().unwrap().0;
 
         // Test invalid facet index (3D cell has vertices 0-3, facet index 4 is invalid)
-        assert!(FacetView::new(&dt.triangulation().tds, cell_key, 4).is_err());
+        assert!(FacetView::new(dt.tds(), cell_key, 4).is_err());
     }
 
     #[test]
@@ -1100,7 +1100,7 @@ mod tests {
         let cell_key = dt.cells().next().unwrap().0;
 
         // Create facet view for facet 0 (excludes vertex 0)
-        let facet = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap();
+        let facet = FacetView::new(dt.tds(), cell_key, 0).unwrap();
         let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
 
         assert_eq!(facet_vertices.len(), 3);
@@ -1131,9 +1131,9 @@ mod tests {
         let cell_key = dt.cells().next().unwrap().0;
 
         // Create facet views with same facet index (should be equal)
-        let facet1 = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap();
-        let facet2 = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap();
-        let facet3 = FacetView::new(&dt.triangulation().tds, cell_key, 1).unwrap();
+        let facet1 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+        let facet2 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+        let facet3 = FacetView::new(dt.tds(), cell_key, 1).unwrap();
 
         assert_eq!(facet1, facet2);
         assert_ne!(facet1, facet3);
@@ -1155,7 +1155,7 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
 
-        let facet = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap();
+        let facet = FacetView::new(dt.tds(), cell_key, 0).unwrap();
         let cloned_facet = facet;
 
         // Verify clones are equal
@@ -1185,7 +1185,7 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
 
-        let facet = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap();
+        let facet = FacetView::new(dt.tds(), cell_key, 0).unwrap();
         let debug_str = format!("{facet:?}");
 
         assert!(debug_str.contains("FacetView"));
@@ -1214,7 +1214,7 @@ mod tests {
         let cell_key = dt.cells().next().unwrap().0;
 
         // Create facet view for facet 0 (excludes vertex 0)
-        let facet = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap();
+        let facet = FacetView::new(dt.tds(), cell_key, 0).unwrap();
 
         let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
         assert_eq!(facet_vertices.len(), 3); // 3D facet should have 3 vertices (D)
@@ -1253,7 +1253,7 @@ mod tests {
                     let cell_key = dt.cells().next().unwrap().0;
 
                     // Create facet view for facet 0 (excludes vertex 0)
-                    let facet = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap();
+                    let facet = FacetView::new(dt.tds(), cell_key, 0).unwrap();
 
                     // Facet of D-dimensional cell is (D-1)-dimensional with D vertices
                     assert_eq!(facet.vertices().unwrap().count(), $expected_facet_vertices,
@@ -1269,14 +1269,14 @@ mod tests {
                         let cell_key = dt.cells().next().unwrap().0;
 
                         // Create same facet twice
-                        let facet1 = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap();
-                        let facet2 = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap();
+                        let facet1 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+                        let facet2 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
 
                         assert_eq!(facet1.key().unwrap(), facet2.key().unwrap(),
                             "Same facet should produce same key");
 
                         // Create different facet
-                        let facet3 = FacetView::new(&dt.triangulation().tds, cell_key, 1).unwrap();
+                        let facet3 = FacetView::new(dt.tds(), cell_key, 1).unwrap();
                         assert_ne!(facet1.key().unwrap(), facet3.key().unwrap(),
                             "Different facets should produce different keys");
                     }
@@ -1288,9 +1288,9 @@ mod tests {
                         let dt = DelaunayTriangulation::new(&vertices).unwrap();
                         let cell_key = dt.cells().next().unwrap().0;
 
-                        let facet1 = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap();
-                        let facet2 = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap();
-                        let facet3 = FacetView::new(&dt.triangulation().tds, cell_key, 1).unwrap();
+                        let facet1 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+                        let facet2 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+                        let facet3 = FacetView::new(dt.tds(), cell_key, 1).unwrap();
 
                         assert_eq!(facet1, facet2, "Same facet should be equal");
                         assert_ne!(facet1, facet3, "Different facets should not be equal");
@@ -1308,7 +1308,7 @@ mod tests {
                         let mut facet_keys = std::collections::HashSet::new();
 
                         for i in 0..expected_facets {
-                            let facet = FacetView::new(&dt.triangulation().tds, cell_key, u8::try_from(i).unwrap()).unwrap();
+                            let facet = FacetView::new(dt.tds(), cell_key, u8::try_from(i).unwrap()).unwrap();
                             facet_keys.insert(facet.key().unwrap());
                         }
 
@@ -1359,7 +1359,7 @@ mod tests {
         let cell_key = dt.cells().next().unwrap().0;
 
         // Create facet view for facet 0 (excludes vertex 0)
-        let facet = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap();
+        let facet = FacetView::new(dt.tds(), cell_key, 0).unwrap();
 
         // Facet of 1D edge is a point (0D) with 1 vertex
         assert_eq!(facet.vertices().unwrap().count(), 1);
@@ -1401,9 +1401,9 @@ mod tests {
         let cell_key = dt.cells().next().unwrap().0;
 
         // Create facet views for different facets
-        let facet1 = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap(); // excludes vertex 0
-        let facet2 = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap(); // same facet
-        let facet3 = FacetView::new(&dt.triangulation().tds, cell_key, 1).unwrap(); // excludes vertex 1 (different facet)
+        let facet1 = FacetView::new(dt.tds(), cell_key, 0).unwrap(); // excludes vertex 0
+        let facet2 = FacetView::new(dt.tds(), cell_key, 0).unwrap(); // same facet
+        let facet3 = FacetView::new(dt.tds(), cell_key, 1).unwrap(); // excludes vertex 1 (different facet)
 
         // Both facet1 and facet2 reference the same facet, so same key
         assert_eq!(
@@ -1428,11 +1428,11 @@ mod tests {
         let cell_key = dt.cells().next().unwrap().0;
 
         // Create facet with vertex 0 as opposite - should have only vertex 1 in facet
-        let facet = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap();
+        let facet = FacetView::new(dt.tds(), cell_key, 0).unwrap();
         assert_eq!(facet.vertices().unwrap().count(), 1);
 
         // Test the opposite case - vertex 1 as opposite should have only vertex 0 in facet
-        let other_facet = FacetView::new(&dt.triangulation().tds, cell_key, 1).unwrap();
+        let other_facet = FacetView::new(dt.tds(), cell_key, 1).unwrap();
         assert_eq!(other_facet.vertices().unwrap().count(), 1);
     }
 
@@ -1449,7 +1449,7 @@ mod tests {
         let cell_key = dt.cells().next().unwrap().0;
 
         // Create facet view for facet 2 (excludes vertex 2)
-        let facet = FacetView::new(&dt.triangulation().tds, cell_key, 2).unwrap();
+        let facet = FacetView::new(dt.tds(), cell_key, 2).unwrap();
 
         // Should have all vertices except vertex at index 2
         assert_eq!(facet.vertices().unwrap().count(), 3);
@@ -1468,10 +1468,10 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
 
-        let facet1 = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap();
-        let facet2 = FacetView::new(&dt.triangulation().tds, cell_key, 1).unwrap();
-        let facet3 = FacetView::new(&dt.triangulation().tds, cell_key, 2).unwrap();
-        let facet4 = FacetView::new(&dt.triangulation().tds, cell_key, 3).unwrap();
+        let facet1 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+        let facet2 = FacetView::new(dt.tds(), cell_key, 1).unwrap();
+        let facet3 = FacetView::new(dt.tds(), cell_key, 2).unwrap();
+        let facet4 = FacetView::new(dt.tds(), cell_key, 3).unwrap();
 
         // All facets should be different because they have different facet indices
         // (i.e., different opposite vertices)
@@ -1499,11 +1499,11 @@ mod tests {
         let cell_key = dt.cells().next().unwrap().0;
 
         // Create two facet views that reference the same facet
-        let facet1 = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap();
-        let facet2 = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap();
+        let facet1 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+        let facet2 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
 
         // Create a different facet
-        let facet3 = FacetView::new(&dt.triangulation().tds, cell_key, 1).unwrap();
+        let facet3 = FacetView::new(dt.tds(), cell_key, 1).unwrap();
 
         // Test that facet keys are consistent for the same facet
         assert_eq!(facet1.key().unwrap(), facet2.key().unwrap());
@@ -1573,12 +1573,12 @@ mod tests {
         let cell_key = dt.cells().next().unwrap().0;
 
         // Test valid facet creation
-        let facet_view = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap();
+        let facet_view = FacetView::new(dt.tds(), cell_key, 0).unwrap();
         assert_eq!(facet_view.cell_key(), cell_key);
         assert_eq!(facet_view.facet_index(), 0);
 
         // Test invalid facet index
-        let result = FacetView::new(&dt.triangulation().tds, cell_key, 10);
+        let result = FacetView::new(dt.tds(), cell_key, 10);
         assert!(matches!(result, Err(FacetError::InvalidFacetIndex { .. })));
     }
 
@@ -1594,7 +1594,7 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
 
-        let facet_view = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap();
+        let facet_view = FacetView::new(dt.tds(), cell_key, 0).unwrap();
 
         // Facet opposite to vertex 0 should have 3 vertices (D vertices in D-1 facet)
         let facet_vertices: Vec<_> = facet_view.vertices().unwrap().collect();
@@ -1624,19 +1624,14 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
 
-        let facet_view = FacetView::new(&dt.triangulation().tds, cell_key, 1).unwrap();
+        let facet_view = FacetView::new(dt.tds(), cell_key, 1).unwrap();
         let opposite = facet_view.opposite_vertex().unwrap();
 
         // The opposite vertex should be the vertex at index 1
-        let cell = dt
-            .triangulation()
-            .tds
-            .get_cell(cell_key)
-            .expect("cell exists");
+        let cell = dt.tds().get_cell(cell_key).expect("cell exists");
         let cell_vertex_keys = cell.vertices();
         let expected_vertex = dt
-            .triangulation()
-            .tds
+            .tds()
             .get_vertex_by_key(cell_vertex_keys[1])
             .expect("vertex exists");
         assert_eq!(opposite.uuid(), expected_vertex.uuid());
@@ -1654,7 +1649,7 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
 
-        let facet_view = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap();
+        let facet_view = FacetView::new(dt.tds(), cell_key, 0).unwrap();
         let key = facet_view.key().unwrap();
 
         // Key should be non-zero for valid facet
@@ -1673,7 +1668,7 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
 
-        let facet_views = all_facets_for_cell(&dt.triangulation().tds, cell_key).unwrap();
+        let facet_views = all_facets_for_cell(dt.tds(), cell_key).unwrap();
 
         // 3D cell (tetrahedron) should have 4 facets
         assert_eq!(facet_views.len(), 4);
@@ -1700,9 +1695,9 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
 
-        let facet_view1 = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap();
-        let facet_view2 = FacetView::new(&dt.triangulation().tds, cell_key, 0).unwrap();
-        let facet_view3 = FacetView::new(&dt.triangulation().tds, cell_key, 1).unwrap();
+        let facet_view1 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+        let facet_view2 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+        let facet_view3 = FacetView::new(dt.tds(), cell_key, 1).unwrap();
 
         // Same facet should be equal
         assert_eq!(facet_view1, facet_view2);
@@ -1723,7 +1718,7 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
 
-        let facet_view = FacetView::new(&dt.triangulation().tds, cell_key, 1).unwrap();
+        let facet_view = FacetView::new(dt.tds(), cell_key, 1).unwrap();
         let debug_str = format!("{facet_view:?}");
 
         assert!(debug_str.contains("FacetView"));

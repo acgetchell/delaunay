@@ -472,7 +472,7 @@ mod tests {
             vertex!([0.0, 1.0]),
         ];
         let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let tds = &mut dt.tri.tds;
+        let tds = dt.tds_mut();
 
         // Insert new vertex
         let new_vertex = vertex!([0.5, 0.5]);

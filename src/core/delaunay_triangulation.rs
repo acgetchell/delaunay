@@ -130,7 +130,6 @@ where
     V: DataType,
 {
     /// Create an empty Delaunay triangulation with the given kernel (advanced usage).
-    ///
     /// Most users should use [`DelaunayTriangulation::empty()`] instead, which uses fast predicates
     /// by default. Use this method only if you need custom coordinate precision or specialized kernels.
     ///
@@ -469,6 +468,20 @@ where
         &self.tri.tds
     }
 
+    /// Returns a mutable reference to the underlying triangulation data structure.
+    ///
+    /// This provides mutable access to the purely combinatorial Tds layer for
+    /// advanced operations and testing of internal algorithms.
+    ///
+    /// # Safety
+    ///
+    /// Modifying the Tds directly can break Delaunay invariants. Use this only
+    /// when you know what you're doing (typically in tests or specialized algorithms).
+    #[cfg(test)]
+    pub(crate) const fn tds_mut(&mut self) -> &mut Tds<K::Scalar, U, V, D> {
+        &mut self.tri.tds
+    }
+
     /// Returns a reference to the underlying `Triangulation` (kernel + tds).
     ///
     /// This is useful when you need to pass the triangulation to methods that
@@ -648,13 +661,18 @@ where
 
                 // 8. Repair any invalid facet sharing using geometric quality metrics
                 // This is usually not needed, but handles edge cases with degenerate geometry
-                #[cfg(debug_assertions)]
                 if let Err(e) = self.tri.fix_invalid_facet_sharing() {
-                    // Log but don't fail - the triangulation is still usable
+                    // Log in debug builds but continue - the triangulation is still usable
+                    #[cfg(debug_assertions)]
                     eprintln!("Warning: facet sharing repair failed after insertion: {e}");
+                    // In release builds, silently continue. The repair failure indicates
+                    // geometric issues that may accumulate, but the triangulation remains
+                    // topologically valid for most operations.
+                    // TODO: Consider tracking repair failures via a diagnostic counter
+                    // that users can query (e.g., needs_repair() method)
+                    #[cfg(not(debug_assertions))]
+                    let _ = e;
                 }
-                #[cfg(not(debug_assertions))]
-                let _ = self.tri.fix_invalid_facet_sharing();
 
                 // 9. Cache last inserted cell for next locate hint
                 self.last_inserted_cell = new_cells.first().copied();
@@ -671,9 +689,17 @@ where
                 Ok(v_key)
             }
             _ => {
-                // TODO: Handle other cases (OnFacet, OnEdge, OnVertex)
+                // TODO: Handle degenerate point locations (OnFacet, OnEdge, OnVertex)
+                // These cases occur when a point lies exactly on a facet, edge, or coincides
+                // with an existing vertex. Proper handling requires:
+                // - OnVertex: Detect duplicate/near-duplicate and return appropriate error
+                // - OnEdge: Split edge and retriangulate affected cells
+                // - OnFacet: Insert into facet and retriangulate affected cells
+                // See issue: https://github.com/acgetchell/delaunay/issues/XXX
                 Err(InsertionError::CavityFilling {
-                    message: format!("Unhandled location result: {location:?}"),
+                    message: format!(
+                        "Unhandled degenerate location: {location:?}. Point lies on facet/edge/vertex which is not yet supported."
+                    ),
                 })
             }
         }
@@ -1009,7 +1035,46 @@ where
     }
 }
 
-// Custom Deserialize for the common case: FastKernel<f64>
+/// Custom `Deserialize` implementation for the common case: `FastKernel<f64>` with no custom data.
+///
+/// This specialization provides convenient deserialization for the most common use case:
+/// triangulations with `f64` coordinates, `FastKernel`, and no custom vertex/cell data.
+///
+/// # Why This Specialization?
+///
+/// Kernels are stateless and can be reconstructed on deserialization. We only serialize
+/// the `Tds` (which contains all the geometric and topological data), then reconstruct
+/// the kernel wrapper on deserialization.
+///
+/// This specialization is limited to `FastKernel<f64>` because:
+/// - It's the most common configuration (matches `DelaunayTriangulation::new()` default)
+/// - Rust doesn't allow overlapping `impl` blocks for generic types
+/// - Custom kernels are rare and can deserialize manually
+///
+/// # Usage with Custom Kernels
+///
+/// If you're using a custom kernel (e.g., `RobustKernel`) or custom data types,
+/// deserialize the `Tds` directly and reconstruct with [`from_tds()`](Self::from_tds):
+///
+/// ```rust
+/// # use delaunay::prelude::*;
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Create and serialize a triangulation
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let dt = DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new(&vertices)?;
+/// let json = serde_json::to_string(&dt)?;
+///
+/// // Deserialize with custom kernel
+/// let tds: Tds<f64, (), (), 3> = serde_json::from_str(&json)?;
+/// let dt_robust = DelaunayTriangulation::from_tds(tds, RobustKernel::new());
+/// # Ok(())
+/// # }
+/// ```
 impl<'de, const D: usize> Deserialize<'de> for DelaunayTriangulation<FastKernel<f64>, (), (), D>
 where
     Tds<f64, (), (), D>: Deserialize<'de>,

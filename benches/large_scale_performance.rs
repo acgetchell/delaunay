@@ -8,7 +8,7 @@
 //! - **Dimensions**: 2D, 3D, 4D, 5D (complete coverage)
 //! - **Vertex counts**: 1K-10K (2D/3D), 1K-3K (4D default), 500-1K (5D)
 //! - **Measurements**:
-//!   - Construction time (Bowyer-Watson algorithm)
+//!   - Construction time (incremental insertion algorithm)
 //!   - Memory usage delta during construction (process RSS)
 //!   - Validation time (topology checks)
 //!   - Query performance (neighbor finding, iteration)

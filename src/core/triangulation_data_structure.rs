@@ -1869,53 +1869,13 @@ where
         // have its pointer updated to a valid remaining cell (or None if isolated).
         self.assign_incident_cells()?;
 
-        // Remove the vertex itself
-        self.remove_vertex_by_uuid(&vertex.uuid());
+        // Remove the vertex itself (inline instead of using deprecated method)
+        self.vertices.remove(vertex_key);
+        self.uuid_to_vertex_key.remove(&vertex.uuid());
+        // Topology changed; invalidate caches
+        self.bump_generation();
 
         Ok(cells_removed)
-    }
-
-    /// Removes a vertex by its UUID, maintaining data structure consistency.
-    ///
-    /// This method atomically removes a vertex from both the vertex storage and
-    /// the UUID→key mapping, ensuring the data structure remains consistent.
-    ///
-    /// **Internal API**: This method is intended for internal use only (e.g., rollback
-    /// operations in insertion algorithms). It does not maintain triangulation topology
-    /// invariants and should not be exposed in the public API.
-    ///
-    /// **Deprecated**: Prefer `remove_vertex()` which handles both vertex and cell removal atomically.
-    ///
-    /// # Safety Warning
-    ///
-    /// This method only removes the vertex and updates the UUID→Key mapping.
-    /// It does NOT maintain topology consistency. The caller MUST ensure:
-    /// 1. No cells reference this vertex (or call `assign_incident_cells()` afterward)
-    /// 2. Incident cell references are updated appropriately
-    ///
-    /// Failure to do so will leave the triangulation in an inconsistent state.
-    ///
-    /// # Arguments
-    ///
-    /// * `uuid` - The UUID of the vertex to remove
-    ///
-    /// # Returns
-    ///
-    /// `true` if the vertex was found and removed, `false` if not found.
-    #[deprecated(
-        since = "0.5.3",
-        note = "Use `remove_vertex()` which atomically removes the vertex and related cells."
-    )]
-    pub(crate) fn remove_vertex_by_uuid(&mut self, uuid: &uuid::Uuid) -> bool {
-        if let Some(vk) = self.vertex_key_from_uuid(uuid) {
-            self.vertices.remove(vk);
-            self.uuid_to_vertex_key.remove(uuid);
-            // Topology changed; invalidate caches
-            self.bump_generation();
-            true
-        } else {
-            false
-        }
     }
 
     // =========================================================================
@@ -3423,13 +3383,42 @@ where
         }
 
         // 6. Optional Delaunay property (empty circumsphere invariant)
-        if options.check_delaunay
-            && let Err(e) = self.validate_delaunay()
-        {
-            violations.push(InvariantViolation {
-                kind: InvariantKind::Delaunay,
-                error: e,
+        if options.check_delaunay {
+            // Use crate::core::util::is_delaunay directly instead of deprecated method
+            let result = crate::core::util::is_delaunay(self).map_err(|err| match err {
+                DelaunayValidationError::DelaunayViolation { cell_key } => {
+                    let cell_uuid = self
+                        .cell_uuid_from_key(cell_key)
+                        .unwrap_or_else(uuid::Uuid::nil);
+                    TriangulationValidationError::DelaunayViolation {
+                        message: format!(
+                            "Cell {cell_uuid} (key: {cell_key:?}) violates Delaunay property"
+                        ),
+                    }
+                }
+                DelaunayValidationError::TriangulationState { source } => source,
+                DelaunayValidationError::InvalidCell { source } => {
+                    TriangulationValidationError::InvalidCell {
+                        cell_id: uuid::Uuid::nil(),
+                        source,
+                    }
+                }
+                DelaunayValidationError::NumericPredicateError {
+                    cell_key,
+                    vertex_key,
+                    source,
+                } => TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Numeric predicate failure while validating Delaunay property for cell {cell_key:?}, vertex {vertex_key:?}: {source}"
+                    ),
+                },
             });
+            if let Err(e) = result {
+                violations.push(InvariantViolation {
+                    kind: InvariantKind::Delaunay,
+                    error: e,
+                });
+            }
         }
 
         if violations.is_empty() {

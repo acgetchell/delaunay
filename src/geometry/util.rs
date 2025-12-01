@@ -2109,6 +2109,9 @@ where
     for<'a> &'a T: std::ops::Div<T>,
 {
     // Generate random points (seeded or unseeded)
+    // Note: GeometricDegeneracy error wraps both point generation failures (invalid bounds, RNG issues)
+    // and actual geometric degeneracy. This is a semantic approximation - point generation failures
+    // are not strictly geometric degeneracy, but map to this error for API simplicity.
     let points: Vec<Point<T, D>> =
         match seed {
             Some(seed_value) => generate_random_points_seeded(n_points, bounds, seed_value)
@@ -4861,7 +4864,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Needs to be reviewed"]
+    #[ignore = "Zero points test expects empty triangulation but actual behavior needs verification"]
     fn test_generate_random_triangulation_error_cases() {
         // Test invalid bounds
         let result = generate_random_triangulation::<f64, (), (), 2>(
@@ -4905,7 +4908,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Needs to be reviewed"]
+    #[ignore = "High-dimensional random triangulations occasionally hit cavity filling errors in CI - needs robust predicate investigation"]
     fn test_generate_random_triangulation_dimensions() {
         // Test different dimensional triangulations with parameter sets that are
         // also reused by examples. These (n_points, bounds, seed) triples have been

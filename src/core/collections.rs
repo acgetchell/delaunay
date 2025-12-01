@@ -1233,6 +1233,10 @@ mod tests {
         let _cell_map: KeyBasedCellMap<i32> = KeyBasedCellMap::default();
         let _vertex_map: KeyBasedVertexMap<String> = KeyBasedVertexMap::default();
 
+        // Test SlotMap secondary maps for auxiliary data compile and instantiate
+        let _cell_aux: CellSecondaryMap<bool> = CellSecondaryMap::new();
+        let _vertex_aux: VertexSecondaryMap<usize> = VertexSecondaryMap::new();
+
         // Test basic operations work on key-based types
         let cell_set: CellKeySet = CellKeySet::default();
         assert!(cell_set.is_empty());
