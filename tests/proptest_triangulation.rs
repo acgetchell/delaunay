@@ -597,3 +597,113 @@ test_quality_properties!(2, 4, 10, 3);
 test_quality_properties!(3, 5, 12, 4);
 test_quality_properties!(4, 6, 14, 5);
 test_quality_properties!(5, 7, 16, 6);
+
+// =============================================================================
+// FACET TOPOLOGY INVARIANT TESTS
+// =============================================================================
+
+/// Macro to generate facet topology invariant property tests for a given dimension.
+///
+/// These tests verify the **critical manifold topology invariant**: each facet
+/// must be shared by at most 2 cells (1 for boundary, 2 for interior). This
+/// invariant is essential for facet walking used in point location.
+///
+/// The localized validation functions (`detect_local_facet_issues`,
+/// `repair_local_facet_issues`) maintain this invariant in O(k) time.
+macro_rules! test_facet_topology_invariant {
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal) => {
+        pastey::paste! {
+            proptest! {
+                /// Property: All cells in a valid triangulation have no over-shared facets
+                #[test]
+                fn [<prop_no_over_shared_facets_ $dim d>](
+                    vertices in prop::collection::vec(
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| vertex!(coords)),
+                        $min_vertices..$max_vertices
+                    )
+                ) {
+
+                    // Build triangulation
+                    if let Ok(dt) = DelaunayTriangulation::new(&vertices) {
+                        let tri = dt.triangulation();
+
+                        // Get all cell keys
+                        let cell_keys: Vec<_> = tri.cells().map(|(k, _)| k).collect();
+
+                        // Validate no over-shared facets
+                        let issues = tri.detect_local_facet_issues(&cell_keys)?;
+                        prop_assert!(
+                            issues.is_none(),
+                            "{}D: Triangulation has {} over-shared facets (violates manifold topology invariant)",
+                            $dim,
+                            issues.as_ref().map_or(0, |m| m.len())
+                        );
+                    }
+                }
+
+                /// Property: After repair, no over-shared facets remain
+                #[test]
+                fn [<prop_repair_fixes_all_issues_ $dim d>](
+                    vertices in prop::collection::vec(
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| vertex!(coords)),
+                        $min_vertices..$max_vertices
+                    )
+                ) {
+
+                    // Build triangulation
+                    if let Ok(mut dt) = DelaunayTriangulation::new(&vertices) {
+                        let tri = dt.triangulation_mut();
+
+                        // Get all cell keys
+                        let cell_keys: Vec<_> = tri.cells().map(|(k, _)| k).collect();
+
+                        // If there are any issues, repair them
+                        if let Some(issues) = tri.detect_local_facet_issues(&cell_keys)? {
+                            let _removed = tri.repair_local_facet_issues(&issues)?;
+
+                            // After repair, re-check - should have no issues
+                            let cell_keys_after: Vec<_> = tri.cells().map(|(k, _)| k).collect();
+                            let issues_after = tri.detect_local_facet_issues(&cell_keys_after)?;
+                            prop_assert!(
+                                issues_after.is_none(),
+                                "{}D: After repair, {} over-shared facets still remain",
+                                $dim,
+                                issues_after.as_ref().map_or(0, |m| m.len())
+                            );
+                        }
+                    }
+                }
+
+                /// Property: Empty cell list returns no issues
+                #[test]
+                fn [<prop_empty_cell_list_no_issues_ $dim d>](
+                    vertices in prop::collection::vec(
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| vertex!(coords)),
+                        $min_vertices..$max_vertices
+                    )
+                ) {
+
+                    // Build triangulation
+                    if let Ok(dt) = DelaunayTriangulation::new(&vertices) {
+                        let tri = dt.triangulation();
+
+                        // Empty cell list should always return None
+                        let issues = tri.detect_local_facet_issues(&[])?;
+                        prop_assert!(
+                            issues.is_none(),
+                            "{}D: Empty cell list should have no issues",
+                            $dim
+                        );
+                    }
+                }
+            }
+        }
+    };
+}
+
+// Generate facet topology invariant tests for dimensions 2-5
+// Parameters: dimension, min_vertices, max_vertices
+test_facet_topology_invariant!(2, 4, 10);
+test_facet_topology_invariant!(3, 5, 12);
+test_facet_topology_invariant!(4, 6, 14);
+test_facet_topology_invariant!(5, 7, 16);

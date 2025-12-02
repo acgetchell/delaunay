@@ -110,7 +110,7 @@ clean:
 
 # Code quality and formatting
 clippy:
-    cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+    cargo clippy --workspace --all-targets --features test-helpers -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
     cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
 # Pre-commit workflow: comprehensive validation before committing
@@ -422,7 +422,7 @@ test:
 
 # test-integration: runs all integration tests (includes proptests)
 test-integration:
-    cargo test --tests --verbose
+    cargo test --tests --features test-helpers --verbose
 
 # test-all: runs lib, doc, integration, and Python tests (comprehensive)
 test-all: test test-integration test-python

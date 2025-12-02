@@ -320,6 +320,31 @@ pub type SmallBuffer<T, const N: usize> = SmallVec<[T; N]>;
 /// ```
 pub type FacetToCellsMap = FastHashMap<u64, SmallBuffer<crate::core::facet::FacetHandle, 2>>;
 
+/// Map of over-shared facets detected during localized validation.
+///
+/// Used for O(k) facet validation of newly created cells, avoiding O(N) global scans.
+/// Maps facet hash to cells sharing that facet (only includes facets shared by > 2 cells).
+///
+/// # Optimization Rationale
+///
+/// - **Key**: `u64` facet hash (from sorted vertex keys)
+/// - **Value**: `SmallBuffer<(CellKey, u8), 4>` - handles up to 4 over-sharing cells on stack
+/// - **Typical Pattern**: 3-4 cells in most over-sharing cases
+/// - **Performance**: Stack allocation for common over-sharing patterns
+///
+/// # Examples
+///
+/// ```ignore
+/// use delaunay::core::collections::FacetIssuesMap;
+///
+/// // After detecting issues in newly created cells
+/// if let Some(issues) = tri.detect_local_facet_issues(&new_cells)? {
+///     let removed = tri.repair_local_facet_issues(&issues)?;
+///     println!("Removed {} problematic cells", removed);
+/// }
+/// ```
+pub type FacetIssuesMap = FastHashMap<u64, SmallBuffer<(CellKey, u8), 4>>;
+
 /// Cell neighbor mapping optimized for typical cell degrees.
 /// Most cells have a small number of neighbors (D+1 faces, so at most D+1 neighbors).
 ///

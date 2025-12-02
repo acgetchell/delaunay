@@ -363,7 +363,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
 
     @pytest.mark.parametrize("dev_mode", [False, True])
     @patch("benchmark_utils.run_cargo_command")
-    def test_compare_uses_quiet(self, mock_cargo, dev_mode):
+    def test_compare_omits_quiet_flag(self, mock_cargo, dev_mode):
         """Test that PerformanceComparator invokes cargo without --quiet flag (removed for better error visibility)."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -616,11 +616,8 @@ Time: [1.0, 1.0, 1.0] µs
 
     def test_write_error_file_handles_write_failure(self, comparator):
         """Test that _write_error_file handles write failures gracefully."""
-        # Create a read-only directory to trigger write failure
         with tempfile.TemporaryDirectory() as temp_dir:
-            output_file = Path(temp_dir) / "readonly" / "error_results.txt"
-            readonly_dir = Path(temp_dir) / "readonly"
-            readonly_dir.mkdir()
+            output_file = Path(temp_dir) / "error_results.txt"
 
             # Mock Path.open to raise an exception
             with patch.object(Path, "open", side_effect=OSError("Permission denied")):

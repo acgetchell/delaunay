@@ -464,6 +464,23 @@ where
         &self.tri
     }
 
+    /// Returns a mutable reference to the underlying `Triangulation` (test-only).
+    ///
+    /// This provides mutable access to the Triangulation layer for testing
+    /// topology validation and repair functions.
+    ///
+    /// # Safety
+    ///
+    /// Modifying the Triangulation directly can break Delaunay invariants.
+    /// This is intended for integration tests that need to test validation
+    /// and repair mechanisms.
+    #[cfg(any(test, feature = "test-helpers"))]
+    #[must_use]
+    #[allow(clippy::missing_const_for_fn)] // mutable refs from const fn not widely supported
+    pub fn triangulation_mut(&mut self) -> &mut Triangulation<K, U, V, D> {
+        &mut self.tri
+    }
+
     /// Returns an iterator over all facets in the triangulation.
     ///
     /// Delegates to the underlying `Triangulation` layer. This provides

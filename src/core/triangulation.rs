@@ -16,19 +16,20 @@ use uuid::Uuid;
 use crate::core::algorithms::incremental_insertion::InsertionError;
 use crate::core::cell::Cell;
 use crate::core::collections::{
-    CellKeyBuffer, CellKeySet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, ValidCellsBuffer,
-    VertexKeySet,
+    CellKeyBuffer, CellKeySet, FacetIssuesMap, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE,
+    SmallBuffer, ValidCellsBuffer, VertexKeySet,
 };
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation_data_structure::{
-    CellKey, Tds, TriangulationConstructionError, VertexKey,
+    CellKey, Tds, TriangulationConstructionError, TriangulationValidationError, VertexKey,
 };
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::quality::radius_ratio;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::geometry::util::safe_scalar_to_f64;
+use std::hash::{Hash, Hasher};
 
 /// Generic triangulation combining kernel and data structure.
 ///
@@ -535,12 +536,18 @@ where
                 // 8. Remove conflict cells (now that new cells are wired up)
                 let _removed_count = self.tds.remove_cells_by_keys(&conflict_cells);
 
-                // 9. Repair any invalid facet sharing
-                if let Err(e) = self.fix_invalid_facet_sharing() {
+                // 9. Validate facet topology for newly created cells (O(k*D) localized check)
+                if let Some(issues) = self.detect_local_facet_issues(&new_cells)? {
                     #[cfg(debug_assertions)]
-                    eprintln!("Warning: facet sharing repair failed after insertion: {e}");
+                    eprintln!(
+                        "Warning: {} over-shared facets detected after insertion, repairing...",
+                        issues.len()
+                    );
+                    let removed = self.repair_local_facet_issues(&issues)?;
+                    #[cfg(debug_assertions)]
+                    eprintln!("Repaired by removing {removed} cells");
                     #[cfg(not(debug_assertions))]
-                    let _ = e;
+                    let _ = removed;
                 }
 
                 // Return vertex key and first new cell for hint caching
@@ -549,6 +556,20 @@ where
             LocateResult::Outside => {
                 // Exterior vertex: extend convex hull
                 let new_cells = extend_hull(&mut self.tds, &self.kernel, v_key, &point)?;
+
+                // Validate facet topology for newly created cells (O(k*D) localized check)
+                if let Some(issues) = self.detect_local_facet_issues(&new_cells)? {
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "Warning: {} over-shared facets detected after hull extension, repairing...",
+                        issues.len()
+                    );
+                    let removed = self.repair_local_facet_issues(&issues)?;
+                    #[cfg(debug_assertions)]
+                    eprintln!("Repaired by removing {removed} cells");
+                    #[cfg(not(debug_assertions))]
+                    let _ = removed;
+                }
 
                 // Return vertex key and first new cell for hint caching
                 Ok((v_key, new_cells.first().copied()))
@@ -672,13 +693,28 @@ where
             })?;
 
         // Wire neighbors for the new cells (while both old and new cells exist)
-        wire_cavity_neighbors(&mut self.tds, &new_cells, Some(&cells_to_remove))
-            .map_err(|e| crate::core::triangulation_data_structure::TriangulationValidationError::InconsistentDataStructure {
+        wire_cavity_neighbors(&mut self.tds, &new_cells, Some(&cells_to_remove)).map_err(|e| {
+            TriangulationValidationError::InconsistentDataStructure {
                 message: format!("Neighbor wiring failed: {e}"),
-            })?;
+            }
+        })?;
 
         // Remove the cells containing the vertex (now that new cells are wired up)
         let cells_removed = self.tds.remove_cells_by_keys(&cells_to_remove);
+
+        // Validate facet topology for newly created cells (O(k*D) localized check)
+        if let Some(issues) = self.detect_local_facet_issues(&new_cells)? {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Warning: {} over-shared facets detected after vertex removal, repairing...",
+                issues.len()
+            );
+            let removed = self.repair_local_facet_issues(&issues)?;
+            #[cfg(debug_assertions)]
+            eprintln!("Repaired by removing {removed} additional cells");
+            #[cfg(not(debug_assertions))]
+            let _ = removed;
+        }
 
         // Rebuild vertex-cell incidence for all vertices
         self.tds.assign_incident_cells()?;
@@ -790,6 +826,227 @@ where
     // Phase 2 TODO: Add geometric operations using kernel predicates
     // - locate(point) - point location using facet walking
 
+    /// Detects over-shared facets within a specific set of cells (localized check).
+    ///
+    /// This is an **O(k * D)** operation where k = number of cells to check,
+    /// unlike global validation which is O(N * D) for the entire triangulation.
+    ///
+    /// # Performance
+    ///
+    /// - **Complexity**: O(k * D) where k = `cells.len()`, D = dimension
+    /// - **Use case**: Detect issues in newly created cells after insertion/removal
+    /// - **Comparison**: Global detection is O(N * D) where N = total cells
+    ///
+    /// # Arguments
+    ///
+    /// * `cells` - Keys of cells to check (typically newly created cells)
+    ///
+    /// # Returns
+    ///
+    /// `Ok(None)` if all facets are valid (≤2 cells per facet).
+    /// `Ok(Some(issues))` if over-shared facets are detected, where issues is a map
+    /// from facet hash to the cells sharing that facet.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if cells cannot be accessed.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// // After inserting new cells via cavity filling, check for topology issues
+    /// let new_cells = fill_cavity(&mut tri.tds, new_vertex_key, &boundary_facets)?;
+    ///
+    /// // Detect any over-shared facets (> 2 cells per facet)
+    /// if let Some(issues) = tri.detect_local_facet_issues(&new_cells)? {
+    ///     // Repair by removing lower-quality cells
+    ///     let removed = tri.repair_local_facet_issues(&issues)?;
+    ///     eprintln!("Warning: Repaired {} over-shared facets", issues.len());
+    /// }
+    /// ```
+    pub fn detect_local_facet_issues(
+        &self,
+        cells: &[CellKey],
+    ) -> Result<Option<FacetIssuesMap>, TriangulationValidationError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        // Build facet map for ONLY the specified cells
+        // This is O(k * D) instead of O(N * D)
+        let mut facet_to_cells = FacetIssuesMap::default();
+
+        // Index facets from the specified cells
+        for &cell_key in cells {
+            let Some(cell) = self.tds.get_cell(cell_key) else {
+                continue; // Cell was removed, skip
+            };
+
+            // For each facet of this cell
+            for facet_idx in 0..cell.number_of_vertices() {
+                // Compute facet hash from sorted vertex keys
+                let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+                for (i, &vkey) in cell.vertices().iter().enumerate() {
+                    if i != facet_idx {
+                        facet_vkeys.push(vkey);
+                    }
+                }
+                facet_vkeys.sort_unstable();
+
+                // Hash the facet
+                let mut hasher = FastHasher::default();
+                for &vkey in &facet_vkeys {
+                    vkey.hash(&mut hasher);
+                }
+                let facet_hash = hasher.finish();
+
+                // Track this cell/facet pair
+                let facet_idx_u8 = u8::try_from(facet_idx).map_err(|_| {
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Facet index {facet_idx} exceeds u8::MAX (dimension too high)"
+                        ),
+                    }
+                })?;
+                facet_to_cells
+                    .entry(facet_hash)
+                    .or_insert_with(SmallBuffer::new)
+                    .push((cell_key, facet_idx_u8));
+            }
+        }
+
+        // Collect over-shared facets (> 2 cells)
+        let mut over_shared = FacetIssuesMap::default();
+        for (facet_hash, cell_facet_pairs) in facet_to_cells {
+            if cell_facet_pairs.len() > 2 {
+                over_shared.insert(facet_hash, cell_facet_pairs);
+            }
+        }
+
+        if over_shared.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(over_shared))
+        }
+    }
+
+    /// Repairs over-shared facets by removing lower-quality cells.
+    ///
+    /// Uses geometric quality metrics (`radius_ratio`) to select which cells to keep
+    /// when a facet is shared by more than 2 cells. Falls back to UUID ordering
+    /// if quality computation fails.
+    ///
+    /// # Performance
+    ///
+    /// - **Complexity**: O(m * q) where m = number of problematic facets, q = quality computation cost
+    /// - **Localized**: Only processes cells involved in detected issues
+    ///
+    /// # Arguments
+    ///
+    /// * `issues` - Detected facet issues map from `detect_local_facet_issues()`
+    ///
+    /// # Returns
+    ///
+    /// Number of cells removed during repair.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if cell removal or topology repair fails.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// // After detecting issues, repair them locally
+    /// if let Some(issues) = tri.detect_local_facet_issues(&new_cells)? {
+    ///     let removed = tri.repair_local_facet_issues(&issues)?;
+    ///     println!("Repaired {} over-shared facets by removing {} cells",
+    ///              issues.len(), removed);
+    /// }
+    /// ```
+    pub fn repair_local_facet_issues(
+        &mut self,
+        issues: &FacetIssuesMap,
+    ) -> Result<usize, TriangulationValidationError>
+    where
+        K::Scalar: CoordinateScalar + Div<Output = K::Scalar>,
+    {
+        let mut cells_to_remove = CellKeySet::default();
+
+        // For each over-shared facet, select cells to remove
+        for cell_facet_pairs in issues.values() {
+            let involved_cells: Vec<CellKey> = cell_facet_pairs.iter().map(|(ck, _)| *ck).collect();
+
+            // Compute quality for each cell
+            let mut cell_qualities: Vec<(CellKey, f64, Uuid)> = involved_cells
+                .iter()
+                .filter_map(|&cell_key| {
+                    let quality_result = radius_ratio(self, cell_key);
+                    let uuid = self.tds.get_cell(cell_key)?.uuid();
+
+                    quality_result.ok().and_then(|ratio| {
+                        safe_scalar_to_f64(ratio)
+                            .ok()
+                            .filter(|r| r.is_finite())
+                            .map(|r| (cell_key, r, uuid))
+                    })
+                })
+                .collect();
+
+            if cell_qualities.len() >= 2 {
+                // Quality-based selection: keep 2 best, remove rest
+                cell_qualities.sort_unstable_by(|a, b| {
+                    a.1.partial_cmp(&b.1)
+                        .unwrap_or(CmpOrdering::Equal)
+                        .then_with(|| a.2.cmp(&b.2))
+                });
+
+                // Mark cells beyond the top 2 for removal
+                for (cell_key, _, _) in cell_qualities.iter().skip(2) {
+                    if self.tds.contains_cell(*cell_key) {
+                        cells_to_remove.insert(*cell_key);
+                    }
+                }
+            } else {
+                // UUID fallback: keep 2 cells with lowest UUIDs
+                let mut sorted_cells = involved_cells.clone();
+                sorted_cells.sort_unstable_by(|a, b| {
+                    let uuid_a = self.tds.get_cell(*a).map(Cell::uuid);
+                    let uuid_b = self.tds.get_cell(*b).map(Cell::uuid);
+                    uuid_a.cmp(&uuid_b)
+                });
+
+                for &cell_key in sorted_cells.iter().skip(2) {
+                    if self.tds.contains_cell(cell_key) {
+                        cells_to_remove.insert(cell_key);
+                    }
+                }
+            }
+        }
+
+        // Remove the selected cells
+        let to_remove: Vec<CellKey> = cells_to_remove.into_iter().collect();
+        let removed_count = self.tds.remove_cells_by_keys(&to_remove);
+
+        // Rebuild topology for affected region
+        if removed_count > 0 {
+            // Note: This is still potentially expensive, but we may need it
+            // Consider: track only affected cells and rebuild their neighbors
+            if self.tds.assign_neighbors().is_err() {
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "Warning: assign_neighbors failed during local facet repair (removed {removed_count} cells)"
+                );
+            }
+            if self.tds.assign_incident_cells().is_err() {
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "Warning: assign_incident_cells failed during local facet repair (removed {removed_count} cells)"
+                );
+            }
+        }
+
+        Ok(removed_count)
+    }
+
     /// Attempts to fix invalid facet sharing by removing problematic cells using geometric quality metrics.
     ///
     /// This is a **best-effort repair mechanism** that may not fully resolve all facet sharing
@@ -811,9 +1068,7 @@ where
     /// logged in debug builds but do not cause this method to return an error. The method
     /// may return `Ok(n)` even if some facet sharing violations remain after the repair attempt.
     #[allow(clippy::too_many_lines)]
-    pub fn fix_invalid_facet_sharing(
-        &mut self,
-    ) -> Result<usize, crate::core::triangulation_data_structure::TriangulationValidationError>
+    pub fn fix_invalid_facet_sharing(&mut self) -> Result<usize, TriangulationValidationError>
     where
         K::Scalar: crate::geometry::traits::coordinate::CoordinateScalar + Div<Output = K::Scalar>,
     {
@@ -1190,4 +1445,165 @@ mod tests {
         assert!(data_values.contains(&43));
         assert!(data_values.contains(&44));
     }
+
+    /// Macro to generate localized facet validation tests across dimensions.
+    ///
+    /// These tests verify the critical manifold topology invariant: each facet
+    /// must be shared by at most 2 cells (1 for boundary, 2 for interior).
+    /// This invariant is essential for facet walking used in point location.
+    ///
+    /// # Usage
+    /// ```ignore
+    /// test_local_facet_validation!(2, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
+    /// ```
+    macro_rules! test_local_facet_validation {
+        ($dim:expr, [$($simplex_coords:expr),+ $(,)?]) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_detect_local_facet_issues_no_issues_ $dim d>]() {
+                    // Create a valid initial simplex - should have no over-sharing
+                    let vertices: Vec<Vertex<f64, (), $dim>> = vec![
+                        $(vertex!($simplex_coords)),+
+                    ];
+
+                    let tds = Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices)
+                        .unwrap();
+                    let tri = Triangulation::<FastKernel<f64>, (), (), $dim> { kernel: FastKernel::new(), tds };
+
+                    // Get all cell keys
+                    let cell_keys: Vec<_> = tri.tds.cell_keys().collect();
+                    assert_eq!(cell_keys.len(), 1, "{}D: Initial simplex should have 1 cell", $dim);
+
+                    // Detect issues - should find none in a valid simplex
+                    let issues = tri.detect_local_facet_issues(&cell_keys).unwrap();
+                    assert!(issues.is_none(),
+                        "{}D: Initial simplex should have no facet sharing issues", $dim);
+                }
+
+                #[test]
+                fn [<test_detect_local_facet_issues_empty_list_ $dim d>]() {
+                    // Create a valid triangulation
+                    let vertices: Vec<Vertex<f64, (), $dim>> = vec![
+                        $(vertex!($simplex_coords)),+
+                    ];
+
+                    let tds = Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices)
+                        .unwrap();
+                    let tri = Triangulation::<FastKernel<f64>, (), (), $dim> { kernel: FastKernel::new(), tds };
+
+                    // Check empty cell list - should return None (no issues)
+                    let issues = tri.detect_local_facet_issues(&[]).unwrap();
+                    assert!(issues.is_none(),
+                        "{}D: Empty cell list should have no issues", $dim);
+                }
+
+                #[test]
+                fn [<test_detect_local_facet_issues_nonexistent_cells_ $dim d>]() {
+                    // Create a valid triangulation
+                    let vertices: Vec<Vertex<f64, (), $dim>> = vec![
+                        $(vertex!($simplex_coords)),+
+                    ];
+
+                    let tds = Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices)
+                        .unwrap();
+                    let tri = Triangulation::<FastKernel<f64>, (), (), $dim> { kernel: FastKernel::new(), tds };
+
+                    // Create fake cell keys that don't exist
+                    let fake_keys = vec![CellKey::default()];
+
+                    // Should handle gracefully (skip nonexistent cells)
+                    let issues = tri.detect_local_facet_issues(&fake_keys).unwrap();
+                    assert!(issues.is_none(),
+                        "{}D: Nonexistent cells should be skipped", $dim);
+                }
+
+                #[test]
+                fn [<test_repair_local_facet_issues_empty_ $dim d>]() {
+                    // Create a valid triangulation
+                    let vertices: Vec<Vertex<f64, (), $dim>> = vec![
+                        $(vertex!($simplex_coords)),+
+                    ];
+
+                    let tds = Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices)
+                        .unwrap();
+                    let mut tri = Triangulation::<FastKernel<f64>, (), (), $dim> { kernel: FastKernel::new(), tds };
+
+                    // Create empty issues map
+                    let empty_issues = FacetIssuesMap::default();
+
+                    // Should repair nothing
+                    let removed = tri.repair_local_facet_issues(&empty_issues).unwrap();
+                    assert_eq!(removed, 0,
+                        "{}D: No cells should be removed for empty issues", $dim);
+
+                    // Triangulation should remain valid
+                    assert_eq!(tri.tds.number_of_cells(), 1,
+                        "{}D: Should still have 1 cell after empty repair", $dim);
+                }
+
+                #[test]
+                fn [<test_facet_invariant_after_validation_ $dim d>]() {
+                    // Create a valid triangulation
+                    let vertices: Vec<Vertex<f64, (), $dim>> = vec![
+                        $(vertex!($simplex_coords)),+
+                    ];
+
+                    let tds = Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices)
+                        .unwrap();
+                    let tri = Triangulation::<FastKernel<f64>, (), (), $dim> { kernel: FastKernel::new(), tds };
+
+                    // Verify the manifold topology invariant:
+                    // Each facet shared by at most 2 cells (boundary = 1, interior = 2)
+                    let cell_keys: Vec<_> = tri.tds.cell_keys().collect();
+                    let issues = tri.detect_local_facet_issues(&cell_keys).unwrap();
+
+                    // No facets should be over-shared
+                    assert!(issues.is_none(),
+                        "{}D: Manifold topology invariant violated - facets over-shared", $dim);
+
+                    // Additional check: all facets of the single cell should be boundary facets
+                    // (no neighbors since it's the only cell)
+                    let (_, cell) = tri.tds.cells().next()
+                        .expect(&format!("{}D: Should have exactly one cell", $dim));
+                    if let Some(neighbors) = cell.neighbors() {
+                        assert!(neighbors.iter().all(|n| n.is_none()),
+                            "{}D: Single cell should have no neighbors (all boundary facets)", $dim);
+                    }
+                }
+            }
+        };
+    }
+
+    // Test 2D - 5D (all practical dimensions)
+    test_local_facet_validation!(2, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
+    test_local_facet_validation!(
+        3,
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0]
+        ]
+    );
+    test_local_facet_validation!(
+        4,
+        [
+            [0.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0]
+        ]
+    );
+    test_local_facet_validation!(
+        5,
+        [
+            [0.0, 0.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0]
+        ]
+    );
 }

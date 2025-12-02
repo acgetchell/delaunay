@@ -11,7 +11,7 @@
 use crate::core::algorithms::locate::{ConflictError, LocateError};
 use crate::core::cell::Cell;
 use crate::core::collections::{
-    CellKeyBuffer, FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
+    CellKeyBuffer, FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
 };
 use crate::core::facet::FacetHandle;
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
@@ -22,6 +22,7 @@ use crate::core::triangulation_data_structure::{
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateScalar;
+use std::hash::{Hash, Hasher};
 
 /// Error during incremental insertion.
 #[derive(Debug, thiserror::Error)]
@@ -76,6 +77,12 @@ pub enum InsertionError {
         /// The UUID that was duplicated.
         uuid: uuid::Uuid,
     },
+
+    /// Topology validation or repair failed.
+    #[error("Topology validation error: {0}")]
+    TopologyValidation(
+        #[from] crate::core::triangulation_data_structure::TriangulationValidationError,
+    ),
 }
 
 /// Fill cavity by creating new cells connecting boundary facets to new vertex.
@@ -367,12 +374,12 @@ where
     Ok(())
 }
 
-/// Compute a hash for a facet from sorted vertex keys
+/// Compute a hash for a facet from sorted vertex keys.
+///
+/// Uses [`FastHasher`] for deterministic hashing consistent with other
+/// internal collections ([`FastHashMap`], [`FastHashSet`]).
 fn compute_facet_hash(sorted_vkeys: &[VertexKey]) -> u64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = DefaultHasher::new();
+    let mut hasher = FastHasher::default();
     for &vkey in sorted_vkeys {
         vkey.hash(&mut hasher);
     }

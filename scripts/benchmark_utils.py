@@ -1370,7 +1370,21 @@ class BaselineGenerator:
             print("   Consider increasing --bench-timeout or using --dev mode for faster benchmarks", file=sys.stderr)
             logging.debug("TimeoutExpired: %s", e)
             return False
+        except subprocess.CalledProcessError as e:
+            # Print captured stderr/stdout from cargo bench failure
+            print("❌ Cargo bench failed with exit code:", e.returncode, file=sys.stderr)
+            if e.stderr:
+                print("\n=== cargo bench stderr ===", file=sys.stderr)
+                print(e.stderr, file=sys.stderr)
+                print("=== end stderr ===\n", file=sys.stderr)
+            if e.stdout:
+                print("\n=== cargo bench stdout ===", file=sys.stderr)
+                print(e.stdout, file=sys.stderr)
+                print("=== end stdout ===\n", file=sys.stderr)
+            logging.exception("Error in generate_baseline")
+            return False
         except Exception:
+            logging.exception("Error in generate_baseline")
             return False
 
     def _write_baseline_file(self, benchmark_results: list[BenchmarkData], output_file: Path) -> None:
@@ -1479,6 +1493,20 @@ class PerformanceComparator:
             print("   Consider increasing --bench-timeout or using --dev mode for faster benchmarks", file=sys.stderr)
             logging.debug("TimeoutExpired: %s", e)
             self._write_error_file(output_file, "Benchmark execution timeout", f"Timeout after {bench_timeout} seconds")
+            return False, False
+        except subprocess.CalledProcessError as e:
+            # Print captured stderr/stdout from cargo bench failure
+            print("❌ Cargo bench failed with exit code:", e.returncode, file=sys.stderr)
+            if e.stderr:
+                print("\n=== cargo bench stderr ===", file=sys.stderr)
+                print(e.stderr, file=sys.stderr)
+                print("=== end stderr ===\n", file=sys.stderr)
+            if e.stdout:
+                print("\n=== cargo bench stdout ===", file=sys.stderr)
+                print(e.stdout, file=sys.stderr)
+                print("=== end stdout ===\n", file=sys.stderr)
+            self._write_error_file(output_file, "Benchmark execution error", str(e))
+            logging.exception("Error in compare_with_baseline")
             return False, False
         except Exception as e:
             self._write_error_file(output_file, "Benchmark execution error", str(e))
