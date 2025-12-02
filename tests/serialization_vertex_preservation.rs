@@ -10,12 +10,7 @@
 //! or a bug in serialization/deserialization.
 
 use delaunay::assert_jaccard_gte;
-use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
-use delaunay::core::triangulation_data_structure::Tds;
-use delaunay::core::util::extract_vertex_coordinate_set;
-use delaunay::core::vertex::Vertex;
-use delaunay::geometry::point::Point;
-use delaunay::geometry::traits::coordinate::Coordinate;
+use delaunay::prelude::*;
 use std::collections::HashSet;
 
 /// Test vertex preservation with duplicate coordinates

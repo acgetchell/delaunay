@@ -8,8 +8,7 @@
 //! - Coordinate extraction consistency
 //! - NaN handling determinism
 
-use delaunay::geometry::point::Point;
-use delaunay::geometry::traits::coordinate::Coordinate;
+use delaunay::prelude::*;
 use proptest::prelude::*;
 use rustc_hash::FxHasher;
 use std::collections::HashMap;

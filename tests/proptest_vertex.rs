@@ -12,9 +12,7 @@
 
 #![allow(unused_imports)] // Imports used in macro expansion
 
-use delaunay::core::vertex::Vertex;
-use delaunay::geometry::point::Point;
-use delaunay::vertex;
+use delaunay::prelude::*;
 use proptest::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};

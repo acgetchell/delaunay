@@ -162,7 +162,6 @@ delaunay/
 │   ├── proptest_invariants.rs
 │   ├── proptest_point.rs
 │   ├── proptest_predicates.rs
-│   ├── proptest_quality.rs
 │   ├── proptest_robust_bowyer_watson.rs
 │   ├── proptest_safe_conversions.rs
 │   ├── proptest_serialization.rs

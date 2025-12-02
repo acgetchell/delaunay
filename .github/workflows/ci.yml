@@ -104,3 +104,4 @@ jobs:
           cargo build --verbose --all-targets
           cargo test --lib --verbose
           cargo test --doc --verbose
+          cargo test --tests --verbose

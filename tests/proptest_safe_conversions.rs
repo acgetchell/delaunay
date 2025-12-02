@@ -15,10 +15,7 @@
 //! - Non-finite values (NaN, Infinity) are properly rejected
 
 use approx::assert_relative_eq;
-use delaunay::geometry::util::{
-    safe_coords_from_f64, safe_coords_to_f64, safe_scalar_from_f64, safe_scalar_to_f64,
-    safe_usize_to_scalar,
-};
+use delaunay::prelude::*;
 use num_traits::cast;
 use proptest::prelude::*;
 // =============================================================================

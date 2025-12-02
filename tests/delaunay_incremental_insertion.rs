@@ -7,8 +7,7 @@
 //! - Different dimensions (2D-5D)
 //! - Different kernels (Fast vs Robust)
 
-use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
-use delaunay::vertex;
+use delaunay::prelude::*;
 
 // =========================================================================
 // Basic Incremental Insertion Tests (using macros for 2D-5D)

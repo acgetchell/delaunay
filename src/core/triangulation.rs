@@ -172,19 +172,26 @@ where
     // - locate(point) - point location using facet walking
     // - is_valid_geometric() - validate using kernel predicates
 
-    /// Fixes invalid facet sharing by removing problematic cells using geometric quality metrics.
+    /// Attempts to fix invalid facet sharing by removing problematic cells using geometric quality metrics.
+    ///
+    /// This is a **best-effort repair mechanism** that may not fully resolve all facet sharing
+    /// violations in extreme cases. The method iterates up to 10 times, removing cells around
+    /// over-shared facets using quality-based selection (`radius_ratio`) and UUID tie-breaking.
     ///
     /// This method belongs in the Triangulation layer (not Tds) because it uses geometric
-    /// quality metrics (`radius_ratio`) to select which cells to keep when a facet is
-    /// shared by more than 2 cells.
+    /// quality metrics to select which cells to keep when a facet is shared by more than 2 cells.
     ///
     /// # Returns
     ///
-    /// Number of cells removed.
+    /// Number of cells removed during the repair attempt.
     ///
     /// # Errors
     ///
-    /// Returns error if facet map cannot be built or topology repair fails.
+    /// Returns error if the facet map cannot be built (indicating structural corruption).
+    ///
+    /// **Note**: Some internal repair failures (duplicate removal, neighbor assignment) are
+    /// logged in debug builds but do not cause this method to return an error. The method
+    /// may return `Ok(n)` even if some facet sharing violations remain after the repair attempt.
     #[allow(clippy::too_many_lines)]
     pub fn fix_invalid_facet_sharing(
         &mut self,

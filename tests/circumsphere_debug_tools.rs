@@ -13,8 +13,6 @@
 //! cargo test --test circumsphere_debug_tools test_all_debug -- --ignored --nocapture
 //! ```
 
-use delaunay::geometry::matrix::Matrix;
-use delaunay::geometry::util::squared_norm;
 use delaunay::prelude::*;
 use nalgebra as na;
 use serde::{Deserialize, Serialize};

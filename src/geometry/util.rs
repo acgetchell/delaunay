@@ -1991,7 +1991,7 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
 /// This utility function combines random point generation and triangulation creation
 /// in a single convenient function. It generates random points using either seeded
 /// or unseeded random generation, converts them to vertices, and creates a Delaunay
-/// triangulation using the Bowyer-Watson algorithm.
+/// triangulation using the incremental cavity-based insertion algorithm.
 ///
 /// This function is particularly useful for testing, benchmarking, and creating
 /// triangulations for analysis or visualization purposes.
@@ -2013,14 +2013,31 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
 /// # Returns
 ///
 /// A `Result` containing either:
-/// - `Ok(Tds<T, U, V, D>)` - The successfully created triangulation
-/// - `Err` - An error from point generation or triangulation construction
+/// - `Ok(DelaunayTriangulation<FastKernel<T>, U, V, D>)` - The successfully created triangulation
+/// - `Err(TriangulationConstructionError)` - An error from point generation or triangulation construction
 ///
 /// # Errors
 ///
-/// This function can fail with:
-/// - `RandomPointGenerationError` if point generation fails (invalid bounds, etc.)
-/// - `TriangulationConstructionError` if triangulation construction fails (degenerate points, etc.)
+/// Returns `TriangulationConstructionError` with different variants depending on the failure:
+///
+/// **Invalid parameters** (mapped to `GeometricDegeneracy`):
+/// - Point generation fails due to invalid bounds (e.g., `min > max`)
+/// - Random number generator initialization fails
+/// - **Note**: These are not strictly geometric degeneracy but are mapped to this
+///   error variant for API simplicity. Consider validating bounds before calling
+///   if you need to distinguish parameter errors from geometric issues.
+///
+/// **Insufficient vertices** (`InsufficientVertices`):
+/// - When `n_points < D + 1` (need at least D+1 points for a D-dimensional simplex)
+/// - Example: Less than 3 points in 2D, less than 4 points in 3D
+///
+/// **Geometric degeneracy** (`GeometricDegeneracy`):
+/// - Points form a degenerate configuration (all collinear, coplanar, etc.)
+/// - Numerical instability during construction
+///
+/// **Other construction failures** (various variants):
+/// - Vertex/cell construction errors
+/// - Triangulation validation failures
 ///
 /// # Panics
 ///
@@ -2082,7 +2099,7 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
 ///
 /// - Point generation is O(n) and typically fast
 /// - Triangulation construction complexity varies by dimension:
-///   - 2D, 3D: O(n log n) expected with Bowyer-Watson algorithm
+///   - 2D, 3D: O(n log n) expected with incremental insertion
 ///   - 4D+: O(n²) worst case, significantly slower for large point sets
 /// - Consider using smaller point counts for dimensions ≥ 4
 ///

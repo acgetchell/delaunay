@@ -132,7 +132,7 @@ fn measure_construction_with_memory<const D: usize>(n_points: usize, seed: u64) 
         .expect("Failed to generate points");
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
 
-    // Measure memory before Tds construction to isolate TDS allocation
+    // Measure memory before triangulation construction to isolate allocation
     let mem_before_tds = get_memory_usage();
 
     let dt = DelaunayTriangulation::new(&vertices).expect("Failed to create triangulation");

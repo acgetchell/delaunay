@@ -10,12 +10,7 @@
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
 use delaunay::assert_jaccard_gte;
-use delaunay::core::Vertex;
-use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
-use delaunay::geometry::algorithms::convex_hull::ConvexHull;
-use delaunay::geometry::point::Point;
-use delaunay::geometry::traits::coordinate::Coordinate;
-use delaunay::prelude::extract_hull_facet_set;
+use delaunay::prelude::*;
 use proptest::prelude::*;
 
 // =============================================================================

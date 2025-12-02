@@ -11,7 +11,7 @@
 use crate::core::algorithms::locate::{ConflictError, LocateError};
 use crate::core::cell::Cell;
 use crate::core::collections::{
-    CellKeyBuffer, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
+    CellKeyBuffer, FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
 };
 use crate::core::facet::FacetHandle;
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
@@ -50,6 +50,13 @@ pub enum InsertionError {
     /// Neighbor wiring failed
     #[error("Neighbor wiring failed: {message}")]
     NeighborWiring {
+        /// Error message
+        message: String,
+    },
+
+    /// Hull extension failed (finding visible boundary facets)
+    #[error("Hull extension failed: {message}")]
+    HullExtension {
         /// Error message
         message: String,
     },
@@ -109,6 +116,18 @@ where
                     ),
                 })?;
 
+        // Validate boundary cell has correct dimensionality (D+1 vertices)
+        if boundary_cell.number_of_vertices() != D + 1 {
+            return Err(InsertionError::CavityFilling {
+                message: format!(
+                    "Boundary cell {:?} has {} vertices, expected {} (D+1)",
+                    facet_handle.cell_key(),
+                    boundary_cell.number_of_vertices(),
+                    D + 1
+                ),
+            });
+        }
+
         let facet_idx = usize::from(facet_handle.facet_index());
         let mut new_cell_vertices = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
 
@@ -136,18 +155,37 @@ where
         new_cells.push(cell_key);
     }
 
+    // Validate we created one cell per boundary facet (1:1 correspondence)
+    if boundary_facets.len() != new_cells.len() {
+        return Err(InsertionError::CavityFilling {
+            message: format!(
+                "Created {} cells for {} boundary facets (should be 1:1)",
+                new_cells.len(),
+                boundary_facets.len()
+            ),
+        });
+    }
+
     Ok(new_cells)
 }
 
 /// Wire neighbor relationships for newly created cavity cells.
 ///
-/// Updates both internal neighbors (between new cells) and external neighbors
-/// (between new cells and existing boundary cells).
+/// This function uses comprehensive facet matching to wire neighbors correctly
+/// for both interior cavity filling and hull extension:
+/// - Interior: New cells replace removed cells, share facets with boundary
+/// - Hull extension: New cells extend hull, share facets with original boundary cells
+///
+/// The algorithm:
+/// 1. Index all facets of new cells
+/// 2. Index relevant boundary facets (from both conflict cells and neighbors)
+/// 3. Match facets by their vertex sets (using hash)
+/// 4. Wire mutual neighbor relationships for matched facets
 ///
 /// # Arguments
 /// - `tds` - Mutable triangulation data structure
 /// - `new_cells` - Keys of newly created cells
-/// - `boundary_facets` - Facets that formed the cavity boundary
+/// - `conflict_cells` - Optional set of cells being removed (for interior insertion)
 ///
 /// # Returns
 /// Ok(()) if wiring succeeds
@@ -157,16 +195,22 @@ where
 pub fn wire_cavity_neighbors<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
     new_cells: &CellKeyBuffer,
-    boundary_facets: &[FacetHandle],
+    conflict_cells: Option<&CellKeyBuffer>,
 ) -> Result<(), InsertionError>
 where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    // Build facet map: facet_vertices -> (cell_key, facet_idx)
+    // Build a comprehensive facet map for ALL facets of new cells and boundary cells
+    // This approach works for both interior cavity filling and hull extension
     type FacetMap = FastHashMap<u64, Vec<(CellKey, u8)>>;
     let mut facet_map: FacetMap = FastHashMap::default();
+
+    // Note: We don't assert new_cells.len() == boundary_facets.len() here because:
+    // 1. boundary_facets is not available in this function (only passed to fill_cavity)
+    // 2. For hull extension, the relationship is different than interior cavity filling
+    // The assertion is done in fill_cavity where boundary_facets is available.
 
     // Index all facets of new cells
     for &cell_key in new_cells {
@@ -201,8 +245,58 @@ where
         }
     }
 
-    // Wire internal neighbors (facets shared by 2 new cells)
-    for cells in facet_map.values() {
+    // Build conflict set for O(1) lookup
+    let conflict_set: FastHashSet<CellKey> = conflict_cells
+        .map(|cells| cells.iter().copied().collect())
+        .unwrap_or_default();
+
+    // Collect existing cell keys first to avoid borrow issues
+    let existing_cell_keys: Vec<CellKey> = tds
+        .cells()
+        .map(|(key, _)| key)
+        .filter(|&key| !new_cells.contains(&key) && !conflict_set.contains(&key))
+        .collect();
+
+    // Index facets from existing non-conflict cells to find matches with new cells
+    // This catches cases where existing cells should neighbor new cells but weren't
+    // in the boundary_facets list
+    for existing_cell_key in existing_cell_keys {
+        let existing_cell =
+            tds.get_cell(existing_cell_key)
+                .ok_or_else(|| InsertionError::NeighborWiring {
+                    message: format!("Existing cell {existing_cell_key:?} not found"),
+                })?;
+
+        for facet_idx in 0..existing_cell.number_of_vertices() {
+            let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+            for (i, &vkey) in existing_cell.vertices().iter().enumerate() {
+                if i != facet_idx {
+                    facet_vkeys.push(vkey);
+                }
+            }
+
+            facet_vkeys.sort_unstable();
+            let facet_key = compute_facet_hash(&facet_vkeys);
+
+            // Only add if this facet matches one from new cells
+            if let Some(existing_facet_cells) = facet_map.get_mut(&facet_key) {
+                // Only add if we don't already have 2 cells for this facet
+                // (prevents non-manifold topology)
+                if existing_facet_cells.len() < 2 {
+                    let facet_idx_u8 =
+                        u8::try_from(facet_idx).map_err(|_| InsertionError::NeighborWiring {
+                            message: format!("Facet index {facet_idx} exceeds u8::MAX"),
+                        })?;
+
+                    existing_facet_cells.push((existing_cell_key, facet_idx_u8));
+                }
+            }
+        }
+    }
+
+    // Wire all matching facets (both internal and external)
+    // Two cells share a facet if they have the same facet key
+    for (facet_key, cells) in &facet_map {
         if cells.len() == 2 {
             let (c1, idx1) = cells[0];
             let (c2, idx2) = cells[1];
@@ -210,66 +304,17 @@ where
             // Set mutual neighbors
             set_neighbor(tds, c1, idx1, Some(c2))?;
             set_neighbor(tds, c2, idx2, Some(c1))?;
+        } else if cells.len() > 2 {
+            // This should never happen - indicates non-manifold topology
+            return Err(InsertionError::NeighborWiring {
+                message: format!(
+                    "Non-manifold topology detected: facet {} shared by {} cells (expected ≤2)",
+                    facet_key,
+                    cells.len()
+                ),
+            });
         }
-    }
-
-    // Wire external neighbors (boundary facets to existing cells)
-    for (i, facet_handle) in boundary_facets.iter().enumerate() {
-        if i >= new_cells.len() {
-            break;
-        }
-
-        let new_cell_key = new_cells[i];
-
-        // Get the external neighbor across this boundary facet
-        let boundary_cell = tds.get_cell(facet_handle.cell_key()).ok_or_else(|| {
-            InsertionError::NeighborWiring {
-                message: format!("Boundary cell {:?} not found", facet_handle.cell_key()),
-            }
-        })?;
-
-        let external_neighbor = boundary_cell
-            .neighbors()
-            .and_then(|neighbors| neighbors.get(usize::from(facet_handle.facet_index())))
-            .and_then(|&opt| opt);
-
-        // The new cell's facet opposite the last vertex (new vertex) connects to external
-        let new_cell =
-            tds.get_cell(new_cell_key)
-                .ok_or_else(|| InsertionError::NeighborWiring {
-                    message: format!("New cell {new_cell_key:?} not found"),
-                })?;
-
-        let last_facet_idx = new_cell.number_of_vertices() - 1;
-        let last_facet_idx_u8 =
-            u8::try_from(last_facet_idx).map_err(|_| InsertionError::NeighborWiring {
-                message: format!("Last facet index {last_facet_idx} exceeds u8::MAX"),
-            })?;
-
-        set_neighbor(tds, new_cell_key, last_facet_idx_u8, external_neighbor)?;
-
-        // Update external cell to point back to new cell
-        if let Some(ext_key) = external_neighbor {
-            // Find which facet of external cell points to the old boundary cell
-            let ext_cell = tds
-                .get_cell(ext_key)
-                .ok_or_else(|| InsertionError::NeighborWiring {
-                    message: format!("External cell {ext_key:?} not found"),
-                })?;
-
-            if let Some(ext_neighbors) = ext_cell.neighbors() {
-                for (ext_idx, &ext_neighbor_opt) in ext_neighbors.iter().enumerate() {
-                    if ext_neighbor_opt == Some(facet_handle.cell_key()) {
-                        let ext_idx_u8 =
-                            u8::try_from(ext_idx).map_err(|_| InsertionError::NeighborWiring {
-                                message: format!("External index {ext_idx} exceeds u8::MAX"),
-                            })?;
-                        set_neighbor(tds, ext_key, ext_idx_u8, Some(new_cell_key))?;
-                        break;
-                    }
-                }
-            }
-        }
+        // cells.len() == 1 means it's a boundary facet (no neighbor)
     }
 
     Ok(())
@@ -350,16 +395,17 @@ where
     let visible_facets = find_visible_boundary_facets(tds, kernel, point)?;
 
     if visible_facets.is_empty() {
-        return Err(InsertionError::CavityFilling {
-            message: "No visible boundary facets found for exterior vertex".to_string(),
+        return Err(InsertionError::HullExtension {
+            message: "No visible boundary facets found for exterior vertex (may be coplanar with hull surface)".to_string(),
         });
     }
 
     // Fill cavity with new cells
     let new_cells = fill_cavity(tds, new_vertex_key, &visible_facets)?;
 
-    // Wire neighbors
-    wire_cavity_neighbors(tds, &new_cells, &visible_facets)?;
+    // Wire neighbors using comprehensive facet matching
+    // For hull extension, no conflict cells (nothing is removed)
+    wire_cavity_neighbors(tds, &new_cells, None)?;
 
     Ok(new_cells)
 }
@@ -368,6 +414,13 @@ where
 ///
 /// A boundary facet is visible from a point if the point is on the positive side
 /// of the facet's supporting hyperplane (determined by orientation test).
+///
+/// **Visibility criterion:**
+/// - **Strictly visible**: Opposite orientations (orientation signs differ)
+/// - **Coplanar** (orientation == 0): Currently treated as non-visible to avoid
+///   numerical instability. For "weakly visible" behavior that includes nearly
+///   coplanar facets, the orientation test logic would need an epsilon-based
+///   threshold (not currently implemented).
 ///
 /// # Arguments
 /// - `tds` - The triangulation data structure
@@ -378,7 +431,10 @@ where
 /// Vector of facet handles representing visible boundary facets
 ///
 /// # Errors
-/// Returns error if boundary facets cannot be retrieved or orientation tests fail
+/// Returns `HullExtension` error if:
+/// - Boundary facets cannot be retrieved
+/// - Orientation tests fail
+/// - Cell/vertex lookups fail
 fn find_visible_boundary_facets<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -395,7 +451,7 @@ where
     // Get all boundary facets
     let boundary_facets = tds
         .boundary_facets()
-        .map_err(|e| InsertionError::CavityFilling {
+        .map_err(|e| InsertionError::HullExtension {
             message: format!("Failed to get boundary facets: {e}"),
         })?;
 
@@ -407,7 +463,7 @@ where
         // Get the cell and its vertices
         let cell = tds
             .get_cell(cell_key)
-            .ok_or_else(|| InsertionError::CavityFilling {
+            .ok_or_else(|| InsertionError::HullExtension {
                 message: format!("Boundary facet cell {cell_key:?} not found"),
             })?;
 
@@ -418,7 +474,7 @@ where
         for &vkey in cell.vertices() {
             let vertex =
                 tds.get_vertex_by_key(vkey)
-                    .ok_or_else(|| InsertionError::CavityFilling {
+                    .ok_or_else(|| InsertionError::HullExtension {
                         message: format!("Vertex {vkey:?} not found in TDS"),
                     })?;
             simplex_points.push(*vertex.point());
@@ -431,7 +487,7 @@ where
         let orientation_with_opposite =
             kernel
                 .orientation(&simplex_points)
-                .map_err(|e| InsertionError::CavityFilling {
+                .map_err(|e| InsertionError::HullExtension {
                     message: format!("Orientation test failed: {e}"),
                 })?;
 
@@ -440,12 +496,18 @@ where
         let orientation_with_point =
             kernel
                 .orientation(&simplex_points)
-                .map_err(|e| InsertionError::CavityFilling {
+                .map_err(|e| InsertionError::HullExtension {
                     message: format!("Orientation test failed: {e}"),
                 })?;
 
         // Facet is visible if orientations have opposite sign (point is on opposite side)
         // orientation() returns i32: positive, negative, or zero
+        //
+        // Note: Coplanar cases (either orientation == 0) are treated as non-visible.
+        // This conservative approach avoids numerical instability but may cause
+        // "no visible facets" errors for points nearly on the hull surface.
+        // For "weakly visible" behavior, use: orientation_with_opposite * orientation_with_point < 0
+        // (but this requires careful epsilon-based handling to avoid degenerate cases)
         let is_visible = (orientation_with_opposite > 0 && orientation_with_point < 0)
             || (orientation_with_opposite < 0 && orientation_with_point > 0);
 
@@ -463,33 +525,108 @@ mod tests {
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
     use crate::vertex;
 
-    #[test]
-    fn test_fill_cavity_2d() {
-        // Create simple 2D triangle
-        let vertices = vec![
+    /// Macro to generate cavity filling tests for different dimensions
+    macro_rules! test_fill_cavity {
+        ($dim:literal, $initial_vertices:expr, $new_vertex:expr, $expected_facets:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_fill_cavity_ $dim d>]() {
+                    // Create initial simplex
+                    let vertices = $initial_vertices;
+                    let mut dt = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices).unwrap();
+                    let tds = dt.tds_mut();
+
+                    // Insert new vertex
+                    let new_vertex = $new_vertex;
+                    let new_vkey = tds.insert_vertex_with_mapping(new_vertex).unwrap();
+
+                    // Find the single cell and create boundary facets (one per face)
+                    let cell_key = tds.cell_keys().next().unwrap();
+                    let boundary_facets: Vec<FacetHandle> = (0..=$dim)
+                        .map(|i| FacetHandle::new(cell_key, i))
+                        .collect();
+
+                    // Verify expected number of facets
+                    assert_eq!(boundary_facets.len(), $expected_facets);
+
+                    // Fill cavity
+                    let new_cells = fill_cavity(tds, new_vkey, &boundary_facets).unwrap();
+
+                    // Should create one cell per boundary facet
+                    assert_eq!(new_cells.len(), $expected_facets);
+
+                    // Wire neighbors
+                    wire_cavity_neighbors(tds, &new_cells, None).unwrap();
+
+                    // Validate neighbor consistency
+                    assert!(
+                        tds.is_valid().is_ok(),
+                        "TDS should be valid after cavity filling and neighbor wiring: {:?}",
+                        tds.is_valid().err()
+                    );
+
+                    // Verify all new cells have correct vertex count
+                    for &cell_key in &new_cells {
+                        let cell = tds.get_cell(cell_key).unwrap();
+                        assert_eq!(
+                            cell.number_of_vertices(),
+                            $dim + 1,
+                            "New cell should have D+1 vertices"
+                        );
+                    }
+                }
+            }
+        };
+    }
+
+    // Generate tests for dimensions 2-5
+    test_fill_cavity!(
+        2,
+        vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
-        ];
-        let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let tds = dt.tds_mut();
+        ],
+        vertex!([0.5, 0.5]),
+        3 // D+1 facets for a 2-simplex
+    );
 
-        // Insert new vertex
-        let new_vertex = vertex!([0.5, 0.5]);
-        let new_vkey = tds.insert_vertex_with_mapping(new_vertex).unwrap();
+    test_fill_cavity!(
+        3,
+        vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ],
+        vertex!([0.25, 0.25, 0.25]),
+        4 // D+1 facets for a 3-simplex
+    );
 
-        // Find the single cell and create boundary facets
-        let cell_key = tds.cell_keys().next().unwrap();
-        let boundary_facets = vec![
-            FacetHandle::new(cell_key, 0),
-            FacetHandle::new(cell_key, 1),
-            FacetHandle::new(cell_key, 2),
-        ];
+    test_fill_cavity!(
+        4,
+        vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+        ],
+        vertex!([0.2, 0.2, 0.2, 0.2]),
+        5 // D+1 facets for a 4-simplex
+    );
 
-        // Fill cavity
-        let new_cells = fill_cavity(tds, new_vkey, &boundary_facets).unwrap();
-
-        // Should create 3 new cells (one for each boundary edge)
-        assert_eq!(new_cells.len(), 3);
-    }
+    test_fill_cavity!(
+        5,
+        vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
+        ],
+        vertex!([0.15, 0.15, 0.15, 0.15, 0.15]),
+        6 // D+1 facets for a 5-simplex
+    );
 }

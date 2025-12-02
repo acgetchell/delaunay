@@ -105,15 +105,28 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
 
     /// Create an empty Delaunay triangulation with no data (most common case).
     ///
+    /// Use this when you want to build a triangulation incrementally by inserting vertices
+    /// one at a time. The triangulation will automatically bootstrap itself when you
+    /// insert the (D+1)th vertex, creating the initial simplex.
+    ///
     /// No type annotations needed! The compiler can infer everything.
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::DelaunayTriangulation;
+    /// use delaunay::prelude::*;
     ///
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    /// // Start with empty triangulation
+    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
     /// assert_eq!(dt.number_of_vertices(), 0);
+    /// assert_eq!(dt.number_of_cells(), 0);
+    ///
+    /// // Insert vertices one by one
+    /// dt.insert(vertex!([0.0, 0.0, 0.0])).unwrap();
+    /// dt.insert(vertex!([1.0, 0.0, 0.0])).unwrap();
+    /// dt.insert(vertex!([0.0, 1.0, 0.0])).unwrap();
+    /// dt.insert(vertex!([0.0, 0.0, 1.0])).unwrap(); // Initial simplex created automatically
+    /// assert_eq!(dt.number_of_cells(), 1);
     /// ```
     #[must_use]
     pub fn empty() -> Self {
@@ -130,22 +143,33 @@ where
     V: DataType,
 {
     /// Create an empty Delaunay triangulation with the given kernel (advanced usage).
+    ///
     /// Most users should use [`DelaunayTriangulation::empty()`] instead, which uses fast predicates
     /// by default. Use this method only if you need custom coordinate precision or specialized kernels.
     ///
     /// This creates a triangulation with no vertices or cells. Use [`insert`](Self::insert)
-    /// to add vertices incrementally.
+    /// to add vertices incrementally. The triangulation will automatically bootstrap itself when
+    /// you insert the (D+1)th vertex, creating the initial simplex.
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::*;
     /// use delaunay::geometry::kernel::RobustKernel;
     ///
-    /// let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 4> =
+    /// // Start with empty triangulation using robust kernel
+    /// let mut dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 4> =
     ///     DelaunayTriangulation::with_empty_kernel(RobustKernel::new());
     /// assert_eq!(dt.number_of_vertices(), 0);
     /// assert_eq!(dt.number_of_cells(), 0);
+    ///
+    /// // Insert vertices incrementally
+    /// dt.insert(vertex!([0.0, 0.0, 0.0, 0.0])).unwrap();
+    /// dt.insert(vertex!([1.0, 0.0, 0.0, 0.0])).unwrap();
+    /// dt.insert(vertex!([0.0, 1.0, 0.0, 0.0])).unwrap();
+    /// dt.insert(vertex!([0.0, 0.0, 1.0, 0.0])).unwrap();
+    /// dt.insert(vertex!([0.0, 0.0, 0.0, 1.0])).unwrap(); // Initial simplex created
+    /// assert_eq!(dt.number_of_cells(), 1);
     /// ```
     #[must_use]
     pub fn with_empty_kernel(kernel: K) -> Self {
@@ -572,29 +596,70 @@ where
 
     /// Insert a vertex into the Delaunay triangulation using incremental cavity-based algorithm.
     ///
+    /// This method handles all stages of triangulation construction:
+    /// - **Bootstrap (< D+1 vertices)**: Accumulates vertices without creating cells
+    /// - **Initial simplex (D+1 vertices)**: Automatically builds the first D-cell
+    /// - **Incremental (> D+1 vertices)**: Uses cavity-based insertion with point location
+    ///
     /// # Algorithm
     /// 1. Insert vertex into Tds
-    /// 2. Locate cell containing the point
-    /// 3. Find conflict region (cells whose circumspheres contain the point)
-    /// 4. Extract cavity boundary
-    /// 5. Remove conflict cells
+    /// 2. Check vertex count:
+    ///    - If < D+1: Return (bootstrap phase)
+    ///    - If == D+1: Build initial simplex from all vertices
+    ///    - If > D+1: Continue with steps 3-7
+    /// 3. Locate cell containing the point
+    /// 4. Find conflict region (cells whose circumspheres contain the point)
+    /// 5. Extract cavity boundary
     /// 6. Fill cavity (create new cells)
     /// 7. Wire neighbors locally
+    /// 8. Remove conflict cells
     ///
     /// # Errors
     /// Returns error if:
-    /// - Point location fails
-    /// - Point is outside convex hull (hull extension not yet implemented)
-    /// - Point is on a facet, edge, or vertex (not yet implemented)
+    /// - Duplicate UUID detected
+    /// - Initial simplex construction fails (when reaching D+1 vertices)
+    /// - Point is on a facet, edge, or vertex (degenerate cases not yet implemented)
     /// - Conflict region computation fails
     /// - Cavity boundary extraction fails
     /// - Cavity filling or neighbor wiring fails
     ///
+    /// Note: Points outside the convex hull are handled automatically via hull extension.
+    ///
     /// # Examples
+    ///
+    /// Incremental insertion from empty triangulation:
+    ///
+    /// ```rust
+    /// use delaunay::prelude::DelaunayTriangulation;
+    /// use delaunay::vertex;
+    ///
+    /// // Start with empty triangulation
+    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    /// assert_eq!(dt.number_of_vertices(), 0);
+    /// assert_eq!(dt.number_of_cells(), 0);
+    ///
+    /// // Insert vertices one by one - bootstrap phase (no cells yet)
+    /// dt.insert(vertex!([0.0, 0.0, 0.0])).unwrap();
+    /// dt.insert(vertex!([1.0, 0.0, 0.0])).unwrap();
+    /// dt.insert(vertex!([0.0, 1.0, 0.0])).unwrap();
+    /// assert_eq!(dt.number_of_vertices(), 3);
+    /// assert_eq!(dt.number_of_cells(), 0); // Still no cells
+    ///
+    /// // 4th vertex triggers initial simplex creation
+    /// dt.insert(vertex!([0.0, 0.0, 1.0])).unwrap();
+    /// assert_eq!(dt.number_of_vertices(), 4);
+    /// assert_eq!(dt.number_of_cells(), 1); // First cell created!
+    ///
+    /// // Further insertions use cavity-based algorithm
+    /// dt.insert(vertex!([0.2, 0.2, 0.2])).unwrap();
+    /// assert_eq!(dt.number_of_vertices(), 5);
+    /// assert!(dt.number_of_cells() > 1);
+    /// ```
+    ///
+    /// Using batch construction (traditional approach):
     ///
     /// ```rust
     /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
-    /// use delaunay::geometry::kernel::FastKernel;
     /// use delaunay::vertex;
     ///
     /// // Create initial triangulation with 5 vertices (4-simplex)
@@ -621,7 +686,31 @@ where
         // 1. Insert vertex into Tds
         let v_key = self.tri.tds.insert_vertex_with_mapping(vertex)?;
 
-        // 2. Locate containing cell
+        // 2. Check if we need to bootstrap the initial simplex
+        let num_vertices = self.tri.tds.number_of_vertices();
+
+        if num_vertices < D + 1 {
+            // Bootstrap phase: just accumulate vertices, no cells yet
+            return Ok(v_key);
+        } else if num_vertices == D + 1 {
+            // Build initial simplex from all D+1 vertices
+            let all_vertices: Vec<_> = self.tri.tds.vertices().map(|(_, v)| *v).collect();
+            let new_tds = Self::build_initial_simplex(&all_vertices).map_err(|e| {
+                InsertionError::CavityFilling {
+                    message: format!("Failed to build initial simplex: {e}"),
+                }
+            })?;
+
+            // Replace empty TDS with simplex TDS (preserve kernel)
+            self.tri.tds = new_tds;
+
+            // Cache first cell for future locate hints
+            self.last_inserted_cell = self.tri.tds.cell_keys().next();
+
+            return Ok(v_key);
+        }
+
+        // 3. Locate containing cell (for vertex D+2 and beyond)
         // Copy the point before borrowing tds mutably
         let point = *self
             .tri
@@ -638,28 +727,28 @@ where
             self.last_inserted_cell,
         )?;
 
-        // Handle different location results
+        // 4. Handle different location results
         match location {
             LocateResult::InsideCell(start_cell) => {
                 // Interior vertex: use cavity-based insertion
 
-                // 3. Find conflict region
+                // 5. Find conflict region
                 let conflict_cells =
                     find_conflict_region(&self.tri.tds, &self.tri.kernel, &point, start_cell)?;
 
-                // 4. Extract cavity boundary
+                // 6. Extract cavity boundary
                 let boundary_facets = extract_cavity_boundary(&self.tri.tds, &conflict_cells)?;
 
-                // 5. Fill cavity BEFORE removing old cells (so boundary cells still exist)
+                // 7. Fill cavity BEFORE removing old cells (so boundary cells still exist)
                 let new_cells = fill_cavity(&mut self.tri.tds, v_key, &boundary_facets)?;
 
-                // 6. Wire neighbors (while both old and new cells exist)
-                wire_cavity_neighbors(&mut self.tri.tds, &new_cells, &boundary_facets)?;
+                // 8. Wire neighbors (while both old and new cells exist)
+                wire_cavity_neighbors(&mut self.tri.tds, &new_cells, Some(&conflict_cells))?;
 
-                // 7. Remove conflict cells (now that new cells are wired up)
+                // 9. Remove conflict cells (now that new cells are wired up)
                 let _removed_count = self.tri.tds.remove_cells_by_keys(&conflict_cells);
 
-                // 8. Repair any invalid facet sharing using geometric quality metrics
+                // 10. Repair any invalid facet sharing using geometric quality metrics
                 // This is usually not needed, but handles edge cases with degenerate geometry
                 if let Err(e) = self.tri.fix_invalid_facet_sharing() {
                     // Log in debug builds but continue - the triangulation is still usable
@@ -674,7 +763,7 @@ where
                     let _ = e;
                 }
 
-                // 9. Cache last inserted cell for next locate hint
+                // 11. Cache last inserted cell for next locate hint
                 self.last_inserted_cell = new_cells.first().copied();
 
                 Ok(v_key)
@@ -1110,12 +1199,13 @@ mod tests {
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::vertex;
 
-    /// Macro to generate incremental insertion tests across dimensions.
+    /// Macro to generate comprehensive triangulation construction tests across dimensions.
     ///
-    /// This macro generates tests that verify incremental insertion by:
-    /// 1. Creating a minimal simplex (D+1 vertices)
-    /// 2. Inserting one additional interior vertex
-    /// 3. Verifying the triangulation has the expected structure
+    /// This macro generates tests that verify all construction patterns:
+    /// 1. **Batch construction** - Creating a simplex with D+1 vertices + incremental insertion
+    /// 2. **Bootstrap from empty** - Accumulating vertices until D+1, then auto-creating simplex
+    /// 3. **Cavity-based continuation** - Verifying cavity algorithm works after bootstrap
+    /// 4. **Equivalence testing** - Bootstrap and batch produce identical structures
     ///
     /// # Usage
     /// ```ignore
@@ -1124,6 +1214,7 @@ mod tests {
     macro_rules! test_incremental_insertion {
         ($dim:expr, [$($simplex_coords:expr),+ $(,)?], $interior_point:expr) => {
             pastey::paste! {
+                // Test 1: Batch construction with incremental insertion
                 #[test]
                 fn [<test_incremental_insertion_ $dim d>]() {
                     // Build initial simplex (D+1 vertices)
@@ -1143,6 +1234,90 @@ mod tests {
                         "{}D: Expected {} vertices", $dim, expected_vertices);
                     assert!(dt.number_of_cells() > 1,
                         "{}D: Expected multiple cells, got {}", $dim, dt.number_of_cells());
+                }
+
+                // Test 2: Bootstrap from empty triangulation
+                #[test]
+                fn [<test_bootstrap_from_empty_ $dim d>]() {
+                    // Start with empty triangulation
+                    let mut dt: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::empty();
+                    assert_eq!(dt.number_of_vertices(), 0);
+                    assert_eq!(dt.number_of_cells(), 0);
+
+                    let vertices = vec![$(vertex!($simplex_coords)),+];
+                    assert_eq!(vertices.len(), $dim + 1, "Test should provide exactly D+1 vertices");
+
+                    // Insert D vertices - should accumulate without creating cells
+                    for (i, vertex) in vertices.iter().take($dim).enumerate() {
+                        dt.insert(*vertex).unwrap();
+                        assert_eq!(dt.number_of_vertices(), i + 1,
+                            "{}D: After inserting vertex {}, expected {} vertices", $dim, i, i + 1);
+                        assert_eq!(dt.number_of_cells(), 0,
+                            "{}D: Should have 0 cells during bootstrap (have {} vertices < D+1)",
+                            $dim, i + 1);
+                    }
+
+                    // Insert (D+1)th vertex - should trigger initial simplex creation
+                    dt.insert(*vertices.last().unwrap()).unwrap();
+                    assert_eq!(dt.number_of_vertices(), $dim + 1);
+                    assert_eq!(dt.number_of_cells(), 1,
+                        "{}D: Should have exactly 1 cell after inserting D+1 vertices", $dim);
+
+                    // Verify triangulation is valid
+                    assert!(dt.is_valid().is_ok(),
+                        "{}D: Triangulation should be valid after bootstrap", $dim);
+                }
+
+                // Test 3: Bootstrap continues with cavity-based insertion
+                #[test]
+                fn [<test_bootstrap_continues_with_cavity_ $dim d>]() {
+                    // Start with empty, bootstrap to initial simplex, then continue with cavity-based
+                    let mut dt: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::empty();
+
+                    let initial_vertices = vec![$(vertex!($simplex_coords)),+];
+
+                    // Bootstrap: insert D+1 vertices
+                    for vertex in &initial_vertices {
+                        dt.insert(*vertex).unwrap();
+                    }
+                    assert_eq!(dt.number_of_cells(), 1);
+
+                    // Continue with cavity-based insertion (vertex D+2 onward)
+                    dt.insert(vertex!($interior_point)).unwrap();
+                    assert_eq!(dt.number_of_vertices(), $dim + 2);
+                    assert!(dt.number_of_cells() > 1,
+                        "{}D: Should have multiple cells after cavity-based insertion", $dim);
+
+                    // Verify triangulation remains valid
+                    assert!(dt.is_valid().is_ok());
+                }
+
+                // Test 4: Bootstrap equivalent to batch construction
+                #[test]
+                fn [<test_bootstrap_equivalent_to_batch_ $dim d>]() {
+                    // Compare bootstrap path vs batch construction
+                    let vertices = vec![$(vertex!($simplex_coords)),+];
+
+                    // Path A: Bootstrap from empty
+                    let mut dt_bootstrap: DelaunayTriangulation<_, (), (), $dim> =
+                        DelaunayTriangulation::empty();
+                    for vertex in &vertices {
+                        dt_bootstrap.insert(*vertex).unwrap();
+                    }
+
+                    // Path B: Batch construction
+                    let dt_batch: DelaunayTriangulation<_, (), (), $dim> =
+                        DelaunayTriangulation::new(&vertices).unwrap();
+
+                    // Both should produce identical structure
+                    assert_eq!(dt_bootstrap.number_of_vertices(), dt_batch.number_of_vertices(),
+                        "{}D: Bootstrap and batch should have same vertex count", $dim);
+                    assert_eq!(dt_bootstrap.number_of_cells(), dt_batch.number_of_cells(),
+                        "{}D: Bootstrap and batch should have same cell count", $dim);
+
+                    // Both should be valid
+                    assert!(dt_bootstrap.is_valid().is_ok());
+                    assert!(dt_batch.is_valid().is_ok());
                 }
             }
         };
@@ -1205,13 +1380,18 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_then_construct() {
-        let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
-
+    fn test_empty_supports_incremental_insertion() {
+        // Verify empty triangulation supports incremental insertion via bootstrap
+        let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
         assert_eq!(dt.number_of_vertices(), 0);
 
-        // Note: Currently can't insert into empty triangulation
-        // This will be supported when hull extension is implemented
+        // Can now insert into empty triangulation - bootstrap phase
+        dt.insert(vertex!([0.0, 0.0])).unwrap();
+        dt.insert(vertex!([1.0, 0.0])).unwrap();
+        assert_eq!(dt.number_of_cells(), 0); // Still in bootstrap
+
+        dt.insert(vertex!([0.0, 1.0])).unwrap();
+        assert_eq!(dt.number_of_cells(), 1); // Initial simplex created
     }
 
     // =========================================================================
@@ -1776,5 +1956,25 @@ mod tests {
         assert!(dt.tds().is_valid().is_ok());
         assert!(dt.tds().validate_vertex_mappings().is_ok());
         assert!(dt.tds().validate_cell_mappings().is_ok());
+    }
+
+    #[test]
+    fn test_bootstrap_with_custom_kernel() {
+        // Verify bootstrap works with RobustKernel
+        let mut dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
+            DelaunayTriangulation::with_empty_kernel(RobustKernel::new());
+
+        assert_eq!(dt.number_of_vertices(), 0);
+
+        // Bootstrap with robust predicates
+        dt.insert(vertex!([0.0, 0.0, 0.0])).unwrap();
+        dt.insert(vertex!([1.0, 0.0, 0.0])).unwrap();
+        dt.insert(vertex!([0.0, 1.0, 0.0])).unwrap();
+        assert_eq!(dt.number_of_cells(), 0); // Still bootstrapping
+
+        dt.insert(vertex!([0.0, 0.0, 1.0])).unwrap();
+        assert_eq!(dt.number_of_cells(), 1); // Initial simplex created
+
+        assert!(dt.is_valid().is_ok());
     }
 }

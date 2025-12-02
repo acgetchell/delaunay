@@ -165,8 +165,9 @@
 //!
 //! 5. **Duplicate vertex detection** - Duplicate and near-duplicate vertices (within `1e-10`
 //!    epsilon) are automatically detected and rejected with
-//!    [`InsertionError::InvalidVertex`](core::algorithms::incremental_insertion::InsertionError), preventing
-//!    numerical instabilities.
+//!    [`InsertionError::DuplicateCoordinates`](core::algorithms::incremental_insertion::InsertionError::DuplicateCoordinates)
+//!    or [`InsertionError::DuplicateUuid`](core::algorithms::incremental_insertion::InsertionError::DuplicateUuid),
+//!    preventing numerical instabilities.
 //!
 //! When constructing a triangulation from a batch of vertices using
 //! [`DelaunayTriangulation::new`](core::delaunay_triangulation::DelaunayTriangulation::new):
@@ -220,7 +221,8 @@
 //! cannot be inserted:
 //!
 //! - **Duplicate detection** - Exact and near-duplicate vertices are detected and rejected
-//!   with [`InsertionError::InvalidVertex`](core::algorithms::incremental_insertion::InsertionError)
+//!   with [`InsertionError::DuplicateCoordinates`](core::algorithms::incremental_insertion::InsertionError::DuplicateCoordinates)
+//!   or [`InsertionError::DuplicateUuid`](core::algorithms::incremental_insertion::InsertionError::DuplicateUuid)
 //! - **Geometric failures** - Degenerate configurations that would violate the Delaunay
 //!   property are rejected with appropriate error messages
 //! - **Validation failures** - If insertion would break structural invariants, the operation
@@ -247,8 +249,9 @@
 //! ### Degenerate input handling
 //!
 //! When the input vertices cannot form a non-degenerate simplex (for example, when all points
-//! are collinear in 2D), construction fails with
-//! [`TriangulationConstructionError::GeometricDegeneracy`](core::triangulation_data_structure::TriangulationConstructionError::GeometricDegeneracy).
+//! are collinear in 2D), construction fails during incremental insertion with
+//! [`TriangulationConstructionError::FailedToAddVertex`](core::triangulation_data_structure::TriangulationConstructionError::FailedToAddVertex).
+//! This occurs because degenerate simplices cannot be processed by the circumsphere containment predicates.
 //!
 //! ```rust
 //! use delaunay::prelude::*;

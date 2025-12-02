@@ -9,11 +9,7 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
-use delaunay::geometry::point::Point;
-use delaunay::geometry::traits::coordinate::Coordinate;
-use delaunay::geometry::util::{
-    circumcenter, circumradius, hypot, inradius, simplex_volume, squared_norm,
-};
+use delaunay::prelude::*;
 use proptest::prelude::*;
 
 // =============================================================================

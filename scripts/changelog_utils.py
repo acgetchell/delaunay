@@ -808,7 +808,7 @@ class ChangelogUtils:
         ChangelogUtils.validate_semver(tag_version)
 
         # Handle existing tag
-        ChangelogUtils._handle_existing_tag(tag_version, force_recreate)
+        ChangelogUtils._handle_existing_tag(tag_version, force_recreate=force_recreate)
 
         # Get changelog content (may be truncated if too large)
         tag_message, is_truncated = ChangelogUtils._get_changelog_content(tag_version)
@@ -820,7 +820,7 @@ class ChangelogUtils:
         ChangelogUtils._create_tag_with_message(tag_version, tag_message, is_truncated=is_truncated)
 
         # Show success message
-        ChangelogUtils._show_success_message(tag_version, is_truncated)
+        ChangelogUtils._show_success_message(tag_version, is_truncated=is_truncated)
 
     @staticmethod
     def _handle_existing_tag(tag_version: str, force_recreate: bool) -> None:

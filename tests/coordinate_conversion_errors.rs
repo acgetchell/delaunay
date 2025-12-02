@@ -3,11 +3,7 @@
 //! This module tests that functions properly handle coordinate conversion errors
 //! when dealing with extreme values, NaN, infinity, etc.
 
-use delaunay::geometry::point::Point;
-use delaunay::geometry::predicates::{insphere, insphere_distance, simplex_orientation};
-use delaunay::geometry::robust_predicates::{config_presets, robust_insphere};
-use delaunay::geometry::traits::coordinate::{Coordinate, CoordinateConversionError};
-use delaunay::geometry::util::{CircumcenterError, circumcenter, circumradius, hypot};
+use delaunay::prelude::*;
 
 // =============================================================================
 // GEOMETRIC PREDICATES ERROR TESTS

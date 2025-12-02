@@ -48,11 +48,7 @@
 //! - Serialization/deserialization
 
 use delaunay::assert_jaccard_gte;
-use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
-use delaunay::core::triangulation_data_structure::Tds;
-use delaunay::core::util::extract_edge_set;
 use delaunay::prelude::*;
-use delaunay::vertex;
 
 // =============================================================================
 // TEST GENERATION MACROS (reduces duplication across 2D-5D)
