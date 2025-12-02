@@ -2,9 +2,8 @@
 //!
 //! This benchmark measures the runtime of the `assign_neighbors` method before and after
 //! optimizations to confirm reduced overhead on representative triangulations.
-
-#![expect(missing_docs)]
-// Benchmark migrated to DelaunayTriangulation::new()
+//!
+//! Benchmark migrated to `DelaunayTriangulation::new()`
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::geometry::kernel::FastKernel;

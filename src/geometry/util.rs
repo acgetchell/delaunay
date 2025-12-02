@@ -2027,9 +2027,13 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
 ///   error variant for API simplicity. Consider validating bounds before calling
 ///   if you need to distinguish parameter errors from geometric issues.
 ///
+/// **Empty triangulation** (special case):
+/// - When `n_points = 0`, returns an empty triangulation with 0 vertices and `dim()` = -1
+/// - This is not an error; use incremental insertion to add vertices later
+///
 /// **Insufficient vertices** (`InsufficientVertices`):
-/// - When `n_points < D + 1` (need at least D+1 points for a D-dimensional simplex)
-/// - Example: Less than 3 points in 2D, less than 4 points in 3D
+/// - When `0 < n_points < D + 1` (need at least D+1 points for a D-dimensional simplex)
+/// - Example: 1-2 points in 2D, 1-3 points in 3D
 ///
 /// **Geometric degeneracy** (`GeometricDegeneracy`):
 /// - Points form a degenerate configuration (all collinear, coplanar, etc.)
@@ -2123,8 +2127,13 @@ where
         + num_traits::cast::NumCast,
     U: DataType,
     V: DataType,
-    for<'a> &'a T: std::ops::Div<T>,
 {
+    // Handle empty triangulation case (0 points)
+    if n_points == 0 {
+        let kernel = FastKernel::new();
+        return Ok(DelaunayTriangulation::with_empty_kernel(kernel));
+    }
+
     // Generate random points (seeded or unseeded)
     // Note: GeometricDegeneracy error wraps both point generation failures (invalid bounds, RNG issues)
     // and actual geometric degeneracy. This is a semantic approximation - point generation failures
@@ -4881,7 +4890,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Zero points test expects empty triangulation but actual behavior needs verification"]
     fn test_generate_random_triangulation_error_cases() {
         // Test invalid bounds
         let result = generate_random_triangulation::<f64, (), (), 2>(
@@ -4892,10 +4900,10 @@ mod tests {
         );
         assert!(result.is_err());
 
-        // Test zero points
+        // Test zero points - should succeed with empty triangulation
         let result =
             generate_random_triangulation::<f64, (), (), 2>(0, (-1.0, 1.0), None, Some(42));
-        assert!(result.is_ok()); // Should succeed with empty triangulation
+        assert!(result.is_ok());
         let triangulation = result.unwrap();
         assert_eq!(triangulation.number_of_vertices(), 0);
         assert_eq!(triangulation.dim(), -1);

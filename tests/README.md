@@ -57,35 +57,84 @@ Property-based tests for Point data structures verifying fundamental properties.
 
 **Run with:** `cargo test --test proptest_point` or included in `just test`
 
-#### [`proptest_triangulation.rs`](./proptest_triangulation.rs)
+#### [`proptest_tds.rs`](./proptest_tds.rs)
 
-Property-based tests for triangulation structural invariants.
+Property-based tests for Tds (Triangulation Data Structure) combinatorial/topological invariants.
+
+**Architectural Layer:** Pure combinatorial structure (no geometric predicates)
 
 **Test Coverage:**
 
-- **Triangulation Validity**:
-  - Constructed triangulations pass is_valid()
-  - Cross-dimensional validity (2D-3D)
-- **Neighbor Symmetry**:
-  - If A neighbors B, then B neighbors A
-  - Reciprocal neighbor relationships
-- **Vertex-Cell Incidence**:
-  - All cell vertices exist in TDS
-  - Vertex key consistency
-- **No Duplicate Cells**:
-  - No two cells have identical vertex sets
-  - Unique cell configurations
-- **Incremental Construction**:
-  - Validity maintained after vertex insertion
-  - Dimension consistency after growth
-- **Dimension Consistency**:
-  - Dimension matches vertex count expectations
-  - Proper dimension evolution
-- **Vertex Count Consistency**:
-  - Vertex keys count matches number_of_vertices()
-  - Iterator consistency
+- **Vertex Mappings**: UUID↔key consistency for all vertices
+- **Cell Mappings**: UUID↔key consistency for all cells
+- **No Duplicate Cells**: No two cells share the same vertex set
+- **Cell Validity**: Each cell has correct vertex count and passes internal consistency checks
+- **Cell Vertex Count**: Maximal cells have exactly D+1 vertices (fundamental Tds constraint)
+- **Facet Sharing**: Each facet is shared by at most 2 cells
+- **Neighbor Consistency**: Neighbor relationships are mutual and reference shared facets
+  - Neighbor symmetry (if A neighbors B, then B neighbors A)
+  - Neighbor index semantics (correct facet-based indexing)
+- **Vertex-Cell Incidence**: All cell vertices exist in the TDS
+- **Vertex Count Consistency**: Vertex key count matches reported vertex count
+- **Dimension Consistency**: Reported dimension matches actual structure
+
+**Dimensions Tested:** 2D-5D
+
+**Run with:** `cargo test --test proptest_tds` or included in `just test`
+
+#### [`proptest_triangulation.rs`](./proptest_triangulation.rs)
+
+Property-based tests for Triangulation layer invariants (generic geometric layer with kernel).
+
+**Architectural Layer:** Generic geometric operations with kernel (delegates topology to Tds)
+
+**Test Coverage:**
+
+- **Geometric Quality Metrics**:
+  - Radius ratio bounds (R/r ≥ D for D-dimensional simplex)
+  - Radius ratio scaling and translation invariance
+  - Normalized volume invariance properties
+  - Quality metric consistency (degeneracy detection)
+  - Quality degradation under deformation
+- **Future Tests**:
+  - Facet iteration consistency
+  - Boundary facet detection
+  - Topology repair (fix_invalid_facet_sharing)
+  - Kernel consistency validation
+
+**Note:** Tests use `DelaunayTriangulation` for construction (most convenient way to obtain valid triangulations).
+The properties tested are generic Triangulation-layer concerns applicable to any triangulation with a kernel.
+
+**Dimensions Tested:** 2D-5D
 
 **Run with:** `cargo test --test proptest_triangulation` or included in `just test`
+
+#### [`proptest_delaunay_triangulation.rs`](./proptest_delaunay_triangulation.rs)
+
+Property-based tests for `DelaunayTriangulation` invariants (all Delaunay-specific properties).
+
+**Architectural Layer:** Delaunay-specific operations and the empty circumsphere property
+
+**Test Coverage:**
+
+- **Structural Invariants (Fast)**:
+  - Incremental insertion maintains validity after each insertion
+  - Duplicate coordinate rejection (geometric duplicate detection at insertion time)
+- **Delaunay Property (Expensive)**:
+  - Empty circumsphere condition - No vertex lies strictly inside any cell's circumsphere (2D-5D)
+  - Insertion-order invariance - Edge set independent of insertion order (2D, currently ignored - Issue #120)
+  - Duplicate cloud integration - Full pipeline with messy real-world inputs (2D-5D: duplicates + near-duplicates)
+
+**Status:** Some tests are currently ignored due to Delaunay property violations found during development. These are being investigated:
+
+- Empty circumsphere tests (2D-5D) - Delaunay property violations
+- Insertion-order invariance (2D) - Requires algorithmic investigation
+- Duplicate coordinate rejection - Failing on edge cases
+- Duplicate cloud integration - Related to empty circumsphere failures
+
+**Dimensions Tested:** 2D-5D
+
+**Run with:** `cargo test --test proptest_delaunay_triangulation` or included in `just test`
 
 #### [`proptest_bowyer_watson.rs`](./proptest_bowyer_watson.rs)
 

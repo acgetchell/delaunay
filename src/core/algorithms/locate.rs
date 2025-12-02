@@ -125,12 +125,7 @@ pub enum ConflictError {
 /// Basic point location in a 4D simplex:
 ///
 /// ```rust
-/// use delaunay::core::algorithms::locate::{locate, LocateResult};
-/// use delaunay::prelude::DelaunayTriangulation;
-/// use delaunay::geometry::kernel::FastKernel;
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
-/// use delaunay::vertex;
+/// use delaunay::prelude::*;
 ///
 /// // Create a 4D simplex (5 vertices)
 /// let vertices = vec![
@@ -163,12 +158,7 @@ pub enum ConflictError {
 /// Using a hint cell for faster location:
 ///
 /// ```rust
-/// use delaunay::core::algorithms::locate::{locate, LocateResult};
-/// use delaunay::prelude::DelaunayTriangulation;
-/// use delaunay::geometry::kernel::RobustKernel;
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
-/// use delaunay::vertex;
+/// use delaunay::prelude::*;
 ///
 /// // Create a 4D simplex
 /// let vertices = vec![

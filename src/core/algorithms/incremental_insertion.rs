@@ -22,8 +22,6 @@ use crate::core::triangulation_data_structure::{
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateScalar;
-use std::iter::Sum;
-use std::ops::{AddAssign, SubAssign};
 
 /// Error during incremental insertion.
 #[derive(Debug, thiserror::Error)]
@@ -94,6 +92,23 @@ pub enum InsertionError {
 ///
 /// # Errors
 /// Returns error if cell creation or insertion fails.
+///
+/// # Partial Mutation on Error
+///
+/// **IMPORTANT**: If this function returns an error, the TDS may be left in a
+/// partially updated state with some new cells already inserted. This function
+/// does NOT rollback cells created before the error occurred.
+///
+/// This behavior is intentional for performance reasons (avoiding double validation)
+/// and is safe because:
+/// - This function is only called during vertex insertion operations
+/// - If insertion fails, the entire triangulation is typically discarded
+/// - Callers should not attempt to use or recover a triangulation after
+///   receiving an error from this function
+///
+/// If you need transactional semantics (all-or-nothing insertion), you must
+/// implement rollback logic at a higher level by cloning the TDS before calling
+/// this function.
 pub fn fill_cavity<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
     new_vertex_key: VertexKey,
@@ -387,7 +402,6 @@ pub fn extend_hull<K, U, V, const D: usize>(
 ) -> Result<CellKeyBuffer, InsertionError>
 where
     K: Kernel<D>,
-    K::Scalar: AddAssign + SubAssign + Sum,
     U: DataType,
     V: DataType,
 {
@@ -442,7 +456,6 @@ fn find_visible_boundary_facets<K, U, V, const D: usize>(
 ) -> Result<Vec<FacetHandle>, InsertionError>
 where
     K: Kernel<D>,
-    K::Scalar: AddAssign + SubAssign + Sum,
     U: DataType,
     V: DataType,
 {

@@ -128,11 +128,10 @@
 //!
 //! [`DelaunayTriangulation::is_valid`](core::delaunay_triangulation::DelaunayTriangulation::is_valid) runs all **structural**
 //! invariants (mappings, duplicates, per-cell validity, facet sharing, neighbors) and returns
-//! only the first failure for convenience. For full diagnostics or to include the Delaunay
-//! invariant, use [`core::delaunay_triangulation::DelaunayTriangulation::validation_report`]
-//! with
-//! [`core::triangulation_data_structure::ValidationOptions::check_delaunay`]
-//! set to `true`.
+//! only the first failure for convenience. For full diagnostics, use
+//! [`core::delaunay_triangulation::DelaunayTriangulation::validation_report`].
+//! To check the Delaunay property, use
+//! [`core::delaunay_triangulation::DelaunayTriangulation::validate_delaunay`] separately.
 //!
 //! For detailed information, see:
 //! - [`core::algorithms::incremental_insertion`] - Primary invariant enforcement during triangulation construction
@@ -454,10 +453,14 @@ pub mod prelude {
         delaunay_triangulation::*,
         facet::*,
         traits::{boundary_analysis::*, data_type::*},
+        triangulation::*,
         triangulation_data_structure::*,
         util::*,
         vertex::*,
     };
+
+    // Re-export point location algorithms from core::algorithms
+    pub use crate::core::algorithms::locate::{LocateError, LocateResult, locate};
 
     // Re-export commonly used collection types from core::collections
     // These are frequently used in advanced examples and downstream code

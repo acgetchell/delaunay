@@ -154,9 +154,7 @@
 use std::{
     cmp::Ordering as CmpOrdering,
     fmt::{self, Debug},
-    iter::Sum,
     marker::PhantomData,
-    ops::{AddAssign, SubAssign},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -176,14 +174,10 @@ use uuid::Uuid;
 use crate::core::collections::{
     CellKeySet, CellRemovalBuffer, CellVertexUuidBuffer, CellVerticesMap, Entry, FacetToCellsMap,
     FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, SmallBuffer, StorageMap,
-    UuidToCellKeyMap, UuidToVertexKeyMap, ValidCellsBuffer, VertexKeyBuffer, VertexKeySet,
-    VertexToCellsMap, fast_hash_map_with_capacity,
+    UuidToCellKeyMap, UuidToVertexKeyMap, VertexKeyBuffer, VertexKeySet, VertexToCellsMap,
+    fast_hash_map_with_capacity,
 };
-use crate::core::util::DelaunayValidationError;
 use crate::geometry::traits::coordinate::CoordinateScalar;
-
-// num-traits imports
-use num_traits::cast::NumCast;
 
 // Parent module imports
 use super::{
@@ -369,12 +363,6 @@ pub enum TriangulationValidationError {
     /// Facet operation failed during validation.
     #[error("Facet operation failed: {0}")]
     FacetError(#[from] super::facet::FacetError),
-    /// The triangulation violates the Delaunay empty circumsphere property.
-    #[error("Delaunay invariant violated: {message}")]
-    DelaunayViolation {
-        /// Human-readable description of the Delaunay violation(s).
-        message: String,
-    },
     /// Finalization failed during triangulation operations.
     #[error("Finalization failed: {message}")]
     FinalizationFailed {
@@ -400,8 +388,6 @@ pub enum InvariantKind {
     FacetSharing,
     /// Neighbor topology and mutual-consistency invariants.
     NeighborConsistency,
-    /// Delaunay empty circumsphere invariant.
-    Delaunay,
 }
 
 /// A single invariant violation recorded during validation diagnostics.
@@ -429,13 +415,6 @@ impl TriangulationValidationReport {
     pub const fn is_empty(&self) -> bool {
         self.violations.is_empty()
     }
-}
-
-/// Configuration options for [`Tds::validation_report`].
-#[derive(Clone, Copy, Debug, Default)]
-pub struct ValidationOptions {
-    /// Whether to validate the Delaunay empty circumsphere invariant.
-    pub check_delaunay: bool,
 }
 
 // =============================================================================
@@ -1079,18 +1058,11 @@ where
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::Relaxed)
     }
-}
 
-// =============================================================================
-// QUERY OPERATIONS
-// =============================================================================
+    // =========================================================================
+    // QUERY OPERATIONS
+    // =========================================================================
 
-impl<T, U, V, const D: usize> Tds<T, U, V, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
     /// Returns a mutable reference to the internal cells storage.
     ///
     /// # ⚠️ Warning: Dangerous Internal API
@@ -2264,18 +2236,7 @@ where
 
         Ok(())
     }
-}
 
-// =============================================================================
-// TRIANGULATION LOGIC
-// =============================================================================
-
-impl<T, U, V, const D: usize> Tds<T, U, V, D>
-where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
-    U: DataType,
-    V: DataType,
-{
     /// Creates a new empty triangulation data structure.
     ///
     ///
@@ -2314,22 +2275,7 @@ where
             generation: Arc::new(AtomicU64::new(0)),
         }
     }
-}
 
-// =============================================================================
-// NEIGHBOR & INCIDENT ASSIGNMENT
-// =============================================================================
-// Note: These methods have been moved to the minimal trait bounds impl block
-// since they only require basic TDS functionality, not coordinate operations.
-
-// Placeholder comment to maintain section structure
-
-impl<T, U, V, const D: usize> Tds<T, U, V, D>
-where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
-    U: DataType,
-    V: DataType,
-{
     /// Clears all neighbor relationships between cells in the triangulation.
     ///
     /// This method removes all neighbor relationships by setting the `neighbors` field
@@ -2371,83 +2317,6 @@ where
         }
         // Topology changed; invalidate caches.
         self.bump_generation();
-    }
-}
-
-// =============================================================================
-// NEIGHBOR ASSIGNMENT (requires additional trait bounds)
-// =============================================================================
-
-// =============================================================================
-// DUPLICATE REMOVAL & FACET MAPPING
-// =============================================================================
-
-impl<T, U, V, const D: usize> Tds<T, U, V, D>
-where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
-    U: DataType,
-    V: DataType,
-{
-    /// Remove duplicate cells (cells with identical vertex sets)
-    ///
-    /// Returns the number of duplicate cells that were removed.
-    ///
-    /// After removing duplicate cells, this method rebuilds the topology
-    /// (neighbor relationships and incident cells) to maintain data structure
-    /// invariants and prevent stale references.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `TriangulationValidationError` if:
-    /// - Vertex keys cannot be retrieved for any cell (data structure corruption)
-    /// - Neighbor assignment fails after cell removal
-    /// - Incident cell assignment fails after cell removal
-    pub fn remove_duplicate_cells(&mut self) -> Result<usize, TriangulationValidationError> {
-        let mut unique_cells = FastHashMap::default();
-        let mut cells_to_remove = CellRemovalBuffer::new();
-
-        // First pass: identify duplicate cells
-        for cell_key in self.cells.keys() {
-            let vertices = self.get_cell_vertices(cell_key)?;
-            // Sort vertex UUIDs instead of keys for deterministic ordering
-            // Note: Don't sort by VertexKey as slotmap::Key's Ord is implementation-defined
-            let mut vertex_uuids: Vec<_> = vertices
-                .iter()
-                .map(|&key| self.vertices[key].uuid())
-                .collect();
-            vertex_uuids.sort_unstable();
-
-            // Use Entry API for atomic check-and-insert
-            match unique_cells.entry(vertex_uuids) {
-                Entry::Occupied(_) => {
-                    cells_to_remove.push(cell_key);
-                }
-                Entry::Vacant(e) => {
-                    e.insert(cell_key);
-                }
-            }
-        }
-
-        let duplicate_count = cells_to_remove.len();
-
-        // Second pass: remove duplicate cells and their corresponding UUID mappings
-        for cell_key in &cells_to_remove {
-            if let Some(removed_cell) = self.cells.remove(*cell_key) {
-                // Remove from our optimized UUID-to-key mapping
-                self.uuid_to_cell_key.remove(&removed_cell.uuid());
-            }
-        }
-
-        if duplicate_count > 0 {
-            // Rebuild topology to avoid stale references after cell removal
-            // This ensures vertices don't point to removed cells via incident_cell,
-            // and neighbor arrays don't reference removed keys
-            self.assign_neighbors()?;
-            self.assign_incident_cells()?;
-
-            // Generation already bumped by assign_neighbors(); avoid double increment
-        }
-        Ok(duplicate_count)
     }
 
     /// Builds a `FacetToCellsMap` with strict error handling.
@@ -2518,320 +2387,74 @@ where
         Ok(facet_to_cells)
     }
 
-    /// Fixes invalid facet sharing by removing problematic cells
+    /// Remove duplicate cells (cells with identical vertex sets)
     ///
-    /// This method first checks if there are any invalid facet sharing issues using
-    /// `validate_facet_sharing()`. If validation passes, no action is needed.
-    /// Otherwise, it identifies facets that are shared by more than 2 cells (which is
-    /// geometrically impossible in a valid triangulation) and removes the excess cells.
-    /// It intelligently determines which cells actually contain the vertices of the facet
-    /// and removes cells that don't properly contain those vertices.
+    /// Returns the number of duplicate cells that were removed.
     ///
-    /// # Returns
-    ///
-    /// A `Result` containing the number of invalid cells that were removed during the cleanup process.
-    /// Returns `Ok(0)` if no fixes were needed.
+    /// After removing duplicate cells, this method rebuilds the topology
+    /// (neighbor relationships and incident cells) to maintain data structure
+    /// invariants and prevent stale references.
     ///
     /// # Errors
     ///
     /// Returns a `TriangulationValidationError` if:
-    /// - Facet creation fails during the validation process
-    /// - Neighbor or incident cell assignment fails during topology repair
-    ///
-    /// # Algorithm
-    ///
-    /// 1. Use `validate_facet_sharing()` to check if there are any issues
-    /// 2. If validation passes, return early (no fix needed)
-    /// 3. Otherwise, build a map from facet keys to the cells that contain them
-    /// 4. For each facet shared by more than 2 cells:
-    ///    - Extract the actual facet vertices from one of the cells using `Facet::vertices()`
-    ///    - Verify which cells truly contain all vertices of that facet using `Cell::vertices()`
-    ///    - Keep only the valid cells (up to 2) and remove invalid ones
-    /// 5. Remove the excess/invalid cells and update the cell bimap accordingly
-    /// 6. Clean up any resulting duplicate cells
-    ///
-    /// # Selection Strategy
-    ///
-    /// This is a purely topological repair that uses UUID ordering for deterministic
-    /// cell selection when multiple valid cells share a facet. For quality-based selection,
-    /// use `Triangulation::fix_invalid_facet_sharing()` instead.
-    #[expect(clippy::too_many_lines)]
-    #[allow(dead_code)]
-    pub(crate) fn fix_invalid_facet_sharing_uuid_only(
-        &mut self,
-    ) -> Result<usize, TriangulationValidationError> {
-        // Safety limit for iteration count to prevent infinite loops
-        const MAX_FIX_FACET_ITERATIONS: usize = 10;
+    /// - Vertex keys cannot be retrieved for any cell (data structure corruption)
+    /// - Neighbor assignment fails after cell removal
+    /// - Incident cell assignment fails after cell removal
+    pub fn remove_duplicate_cells(&mut self) -> Result<usize, TriangulationValidationError> {
+        let mut unique_cells = FastHashMap::default();
+        let mut cells_to_remove = CellRemovalBuffer::new();
 
-        // First check if there are any facet sharing issues using the validation function
-        if self.validate_facet_sharing().is_ok() {
-            // No facet sharing issues found, no fix needed
-            return Ok(0);
+        // First pass: identify duplicate cells
+        for cell_key in self.cells.keys() {
+            let vertices = self.get_cell_vertices(cell_key)?;
+            // Sort vertex UUIDs instead of keys for deterministic ordering
+            // Note: Don't sort by VertexKey as slotmap::Key's Ord is implementation-defined
+            let mut vertex_uuids: Vec<_> = vertices
+                .iter()
+                .map(|&key| self.vertices[key].uuid())
+                .collect();
+            vertex_uuids.sort_unstable();
+
+            // Use Entry API for atomic check-and-insert
+            match unique_cells.entry(vertex_uuids) {
+                Entry::Occupied(_) => {
+                    cells_to_remove.push(cell_key);
+                }
+                Entry::Vacant(e) => {
+                    e.insert(cell_key);
+                }
+            }
         }
 
-        // Iterate until all facet sharing issues are resolved
-        // Multiple passes may be needed as removing cells can create new issues
-        let mut total_removed = 0;
+        let duplicate_count = cells_to_remove.len();
 
-        #[allow(unused_variables)] // iteration only used in debug_assertions
-        for iteration in 0..MAX_FIX_FACET_ITERATIONS {
-            #[cfg(debug_assertions)]
-            eprintln!("fix_invalid_facet_sharing: Starting iteration {iteration}");
-
-            // Check if facet sharing is already valid at the start of this iteration
-            if self.validate_facet_sharing().is_ok() {
-                #[cfg(debug_assertions)]
-                if iteration > 0 {
-                    eprintln!(
-                        "✓ Fixed invalid facet sharing after {iteration} iterations, removed {total_removed} total cells"
-                    );
-                }
-                return Ok(total_removed);
+        // Second pass: remove duplicate cells and their corresponding UUID mappings
+        for cell_key in &cells_to_remove {
+            if let Some(removed_cell) = self.cells.remove(*cell_key) {
+                // Remove from our optimized UUID-to-key mapping
+                self.uuid_to_cell_key.remove(&removed_cell.uuid());
             }
-
-            // There are facet sharing issues, proceed with the fix
-            // Use strict build - if it fails, we can't reliably repair the triangulation
-            // The facet map is essential for identifying shared facets
-            let facet_to_cells = match self.build_facet_to_cells_map() {
-                Ok(map) => map,
-                Err(e) => {
-                    // If we can't build a facet map, we can't reliably repair
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "Warning: Facet map build failed during repair: {e}. \
-                         Cannot safely repair without valid facet mapping."
-                    );
-                    return Err(e);
-                }
-            };
-            let mut cells_to_remove: CellKeySet = CellKeySet::default();
-
-            // Find facets that are shared by more than 2 cells and validate which ones are correct
-            #[allow(unused_variables)] // facet_key used in debug_assertions
-            for (facet_key, cell_facet_pairs) in facet_to_cells {
-                #[cfg(debug_assertions)]
-                if cell_facet_pairs.len() > 2 {
-                    eprintln!(
-                        "Iteration {}: Processing facet {} with {} sharing cells",
-                        iteration,
-                        facet_key,
-                        cell_facet_pairs.len()
-                    );
-                }
-
-                if cell_facet_pairs.len() > 2 {
-                    let first_cell_key = cell_facet_pairs[0].cell_key();
-                    let first_facet_index = cell_facet_pairs[0].facet_index();
-                    if self.cells.contains_key(first_cell_key) {
-                        // Use direct key-based method with proper error propagation
-                        // The error is already TriangulationValidationError, so just propagate it
-                        let vertices = self.get_cell_vertices(first_cell_key)?;
-                        // Allocate facet_vertices buffer once, reuse for all facets
-                        let mut facet_vertices = Vec::with_capacity(vertices.len() - 1);
-                        let idx: usize = first_facet_index.into();
-                        for (i, &key) in vertices.iter().enumerate() {
-                            if i != idx {
-                                facet_vertices.push(key);
-                            }
-                        }
-
-                        // Build the facet vertex set once, outside the loop
-                        let facet_vertices_set: VertexKeySet =
-                            facet_vertices.iter().copied().collect();
-
-                        let mut valid_cells = ValidCellsBuffer::new();
-                        for facet_handle in &cell_facet_pairs {
-                            let cell_key = facet_handle.cell_key();
-                            if self.cells.contains_key(cell_key) {
-                                // Use direct key-based method with proper error propagation
-                                // The error is already TriangulationValidationError, so just propagate it
-                                let cell_vertices_vec = self.get_cell_vertices(cell_key)?;
-                                // Use iter().copied() to avoid moving the Vec
-                                let cell_vertices: VertexKeySet =
-                                    cell_vertices_vec.iter().copied().collect();
-
-                                if facet_vertices_set.is_subset(&cell_vertices) {
-                                    valid_cells.push(cell_key);
-                                } else {
-                                    cells_to_remove.insert(cell_key);
-                                }
-                            }
-                        }
-
-                        #[cfg(debug_assertions)]
-                        eprintln!(
-                            "Iteration {}: Facet {} has {} valid cells",
-                            iteration,
-                            facet_key,
-                            valid_cells.len()
-                        );
-
-                        if valid_cells.len() > 2 {
-                            #[cfg(debug_assertions)]
-                            eprintln!(
-                                "Iteration {}: Facet {} has {} valid cells, using UUID ordering to select 2",
-                                iteration,
-                                facet_key,
-                                valid_cells.len()
-                            );
-
-                            // UUID-based selection for deterministic behavior
-                            // For quality-based selection, use Triangulation::fix_invalid_facet_sharing()
-                            valid_cells.sort_unstable_by_key(|&k| self.cells[k].uuid());
-                            for &cell_key in valid_cells.iter().skip(2) {
-                                if self.cells.contains_key(cell_key) {
-                                    cells_to_remove.insert(cell_key);
-
-                                    #[cfg(debug_assertions)]
-                                    eprintln!("Removing cell {cell_key:?} (UUID-based selection)");
-                                } else {
-                                    #[cfg(debug_assertions)]
-                                    eprintln!(
-                                        "Cell {cell_key:?} already removed in previous iteration"
-                                    );
-                                }
-                            }
-                        }
-
-                        if cfg!(debug_assertions) {
-                            let total_cells = cell_facet_pairs.len();
-                            let removed_count = total_cells - valid_cells.len().min(2);
-                            if removed_count > 0 {
-                                #[cfg(debug_assertions)]
-                                eprintln!(
-                                    "Warning: Facet {} was shared by {} cells, removing {} invalid cells (keeping {} valid)",
-                                    facet_key,
-                                    total_cells,
-                                    removed_count,
-                                    valid_cells.len().min(2)
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "Iteration {}: Facet processing complete, {} cells marked for removal",
-                iteration,
-                cells_to_remove.len()
-            );
-
-            // Remove the invalid/excess cells using batch API (handles UUID mapping and generation)
-            let to_remove: Vec<CellKey> = cells_to_remove.into_iter().collect();
-            let actually_removed = self.remove_cells_by_keys(&to_remove);
-
-            #[cfg(debug_assertions)]
-            eprintln!("Iteration {iteration}: Removed {actually_removed} cells directly");
-
-            // Clean up any resulting duplicate cells
-            #[cfg(debug_assertions)]
-            eprintln!("Iteration {iteration}: Calling remove_duplicate_cells");
-            let duplicate_cells_removed = match self.remove_duplicate_cells() {
-                Ok(n) => n,
-                Err(e) => {
-                    // Count direct removals before retrying next pass
-                    total_removed += actually_removed;
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "Iteration {iteration}: remove_duplicate_cells failed (will retry next iteration): {e}"
-                    );
-                    continue; // try again next pass
-                }
-            };
-
-            #[cfg(debug_assertions)]
-            eprintln!("Iteration {iteration}: Removed {duplicate_cells_removed} duplicate cells");
-
-            // Topology was rebuilt inside remove_duplicate_cells() when duplicates were removed.
-            // If no duplicates were found but cells were removed, we must rebuild topology ourselves
-            // per the contract of remove_cells_by_keys().
-            if actually_removed > 0 && duplicate_cells_removed == 0 {
-                #[cfg(debug_assertions)]
-                eprintln!("Iteration {iteration}: Rebuilding topology after removals");
-
-                if let Err(e) = self.assign_neighbors() {
-                    // Count removals before retrying
-                    total_removed += actually_removed;
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "Iteration {iteration}: assign_neighbors failed (will retry next iteration): {e}"
-                    );
-                    continue;
-                }
-
-                if let Err(e) = self.assign_incident_cells() {
-                    // Count removals before retrying
-                    total_removed += actually_removed;
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "Iteration {iteration}: assign_incident_cells failed (will retry next iteration): {e}"
-                    );
-                    continue;
-                }
-            }
-
-            let removed_this_iteration = actually_removed + duplicate_cells_removed;
-            total_removed += removed_this_iteration;
-
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "Iteration {iteration}: Removed {removed_this_iteration} cells ({actually_removed} directly, {duplicate_cells_removed} duplicates)"
-            );
-
-            // If no cells were removed this iteration, or validation passes, we're done
-            let validation_ok = self.validate_facet_sharing().is_ok();
-
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "Iteration {iteration}: validation_ok={validation_ok}, removed_this_iteration={removed_this_iteration}"
-            );
-
-            if removed_this_iteration == 0 || validation_ok {
-                #[cfg(debug_assertions)]
-                if iteration > 0 {
-                    eprintln!(
-                        "✓ Fixed invalid facet sharing after {} iterations, removed {} total cells",
-                        iteration + 1,
-                        total_removed
-                    );
-                }
-                break;
-            }
-
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "Iteration {}: Removed {} cells, {} total removed so far",
-                iteration + 1,
-                removed_this_iteration,
-                total_removed
-            );
         }
 
-        // After loop, verify that facet sharing is actually fixed
-        if self.validate_facet_sharing().is_err() {
-            return Err(TriangulationValidationError::InconsistentDataStructure {
-                message: format!(
-                    "fix_invalid_facet_sharing: reached MAX_FIX_FACET_ITERATIONS={MAX_FIX_FACET_ITERATIONS} with remaining invalid facet sharing"
-                ),
-            });
-        }
+        if duplicate_count > 0 {
+            // Rebuild topology to avoid stale references after cell removal
+            // This ensures vertices don't point to removed cells via incident_cell,
+            // and neighbor arrays don't reference removed keys
+            self.assign_neighbors()?;
+            self.assign_incident_cells()?;
 
-        Ok(total_removed)
+            // Generation already bumped by assign_neighbors(); avoid double increment
+        }
+        Ok(duplicate_count)
     }
-}
 
-// =============================================================================
-// VALIDATION & CONSISTENCY CHECKS
-// =============================================================================
+    // =========================================================================
+    // VALIDATION & CONSISTENCY CHECKS
+    // =========================================================================
+    // Note: Validation methods only require CoordinateScalar (for Cell/Vertex type bounds).
+    // They don't perform numeric operations, so AddAssign/SubAssign/Sum/NumCast are not needed.
 
-impl<T, U, V, const D: usize> Tds<T, U, V, D>
-where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
-    U: DataType,
-    V: DataType,
-{
     /// Validates the consistency of vertex UUID-to-key mappings.
     ///
     /// This helper function ensures that:
@@ -3205,14 +2828,12 @@ where
     /// mappings, duplicate cells, per-cell validity, facet sharing, and neighbor
     /// consistency) and returns only the first failure.
     ///
-    /// It does **not** enable the expensive global Delaunay check; to include that,
-    /// use [`Tds::validation_report`](Self::validation_report) with
-    /// [`ValidationOptions::check_delaunay`] set to `true`, or call
-    /// [`Tds::validate_delaunay`](Self::validate_delaunay) directly.
+    /// **Note**: This does NOT check the Delaunay property. Use
+    /// `DelaunayTriangulation::validate_delaunay()` for geometric validation.
     pub fn is_valid(&self) -> Result<(), TriangulationValidationError> {
         // Delegate to the multi-invariant report API and return only the first
         // error for backward compatibility.
-        match self.validation_report(ValidationOptions::default()) {
+        match self.validation_report() {
             Ok(()) => Ok(()),
             Err(report) => {
                 let first = report
@@ -3225,75 +2846,7 @@ where
         }
     }
 
-    /// Validates only the Delaunay empty circumsphere invariant.
-    ///
-    /// This is a convenience wrapper around `core::util::is_delaunay` that maps
-    /// `DelaunayValidationError` into `TriangulationValidationError`.
-    ///
-    /// # Deprecation Notice
-    ///
-    /// **This method is deprecated** and will be removed in a future version.
-    /// The Delaunay validation logic belongs in the `DelaunayTriangulation` layer,
-    /// not in the generic `Tds` (Triangulation Data Structure) layer.
-    ///
-    /// **Migration Guide**:
-    /// - If using `DelaunayTriangulation`, call `dt.validate_delaunay()` instead
-    /// - If using `Tds` directly, call `crate::core::util::is_delaunay(&tds)` instead
-    ///
-    /// This deprecation follows CGAL's architecture where Tds is purely combinatorial
-    /// and Delaunay-specific operations live in the Delaunay triangulation layer.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`TriangulationValidationError`] if the triangulation violates
-    /// the Delaunay property or if structural validation fails during the check.
-    ///
-    /// This corresponds to [`InvariantKind::Delaunay`], which is reported by
-    /// [`Tds::validation_report`](Self::validation_report). It is **not** enabled by
-    /// default in [`Tds::is_valid`](Self::is_valid) and must be requested via
-    /// [`ValidationOptions::check_delaunay`] or by calling this method directly.
-    #[deprecated(
-        since = "0.6.0",
-        note = "Use `DelaunayTriangulation::validate_delaunay()` or `crate::core::util::is_delaunay()` instead. Tds should be purely combinatorial."
-    )]
-    pub fn validate_delaunay(&self) -> Result<(), TriangulationValidationError>
-    where
-        T: std::ops::AddAssign<T> + std::ops::SubAssign<T> + std::iter::Sum + num_traits::NumCast,
-    {
-        crate::core::util::is_delaunay(self).map_err(|err| {
-            match err {
-                DelaunayValidationError::DelaunayViolation { cell_key } => {
-                    let cell_uuid = self
-                        .cell_uuid_from_key(cell_key)
-                        .unwrap_or_else(uuid::Uuid::nil);
-                    TriangulationValidationError::DelaunayViolation {
-                        message: format!(
-                            "Cell {cell_uuid} (key: {cell_key:?}) violates Delaunay property"
-                        ),
-                    }
-                }
-                DelaunayValidationError::TriangulationState { source } => source,
-                DelaunayValidationError::InvalidCell { source } => {
-                    TriangulationValidationError::InvalidCell {
-                        cell_id: uuid::Uuid::nil(), // Best effort - cell UUID not available in error
-                        source,
-                    }
-                }
-                DelaunayValidationError::NumericPredicateError {
-                    cell_key,
-                    vertex_key,
-                    source,
-                } => TriangulationValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Numeric predicate failure while validating Delaunay property for cell {cell_key:?}, vertex {vertex_key:?}: {source}",
-                    ),
-                },
-            }
-        })
-    }
-
-    /// Runs all structural validation checks (and optionally the Delaunay invariant)
-    /// and returns a report containing **all** failed invariants.
+    /// Runs all structural validation checks and returns a report containing **all** failed invariants.
     ///
     /// Unlike [`is_valid()`](Self::is_valid), this method does **not** stop at the
     /// first error. Instead it records a [`TriangulationValidationError`] for each
@@ -3303,17 +2856,14 @@ where
     /// This is primarily intended for debugging, diagnostics, and tests that
     /// want to surface every violated invariant at once.
     ///
+    /// **Note**: This does NOT check the Delaunay property. Use
+    /// `DelaunayTriangulation::validate_delaunay()` for geometric validation.
+    ///
     /// # Errors
     ///
     /// Returns a [`TriangulationValidationReport`] containing all invariant
     /// violations if any validation step fails.
-    pub fn validation_report(
-        &self,
-        options: ValidationOptions,
-    ) -> Result<(), TriangulationValidationReport>
-    where
-        T: std::ops::AddAssign<T> + std::ops::SubAssign<T> + std::iter::Sum + num_traits::NumCast,
-    {
+    pub fn validation_report(&self) -> Result<(), TriangulationValidationReport> {
         let mut violations = Vec::new();
 
         // 1. Mapping consistency (vertex + cell UUID↔key mappings)
@@ -3380,45 +2930,6 @@ where
                 kind: InvariantKind::NeighborConsistency,
                 error: e,
             });
-        }
-
-        // 6. Optional Delaunay property (empty circumsphere invariant)
-        if options.check_delaunay {
-            // Use crate::core::util::is_delaunay directly instead of deprecated method
-            let result = crate::core::util::is_delaunay(self).map_err(|err| match err {
-                DelaunayValidationError::DelaunayViolation { cell_key } => {
-                    let cell_uuid = self
-                        .cell_uuid_from_key(cell_key)
-                        .unwrap_or_else(uuid::Uuid::nil);
-                    TriangulationValidationError::DelaunayViolation {
-                        message: format!(
-                            "Cell {cell_uuid} (key: {cell_key:?}) violates Delaunay property"
-                        ),
-                    }
-                }
-                DelaunayValidationError::TriangulationState { source } => source,
-                DelaunayValidationError::InvalidCell { source } => {
-                    TriangulationValidationError::InvalidCell {
-                        cell_id: uuid::Uuid::nil(),
-                        source,
-                    }
-                }
-                DelaunayValidationError::NumericPredicateError {
-                    cell_key,
-                    vertex_key,
-                    source,
-                } => TriangulationValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Numeric predicate failure while validating Delaunay property for cell {cell_key:?}, vertex {vertex_key:?}: {source}"
-                    ),
-                },
-            });
-            if let Err(e) = result {
-                violations.push(InvariantViolation {
-                    kind: InvariantKind::Delaunay,
-                    error: e,
-                });
-            }
         }
 
         if violations.is_empty() {

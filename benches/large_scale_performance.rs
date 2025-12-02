@@ -136,9 +136,11 @@ fn measure_construction_with_memory<const D: usize>(n_points: usize, seed: u64) 
     let mem_before_tds = get_memory_usage();
 
     let dt = DelaunayTriangulation::new(&vertices).expect("Failed to create triangulation");
-    let _tds = dt.tds();
 
     let mem_after = get_memory_usage();
+
+    // Keep dt alive for accurate memory measurement
+    black_box(&dt);
 
     // Total delta includes setup + TDS
     let delta_i128 = i128::from(mem_after) - i128::from(mem_before);

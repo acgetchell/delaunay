@@ -39,7 +39,7 @@ macro_rules! test_convex_hull_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = delaunay::core::delaunay_triangulation::DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
                         // Filter: Skip degenerate configurations (no boundary facets)
                         // These are tested separately in dedicated degenerate case tests
                         let boundary_count = dt.tds().number_of_boundary_facets().unwrap_or(0);
@@ -80,7 +80,7 @@ macro_rules! test_convex_hull_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = delaunay::core::delaunay_triangulation::DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
                         if let Ok(hull) = ConvexHull::from_triangulation(dt.triangulation()) {
                             let facet_count = hull.facet_count();
                             let vertex_count = dt.tds().vertices().count();
@@ -127,7 +127,7 @@ macro_rules! test_convex_hull_properties {
                     ).prop_map(|v| Vertex::from_points(&v)),
                     new_point in prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new)
                 ) {
-                    if let Ok(mut dt) = delaunay::core::delaunay_triangulation::DelaunayTriangulation::<_, (), (), $dim>::new(&initial_vertices) {
+                    if let Ok(mut dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&initial_vertices) {
                         // Filter: Skip degenerate initial configurations
                         let initial_boundary_count = dt.tds().number_of_boundary_facets().unwrap_or(0);
                         prop_assume!(initial_boundary_count > 0);
@@ -182,7 +182,7 @@ macro_rules! test_convex_hull_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = delaunay::core::delaunay_triangulation::DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
                         if let Ok(hull) = ConvexHull::from_triangulation(dt.triangulation()) {
                             let tds_vertex_count = dt.tds().vertices().count();
                             let facet_count = hull.facet_count();
@@ -232,7 +232,7 @@ macro_rules! test_convex_hull_properties {
 
                     let vertices = Vertex::from_points(&points);
 
-                    if let Ok(dt) = delaunay::core::delaunay_triangulation::DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
                         if let Ok(hull) = ConvexHull::from_triangulation(dt.triangulation()) {
                             // A minimal D-simplex should have exactly D+1 facets
                             prop_assert_eq!(
@@ -254,7 +254,7 @@ macro_rules! test_convex_hull_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = delaunay::core::delaunay_triangulation::DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
                         if let Ok(hull1) = ConvexHull::from_triangulation(dt.triangulation()) {
                             if let Ok(hull2) = ConvexHull::from_triangulation(dt.triangulation()) {
                                 // Both hulls should have the same facet count

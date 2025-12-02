@@ -7,8 +7,6 @@ use crate::core::{
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use num_traits::NumCast;
-use std::iter::Sum;
-use std::ops::{AddAssign, SubAssign};
 
 /// Trait for boundary analysis operations on triangulations.
 ///
@@ -41,7 +39,7 @@ use std::ops::{AddAssign, SubAssign};
 /// ```
 pub trait BoundaryAnalysis<T, U, V, const D: usize>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
+    T: CoordinateScalar + NumCast,
     U: DataType,
     V: DataType,
 {

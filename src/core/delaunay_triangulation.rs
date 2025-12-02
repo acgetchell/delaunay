@@ -9,20 +9,15 @@ use std::num::NonZeroUsize;
 
 use num_traits::NumCast;
 
-use crate::core::algorithms::incremental_insertion::{
-    InsertionError, extend_hull, fill_cavity, wire_cavity_neighbors,
-};
-use crate::core::algorithms::locate::{
-    LocateResult, extract_cavity_boundary, find_conflict_region, locate,
-};
+use crate::core::algorithms::incremental_insertion::InsertionError;
+use crate::core::algorithms::locate::{LocateResult, find_conflict_region, locate};
 use crate::core::cell::Cell;
-use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::triangulation_data_structure::{
     CellKey, Tds, TriangulationConstructionError, TriangulationValidationError,
-    TriangulationValidationReport, ValidationOptions, VertexKey,
+    TriangulationValidationReport, VertexKey,
 };
 use crate::core::util::DelaunayValidationError;
 use crate::core::vertex::Vertex;
@@ -237,7 +232,7 @@ where
 
         // Build initial simplex directly (no Bowyer-Watson)
         let initial_vertices = &vertices[..=D];
-        let tds = Self::build_initial_simplex(initial_vertices)?;
+        let tds = Triangulation::<K, U, V, D>::build_initial_simplex(initial_vertices)?;
 
         let mut dt = Self {
             tri: Triangulation { kernel, tds },
@@ -253,71 +248,6 @@ where
         }
 
         Ok(dt)
-    }
-
-    /// Build initial D-simplex from D+1 vertices without using Bowyer-Watson.
-    ///
-    /// This creates a Tds with a single cell containing all D+1 vertices,
-    /// with no neighbor relationships (all boundary facets).
-    ///
-    /// # Arguments
-    /// - `vertices`: Exactly D+1 vertices to form the initial simplex
-    ///
-    /// # Returns
-    /// A Tds containing one D-cell with all vertices, ready for incremental insertion.
-    ///
-    /// # Errors
-    /// Returns error if:
-    /// - Wrong number of vertices (must be exactly D+1)
-    /// - Vertex or cell insertion fails
-    /// - Duplicate UUIDs detected
-    fn build_initial_simplex(
-        vertices: &[Vertex<K::Scalar, U, D>],
-    ) -> Result<Tds<K::Scalar, U, V, D>, TriangulationConstructionError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
-        if vertices.len() != D + 1 {
-            return Err(TriangulationConstructionError::InsufficientVertices {
-                dimension: D,
-                source: crate::core::cell::CellValidationError::InsufficientVertices {
-                    actual: vertices.len(),
-                    expected: D + 1,
-                    dimension: D,
-                },
-            });
-        }
-
-        // Create empty Tds
-        let mut tds = Tds::empty();
-
-        // Insert all vertices and collect their keys
-        let mut vertex_keys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-        for vertex in vertices {
-            let vkey = tds.insert_vertex_with_mapping(*vertex)?;
-            vertex_keys.push(vkey);
-        }
-
-        // Create single D-cell from all vertices
-        // Note: Cell::new() handles vertex ordering/orientation internally
-        let cell = Cell::new(vertex_keys, None).map_err(|e| {
-            TriangulationConstructionError::FailedToCreateCell {
-                message: format!("Failed to create initial simplex cell: {e}"),
-            }
-        })?;
-
-        // Insert the cell
-        let _cell_key = tds.insert_cell_with_mapping(cell)?;
-
-        // Assign incident cells to vertices (each vertex points to this one cell)
-        // This is required for proper Tds structure
-        tds.assign_incident_cells()
-            .map_err(TriangulationConstructionError::ValidationError)?;
-
-        // Cache the initial cell key for first insert() hint
-        // (This will be returned but caller will set last_inserted_cell)
-
-        Ok(tds)
     }
 
     /// Returns the number of vertices in the triangulation.
@@ -683,127 +613,75 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
-        // 1. Insert vertex into Tds
-        let v_key = self.tri.tds.insert_vertex_with_mapping(vertex)?;
-
-        // 2. Check if we need to bootstrap the initial simplex
         let num_vertices = self.tri.tds.number_of_vertices();
 
+        // Bootstrap (< D+1) or initial simplex (== D+1): delegate directly
         if num_vertices < D + 1 {
-            // Bootstrap phase: just accumulate vertices, no cells yet
-            return Ok(v_key);
-        } else if num_vertices == D + 1 {
-            // Build initial simplex from all D+1 vertices
-            let all_vertices: Vec<_> = self.tri.tds.vertices().map(|(_, v)| *v).collect();
-            let new_tds = Self::build_initial_simplex(&all_vertices).map_err(|e| {
-                InsertionError::CavityFilling {
-                    message: format!("Failed to build initial simplex: {e}"),
-                }
-            })?;
-
-            // Replace empty TDS with simplex TDS (preserve kernel)
-            self.tri.tds = new_tds;
-
-            // Cache first cell for future locate hints
-            self.last_inserted_cell = self.tri.tds.cell_keys().next();
-
+            let (v_key, hint) = self.tri.insert(vertex, None, self.last_inserted_cell)?;
+            self.last_inserted_cell = hint;
             return Ok(v_key);
         }
 
-        // 3. Locate containing cell (for vertex D+2 and beyond)
-        // Copy the point before borrowing tds mutably
-        let point = *self
-            .tri
-            .tds
-            .get_vertex_by_key(v_key)
-            .ok_or_else(|| InsertionError::CavityFilling {
-                message: "Vertex key invalid immediately after insertion".to_string(),
-            })?
-            .point();
+        // For D+2 and beyond: compute Delaunay conflict region first
+        // We need to locate and find conflict region BEFORE calling tri.insert()
+        // because the vertex hasn't been inserted into Tds yet
+
+        // First, do a pre-check by locating the point
+        let point = vertex.point();
         let location = locate(
             &self.tri.tds,
             &self.tri.kernel,
-            &point,
+            point,
             self.last_inserted_cell,
         )?;
 
-        // 4. Handle different location results
-        match location {
-            LocateResult::InsideCell(start_cell) => {
-                // Interior vertex: use cavity-based insertion
-
-                // 5. Find conflict region
-                let conflict_cells =
-                    find_conflict_region(&self.tri.tds, &self.tri.kernel, &point, start_cell)?;
-
-                // 6. Extract cavity boundary
-                let boundary_facets = extract_cavity_boundary(&self.tri.tds, &conflict_cells)?;
-
-                // 7. Fill cavity BEFORE removing old cells (so boundary cells still exist)
-                let new_cells = fill_cavity(&mut self.tri.tds, v_key, &boundary_facets)?;
-
-                // 8. Wire neighbors (while both old and new cells exist)
-                wire_cavity_neighbors(&mut self.tri.tds, &new_cells, Some(&conflict_cells))?;
-
-                // 9. Remove conflict cells (now that new cells are wired up)
-                let _removed_count = self.tri.tds.remove_cells_by_keys(&conflict_cells);
-
-                // 10. Repair any invalid facet sharing using geometric quality metrics
-                // This is usually not needed, but handles edge cases with degenerate geometry
-                if let Err(e) = self.tri.fix_invalid_facet_sharing() {
-                    // Log in debug builds but continue - the triangulation is still usable
-                    #[cfg(debug_assertions)]
-                    eprintln!("Warning: facet sharing repair failed after insertion: {e}");
-                    // In release builds, silently continue. The repair failure indicates
-                    // geometric issues that may accumulate, but the triangulation remains
-                    // topologically valid for most operations.
-                    // TODO: Consider tracking repair failures via a diagnostic counter
-                    // that users can query (e.g., needs_repair() method)
-                    #[cfg(not(debug_assertions))]
-                    let _ = e;
-                }
-
-                // 11. Cache last inserted cell for next locate hint
-                self.last_inserted_cell = new_cells.first().copied();
-
-                Ok(v_key)
-            }
-            LocateResult::Outside => {
-                // Exterior vertex: extend convex hull
-                let new_cells = extend_hull(&mut self.tri.tds, &self.tri.kernel, v_key, &point)?;
-
-                // Cache last inserted cell for next locate hint
-                self.last_inserted_cell = new_cells.first().copied();
-
-                Ok(v_key)
-            }
+        // Compute conflict region for interior points (requires in-sphere predicate)
+        let conflict_cells = match location {
+            LocateResult::InsideCell(start_cell) => Some(find_conflict_region(
+                &self.tri.tds,
+                &self.tri.kernel,
+                point,
+                start_cell,
+            )?),
+            LocateResult::Outside => None, // Hull extension doesn't need conflict region
             _ => {
-                // TODO: Handle degenerate point locations (OnFacet, OnEdge, OnVertex)
-                // These cases occur when a point lies exactly on a facet, edge, or coincides
-                // with an existing vertex. Proper handling requires:
-                // - OnVertex: Detect duplicate/near-duplicate and return appropriate error
-                // - OnEdge: Split edge and retriangulate affected cells
-                // - OnFacet: Insert into facet and retriangulate affected cells
-                // See issue: https://github.com/acgetchell/delaunay/issues/XXX
-                Err(InsertionError::CavityFilling {
+                // TODO(future): Tighten error semantics for degenerate locations
+                // - OnVertex could map to DuplicateVertex when coordinates coincide
+                // - OnFacet/OnEdge could have specific error variants
+                // - Reserve CavityFilling for genuine cavity failures
+                // This would improve error taxonomy and make debugging easier.
+                return Err(InsertionError::CavityFilling {
                     message: format!(
                         "Unhandled degenerate location: {location:?}. Point lies on facet/edge/vertex which is not yet supported."
                     ),
-                })
+                });
             }
-        }
+        };
+
+        // Delegate to Triangulation layer with computed conflict region
+        let (v_key, hint) = self
+            .tri
+            .insert(vertex, conflict_cells, self.last_inserted_cell)?;
+        self.last_inserted_cell = hint;
+
+        Ok(v_key)
     }
 
-    /// Removes a vertex and all cells containing it from the triangulation.
+    /// Removes a vertex and retriangulates the resulting cavity using fan triangulation.
     ///
-    /// This operation:
+    /// This operation delegates to `Triangulation::remove_vertex()` which:
     /// 1. Finds all cells containing the vertex
-    /// 2. Removes those cells
-    /// 3. Rebuilds vertex-cell incidence to maintain consistency
-    /// 4. Removes the vertex
+    /// 2. Removes those cells (creating a cavity)
+    /// 3. Fills the cavity with fan triangulation
+    /// 4. Wires neighbors and rebuilds vertex-cell incidence
+    /// 5. Removes the vertex
     ///
-    /// The triangulation remains in a valid state after removal (though potentially incomplete).
-    /// This is useful for dynamic operations, mesh coarsening, or as part of flip-based algorithms.
+    /// The triangulation remains topologically valid after removal. However, the fan
+    /// triangulation may temporarily violate the Delaunay property in some cases.
+    ///
+    /// **Future Enhancement**: Delaunay-aware cavity retriangulation will be added when
+    /// iterative flip operations are implemented. For now, occasional Delaunay violations
+    /// after removal are expected and will be addressed by the global flip refinement system.
     ///
     /// # Arguments
     ///
@@ -847,7 +725,9 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
-        self.tri.tds.remove_vertex(vertex)
+        // Delegate to Triangulation layer
+        // Future: Could add Delaunay property restoration after removal
+        self.tri.remove_vertex(vertex)
     }
 
     /// Validate the combinatorial structure of the triangulation.
@@ -994,26 +874,22 @@ where
         self.tri.tds.validate_neighbors()
     }
 
-    /// Generate a comprehensive validation report.
+    /// Generate a comprehensive validation report for structural invariants.
     ///
-    /// This runs all validation checks and returns detailed diagnostics.
-    /// Use this for debugging triangulation issues.
+    /// This runs all structural validation checks (mappings, duplicate cells,
+    /// facet sharing, neighbor consistency) and returns detailed diagnostics.
     ///
-    /// # Parameters
-    ///
-    /// - `options`: Configuration for validation (e.g., whether to check Delaunay property)
+    /// **Note**: This does NOT check the Delaunay property. Use
+    /// [`validate_delaunay()`](Self::validate_delaunay) separately for geometric validation.
     ///
     /// # Errors
     ///
-    /// Returns error if any validation check fails.
-    pub fn validation_report(
-        &self,
-        options: ValidationOptions,
-    ) -> Result<(), TriangulationValidationReport>
+    /// Returns error if any structural validation check fails.
+    pub fn validation_report(&self) -> Result<(), TriangulationValidationReport>
     where
         K::Scalar: CoordinateScalar,
     {
-        self.tri.tds.validation_report(options)
+        self.tri.tds.validation_report()
     }
 
     /// Validate that the triangulation satisfies the Delaunay property.
@@ -1063,14 +939,16 @@ where
                     .tds
                     .cell_uuid_from_key(cell_key)
                     .unwrap_or_else(uuid::Uuid::nil);
-                TriangulationValidationError::DelaunayViolation {
+                TriangulationValidationError::InconsistentDataStructure {
                     message: format!(
-                        "Cell {cell_uuid} (key: {cell_key:?}) violates Delaunay property"
+                        "Delaunay property violated: Cell {cell_uuid} (key: {cell_key:?}) violates empty circumsphere invariant"
                     ),
                 }
             }
             DelaunayValidationError::TriangulationState { source } => source,
             DelaunayValidationError::InvalidCell { source } => {
+                // CellValidationError variants don't contain cell UUID context,
+                // so we use nil() for the cell_id field
                 TriangulationValidationError::InvalidCell {
                     cell_id: uuid::Uuid::nil(),
                     source,
@@ -1080,11 +958,19 @@ where
                 cell_key,
                 vertex_key,
                 source,
-            } => TriangulationValidationError::InconsistentDataStructure {
-                message: format!(
-                    "Numeric predicate failure while validating Delaunay property for cell {cell_key:?}, vertex {vertex_key:?}: {source}"
-                ),
-            },
+            } => {
+                // Include cell UUID for better debugging and log correlation
+                let cell_uuid = self
+                    .tri
+                    .tds
+                    .cell_uuid_from_key(cell_key)
+                    .unwrap_or_else(uuid::Uuid::nil);
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Numeric predicate failure while validating Delaunay property for cell {cell_uuid} (key: {cell_key:?}), vertex {vertex_key:?}: {source}"
+                    ),
+                }
+            }
         })
     }
 
@@ -1179,7 +1065,28 @@ where
 
 /// Policy controlling when global Delaunay validation runs during triangulation.
 ///
-/// This policy is interpreted by insertion algorithms to schedule validation passes.
+/// **Status**: Experimental API. Currently defined but not yet wired into insertion logic.
+///
+/// # Future Usage
+///
+/// This policy will be interpreted by insertion algorithms to schedule validation passes.
+/// Planned integration points include:
+/// - Configuration field on `DelaunayTriangulation` to control validation frequency
+/// - Argument to higher-level construction routines (e.g., `new_with_policy`)
+/// - Periodic `validate_delaunay()` calls during incremental insertion
+///
+/// Until wired in, users should call `validate_delaunay()` explicitly as needed.
+///
+/// # Examples (Future API)
+///
+/// ```ignore
+/// // Once implemented:
+/// let mut dt = DelaunayTriangulation::with_policy(
+///     vertices,
+///     DelaunayCheckPolicy::EveryN(NonZeroUsize::new(100).unwrap())
+/// )?;
+/// // Validation runs automatically every 100 insertions
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DelaunayCheckPolicy {
     /// Run global Delaunay validation only at the end of triangulation.
@@ -1193,10 +1100,7 @@ pub enum DelaunayCheckPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::vertex::VertexBuilder;
     use crate::geometry::kernel::{FastKernel, RobustKernel};
-    use crate::geometry::point::Point;
-    use crate::geometry::traits::coordinate::Coordinate;
     use crate::vertex;
 
     /// Macro to generate comprehensive triangulation construction tests across dimensions.
@@ -1477,188 +1381,6 @@ mod tests {
 
         assert_eq!(dt.number_of_vertices(), 3);
         assert_eq!(dt.number_of_cells(), 1);
-    }
-
-    // =========================================================================
-    // build_initial_simplex() tests
-    // =========================================================================
-
-    /// Macro to generate `build_initial_simplex` tests across dimensions.
-    ///
-    /// This macro generates tests that verify `build_initial_simplex` by:
-    /// 1. Creating D+1 affinely independent vertices
-    /// 2. Calling `build_initial_simplex` directly
-    /// 3. Verifying the Tds has correct structure (vertices, cells, dimension)
-    ///
-    /// # Usage
-    /// ```ignore
-    /// test_build_initial_simplex!(2, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
-    /// ```
-    macro_rules! test_build_initial_simplex {
-        ($dim:expr, [$($simplex_coords:expr),+ $(,)?]) => {
-            pastey::paste! {
-                #[test]
-                fn [<test_build_initial_simplex_ $dim d>]() {
-                    // Build initial simplex (D+1 vertices)
-                    let vertices: Vec<Vertex<f64, (), $dim>> = vec![
-                        $(vertex!($simplex_coords)),+
-                    ];
-
-                    let expected_vertices = vertices.len();
-                    assert_eq!(expected_vertices, $dim + 1,
-                        "Test must provide exactly D+1 vertices for {}D simplex", $dim);
-
-                    let tds = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices)
-                        .unwrap();
-
-                    // Verify structure
-                    assert_eq!(tds.number_of_vertices(), expected_vertices,
-                        "{}D: Expected {} vertices", $dim, expected_vertices);
-                    assert_eq!(tds.number_of_cells(), 1,
-                        "{}D: Expected 1 cell", $dim);
-                    assert_eq!(tds.dim(), $dim as i32,
-                        "{}D: Expected dimension {}", $dim, $dim);
-
-                    // Verify all vertices are present
-                    assert_eq!(tds.vertices().count(), expected_vertices,
-                        "{}D: All vertices should be in Tds", $dim);
-
-                    // Verify the single cell has correct number of vertices
-                    let (_, cell) = tds.cells().next()
-                        .expect(&format!("{}D: Should have exactly one cell", $dim));
-                    assert_eq!(cell.number_of_vertices(), expected_vertices,
-                        "{}D: Cell should have {} vertices", $dim, expected_vertices);
-
-                    // Verify incident cells are assigned
-                    for (_, vertex) in tds.vertices() {
-                        assert!(vertex.incident_cell.is_some(),
-                            "{}D: All vertices should have incident cell assigned", $dim);
-                    }
-
-                    // Verify initial simplex has no neighbors (all boundary facets)
-                    if let Some(neighbors) = cell.neighbors() {
-                        assert!(neighbors.iter().all(|n| n.is_none()),
-                            "{}D: Initial simplex should have no neighbors (all boundary)", $dim);
-                    }
-                }
-            }
-        };
-    }
-
-    // 2D: Triangle
-    test_build_initial_simplex!(2, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
-
-    // 3D: Tetrahedron
-    test_build_initial_simplex!(
-        3,
-        [
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0]
-        ]
-    );
-
-    // 4D: 4-simplex
-    test_build_initial_simplex!(
-        4,
-        [
-            [0.0, 0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0]
-        ]
-    );
-
-    // 5D: 5-simplex
-    test_build_initial_simplex!(
-        5,
-        [
-            [0.0, 0.0, 0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 1.0]
-        ]
-    );
-
-    #[test]
-    fn test_build_initial_simplex_insufficient_vertices() {
-        // Try to build 3D simplex with only 2 vertices (need 4)
-        let vertices = vec![vertex!([0.0, 0.0, 0.0]), vertex!([1.0, 0.0, 0.0])];
-
-        let result =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices);
-
-        assert!(result.is_err());
-        match result {
-            Err(TriangulationConstructionError::InsufficientVertices { dimension, .. }) => {
-                assert_eq!(dimension, 3);
-            }
-            _ => panic!("Expected InsufficientVertices error"),
-        }
-    }
-
-    #[test]
-    fn test_build_initial_simplex_too_many_vertices() {
-        // Try to build 2D simplex with 4 vertices (need exactly 3)
-        let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-            vertex!([0.5, 0.5]),
-        ];
-
-        let result =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices);
-
-        assert!(result.is_err());
-        match result {
-            Err(TriangulationConstructionError::InsufficientVertices { .. }) => {}
-            _ => panic!("Expected InsufficientVertices error for wrong count"),
-        }
-    }
-
-    #[test]
-    fn test_build_initial_simplex_with_user_data() {
-        // Build vertices with user data
-        let v1 = VertexBuilder::default()
-            .point(Point::new([0.0, 0.0]))
-            .data(42_usize)
-            .build()
-            .unwrap();
-        let v2 = VertexBuilder::default()
-            .point(Point::new([1.0, 0.0]))
-            .data(43_usize)
-            .build()
-            .unwrap();
-        let v3 = VertexBuilder::default()
-            .point(Point::new([0.0, 1.0]))
-            .data(44_usize)
-            .build()
-            .unwrap();
-
-        let vertices = vec![v1, v2, v3];
-        let tds = DelaunayTriangulation::<FastKernel<f64>, usize, (), 2>::build_initial_simplex(
-            &vertices,
-        )
-        .unwrap();
-
-        assert_eq!(tds.number_of_vertices(), 3);
-        assert_eq!(tds.number_of_cells(), 1);
-
-        // Verify user data is preserved
-        let data_values: Vec<_> = tds
-            .vertices()
-            .filter_map(|(_, v)| v.data.as_ref())
-            .copied()
-            .collect();
-        assert_eq!(data_values.len(), 3);
-        assert!(data_values.contains(&42));
-        assert!(data_values.contains(&43));
-        assert!(data_values.contains(&44));
     }
 
     // =========================================================================

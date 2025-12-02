@@ -73,34 +73,58 @@ Tests fundamental Point properties:
 
 **Note**: JSON serialization roundtrip tests were intentionally omitted due to inherent floating-point precision loss in JSON format.
 
-#### `proptest_triangulation.rs` - Triangulation Invariants
+#### `proptest_tds.rs` - Tds Combinatorial/Topological Invariants
 
-Tests structural properties of Delaunay triangulations:
+Tests pure combinatorial structure of the Triangulation Data Structure (no geometric predicates):
 
-- **Triangulation Validity** (2 property tests):
-  - Constructed triangulations pass `Tds::is_valid()` (2D/3D), which runs the
-    structural invariant checks that back `Tds::validation_report()`.
+- **Vertex/Cell Mappings** (8 property tests):
+  - UUID↔key consistency for all vertices and cells (2D-5D)
   
-- **Neighbor Symmetry** (2 property tests):
-  - If A neighbors B, then B neighbors A (2D/3D)
-  - Reciprocal neighbor relationships
+- **Cell Validity** (4 property tests):
+  - Cells pass internal consistency checks (2D-5D)
+  - Cell vertex count exactly D+1 (2D-5D)
   
-- **Vertex-Cell Incidence** (2 property tests):
-  - All cell vertices exist in TDS (2D/3D)
+- **Neighbor Consistency** (8 property tests):
+  - Neighbor symmetry: if A neighbors B, then B neighbors A (2D-5D)
+  - Neighbor index semantics: correct facet-based indexing (2D-5D)
   
-- **No Duplicate Cells** (2 property tests):
-  - No cells have identical vertex sets (2D/3D)
-  
-- **Incremental Construction** (2 property tests):
-  - Validity maintained after vertex insertion (2D/3D)
-  
-- **Dimension Consistency** (2 property tests):
-  - Dimension matches vertex count expectations (2D/3D)
-  
-- **Vertex Count Consistency** (2 property tests):
-  - Vertex keys count matches `number_of_vertices()` (2D/3D)
+- **Topological Invariants** (12 property tests):
+  - No duplicate cells (2D-5D)
+  - Vertex-cell incidence: all cell vertices exist in TDS (2D-5D)
+  - Dimension consistency (2D-5D)
+  - Vertex count consistency (2D-5D)
 
-**Test Count**: 14 property tests covering triangulation invariants
+**Test Count**: 32 property tests covering Tds combinatorial invariants (2D-5D)
+
+#### `proptest_triangulation.rs` - Triangulation Layer Invariants
+
+Tests generic geometric layer with kernel (delegates topology to Tds):
+
+- **Geometric Quality Metrics** (36 property tests):
+  - Radius ratio bounds and properties (2D-5D)
+  - Scale and translation invariance (2D-5D)
+  - Normalized volume invariance (2D-5D)
+  - Degeneracy consistency and detection (2D-5D)
+  - Quality degradation under deformation (2D-5D)
+
+**Test Count**: 36 property tests covering geometric quality metrics (2D-5D)
+
+**Note**: Uses `DelaunayTriangulation` for construction but tests generic Triangulation-layer properties.
+
+#### `proptest_delaunay_triangulation.rs` - Delaunay-Specific Properties
+
+Tests all Delaunay-specific invariants and properties:
+
+- **Structural Invariants** (4 property tests, passing):
+  - Incremental insertion maintains validity (2D-5D)
+  
+- **Delaunay Property** (13 property tests, currently ignored):
+  - Empty circumsphere condition (2D-5D) - under investigation
+  - Insertion-order invariance (2D) - Issue #120
+  - Duplicate coordinate rejection (2D-5D) - edge case failures
+  - Duplicate cloud integration (2D-5D) - related to circumsphere
+
+**Test Count**: 17 property tests (4 passing, 13 ignored pending investigation)
 
 ### 3. Documentation Updates
 
@@ -164,12 +188,26 @@ PROPTEST_CASES=1000 cargo test --test proptest_predicates
 cargo test --test proptest_point -- --nocapture
 ```
 
-## Test Statistics
+## Test Statistics (Property Tests by Architectural Layer)
 
-- **Total property tests**: 41 tests
-- **Total test cases** (default): 41 × 256 = 10,496 randomized inputs tested
-- **Execution time**: ~0.6 seconds (all three modules)
-- **Success rate**: 100% (all properties hold)
+### Core Property Test Modules (by layer)
+
+- **Tds layer** (`proptest_tds.rs`): 32 tests (2D-5D combinatorial invariants)
+- **Triangulation layer** (`proptest_triangulation.rs`): 36 tests (2D-5D geometric quality metrics)
+- **DelaunayTriangulation layer** (`proptest_delaunay_triangulation.rs`): 17 tests (4 passing, 13 ignored)
+- **Predicates** (`proptest_predicates.rs`): 11 tests (geometric predicate properties)
+- **Point** (`proptest_point.rs`): 16 tests (Point data structure invariants)
+
+### Additional Property Test Modules
+
+- **Other modules** (Cell, Facet, Vertex, ConvexHull, etc.): ~50+ additional tests
+
+### Summary
+
+- **Core architectural tests**: 85 tests (68 passing, 13 ignored, 4 passing structural)
+- **Total property tests** (all modules): ~140+ tests across entire test suite
+- **Execution time**: ~2-3 seconds (core modules)
+- **Coverage**: 2D-5D across all architectural layers
 
 ## Benefits Achieved
 

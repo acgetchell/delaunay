@@ -573,6 +573,63 @@ Time: [1.0, 1.0, 1.0] µs
         assert time_change == pytest.approx(7.0, abs=0.001)  # Use pytest.approx for floating-point comparison
         assert not is_regression
 
+    def test_write_error_file_baseline_not_found(self, comparator):
+        """Test writing error file when baseline is not found."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = Path(temp_dir) / "error_results.txt"
+            baseline_file = Path(temp_dir) / "nonexistent_baseline.txt"
+
+            comparator._write_error_file(output_file, "Baseline file not found", baseline_file)
+
+            assert output_file.exists()
+            content = output_file.read_text()
+            assert "Comparison Results" in content
+            assert "❌ Error: Baseline file not found" in content
+            assert str(baseline_file) in content
+            assert "This error prevented the benchmark comparison from completing successfully" in content
+
+    def test_write_error_file_benchmark_error(self, comparator):
+        """Test writing error file when benchmark execution fails."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = Path(temp_dir) / "error_results.txt"
+            error_message = "Failed to compile benchmarks: error[E0277]: trait bound not satisfied"
+
+            comparator._write_error_file(output_file, "Benchmark execution error", error_message)
+
+            assert output_file.exists()
+            content = output_file.read_text()
+            assert "❌ Error: Benchmark execution error" in content
+            assert error_message in content
+            assert "Please check the CI logs for more information" in content
+
+    def test_write_error_file_creates_parent_directory(self, comparator):
+        """Test that _write_error_file creates parent directory if it doesn't exist."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = Path(temp_dir) / "nested" / "path" / "error_results.txt"
+
+            comparator._write_error_file(output_file, "Test error", "Test details")
+
+            assert output_file.exists()
+            assert output_file.parent.exists()
+            content = output_file.read_text()
+            assert "❌ Error: Test error" in content
+
+    def test_write_error_file_handles_write_failure(self, comparator):
+        """Test that _write_error_file handles write failures gracefully."""
+        # Create a read-only directory to trigger write failure
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = Path(temp_dir) / "readonly" / "error_results.txt"
+            readonly_dir = Path(temp_dir) / "readonly"
+            readonly_dir.mkdir()
+
+            # Mock Path.open to raise an exception
+            with patch.object(Path, "open", side_effect=OSError("Permission denied")):
+                # Should not raise exception, just log it
+                comparator._write_error_file(output_file, "Test error", "Test details")
+
+            # File should not exist due to write failure
+            assert not output_file.exists()
+
 
 class TestIntegrationScenarios:
     """Integration test scenarios for real-world use cases."""

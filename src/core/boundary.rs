@@ -11,8 +11,6 @@ use super::{
 
 use crate::prelude::CoordinateScalar;
 use num_traits::NumCast;
-use std::iter::Sum;
-use std::ops::{AddAssign, SubAssign};
 
 /// Implementation of `BoundaryAnalysis` trait for `Tds`.
 ///
@@ -20,7 +18,7 @@ use std::ops::{AddAssign, SubAssign};
 /// for d-dimensional triangulations using the triangulation data structure.
 impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
+    T: CoordinateScalar + NumCast,
     U: DataType,
     V: DataType,
 {

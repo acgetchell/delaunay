@@ -37,6 +37,20 @@ The delaunay project follows a standard Rust library structure with additional t
 
 ```text
 delaunay/
+├── .cargo/
+│   └── config.toml
+├── .github/
+│   ├── workflows/
+│   │   ├── audit.yml
+│   │   ├── benchmarks.yml
+│   │   ├── ci.yml
+│   │   ├── codacy.yml
+│   │   ├── codecov.yml
+│   │   ├── generate-baseline.yml
+│   │   ├── profiling-benchmarks.yml
+│   │   └── rust-clippy.yml
+│   ├── CODEOWNERS
+│   └── dependabot.yml
 ├── benches/
 │   ├── assign_neighbors_performance.rs
 │   ├── ci_performance_suite.rs
@@ -47,14 +61,6 @@ delaunay/
 │   ├── profiling_suite.rs
 │   ├── README.md
 │   └── triangulation_creation.rs
-├── Cargo.lock
-├── Cargo.toml
-├── CHANGELOG.md
-├── CITATION.cff
-├── clippy.toml
-├── CODE_OF_CONDUCT.md
-├── CONTRIBUTING.md
-├── cspell.json
 ├── docs/
 │   ├── archive/
 │   │   ├── fix-delaunay.md
@@ -66,6 +72,9 @@ delaunay/
 │   │   ├── phase2_bowyer_watson_optimization.md
 │   │   ├── phase2_uuid_iter_optimization.md
 │   │   └── testing.md
+│   ├── templates/
+│   │   ├── changelog.hbs
+│   │   └── README.md
 │   ├── code_organization.md
 │   ├── numerical_robustness_guide.md
 │   ├── OPTIMIZATION_ROADMAP.md
@@ -73,9 +82,6 @@ delaunay/
 │   ├── property_testing_summary.md
 │   ├── README.md
 │   ├── RELEASING.md
-│   ├── templates/
-│   │   ├── changelog.hbs
-│   │   └── README.md
 │   └── topology.md
 ├── examples/
 │   ├── convex_hull_3d_20_points.rs
@@ -85,14 +91,18 @@ delaunay/
 │   ├── README.md
 │   ├── triangulation_3d_20_points.rs
 │   └── zero_allocation_iterator_demo.rs
-├── justfile
-├── LICENSE
-├── pyproject.toml
-├── README.md
-├── REFERENCES.md
-├── rust-toolchain.toml
-├── rustfmt.toml
 ├── scripts/
+│   ├── tests/
+│   │   ├── __init__.py
+│   │   ├── conftest.py
+│   │   ├── test_benchmark_models.py
+│   │   ├── test_benchmark_utils.py
+│   │   ├── test_changelog_tag_size_limit.py
+│   │   ├── test_changelog_utils.py
+│   │   ├── test_compare_storage_backends.py
+│   │   ├── test_enhance_commits.py
+│   │   ├── test_hardware_utils.py
+│   │   └── test_subprocess_utils.py
 │   ├── benchmark_models.py
 │   ├── benchmark_utils.py
 │   ├── changelog_utils.py
@@ -102,86 +112,87 @@ delaunay/
 │   ├── README.md
 │   ├── run_all_examples.sh
 │   ├── slurm_storage_comparison.sh
-│   ├── subprocess_utils.py
-│   └── tests/
-│       ├── __init__.py
-│       ├── conftest.py
-│       ├── test_benchmark_models.py
-│       ├── test_benchmark_utils.py
-│       ├── test_changelog_tag_size_limit.py
-│       ├── test_changelog_utils.py
-│       ├── test_compare_storage_backends.py
-│       ├── test_enhance_commits.py
-│       ├── test_hardware_utils.py
-│       └── test_subprocess_utils.py
+│   └── subprocess_utils.py
 ├── src/
 │   ├── core/
 │   │   ├── algorithms/
-│   │   │   ├── bowyer_watson.rs
-│   │   │   ├── robust_bowyer_watson.rs
-│   │   │   └── unified_insertion_pipeline.rs
-│   │   ├── boundary.rs
-│   │   ├── cell.rs
-│   │   ├── collections.rs
-│   │   ├── facet.rs
+│   │   │   ├── flips.rs
+│   │   │   ├── incremental_insertion.rs
+│   │   │   └── locate.rs
 │   │   ├── traits/
 │   │   │   ├── boundary_analysis.rs
 │   │   │   ├── data_type.rs
-│   │   │   ├── facet_cache.rs
-│   │   │   └── insertion_algorithm.rs
+│   │   │   └── facet_cache.rs
+│   │   ├── boundary.rs
+│   │   ├── cell.rs
+│   │   ├── collections.rs
+│   │   ├── delaunay_triangulation.rs
+│   │   ├── facet.rs
 │   │   ├── triangulation_data_structure.rs
+│   │   ├── triangulation.rs
 │   │   ├── util.rs
 │   │   └── vertex.rs
 │   ├── geometry/
 │   │   ├── algorithms/
 │   │   │   └── convex_hull.rs
+│   │   ├── traits/
+│   │   │   └── coordinate.rs
+│   │   ├── kernel.rs
 │   │   ├── matrix.rs
 │   │   ├── point.rs
 │   │   ├── predicates.rs
 │   │   ├── quality.rs
 │   │   ├── robust_predicates.rs
-│   │   ├── traits/
-│   │   │   └── coordinate.rs
 │   │   └── util.rs
 │   └── lib.rs
 ├── tests/
 │   ├── allocation_api.rs
 │   ├── circumsphere_debug_tools.rs
-│   ├── convex_hull_bowyer_watson_integration.rs
 │   ├── coordinate_conversion_errors.rs
 │   ├── COVERAGE.md
-│   ├── integration_robust_bowyer_watson.rs
-│   ├── proptest_bowyer_watson.rs
+│   ├── delaunay_edge_cases.rs
+│   ├── delaunay_incremental_insertion.rs
 │   ├── proptest_cell.rs
 │   ├── proptest_convex_hull.rs
-│   ├── proptest_delaunay_condition.rs
-│   ├── proptest_duplicates.rs
-│   ├── proptest_facet_cache.rs
+│   ├── proptest_delaunay_triangulation.rs
 │   ├── proptest_facet.rs
 │   ├── proptest_geometry.rs
-│   ├── proptest_invariants.rs
 │   ├── proptest_point.rs
 │   ├── proptest_predicates.rs
-│   ├── proptest_robust_bowyer_watson.rs
 │   ├── proptest_safe_conversions.rs
+│   ├── proptest_serialization.proptest-regressions
 │   ├── proptest_serialization.rs
+│   ├── proptest_tds.rs
 │   ├── proptest_triangulation.rs
 │   ├── proptest_vertex.rs
 │   ├── README.md
-│   ├── regression_delaunay_known_configs.rs
-│   ├── robust_predicates_comparison.rs
-│   ├── robust_predicates_showcase.rs
 │   ├── serialization_vertex_preservation.rs
-│   ├── storage_backend_compatibility.rs
-│   ├── tds_basic_integration.rs
-│   ├── test_cavity_boundary_error.rs
-│   ├── test_convex_hull_error_paths.rs
-│   ├── test_facet_cache_integration.rs
-│   ├── test_geometry_util.rs
-│   ├── test_insertion_algorithm_trait.rs
-│   ├── test_insertion_algorithm_utils.rs
-│   ├── test_robust_fallbacks.rs
-│   └── test_tds_edge_cases.rs
+│   └── storage_backend_compatibility.rs
+├── .auto-changelog
+├── .codacy.yml
+├── .codecov.yml
+├── .coderabbit.yml
+├── .gitignore
+├── .gitleaks.toml
+├── .markdownlint.json
+├── .python-version
+├── .semgrep.yaml
+├── .yamllint
+├── Cargo.lock
+├── Cargo.toml
+├── CHANGELOG.md
+├── CITATION.cff
+├── clippy.toml
+├── CODE_OF_CONDUCT.md
+├── CONTRIBUTING.md
+├── cspell.json
+├── justfile
+├── LICENSE
+├── pyproject.toml
+├── README.md
+├── REFERENCES.md
+├── rust-toolchain.toml
+├── rustfmt.toml
 └── WARP.md
 ```
 
@@ -197,26 +208,6 @@ cargo test --test circumsphere_debug_tools test_3d_circumsphere_debug -- --nocap
 cargo test --test circumsphere_debug_tools test_all_debug -- --nocapture
 # Or run all debug tests at once
 cargo test --test circumsphere_debug_tools -- --nocapture
-```
-
-**Note**: Delaunay-specific regression and stepwise debug harnesses live in:
-
-- `tests/regression_delaunay_known_configs.rs` – macro-based regression tests
-  for canonical Delaunay-violation point sets (currently 5D), kept `#[ignore]`
-  until the insertion pipeline is fixed.
-- `src/core/algorithms/unified_insertion_pipeline.rs` (test module) – contains
-  the stepwise unified-insertion debug test
-  `debug_5d_stepwise_insertion_of_seventh_vertex` and the generic helper
-  `run_stepwise_unified_insertion_debug` for 2D–5D.
-
-Example invocations:
-
-```bash
-# Run the 5D unified insertion stepwise debug test (ignored by default)
-cargo test --lib unified_insertion_pipeline::tests::debug_5d_stepwise_insertion_of_seventh_vertex -- --ignored --nocapture
-
-# Run all known-config regression tests (ignored by default)
-cargo test --test regression_delaunay_known_configs -- --ignored --nocapture
 ```
 
 **Note**: Memory allocation profiling is available through the `count-allocations` feature:
@@ -246,26 +237,6 @@ cargo test --lib --features bench
 > **CI Stability**: The `bench` feature gates timing-based tests that may be flaky in CI environments.
 > These tests are designed for local performance analysis and ergonomics validation rather than
 > deterministic unit testing. Use `--features bench` when conducting performance investigations.
-
-**Note**: Basic TDS integration tests validate fundamental triangulation data structure operations:
-
-```bash
-# Run basic TDS creation, neighbor assignment, and boundary tests
-cargo test --test tds_basic_integration
-# Or with detailed output
-cargo test --test tds_basic_integration -- --nocapture
-```
-
-**Note**: Robust predicates testing demonstrates cases where enhanced numerical stability prevents triangulation failures:
-
-```bash
-# Run robust predicates showcase (demonstrates real problem solving)
-cargo test --test robust_predicates_showcase -- --nocapture
-# Run numerical accuracy comparisons
-cargo test --test robust_predicates_comparison
-# Run coordinate conversion error handling tests
-cargo test --test coordinate_conversion_errors
-```
 
 **Note**: Python tests in `scripts/tests/` are executed via pytest (use `uv run pytest` for reproducible envs) and discovered via `pyproject.toml`. Run with:
 
@@ -305,14 +276,17 @@ with convenient `just` shortcuts for common workflows.
 **`src/core/`** - Triangulation data structures and algorithms:
 
 - `triangulation_data_structure.rs` - Main `Tds` struct
+- `delaunay_triangulation.rs` - DelaunayTriangulation implementation (top layer)
+- `triangulation.rs` - Generic Triangulation layer with kernel
 - `vertex.rs`, `cell.rs`, `facet.rs` - Core geometric primitives
 - `collections.rs` - Optimized collection types and utilities
 - `boundary.rs` - Boundary detection and analysis
-- `algorithms/` - Bowyer-Watson implementations (standard and robust)
+- `algorithms/` - Core algorithms (incremental insertion, flips, point location)
 - `traits/` - Core trait definitions including FacetCacheProvider for performance optimization
 
 **`src/geometry/`** - Geometric algorithms and predicates:
 
+- `kernel.rs` - Kernel abstraction for geometric operations
 - `point.rs` - NaN-aware Point operations
 - `predicates.rs`, `robust_predicates.rs` - Geometric tests (see [Numerical Robustness Guide](numerical_robustness_guide.md))
 - `quality.rs` - Cell quality metrics (radius ratio, normalized volume) for d-dimensional simplices; provides mesh quality analysis to identify

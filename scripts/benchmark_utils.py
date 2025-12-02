@@ -1437,6 +1437,7 @@ class PerformanceComparator:
             output_file = self.project_root / "benches" / "compare_results.txt"
 
         if not baseline_file.exists():
+            self._write_error_file(output_file, "Baseline file not found", baseline_file)
             return False, False
 
         try:
@@ -1461,6 +1462,7 @@ class PerformanceComparator:
             current_results = CriterionParser.find_criterion_results(target_dir)
 
             if not current_results:
+                self._write_error_file(output_file, "No benchmark results found", target_dir / "criterion")
                 return False, False
 
             # Parse baseline
@@ -1476,8 +1478,11 @@ class PerformanceComparator:
             print(f"❌ Benchmark execution timed out after {bench_timeout} seconds", file=sys.stderr)
             print("   Consider increasing --bench-timeout or using --dev mode for faster benchmarks", file=sys.stderr)
             logging.debug("TimeoutExpired: %s", e)
+            self._write_error_file(output_file, "Benchmark execution timeout", f"Timeout after {bench_timeout} seconds")
             return False, False
-        except Exception:
+        except Exception as e:
+            self._write_error_file(output_file, "Benchmark execution error", str(e))
+            logging.exception("Error in compare_with_baseline")
             return False, False
 
     def _parse_baseline_file(self, baseline_content: str) -> dict[str, BenchmarkData]:
@@ -1802,6 +1807,20 @@ class PerformanceComparator:
         else:
             thrpt_change_pct = ((current.throughput_mean - baseline.throughput_mean) / baseline.throughput_mean) * 100
             f.write(f"Throughput Change (mean): {thrpt_change_pct:.1f}%\n")
+
+    def _write_error_file(self, output_file: Path, error_title: str, error_detail: str | Path) -> None:
+        """Write an error message to the comparison results file."""
+        try:
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            with output_file.open("w", encoding="utf-8") as f:
+                f.write("Comparison Results\n")
+                f.write("==================\n\n")
+                f.write(f"❌ Error: {error_title}\n\n")
+                f.write(f"Details: {error_detail}\n\n")
+                f.write("This error prevented the benchmark comparison from completing successfully.\n")
+                f.write("Please check the CI logs for more information.\n")
+        except Exception:
+            logging.exception("Failed to write error file")
 
 
 class WorkflowHelper:
