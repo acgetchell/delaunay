@@ -1,10 +1,10 @@
-#!/bin/bash -l
+#!/bin/bash
 #SBATCH --job-name=delaunay-storage-comparison
 #SBATCH --account=adamgrp
 #SBATCH --partition=med2
 #SBATCH --output=slurm-%j-storage-comparison.out
 #SBATCH --error=slurm-%j-storage-comparison.err
-#SBATCH --time=12:00:00
+#SBATCH --time=3-00:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
@@ -12,11 +12,19 @@
 # Storage Backend Comparison for Delaunay Triangulation
 # Compares SlotMap vs DenseSlotMap performance using Phase 4 benchmarks
 #
-# Usage:
-#   sbatch scripts/slurm_storage_comparison.sh
+# This script operates in two modes:
+# 1. SUBMISSION MODE (no SLURM_JOB_ID): Submits itself to Slurm with specified time limit
+# 2. EXECUTION MODE (has SLURM_JOB_ID): Runs benchmarks with per-phase timeouts
 #
-# Or with large-scale benchmarks:
-#   sbatch --time=24:00:00 scripts/slurm_storage_comparison.sh --large
+# Usage:
+#   ./scripts/slurm_storage_comparison.sh                    # 3 days, standard benchmarks
+#   ./scripts/slurm_storage_comparison.sh --large            # 2 weeks, large-scale (4D@10K)
+#   ./scripts/slurm_storage_comparison.sh --time=7-00:00:00  # Custom time, standard benchmarks
+#   ./scripts/slurm_storage_comparison.sh --time=7-00:00:00 --large  # Custom time, large-scale
+#
+# Benchmark differences:
+#   Standard: 4D uses [1K, 3K] points (~2-3h per backend, 6h total with buffer)
+#   Large:    4D uses [1K, 5K, 10K] points (~4-6h per backend, 14d total with buffer)
 #
 # Requirements:
 #   - Rust toolchain installed (rustup)
@@ -25,7 +33,106 @@
 
 set -euo pipefail
 
-# Parse command-line arguments
+# ============================================================================
+# SUBMISSION MODE: Submit to Slurm if not already in a job
+# ============================================================================
+
+if [[ -z "${SLURM_JOB_ID:-}" ]]; then
+	# Not in Slurm job - parse args and submit
+
+	TIME_LIMIT="3-00:00:00" # Default: 3 days for standard benchmarks
+	LARGE_SCALE=0
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--large)
+			LARGE_SCALE=1
+			TIME_LIMIT="14-00:00:00" # 2 weeks for large-scale
+			shift
+			;;
+		--time=*)
+			TIME_LIMIT="${1#*=}"
+			shift
+			;;
+		--help | -h)
+			cat <<'EOF'
+Storage Backend Comparison - Submit to Slurm
+
+Submits a job comparing SlotMap vs DenseSlotMap performance.
+
+Usage:
+  slurm_storage_comparison.sh [OPTIONS]
+
+Options:
+  --large              Large-scale benchmarks: 4D@10K points (vs 4D@3K standard)
+  --time=DURATION      Custom Slurm time limit (Slurm format: D-HH:MM:SS)
+  --help, -h           Show this help
+
+Defaults:
+  Standard: 3 days, BENCH_LARGE_SCALE=0, 4D uses [1K, 3K] (~6h total)
+  --large:  2 weeks, BENCH_LARGE_SCALE=1, 4D uses [1K, 5K, 10K] (~12h total)
+
+Examples:
+  # Standard 3-day run
+  ./scripts/slurm_storage_comparison.sh
+  
+  # Large-scale 2-week run  
+  ./scripts/slurm_storage_comparison.sh --large
+  
+  # Custom 1-week time limit, standard benchmarks
+  ./scripts/slurm_storage_comparison.sh --time=7-00:00:00
+  
+  # Custom time with large-scale benchmarks
+  ./scripts/slurm_storage_comparison.sh --time=10-00:00:00 --large
+
+Time allocation:
+  Total time is split: ~50% Phase 1, ~50% Phase 2, 2h buffer for cleanup
+EOF
+			exit 0
+			;;
+		*)
+			echo "❌ Error: Unknown argument: $1" >&2
+			echo "Run with --help for usage" >&2
+			exit 1
+			;;
+		esac
+	done
+
+	if ! command -v sbatch &>/dev/null; then
+		echo "❌ Error: sbatch not found. Are you on a Slurm cluster?" >&2
+		exit 1
+	fi
+
+	echo "🚀 Submitting storage comparison job"
+	echo "   Time limit: $TIME_LIMIT"
+	if [[ $LARGE_SCALE -eq 1 ]]; then
+		echo "   Mode: large-scale (BENCH_LARGE_SCALE=1, 4D@10K points)"
+	else
+		echo "   Mode: standard (4D@3K points)"
+	fi
+	echo
+
+	JOB_ARGS=()
+	[[ $LARGE_SCALE -eq 1 ]] && JOB_ARGS+=(--large)
+
+	JOB_ID=$(sbatch --time="$TIME_LIMIT" "$0" "${JOB_ARGS[@]}" | grep -oP '\d+$')
+
+	if [[ -n "$JOB_ID" ]]; then
+		echo "✅ Job submitted: $JOB_ID"
+		echo "Monitor: squeue -j $JOB_ID"
+		echo "Logs: tail -f slurm-${JOB_ID}-storage-comparison.out"
+		exit 0
+	else
+		echo "❌ Failed to submit job" >&2
+		exit 1
+	fi
+fi
+
+# ============================================================================
+# EXECUTION MODE: Running inside Slurm job
+# ============================================================================
+
+# Parse command-line arguments (passed from submission mode)
 LARGE_SCALE=0
 if [[ "${1:-}" == "--large" ]]; then
 	LARGE_SCALE=1
@@ -94,15 +201,56 @@ mkdir -p artifacts
 if [[ $LARGE_SCALE -eq 1 ]]; then
 	export BENCH_LARGE_SCALE=1
 	BENCHMARK_MODE="large-scale"
-	TIMEOUT="24h"
 else
 	BENCHMARK_MODE="standard"
-	TIMEOUT="12h"
 fi
+
+# Calculate per-phase timeout from Slurm time limit
+# Extract time limit using scontrol (works for current job)
+TIME_LIMIT_STR=$(scontrol show job "$SLURM_JOB_ID" 2>/dev/null | grep -oP 'TimeLimit=\K[^ ]+' || echo "UNLIMITED")
+
+if [[ "$TIME_LIMIT_STR" == "UNLIMITED" ]]; then
+	PHASE_TIMEOUT_HOURS=336 # 2 weeks per phase if unlimited
+	echo "ℹ️  Slurm time limit: UNLIMITED (using ${PHASE_TIMEOUT_HOURS}h per phase)"
+else
+	echo "ℹ️  Slurm time limit: $TIME_LIMIT_STR"
+
+	# Parse Slurm time format: D-HH:MM:SS, HH:MM:SS, MM:SS, or MM
+	if [[ "$TIME_LIMIT_STR" =~ ^([0-9]+)-([0-9]+):([0-9]+):([0-9]+)$ ]]; then
+		# Days-Hours:Minutes:Seconds
+		TOTAL_HOURS=$((BASH_REMATCH[1] * 24 + BASH_REMATCH[2]))
+	elif [[ "$TIME_LIMIT_STR" =~ ^([0-9]+):([0-9]+):([0-9]+)$ ]]; then
+		# Hours:Minutes:Seconds
+		TOTAL_HOURS=${BASH_REMATCH[1]}
+	elif [[ "$TIME_LIMIT_STR" =~ ^([0-9]+):([0-9]+)$ ]]; then
+		# Minutes:Seconds (convert to hours)
+		TOTAL_HOURS=$((BASH_REMATCH[1] / 60))
+	elif [[ "$TIME_LIMIT_STR" =~ ^([0-9]+)$ ]]; then
+		# Minutes only (convert to hours)
+		TOTAL_HOURS=$((BASH_REMATCH[1] / 60))
+	else
+		echo "⚠️  Warning: Could not parse time limit '$TIME_LIMIT_STR', using 36h per phase" >&2
+		TOTAL_HOURS=72
+	fi
+
+	# Reserve 2 hours for buffer/cleanup, split remaining between 2 phases
+	BUFFER_HOURS=2
+	AVAILABLE_HOURS=$((TOTAL_HOURS - BUFFER_HOURS))
+	PHASE_TIMEOUT_HOURS=$((AVAILABLE_HOURS / 2))
+
+	if [[ $PHASE_TIMEOUT_HOURS -lt 1 ]]; then
+		echo "⚠️  Warning: Time limit too short ($TIME_LIMIT_STR), phases may not complete" >&2
+		PHASE_TIMEOUT_HOURS=1
+	fi
+
+	echo "ℹ️  Calculated: ${TOTAL_HOURS}h total, ${PHASE_TIMEOUT_HOURS}h per phase"
+fi
+
+PHASE_TIMEOUT="${PHASE_TIMEOUT_HOURS}h"
 
 echo "🔧 Configuration:"
 echo "   Mode: $BENCHMARK_MODE"
-echo "   Timeout: $TIMEOUT"
+echo "   Per-phase timeout: $PHASE_TIMEOUT"
 echo "   Threads: ${SLURM_CPUS_PER_TASK:-$(nproc)}"
 echo
 
@@ -135,13 +283,13 @@ SLOTMAP_START=$(date +%s)
 echo "⏰ Start time: $(date)"
 echo
 
-if timeout "$TIMEOUT" cargo bench --bench large_scale_performance -- --save-baseline slotmap; then
+if timeout "$PHASE_TIMEOUT" cargo bench --bench large_scale_performance -- --save-baseline slotmap; then
 	echo "✅ SlotMap benchmarks completed successfully"
 	SLOTMAP_STATUS="ok"
 else
 	EXIT_CODE=$?
 	if [[ $EXIT_CODE -eq 124 ]]; then
-		echo "⏰ SlotMap benchmarks timed out after $TIMEOUT"
+		echo "⏰ SlotMap benchmarks timed out after $PHASE_TIMEOUT"
 		SLOTMAP_STATUS="timeout"
 	else
 		echo "❌ SlotMap benchmarks failed with exit code: $EXIT_CODE"
@@ -171,13 +319,13 @@ DENSESLOTMAP_START=$(date +%s)
 echo "⏰ Start time: $(date)"
 echo
 
-if timeout "$TIMEOUT" cargo bench --bench large_scale_performance --features dense-slotmap -- --save-baseline denseslotmap; then
+if timeout "$PHASE_TIMEOUT" cargo bench --bench large_scale_performance --features dense-slotmap -- --save-baseline denseslotmap; then
 	echo "✅ DenseSlotMap benchmarks completed successfully"
 	DENSESLOTMAP_STATUS="ok"
 else
 	EXIT_CODE=$?
 	if [[ $EXIT_CODE -eq 124 ]]; then
-		echo "⏰ DenseSlotMap benchmarks timed out after $TIMEOUT"
+		echo "⏰ DenseSlotMap benchmarks timed out after $PHASE_TIMEOUT"
 		DENSESLOTMAP_STATUS="timeout"
 	else
 		echo "❌ DenseSlotMap benchmarks failed with exit code: $EXIT_CODE"

@@ -1049,6 +1049,19 @@ where
 
     /// Attempts to fix invalid facet sharing by removing problematic cells using geometric quality metrics.
     ///
+    /// Deprecated: This performs a global O(N·D) validation/repair pass. For incremental
+    /// operations, use the localized O(k·D) approach instead:
+    ///
+    /// ```ignore
+    /// // After insertion/removal, collect the cells you touched
+    /// let affected_cells: Vec<CellKey> = /* cells that were just modified */;
+    /// // Detect issues only in the affected region
+    /// if let Some(issues) = triangulation.detect_local_facet_issues(&affected_cells) {
+    ///     // Repair only that subset
+    ///     triangulation.repair_local_facet_issues(&issues)?;
+    /// }
+    /// ```
+    ///
     /// This is a **best-effort repair mechanism** that may not fully resolve all facet sharing
     /// violations in extreme cases. The method iterates up to 10 times, removing cells around
     /// over-shared facets using quality-based selection (`radius_ratio`) and UUID tie-breaking.
@@ -1060,13 +1073,21 @@ where
     ///
     /// Number of cells removed during the repair attempt.
     ///
+    /// Important: `Ok(n)` does not guarantee that all facet sharing violations are resolved.
+    /// This method may return successfully even if violations persist after reaching the
+    /// iteration limit, making no progress, or when internal repair steps (neighbor assignment,
+    /// duplicate removal) fail. Call `validate_facet_sharing()` if you require a post-check.
+    ///
     /// # Errors
     ///
     /// Returns error if the facet map cannot be built (indicating structural corruption).
     ///
-    /// **Note**: Some internal repair failures (duplicate removal, neighbor assignment) are
-    /// logged in debug builds but do not cause this method to return an error. The method
-    /// may return `Ok(n)` even if some facet sharing violations remain after the repair attempt.
+    /// Note: Some internal repair failures (duplicate removal, neighbor assignment) are
+    /// logged in debug builds but do not cause this method to return an error.
+    #[deprecated(
+        since = "0.5.5",
+        note = "Use detect_local_facet_issues() + repair_local_facet_issues() for localized O(k·D) repair."
+    )]
     #[allow(clippy::too_many_lines)]
     pub fn fix_invalid_facet_sharing(&mut self) -> Result<usize, TriangulationValidationError>
     where

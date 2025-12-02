@@ -993,6 +993,14 @@ where
 
     /// Fixes invalid facet sharing by removing problematic cells using geometric quality metrics.
     ///
+    /// Deprecated: This performs an O(N·D) global scan. Prefer the localized O(k·D) flow:
+    /// ```ignore
+    /// let affected_cells: Vec<CellKey> = /* cells that were just modified */;
+    /// if let Some(issues) = triangulation.detect_local_facet_issues(&affected_cells) {
+    ///     triangulation.repair_local_facet_issues(&issues)?;
+    /// }
+    /// ```
+    ///
     /// Delegates to the underlying Triangulation layer.
     ///
     /// # Returns
@@ -1002,12 +1010,19 @@ where
     /// # Errors
     ///
     /// Returns error if facet map cannot be built or topology repair fails.
+    #[deprecated(
+        since = "0.5.5",
+        note = "Use detect_local_facet_issues() + repair_local_facet_issues() for O(k·D) instead of global O(N·D)."
+    )]
     pub fn fix_invalid_facet_sharing(&mut self) -> Result<usize, TriangulationValidationError>
     where
         K::Scalar: CoordinateScalar,
     {
         // Delegate to Triangulation layer
-        self.tri.fix_invalid_facet_sharing()
+        #[allow(deprecated)]
+        {
+            self.tri.fix_invalid_facet_sharing()
+        }
     }
 }
 

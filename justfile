@@ -131,7 +131,7 @@ compare-storage-large: _ensure-uv
 # Note: -t 300 sets per-test timeout to 5 minutes (needed for slow CI environments)
 # Excludes: storage_backend_compatibility (all tests ignored - Phase 4 evaluation tests)
 _coverage_base_args := '''--exclude-files 'benches/*' --exclude-files 'examples/*' \
-  --workspace --lib --tests \
+  --workspace --lib --tests --features test-helpers \
   --exclude storage_backend_compatibility \
   -t 300 --verbose --implicit-test-threads'''
 

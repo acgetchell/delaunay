@@ -1609,6 +1609,42 @@ Hardware Information:
                 github_env_content = github_env_file.read_text()
                 assert "BENCHMARK_REGRESSION_DETECTED=true" in github_env_content
 
+    def test_generate_summary_with_error_file(self, temp_chdir, capsys):
+        """Test generating summary when comparison failed with error file."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            results_file = Path(temp_dir) / "benches" / "compare_results.txt"
+            results_file.parent.mkdir(parents=True)
+            # Simulate error file content (as written by _write_error_file)
+            results_file.write_text(
+                "Comparison Results\n"
+                "==================\n\n"
+                "❌ Error: Benchmark execution timeout\n\n"
+                "Details: Command timed out after 1800 seconds\n\n"
+                "This error prevented the benchmark comparison from completing successfully.\n"
+                "Please check the CI logs for more information.\n"
+            )
+
+            env_vars = {
+                "BASELINE_SOURCE": "artifact",
+                "BASELINE_ORIGIN": "release",
+                "BASELINE_TAG": "v1.0.0",
+                "BASELINE_EXISTS": "true",
+                "SKIP_BENCHMARKS": "false",
+                "SKIP_REASON": "n/a",
+            }
+
+            with patch.dict(os.environ, env_vars), temp_chdir(temp_dir):
+                BenchmarkRegressionHelper.generate_summary()
+
+                captured = capsys.readouterr()
+                assert "📊 Performance Regression Testing Summary" in captured.out
+                assert "Baseline source: artifact" in captured.out
+                # Should detect error and report failure, not "no regressions"
+                assert "Result: ❌ Benchmark comparison failed" in captured.out
+                assert "(see benches/compare_results.txt for details)" in captured.out
+                # Should NOT say "no regressions" when there was an error
+                assert "✅ No significant performance regressions" not in captured.out
+
 
 class TestProjectRootHandling:
     """Test cases for find_project_root functionality."""

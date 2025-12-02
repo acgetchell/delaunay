@@ -29,7 +29,7 @@
 //!
 //! - **Facet iteration** - `facets()`, `boundary_facets()` consistency
 //! - **Boundary detection** - Correct identification of hull facets
-//! - **Topology repair** - `fix_invalid_facet_sharing` preserves validity
+//! - **Topology repair** - `detect_local_facet_issues` + `repair_local_facet_issues` preserve validity
 //! - **Kernel consistency** - Geometric predicates produce consistent results
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.

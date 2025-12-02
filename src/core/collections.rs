@@ -328,7 +328,7 @@ pub type FacetToCellsMap = FastHashMap<u64, SmallBuffer<crate::core::facet::Face
 /// # Optimization Rationale
 ///
 /// - **Key**: `u64` facet hash (from sorted vertex keys)
-/// - **Value**: `SmallBuffer<(CellKey, u8), 4>` - handles up to 4 over-sharing cells on stack
+/// - **Value**: `SmallBuffer<(CellKey, FacetIndex), 4>` - handles up to 4 over-sharing cells on stack
 /// - **Typical Pattern**: 3-4 cells in most over-sharing cases
 /// - **Performance**: Stack allocation for common over-sharing patterns
 ///
@@ -343,7 +343,7 @@ pub type FacetToCellsMap = FastHashMap<u64, SmallBuffer<crate::core::facet::Face
 ///     println!("Removed {} problematic cells", removed);
 /// }
 /// ```
-pub type FacetIssuesMap = FastHashMap<u64, SmallBuffer<(CellKey, u8), 4>>;
+pub type FacetIssuesMap = FastHashMap<u64, SmallBuffer<(CellKey, FacetIndex), 4>>;
 
 /// Cell neighbor mapping optimized for typical cell degrees.
 /// Most cells have a small number of neighbors (D+1 faces, so at most D+1 neighbors).

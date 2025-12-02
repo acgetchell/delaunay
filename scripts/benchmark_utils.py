@@ -2354,7 +2354,9 @@ class BenchmarkRegressionHelper:
             if results_file.exists():
                 with results_file.open("r", encoding="utf-8") as f:
                     content = f.read()
-                    if "REGRESSION" in content:
+                    if "❌ Error:" in content:
+                        print("Result: ❌ Benchmark comparison failed (see benches/compare_results.txt for details)")
+                    elif "REGRESSION" in content:
                         print("Result: ⚠️ Performance regressions detected")
                         # Set environment variable for machine consumption by CI systems
                         os.environ["BENCHMARK_REGRESSION_DETECTED"] = "true"
