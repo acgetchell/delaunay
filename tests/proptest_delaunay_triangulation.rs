@@ -211,7 +211,13 @@ proptest! {
                     };
 
                     // Verify the triangulation satisfies the Delaunay property
-                    is_delaunay(dt.tds()).unwrap();
+                    let delaunay_result = is_delaunay(dt.tds());
+                    prop_assert!(
+                        delaunay_result.is_ok(),
+                        "{}D triangulation should satisfy Delaunay property: {:?}",
+                        $dim,
+                        delaunay_result.err()
+                    );
                 }
             }
         }
@@ -386,8 +392,21 @@ macro_rules! gen_duplicate_cloud_test {
                     };
 
                     // Structural and Delaunay validity for kept subset
-                    prop_assert!(dt.is_valid().is_ok());
-                    prop_assert!(is_delaunay(dt.tds()).is_ok());
+                    let validity_result = dt.is_valid();
+                    prop_assert!(
+                        validity_result.is_ok(),
+                        "{}D triangulation should be structurally valid: {:?}",
+                        $dim,
+                        validity_result.err()
+                    );
+
+                    let delaunay_result = is_delaunay(dt.tds());
+                    prop_assert!(
+                        delaunay_result.is_ok(),
+                        "{}D triangulation should satisfy Delaunay property: {:?}",
+                        $dim,
+                        delaunay_result.err()
+                    );
                 }
             }
         }

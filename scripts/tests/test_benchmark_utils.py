@@ -364,7 +364,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
     @pytest.mark.parametrize("dev_mode", [False, True])
     @patch("benchmark_utils.run_cargo_command")
     def test_compare_uses_quiet(self, mock_cargo, dev_mode):
-        """Test that PerformanceComparator invokes cargo with --quiet flag in both dev and non-dev modes."""
+        """Test that PerformanceComparator invokes cargo without --quiet flag (removed for better error visibility)."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             baseline_file = temp_path / "baseline.txt"
@@ -386,10 +386,10 @@ Time: [1.0, 1.0, 1.0] µs
             comparator = PerformanceComparator(temp_path)
             comparator.compare_with_baseline(baseline_file, dev_mode=dev_mode)
 
-            # Verify cargo was called with --quiet flag
+            # Verify cargo was called without --quiet flag (removed for better error visibility)
             assert mock_cargo.call_count >= 1
             args = mock_cargo.call_args[0][0]
-            assert "--quiet" in args
+            assert "--quiet" not in args  # Changed: --quiet flag should NOT be present
             if dev_mode:
                 for arg in DEV_MODE_BENCH_ARGS:
                     assert arg in args

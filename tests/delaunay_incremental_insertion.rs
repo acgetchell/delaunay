@@ -470,3 +470,97 @@ test_bootstrap_key_stability!(
         [0.0, 0.0, 0.0, 0.0, 1.0]
     ]
 );
+
+/// Regression test for stale `VertexKey` bug in initial simplex construction.
+///
+/// This test catches a bug where `Triangulation::insert()` returned a stale
+/// `VertexKey` from the old `TDS` after the initial simplex construction replaced
+/// the `TDS`. The bug was masked because `SlotMap` keys generated in sequence happen
+/// to have the same values across different `SlotMap` instances.
+///
+/// This test breaks that lucky coincidence by:
+/// 1. Creating vertices with explicit UUIDs
+/// 2. Inserting them in a specific order during bootstrap
+/// 3. Creating a reference TDS with the same vertices in a DIFFERENT order
+/// 4. Verifying that the returned keys are actually valid in the final TDS
+///
+/// Without the fix, the returned key from the D+1 insertion would be from the
+/// old TDS and lookups would fail or return wrong data.
+#[test]
+fn test_bootstrap_returns_valid_key_after_tds_rebuild() {
+    use delaunay::core::vertex::Vertex;
+    use delaunay::geometry::point::Point;
+    use uuid::Uuid;
+
+    // Create vertices with explicit UUIDs so we can track them
+    let uuid1 = Uuid::new_v4();
+    let uuid2 = Uuid::new_v4();
+    let uuid3 = Uuid::new_v4();
+
+    let v1 = Vertex::new_with_uuid(Point::new([0.0, 0.0]), uuid1, None);
+    let v2 = Vertex::new_with_uuid(Point::new([1.0, 0.0]), uuid2, None);
+    let v3 = Vertex::new_with_uuid(Point::new([0.0, 1.0]), uuid3, None);
+
+    // Bootstrap insertion: vertices inserted in order v1, v2, v3
+    let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
+
+    let key1 = dt.insert(v1).unwrap();
+    assert_eq!(dt.number_of_vertices(), 1);
+    assert_eq!(dt.number_of_cells(), 0);
+
+    let key2 = dt.insert(v2).unwrap();
+    assert_eq!(dt.number_of_vertices(), 2);
+    assert_eq!(dt.number_of_cells(), 0);
+
+    // D+1 vertex triggers TDS rebuild - this is where the bug occurred
+    let key3 = dt.insert(v3).unwrap();
+    assert_eq!(dt.number_of_vertices(), 3);
+    assert_eq!(dt.number_of_cells(), 1);
+
+    // Verify all returned keys are valid in the final TDS
+    let vertex1 = dt.tds().get_vertex_by_key(key1);
+    assert!(
+        vertex1.is_some(),
+        "First key should be valid after simplex creation"
+    );
+    assert_eq!(
+        vertex1.unwrap().uuid(),
+        uuid1,
+        "First key should map to correct vertex UUID"
+    );
+
+    let vertex2 = dt.tds().get_vertex_by_key(key2);
+    assert!(
+        vertex2.is_some(),
+        "Second key should be valid after simplex creation"
+    );
+    assert_eq!(
+        vertex2.unwrap().uuid(),
+        uuid2,
+        "Second key should map to correct vertex UUID"
+    );
+
+    let vertex3 = dt.tds().get_vertex_by_key(key3);
+    assert!(
+        vertex3.is_some(),
+        "Third key (D+1) should be valid after simplex creation"
+    );
+    assert_eq!(
+        vertex3.unwrap().uuid(),
+        uuid3,
+        "Third key should map to correct vertex UUID"
+    );
+
+    // Extra verification: keys should map to correct coordinates
+    let coords1 = vertex1.unwrap().point().coords();
+    assert_relative_eq!(coords1[0], 0.0, epsilon = 1e-12);
+    assert_relative_eq!(coords1[1], 0.0, epsilon = 1e-12);
+
+    let coords2 = vertex2.unwrap().point().coords();
+    assert_relative_eq!(coords2[0], 1.0, epsilon = 1e-12);
+    assert_relative_eq!(coords2[1], 0.0, epsilon = 1e-12);
+
+    let coords3 = vertex3.unwrap().point().coords();
+    assert_relative_eq!(coords3[0], 0.0, epsilon = 1e-12);
+    assert_relative_eq!(coords3[1], 1.0, epsilon = 1e-12);
+}

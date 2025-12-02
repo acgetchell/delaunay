@@ -21,7 +21,7 @@ Added `proptest = "1.4"` to `[dev-dependencies]` in `Cargo.toml`.
 
 ### 2. Test Modules Created
 
-Three new property test modules were created in `tests/`:
+Property test modules were created in `tests/` organized by architectural layer:
 
 #### `proptest_predicates.rs` - Geometric Predicates
 
@@ -41,7 +41,7 @@ Tests mathematical properties of geometric predicates:
   - Degenerate orientation implies potential insphere failures
   - Robustness verification
 
-**Test Count**: 11 property tests covering 2D-4D geometric predicates
+**Test Count**: 11 property tests covering 2D-5D geometric predicates
 
 #### `proptest_point.rs` - Point Data Structure
 
@@ -151,7 +151,7 @@ Added property testing guidelines:
 ### 1. Test Scope
 
 - **Focused on mathematical properties**: Properties that must hold universally
-- **Cross-dimensional testing**: 2D-4D coverage where applicable
+- **Cross-dimensional testing**: 2D-5D coverage where applicable
 - **Realistic value ranges**: Coordinates in [-1000, 1000] or [-100, 100] to avoid numerical issues
 
 ### 2. Strategy Design
@@ -170,7 +170,7 @@ Added property testing guidelines:
 
 - **JSON serialization**: Exact roundtrip equality not guaranteed due to floating-point precision loss
 - **Performance**: Property tests slower than unit tests (256 iterations by default)
-- **Dimensional coverage**: Primarily 2D-4D (higher dimensions possible but slower)
+- **Dimensional coverage**: Primarily 2D-5D (higher dimensions possible but slower)
 
 ## Running Property Tests
 
@@ -246,4 +246,5 @@ No special configuration required - proptest is a standard dev dependency.
 ---
 
 **Conclusion**: Property-based testing infrastructure successfully integrated, providing
-systematic verification of geometric and structural invariants across 2D-4D triangulations.
+systematic verification of geometric and structural invariants across 2D-5D triangulations,
+organized by architectural layer (Tds, Triangulation, DelaunayTriangulation).

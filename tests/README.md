@@ -136,73 +136,6 @@ Property-based tests for `DelaunayTriangulation` invariants (all Delaunay-specif
 
 **Run with:** `cargo test --test proptest_delaunay_triangulation` or included in `just test`
 
-#### [`proptest_bowyer_watson.rs`](./proptest_bowyer_watson.rs)
-
-Property-based tests for Bowyer-Watson insertion algorithm verifying invariants during randomized vertex insertion sequences across dimensions (2D-5D).
-
-**Test Coverage:**
-
-- **Cavity Boundary Correctness**:
-  - Conflict zone boundary facets are correctly identified
-  - No orphaned facets after insertion
-- **Delaunay Property Preservation**:
-  - Delaunay property holds after each insertion
-  - Circumsphere test consistency
-- **Neighbor Symmetry**:
-  - Reciprocal neighbor relationships maintained
-  - No broken neighbor links
-- **Structural Integrity**:
-  - No orphan vertices or cells after insertion
-  - Vertex count consistency
-
-**Run with:**
-
-```bash
-# Standard test run
-cargo test --release --test proptest_bowyer_watson
-
-# With increased test cases and verbose output
-PROPTEST_CASES=512 cargo test --release --test proptest_bowyer_watson -- --nocapture
-
-# Reproduce a specific failure
-PROPTEST_SEED=<seed> cargo test --release --test proptest_bowyer_watson -- --nocapture
-```
-
-#### [`proptest_robust_bowyer_watson.rs`](./proptest_robust_bowyer_watson.rs)
-
-Property-based tests for `RobustBowyerWatson` algorithm verifying robustness properties under randomized insertion sequences.
-
-**Test Coverage:**
-
-- **TDS Validity Preservation**:
-  - TDS remains valid after all insertion attempts (success or failure)
-  - Structural integrity maintained regardless of outcome
-- **Statistics Monotonicity**:
-  - Counters (processed, created, removed) are non-decreasing
-  - Consistent tracking across multiple insertions
-- **Insertion Info Consistency**:
-  - Successful insertions have `success=true` in result
-  - Cell creation/removal counts are reasonable
-- **Interior Point Handling**:
-  - Interior points (centroid of existing vertices) insert gracefully
-  - TDS validity maintained after interior insertions
-- **Cache Invalidation Properties**:
-  - Cache generation tracking works correctly
-  - Invalidation occurs with structural modifications
-
-**Run with:**
-
-```bash
-# Standard test run
-cargo test --release --test proptest_robust_bowyer_watson
-
-# With increased test cases for thorough validation
-PROPTEST_CASES=512 cargo test --release --test proptest_robust_bowyer_watson -- --nocapture
-
-# Reproduce a specific failure
-PROPTEST_SEED=<seed> cargo test --release --test proptest_robust_bowyer_watson -- --nocapture
-```
-
 #### [`proptest_cell.rs`](./proptest_cell.rs)
 
 Property-based tests for Cell data structure verifying cell-level invariants and topological consistency.
@@ -277,28 +210,6 @@ cargo test --release --test proptest_quality
 PROPTEST_CASES=1024 cargo test --release --test proptest_quality -- --nocapture
 ```
 
-#### [`proptest_duplicates.rs`](./proptest_duplicates.rs)
-
-Property-based tests for the unified Bowyer–Watson pipeline on random point
-clouds containing exact duplicates and small jittered near-duplicates.
-
-**Test Coverage:**
-
-- 2D and 3D point clouds with injected duplicates and near-duplicates (f64 coordinates)
-- Construction via `Tds::new` and `Tds::bowyer_watson_with_diagnostics`
-- Global Delaunay validation for the kept subset of vertices
-- Integrity of `TriangulationDiagnostics::unsalvageable_vertices` (all unsalvageable
-  vertices originate from the input set)
-
-**Run with:**
-
-```bash
-cargo test --test proptest_duplicates -- --nocapture
-
-# With increased test cases for thorough validation
-PROPTEST_CASES=512 cargo test --test proptest_duplicates -- --nocapture
-```
-
 #### [`proptest_serialization.rs`](./proptest_serialization.rs)
 
 Property-based tests for serialization and deserialization verifying data preservation via randomized structures.
@@ -344,7 +255,6 @@ Proptest automatically captures minimal failing test cases in `.proptest-regress
 
 **Current Regression Files:**
 
-- `proptest_bowyer_watson.proptest-regressions`
 - `proptest_convex_hull.proptest-regressions`
 - `proptest_quality.proptest-regressions`
 - `proptest_serialization.proptest-regressions`
@@ -691,30 +601,6 @@ Tests error handling for coordinate conversion operations, particularly focusing
 - Error message validation and context
 
 **Run with:** `cargo test --test coordinate_conversion_errors` or `just test-release`
-
-#### [`regression_delaunay_known_configs.rs`](./regression_delaunay_known_configs.rs)
-
-Deterministic regression tests for small canonical point sets in 2D–5D that
-must remain globally Delaunay.
-
-**Test Coverage:**
-
-- Canonical 2D–4D configurations exercising basic interior/exterior behavior
-  (simple simplices with interior and exterior points).
-- A fixed 5D configuration reconstructed from a historically failing
-  `proptest_delaunay_condition` case.
-- All configurations assert successful construction via `Tds::new` and the
-  global Delaunay property via `tds.validate_delaunay()`.
-
-This file is the target for promoting important failing seeds captured via
-Delaunay-focused property tests (see the conditional playbook in
-`docs/fix-delaunay.md`).
-
-**Run with:**
-
-```bash
-cargo test --test regression_delaunay_known_configs -- --nocapture
-```
 
 ### 📊 Performance and Memory Testing
 

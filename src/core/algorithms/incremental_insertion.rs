@@ -265,11 +265,14 @@ where
         .map(|cells| cells.iter().copied().collect())
         .unwrap_or_default();
 
+    // Build new cells set for O(1) lookup
+    let new_cells_set: FastHashSet<CellKey> = new_cells.iter().copied().collect();
+
     // Collect existing cell keys first to avoid borrow issues
     let existing_cell_keys: Vec<CellKey> = tds
         .cells()
         .map(|(key, _)| key)
-        .filter(|&key| !new_cells.contains(&key) && !conflict_set.contains(&key))
+        .filter(|&key| !new_cells_set.contains(&key) && !conflict_set.contains(&key))
         .collect();
 
     // Index facets from existing non-conflict cells to find matches with new cells

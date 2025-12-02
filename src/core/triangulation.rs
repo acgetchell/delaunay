@@ -466,8 +466,11 @@ where
         };
         use crate::core::algorithms::locate::{LocateResult, extract_cavity_boundary, locate};
 
+        // Capture the inserted vertex's UUID before any TDS operations
+        let inserted_uuid = vertex.uuid();
+
         // 1. Insert vertex into Tds
-        let v_key = self.tds.insert_vertex_with_mapping(vertex)?;
+        let mut v_key = self.tds.insert_vertex_with_mapping(vertex)?;
 
         // 2. Check if we need to bootstrap the initial simplex
         let num_vertices = self.tds.number_of_vertices();
@@ -486,6 +489,14 @@ where
 
             // Replace empty TDS with simplex TDS (preserve kernel)
             self.tds = new_tds;
+
+            // Re-map vertex key to the rebuilt TDS
+            v_key = self
+                .tds
+                .vertex_key_from_uuid(&inserted_uuid)
+                .ok_or_else(|| InsertionError::CavityFilling {
+                    message: "Inserted vertex not found in rebuilt TDS".to_string(),
+                })?;
 
             // Return first cell key for hint caching
             let first_cell = self.tds.cell_keys().next();
