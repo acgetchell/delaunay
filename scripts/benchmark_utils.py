@@ -1492,7 +1492,7 @@ class PerformanceComparator:
             print(f"❌ Benchmark execution timed out after {bench_timeout} seconds", file=sys.stderr)
             print("   Consider increasing --bench-timeout or using --dev mode for faster benchmarks", file=sys.stderr)
             logging.debug("TimeoutExpired: %s", e)
-            self._write_error_file(output_file, "Benchmark execution timeout", f"Timeout after {bench_timeout} seconds")
+            self._write_error_file(output_file, "Benchmark execution timeout", f"{e} (timeout after {bench_timeout} seconds)")
             return False, False
         except subprocess.CalledProcessError as e:
             # Print captured stderr/stdout from cargo bench failure

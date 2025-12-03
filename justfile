@@ -110,7 +110,7 @@ clean:
 
 # Code quality and formatting
 clippy:
-    cargo clippy --workspace --all-targets --features test-helpers -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+    cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
     cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
 # Pre-commit workflow: comprehensive validation before committing
@@ -131,7 +131,7 @@ compare-storage-large: _ensure-uv
 # Note: -t 300 sets per-test timeout to 5 minutes (needed for slow CI environments)
 # Excludes: storage_backend_compatibility (all tests ignored - Phase 4 evaluation tests)
 _coverage_base_args := '''--exclude-files 'benches/*' --exclude-files 'examples/*' \
-  --workspace --lib --tests --features test-helpers \
+  --workspace --lib --tests \
   --exclude storage_backend_compatibility \
   -t 300 --verbose --implicit-test-threads'''
 
@@ -422,7 +422,7 @@ test:
 
 # test-integration: runs all integration tests (includes proptests)
 test-integration:
-    cargo test --tests --features test-helpers --verbose
+    cargo test --tests --verbose
 
 # test-all: runs lib, doc, integration, and Python tests (comprehensive)
 test-all: test test-integration test-python

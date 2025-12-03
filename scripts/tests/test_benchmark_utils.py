@@ -1767,6 +1767,14 @@ class TestTimeoutHandling:
                 assert "timed out after 1800 seconds" in captured.err
                 assert "Consider increasing --bench-timeout" in captured.err
 
+                # Verify error file contains full exception message with command context
+                error_file = project_root / "benches" / "compare_results.txt"
+                assert error_file.exists()
+                error_content = error_file.read_text()
+                assert "❌ Error: Benchmark execution timeout" in error_content
+                assert "cargo bench" in error_content  # Command from exception
+                assert "timeout after 1800 seconds" in error_content  # Explicit timeout value
+
     def test_cli_bench_timeout_validation(self, monkeypatch, temp_chdir):
         """Test that CLI validates bench_timeout is positive via main()."""
         # Create a temporary project with Cargo.toml to satisfy find_project_root

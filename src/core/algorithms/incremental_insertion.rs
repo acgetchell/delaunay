@@ -330,14 +330,16 @@ where
             set_neighbor(tds, c1, idx1, Some(c2))?;
             set_neighbor(tds, c2, idx2, Some(c1))?;
         } else if cells.len() > 2 {
-            // This should never happen - indicates non-manifold topology
-            return Err(InsertionError::NeighborWiring {
-                message: format!(
-                    "Non-manifold topology detected: facet {} shared by {} cells (expected ≤2)",
-                    facet_key,
-                    cells.len()
-                ),
-            });
+            // Non-manifold topology detected - skip wiring for this facet
+            // The localized repair mechanism (detect_local_facet_issues + repair_local_facet_issues)
+            // will handle this after wiring completes by removing problematic cells.
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Warning: Non-manifold topology during wiring: facet {} shared by {} cells (expected ≤2). Will be repaired after insertion.",
+                facet_key,
+                cells.len()
+            );
+            // Skip wiring for this facet - leave neighbors unset for these cells
         }
         // cells.len() == 1 means it's a boundary facet (no neighbor)
     }
@@ -384,6 +386,150 @@ fn compute_facet_hash(sorted_vkeys: &[VertexKey]) -> u64 {
         vkey.hash(&mut hasher);
     }
     hasher.finish()
+}
+
+/// Repair neighbor pointers by fixing only broken/None pointers.
+///
+/// This function scans all cells and for each None or invalid neighbor pointer,
+/// finds the correct neighbor by matching facets. Unlike `assign_neighbors`,
+/// this preserves existing correct neighbor relationships.
+///
+/// **Performance**: O(k·n·D) where k = cells with broken neighbors, n = total cells.
+///
+/// **Use case**: After removing cells during topology repair, when some neighbor
+/// pointers are stale (point to removed cells) but most are still correct.
+///
+/// # Arguments
+/// - `tds` - Mutable triangulation data structure
+///
+/// # Returns
+/// Ok(()) if repair succeeds
+///
+/// # Errors
+/// Returns error if facet indexing or neighbor setting fails.
+///
+/// # Algorithm
+/// 1. For each cell, check each neighbor pointer
+/// 2. If neighbor is None or points to non-existent cell, mark for repair
+/// 3. Build facet hash for that specific facet
+/// 4. Scan all other cells to find the one sharing that facet
+/// 5. Wire mutual neighbors only for the broken facets
+pub fn repair_neighbor_pointers<T, U, V, const D: usize>(
+    tds: &mut Tds<T, U, V, D>,
+) -> Result<(), InsertionError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    // Collect all cell keys first
+    let all_cell_keys: Vec<CellKey> = tds.cells().map(|(key, _)| key).collect();
+    
+    #[cfg(debug_assertions)]
+    eprintln!("repair_neighbor_pointers: scanning {} cells", all_cell_keys.len());
+    
+    let mut total_repaired = 0;
+    
+    // For each cell, find facets that need repair (None or invalid neighbors)
+    for &cell_key in &all_cell_keys {
+        let cell = tds
+            .get_cell(cell_key)
+            .ok_or_else(|| InsertionError::NeighborWiring {
+                message: format!("Cell {cell_key:?} not found"),
+            })?;
+        
+        let num_vertices = cell.number_of_vertices();
+        let mut facets_to_repair: Vec<usize> = Vec::new();
+        
+        // Check which facets need repair
+        if let Some(neighbors) = cell.neighbors() {
+            for facet_idx in 0..num_vertices {
+                let neighbor = neighbors.get(facet_idx).copied().flatten();
+                // Repair if None or neighbor doesn't exist
+                if neighbor.is_none() || !tds.contains_cell(neighbor.unwrap()) {
+                    facets_to_repair.push(facet_idx);
+                }
+            }
+        } else {
+            // No neighbors set at all - repair all facets
+            facets_to_repair.extend(0..num_vertices);
+        }
+        
+        if facets_to_repair.is_empty() {
+            continue; // All neighbors are valid
+        }
+        
+        // For each facet that needs repair, find its neighbor by facet matching
+        for facet_idx in facets_to_repair {
+            // Build facet vertex keys (all except facet_idx)
+            let cell = tds.get_cell(cell_key).unwrap();
+            let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+            for (i, &vkey) in cell.vertices().iter().enumerate() {
+                if i != facet_idx {
+                    facet_vkeys.push(vkey);
+                }
+            }
+            facet_vkeys.sort_unstable();
+            let facet_hash = compute_facet_hash(&facet_vkeys);
+            
+            // Scan all other cells to find one sharing this facet
+            let mut matching_cell: Option<(CellKey, usize)> = None;
+            
+            for &other_key in &all_cell_keys {
+                if other_key == cell_key {
+                    continue;
+                }
+                
+                let other_cell = tds.get_cell(other_key).unwrap();
+                
+                // Check each facet of other_cell
+                for other_facet_idx in 0..other_cell.number_of_vertices() {
+                    let mut other_facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+                    for (i, &vkey) in other_cell.vertices().iter().enumerate() {
+                        if i != other_facet_idx {
+                            other_facet_vkeys.push(vkey);
+                        }
+                    }
+                    other_facet_vkeys.sort_unstable();
+                    let other_facet_hash = compute_facet_hash(&other_facet_vkeys);
+                    
+                    if facet_hash == other_facet_hash {
+                        // Found matching facet
+                        matching_cell = Some((other_key, other_facet_idx));
+                        break;
+                    }
+                }
+                
+                if matching_cell.is_some() {
+                    break;
+                }
+            }
+            
+            // Wire mutual neighbors if we found a match
+            if let Some((other_key, other_facet_idx)) = matching_cell {
+                let facet_idx_u8 = u8::try_from(facet_idx).map_err(|_| {
+                    InsertionError::NeighborWiring {
+                        message: format!("Facet index {facet_idx} exceeds u8::MAX"),
+                    }
+                })?;
+                let other_facet_idx_u8 = u8::try_from(other_facet_idx).map_err(|_| {
+                    InsertionError::NeighborWiring {
+                        message: format!("Facet index {other_facet_idx} exceeds u8::MAX"),
+                    }
+                })?;
+                
+                set_neighbor(tds, cell_key, facet_idx_u8, Some(other_key))?;
+                set_neighbor(tds, other_key, other_facet_idx_u8, Some(cell_key))?;
+                total_repaired += 1;
+            }
+            // If no match found, leave as None (boundary facet)
+        }
+    }
+    
+    #[cfg(debug_assertions)]
+    eprintln!("repair_neighbor_pointers: repaired {} facet pairs", total_repaired);
+
+    Ok(())
 }
 
 /// Extend the convex hull by connecting an exterior vertex to visible boundary facets.

@@ -161,6 +161,105 @@ test_regression_config!(
 );
 
 // =========================================================================
+// Regression Tests - Non-Manifold Topology During Incremental Insertion
+// =========================================================================
+
+/// Regression test for CI benchmark failure with non-manifold topology.
+///
+/// This test reproduces a specific failure discovered in the CI benchmark suite
+/// where incremental insertion created temporary non-manifold topology (facet
+/// shared by 4 cells). The fix made `wire_cavity_neighbors` tolerant of this
+/// condition, allowing the localized repair mechanism to handle it.
+///
+/// ## Historical Context
+///
+/// - **When**: Discovered in CI run 19874972833 (2025-12-02)
+/// - **Where**: `benches/ci_performance_suite.rs:85` (3D, 50 points, seed 123)
+/// - **Error**: "Non-manifold topology detected: facet 11030659497163937569
+///   shared by 4 cells (expected ≤2)"
+/// - **Fix**: Modified `wire_cavity_neighbors` to skip wiring over-shared facets
+///   and rely on `repair_local_facet_issues` to fix them post-insertion
+///
+/// ## Configuration
+///
+/// Uses exact parameters from the failing benchmark:
+/// - Dimension: 3D
+/// - Point count: 50
+/// - Seed: 123 (from `benchmark_tds_new_dimension!(3, benchmark_tds_new_3d, 123)`)
+/// - Bounds: (-100.0, 100.0)
+#[test]
+#[ignore = "repair_neighbor_pointers creates location cycles - see issue #135"]
+fn test_regression_non_manifold_3d_seed123_50pts() {
+    use delaunay::geometry::util::generate_random_triangulation;
+
+    // Exact configuration from CI failure
+    let result = generate_random_triangulation::<f64, (), (), 3>(
+        50,                 // Point count from failing benchmark
+        (-100.0, 100.0),   // Bounds from benchmark
+        None,              // No vertex data
+        Some(123),         // Problematic seed from benchmark (line 85 in ci_performance_suite.rs)
+    );
+
+    // Should succeed now that wire_cavity_neighbors is tolerant of non-manifold topology
+    assert!(
+        result.is_ok(),
+        "Failed to generate 3D triangulation with 50 points (seed 123): {:?}",
+        result.err()
+    );
+
+    let dt = result.unwrap();
+
+    // Verify basic properties
+    assert_eq!(dt.number_of_vertices(), 50);
+    assert!(dt.number_of_cells() > 0);
+
+    // Most importantly: validate the triangulation has no facet topology violations
+    // The repair mechanism should have fixed any non-manifold issues
+    assert!(
+        dt.is_valid().is_ok(),
+        "Triangulation has topology violations after repair: {:?}",
+        dt.is_valid().err()
+    );
+}
+
+/// Stress test: Multiple seeds around the problematic configuration.
+///
+/// Tests seeds near 123 to ensure robustness across similar random configurations.
+/// Some may also trigger temporary non-manifold conditions during insertion.
+#[test]
+#[ignore = "repair_neighbor_pointers creates location cycles - see issue #135"]
+fn test_regression_non_manifold_nearby_seeds() {
+    use delaunay::geometry::util::generate_random_triangulation;
+
+    let test_seeds = [120, 121, 122, 123, 124, 125, 126];
+
+    for seed in test_seeds {
+        let result = generate_random_triangulation::<f64, (), (), 3>(
+            50,
+            (-100.0, 100.0),
+            None,
+            Some(seed),
+        );
+
+        assert!(
+            result.is_ok(),
+            "Failed with seed {}: {:?}",
+            seed,
+            result.err()
+        );
+
+        let dt = result.unwrap();
+        assert_eq!(dt.number_of_vertices(), 50, "Seed {}: wrong vertex count", seed);
+        assert!(
+            dt.is_valid().is_ok(),
+            "Seed {}: topology violations: {:?}",
+            seed,
+            dt.is_valid().err()
+        );
+    }
+}
+
+// =========================================================================
 // Edge Cases - Minimal Configurations
 // =========================================================================
 

@@ -464,17 +464,61 @@ where
         &self.tri
     }
 
-    /// Returns a mutable reference to the underlying `Triangulation` (test-only).
+    /// Returns a mutable reference to the underlying `Triangulation`.
     ///
-    /// This provides mutable access to the Triangulation layer for testing
-    /// topology validation and repair functions.
+    /// # ⚠️ WARNING - ADVANCED USE ONLY
     ///
-    /// # Safety
+    /// This method provides direct mutable access to the internal triangulation state.
+    /// **Modifying the triangulation through this reference can break Delaunay invariants
+    /// and leave the data structure in an inconsistent state.**
     ///
-    /// Modifying the Triangulation directly can break Delaunay invariants.
-    /// This is intended for integration tests that need to test validation
-    /// and repair mechanisms.
-    #[cfg(any(test, feature = "test-helpers"))]
+    /// ## When to Use
+    ///
+    /// This is primarily intended for:
+    /// - **Testing internal algorithms** (topology validation, repair mechanisms)
+    /// - **Advanced library development** (implementing custom triangulation operations)
+    /// - **Research prototyping** (experimenting with new algorithms)
+    ///
+    /// ## What Can Go Wrong
+    ///
+    /// Direct mutations can violate critical invariants:
+    /// - **Delaunay property**: Cells may no longer satisfy the empty circumsphere condition
+    /// - **Manifold topology**: Facets may become over-shared or improperly connected
+    /// - **Neighbor consistency**: Cell neighbor pointers may become invalid
+    /// - **Hint caching**: Location hints may point to deleted cells
+    ///
+    /// After direct modification, you should:
+    /// 1. Call `detect_local_facet_issues()` and `repair_local_facet_issues()` if you modified topology
+    /// 2. Call `is_valid()` to verify structural consistency
+    /// 3. Verify Delaunay property manually (if needed)
+    ///
+    /// ## Safe Alternatives
+    ///
+    /// For most use cases, prefer these safe, high-level methods:
+    /// - [`insert()`](Self::insert) - Add vertices (maintains all invariants)
+    /// - [`remove_vertex()`](Self::remove_vertex) - Remove vertices safely
+    /// - [`tds()`](Self::tds) - Read-only access to the data structure
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// // ⚠️ Advanced use: direct access for testing validation
+    /// let tri = dt.triangulation_mut();
+    /// // ... perform internal algorithm testing ...
+    ///
+    /// // Always validate after direct modifications
+    /// assert!(dt.is_valid().is_ok());
+    /// ```
     #[must_use]
     #[allow(clippy::missing_const_for_fn)] // mutable refs from const fn not widely supported
     pub fn triangulation_mut(&mut self) -> &mut Triangulation<K, U, V, D> {

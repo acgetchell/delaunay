@@ -536,43 +536,137 @@ where
                 // 8. Remove conflict cells (now that new cells are wired up)
                 let _removed_count = self.tds.remove_cells_by_keys(&conflict_cells);
 
-                // 9. Validate facet topology for newly created cells (O(k*D) localized check)
-                if let Some(issues) = self.detect_local_facet_issues(&new_cells)? {
+                // 9. Iteratively repair non-manifold topology until facet sharing is valid
+                let mut total_removed = 0;
+                const MAX_REPAIR_ITERATIONS: usize = 10;
+                
+                for iteration in 0..MAX_REPAIR_ITERATIONS {
+                    // Check for non-manifold issues in remaining cells
+                    let remaining_cells: CellKeyBuffer = self.tds.cells()
+                        .map(|(k, _)| k)
+                        .collect();
+                    
+                    if let Some(issues) = self.detect_local_facet_issues(&remaining_cells)? {
+                        #[cfg(debug_assertions)]
+                        eprintln!(
+                            "Repair iteration {}: {} over-shared facets detected, removing cells...",
+                            iteration + 1,
+                            issues.len()
+                        );
+                        
+                        let removed = self.repair_local_facet_issues(&issues)?;
+                        total_removed += removed;
+                        
+                        #[cfg(debug_assertions)]
+                        eprintln!("Removed {removed} cells (total: {total_removed})");
+                    } else {
+                        // No more non-manifold issues - safe to rebuild neighbors
+                        break;
+                    }
+                }
+                
+                // 10. Rebuild neighbor pointers now that topology is manifold
+                #[cfg(debug_assertions)]
+                eprintln!("After repair loop (interior): total_removed={total_removed}");
+                
+                if total_removed > 0 {
+                    // Double-check that facet sharing is actually valid
+                    let facet_valid = self.tds.validate_facet_sharing().is_ok();
                     #[cfg(debug_assertions)]
-                    eprintln!(
-                        "Warning: {} over-shared facets detected after insertion, repairing...",
-                        issues.len()
-                    );
-                    let removed = self.repair_local_facet_issues(&issues)?;
+                    eprintln!("Before repair_neighbor_pointers (interior): facet_sharing_valid={facet_valid}, cells={}",
+                             self.tds.number_of_cells());
+                    
+                    if !facet_valid {
+                        return Err(InsertionError::CavityFilling {
+                            message: "Facet sharing still invalid after repairs - cannot safely rebuild neighbors".to_string(),
+                        });
+                    }
+                    
+                    crate::core::algorithms::incremental_insertion::repair_neighbor_pointers(&mut self.tds)
+                        .map_err(|e| InsertionError::CavityFilling {
+                            message: format!("Failed to rebuild neighbors after repairs: {e}"),
+                        })?;
+                    
                     #[cfg(debug_assertions)]
-                    eprintln!("Repaired by removing {removed} cells");
-                    #[cfg(not(debug_assertions))]
-                    let _ = removed;
+                    eprintln!("repair_neighbor_pointers completed (interior), assigning incident cells...");
+                    
+                    self.tds.assign_incident_cells()
+                        .map_err(|e| InsertionError::CavityFilling {
+                            message: format!("Failed to assign incident cells after repairs: {e}"),
+                        })?;
+                } else {
+                    #[cfg(debug_assertions)]
+                    eprintln!("No cells removed (interior), skipping neighbor rebuild");
                 }
 
-                // Return vertex key and first new cell for hint caching
-                Ok((v_key, new_cells.first().copied()))
+                // Return vertex key and hint for next insertion
+                let hint = new_cells.iter().copied().find(|ck| self.tds.contains_cell(*ck));
+                Ok((v_key, hint))
             }
             LocateResult::Outside => {
                 // Exterior vertex: extend convex hull
                 let new_cells = extend_hull(&mut self.tds, &self.kernel, v_key, &point)?;
 
-                // Validate facet topology for newly created cells (O(k*D) localized check)
-                if let Some(issues) = self.detect_local_facet_issues(&new_cells)? {
+                // Iteratively repair non-manifold topology until facet sharing is valid
+                let mut total_removed = 0;
+                const MAX_REPAIR_ITERATIONS: usize = 10;
+                
+                for iteration in 0..MAX_REPAIR_ITERATIONS {
+                    // Check for non-manifold issues in remaining cells
+                    let remaining_cells: CellKeyBuffer = self.tds.cells()
+                        .map(|(k, _)| k)
+                        .collect();
+                    
+                    if let Some(issues) = self.detect_local_facet_issues(&remaining_cells)? {
+                        #[cfg(debug_assertions)]
+                        eprintln!(
+                            "Hull extension repair iteration {}: {} over-shared facets detected, removing cells...",
+                            iteration + 1,
+                            issues.len()
+                        );
+                        
+                        let removed = self.repair_local_facet_issues(&issues)?;
+                        total_removed += removed;
+                        
+                        #[cfg(debug_assertions)]
+                        eprintln!("Removed {removed} cells (total: {total_removed})");
+                    } else {
+                        // No more non-manifold issues - safe to rebuild neighbors
+                        break;
+                    }
+                }
+                
+                // Rebuild neighbor pointers now that topology is manifold
+                if total_removed > 0 {
+                    // Double-check that facet sharing is actually valid
+                    let facet_valid = self.tds.validate_facet_sharing().is_ok();
                     #[cfg(debug_assertions)]
-                    eprintln!(
-                        "Warning: {} over-shared facets detected after hull extension, repairing...",
-                        issues.len()
-                    );
-                    let removed = self.repair_local_facet_issues(&issues)?;
+                    eprintln!("Before repair_neighbor_pointers: facet_sharing_valid={facet_valid}, cells={}",
+                             self.tds.number_of_cells());
+                    
+                    if !facet_valid {
+                        return Err(InsertionError::CavityFilling {
+                            message: "Facet sharing still invalid after repairs - cannot safely rebuild neighbors".to_string(),
+                        });
+                    }
+                    
+                    crate::core::algorithms::incremental_insertion::repair_neighbor_pointers(&mut self.tds)
+                        .map_err(|e| InsertionError::CavityFilling {
+                            message: format!("Failed to rebuild neighbors after repairs: {e}"),
+                        })?;
+                    
                     #[cfg(debug_assertions)]
-                    eprintln!("Repaired by removing {removed} cells");
-                    #[cfg(not(debug_assertions))]
-                    let _ = removed;
+                    eprintln!("repair_neighbor_pointers completed, assigning incident cells...");
+                    
+                    self.tds.assign_incident_cells()
+                        .map_err(|e| InsertionError::CavityFilling {
+                            message: format!("Failed to assign incident cells after repairs: {e}"),
+                        })?;
                 }
 
-                // Return vertex key and first new cell for hint caching
-                Ok((v_key, new_cells.first().copied()))
+                // Return vertex key and hint for next insertion
+                let hint = new_cells.iter().copied().find(|ck| self.tds.contains_cell(*ck));
+                Ok((v_key, hint))
             }
             _ => {
                 // TODO: Handle degenerate point locations (OnFacet, OnEdge, OnVertex)
@@ -950,7 +1044,8 @@ where
     ///
     /// # Errors
     ///
-    /// Returns error if cell removal or topology repair fails.
+    /// Returns error if topology rebuild fails after cell removal. This indicates
+    /// the triangulation may be in an inconsistent state and should be validated.
     ///
     /// # Examples
     ///
@@ -1022,27 +1117,10 @@ where
             }
         }
 
-        // Remove the selected cells
+        // Remove the selected cells - do NOT rebuild neighbors here
+        // Neighbor wiring should happen AFTER all non-manifold issues are resolved
         let to_remove: Vec<CellKey> = cells_to_remove.into_iter().collect();
         let removed_count = self.tds.remove_cells_by_keys(&to_remove);
-
-        // Rebuild topology for affected region
-        if removed_count > 0 {
-            // Note: This is still potentially expensive, but we may need it
-            // Consider: track only affected cells and rebuild their neighbors
-            if self.tds.assign_neighbors().is_err() {
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "Warning: assign_neighbors failed during local facet repair (removed {removed_count} cells)"
-                );
-            }
-            if self.tds.assign_incident_cells().is_err() {
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "Warning: assign_incident_cells failed during local facet repair (removed {removed_count} cells)"
-                );
-            }
-        }
 
         Ok(removed_count)
     }
@@ -1238,8 +1316,9 @@ where
                 }
             }
 
-            // Remove cells
             let to_remove: Vec<CellKey> = cells_to_remove.into_iter().collect();
+            
+            // Remove cells
             let actually_removed = self.tds.remove_cells_by_keys(&to_remove);
 
             // Clean up duplicates
@@ -1252,25 +1331,7 @@ where
                 continue;
             };
 
-            // Rebuild topology if needed
-            if actually_removed > 0 && duplicate_cells_removed == 0 {
-                if self.tds.assign_neighbors().is_err() {
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "Warning: assign_neighbors failed during facet repair (removed {actually_removed} cells)"
-                    );
-                    total_removed += actually_removed;
-                    continue;
-                }
-                if self.tds.assign_incident_cells().is_err() {
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "Warning: assign_incident_cells failed during facet repair (removed {actually_removed} cells)"
-                    );
-                    total_removed += actually_removed;
-                    continue;
-                }
-            }
+            // Skip neighbor repair during iterations - will do once at end
 
             let removed_this_iteration = actually_removed + duplicate_cells_removed;
             total_removed += removed_this_iteration;
@@ -1278,6 +1339,22 @@ where
             if removed_this_iteration == 0 || self.tds.validate_facet_sharing().is_ok() {
                 break;
             }
+        }
+
+        // After all iterations complete, rebuild neighbor relationships once
+        // Use repair_neighbor_pointers which tolerates non-manifold topology
+        if total_removed > 0 {
+            #[cfg(debug_assertions)]
+            eprintln!("Repairs complete, rebuilding all neighbor pointers...");
+            
+            crate::core::algorithms::incremental_insertion::repair_neighbor_pointers(&mut self.tds)
+                .map_err(|e| {
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!("repair_neighbor_pointers failed after repairs: {e}"),
+                    }
+                })?;
+            
+            self.tds.assign_incident_cells()?;
         }
 
         Ok(total_removed)
