@@ -171,12 +171,16 @@ proptest! {
                 /// Property: For every cell, no other vertex lies strictly inside
                 /// the circumsphere defined by that cell (Delaunay condition).
                 ///
-                /// **Status**: Ignored - Delaunay property violations found in triangulations.
-                /// Proptest discovered cases where the empty circumsphere property is violated,
-                /// indicating issues with the incremental insertion algorithm or geometric predicates.
-                /// This may be related to the recent neighbor relationship bug fix.
-                /// Needs investigation into cavity-based insertion and predicate accuracy.
-                #[ignore = "Delaunay property violations found - needs investigation after neighbor bug fix"]
+                /// **Status**: Ignored - Requires bistellar flips for full Delaunay property enforcement.
+                ///
+                /// The incremental Bowyer-Watson algorithm can produce locally non-Delaunay configurations
+                /// that cannot be repaired without topology-changing operations (bistellar flips).
+                /// These tests will be re-enabled after implementing:
+                /// - 2D: Edge flip (2-to-2)
+                /// - 3D+: Bistellar flip operations
+                ///
+                /// See: Issue #120, src/core/algorithms/flips.rs
+                #[ignore = "Requires bistellar flips - see Issue #120"]
                 #[test]
                 fn [<prop_empty_circumsphere_ $dim d>](
                     vertices in prop::collection::vec(
@@ -377,9 +381,13 @@ macro_rules! gen_duplicate_cloud_test {
                 /// Property: Random clouds with duplicates and near-duplicates
                 /// produce triangulations that are globally Delaunay for the kept subset.
                 ///
-                /// **Status**: Ignored - Delaunay property violations (same underlying issue as empty_circumsphere tests).
-                /// This integration test exercises the full construction pipeline with messy real-world inputs.
-                #[ignore = "Delaunay property violations - related to empty_circumsphere failures"]
+                /// **Status**: Ignored - Requires bistellar flips (same as empty_circumsphere tests).
+                ///
+                /// This integration test exercises the full construction pipeline with messy real-world
+                /// inputs. Will be re-enabled after bistellar flip implementation.
+                ///
+                /// See: Issue #120, src/core/algorithms/flips.rs
+                #[ignore = "Requires bistellar flips - see Issue #120"]
                 #[test]
                 fn [<prop_cloud_with_duplicates_is_delaunay_ $dim d>](
                     points in [<cloud_with_duplicates_ $dim d>]()
