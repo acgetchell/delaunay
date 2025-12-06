@@ -802,10 +802,15 @@ where
                 let mut total_removed = 0;
                 #[allow(unused_variables)]
                 for iteration in 0..10 {
-                    // Check for non-manifold issues in remaining cells
-                    let remaining_cells: CellKeyBuffer = self.tds.cells().map(|(k, _)| k).collect();
+                    // Check for non-manifold issues in newly created cells (local scan)
+                    // This keeps the repair O(k·D) where k is the cavity size, rather than O(N·D)
+                    let cells_to_check: CellKeyBuffer = new_cells
+                        .iter()
+                        .copied()
+                        .filter(|ck| self.tds.contains_cell(*ck))
+                        .collect();
 
-                    if let Some(issues) = self.detect_local_facet_issues(&remaining_cells)? {
+                    if let Some(issues) = self.detect_local_facet_issues(&cells_to_check)? {
                         #[cfg(debug_assertions)]
                         eprintln!(
                             "Repair iteration {}: {} over-shared facets detected, removing cells...",
@@ -930,10 +935,15 @@ where
                 let mut total_removed = 0;
                 #[allow(unused_variables)]
                 for iteration in 0..10 {
-                    // Check for non-manifold issues in remaining cells
-                    let remaining_cells: CellKeyBuffer = self.tds.cells().map(|(k, _)| k).collect();
+                    // Check for non-manifold issues in newly created hull cells (local scan)
+                    // This keeps the repair O(k·D) where k is the number of new hull cells, rather than O(N·D)
+                    let cells_to_check: CellKeyBuffer = new_cells
+                        .iter()
+                        .copied()
+                        .filter(|ck| self.tds.contains_cell(*ck))
+                        .collect();
 
-                    if let Some(issues) = self.detect_local_facet_issues(&remaining_cells)? {
+                    if let Some(issues) = self.detect_local_facet_issues(&cells_to_check)? {
                         #[cfg(debug_assertions)]
                         eprintln!(
                             "Hull extension repair iteration {}: {} over-shared facets detected, removing cells...",
@@ -1016,13 +1026,10 @@ where
                     .find(|ck| self.tds.contains_cell(*ck));
                 Ok(((v_key, hint), total_removed))
             }
-            _ => {
-                // TODO: Handle degenerate point locations (OnFacet, OnEdge, OnVertex)
-                Err(InsertionError::CavityFilling {
-                    message: format!(
-                        "Unhandled degenerate location: {location:?}. Point lies on facet/edge/vertex which is not yet supported."
-                    ),
-                })
+            LocateResult::OnFacet(_, _) | LocateResult::OnEdge(_) | LocateResult::OnVertex(_) => {
+                // These degenerate cases are already handled at lines 772-779 above,
+                // so this arm is unreachable. Included only for exhaustiveness.
+                unreachable!("Degenerate locations should have been handled earlier")
             }
         }
     }
@@ -1144,7 +1151,7 @@ where
         // Remove the cells containing the vertex (now that new cells are wired up)
         // Note: remove_cells_by_keys() automatically clears neighbor pointers in surviving
         // cells that reference removed cells (sets them to None/boundary)
-        let cells_removed = self.tds.remove_cells_by_keys(&cells_to_remove);
+        let mut cells_removed = self.tds.remove_cells_by_keys(&cells_to_remove);
 
         // Validate facet topology for newly created cells (O(k*D) localized check)
         if let Some(issues) = self.detect_local_facet_issues(&new_cells)? {
@@ -1154,6 +1161,7 @@ where
                 issues.len()
             );
             let removed = self.repair_local_facet_issues(&issues)?;
+            cells_removed += removed;
             #[cfg(debug_assertions)]
             eprintln!("Repaired by removing {removed} additional cells");
 
@@ -1380,8 +1388,8 @@ where
     /// Repairs over-shared facets by removing lower-quality cells.
     ///
     /// Uses geometric quality metrics (`radius_ratio`) to select which cells to keep
-    /// when a facet is shared by more than 2 cells. Falls back to UUID ordering
-    /// if quality computation fails.
+    /// when a facet is shared by more than 2 cells. UUID ordering is used as a tie-breaker
+    /// when cells have equal quality. Errors if quality computation or conversion fails.
     ///
     /// # Performance
     ///
@@ -1459,33 +1467,19 @@ where
                 }
             }
 
-            if cell_qualities.len() >= 2 {
-                // Quality-based selection: keep 2 best, remove rest
-                cell_qualities.sort_unstable_by(|a, b| {
-                    a.1.partial_cmp(&b.1)
-                        .unwrap_or(CmpOrdering::Equal)
-                        .then_with(|| a.2.cmp(&b.2))
-                });
+            // Quality-based selection: keep 2 best, remove rest
+            // Note: cell_qualities always has all involved_cells at this point since
+            // any quality computation failure results in an early error return above
+            cell_qualities.sort_unstable_by(|a, b| {
+                a.1.partial_cmp(&b.1)
+                    .unwrap_or(CmpOrdering::Equal)
+                    .then_with(|| a.2.cmp(&b.2))
+            });
 
-                // Mark cells beyond the top 2 for removal
-                for (cell_key, _, _) in cell_qualities.iter().skip(2) {
-                    if self.tds.contains_cell(*cell_key) {
-                        cells_to_remove.insert(*cell_key);
-                    }
-                }
-            } else {
-                // UUID fallback: keep 2 cells with lowest UUIDs
-                let mut sorted_cells = involved_cells.clone();
-                sorted_cells.sort_unstable_by(|a, b| {
-                    let uuid_a = self.tds.get_cell(*a).map(Cell::uuid);
-                    let uuid_b = self.tds.get_cell(*b).map(Cell::uuid);
-                    uuid_a.cmp(&uuid_b)
-                });
-
-                for &cell_key in sorted_cells.iter().skip(2) {
-                    if self.tds.contains_cell(cell_key) {
-                        cells_to_remove.insert(cell_key);
-                    }
+            // Mark cells beyond the top 2 for removal
+            for (cell_key, _, _) in cell_qualities.iter().skip(2) {
+                if self.tds.contains_cell(*cell_key) {
+                    cells_to_remove.insert(*cell_key);
                 }
             }
         }
