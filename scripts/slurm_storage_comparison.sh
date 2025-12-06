@@ -10,26 +10,119 @@
 #SBATCH --mem=32G
 
 # Storage Backend Comparison for Delaunay Triangulation
-# Compares SlotMap vs DenseSlotMap performance using Phase 4 benchmarks
 #
-# This script operates in two modes:
-# 1. SUBMISSION MODE (no SLURM_JOB_ID): Submits itself to Slurm with specified time limit
-# 2. EXECUTION MODE (has SLURM_JOB_ID): Runs benchmarks with per-phase timeouts
+# PURPOSE:
+#   Compares SlotMap vs DenseSlotMap performance across multiple dimensions and point
+#   counts using the large_scale_performance benchmark. Runs both backends sequentially,
+#   preserves baselines, and generates comparison reports.
 #
-# Usage:
-#   ./scripts/slurm_storage_comparison.sh                    # Default time (3 days), standard benchmarks
-#   ./scripts/slurm_storage_comparison.sh --large            # Default time (3 days), large-scale (4D@10K)
-#   ./scripts/slurm_storage_comparison.sh --time=14-00:00:00 # Custom time (2 weeks), standard benchmarks
-#   ./scripts/slurm_storage_comparison.sh --time=14-00:00:00 --large  # Custom time, large-scale
+# WORKFLOW:
+#   Phase 1: SlotMap benchmarks → backup results → clean build
+#   Phase 2: DenseSlotMap benchmarks (--features dense-slotmap)
+#   Phase 3: Merge baselines, generate comparison report, create archive
 #
-# Benchmark differences:
-#   Standard: 4D uses [1K, 3K] points (~2-3h per backend)
-#   Large:    4D uses [1K, 5K, 10K] points (~4-6h per backend)
+# SUBMISSION MODES:
+#   1. SELF-SUBMISSION MODE (no SLURM_JOB_ID):
+#      Parses arguments, validates environment, submits itself to Slurm scheduler.
+#      Use this when running from login node or non-Slurm environment.
 #
-# Requirements:
-#   - Rust toolchain installed (rustup)
-#   - uv installed for Python utilities
-#   - delaunay project cloned to working directory
+#   2. DIRECT EXECUTION MODE (has SLURM_JOB_ID):
+#      Already running inside a Slurm job. Executes benchmarks directly.
+#      Use this if manually submitting via sbatch or running in existing job.
+#
+# USAGE:
+#   ./scripts/slurm_storage_comparison.sh                    # Default: 3 days, standard
+#   ./scripts/slurm_storage_comparison.sh --large            # Default: 3 days, large-scale (4D@10K)
+#   ./scripts/slurm_storage_comparison.sh --time=14-00:00:00 # Custom: 2 weeks, standard
+#   ./scripts/slurm_storage_comparison.sh --time=14-00:00:00 --large  # Custom: 2 weeks, large
+#
+# BENCHMARK SCALE:
+#   Standard (default):
+#     - 2D: [100, 1K, 10K, 100K] points
+#     - 3D: [100, 1K, 10K, 50K] points
+#     - 4D: [100, 1K, 3K] points (reduced for time)
+#     - 5D: [100, 1K] points
+#     - Estimated time: ~2-3h per backend (~6h total)
+#
+#   Large (--large flag):
+#     - Same as standard, but 4D uses [100, 1K, 5K, 10K] points
+#     - Estimated time: ~4-6h per backend (~12h total)
+#
+# TIME MANAGEMENT:
+#   - Total Slurm time is split: ~50% Phase 1, ~50% Phase 2, 2h buffer
+#   - Per-phase timeout calculated automatically from --time value
+#   - Default: 3 days → 34h per phase (72h - 2h buffer / 2 phases)
+#   - Example: 14 days → 166h per phase (336h - 2h buffer / 2 phases)
+#   - If phase times out (exit 124), remaining phases continue
+#   - Use larger time limits for large-scale to ensure completion
+#
+# CLUSTER CONFIGURATION:
+#   Adjust #SBATCH directives at top of file for your cluster:
+#   - --account: Your allocation/project ID
+#   - --partition: Queue name (e.g. med2, gpu, debug)
+#   - --cpus-per-task: Benchmark parallelism (default: 8)
+#   - --mem: Memory allocation (default: 32G)
+#   Module loading (lines 156-170): Adapt to your cluster's module system
+#
+# OUTPUT FILES:
+#   artifacts/
+#   ├── slurm-{JOB_ID}-storage-comparison.out    # Stdout log
+#   ├── slurm-{JOB_ID}-storage-comparison.err    # Stderr log
+#   ├── storage_comparison_{JOB_ID}_*.md         # Markdown report
+#   ├── storage-comparison-{JOB_ID}.tar.gz       # Complete archive
+#   └── storage-comparison-{JOB_ID}/             # Extracted results
+#       ├── report.md                            # Copy of comparison report
+#       └── criterion/                           # Criterion benchmark data
+#           ├── {benchmark_name}/
+#           │   ├── base/                        # Baseline measurements
+#           │   └── {size}/                      # Per-size results
+#           ├── slotmap/                         # SlotMap baseline
+#           └── denseslotmap/                    # DenseSlotMap baseline
+#
+# ANALYSIS WORKFLOW:
+#   1. Wait for job completion: squeue -j {JOB_ID}
+#   2. Check logs: tail -f artifacts/slurm-{JOB_ID}-storage-comparison.out
+#   3. Extract archive: tar -xzf artifacts/storage-comparison-{JOB_ID}.tar.gz
+#   4. Review report: less artifacts/storage-comparison-{JOB_ID}/report.md
+#   5. Compare baselines:
+#      cd artifacts/storage-comparison-{JOB_ID}
+#      critcmp slotmap denseslotmap  # Requires: cargo install critcmp
+#   6. Detailed analysis:
+#      Open criterion/*/report/index.html in browser for visualizations
+#
+# UNDERSTANDING RESULTS:
+#   - Report shows duration and exit status for each phase
+#   - critcmp output format: benchmark_name/size: {time} (baseline) vs {time} ({%change})
+#   - Positive % = DenseSlotMap slower, Negative % = DenseSlotMap faster
+#   - Look for consistent patterns across dimensions and sizes
+#   - Criterion HTML reports include: violin plots, iteration times, distributions
+#
+# COMMON ISSUES:
+#   - "sbatch not found": Not on Slurm cluster or sbatch not in PATH
+#   - "cargo not found": Rust not installed or module not loaded
+#   - "uv not found": Install uv (curl -LsSf https://astral.sh/uv/install.sh | sh)
+#   - Phase timeout: Increase --time value (2x for large-scale recommended)
+#   - NFS .nfs* errors: Transient, script continues automatically
+#   - Out of memory: Increase #SBATCH --mem or reduce point counts
+#
+# ENVIRONMENT VARIABLES:
+#   BENCH_LARGE_SCALE=1           # Enable large-scale mode (set by --large flag)
+#   CARGO_TARGET_DIR=<path>       # Build artifacts location (auto-set to scratch)
+#   CARGO_UPDATE_IN_JOB=1         # Run cargo update before benchmarks (default: 0)
+#   PROJECT_DIR=<path>            # Override project directory (default: pwd)
+#   SLURM_JOB_ID                  # Slurm job ID (set automatically by scheduler)
+#   SLURM_CPUS_PER_TASK           # CPU count (set by #SBATCH directive)
+#   SLURM_MEM_PER_NODE            # Memory allocation (set by #SBATCH directive)
+#   SLURM_TMPDIR                  # Node-local scratch space
+#
+# PREREQUISITES:
+#   - Slurm cluster with sbatch command
+#   - Rust toolchain (1.91.0+, Edition 2024)
+#   - uv (Python package manager)
+#   - GNU coreutils (timeout command)
+#   - delaunay project in working directory
+#   - Sufficient disk space in artifacts/ and $SLURM_TMPDIR (~10GB per phase)
+#   - critcmp (optional, for detailed comparison): cargo install critcmp
 
 set -euo pipefail
 

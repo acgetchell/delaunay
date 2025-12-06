@@ -34,6 +34,8 @@ See [CHANGELOG.md](CHANGELOG.md) for details.
 
 ## ⚠️ Known Limitations
 
+<!-- TODO: Remove this entire section once Issue #120 is resolved (bistellar flips implemented) -->
+
 ### Delaunay Property
 
 The incremental Bowyer-Watson algorithm produces structurally valid triangulations but may
@@ -49,9 +51,16 @@ currently planned for v0.7.0+.
 
 For details, see: [Issue #120 Investigation](docs/issue_120_investigation.md)
 
-For applications requiring strict Delaunay guarantees, you can validate a triangulation with
-`DelaunayTriangulation::validate_delaunay()` and consider these mitigations:
+**Validation**: You can verify your triangulation meets your requirements using the library's
+[4-level validation hierarchy](docs/validation.md):
 
+- **Level 2** (`dt.is_valid()`) - Structural correctness (always passes)
+- **Level 3** (`dt.triangulation().validate_manifold()`) - Manifold topology + Euler characteristic
+- **Level 4** (`dt.validate_delaunay()`) - Delaunay property (may fail in rare cases)
+
+For applications requiring strict Delaunay guarantees:
+
+- Use `validate_delaunay()` to check your specific triangulation
 - Use smaller point sets (violations are rarer)
 - Filter degenerate configurations when possible
 - Monitor for updates in future releases
@@ -120,6 +129,13 @@ This includes information about:
 - Code style and standards
 - Submitting changes and pull requests
 - Project structure and development tools
+
+## 📖 Documentation
+
+- **[Validation Guide](docs/validation.md)** - Comprehensive 4-level validation hierarchy guide (element → structural → manifold → Delaunay)
+- **[Code Organization](docs/code_organization.md)** - Project structure and module patterns
+- **[Topology Guide](docs/topology.md)** - Topological concepts and Euler characteristic
+- **[Issue #120 Investigation](docs/issue_120_investigation.md)** - Known Delaunay property limitations
 
 ## 📚 References
 

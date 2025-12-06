@@ -111,10 +111,45 @@
 //!   maintain the empty circumsphere invariant; no vertex lies strictly
 //!   inside the circumsphere of any maximal cell.
 //!
-//! ## Validation helpers
+//! ## Validation Hierarchy
 //!
-//! These invariants are exposed through focused validation helpers on
-//! [`core::delaunay_triangulation::DelaunayTriangulation`]:
+//! The library provides **four levels** of validation, each building on the previous:
+//!
+//! 1. **Level 1: Element Validity** - [`Cell::is_valid()`](core::cell::Cell::is_valid), [`Vertex::is_valid()`](core::vertex::Vertex::is_valid)
+//! 2. **Level 2: TDS Structural Validity** - [`Tds::is_valid()`](core::triangulation_data_structure::Tds::is_valid)
+//! 3. **Level 3: Manifold Topology** - [`Triangulation::validate_manifold()`](crate::core::triangulation::Triangulation::validate_manifold)
+//! 4. **Level 4: Delaunay Property** - [`DelaunayTriangulation::validate_delaunay()`](core::delaunay_triangulation::DelaunayTriangulation::validate_delaunay)
+//!
+//! ```rust
+//! use delaunay::prelude::*;
+//!
+//! let vertices = vec![
+//!     vertex!([0.0, 0.0, 0.0]),
+//!     vertex!([1.0, 0.0, 0.0]),
+//!     vertex!([0.0, 1.0, 0.0]),
+//!     vertex!([0.0, 0.0, 1.0]),
+//! ];
+//! let dt = DelaunayTriangulation::new(&vertices).unwrap();
+//!
+//! // Level 2: Quick structural check (recommended for production)
+//! assert!(dt.is_valid().is_ok());
+//!
+//! // Level 3: Thorough manifold validation (includes Level 2 + Euler characteristic)
+//! assert!(dt.triangulation().validate_manifold().is_ok());
+//!
+//! // Level 4: Full geometric validation (expensive, use in tests)
+//! assert!(dt.validate_delaunay().is_ok());
+//! ```
+//!
+//! **Performance**: Use Level 2 (`is_valid()`) for most production validation. Reserve Level 3
+//! for tests/debug builds, and Level 4 for critical verification.
+//!
+//! For a comprehensive guide with decision trees, troubleshooting, and performance analysis,
+//! see the [Validation Guide](https://github.com/acgetchell/delaunay/blob/main/docs/validation.md).
+//!
+//! ## Validation Helpers
+//!
+//! Individual invariants can be checked using focused validation helpers:
 //!
 //! | Invariant | Helper method | Notes |
 //! |---|---|---|
@@ -124,14 +159,13 @@
 //! | Cell validity | [`Cell::is_valid`](core::cell::Cell::is_valid) (aggregated via [`DelaunayTriangulation::validation_report`](core::delaunay_triangulation::DelaunayTriangulation::validation_report)) | Per-cell structural checks. |
 //! | Facet sharing | [`DelaunayTriangulation::validate_facet_sharing`](core::delaunay_triangulation::DelaunayTriangulation::validate_facet_sharing) | Verifies that each facet is shared by ≤ 2 cells. |
 //! | Neighbor consistency | [`DelaunayTriangulation::validate_neighbors`](core::delaunay_triangulation::DelaunayTriangulation::validate_neighbors) | Verifies neighbor topology and mutual relationships. |
+//! | Manifold topology | [`Triangulation::validate_manifold`](crate::core::triangulation::Triangulation::validate_manifold) | Validates manifold properties and Euler characteristic. |
 //! | Delaunay property | [`DelaunayTriangulation::validate_delaunay`](core::delaunay_triangulation::DelaunayTriangulation::validate_delaunay) | Expensive global empty-circumsphere check (optional). |
 //!
 //! [`DelaunayTriangulation::is_valid`](core::delaunay_triangulation::DelaunayTriangulation::is_valid) runs all **structural**
 //! invariants (mappings, duplicates, per-cell validity, facet sharing, neighbors) and returns
 //! only the first failure for convenience. For full diagnostics, use
 //! [`core::delaunay_triangulation::DelaunayTriangulation::validation_report`].
-//! To check the Delaunay property, use
-//! [`core::delaunay_triangulation::DelaunayTriangulation::validate_delaunay`] separately.
 //!
 //! For detailed information, see:
 //! - [`core::algorithms::incremental_insertion`] - Primary invariant enforcement during triangulation construction
