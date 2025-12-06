@@ -8,14 +8,15 @@ issues, including the "No cavity boundary facets found" error and other precisio
 1. [Problem Overview](#problem-overview)
 2. [Current Implementation Status](#current-implementation-status)
 3. [Implemented Solutions](#implemented-solutions)
-4. [Robust Predicates](#robust-predicates)
-5. [Matrix Conditioning](#matrix-conditioning)
-6. [Usage Examples](#usage-examples)
-7. [Configuration Selection Guide](#configuration-selection-guide)
-8. [Convex Hull Robustness](#convex-hull-robustness)
-9. [Testing and Validation](#testing-and-validation)
-10. [Performance Considerations](#performance-considerations)
-11. [Migration Strategy](#migration-strategy)
+4. [Error Handling and Retry Logic](#error-handling-and-retry-logic)
+5. [Robust Predicates](#robust-predicates)
+6. [Matrix Conditioning](#matrix-conditioning)
+7. [Usage Examples](#usage-examples)
+8. [Configuration Selection Guide](#configuration-selection-guide)
+9. [Convex Hull Robustness](#convex-hull-robustness)
+10. [Testing and Validation](#testing-and-validation)
+11. [Performance Considerations](#performance-considerations)
+12. [Migration Strategy](#migration-strategy)
 
 ## Problem Overview
 
@@ -59,18 +60,20 @@ As of version 0.4.3, the delaunay library includes comprehensive robustness impr
    - Comprehensive error handling for edge cases
    - Multi-dimensional support (tested in 2D-5D)
 
-4. **Enhanced Error Handling**
-   - Detailed error types with diagnostic information
-   - Graceful degradation for numerical edge cases
-   - Comprehensive validation and consistency checks
-   - Recovery strategies for boundary detection failures
+4. **Enhanced Error Handling** (`src/core/algorithms/incremental_insertion.rs`, `src/core/triangulation.rs`)
+   - Structured `InsertionError` enum with geometric degeneracy classification
+   - `NonManifoldTopology` variant for facet sharing violations (retryable via perturbation)
+   - Automatic retry logic with progressive coordinate perturbation (1e-4 to 5e-2)
+   - Direct error propagation avoiding unnecessary unwrapping
+   - Transactional insertion with automatic rollback on failure
+   - Detailed error diagnostics with facet hash and cell count information
 
-5. **Robust Bowyer-Watson Algorithm** (`src/core/algorithms/robust_bowyer_watson.rs`)
-   - Complete integration of robust predicates into triangulation construction
-   - Recovery strategies for cavity boundary detection failures
-   - Statistics tracking for algorithm performance analysis
-   - Configurable robustness settings for different use cases
-   - Support for degenerate point configurations
+5. **Kernel-Based Robust Predicates** (`src/geometry/kernel.rs`)
+   - `FastKernel`: Direct floating-point predicates for well-conditioned inputs
+   - `RobustKernel`: Adaptive tolerance + matrix conditioning for degeneracies
+   - Unified insertion algorithm with kernel-based predicate dispatch
+   - Statistics tracking for insertion performance analysis
+   - Support for degenerate point configurations via automatic retry
 
 ### 🚧 In Progress
 
@@ -132,9 +135,108 @@ use delaunay::geometry::algorithms::convex_hull::ConvexHull;
 // Robust point-in-hull testing with fallback for degenerate cases
 let is_outside = hull.is_point_outside(&test_point, &tds)?;
 
-// Fallback visibility testing when orientation predicates fail
+### Fallback visibility testing when orientation predicates fail
 let visible_facets = hull.find_visible_facets(&external_point, &tds)?;
 ```
+
+## Error Handling and Retry Logic
+
+### Structured Error Classification
+
+Location: `src/core/algorithms/incremental_insertion.rs`
+
+The `InsertionError` enum provides structured error variants for geometric degeneracies:
+
+```rust
+use delaunay::core::algorithms::incremental_insertion::InsertionError;
+
+// Structured error for non-manifold topology
+match insertion_result {
+    Err(InsertionError::NonManifoldTopology { facet_hash, cell_count }) => {
+        eprintln!("Non-manifold: facet {:x} shared by {} cells", facet_hash, cell_count);
+        // Retryable via perturbation
+    }
+    Err(InsertionError::ConflictRegion(e)) => {
+        // Duplicate boundary facets or ridge fans - also retryable
+    }
+    Err(e) if e.is_retryable() => {
+        // Automatic retry with perturbation
+    }
+    Err(e) => {
+        // Non-retryable structural error
+        return Err(e);
+    }
+    Ok(result) => result,
+}
+```
+
+### Automatic Retry with Perturbation
+
+Location: `src/core/triangulation.rs`
+
+The `insert_transactional` method provides automatic retry logic:
+
+```rust
+use delaunay::core::triangulation::Triangulation;
+use delaunay::vertex;
+
+// Transactional insertion with automatic rollback and retry
+let vertex = vertex!([0.5, 0.5, 0.5]);
+let ((vkey, cell_hint), stats) = triangulation.insert_with_statistics(vertex, None, None)?;
+
+println!("Insertion statistics:");
+println!("  Attempts: {}", stats.attempts);
+println!("  Used perturbation: {}", stats.used_perturbation);
+println!("  Cells repaired: {}", stats.cells_removed_during_repair);
+println!("  Success: {}", stats.success);
+```
+
+### Progressive Perturbation Schedule
+
+The retry mechanism uses a progressive perturbation schedule:
+
+1. **Attempt 0**: Original coordinates (no perturbation)
+2. **Attempt 1**: ε = 1e-4 (0.01% perturbation)
+3. **Attempt 2**: ε = 1e-3 (0.1% perturbation)
+4. **Attempt 3**: ε = 1e-2 (1% perturbation)
+5. **Attempt 4**: ε = 2e-2 (2% perturbation)
+6. **Attempt 5**: ε = 5e-2 (5% perturbation)
+
+Each attempt:
+
+- Clones the TDS for rollback (transactional semantics)
+- Applies coordinate perturbation
+- Attempts insertion
+- On failure: restores TDS from snapshot and increases perturbation
+- On success: returns result with statistics
+
+### Retryable Error Detection
+
+The `is_retryable()` method classifies errors:
+
+```rust
+// Retryable errors (geometric degeneracies)
+- InsertionError::NonManifoldTopology { .. }        // Facet sharing violation
+- InsertionError::Location(CycleDetected { .. })    // Point location cycle
+- InsertionError::ConflictRegion(DuplicateBoundaryFacets { .. })
+- InsertionError::ConflictRegion(RidgeFan { .. })
+- InsertionError::TopologyValidation(_)             // Repair failure
+
+// Non-retryable errors (structural failures)
+- InsertionError::DuplicateUuid { .. }              // UUID conflict
+- InsertionError::DuplicateCoordinates { .. }       // Coordinate conflict
+- InsertionError::Construction(_)                   // Generic construction error
+- InsertionError::CavityFilling { .. }              // Cavity filling error
+- InsertionError::NeighborWiring { .. }             // Wiring error (legacy)
+```
+
+### Benefits
+
+1. **Type Safety**: Structured error variants eliminate string parsing
+2. **Automatic Recovery**: Retry logic resolves most geometric degeneracies
+3. **Transactional Semantics**: TDS always remains in valid state
+4. **Diagnostic Information**: Detailed error context for debugging
+5. **Progressive Resolution**: Increasing perturbation scales resolve degeneracies
 
 ## Robust Predicates
 
@@ -205,30 +307,24 @@ let config = config_presets::degenerate_robust();
 
 ### Usage in Triangulation
 
-The robust predicates are designed for integration with the Bowyer-Watson algorithm:
+The robust predicates are integrated into the triangulation kernels and automatically applied
+during insertion. Users can choose between different kernel types based on their needs:
 
 ```rust
-// In bowyer_watson.rs - find_bad_cells() can use robust predicates
-for cell_key in &tds.cells().indices().collect::<Vec<_>>() {
-    let cell = &tds.cells()[*cell_key];
-    
-    // Use robust insphere test for stability
-    let config = config_presets::general_triangulation();
-    match robust_insphere(&cell.vertices_as_points(), vertex.point(), &config) {
-        Ok(InSphere::INSIDE) => bad_cells.push(*cell_key),
-        Ok(InSphere::OUTSIDE) => continue,
-        Ok(InSphere::BOUNDARY) => {
-            // Handle boundary case with additional logic
-            if should_include_boundary_cell(cell, vertex) {
-                bad_cells.push(*cell_key);
-            }
-        }
-        Err(e) => {
-            eprintln!("Insphere test failed for cell {:?}: {}", cell_key, e);
-            continue;
-        }
-    }
-}
+use delaunay::prelude::*;
+use delaunay::geometry::kernel::{FastKernel, RobustKernel};
+
+// Fast predicates (default) - best for well-conditioned inputs
+let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+    DelaunayTriangulation::empty();
+
+// Robust predicates - handles degeneracies and extreme coordinates
+let mut dt_robust: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
+    DelaunayTriangulation::with_empty_kernel(RobustKernel::new());
+
+// Insert vertices - kernel predicates used automatically
+dt_robust.insert(vertex!([1e10, 1e10, 1e10])).unwrap();
+dt_robust.insert(vertex!([1e10 + 1.0, 1e10, 1e10])).unwrap();
 ```
 
 ## Matrix Conditioning
@@ -296,15 +392,10 @@ let result_determinant = cast(final_determinant)
 ### Basic Robust Triangulation
 
 ```rust
-use delaunay::core::{
-    algorithms::robust_bowyer_watson::RobustBoyerWatson,
-    traits::insertion_algorithm::InsertionAlgorithm,
-    triangulation_data_structure::Tds,
-};
-use delaunay::geometry::robust_predicates::config_presets;
-use delaunay::vertex;
+use delaunay::prelude::*;
+use delaunay::geometry::kernel::{FastKernel, RobustKernel};
 
-// For problematic point sets, use robust triangulation
+// For problematic point sets, use robust kernel
 let vertices = vec![
     vertex!([1e10, 1e10, 1e10]),           // Large coordinates
     vertex!([1e10 + 1.0, 1e10, 1e10]),     // Small relative differences
@@ -313,22 +404,20 @@ let vertices = vec![
     vertex!([1e10 + 0.5, 1e10 + 0.5, 1e10 + 0.5]),
 ];
 
-// Try standard construction first
-let tds_result = Tds::new(&vertices);
-if tds_result.is_err() {
+// Try standard triangulation with fast predicates first
+let dt_result: Result<DelaunayTriangulation<FastKernel<f64>, (), (), 3>, _> = 
+    DelaunayTriangulation::new(&vertices);
+
+if dt_result.is_err() {
     println!("Standard triangulation failed, using robust approach");
     
-    // Use robust Bowyer-Watson algorithm
-    let mut robust_algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::for_degenerate_cases();
-    let mut tds = Tds::empty();
+    // Use robust kernel for numerical stability
+    let dt = DelaunayTriangulation::with_kernel(
+        RobustKernel::new(),
+        &vertices
+    ).expect("Robust triangulation failed");
     
-    for vertex in &vertices {
-        if let Err(e) = robust_algorithm.insert_vertex(&mut tds, vertex) {
-            eprintln!("Failed to insert vertex {:?}: {}", vertex, e);
-        }
-    }
-    
-    println!("Robust triangulation completed with {} cells", tds.cells().len());
+    println!("Robust triangulation completed with {} cells", dt.number_of_cells());
 }
 ```
 
@@ -364,103 +453,84 @@ match result {
 
 ### Available Configurations
 
-The library provides three preset configurations optimized for different scenarios:
+The library provides robust predicates integrated into kernel types. Choose the appropriate
+kernel based on your input characteristics:
 
 ```rust
-use delaunay::geometry::robust_predicates::config_presets;
+use delaunay::prelude::*;
+use delaunay::geometry::kernel::{FastKernel, RobustKernel};
 
-// General-purpose triangulation (balanced performance and robustness)
-let general_config = config_presets::general_triangulation::<f64>();
+// Fast predicates (default) - best for well-conditioned inputs
+let dt_fast: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+    DelaunayTriangulation::empty();
 
-// High-precision applications (maximum accuracy)
-let precision_config = config_presets::high_precision::<f64>();
-
-// Degenerate input handling (maximum robustness)
-let robust_config = config_presets::degenerate_robust::<f64>();
+// Robust predicates - handles degeneracies, extreme coordinates
+let dt_robust: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
+    DelaunayTriangulation::with_empty_kernel(RobustKernel::new());
 ```
 
-### Configuration Comparison
+### Kernel Selection Comparison
 
-| Configuration | Base Tolerance | Refinement Iterations | Best Use Case |
-|---|---|---|---|
-| `general_triangulation()` | 1e-12 | 3 | Well-conditioned inputs, performance-critical |
-| `high_precision()` | 1e-15 | 5 | Scientific computing, high accuracy required |
-| `degenerate_robust()` | 1e-10 | 2 | Nearly degenerate inputs, error recovery |
+| Kernel Type | Predicate Strategy | Best Use Case |
+|---|---|---|
+| `FastKernel<f64>` | Direct floating-point determinants | Well-conditioned inputs, performance-critical |
+| `RobustKernel<f64>` | Adaptive tolerance + conditioning | Degeneracies, extreme coordinates, error recovery |
 
-### Algorithm Selection Examples
+### Kernel Selection Examples
 
 ```rust
-use delaunay::core::algorithms::robust_bowyer_watson::RobustBoyerWatson;
+use delaunay::prelude::*;
+use delaunay::geometry::kernel::{FastKernel, RobustKernel};
 
-// For general applications
-let general_algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
+// For general applications - use default fast kernel
+let vertices = vec![vertex!([0.0, 0.0, 0.0]), /* ... */];
+let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-// For high-precision scientific computing
-let precision_config = config_presets::high_precision::<f64>();
-let precise_algorithm = RobustBoyerWatson::with_config(precision_config);
+// For high-precision scientific computing - use robust kernel
+let dt_precise: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
+    DelaunayTriangulation::with_kernel(RobustKernel::new(), &vertices).unwrap();
 
-// For problematic/degenerate inputs
-let robust_algorithm = RobustBoyerWatson::for_degenerate_cases();
+// For problematic/degenerate inputs - use robust kernel
+let dt_robust: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
+    DelaunayTriangulation::with_kernel(RobustKernel::new(), &vertices).unwrap();
 ```
 
 ### Error Recovery in Applications
 
 ```rust
-use delaunay::core::{
-    algorithms::robust_bowyer_watson::RobustBoyerWatson,
-    traits::insertion_algorithm::InsertionAlgorithm,
-    triangulation_data_structure::Tds,
-    vertex::Vertex,
-};
-use delaunay::geometry::robust_predicates::config_presets;
+use delaunay::prelude::*;
+use delaunay::geometry::kernel::{FastKernel, RobustKernel};
+use delaunay::core::triangulation_data_structure::TriangulationConstructionError;
+use delaunay::core::vertex::Vertex;
 
 pub fn create_triangulation_with_fallback(
-    vertices: &[Vertex<f64, Option<()>, 3>]
-) -> Result<Tds<f64, Option<()>, Option<()>, 3>, String> {
-    // Strategy 1: Try standard triangulation
-    if let Ok(tds) = Tds::new(vertices) {
-        println!("Standard triangulation succeeded");
-        return Ok(tds);
+    vertices: &[Vertex<f64, (), 3>]
+) -> Result<DelaunayTriangulation<RobustKernel<f64>, (), (), 3>, TriangulationConstructionError> {
+    // Strategy 1: Try fast kernel first for performance
+    let fast_result: Result<DelaunayTriangulation<FastKernel<f64>, (), (), 3>, _> =
+        DelaunayTriangulation::new(vertices);
+    
+    if fast_result.is_ok() {
+        println!("Fast kernel succeeded");
+        // Convert to robust kernel type for uniform return type
+        return DelaunayTriangulation::with_kernel(RobustKernel::new(), vertices);
     }
     
-    // Strategy 2: Try with general robust configuration
-    let mut robust_algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::new();
-    let mut tds = Tds::empty();
+    println!("Fast kernel failed, trying robust kernel");
     
-    for vertex in vertices {
-        if let Err(_) = robust_algorithm.insert_vertex(&mut tds, vertex) {
-            // Strategy 3: Try with maximum robustness configuration
-            let mut max_robust_algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::for_degenerate_cases();
-            let mut max_robust_tds = Tds::empty();
-            
-            for v in vertices {
-                if let Err(e) = max_robust_algorithm.insert_vertex(&mut max_robust_tds, v) {
-                    // Strategy 4: Preprocess points and retry with max robustness
-                    let filtered_vertices = remove_duplicate_and_near_duplicate_points(vertices);
-                    return try_with_filtered_vertices(&filtered_vertices);
-                }
-            }
-            return Ok(max_robust_tds);
+    // Strategy 2: Try robust kernel with automatic retry logic
+    match DelaunayTriangulation::with_kernel(RobustKernel::new(), vertices) {
+        Ok(dt) => {
+            println!("Robust kernel succeeded");
+            Ok(dt)
+        }
+        Err(e) => {
+            // Strategy 3: Preprocess points and retry with robust kernel
+            println!("Robust kernel failed, trying with filtered vertices");
+            let filtered_vertices = remove_duplicate_and_near_duplicate_points(vertices);
+            DelaunayTriangulation::with_kernel(RobustKernel::new(), &filtered_vertices)
         }
     }
-    
-    println!("Robust triangulation succeeded");
-    Ok(tds)
-}
-
-fn try_with_filtered_vertices(
-    vertices: &[Vertex<f64, Option<()>, 3>]
-) -> Result<Tds<f64, Option<()>, Option<()>, 3>, String> {
-    let mut algorithm = RobustBoyerWatson::<f64, Option<()>, Option<()>, 3>::for_degenerate_cases();
-    let mut tds = Tds::empty();
-    
-    for vertex in vertices {
-        algorithm.insert_vertex(&mut tds, vertex)
-            .map_err(|e| format!("All triangulation strategies failed: {}", e))?;
-    }
-    
-    println!("Filtered robust triangulation succeeded");
-    Ok(tds)
 }
 ```
 
@@ -704,27 +774,27 @@ mod performance_tests {
 
 The robust predicates and algorithms add computational overhead, but provide significant reliability gains:
 
-1. **Adaptive tolerance computation**: ~10-20% overhead per predicate call
-2. **Multiple strategy attempts**: ~50-100% overhead (only for difficult cases that would otherwise fail)
-3. **Matrix conditioning**: ~30-50% overhead for problematic cases
-4. **Consistency verification**: ~100% overhead (double computation) when enabled
-5. **RobustBoyerWatson vs IncrementalBoyerWatson**: ~20-40% slower for normal cases, but succeeds on cases that would fail
+1. **Adaptive tolerance computation**: ~10-20% overhead per predicate call (RobustKernel only)
+2. **Automatic retry with perturbation**: ~50-100% overhead (only for retryable insertion errors)
+3. **Matrix conditioning**: ~30-50% overhead for problematic cases (RobustKernel only)
+4. **RobustKernel vs FastKernel**: ~20-40% slower for normal cases, but succeeds on cases that would fail
+5. **Transactional insertion**: Minimal overhead (~5%) for maintaining valid state during errors
 
 > **Note**: These percentages are based on benchmark measurements from [`benches/robust_predicates_comparison.rs`](../benches/robust_predicates_comparison.rs)
 > and [`tests/robust_predicates_showcase.rs`](../tests/robust_predicates_showcase.rs). For detailed results, see [`benches/PERFORMANCE_RESULTS.md`](../benches/PERFORMANCE_RESULTS.md).
 > Actual overhead may vary based on input complexity and geometry.
 
-### When to Use Robust Algorithms
+### When to Use Robust Kernels
 
-**Use `RobustBoyerWatson` when:**
+**Use `RobustKernel` when:**
 
-- Standard triangulation fails with "No cavity boundary facets found" errors
+- Standard triangulation fails with insertion errors (TopologyValidation, NonManifoldTopology)
 - Working with nearly degenerate point configurations
 - Points have extreme coordinate values (very large or very small)
 - Input data comes from measurements with numerical precision issues
 - Reliability is more important than maximum performance
 
-**Use standard `IncrementalBoyerWatson` when:**
+**Use standard `FastKernel` (default) when:**
 
 - Working with well-conditioned point sets
 - Maximum performance is critical
@@ -732,11 +802,11 @@ The robust predicates and algorithms add computational overhead, but provide sig
 
 ### Optimization Strategies
 
-1. **Tiered approach**: Try standard algorithm first, fall back to robust on failure
-2. **Caching**: Cache computed tolerances and conditioned matrices
+1. **Tiered approach**: Try `FastKernel` first, fall back to `RobustKernel` on failure
+2. **Automatic retry**: Insertion errors trigger automatic retry with random perturbation (built-in)
 3. **Early termination**: Return as soon as a reliable result is found
-4. **Selective robustness**: Use `RobustBoyerWatson::new()` for general cases, `::for_degenerate_cases()` only when needed
-5. **Preprocessing**: Remove duplicate and near-duplicate points before triangulation
+4. **Preprocessing**: Remove duplicate and near-duplicate points before triangulation
+5. **Error handling**: Structured error types enable precise error recovery strategies
 
 ### Memory Usage
 
@@ -755,37 +825,44 @@ The robust predicates and algorithms add computational overhead, but provide sig
 - ✅ Added comprehensive tests and validation suite
 - ✅ Benchmarked performance impact and documented overhead
 
-#### Phase 2: Algorithm Integration
+#### Phase 2: Algorithm Consolidation and Kernel Integration
 
-- ✅ Integrated robust predicates into `RobustBoyerWatson` algorithm
-- ✅ Added configuration options (`general_triangulation`, `high_precision`, `degenerate_robust`)
+- ✅ Consolidated incremental insertion into unified cavity-based algorithm
+- ✅ Integrated robust predicates into kernel architecture (`FastKernel`, `RobustKernel`)
+- ✅ Added automatic retry logic with progressive perturbation for transient errors
+- ✅ Implemented structured error types for precise error handling
 - ✅ Demonstrated significant improvement in success rates for problematic cases
 
 ### 🚧 Current Phase: Selective Adoption
 
 **Recommended Migration Path:**
 
-1. **Immediate**: Use `RobustBoyerWatson` for applications encountering triangulation failures
+1. **Immediate**: Use `RobustKernel` for applications encountering triangulation failures
 
    ```rust
+   use delaunay::prelude::*;
+   use delaunay::geometry::kernel::RobustKernel;
+   
    // Replace failed standard triangulations
-   let robust_algorithm = RobustBoyerWatson::for_degenerate_cases();
+   let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
+       DelaunayTriangulation::with_kernel(RobustKernel::new(), &vertices)?;
    ```
 
 2. **Short-term**: Implement tiered approach for new applications
 
    ```rust
-   use delaunay::core::error::TriangulationError;
+   use delaunay::prelude::*;
+   use delaunay::geometry::kernel::{FastKernel, RobustKernel};
    
-   // Try standard first, fall back to robust
-   match Tds::new(&vertices) {
-       Ok(tds) => tds,
-       Err(_) => create_with_robust_algorithm(&vertices)?
-           .map_err(|e: TriangulationError| e)?,
-   }
+   // Try fast kernel first, fall back to robust
+   let dt = DelaunayTriangulation::new(&vertices)
+       .or_else(|_| {
+           println!("Fast kernel failed, using robust kernel");
+           DelaunayTriangulation::with_kernel(RobustKernel::new(), &vertices)
+       })?;
    ```
 
-3. **Medium-term**: Evaluate robust algorithms for performance-critical applications based on your specific input characteristics
+3. **Medium-term**: Evaluate kernel performance for your specific input characteristics
 
 ### 📋 Future Phases
 
@@ -803,6 +880,7 @@ The robust predicates and algorithms add computational overhead, but provide sig
 
 ### Current Status Summary
 
-The robust predicates system is **production-ready** and addresses the core numerical stability issues.
-Users experiencing "No cavity boundary facets found" errors should migrate to `RobustBoyerWatson` immediately.
-The system provides a mature, well-tested solution with comprehensive error recovery strategies.
+The robust predicates system is **production-ready** and integrated into the kernel architecture.
+Users experiencing insertion errors should switch to `RobustKernel` for improved numerical stability.
+The system provides automatic retry logic with progressive perturbation for transient degeneracies,
+combined with kernel-level robust predicates for persistent numerical issues.

@@ -363,8 +363,8 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
 
     @pytest.mark.parametrize("dev_mode", [False, True])
     @patch("benchmark_utils.run_cargo_command")
-    def test_compare_uses_quiet(self, mock_cargo, dev_mode):
-        """Test that PerformanceComparator invokes cargo with --quiet flag in both dev and non-dev modes."""
+    def test_compare_omits_quiet_flag(self, mock_cargo, dev_mode):
+        """Test that PerformanceComparator invokes cargo without --quiet flag (removed for better error visibility)."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             baseline_file = temp_path / "baseline.txt"
@@ -386,10 +386,10 @@ Time: [1.0, 1.0, 1.0] µs
             comparator = PerformanceComparator(temp_path)
             comparator.compare_with_baseline(baseline_file, dev_mode=dev_mode)
 
-            # Verify cargo was called with --quiet flag
+            # Verify cargo was called without --quiet flag (removed for better error visibility)
             assert mock_cargo.call_count >= 1
             args = mock_cargo.call_args[0][0]
-            assert "--quiet" in args
+            assert "--quiet" not in args  # Changed: --quiet flag should NOT be present
             if dev_mode:
                 for arg in DEV_MODE_BENCH_ARGS:
                     assert arg in args
@@ -572,6 +572,60 @@ Time: [1.0, 1.0, 1.0] µs
         # 7% change should not be regression with 10% threshold
         assert time_change == pytest.approx(7.0, abs=0.001)  # Use pytest.approx for floating-point comparison
         assert not is_regression
+
+    def test_write_error_file_baseline_not_found(self, comparator):
+        """Test writing error file when baseline is not found."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = Path(temp_dir) / "error_results.txt"
+            baseline_file = Path(temp_dir) / "nonexistent_baseline.txt"
+
+            comparator._write_error_file(output_file, "Baseline file not found", baseline_file)
+
+            assert output_file.exists()
+            content = output_file.read_text()
+            assert "Comparison Results" in content
+            assert "❌ Error: Baseline file not found" in content
+            assert str(baseline_file) in content
+            assert "This error prevented the benchmark comparison from completing successfully" in content
+
+    def test_write_error_file_benchmark_error(self, comparator):
+        """Test writing error file when benchmark execution fails."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = Path(temp_dir) / "error_results.txt"
+            error_message = "Failed to compile benchmarks: error[E0277]: trait bound not satisfied"
+
+            comparator._write_error_file(output_file, "Benchmark execution error", error_message)
+
+            assert output_file.exists()
+            content = output_file.read_text()
+            assert "❌ Error: Benchmark execution error" in content
+            assert error_message in content
+            assert "Please check the CI logs for more information" in content
+
+    def test_write_error_file_creates_parent_directory(self, comparator):
+        """Test that _write_error_file creates parent directory if it doesn't exist."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = Path(temp_dir) / "nested" / "path" / "error_results.txt"
+
+            comparator._write_error_file(output_file, "Test error", "Test details")
+
+            assert output_file.exists()
+            assert output_file.parent.exists()
+            content = output_file.read_text()
+            assert "❌ Error: Test error" in content
+
+    def test_write_error_file_handles_write_failure(self, comparator):
+        """Test that _write_error_file handles write failures gracefully."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = Path(temp_dir) / "error_results.txt"
+
+            # Mock Path.open to raise an exception
+            with patch.object(Path, "open", side_effect=OSError("Permission denied")):
+                # Should not raise exception, just log it
+                comparator._write_error_file(output_file, "Test error", "Test details")
+
+            # File should not exist due to write failure
+            assert not output_file.exists()
 
 
 class TestIntegrationScenarios:
@@ -1555,6 +1609,42 @@ Hardware Information:
                 github_env_content = github_env_file.read_text()
                 assert "BENCHMARK_REGRESSION_DETECTED=true" in github_env_content
 
+    def test_generate_summary_with_error_file(self, temp_chdir, capsys):
+        """Test generating summary when comparison failed with error file."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            results_file = Path(temp_dir) / "benches" / "compare_results.txt"
+            results_file.parent.mkdir(parents=True)
+            # Simulate error file content (as written by _write_error_file)
+            results_file.write_text(
+                "Comparison Results\n"
+                "==================\n\n"
+                "❌ Error: Benchmark execution timeout\n\n"
+                "Details: Command timed out after 1800 seconds\n\n"
+                "This error prevented the benchmark comparison from completing successfully.\n"
+                "Please check the CI logs for more information.\n"
+            )
+
+            env_vars = {
+                "BASELINE_SOURCE": "artifact",
+                "BASELINE_ORIGIN": "release",
+                "BASELINE_TAG": "v1.0.0",
+                "BASELINE_EXISTS": "true",
+                "SKIP_BENCHMARKS": "false",
+                "SKIP_REASON": "n/a",
+            }
+
+            with patch.dict(os.environ, env_vars), temp_chdir(temp_dir):
+                BenchmarkRegressionHelper.generate_summary()
+
+                captured = capsys.readouterr()
+                assert "📊 Performance Regression Testing Summary" in captured.out
+                assert "Baseline source: artifact" in captured.out
+                # Should detect error and report failure, not "no regressions"
+                assert "Result: ❌ Benchmark comparison failed" in captured.out
+                assert "(see benches/compare_results.txt for details)" in captured.out
+                # Should NOT say "no regressions" when there was an error
+                assert "✅ No significant performance regressions" not in captured.out
+
 
 class TestProjectRootHandling:
     """Test cases for find_project_root functionality."""
@@ -1676,6 +1766,14 @@ class TestTimeoutHandling:
                 captured = capsys.readouterr()
                 assert "timed out after 1800 seconds" in captured.err
                 assert "Consider increasing --bench-timeout" in captured.err
+
+                # Verify error file contains full exception message with command context
+                error_file = project_root / "benches" / "compare_results.txt"
+                assert error_file.exists()
+                error_content = error_file.read_text()
+                assert "❌ Error: Benchmark execution timeout" in error_content
+                assert "cargo bench" in error_content  # Command from exception
+                assert "timeout after 1800 seconds" in error_content  # Explicit timeout value
 
     def test_cli_bench_timeout_validation(self, monkeypatch, temp_chdir):
         """Test that CLI validates bench_timeout is positive via main()."""

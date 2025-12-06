@@ -3,9 +3,7 @@
 //! This example demonstrates basic memory usage analysis for Delaunay triangulations
 //! using the existing allocation counter infrastructure from the tests.
 
-use delaunay::core::util::measure_with_result;
-use delaunay::geometry::algorithms::ConvexHull;
-use delaunay::geometry::util::generate_random_triangulation;
+use delaunay::prelude::*;
 use std::time::Instant;
 
 /// Bounds for random triangulation (min, max) - consistent with benchmarks
@@ -20,7 +18,7 @@ macro_rules! generate_memory_analysis {
 
             // Measure triangulation construction
             let start = Instant::now();
-            let (tds_res, tri_info) = measure_with_result(|| {
+            let (dt_res, tri_info) = measure_with_result(|| {
                 generate_random_triangulation::<f64, (), (), $dim>(
                     n_points,
                     BOUNDS,
@@ -28,7 +26,7 @@ macro_rules! generate_memory_analysis {
                     Some(seed),
                 )
             });
-            let tds = match tds_res {
+            let dt = match dt_res {
                 Ok(t) => t,
                 Err(e) => {
                     eprintln!("✗ Failed to build triangulation: {e}");
@@ -37,13 +35,13 @@ macro_rules! generate_memory_analysis {
             };
             let construction_time = start.elapsed();
 
-            let num_vertices = tds.number_of_vertices();
-            let num_cells = tds.number_of_cells();
+            let num_vertices = dt.tds().number_of_vertices();
+            let num_cells = dt.tds().number_of_cells();
 
             // Measure convex hull extraction
             let start = Instant::now();
             let (hull_res, hull_info) = measure_with_result(|| {
-                ConvexHull::from_triangulation(&tds)
+                ConvexHull::from_triangulation(dt.triangulation())
             });
             let hull = match hull_res {
                 Ok(h) => h,
@@ -54,7 +52,7 @@ macro_rules! generate_memory_analysis {
             };
             let hull_time = start.elapsed();
 
-            let hull_facets = hull.facet_count();
+            let hull_facets = hull.number_of_facets();
 
             // Print results
             println!("    Triangulation: {num_vertices} vertices, {num_cells} cells");

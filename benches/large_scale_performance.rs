@@ -8,7 +8,7 @@
 //! - **Dimensions**: 2D, 3D, 4D, 5D (complete coverage)
 //! - **Vertex counts**: 1K-10K (2D/3D), 1K-3K (4D default), 500-1K (5D)
 //! - **Measurements**:
-//!   - Construction time (Bowyer-Watson algorithm)
+//!   - Construction time (incremental insertion algorithm)
 //!   - Memory usage delta during construction (process RSS)
 //!   - Validation time (topology checks)
 //!   - Query performance (neighbor finding, iteration)
@@ -79,7 +79,7 @@
 #![allow(missing_docs)]
 
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
-use delaunay::core::triangulation_data_structure::Tds;
+use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::vertex;
 use std::hint::black_box;
@@ -132,13 +132,15 @@ fn measure_construction_with_memory<const D: usize>(n_points: usize, seed: u64) 
         .expect("Failed to generate points");
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
 
-    // Measure memory before Tds construction to isolate TDS allocation
+    // Measure memory before triangulation construction to isolate allocation
     let mem_before_tds = get_memory_usage();
 
-    let _tds: Tds<f64, Option<()>, Option<()>, D> =
-        Tds::new(&vertices).expect("Failed to create triangulation");
+    let dt = DelaunayTriangulation::new(&vertices).expect("Failed to create triangulation");
 
     let mem_after = get_memory_usage();
+
+    // Keep dt alive for accurate memory measurement
+    black_box(&dt);
 
     // Total delta includes setup + TDS
     let delta_i128 = i128::from(mem_after) - i128::from(mem_before);
@@ -184,9 +186,9 @@ fn bench_construction<const D: usize>(c: &mut Criterion, dimension_name: &str, n
             },
             |vertices| {
                 // Measured operation: Construct triangulation
-                let tds: Tds<f64, Option<()>, Option<()>, D> =
-                    Tds::new(black_box(&vertices)).expect("Failed to create triangulation");
-                black_box(tds)
+                let dt = DelaunayTriangulation::new(black_box(&vertices))
+                    .expect("Failed to create triangulation");
+                black_box(dt)
             },
             BatchSize::LargeInput,
         );
@@ -243,8 +245,8 @@ fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_p
     let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), 42)
         .expect("Failed to generate points");
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
-    let tds: Tds<f64, Option<()>, Option<()>, D> =
-        Tds::new(&vertices).expect("Failed to create triangulation");
+    let dt = DelaunayTriangulation::new(&vertices).expect("Failed to create triangulation");
+    let tds = dt.tds();
 
     // Throughput in terms of cells we actually validate
     group.throughput(Throughput::Elements(tds.number_of_cells() as u64));
@@ -293,8 +295,8 @@ fn bench_neighbor_queries<const D: usize>(
     let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), 42)
         .expect("Failed to generate points");
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
-    let tds: Tds<f64, Option<()>, Option<()>, D> =
-        Tds::new(&vertices).expect("Failed to create triangulation");
+    let dt = DelaunayTriangulation::new(&vertices).expect("Failed to create triangulation");
+    let tds = dt.tds();
 
     // Collect cell keys for iteration
     let cell_keys: Vec<_> = tds.cell_keys().collect();
@@ -335,8 +337,8 @@ fn bench_vertex_iteration<const D: usize>(
     let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), 42)
         .expect("Failed to generate points");
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
-    let tds: Tds<f64, Option<()>, Option<()>, D> =
-        Tds::new(&vertices).expect("Failed to create triangulation");
+    let dt = DelaunayTriangulation::new(&vertices).expect("Failed to create triangulation");
+    let tds = dt.tds();
 
     group.bench_function("iterate_all_vertices", |b| {
         b.iter(|| {
@@ -368,8 +370,8 @@ fn bench_cell_iteration<const D: usize>(c: &mut Criterion, dimension_name: &str,
     let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), 42)
         .expect("Failed to generate points");
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
-    let tds: Tds<f64, Option<()>, Option<()>, D> =
-        Tds::new(&vertices).expect("Failed to create triangulation");
+    let dt = DelaunayTriangulation::new(&vertices).expect("Failed to create triangulation");
+    let tds = dt.tds();
 
     let num_cells = tds.number_of_cells();
     group.throughput(Throughput::Elements(num_cells as u64));

@@ -1,189 +1,586 @@
-//! Property-based tests for triangulation invariants.
+//! Property-based tests for Triangulation layer invariants.
 //!
-//! This module uses proptest to verify structural properties of Delaunay
-//! triangulations that must hold universally, including:
-//! - Neighbor symmetry (if A neighbors B, then B neighbors A)
-//! - Vertex-cell incidence consistency
-//! - No duplicate cells in valid triangulations
-//! - Triangulation remains valid after vertex insertion
+//! This module tests the generic geometric layer that combines a `Kernel` with
+//! the combinatorial `Tds`. The Triangulation layer provides geometric operations
+//! while delegating pure topology to Tds.
+//!
+//! ## Architectural Context
+//!
+//! Following CGAL's architecture:
+//! - **Tds** - Pure combinatorial/topological structure (tested in `proptest_tds.rs`)
+//! - **Triangulation** - Generic geometric layer with kernel (tested here)
+//! - **`DelaunayTriangulation`** - Delaunay-specific operations (tested in `proptest_delaunay_triangulation.rs`)
+//!
+//! ## Tests Included
+//!
+//! ### Geometric Quality Metrics
+//! Property-based tests for quality metrics including:
+//! - Radius ratio bounds (R/r ≥ D for D-dimensional simplex)
+//! - Radius ratio scaling and translation invariance
+//! - Normalized volume invariance properties
+//! - Quality metric consistency (degeneracy detection)
+//! - Quality degradation under deformation
+//!
+//! **Note**: Tests use `DelaunayTriangulation` for construction (most convenient way
+//! to obtain valid triangulations), but the properties tested are generic
+//! Triangulation-layer concerns applicable to any triangulation with a kernel.
+//!
+//! ### Future Tests
+//!
+//! - **Facet iteration** - `facets()`, `boundary_facets()` consistency
+//! - **Boundary detection** - Correct identification of hull facets
+//! - **Topology repair** - `detect_local_facet_issues` + `repair_local_facet_issues` preserve validity
+//! - **Kernel consistency** - Geometric predicates produce consistent results
+//!
+//! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
-use delaunay::core::triangulation_data_structure::Tds;
-use delaunay::core::util::jaccard_index;
-use delaunay::core::vertex::Vertex;
-use delaunay::geometry::point::Point;
-use delaunay::geometry::traits::coordinate::Coordinate;
-use delaunay::vertex;
+use delaunay::prelude::*;
 use proptest::prelude::*;
-use std::collections::HashSet;
+use std::collections::HashMap;
+use uuid::Uuid;
 
 // =============================================================================
 // TEST CONFIGURATION
 // =============================================================================
 
-/// Strategy for generating finite f64 coordinates in a reasonable range
+/// Strategy for generating finite f64 coordinates
 fn finite_coordinate() -> impl Strategy<Value = f64> {
     (-100.0..100.0).prop_filter("must be finite", |x: &f64| x.is_finite())
 }
 
-/// Strategy for generating 2D vertices
-fn vertex_2d() -> impl Strategy<Value = Point<f64, 2>> {
-    prop::array::uniform2(finite_coordinate()).prop_map(Point::new)
-}
-
-/// Strategy for generating 3D vertices
-fn vertex_3d() -> impl Strategy<Value = Point<f64, 3>> {
-    prop::array::uniform3(finite_coordinate()).prop_map(Point::new)
-}
-
-/// Strategy for generating 4D vertices
-fn vertex_4d() -> impl Strategy<Value = Point<f64, 4>> {
-    prop::array::uniform4(finite_coordinate()).prop_map(Point::new)
-}
-
-/// Strategy for generating 5D vertices
-fn vertex_5d() -> impl Strategy<Value = Point<f64, 5>> {
-    prop::array::uniform5(finite_coordinate()).prop_map(Point::new)
-}
-
-/// Strategy for generating a small collection of 2D vertices (4-10 vertices)
-fn small_vertex_set_2d() -> impl Strategy<Value = Vec<Vertex<f64, Option<()>, 2>>> {
-    prop::collection::vec(vertex_2d(), 4..=10).prop_map(|v| Vertex::from_points(&v))
-}
-
-/// Strategy for generating a small collection of 3D vertices (5-12 vertices)
-fn small_vertex_set_3d() -> impl Strategy<Value = Vec<Vertex<f64, Option<()>, 3>>> {
-    prop::collection::vec(vertex_3d(), 5..=12).prop_map(|v| Vertex::from_points(&v))
-}
-
-/// Strategy for generating a small collection of 4D vertices (6-14 vertices)
-fn small_vertex_set_4d() -> impl Strategy<Value = Vec<Vertex<f64, Option<()>, 4>>> {
-    prop::collection::vec(vertex_4d(), 6..=14).prop_map(|v| Vertex::from_points(&v))
-}
-
-/// Strategy for generating a small collection of 5D vertices (7-16 vertices)
-fn small_vertex_set_5d() -> impl Strategy<Value = Vec<Vertex<f64, Option<()>, 5>>> {
-    prop::collection::vec(vertex_5d(), 7..=16).prop_map(|v| Vertex::from_points(&v))
-}
-
 // =============================================================================
-// TRIANGULATION VALIDITY TESTS
+// HELPER FUNCTIONS
 // =============================================================================
 
-// Macros to generate dimension-specific property tests
-macro_rules! gen_triangulation_validity {
-    ($dim:literal) => {
-        pastey::paste! {
-            proptest! {
-                #[test]
-                fn [<prop_triangulation_from_vertices_is_valid_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
-                        prop_assert!(tds.is_valid().is_ok(),
-                            "{}D triangulation should be valid: {:?}",
-                            $dim, tds.is_valid().err());
+/// Compare quality metrics between two triangulations by matching cells via vertex UUIDs.
+///
+/// This helper function matches cells between an original and transformed triangulation
+/// by mapping vertex UUIDs, then compares their quality metrics using the provided
+/// comparison function.
+///
+/// # Arguments
+/// * `tds_orig` - Original triangulation
+/// * `tds_transformed` - Transformed triangulation (translated, scaled, rotated, etc.)
+/// * `uuid_map` - Mapping from original vertex UUIDs to transformed vertex UUIDs
+/// * `_metric_name` - Name of the metric being tested (for error messages)
+/// * `_dimension` - Dimensionality (for error messages)
+/// * `compare_fn` - Function to compute and compare quality metrics for matched cells.
+///   Returns `Ok(())` if metrics match within tolerance, `Err(TestCaseError)` otherwise.
+///
+/// # Returns
+/// * `Ok(true)` - At least one cell was successfully matched and compared
+/// * `Ok(false)` - No cells could be matched (topology changed too much)
+/// * `Err(TestCaseError)` - A metric comparison failed
+///
+/// # Purpose
+/// This function centralizes the UUID-based cell matching logic used across multiple
+/// transformation invariance tests (translation, scaling, rotation). It eliminates
+/// ~200 lines of duplicated code by extracting the common pattern:
+/// 1. Iterate through cells in original triangulation
+/// 2. Map their vertex UUIDs to transformed triangulation
+/// 3. Find matching cell in transformed triangulation
+/// 4. Compare quality metrics between matched cells
+/// 5. Track whether any cells were successfully matched (to avoid vacuous success)
+fn compare_transformed_cells<const D: usize, F>(
+    dt_orig: &DelaunayTriangulation<FastKernel<f64>, (), (), D>,
+    dt_transformed: &DelaunayTriangulation<FastKernel<f64>, (), (), D>,
+    uuid_map: &HashMap<Uuid, Uuid>,
+    _metric_name: &str,
+    _dimension: usize,
+    mut compare_fn: F,
+) -> Result<bool, TestCaseError>
+where
+    F: FnMut(CellKey, CellKey) -> Result<(), TestCaseError>,
+{
+    let mut matched_any = false;
+    let tds_orig = dt_orig.tds();
+    let tds_transformed = dt_transformed.tds();
+
+    // Iterate through all cells in original triangulation
+    for orig_key in tds_orig.cell_keys() {
+        if let Some(orig_cell) = tds_orig.get_cell(orig_key) {
+            // Get original cell's vertex UUIDs
+            if let Ok(orig_uuids) = orig_cell.vertex_uuids(tds_orig) {
+                // Map to transformed UUIDs
+                let transformed_uuids: Vec<_> = orig_uuids
+                    .iter()
+                    .filter_map(|uuid| uuid_map.get(uuid))
+                    .copied()
+                    .collect();
+
+                // Find matching cell in transformed triangulation
+                for trans_key in tds_transformed.cell_keys() {
+                    if let Some(trans_cell) = tds_transformed.get_cell(trans_key)
+                        && let Ok(trans_cell_uuids) = trans_cell.vertex_uuids(tds_transformed)
+                    {
+                        // Check if cells have same vertices (by UUID)
+                        if transformed_uuids.len() == trans_cell_uuids.len()
+                            && transformed_uuids
+                                .iter()
+                                .all(|u| trans_cell_uuids.contains(u))
+                        {
+                            // Found matching cell - compare quality metrics
+                            compare_fn(orig_key, trans_key)?;
+                            matched_any = true;
+                            break; // Found the match, no need to check other cells
+                        }
                     }
                 }
             }
         }
-    };
+    }
+
+    Ok(matched_any)
 }
 
-macro_rules! gen_neighbor_symmetry {
-    ($dim:literal) => {
+// =============================================================================
+// DIMENSIONAL TEST GENERATION MACROS
+// =============================================================================
+
+/// Macro to generate quality metric property tests for a given dimension
+macro_rules! test_quality_properties {
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal, $num_points:literal) => {
         pastey::paste! {
             proptest! {
+                /// Property: Radius ratio R/r ≥ D for non-degenerate D-simplices
                 #[test]
-                fn [<prop_neighbor_symmetry_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
-                        for (cell_key, cell) in tds.cells() {
-                            if let Some(neighbors) = cell.neighbors() {
-                                for neighbor_key in neighbors.iter().flatten() {
-                                    let found_reciprocal = tds
-                                        .get_cell(*neighbor_key)
-                                        .and_then(|c| c.neighbors())
-                                        .is_some_and(|nn| nn.iter().any(|n| n == &Some(cell_key)));
+                fn [<prop_radius_ratio_lower_bound_ $dim d>](
+                    simplex_points in prop::collection::vec(
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        $num_points
+                    )
+                ) {
+                    if let (Ok(r_outer), Ok(r_inner)) = (circumradius(&simplex_points), inradius(&simplex_points)) {
+                        // Skip degenerate cases
+                        if r_outer > 1e-6 && r_inner > 1e-9 {
+                            let ratio = r_outer / r_inner;
+                            let dim_f64 = f64::from($dim);
+                            prop_assert!(
+                                ratio >= dim_f64 - 0.1,  // Small tolerance for numerical errors
+                                "{}D radius ratio {} should be >= {}",
+                                $dim,
+                                ratio,
+                                $dim
+                            );
+                        }
+                    }
+                }
 
-                                    if !found_reciprocal {
-                                        // Enhanced diagnostics with Jaccard similarity
-                                        let cell_neighbors: HashSet<_> = neighbors
-                                            .iter()
-                                            .flatten()
-                                            .copied()
-                                            .collect();
-                                        let neighbor_neighbors: HashSet<_> = tds
-                                            .get_cell(*neighbor_key)
-                                            .and_then(|c| c.neighbors())
-                                            .map(|nn| nn.iter().flatten().copied().collect())
-                                            .unwrap_or_default();
+                /// Property: Radius ratio is scale-invariant
+                #[test]
+                fn [<prop_radius_ratio_scale_invariant_ $dim d>](
+                    simplex_points in prop::collection::vec(
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        $num_points
+                    ),
+                    scale in 0.1f64..10.0f64
+                ) {
+                    // Compute original radius ratio
+                    if let (Ok(r1), Ok(r_inner_1)) = (circumradius(&simplex_points), inradius(&simplex_points)) {
+                        if r1 > 1e-6 && r_inner_1 > 1e-9 {
+                            let ratio1 = r1 / r_inner_1;
 
-                                        let similarity = jaccard_index(&cell_neighbors, &neighbor_neighbors)
-                                            .expect("Jaccard computation should not overflow for neighbor sets");
-                                        let intersection: Vec<_> = cell_neighbors
-                                            .intersection(&neighbor_neighbors)
-                                            .take(5)
-                                            .collect();
+                            // Scale all points
+                            let scaled_points: Vec<Point<f64, $dim>> = simplex_points
+                                .iter()
+                                .map(|p| {
+                                    let coords: [f64; $dim] = (*p).into();
+                                    let mut scaled = [0.0f64; $dim];
+                                    for i in 0..$dim {
+                                        scaled[i] = coords[i] * scale;
+                                    }
+                                    Point::new(scaled)
+                                })
+                                .collect();
 
+                            // Compute scaled radius ratio
+                            if let (Ok(r2), Ok(r_inner_2)) = (circumradius(&scaled_points), inradius(&scaled_points)) {
+                                if r2 > 1e-6 && r_inner_2 > 1e-9 {
+                                    let ratio2 = r2 / r_inner_2;
+                                    prop_assert!(
+                                        (ratio1 - ratio2).abs() < 0.01 * ratio1.max(1.0),
+                                        "{}D radius ratio should be scale-invariant: {} vs {}",
+                                        $dim,
+                                        ratio1,
+                                        ratio2
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+
+                /// Property: Radius ratio is always positive for valid simplices
+                #[test]
+                fn [<prop_radius_ratio_positive_ $dim d>](
+                    vertices in prop::collection::vec(
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        $min_vertices..=$max_vertices
+                    ).prop_map(|v| Vertex::from_points(&v))
+                ) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &vertices) {
+                        let tds = dt.tds();
+                        let tri = dt.triangulation();
+                        for cell_key in tds.cell_keys() {
+                            if let Ok(ratio) = radius_ratio(tri, cell_key) {
+                                prop_assert!(
+                                    ratio > 0.0,
+                                    "{}D radius ratio should be positive, got {}",
+                                    $dim,
+                                    ratio
+                                );
+                            }
+                        }
+                    }
+                }
+
+                /// Property: Regular simplex has better (lower) radius ratio than degenerate
+                #[test]
+                fn [<prop_regular_simplex_quality_ $dim d>](
+                    base_scale in 0.1f64..10.0f64
+                ) {
+                    // Create a regular simplex (vertices at unit distance from origin)
+                    let mut regular_points = Vec::new();
+
+                    // First vertex at origin (scaled)
+                    let origin = [0.0f64; $dim];
+                    regular_points.push(Point::new(origin));
+
+                    // D more vertices with one coordinate = base_scale
+                    for i in 0..$dim {
+                        let mut coords = [0.0f64; $dim];
+                        coords[i] = base_scale;
+                        regular_points.push(Point::new(coords));
+                    }
+
+                    // Create a flatter simplex (still valid but lower quality)
+                    // Make it elongated in one direction with small extent in others
+                    let mut degenerate_points = Vec::with_capacity($dim + 1);
+                    degenerate_points.push(Point::new([0.0f64; $dim]));
+                    for i in 0..$dim {
+                        let mut coords = [0.0f64; $dim];
+                        let i_f64: f64 = safe_usize_to_scalar(i).unwrap();
+                        coords[0] = (10.0 + i_f64) * base_scale;
+                        let axis = (i + 1) % $dim;
+                        coords[axis] += 0.05 * base_scale;
+                        degenerate_points.push(Point::new(coords));
+                    }
+
+                    // Try to compute quality metrics, but skip if degenerate
+                    // (higher dimensions with nearly collinear points can cause numerical issues)
+                    let regular_quality = circumradius(&regular_points)
+                        .and_then(|r| inradius(&regular_points).map(|r_inner| (r, r_inner)));
+                    let degenerate_quality = circumradius(&degenerate_points)
+                        .and_then(|r| inradius(&degenerate_points).map(|r_inner| (r, r_inner)));
+
+                    if let (Ok((r_reg, r_inner_reg)), Ok((r_deg, r_inner_deg))) = (regular_quality, degenerate_quality) {
+                        if r_reg > 1e-6 && r_inner_reg > 1e-9 && r_deg > 1e-6 && r_inner_deg > 1e-9 && r_inner_deg.is_finite() {
+                            let ratio_reg = r_reg / r_inner_reg;
+                            let ratio_deg = r_deg / r_inner_deg;
+
+                            // Only assert if both ratios are finite
+                            if ratio_reg.is_finite() && ratio_deg.is_finite() {
+                                prop_assert!(
+                                    ratio_reg < ratio_deg * 0.9,  // Regular should be significantly better
+                                    "{}D regular simplex quality ({}) should be better than degenerate ({})",
+                                    $dim,
+                                    ratio_reg,
+                                    ratio_deg
+                                );
+                            }
+                        }
+                    }
+                }
+
+                /// Property: Radius ratio is translation-invariant
+                #[test]
+                fn [<prop_radius_ratio_translation_invariant_ $dim d>](
+                    vertices in prop::collection::vec(
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        $min_vertices..=$max_vertices
+                    ).prop_map(|v| Vertex::from_points(&v)),
+                    translation in prop::array::[<uniform $dim>](finite_coordinate())
+                ) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &vertices) {
+                        // Translate all vertices
+                        let translated_vertices: Vec<_> = vertices
+                            .iter()
+                            .map(|v| {
+                                let coords: [f64; $dim] = (*v.point()).into();
+                                let mut translated = [0.0f64; $dim];
+                                for i in 0..$dim {
+                                    translated[i] = coords[i] + translation[i];
+                                }
+                                Point::new(translated)
+                            })
+                            .collect::<Vec<_>>();
+
+                        let translated_vertices = Vertex::from_points(&translated_vertices);
+
+                        if let Ok(dt_translated) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &translated_vertices) {
+                            // Build mapping from original UUIDs to translated UUIDs
+                            let uuid_map: HashMap<_, _> = vertices.iter()
+                                .zip(translated_vertices.iter())
+                                .map(|(orig, trans)| (orig.uuid(), trans.uuid()))
+                                .collect();
+
+                            // Compare cells using helper function
+                            let matched_any = compare_transformed_cells(
+                                &dt,
+                                &dt_translated,
+                                &uuid_map,
+                                "radius_ratio",
+                                $dim,
+                                |orig_key, trans_key| {
+                                    let tri = dt.triangulation();
+                                    let tri_translated = dt_translated.triangulation();
+                                    if let (Ok(ratio_orig), Ok(ratio_trans)) = (
+                                        radius_ratio(tri, orig_key),
+                                        radius_ratio(tri_translated, trans_key),
+                                    ) {
+                                        let rel_diff = ((ratio_orig - ratio_trans).abs()
+                                            / ratio_orig.max(1.0))
+                                        .min(1.0);
                                         prop_assert!(
-                                            false,
-                                            "{}D neighbor relationship should be symmetric\n\
-                                             Cell {:?} has neighbor {:?}, but reciprocal not found\n\
-                                             Jaccard similarity between neighbor sets: {:.6}\n\
-                                             Cell neighbors: {} total\n\
-                                             Neighbor's neighbors: {} total\n\
-                                             Common neighbors (first 5): {:?}",
+                                            rel_diff < 0.05,
+                                            "{}D radius ratio should be translation-invariant: {} vs {} (diff: {})",
                                             $dim,
-                                            cell_key,
-                                            neighbor_key,
-                                            similarity,
-                                            cell_neighbors.len(),
-                                            neighbor_neighbors.len(),
-                                            intersection
+                                            ratio_orig,
+                                            ratio_trans,
+                                            rel_diff
+                                        );
+                                    }
+                                    Ok(())
+                                },
+                            )?;
+
+                            // If no cells matched, discard this case to avoid vacuous success
+                            prop_assume!(matched_any);
+                        }
+                    }
+                }
+
+                /// Property: Normalized volume is translation-invariant
+                #[test]
+                fn [<prop_normalized_volume_translation_invariant_ $dim d>](
+                    vertices in prop::collection::vec(
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        $min_vertices..=$max_vertices
+                    ).prop_map(|v| Vertex::from_points(&v)),
+                    translation in prop::array::[<uniform $dim>](finite_coordinate())
+                ) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &vertices) {
+                        // Translate all vertices
+                        let translated_vertices: Vec<_> = vertices
+                            .iter()
+                            .map(|v| {
+                                let coords: [f64; $dim] = (*v.point()).into();
+                                let mut translated = [0.0f64; $dim];
+                                for i in 0..$dim {
+                                    translated[i] = coords[i] + translation[i];
+                                }
+                                Point::new(translated)
+                            })
+                            .collect::<Vec<_>>();
+
+                        let translated_vertices = Vertex::from_points(&translated_vertices);
+
+                        if let Ok(dt_translated) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &translated_vertices) {
+                            // Build UUID mapping
+                            let uuid_map: HashMap<_, _> = vertices.iter()
+                                .zip(translated_vertices.iter())
+                                .map(|(orig, trans)| (orig.uuid(), trans.uuid()))
+                                .collect();
+
+                            // Compare cells using helper function
+                            let matched_any = compare_transformed_cells(
+                                &dt,
+                                &dt_translated,
+                                &uuid_map,
+                                "normalized_volume",
+                                $dim,
+                                |orig_key, trans_key| {
+                                    let tri = dt.triangulation();
+                                    let tri_translated = dt_translated.triangulation();
+                                    if let (Ok(vol_orig), Ok(vol_trans)) = (
+                                        normalized_volume(tri, orig_key),
+                                        normalized_volume(tri_translated, trans_key),
+                                    ) {
+                                        let rel_diff = ((vol_orig - vol_trans).abs()
+                                            / vol_orig.max(1e-6))
+                                        .min(1.0);
+                                        prop_assert!(
+                                            rel_diff < 0.01,
+                                            "{}D normalized volume should be translation-invariant: {} vs {} (diff: {})",
+                                            $dim,
+                                            vol_orig,
+                                            vol_trans,
+                                            rel_diff
+                                        );
+                                    }
+                                    Ok(())
+                                },
+                            )?;
+
+                            // If no cells matched, discard this case to avoid vacuous success
+                            prop_assume!(matched_any);
+                        }
+                    }
+                }
+
+                /// Property: Normalized volume is scale-invariant (uniform scaling)
+                #[test]
+                fn [<prop_normalized_volume_scale_invariant_ $dim d>](
+                    vertices in prop::collection::vec(
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        $min_vertices..=$max_vertices
+                    ).prop_map(|v| Vertex::from_points(&v)),
+                    scale in 0.1f64..10.0f64
+                ) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &vertices) {
+                        // Scale all vertices uniformly
+                        let scaled_vertices: Vec<_> = vertices
+                            .iter()
+                            .map(|v| {
+                                let coords: [f64; $dim] = (*v.point()).into();
+                                let mut scaled = [0.0f64; $dim];
+                                for i in 0..$dim {
+                                    scaled[i] = coords[i] * scale;
+                                }
+                                Point::new(scaled)
+                            })
+                            .collect::<Vec<_>>();
+
+                        let scaled_vertices = Vertex::from_points(&scaled_vertices);
+
+                        if let Ok(dt_scaled) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &scaled_vertices) {
+                            // Build UUID mapping
+                            let uuid_map: HashMap<_, _> = vertices.iter()
+                                .zip(scaled_vertices.iter())
+                                .map(|(orig, scaled)| (orig.uuid(), scaled.uuid()))
+                                .collect();
+
+                            // Compare cells using helper function
+                            let matched_any = compare_transformed_cells(
+                                &dt,
+                                &dt_scaled,
+                                &uuid_map,
+                                "normalized_volume",
+                                $dim,
+                                |orig_key, scaled_key| {
+                                    let tri = dt.triangulation();
+                                    let tri_scaled = dt_scaled.triangulation();
+                                    if let (Ok(vol_orig), Ok(vol_scaled)) = (
+                                        normalized_volume(tri, orig_key),
+                                        normalized_volume(tri_scaled, scaled_key),
+                                    ) {
+                                        let rel_diff = ((vol_orig - vol_scaled).abs()
+                                            / vol_orig.max(1e-6))
+                                        .min(1.0);
+                                        prop_assert!(
+                                            rel_diff < 0.01,
+                                            "{}D normalized volume should be scale-invariant: {} vs {} (diff: {})",
+                                            $dim,
+                                            vol_orig,
+                                            vol_scaled,
+                                            rel_diff
+                                        );
+                                    }
+                                    Ok(())
+                                },
+                            )?;
+
+                            // If no cells matched, discard this case to avoid vacuous success
+                            prop_assume!(matched_any);
+                        }
+                    }
+                }
+
+                /// Property: Both metrics detect degeneracy consistently
+                #[test]
+                fn [<prop_degeneracy_consistency_ $dim d>](
+                    vertices in prop::collection::vec(
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        $min_vertices..=$max_vertices
+                    ).prop_map(|v| Vertex::from_points(&v))
+                ) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &vertices) {
+                        let tds = dt.tds();
+                        let tri = dt.triangulation();
+                        for cell_key in tds.cell_keys() {
+                            let rr_result = radius_ratio(tri, cell_key);
+                            let nv_result = normalized_volume(tri, cell_key);
+
+                            // Both metrics should agree on degeneracy
+                            // If one fails with DegenerateCell, both should fail
+                            match (rr_result, nv_result) {
+                                (Ok(_), Ok(_)) => (),  // Both succeed - OK
+                                (Err(rr_err), Err(nv_err)) => {
+                                    // Both fail - verify they're both degeneracy errors or both other errors
+                                    let rr_is_degen = matches!(rr_err, delaunay::geometry::quality::QualityError::DegenerateCell { .. });
+                                    let nv_is_degen = matches!(nv_err, delaunay::geometry::quality::QualityError::DegenerateCell { .. });
+
+                                    if rr_is_degen || nv_is_degen {
+                                        prop_assert!(
+                                            rr_is_degen == nv_is_degen,
+                                            "{}D: Both metrics should detect degeneracy consistently: rr={}, nv={}",
+                                            $dim,
+                                            rr_is_degen,
+                                            nv_is_degen
                                         );
                                     }
                                 }
+                                (Ok(_), Err(_)) | (Err(_), Ok(_)) => {
+                                    // One succeeds, one fails - this is acceptable for numerical edge cases
+                                    // but log for investigation if it's a degeneracy disagreement
+                                }
                             }
                         }
                     }
                 }
-            }
-        }
-    };
-}
 
-macro_rules! gen_neighbor_index_semantics {
-    ($dim:literal) => {
-        pastey::paste! {
-            proptest! {
+                /// Property: Extreme deformation degrades quality (becomes degenerate)
                 #[test]
-                fn [<prop_neighbor_index_semantics_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    // Use stack-allocated buffer for D facet vertices (D ≤ 7 typical)
-                    use delaunay::core::collections::SimplexVertexBuffer;
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
-                        prop_assume!(tds.is_valid().is_ok());
-                        for (cell_key, cell) in tds.cells() {
-                            if let Some(neighbors) = cell.neighbors() {
-                                let a_vertices = cell.vertices();
-                                for (i, nb) in neighbors.iter().enumerate() {
-                                    if let Some(b_key) = nb {
-                                        let b_cell = tds.get_cell(*b_key).unwrap();
-                                        let b_vertices = b_cell.vertices();
-                                        let mut a_facet: SimplexVertexBuffer<_> = a_vertices.iter().enumerate()
-                                            .filter_map(|(idx, &vk)| (idx != i).then_some(vk))
-                                            .collect();
-                                        a_facet.sort_unstable();
-                                        let mut found_j = None;
-                                        for j in 0..b_vertices.len() {
-                                            let mut b_facet: SimplexVertexBuffer<_> = b_vertices.iter().enumerate()
-                                                .filter_map(|(idx, &vk)| (idx != j).then_some(vk))
-                                                .collect();
-                                            b_facet.sort_unstable();
-                                            if b_facet == a_facet { found_j = Some(j); break; }
-                                        }
-                                        prop_assert!(found_j.is_some(), "Facet mismatch between neighbor cells");
-                                        if let Some(j) = found_j && let Some(b_neighs) = b_cell.neighbors() {
-                                            prop_assert_eq!(b_neighs.get(j).copied().flatten(), Some(cell_key),
-                                                "Reciprocal neighbor at correct index not found");
-                                        }
-                                    }
+                fn [<prop_quality_degrades_under_collapse_ $dim d>](
+                    base_scale in 0.1f64..10.0f64
+                ) {
+                    // Create a regular simplex
+                    let mut regular_points = Vec::new();
+                    regular_points.push(Point::new([0.0f64; $dim]));
+                    for i in 0..$dim {
+                        let mut coords = [0.0f64; $dim];
+                        coords[i] = base_scale;
+                        regular_points.push(Point::new(coords));
+                    }
+
+                    // Create a nearly-degenerate version (collapse last vertex toward origin)
+                    let mut degenerate_points = regular_points.clone();
+                    if let Some(last) = degenerate_points.last_mut() {
+                        let coords: [f64; $dim] = (*last).into();
+                        let mut collapsed_coords = coords;
+                        // Collapse to nearly coincident with first vertex
+                        for i in 0..$dim {
+                            collapsed_coords[i] *= 0.01; // Move 99% toward origin
+                        }
+                        *last = Point::new(collapsed_coords);
+                    }
+
+                    // Compare quality metrics - collapsed should be much worse
+                    if let (Ok(r_reg), Ok(r_inner_reg)) = (circumradius(&regular_points), inradius(&regular_points)) {
+                        if let (Ok(r_coll), Ok(r_inner_coll)) = (circumradius(&degenerate_points), inradius(&degenerate_points)) {
+                            if r_reg > 1e-6 && r_inner_reg > 1e-9 && r_coll > 1e-6 && r_inner_coll > 1e-9 {
+                                let ratio_reg = r_reg / r_inner_reg;
+                                let ratio_coll = r_coll / r_inner_coll;
+
+                                if ratio_reg.is_finite() && ratio_coll.is_finite() {
+                                    // Collapsed simplex should have significantly worse quality
+                                    prop_assert!(
+                                        ratio_coll > ratio_reg * 1.5,
+                                        "{}D: Collapsed simplex should have worse quality: regular={}, collapsed={}",
+                                        $dim,
+                                        ratio_reg,
+                                        ratio_coll
+                                    );
                                 }
                             }
                         }
@@ -194,84 +591,109 @@ macro_rules! gen_neighbor_index_semantics {
     };
 }
 
-macro_rules! gen_cell_vertices_exist_in_tds {
-    ($dim:literal) => {
-        pastey::paste! {
-            proptest! {
-                #[test]
-                fn [<prop_cell_vertices_exist_in_tds_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    use std::collections::HashSet;
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
-                        let all_vertex_keys: HashSet<_> = tds.vertex_keys().collect();
-                        for (_cell_key, cell) in tds.cells() {
-                            for vertex_key in cell.vertices() {
-                                prop_assert!(all_vertex_keys.contains(vertex_key),
-                                    "{}D cell vertex should exist in TDS", $dim);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    };
-}
+// Generate tests for dimensions 2-5
+// Parameters: dimension, min_vertices, max_vertices, num_points (D+1)
+test_quality_properties!(2, 4, 10, 3);
+test_quality_properties!(3, 5, 12, 4);
+test_quality_properties!(4, 6, 14, 5);
+test_quality_properties!(5, 7, 16, 6);
 
-macro_rules! gen_no_duplicate_cells {
-    ($dim:literal) => {
-        pastey::paste! {
-            proptest! {
-                #[test]
-                fn [<prop_no_duplicate_cells_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    use std::collections::HashSet;
-                    use delaunay::core::collections::CellVertexBuffer;
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
-                        let mut seen = HashSet::new();
-                        for (_cell_key, cell) in tds.cells() {
-                            // Use stack-allocated buffer for D+1 vertices (D ≤ 7 typical)
-                            let mut vs: CellVertexBuffer = cell.vertices().iter().copied().collect();
-                            vs.sort_unstable();
-                            prop_assert!(seen.insert(vs), "Found duplicate {}D cell", $dim);
-                        }
-                    }
-                }
-            }
-        }
-    };
-}
+// =============================================================================
+// FACET TOPOLOGY INVARIANT TESTS
+// =============================================================================
 
-macro_rules! gen_incremental_insertion_validity {
-    ($dim:literal, $min:literal, $max:literal) => {
+/// Macro to generate facet topology invariant property tests for a given dimension.
+///
+/// These tests verify the **critical manifold topology invariant**: each facet
+/// must be shared by at most 2 cells (1 for boundary, 2 for interior). This
+/// invariant is essential for facet walking used in point location.
+///
+/// The localized validation functions (`detect_local_facet_issues`,
+/// `repair_local_facet_issues`) maintain this invariant in O(k) time.
+macro_rules! test_facet_topology_invariant {
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal) => {
         pastey::paste! {
             proptest! {
+                /// Property: All cells in a valid triangulation have no over-shared facets
                 #[test]
-                fn [<prop_incremental_insertion_maintains_validity_ $dim d>](
-                    initial_points in prop::collection::vec([<vertex_ $dim d>](), $min..=$max),
-                    additional_point in [<vertex_ $dim d>](),
+                fn [<prop_no_over_shared_facets_ $dim d>](
+                    vertices in prop::collection::vec(
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| vertex!(coords)),
+                        $min_vertices..$max_vertices
+                    )
                 ) {
-                    let initial_vertices = Vertex::from_points(&initial_points);
-                    if let Ok(mut tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&initial_vertices) {
-                        prop_assert!(tds.is_valid().is_ok(), "Initial {}D triangulation should be valid", $dim);
-                        let additional_vertex = vertex!(additional_point);
-                        if tds.add(additional_vertex).is_ok() {
-                            prop_assert!(tds.is_valid().is_ok(), "{}D triangulation should remain valid after insertion: {:?}", $dim, tds.is_valid().err());
+
+                    // Build triangulation
+                    if let Ok(dt) = DelaunayTriangulation::new(&vertices) {
+                        let tri = dt.triangulation();
+
+                        // Get all cell keys
+                        let cell_keys: Vec<_> = tri.cells().map(|(k, _)| k).collect();
+
+                        // Validate no over-shared facets
+                        let issues = tri.detect_local_facet_issues(&cell_keys)?;
+                        prop_assert!(
+                            issues.is_none(),
+                            "{}D: Triangulation has {} over-shared facets (violates manifold topology invariant)",
+                            $dim,
+                            issues.as_ref().map_or(0, |m| m.len())
+                        );
+                    }
+                }
+
+                /// Property: After repair, no over-shared facets remain
+                #[test]
+                fn [<prop_repair_fixes_all_issues_ $dim d>](
+                    vertices in prop::collection::vec(
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| vertex!(coords)),
+                        $min_vertices..$max_vertices
+                    )
+                ) {
+
+                    // Build triangulation
+                    if let Ok(mut dt) = DelaunayTriangulation::new(&vertices) {
+                        let tri = dt.triangulation_mut();
+
+                        // Get all cell keys
+                        let cell_keys: Vec<_> = tri.cells().map(|(k, _)| k).collect();
+
+                        // If there are any issues, repair them
+                        if let Some(issues) = tri.detect_local_facet_issues(&cell_keys)? {
+                            let _removed = tri.repair_local_facet_issues(&issues)?;
+
+                            // After repair, re-check - should have no issues
+                            let cell_keys_after: Vec<_> = tri.cells().map(|(k, _)| k).collect();
+                            let issues_after = tri.detect_local_facet_issues(&cell_keys_after)?;
+                            prop_assert!(
+                                issues_after.is_none(),
+                                "{}D: After repair, {} over-shared facets still remain",
+                                $dim,
+                                issues_after.as_ref().map_or(0, |m| m.len())
+                            );
                         }
                     }
                 }
-            }
-        }
-    };
-}
 
-macro_rules! gen_dimension_consistency {
-    ($dim:literal, $min_vertices:literal) => {
-        pastey::paste! {
-            proptest! {
+                /// Property: Empty cell list returns no issues
                 #[test]
-                fn [<prop_dimension_consistency_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
-                        if tds.number_of_vertices() >= $min_vertices && tds.number_of_cells() > 0 {
-                            prop_assert_eq!(tds.dim(), $dim as i32, "{}D triangulation dimension mismatch", $dim);
-                        }
+                fn [<prop_empty_cell_list_no_issues_ $dim d>](
+                    vertices in prop::collection::vec(
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| vertex!(coords)),
+                        $min_vertices..$max_vertices
+                    )
+                ) {
+
+                    // Build triangulation
+                    if let Ok(dt) = DelaunayTriangulation::new(&vertices) {
+                        let tri = dt.triangulation();
+
+                        // Empty cell list should always return None
+                        let issues = tri.detect_local_facet_issues(&[])?;
+                        prop_assert!(
+                            issues.is_none(),
+                            "{}D: Empty cell list should have no issues",
+                            $dim
+                        );
                     }
                 }
             }
@@ -279,112 +701,9 @@ macro_rules! gen_dimension_consistency {
     };
 }
 
-macro_rules! gen_vertex_count_consistency {
-    ($dim:literal) => {
-        pastey::paste! {
-            proptest! {
-                #[test]
-                fn [<prop_vertex_count_consistency_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
-                        let keys = tds.vertex_keys().count();
-                        let n = tds.number_of_vertices();
-                        prop_assert_eq!(keys, n, "{}D vertex keys count should match number_of_vertices", $dim);
-                    }
-                }
-            }
-        }
-    };
-}
-
-// =============================================================================
-// TRIANGULATION VALIDITY TESTS
-// =============================================================================
-
-gen_triangulation_validity!(2);
-gen_triangulation_validity!(3);
-gen_triangulation_validity!(4);
-gen_triangulation_validity!(5);
-
-// =============================================================================
-// NEIGHBOR SYMMETRY TESTS
-// =============================================================================
-
-gen_neighbor_symmetry!(2);
-
-gen_neighbor_symmetry!(3);
-
-gen_neighbor_symmetry!(4);
-
-gen_neighbor_symmetry!(5);
-
-// =============================================================================
-// NEIGHBOR INDEX SEMANTICS TESTS
-// =============================================================================
-
-gen_neighbor_index_semantics!(2);
-
-gen_neighbor_index_semantics!(3);
-
-gen_neighbor_index_semantics!(4);
-
-gen_neighbor_index_semantics!(5);
-
-// =============================================================================
-// VERTEX-CELL INCIDENCE TESTS
-// =============================================================================
-
-gen_cell_vertices_exist_in_tds!(2);
-
-gen_cell_vertices_exist_in_tds!(3);
-
-gen_cell_vertices_exist_in_tds!(4);
-
-gen_cell_vertices_exist_in_tds!(5);
-
-// =============================================================================
-// NO DUPLICATE CELLS TESTS
-// =============================================================================
-
-gen_no_duplicate_cells!(2);
-
-gen_no_duplicate_cells!(3);
-
-gen_no_duplicate_cells!(4);
-
-gen_no_duplicate_cells!(5);
-
-// =============================================================================
-// INCREMENTAL CONSTRUCTION TESTS
-// =============================================================================
-
-gen_incremental_insertion_validity!(2, 3, 5);
-
-gen_incremental_insertion_validity!(3, 4, 6);
-
-gen_incremental_insertion_validity!(4, 5, 7);
-
-gen_incremental_insertion_validity!(5, 6, 8);
-
-// =============================================================================
-// DIMENSION CONSISTENCY TESTS
-// =============================================================================
-
-gen_dimension_consistency!(2, 3);
-
-gen_dimension_consistency!(3, 4);
-
-gen_dimension_consistency!(4, 5);
-
-gen_dimension_consistency!(5, 6);
-
-// =============================================================================
-// VERTEX COUNT CONSISTENCY TESTS
-// =============================================================================
-
-gen_vertex_count_consistency!(2);
-
-gen_vertex_count_consistency!(3);
-
-gen_vertex_count_consistency!(4);
-
-gen_vertex_count_consistency!(5);
+// Generate facet topology invariant tests for dimensions 2-5
+// Parameters: dimension, min_vertices, max_vertices
+test_facet_topology_invariant!(2, 4, 10);
+test_facet_topology_invariant!(3, 5, 12);
+test_facet_topology_invariant!(4, 6, 14);
+test_facet_topology_invariant!(5, 7, 16);

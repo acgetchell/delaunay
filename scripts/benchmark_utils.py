@@ -1340,14 +1340,14 @@ class BaselineGenerator:
             # Run fresh benchmark - using secure subprocess wrapper
             if dev_mode:
                 run_cargo_command(
-                    ["bench", "--bench", "ci_performance_suite", "--quiet", "--", *DEV_MODE_BENCH_ARGS],
+                    ["bench", "--bench", "ci_performance_suite", "--", *DEV_MODE_BENCH_ARGS],
                     cwd=self.project_root,
                     timeout=bench_timeout,
                     capture_output=True,
                 )
             else:
                 run_cargo_command(
-                    ["bench", "--bench", "ci_performance_suite", "--quiet"],
+                    ["bench", "--bench", "ci_performance_suite"],
                     cwd=self.project_root,
                     timeout=bench_timeout,
                     capture_output=True,
@@ -1370,7 +1370,21 @@ class BaselineGenerator:
             print("   Consider increasing --bench-timeout or using --dev mode for faster benchmarks", file=sys.stderr)
             logging.debug("TimeoutExpired: %s", e)
             return False
+        except subprocess.CalledProcessError as e:
+            # Print captured stderr/stdout from cargo bench failure
+            print("❌ Cargo bench failed with exit code:", e.returncode, file=sys.stderr)
+            if e.stderr:
+                print("\n=== cargo bench stderr ===", file=sys.stderr)
+                print(e.stderr, file=sys.stderr)
+                print("=== end stderr ===\n", file=sys.stderr)
+            if e.stdout:
+                print("\n=== cargo bench stdout ===", file=sys.stderr)
+                print(e.stdout, file=sys.stderr)
+                print("=== end stdout ===\n", file=sys.stderr)
+            logging.exception("Error in generate_baseline")
+            return False
         except Exception:
+            logging.exception("Error in generate_baseline")
             return False
 
     def _write_baseline_file(self, benchmark_results: list[BenchmarkData], output_file: Path) -> None:
@@ -1437,20 +1451,21 @@ class PerformanceComparator:
             output_file = self.project_root / "benches" / "compare_results.txt"
 
         if not baseline_file.exists():
+            self._write_error_file(output_file, "Baseline file not found", baseline_file)
             return False, False
 
         try:
             # Run fresh benchmark - using secure subprocess wrapper
             if dev_mode:
                 run_cargo_command(
-                    ["bench", "--bench", "ci_performance_suite", "--quiet", "--", *DEV_MODE_BENCH_ARGS],
+                    ["bench", "--bench", "ci_performance_suite", "--", *DEV_MODE_BENCH_ARGS],
                     cwd=self.project_root,
                     timeout=bench_timeout,
                     capture_output=True,
                 )
             else:
                 run_cargo_command(
-                    ["bench", "--bench", "ci_performance_suite", "--quiet"],
+                    ["bench", "--bench", "ci_performance_suite"],
                     cwd=self.project_root,
                     timeout=bench_timeout,
                     capture_output=True,
@@ -1461,6 +1476,7 @@ class PerformanceComparator:
             current_results = CriterionParser.find_criterion_results(target_dir)
 
             if not current_results:
+                self._write_error_file(output_file, "No benchmark results found", target_dir / "criterion")
                 return False, False
 
             # Parse baseline
@@ -1476,8 +1492,25 @@ class PerformanceComparator:
             print(f"❌ Benchmark execution timed out after {bench_timeout} seconds", file=sys.stderr)
             print("   Consider increasing --bench-timeout or using --dev mode for faster benchmarks", file=sys.stderr)
             logging.debug("TimeoutExpired: %s", e)
+            self._write_error_file(output_file, "Benchmark execution timeout", f"{e} (timeout after {bench_timeout} seconds)")
             return False, False
-        except Exception:
+        except subprocess.CalledProcessError as e:
+            # Print captured stderr/stdout from cargo bench failure
+            print("❌ Cargo bench failed with exit code:", e.returncode, file=sys.stderr)
+            if e.stderr:
+                print("\n=== cargo bench stderr ===", file=sys.stderr)
+                print(e.stderr, file=sys.stderr)
+                print("=== end stderr ===\n", file=sys.stderr)
+            if e.stdout:
+                print("\n=== cargo bench stdout ===", file=sys.stderr)
+                print(e.stdout, file=sys.stderr)
+                print("=== end stdout ===\n", file=sys.stderr)
+            self._write_error_file(output_file, "Benchmark execution error", str(e))
+            logging.exception("Error in compare_with_baseline")
+            return False, False
+        except Exception as e:
+            self._write_error_file(output_file, "Benchmark execution error", str(e))
+            logging.exception("Error in compare_with_baseline")
             return False, False
 
     def _parse_baseline_file(self, baseline_content: str) -> dict[str, BenchmarkData]:
@@ -1802,6 +1835,20 @@ class PerformanceComparator:
         else:
             thrpt_change_pct = ((current.throughput_mean - baseline.throughput_mean) / baseline.throughput_mean) * 100
             f.write(f"Throughput Change (mean): {thrpt_change_pct:.1f}%\n")
+
+    def _write_error_file(self, output_file: Path, error_title: str, error_detail: str | Path) -> None:
+        """Write an error message to the comparison results file."""
+        try:
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            with output_file.open("w", encoding="utf-8") as f:
+                f.write("Comparison Results\n")
+                f.write("==================\n\n")
+                f.write(f"❌ Error: {error_title}\n\n")
+                f.write(f"Details: {error_detail}\n\n")
+                f.write("This error prevented the benchmark comparison from completing successfully.\n")
+                f.write("Please check the CI logs for more information.\n")
+        except Exception:
+            logging.exception("Failed to write error file")
 
 
 class WorkflowHelper:
@@ -2307,7 +2354,9 @@ class BenchmarkRegressionHelper:
             if results_file.exists():
                 with results_file.open("r", encoding="utf-8") as f:
                     content = f.read()
-                    if "REGRESSION" in content:
+                    if "❌ Error:" in content:
+                        print("Result: ❌ Benchmark comparison failed (see benches/compare_results.txt for details)")
+                    elif "REGRESSION" in content:
                         print("Result: ⚠️ Performance regressions detected")
                         # Set environment variable for machine consumption by CI systems
                         os.environ["BENCHMARK_REGRESSION_DETECTED"] = "true"

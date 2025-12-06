@@ -6,10 +6,7 @@
 //! - Insphere transitivity and symmetry properties
 //! - Robustness under small perturbations
 
-use delaunay::geometry::point::Point;
-use delaunay::geometry::predicates::{InSphere, Orientation, insphere, simplex_orientation};
-use delaunay::geometry::traits::coordinate::Coordinate;
-use delaunay::geometry::util::{circumcenter, circumradius};
+use delaunay::prelude::*;
 use proptest::prelude::*;
 
 // =============================================================================

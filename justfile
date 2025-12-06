@@ -96,9 +96,9 @@ ci-baseline tag="ci":
     just ci
     just perf-baseline {{tag}}
 
-# CI simulation: fast quality checks only (matches .github/workflows/ci.yml)
-# Runs: linting + lib/doc tests only (no integration tests, no proptests)
-ci: lint test bench-compile
+# CI simulation: quality checks with comprehensive testing (matches .github/workflows/ci.yml)
+# Runs: linting + all Rust tests (lib + doc + integration with proptests) + benchmark compilation
+ci: lint test test-integration bench-compile
     @echo "🎯 CI simulation complete!"
 
 # Clean build artifacts
@@ -129,28 +129,11 @@ compare-storage-large: _ensure-uv
 
 # Common tarpaulin arguments for all coverage runs
 # Note: -t 300 sets per-test timeout to 5 minutes (needed for slow CI environments)
-#       test_cavity_boundary_error can take ~3 min locally, longer in CI (was hitting default 60s timeout)
 # Excludes: storage_backend_compatibility (all tests ignored - Phase 4 evaluation tests)
-#           test_cavity_boundary_error (regression test, very slow ~2.5min, causes tarpaulin issues)
-_coverage_base_args := '''--exclude-files 'benches/*' --exclude-files 'examples/*' --lib \
-  --test allocation_api \
-  --test circumsphere_debug_tools \
-  --test convex_hull_bowyer_watson_integration \
-  --test coordinate_conversion_errors \
-  --test integration_robust_bowyer_watson \
-  --test regression_delaunay_known_configs \
-  --test robust_predicates_comparison \
-  --test robust_predicates_showcase \
-  --test serialization_vertex_preservation \
-  --test tds_basic_integration \
-  --test test_convex_hull_error_paths \
-  --test test_facet_cache_integration \
-  --test test_geometry_util \
-  --test test_insertion_algorithm_trait \
-  --test test_insertion_algorithm_utils \
-  --test test_robust_fallbacks \
-  --test test_tds_edge_cases \
-  --workspace -t 300 --verbose --implicit-test-threads'''
+_coverage_base_args := '''--exclude-files 'benches/*' --exclude-files 'examples/*' \
+  --workspace --lib --tests \
+  --exclude storage_backend_compatibility \
+  -t 300 --verbose --implicit-test-threads'''
 
 # Coverage analysis for local development (HTML output)
 coverage:
@@ -177,7 +160,7 @@ fmt:
 
 help-workflows:
     @echo "Common Just workflows:"
-    @echo "  just ci                # Fast iteration (linting + lib/doc tests + bench compile)"
+    @echo "  just ci                # CI simulation (linting + all Rust tests + bench compile)"
     @echo "  just commit-check      # Pre-commit validation (linting + all tests + examples)"
     @echo "  just commit-check-slow # Comprehensive with slow tests (100+ vertices)"
     @echo "  just ci-baseline       # CI + save performance baseline"

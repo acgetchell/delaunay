@@ -57,102 +57,84 @@ Property-based tests for Point data structures verifying fundamental properties.
 
 **Run with:** `cargo test --test proptest_point` or included in `just test`
 
-#### [`proptest_triangulation.rs`](./proptest_triangulation.rs)
+#### [`proptest_tds.rs`](./proptest_tds.rs)
 
-Property-based tests for triangulation structural invariants.
+Property-based tests for Tds (Triangulation Data Structure) combinatorial/topological invariants.
+
+**Architectural Layer:** Pure combinatorial structure (no geometric predicates)
 
 **Test Coverage:**
 
-- **Triangulation Validity**:
-  - Constructed triangulations pass is_valid()
-  - Cross-dimensional validity (2D-3D)
-- **Neighbor Symmetry**:
-  - If A neighbors B, then B neighbors A
-  - Reciprocal neighbor relationships
-- **Vertex-Cell Incidence**:
-  - All cell vertices exist in TDS
-  - Vertex key consistency
-- **No Duplicate Cells**:
-  - No two cells have identical vertex sets
-  - Unique cell configurations
-- **Incremental Construction**:
-  - Validity maintained after vertex insertion
-  - Dimension consistency after growth
-- **Dimension Consistency**:
-  - Dimension matches vertex count expectations
-  - Proper dimension evolution
-- **Vertex Count Consistency**:
-  - Vertex keys count matches number_of_vertices()
-  - Iterator consistency
+- **Vertex Mappings**: UUID↔key consistency for all vertices
+- **Cell Mappings**: UUID↔key consistency for all cells
+- **No Duplicate Cells**: No two cells share the same vertex set
+- **Cell Validity**: Each cell has correct vertex count and passes internal consistency checks
+- **Cell Vertex Count**: Maximal cells have exactly D+1 vertices (fundamental Tds constraint)
+- **Facet Sharing**: Each facet is shared by at most 2 cells
+- **Neighbor Consistency**: Neighbor relationships are mutual and reference shared facets
+  - Neighbor symmetry (if A neighbors B, then B neighbors A)
+  - Neighbor index semantics (correct facet-based indexing)
+- **Vertex-Cell Incidence**: All cell vertices exist in the TDS
+- **Vertex Count Consistency**: Vertex key count matches reported vertex count
+- **Dimension Consistency**: Reported dimension matches actual structure
+
+**Dimensions Tested:** 2D-5D
+
+**Run with:** `cargo test --test proptest_tds` or included in `just test`
+
+#### [`proptest_triangulation.rs`](./proptest_triangulation.rs)
+
+Property-based tests for Triangulation layer invariants (generic geometric layer with kernel).
+
+**Architectural Layer:** Generic geometric operations with kernel (delegates topology to Tds)
+
+**Test Coverage:**
+
+- **Geometric Quality Metrics**:
+  - Radius ratio bounds (R/r ≥ D for D-dimensional simplex)
+  - Radius ratio scaling and translation invariance
+  - Normalized volume invariance properties
+  - Quality metric consistency (degeneracy detection)
+  - Quality degradation under deformation
+- **Future Tests**:
+  - Facet iteration consistency
+  - Boundary facet detection
+  - Topology repair (fix_invalid_facet_sharing)
+  - Kernel consistency validation
+
+**Note:** Tests use `DelaunayTriangulation` for construction (most convenient way to obtain valid triangulations).
+The properties tested are generic Triangulation-layer concerns applicable to any triangulation with a kernel.
+
+**Dimensions Tested:** 2D-5D
 
 **Run with:** `cargo test --test proptest_triangulation` or included in `just test`
 
-#### [`proptest_bowyer_watson.rs`](./proptest_bowyer_watson.rs)
+#### [`proptest_delaunay_triangulation.rs`](./proptest_delaunay_triangulation.rs)
 
-Property-based tests for Bowyer-Watson insertion algorithm verifying invariants during randomized vertex insertion sequences across dimensions (2D-5D).
+Property-based tests for `DelaunayTriangulation` invariants (all Delaunay-specific properties).
 
-**Test Coverage:**
-
-- **Cavity Boundary Correctness**:
-  - Conflict zone boundary facets are correctly identified
-  - No orphaned facets after insertion
-- **Delaunay Property Preservation**:
-  - Delaunay property holds after each insertion
-  - Circumsphere test consistency
-- **Neighbor Symmetry**:
-  - Reciprocal neighbor relationships maintained
-  - No broken neighbor links
-- **Structural Integrity**:
-  - No orphan vertices or cells after insertion
-  - Vertex count consistency
-
-**Run with:**
-
-```bash
-# Standard test run
-cargo test --release --test proptest_bowyer_watson
-
-# With increased test cases and verbose output
-PROPTEST_CASES=512 cargo test --release --test proptest_bowyer_watson -- --nocapture
-
-# Reproduce a specific failure
-PROPTEST_SEED=<seed> cargo test --release --test proptest_bowyer_watson -- --nocapture
-```
-
-#### [`proptest_robust_bowyer_watson.rs`](./proptest_robust_bowyer_watson.rs)
-
-Property-based tests for `RobustBowyerWatson` algorithm verifying robustness properties under randomized insertion sequences.
+**Architectural Layer:** Delaunay-specific operations and the empty circumsphere property
 
 **Test Coverage:**
 
-- **TDS Validity Preservation**:
-  - TDS remains valid after all insertion attempts (success or failure)
-  - Structural integrity maintained regardless of outcome
-- **Statistics Monotonicity**:
-  - Counters (processed, created, removed) are non-decreasing
-  - Consistent tracking across multiple insertions
-- **Insertion Info Consistency**:
-  - Successful insertions have `success=true` in result
-  - Cell creation/removal counts are reasonable
-- **Interior Point Handling**:
-  - Interior points (centroid of existing vertices) insert gracefully
-  - TDS validity maintained after interior insertions
-- **Cache Invalidation Properties**:
-  - Cache generation tracking works correctly
-  - Invalidation occurs with structural modifications
+- **Structural Invariants (Fast)**:
+  - Incremental insertion maintains validity after each insertion
+  - Duplicate coordinate rejection (geometric duplicate detection at insertion time)
+- **Delaunay Property (Expensive)**:
+  - Empty circumsphere condition - No vertex lies strictly inside any cell's circumsphere (2D-5D)
+  - Insertion-order invariance - Edge set independent of insertion order (2D, currently ignored - Issue #120)
+  - Duplicate cloud integration - Full pipeline with messy real-world inputs (2D-5D: duplicates + near-duplicates)
 
-**Run with:**
+**Status:** Some tests are currently ignored due to Delaunay property violations found during development. These are being investigated:
 
-```bash
-# Standard test run
-cargo test --release --test proptest_robust_bowyer_watson
+- Empty circumsphere tests (2D-5D) - Delaunay property violations
+- Insertion-order invariance (2D) - Requires algorithmic investigation
+- Duplicate coordinate rejection - Failing on edge cases
+- Duplicate cloud integration - Related to empty circumsphere failures
 
-# With increased test cases for thorough validation
-PROPTEST_CASES=512 cargo test --release --test proptest_robust_bowyer_watson -- --nocapture
+**Dimensions Tested:** 2D-5D
 
-# Reproduce a specific failure
-PROPTEST_SEED=<seed> cargo test --release --test proptest_robust_bowyer_watson -- --nocapture
-```
+**Run with:** `cargo test --test proptest_delaunay_triangulation` or included in `just test`
 
 #### [`proptest_cell.rs`](./proptest_cell.rs)
 
@@ -228,28 +210,6 @@ cargo test --release --test proptest_quality
 PROPTEST_CASES=1024 cargo test --release --test proptest_quality -- --nocapture
 ```
 
-#### [`proptest_duplicates.rs`](./proptest_duplicates.rs)
-
-Property-based tests for the unified Bowyer–Watson pipeline on random point
-clouds containing exact duplicates and small jittered near-duplicates.
-
-**Test Coverage:**
-
-- 2D and 3D point clouds with injected duplicates and near-duplicates (f64 coordinates)
-- Construction via `Tds::new` and `Tds::bowyer_watson_with_diagnostics`
-- Global Delaunay validation for the kept subset of vertices
-- Integrity of `TriangulationDiagnostics::unsalvageable_vertices` (all unsalvageable
-  vertices originate from the input set)
-
-**Run with:**
-
-```bash
-cargo test --test proptest_duplicates -- --nocapture
-
-# With increased test cases for thorough validation
-PROPTEST_CASES=512 cargo test --test proptest_duplicates -- --nocapture
-```
-
 #### [`proptest_serialization.rs`](./proptest_serialization.rs)
 
 Property-based tests for serialization and deserialization verifying data preservation via randomized structures.
@@ -295,7 +255,6 @@ Proptest automatically captures minimal failing test cases in `.proptest-regress
 
 **Current Regression Files:**
 
-- `proptest_bowyer_watson.proptest-regressions`
 - `proptest_convex_hull.proptest-regressions`
 - `proptest_quality.proptest-regressions`
 - `proptest_serialization.proptest-regressions`
@@ -642,30 +601,6 @@ Tests error handling for coordinate conversion operations, particularly focusing
 - Error message validation and context
 
 **Run with:** `cargo test --test coordinate_conversion_errors` or `just test-release`
-
-#### [`regression_delaunay_known_configs.rs`](./regression_delaunay_known_configs.rs)
-
-Deterministic regression tests for small canonical point sets in 2D–5D that
-must remain globally Delaunay.
-
-**Test Coverage:**
-
-- Canonical 2D–4D configurations exercising basic interior/exterior behavior
-  (simple simplices with interior and exterior points).
-- A fixed 5D configuration reconstructed from a historically failing
-  `proptest_delaunay_condition` case.
-- All configurations assert successful construction via `Tds::new` and the
-  global Delaunay property via `tds.validate_delaunay()`.
-
-This file is the target for promoting important failing seeds captured via
-Delaunay-focused property tests (see the conditional playbook in
-`docs/fix-delaunay.md`).
-
-**Run with:**
-
-```bash
-cargo test --test regression_delaunay_known_configs -- --nocapture
-```
 
 ### 📊 Performance and Memory Testing
 

@@ -193,11 +193,11 @@ pub fn make_uuid() -> Uuid {
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
 ///
-/// let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+/// let v1: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
 ///     .into_iter().next().unwrap();
-/// let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])]) // Duplicate
+/// let v2: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])]) // Duplicate
 ///     .into_iter().next().unwrap();
-/// let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
+/// let v3: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
 ///     .into_iter().next().unwrap();
 ///
 /// let vertices = vec![v1, v2, v3];
@@ -262,11 +262,11 @@ where
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
 ///
-/// let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+/// let v1: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
 ///     .into_iter().next().unwrap();
-/// let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1e-11, 1e-11])]) // Near duplicate
+/// let v2: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1e-11, 1e-11])]) // Near duplicate
 ///     .into_iter().next().unwrap();
-/// let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
+/// let v3: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
 ///     .into_iter().next().unwrap();
 ///
 /// let vertices = vec![v1, v2, v3];
@@ -335,9 +335,9 @@ where
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
 ///
-/// let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+/// let v1: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
 ///     .into_iter().next().unwrap();
-/// let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
+/// let v2: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
 ///     .into_iter().next().unwrap();
 ///
 /// let reference = vec![v1]; // Exclude origin
@@ -435,7 +435,7 @@ fn coords_within_epsilon<T: CoordinateScalar, const D: usize>(
 /// use delaunay::core::triangulation_data_structure::Tds;
 ///
 /// // This is a conceptual example - in practice you would get these from a real TDS
-/// fn example(tds: &Tds<f64, Option<()>, Option<()>, 3>) -> Result<bool, FacetError> {
+/// fn example(tds: &Tds<f64, (), (), 3>) -> Result<bool, FacetError> {
 ///     let cell_keys: Vec<_> = tds.cell_keys().take(2).collect();
 ///     if cell_keys.len() >= 2 {
 ///         let facet1 = FacetView::new(tds, cell_keys[0], 0)?;
@@ -505,7 +505,7 @@ where
 /// use delaunay::core::triangulation_data_structure::Tds;
 ///
 /// fn extract_vertices_example(
-///     tds: &Tds<f64, Option<()>, Option<()>, 3>,
+///     tds: &Tds<f64, (), (), 3>,
 /// ) -> Result<(), Box<dyn std::error::Error>> {
 ///     let cell_key = tds.cell_keys().next().unwrap();
 ///     let facet_view = FacetView::new(tds, cell_key, 0)?;
@@ -556,7 +556,7 @@ where
 /// use delaunay::core::vertex::Vertex;
 /// use delaunay::vertex;
 ///
-/// let vertices: Vec<Vertex<f64, Option<()>, 1>> = vec![
+/// let vertices: Vec<Vertex<f64, (), 1>> = vec![
 ///     vertex!([0.0]),
 ///     vertex!([1.0]),
 ///     vertex!([2.0]),
@@ -843,9 +843,8 @@ where
 /// # Examples
 ///
 /// ```
+/// use delaunay::prelude::*;
 /// use delaunay::core::util::extract_vertex_coordinate_set;
-/// use delaunay::core::Tds;
-/// use delaunay::vertex;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -853,9 +852,10 @@ where
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
 ///
-/// let coord_set = extract_vertex_coordinate_set(&tds);
+/// let coord_set = extract_vertex_coordinate_set(tds);
 /// assert_eq!(coord_set.len(), 4);
 /// ```
 #[must_use]
@@ -900,9 +900,8 @@ const fn canonical_edge(u: u128, v: u128) -> (u128, u128) {
 /// # Examples
 ///
 /// ```
+/// use delaunay::prelude::*;
 /// use delaunay::core::util::extract_edge_set;
-/// use delaunay::core::Tds;
-/// use delaunay::vertex;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -910,9 +909,10 @@ const fn canonical_edge(u: u128, v: u128) -> (u128, u128) {
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
 ///
-/// let edge_set = extract_edge_set(&tds).unwrap();
+/// let edge_set = extract_edge_set(tds).unwrap();
 /// // A tetrahedron has 6 edges
 /// assert_eq!(edge_set.len(), 6);
 /// ```
@@ -972,9 +972,8 @@ where
 /// # Examples
 ///
 /// ```
+/// use delaunay::prelude::*;
 /// use delaunay::core::util::extract_facet_identifier_set;
-/// use delaunay::core::Tds;
-/// use delaunay::vertex;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -982,9 +981,10 @@ where
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
 ///
-/// let facet_set = extract_facet_identifier_set(&tds).unwrap();
+/// let facet_set = extract_facet_identifier_set(tds).unwrap();
 /// // A tetrahedron has 4 facets
 /// assert_eq!(facet_set.len(), 4);
 /// ```
@@ -1039,31 +1039,34 @@ where
 ///
 /// ```
 /// use delaunay::core::util::extract_hull_facet_set;
+/// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
-/// use delaunay::core::Tds;
 /// use delaunay::vertex;
 ///
-/// let vertices = vec![
+/// let vertices: Vec<_> = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-/// let hull = ConvexHull::from_triangulation(&tds).unwrap();
+/// let dt: DelaunayTriangulation<_, (), (), 3> =
+///     DelaunayTriangulation::new(&vertices).unwrap();
+/// let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 ///
-/// let facet_set = extract_hull_facet_set(&hull, &tds).unwrap();
+/// let facet_set = extract_hull_facet_set(&hull, dt.triangulation()).unwrap();
 /// assert_eq!(facet_set.len(), 4);
 /// ```
-pub fn extract_hull_facet_set<T, U, V, const D: usize>(
-    hull: &ConvexHull<T, U, V, D>,
-    tds: &Tds<T, U, V, D>,
+pub fn extract_hull_facet_set<K, U, V, const D: usize>(
+    hull: &ConvexHull<K, U, V, D>,
+    tri: &crate::core::triangulation::Triangulation<K, U, V, D>,
 ) -> Result<HashSet<u64>, FacetError>
 where
-    T: CoordinateScalar + std::ops::AddAssign<T> + std::ops::SubAssign<T> + std::iter::Sum,
+    K: crate::geometry::kernel::Kernel<D>,
+    K::Scalar: CoordinateScalar + std::ops::AddAssign + std::ops::SubAssign + std::iter::Sum,
     U: DataType,
     V: DataType,
 {
+    let tds = &tri.tds;
     let mut facet_ids = HashSet::new();
 
     for facet_handle in hull.facets() {
@@ -1266,9 +1269,8 @@ macro_rules! assert_jaccard_gte {
 /// # Examples
 ///
 /// ```
+/// use delaunay::prelude::*;
 /// use delaunay::core::util::derive_facet_key_from_vertex_keys;
-/// use delaunay::core::triangulation_data_structure::Tds;
-/// use delaunay::vertex;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -1276,13 +1278,14 @@ macro_rules! assert_jaccard_gte {
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
 ///
 /// // Get facet vertex keys from a cell - no need to materialize Vertex objects
 /// if let Some(cell) = tds.cells().map(|(_, cell)| cell).next() {
 ///     let facet_vertex_keys: Vec<_> = cell.vertices().iter().skip(1).copied().collect(); // Skip 1 vertex to get D vertices
 ///     assert_eq!(facet_vertex_keys.len(), 3); // For 3D triangulation, facet has 3 vertices
-///     let facet_key = derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(&facet_vertex_keys).unwrap();
+///     let facet_key = derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&facet_vertex_keys).unwrap();
 ///     println!("Facet key: {}", facet_key);
 /// }
 /// ```
@@ -1355,7 +1358,7 @@ where
 /// use delaunay::core::triangulation_data_structure::Tds;
 ///
 /// fn validate_neighbor_consistency(
-///     tds: &Tds<f64, Option<()>, Option<()>, 3>,
+///     tds: &Tds<f64, (), (), 3>,
 /// ) -> Result<(), String> {
 ///     // Get two neighboring cell keys
 ///     let cell_keys: Vec<_> = tds.cell_keys().take(2).collect();
@@ -1398,17 +1401,9 @@ where
 {
     use crate::core::facet::FacetError;
 
-    // Get both cells
-    let cell1 = tds
-        .get_cell(cell1_key)
-        .ok_or(FacetError::CellNotFoundInTriangulation)?;
-    let cell2 = tds
-        .get_cell(cell2_key)
-        .ok_or(FacetError::CellNotFoundInTriangulation)?;
-
-    // Get facet views from both cells
-    let cell1_facets = cell1.facet_views(tds, cell1_key)?;
-    let cell2_facets = cell2.facet_views(tds, cell2_key)?;
+    // Get facet views from both cells (validates cells exist)
+    let cell1_facets = crate::core::cell::Cell::facet_views_from_tds(tds, cell1_key)?;
+    let cell2_facets = crate::core::cell::Cell::facet_views_from_tds(tds, cell2_key)?;
 
     // Check facet index bounds
     if facet_idx >= cell1_facets.len() {
@@ -1648,9 +1643,8 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::prelude::*;
 /// use delaunay::core::util::is_delaunay;
-/// use delaunay::vertex;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -1659,10 +1653,11 @@ where
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
 ///
-/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
 ///
 /// // Check if triangulation is Delaunay
-/// assert!(is_delaunay(&tds).is_ok());
+/// assert!(is_delaunay(tds).is_ok());
 /// ```
 pub fn is_delaunay<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
@@ -1727,9 +1722,8 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::prelude::*;
 /// use delaunay::core::util::find_delaunay_violations;
-/// use delaunay::vertex;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -1738,10 +1732,11 @@ where
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
 ///
-/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
 ///
 /// // Find all violating cells (should be empty for valid Delaunay triangulation)
-/// let violations = find_delaunay_violations(&tds, None).unwrap();
+/// let violations = find_delaunay_violations(tds, None).unwrap();
 /// assert!(violations.is_empty());
 /// ```
 pub fn find_delaunay_violations<T, U, V, const D: usize>(
@@ -1956,9 +1951,8 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
 #[cfg(test)]
 mod tests {
 
-    use crate::core::cell::Cell;
     use crate::core::facet::FacetView;
-    use crate::core::triangulation_data_structure::{Tds, VertexKey};
+    use crate::core::triangulation_data_structure::VertexKey;
     use crate::geometry::algorithms::convex_hull::ConvexHull;
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
@@ -1974,44 +1968,40 @@ mod tests {
     // =============================================================================
 
     #[test]
-    fn utilities_make_uuid_uniqueness() {
+    fn test_validate_uuid_comprehensive() {
+        // Sub-test: UUID creation uniqueness
         let uuid1 = make_uuid();
         let uuid2 = make_uuid();
         let uuid3 = make_uuid();
+        assert_ne!(uuid1, uuid2, "UUIDs should be unique");
+        assert_ne!(uuid1, uuid3, "UUIDs should be unique");
+        assert_ne!(uuid2, uuid3, "UUIDs should be unique");
+        assert_eq!(uuid1.get_version_num(), 4, "Should be version 4");
+        assert_eq!(uuid2.get_version_num(), 4, "Should be version 4");
+        assert_eq!(uuid3.get_version_num(), 4, "Should be version 4");
 
-        // All UUIDs should be different
-        assert_ne!(uuid1, uuid2);
-        assert_ne!(uuid1, uuid3);
-        assert_ne!(uuid2, uuid3);
-
-        // All should be version 4
-        assert_eq!(uuid1.get_version_num(), 4);
-        assert_eq!(uuid2.get_version_num(), 4);
-        assert_eq!(uuid3.get_version_num(), 4);
-    }
-
-    #[test]
-    fn utilities_make_uuid_format() {
+        // Sub-test: UUID format validation
         let uuid = make_uuid();
         let uuid_string = uuid.to_string();
-
-        // UUID should have proper format: 8-4-4-4-12 characters
-        assert_eq!(uuid_string.len(), 36); // Including hyphens
-        assert_eq!(uuid_string.chars().filter(|&c| c == '-').count(), 4);
-
-        // Should be valid hyphenated format
+        assert_eq!(
+            uuid_string.len(),
+            36,
+            "UUID should be 36 chars (with hyphens)"
+        );
+        assert_eq!(
+            uuid_string.chars().filter(|&c| c == '-').count(),
+            4,
+            "UUID should have 4 hyphens"
+        );
         let parts: Vec<&str> = uuid_string.split('-').collect();
-        assert_eq!(parts.len(), 5);
-        assert_eq!(parts[0].len(), 8);
-        assert_eq!(parts[1].len(), 4);
-        assert_eq!(parts[2].len(), 4);
-        assert_eq!(parts[3].len(), 4);
-        assert_eq!(parts[4].len(), 12);
-    }
+        assert_eq!(parts.len(), 5, "UUID should have 5 hyphen-separated parts");
+        assert_eq!(parts[0].len(), 8, "First part should be 8 chars");
+        assert_eq!(parts[1].len(), 4, "Second part should be 4 chars");
+        assert_eq!(parts[2].len(), 4, "Third part should be 4 chars");
+        assert_eq!(parts[3].len(), 4, "Fourth part should be 4 chars");
+        assert_eq!(parts[4].len(), 12, "Fifth part should be 12 chars");
 
-    #[test]
-    fn test_validate_uuid_comprehensive() {
-        // Test valid UUID (version 4)
+        // Sub-test: Valid UUID (version 4)
         let valid_uuid = make_uuid();
         assert!(
             validate_uuid(&valid_uuid).is_ok(),
@@ -2188,73 +2178,62 @@ mod tests {
     // =============================================================================
 
     #[test]
-    fn test_dedup_vertices_exact_basic() {
-        // Basic deduplication
-        let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+    fn test_dedup_vertices_exact_comprehensive() {
+        // Sub-test: Basic deduplication
+        let v1: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
             .into_iter()
             .next()
             .unwrap();
-        let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+        let v2: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
             .into_iter()
             .next()
             .unwrap();
-        let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
+        let v3: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
             .into_iter()
             .next()
             .unwrap();
-
         let vertices = vec![v1, v2, v3];
         let unique = dedup_vertices_exact(vertices);
         assert_eq!(unique.len(), 2, "Should remove exact duplicate");
-    }
 
-    #[test]
-    fn test_dedup_vertices_exact_nan_handling() {
-        // NaN should equal NaN for deduplication purposes
-        let v1: Vertex<f64, Option<()>, 2> =
-            Vertex::from_points(&[Point::new([f64::NAN, f64::NAN])])
-                .into_iter()
-                .next()
-                .unwrap();
-        let v2: Vertex<f64, Option<()>, 2> =
-            Vertex::from_points(&[Point::new([f64::NAN, f64::NAN])])
-                .into_iter()
-                .next()
-                .unwrap();
-        let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
+        // Sub-test: NaN handling - NaN should equal NaN
+        let v1_nan: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([f64::NAN, f64::NAN])])
             .into_iter()
             .next()
             .unwrap();
-
-        let vertices = vec![v1, v2, v3];
-        let unique = dedup_vertices_exact(vertices);
+        let v2_nan: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([f64::NAN, f64::NAN])])
+            .into_iter()
+            .next()
+            .unwrap();
+        let v3_regular: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
+            .into_iter()
+            .next()
+            .unwrap();
+        let vertices_nan = vec![v1_nan, v2_nan, v3_regular];
+        let unique_nan = dedup_vertices_exact(vertices_nan);
         assert_eq!(
-            unique.len(),
+            unique_nan.len(),
             2,
             "NaN should be considered equal to NaN for deduplication"
         );
-    }
 
-    #[test]
-    fn test_dedup_vertices_exact_zero_handling() {
-        // +0.0 should equal -0.0 for deduplication
-        let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+        // Sub-test: Zero handling - +0.0 should equal -0.0
+        let v1_pos_zero: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
             .into_iter()
             .next()
             .unwrap();
-        let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([-0.0, -0.0])])
+        let v2_neg_zero: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([-0.0, -0.0])])
             .into_iter()
             .next()
             .unwrap();
-        let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
+        let v3_one: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
             .into_iter()
             .next()
             .unwrap();
-
-        let vertices = vec![v1, v2, v3];
-        let unique = dedup_vertices_exact(vertices);
+        let vertices_zero = vec![v1_pos_zero, v2_neg_zero, v3_one];
+        let unique_zero = dedup_vertices_exact(vertices_zero);
         assert_eq!(
-            unique.len(),
+            unique_zero.len(),
             2,
             "+0.0 and -0.0 should be considered equal for deduplication"
         );
@@ -2263,15 +2242,15 @@ mod tests {
     #[test]
     fn test_dedup_vertices_epsilon_basic() {
         // Near-duplicates should be filtered
-        let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+        let v1: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
             .into_iter()
             .next()
             .unwrap();
-        let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1e-11, 1e-11])])
+        let v2: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1e-11, 1e-11])])
             .into_iter()
             .next()
             .unwrap();
-        let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
+        let v3: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
             .into_iter()
             .next()
             .unwrap();
@@ -2288,17 +2267,17 @@ mod tests {
     #[test]
     fn test_dedup_vertices_epsilon_boundary() {
         // Test strict < epsilon semantics (distance = epsilon should NOT be filtered)
-        let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+        let v1: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
             .into_iter()
             .next()
             .unwrap();
         // Distance exactly epsilon (1e-10) in x direction
-        let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1e-10, 0.0])])
+        let v2: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1e-10, 0.0])])
             .into_iter()
             .next()
             .unwrap();
         // Distance slightly less than epsilon
-        let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.99e-10, 0.0])])
+        let v3: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.99e-10, 0.0])])
             .into_iter()
             .next()
             .unwrap();
@@ -2322,7 +2301,7 @@ mod tests {
             Point::new([1.0, 1.0]),
             Point::new([1.0 + 1e-11, 1.0 + 1e-11]), // Near-duplicate of third
         ];
-        let vertices: Vec<Vertex<f64, Option<()>, 2>> = Vertex::from_points(&points);
+        let vertices: Vec<Vertex<f64, (), 2>> = Vertex::from_points(&points);
 
         let unique = dedup_vertices_epsilon(vertices, 1e-10);
         assert_eq!(unique.len(), 2, "Should keep first of each cluster");
@@ -2339,71 +2318,60 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_vertices_excluding_basic() {
-        // Basic exclusion
-        let v1: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+    fn test_filter_vertices_excluding_comprehensive() {
+        // Sub-test: Basic exclusion
+        let v1: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
             .into_iter()
             .next()
             .unwrap();
-        let v2: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
+        let v2: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
             .into_iter()
             .next()
             .unwrap();
-        let v3: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([2.0, 2.0])])
+        let v3: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([2.0, 2.0])])
             .into_iter()
             .next()
             .unwrap();
-
-        let reference = vec![v1];
-        let vertices = vec![v1, v2, v3];
-
-        let filtered = filter_vertices_excluding(vertices, &reference);
+        let reference_basic = vec![v1];
+        let vertices_basic = vec![v1, v2, v3];
+        let filtered_basic = filter_vertices_excluding(vertices_basic, &reference_basic);
         assert_eq!(
-            filtered.len(),
+            filtered_basic.len(),
             2,
             "Should exclude vertex matching reference"
         );
-    }
 
-    #[test]
-    fn test_filter_vertices_excluding_nan() {
-        // NaN reference should match NaN vertices
-        let v_nan: Vertex<f64, Option<()>, 2> =
-            Vertex::from_points(&[Point::new([f64::NAN, f64::NAN])])
-                .into_iter()
-                .next()
-                .unwrap();
-
-        let reference = vec![v_nan];
-        let vertices_with_nan: Vec<Vertex<f64, Option<()>, 2>> =
-            Vertex::from_points(&[Point::new([f64::NAN, f64::NAN]), Point::new([1.0, 1.0])]);
-
-        let filtered = filter_vertices_excluding(vertices_with_nan, &reference);
-        assert_eq!(filtered.len(), 1, "NaN reference should exclude NaN vertex");
-    }
-
-    #[test]
-    fn test_filter_vertices_excluding_zero() {
-        // +0.0 reference should match -0.0 vertices
-        let v_pos_zero: Vertex<f64, Option<()>, 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+        // Sub-test: NaN exclusion - NaN reference should match NaN vertices
+        let v_nan: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([f64::NAN, f64::NAN])])
             .into_iter()
             .next()
             .unwrap();
-
-        let reference = vec![v_pos_zero];
-        let vertices_with_neg_zero: Vec<Vertex<f64, Option<()>, 2>> =
-            Vertex::from_points(&[Point::new([-0.0, -0.0]), Point::new([1.0, 1.0])]);
-
-        let filtered = filter_vertices_excluding(vertices_with_neg_zero, &reference);
+        let reference_nan = vec![v_nan];
+        let vertices_with_nan: Vec<Vertex<f64, (), 2>> =
+            Vertex::from_points(&[Point::new([f64::NAN, f64::NAN]), Point::new([1.0, 1.0])]);
+        let filtered_nan = filter_vertices_excluding(vertices_with_nan, &reference_nan);
         assert_eq!(
-            filtered.len(),
+            filtered_nan.len(),
+            1,
+            "NaN reference should exclude NaN vertex"
+        );
+
+        // Sub-test: Zero exclusion - +0.0 reference should match -0.0 vertices
+        let v_pos_zero: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
+            .into_iter()
+            .next()
+            .unwrap();
+        let reference_zero = vec![v_pos_zero];
+        let vertices_with_neg_zero: Vec<Vertex<f64, (), 2>> =
+            Vertex::from_points(&[Point::new([-0.0, -0.0]), Point::new([1.0, 1.0])]);
+        let filtered_zero = filter_vertices_excluding(vertices_with_neg_zero, &reference_zero);
+        assert_eq!(
+            filtered_zero.len(),
             1,
             "+0.0 reference should exclude -0.0 vertex"
         );
-    }
 
-    #[test]
-    fn test_filter_vertices_excluding_multiple_references() {
+        // Sub-test: Multiple reference vertices
         // Multiple reference vertices
         let points = [
             Point::new([0.0, 0.0]),
@@ -2411,7 +2379,7 @@ mod tests {
             Point::new([2.0, 2.0]),
             Point::new([3.0, 3.0]),
         ];
-        let vertices: Vec<Vertex<f64, Option<()>, 2>> = Vertex::from_points(&points);
+        let vertices: Vec<Vertex<f64, (), 2>> = Vertex::from_points(&points);
 
         let reference = vec![vertices[0], vertices[2]]; // Exclude first and third
         let filtered = filter_vertices_excluding(vertices, &reference);
@@ -2477,7 +2445,7 @@ mod tests {
     #[test]
     fn test_generate_combinations_comprehensive() {
         // Test basic functionality with 4 vertices
-        let vertices: Vec<Vertex<f64, Option<()>, 1>> = vec![
+        let vertices: Vec<Vertex<f64, (), 1>> = vec![
             vertex!([0.0]),
             vertex!([1.0]),
             vertex!([2.0]),
@@ -2540,13 +2508,13 @@ mod tests {
         );
 
         // Test with different size - 3 vertices, choose 2
-        let small_vertices: Vec<Vertex<f64, Option<()>, 1>> =
+        let small_vertices: Vec<Vertex<f64, (), 1>> =
             vec![vertex!([1.0]), vertex!([2.0]), vertex!([3.0])];
         let combinations_small = generate_combinations(&small_vertices, 2);
         assert_eq!(combinations_small.len(), 3, "C(3,2) should equal 3");
 
         // Test larger case - 5 vertices, choose 3 to exercise inner loops
-        let large_vertices: Vec<Vertex<f64, Option<()>, 1>> = vec![
+        let large_vertices: Vec<Vertex<f64, (), 1>> = vec![
             vertex!([1.0]),
             vertex!([2.0]),
             vertex!([3.0]),
@@ -2575,7 +2543,7 @@ mod tests {
         );
 
         // Test empty input edge cases
-        let empty_vertices: Vec<Vertex<f64, Option<()>, 1>> = vec![];
+        let empty_vertices: Vec<Vertex<f64, (), 1>> = vec![];
         let combinations_empty_k1 = generate_combinations(&empty_vertices, 1);
         assert!(
             combinations_empty_k1.is_empty(),
@@ -2696,14 +2664,16 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let dt =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let tds = &dt.triangulation().tds;
 
         // Basic Delaunay helpers should report no violations.
         assert!(
-            is_delaunay(&tds).is_ok(),
+            is_delaunay(tds).is_ok(),
             "Simple tetrahedron should be Delaunay"
         );
-        let violations = find_delaunay_violations(&tds, None).unwrap();
+        let violations = find_delaunay_violations(tds, None).unwrap();
         assert!(
             violations.is_empty(),
             "find_delaunay_violations should report no violating cells for a tetrahedron"
@@ -2712,67 +2682,7 @@ mod tests {
         // Smoke test for the debug helper: it should not panic and should print a
         // summary indicating that no violations were found.
         #[cfg(any(test, debug_assertions))]
-        debug_print_first_delaunay_violation(&tds, None);
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn delaunay_validator_detects_violations() {
-        println!("Testing Delaunay validator violation detection");
-
-        // Create vertices for a 2D configuration where we can create a violation:
-        // Three vertices forming a large triangle, and one vertex inside
-        let v0 = vertex!([0.0, 0.0]);
-        let v1 = vertex!([3.0, 0.0]);
-        let v2 = vertex!([1.5, 3.0]);
-        let v_inside = vertex!([1.5, 1.0]); // Point inside the triangle
-
-        let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
-
-        // Insert vertices
-        let vk0 = tds.insert_vertex_with_mapping(v0).unwrap();
-        let vk1 = tds.insert_vertex_with_mapping(v1).unwrap();
-        let vk2 = tds.insert_vertex_with_mapping(v2).unwrap();
-        let _vk_inside = tds.insert_vertex_with_mapping(v_inside).unwrap();
-
-        // Create a cell using the three outer vertices (v0, v1, v2)
-        // This cell will have v_inside inside its circumcircle, violating Delaunay property
-        let cell_outer = Cell::new(vec![vk0, vk1, vk2], None).unwrap();
-
-        // Use low-level API to insert the cell without Delaunay checks
-        #[allow(deprecated)]
-        let cell_key = tds.insert_cell_unchecked(cell_outer);
-
-        println!("  Created cell with vertices at (0,0), (3,0), (1.5,3)");
-        println!("  Interior vertex at (1.5, 1.0) should be inside circumcircle");
-
-        // Test find_delaunay_violations - should find the violation
-        let violations = find_delaunay_violations(&tds, None).unwrap();
-        println!("  Found {} violating cells", violations.len());
-
-        assert!(
-            !violations.is_empty(),
-            "Should detect Delaunay violation when vertex is inside cell's circumcircle"
-        );
-
-        assert!(
-            violations.contains(&cell_key),
-            "Violating cell should be in the violations list"
-        );
-
-        // Test is_delaunay - because we used insert_cell_unchecked, the UUID mapping
-        // is inconsistent, so is_delaunay() will detect TDS corruption first.
-        // This demonstrates that is_delaunay() correctly checks structural invariants
-        // before checking the Delaunay property.
-        let result = is_delaunay(&tds);
-        println!("  is_delaunay() result: {result:?}");
-        assert!(
-            result.is_err(),
-            "is_delaunay() should return an error (either TDS corruption or Delaunay violation)"
-        );
-
-        // find_delaunay_violations() skips the structural check (by design, for targeted checking)
-        // so it correctly identifies the Delaunay violation
+        debug_print_first_delaunay_violation(tds, None);
     }
 
     #[test]
@@ -2787,15 +2697,16 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let dt =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let tds = &dt.triangulation().tds;
 
         // Test 1: Basic functionality - successful key derivation
         println!("  Testing basic functionality...");
         let cell = tds.cells().map(|(_, cell)| cell).next().unwrap();
         let facet_vertex_keys: Vec<_> = cell.vertices().iter().skip(1).copied().collect();
 
-        let result =
-            derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(&facet_vertex_keys);
+        let result = derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&facet_vertex_keys);
         assert!(
             result.is_ok(),
             "Facet key derivation should succeed for valid vertex keys"
@@ -2805,8 +2716,7 @@ mod tests {
         println!("    Derived facet key: {facet_key}");
 
         // Test deterministic behavior - same vertex keys produce same key
-        let result2 =
-            derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(&facet_vertex_keys);
+        let result2 = derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&facet_vertex_keys);
         assert!(result2.is_ok(), "Second derivation should also succeed");
         assert_eq!(
             facet_key,
@@ -2820,9 +2730,8 @@ mod tests {
         if different_facet_vertex_keys.len() == 3
             && different_facet_vertex_keys != facet_vertex_keys
         {
-            let result3 = derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(
-                &different_facet_vertex_keys,
-            );
+            let result3 =
+                derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&different_facet_vertex_keys);
             assert!(
                 result3.is_ok(),
                 "Different facet key derivation should succeed"
@@ -2840,8 +2749,7 @@ mod tests {
 
         // Wrong vertex key count
         let single_key: Vec<VertexKey> = vec![facet_vertex_keys[0]];
-        let result_count =
-            derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(&single_key);
+        let result_count = derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&single_key);
         assert!(
             result_count.is_err(),
             "Should return error for wrong vertex key count"
@@ -2863,8 +2771,7 @@ mod tests {
 
         // Empty vertex keys
         let empty_keys: Vec<VertexKey> = vec![];
-        let result_empty =
-            derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(&empty_keys);
+        let result_empty = derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&empty_keys);
         assert!(
             result_empty.is_err(),
             "Empty vertex keys should fail validation"
@@ -2908,9 +2815,7 @@ mod tests {
 
                 if !facet_vertex_keys.is_empty() {
                     let key_result =
-                        derive_facet_key_from_vertex_keys::<f64, Option<()>, Option<()>, 3>(
-                            &facet_vertex_keys,
-                        );
+                        derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&facet_vertex_keys);
                     if let Ok(derived_key) = key_result {
                         keys_tested += 1;
                         if cache.contains_key(&derived_key) {
@@ -2953,8 +2858,12 @@ mod tests {
         let mut vertices2 = shared_vertices;
         vertices2.push(vertex_b);
 
-        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices2).unwrap();
+        let dt1 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices1).unwrap();
+        let dt2 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices2).unwrap();
+        let tds1 = &dt1.triangulation().tds;
+        let tds2 = &dt2.triangulation().tds;
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
@@ -2962,8 +2871,8 @@ mod tests {
         // Find the facets that correspond to the shared triangle
         // In tetrahedron 1, this is the facet opposite to vertex_a (index 3)
         // In tetrahedron 2, this is the facet opposite to vertex_b (index 3)
-        let facet_view1 = FacetView::new(&tds1, cell1_key, 3).unwrap();
-        let facet_view2 = FacetView::new(&tds2, cell2_key, 3).unwrap();
+        let facet_view1 = FacetView::new(tds1, cell1_key, 3).unwrap();
+        let facet_view2 = FacetView::new(tds2, cell2_key, 3).unwrap();
 
         assert!(
             facet_views_are_adjacent(&facet_view1, &facet_view2).unwrap(),
@@ -2975,8 +2884,8 @@ mod tests {
         println!("Test 2: Non-adjacent facets from same tetrahedra");
 
         // Different facets from the same tetrahedra (not sharing vertices)
-        let facet_view1_diff = FacetView::new(&tds1, cell1_key, 0).unwrap(); // Different facet
-        let facet_view2_diff = FacetView::new(&tds2, cell2_key, 1).unwrap(); // Different facet
+        let facet_view1_diff = FacetView::new(tds1, cell1_key, 0).unwrap(); // Different facet
+        let facet_view2_diff = FacetView::new(tds2, cell2_key, 1).unwrap(); // Different facet
 
         assert!(
             !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff).unwrap(),
@@ -3015,16 +2924,20 @@ mod tests {
         let mut vertices2 = shared_edge;
         vertices2.push(vertex_d);
 
-        let tds1: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices2).unwrap();
+        let dt1 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices1).unwrap();
+        let dt2 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices2).unwrap();
+        let tds1 = &dt1.triangulation().tds;
+        let tds2 = &dt2.triangulation().tds;
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
 
         // In 2D, facets are edges. Find the facets that correspond to the shared edge
         // This is the facet opposite to the non-shared vertex
-        let facet_view1 = FacetView::new(&tds1, cell1_key, 2).unwrap(); // Opposite to vertex_c
-        let facet_view2 = FacetView::new(&tds2, cell2_key, 2).unwrap(); // Opposite to vertex_d
+        let facet_view1 = FacetView::new(tds1, cell1_key, 2).unwrap(); // Opposite to vertex_c
+        let facet_view2 = FacetView::new(tds2, cell2_key, 2).unwrap(); // Opposite to vertex_d
 
         assert!(
             facet_views_are_adjacent(&facet_view1, &facet_view2).unwrap(),
@@ -3032,8 +2945,8 @@ mod tests {
         );
 
         // Test non-adjacent edges
-        let facet_view1_diff = FacetView::new(&tds1, cell1_key, 0).unwrap();
-        let facet_view2_diff = FacetView::new(&tds2, cell2_key, 1).unwrap();
+        let facet_view1_diff = FacetView::new(tds1, cell1_key, 0).unwrap();
+        let facet_view2_diff = FacetView::new(tds2, cell2_key, 1).unwrap();
 
         assert!(
             !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff).unwrap(),
@@ -3059,8 +2972,12 @@ mod tests {
         // Edge 2: shared_vertex to vertex_right
         let vertices2 = vec![shared_vertex, vertex_right];
 
-        let tds1: Tds<f64, Option<()>, Option<()>, 1> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, Option<()>, Option<()>, 1> = Tds::new(&vertices2).unwrap();
+        let dt1 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices1).unwrap();
+        let dt2 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices2).unwrap();
+        let tds1 = &dt1.triangulation().tds;
+        let tds2 = &dt2.triangulation().tds;
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
@@ -3071,11 +2988,11 @@ mod tests {
 
         // Both edges contain the shared vertex, so we need to find which facet index
         // corresponds to the shared vertex
-        let facet_view1_0 = FacetView::new(&tds1, cell1_key, 0).unwrap(); // Contains vertex_left
-        let facet_view1_1 = FacetView::new(&tds1, cell1_key, 1).unwrap(); // Contains shared_vertex
+        let facet_view1_0 = FacetView::new(tds1, cell1_key, 0).unwrap(); // Contains vertex_left
+        let facet_view1_1 = FacetView::new(tds1, cell1_key, 1).unwrap(); // Contains shared_vertex
 
-        let facet_view2_0 = FacetView::new(&tds2, cell2_key, 0).unwrap(); // Contains vertex_right
-        let facet_view2_1 = FacetView::new(&tds2, cell2_key, 1).unwrap(); // Contains shared_vertex
+        let facet_view2_0 = FacetView::new(tds2, cell2_key, 0).unwrap(); // Contains vertex_right
+        let facet_view2_1 = FacetView::new(tds2, cell2_key, 1).unwrap(); // Contains shared_vertex
 
         // The facets containing the shared vertex should be adjacent
         assert!(
@@ -3104,14 +3021,16 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let dt =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let tds = &dt.triangulation().tds;
         let cell_key = tds.cell_keys().next().unwrap();
 
         // All facets of the same tetrahedron should be different from each other
-        let facet0 = FacetView::new(&tds, cell_key, 0).unwrap();
-        let facet1 = FacetView::new(&tds, cell_key, 1).unwrap();
-        let facet2 = FacetView::new(&tds, cell_key, 2).unwrap();
-        let facet3 = FacetView::new(&tds, cell_key, 3).unwrap();
+        let facet0 = FacetView::new(tds, cell_key, 0).unwrap();
+        let facet1 = FacetView::new(tds, cell_key, 1).unwrap();
+        let facet2 = FacetView::new(tds, cell_key, 2).unwrap();
+        let facet3 = FacetView::new(tds, cell_key, 3).unwrap();
 
         // Each facet should be adjacent to itself
         assert!(facet_views_are_adjacent(&facet0, &facet0).unwrap());
@@ -3143,11 +3062,13 @@ mod tests {
             vertex!([1.0, 1.0, 2.0]),
         ];
 
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let dt =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let tds = &dt.triangulation().tds;
         let cell_key = tds.cell_keys().next().unwrap();
 
-        let facet1 = FacetView::new(&tds, cell_key, 0).unwrap();
-        let facet2 = FacetView::new(&tds, cell_key, 1).unwrap();
+        let facet1 = FacetView::new(tds, cell_key, 0).unwrap();
+        let facet2 = FacetView::new(tds, cell_key, 1).unwrap();
 
         // Run the adjacency check many times to measure performance
         let start = Instant::now();
@@ -3188,14 +3109,18 @@ mod tests {
             vertex!([10.0, 10.0, 11.0]),
         ];
 
-        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices2).unwrap();
+        let dt1 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices1).unwrap();
+        let dt2 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices2).unwrap();
+        let tds1 = &dt1.triangulation().tds;
+        let tds2 = &dt2.triangulation().tds;
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
 
-        let facet1 = FacetView::new(&tds1, cell1_key, 0).unwrap();
-        let facet2 = FacetView::new(&tds2, cell2_key, 0).unwrap();
+        let facet1 = FacetView::new(tds1, cell1_key, 0).unwrap();
+        let facet2 = FacetView::new(tds2, cell2_key, 0).unwrap();
 
         // Facets from completely different geometries should not be adjacent
         assert!(
@@ -3218,14 +3143,18 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let tds1: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let tds2: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let dt1 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt2 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let tds1 = &dt1.triangulation().tds;
+        let tds2 = &dt2.triangulation().tds;
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
 
-        let facet1 = FacetView::new(&tds1, cell1_key, 0).unwrap();
-        let facet2 = FacetView::new(&tds2, cell2_key, 0).unwrap();
+        let facet1 = FacetView::new(tds1, cell1_key, 0).unwrap();
+        let facet2 = FacetView::new(tds2, cell2_key, 0).unwrap();
 
         // Check if the UUID generation is deterministic based on coordinates
         let facet1_vertex_uuids: Vec<_> = match facet1.vertices() {
@@ -3276,16 +3205,20 @@ mod tests {
         let mut vertices2 = shared_tetrahedron;
         vertices2.push(vertex_f);
 
-        let tds1: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices2).unwrap();
+        let dt1 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices1).unwrap();
+        let dt2 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices2).unwrap();
+        let tds1 = &dt1.triangulation().tds;
+        let tds2 = &dt2.triangulation().tds;
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
 
         // In 4D, facets are tetrahedra. Find the facets that correspond to the shared tetrahedron
         // This is the facet opposite to the non-shared vertex (index 4)
-        let facet_view1 = FacetView::new(&tds1, cell1_key, 4).unwrap(); // Opposite to vertex_e
-        let facet_view2 = FacetView::new(&tds2, cell2_key, 4).unwrap(); // Opposite to vertex_f
+        let facet_view1 = FacetView::new(tds1, cell1_key, 4).unwrap(); // Opposite to vertex_e
+        let facet_view2 = FacetView::new(tds2, cell2_key, 4).unwrap(); // Opposite to vertex_f
 
         assert!(
             facet_views_are_adjacent(&facet_view1, &facet_view2).unwrap(),
@@ -3293,8 +3226,8 @@ mod tests {
         );
 
         // Test non-adjacent tetrahedra within the same 4D simplices
-        let facet_view1_diff = FacetView::new(&tds1, cell1_key, 0).unwrap();
-        let facet_view2_diff = FacetView::new(&tds2, cell2_key, 1).unwrap();
+        let facet_view1_diff = FacetView::new(tds1, cell1_key, 0).unwrap();
+        let facet_view2_diff = FacetView::new(tds2, cell2_key, 1).unwrap();
 
         assert!(
             !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff).unwrap(),
@@ -3328,16 +3261,20 @@ mod tests {
         let mut vertices2 = shared_4d_simplex;
         vertices2.push(vertex_h);
 
-        let tds1: Tds<f64, Option<()>, Option<()>, 5> = Tds::new(&vertices1).unwrap();
-        let tds2: Tds<f64, Option<()>, Option<()>, 5> = Tds::new(&vertices2).unwrap();
+        let dt1 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices1).unwrap();
+        let dt2 =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices2).unwrap();
+        let tds1 = &dt1.triangulation().tds;
+        let tds2 = &dt2.triangulation().tds;
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
 
         // In 5D, facets are 4D simplices. Find the facets that correspond to the shared 4D simplex
         // This is the facet opposite to the non-shared vertex (index 5)
-        let facet_view1 = FacetView::new(&tds1, cell1_key, 5).unwrap(); // Opposite to vertex_g
-        let facet_view2 = FacetView::new(&tds2, cell2_key, 5).unwrap(); // Opposite to vertex_h
+        let facet_view1 = FacetView::new(tds1, cell1_key, 5).unwrap(); // Opposite to vertex_g
+        let facet_view2 = FacetView::new(tds2, cell2_key, 5).unwrap(); // Opposite to vertex_h
 
         assert!(
             facet_views_are_adjacent(&facet_view1, &facet_view2).unwrap(),
@@ -3345,8 +3282,8 @@ mod tests {
         );
 
         // Test non-adjacent 4D simplices within the same 5D simplices
-        let facet_view1_diff = FacetView::new(&tds1, cell1_key, 0).unwrap();
-        let facet_view2_diff = FacetView::new(&tds2, cell2_key, 1).unwrap();
+        let facet_view1_diff = FacetView::new(tds1, cell1_key, 0).unwrap();
+        let facet_view2_diff = FacetView::new(tds2, cell2_key, 1).unwrap();
 
         assert!(
             !facet_views_are_adjacent(&facet_view1_diff, &facet_view2_diff).unwrap(),
@@ -3382,15 +3319,59 @@ mod tests {
 
     #[test]
     fn test_usize_to_u8_conversion_comprehensive() {
-        // Test successful conversions
+        // Sub-test: Successful conversions
         assert_eq!(usize_to_u8(0, 4), Ok(0));
         assert_eq!(usize_to_u8(1, 4), Ok(1));
         assert_eq!(usize_to_u8(255, 256), Ok(255));
-
-        // Test conversion at boundary
         assert_eq!(usize_to_u8(u8::MAX as usize, 256), Ok(u8::MAX));
 
-        // Test failed conversion (index too large)
+        // Sub-test: All valid u8 values (0..=255)
+        for i in 0u8..=255 {
+            let result = usize_to_u8(i as usize, 256);
+            assert_eq!(result, Ok(i), "Failed to convert {i}");
+        }
+
+        // Sub-test: Edge cases around u8::MAX boundary
+        assert_eq!(usize_to_u8(254, 300), Ok(254));
+        assert_eq!(usize_to_u8(255, 300), Ok(255));
+        assert!(usize_to_u8(256, 300).is_err());
+        assert!(usize_to_u8(257, 300).is_err());
+
+        // Sub-test: Different facet_count values
+        let facet_counts = [1, 10, 100, 255, 256, 1000, usize::MAX];
+        for &count in &facet_counts {
+            assert_eq!(
+                usize_to_u8(0, count),
+                Ok(0),
+                "Valid conversion should succeed"
+            );
+            let result_invalid = usize_to_u8(256, count);
+            assert!(result_invalid.is_err(), "Invalid conversion should fail");
+            if let Err(FacetError::InvalidFacetIndexOverflow { facet_count, .. }) = result_invalid {
+                assert_eq!(facet_count, count);
+            }
+        }
+
+        // Sub-test: Deterministic behavior
+        for i in 0..10 {
+            assert_eq!(
+                usize_to_u8(i, 20),
+                usize_to_u8(i, 20),
+                "Should be deterministic"
+            );
+        }
+        for i in [256, 1000, usize::MAX] {
+            assert_eq!(
+                usize_to_u8(i, 100),
+                usize_to_u8(i, 100),
+                "Error cases should be deterministic"
+            );
+        }
+    }
+
+    #[test]
+    fn test_usize_to_u8_error_handling() {
+        // Sub-test: Basic error cases
         let result = usize_to_u8(256, 10);
         assert!(result.is_err());
         if let Err(FacetError::InvalidFacetIndexOverflow {
@@ -3398,13 +3379,12 @@ mod tests {
             facet_count,
         }) = result
         {
-            assert_eq!(original_index, 256); // Should preserve original value
+            assert_eq!(original_index, 256);
             assert_eq!(facet_count, 10);
         } else {
             panic!("Expected InvalidFacetIndexOverflow error");
         }
 
-        // Test failed conversion (very large index)
         let result = usize_to_u8(usize::MAX, 5);
         assert!(result.is_err());
         if let Err(FacetError::InvalidFacetIndexOverflow {
@@ -3417,21 +3397,31 @@ mod tests {
         } else {
             panic!("Expected InvalidFacetIndexOverflow error");
         }
-    }
 
-    #[test]
-    fn test_usize_to_u8_boundary_cases() {
-        // Test all valid u8 values
-        for i in 0u8..=255 {
-            let result = usize_to_u8(i as usize, 256);
-            assert_eq!(result, Ok(i), "Failed to convert {i}");
+        // Sub-test: Error consistency across various inputs
+        let test_cases = [
+            (256, 100),
+            (300, 500),
+            (1000, 1500),
+            (usize::MAX, 42),
+            (65536, 10),
+        ];
+        for &(idx, count) in &test_cases {
+            let result = usize_to_u8(idx, count);
+            assert!(result.is_err(), "Should fail for index {idx}");
+            match result {
+                Err(FacetError::InvalidFacetIndexOverflow {
+                    original_index,
+                    facet_count,
+                }) => {
+                    assert_eq!(original_index, idx, "Should preserve original index");
+                    assert_eq!(facet_count, count, "Should preserve facet_count");
+                }
+                _ => panic!("Expected InvalidFacetIndex error for index {idx}"),
+            }
         }
 
-        // Test just above boundary
-        let result = usize_to_u8(256, 300);
-        assert!(result.is_err());
-
-        // Test various large values
+        // Sub-test: Large values
         let large_values = [257, 1000, 10000, 65536, usize::MAX];
         for &val in &large_values {
             let result = usize_to_u8(val, val);
@@ -3445,100 +3435,83 @@ mod tests {
                 assert_eq!(facet_count, val);
             }
         }
-    }
 
-    #[test]
-    fn test_usize_to_u8_error_consistency() {
-        // Test that all out-of-range values produce consistent errors
-        let test_cases = [
-            (256, 100),
-            (300, 500),
-            (1000, 1500),
-            (usize::MAX, 42),
-            (65536, 10),
-        ];
-
-        for &(idx, count) in &test_cases {
-            let result = usize_to_u8(idx, count);
-            assert!(result.is_err(), "Should fail for index {idx}");
-
-            match result {
-                Err(FacetError::InvalidFacetIndexOverflow {
-                    original_index,
-                    facet_count,
-                }) => {
-                    assert_eq!(original_index, idx, "Should preserve original index");
-                    assert_eq!(facet_count, count, "Should preserve facet_count");
-                }
-                _ => panic!("Expected InvalidFacetIndex error for index {idx}"),
-            }
-        }
-    }
-
-    #[test]
-    fn test_usize_to_u8_edge_values() {
-        // Test edge cases around u8::MAX
-        assert_eq!(usize_to_u8(254, 300), Ok(254));
-        assert_eq!(usize_to_u8(255, 300), Ok(255));
-        assert!(usize_to_u8(256, 300).is_err());
-        assert!(usize_to_u8(257, 300).is_err());
-
-        // Test with different facet_count values
-        let facet_counts = [1, 10, 100, 255, 256, 1000, usize::MAX];
-        for &count in &facet_counts {
-            // Valid conversion
-            let result_valid = usize_to_u8(0, count);
-            assert_eq!(result_valid, Ok(0));
-
-            // Invalid conversion
-            let result_invalid = usize_to_u8(256, count);
-            assert!(result_invalid.is_err());
-            if let Err(FacetError::InvalidFacetIndexOverflow { facet_count, .. }) = result_invalid {
-                assert_eq!(facet_count, count);
-            }
-        }
-    }
-
-    #[test]
-    fn test_usize_to_u8_deterministic_behavior() {
-        // Test that same inputs produce same results
-        for i in 0..10 {
-            let result1 = usize_to_u8(i, 20);
-            let result2 = usize_to_u8(i, 20);
-            assert_eq!(result1, result2, "Results should be deterministic for {i}");
-        }
-
-        // Test that error cases are also deterministic
-        for i in [256, 1000, usize::MAX] {
-            let result1 = usize_to_u8(i, 100);
-            let result2 = usize_to_u8(i, 100);
-            assert_eq!(
-                result1, result2,
-                "Error results should be deterministic for {i}"
+        // Sub-test: Error message quality
+        let result = usize_to_u8(300, 42);
+        assert!(result.is_err());
+        if let Err(error) = result {
+            let error_string = format!("{error}");
+            assert!(
+                error_string.contains("InvalidFacetIndex") || error_string.contains("index"),
+                "Error message should indicate invalid index: {error_string}"
             );
         }
+
+        let result = usize_to_u8(usize::MAX, 7);
+        if let Err(FacetError::InvalidFacetIndexOverflow {
+            original_index,
+            facet_count,
+        }) = result
+        {
+            assert_eq!(original_index, usize::MAX);
+            assert_eq!(facet_count, 7);
+        } else {
+            panic!("Expected InvalidFacetIndexOverflow error");
+        }
     }
 
     #[test]
-    fn test_usize_to_u8_performance_characteristics() {
-        // Test that the function is fast for valid conversions
+    fn test_usize_to_u8_performance_and_threading() {
+        // Sub-test: Performance characteristics (informational only)
         let start = Instant::now();
         for i in 0..1000 {
             let _ = usize_to_u8(i % 256, 300);
         }
         let duration = start.elapsed();
-
-        // Informational only (avoid flaky time asserts in tests)
         eprintln!("usize_to_u8 valid conversions: 1000 iters in {duration:?}");
 
-        // Test that error cases are also fast
         let start = Instant::now();
         for i in 256..1256 {
             let _ = usize_to_u8(i, 100);
         }
         let duration = start.elapsed();
-
         eprintln!("usize_to_u8 error conversions: 1000 iters in {duration:?}");
+
+        // Sub-test: Memory efficiency (stack allocation only)
+        let (result, _alloc_info) = measure_with_result(|| {
+            let mut results = Vec::new();
+            for i in 0..100 {
+                results.push(usize_to_u8(i, 200));
+            }
+            results
+        });
+        for (i, result) in result.iter().enumerate() {
+            assert_eq!(
+                *result,
+                Ok(u8::try_from(i).unwrap()),
+                "Result should be correct for {i}"
+            );
+        }
+
+        // Sub-test: Thread safety
+        let handles: Vec<_> = (0..4)
+            .map(|thread_id| {
+                thread::spawn(move || {
+                    let mut results = Vec::new();
+                    for i in 0..100 {
+                        let val = (thread_id * 50 + i) % 256;
+                        results.push(usize_to_u8(val, 300));
+                    }
+                    results
+                })
+            })
+            .collect();
+        for handle in handles {
+            let results = handle.join().expect("Thread should complete successfully");
+            for result in results {
+                assert!(result.is_ok(), "All results should be successful");
+            }
+        }
     }
 
     // =============================================================================
@@ -3558,149 +3531,40 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_vertex_coordinate_set() {
-        // Test vertex coordinate extraction from a simple tetrahedron
+    fn test_set_extraction_utilities_comprehensive() {
+        // Create a simple tetrahedron for all extraction tests
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+        let dt =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let tds = &dt.triangulation().tds;
 
-        let coord_set = extract_vertex_coordinate_set(&tds);
+        // Sub-test: Vertex coordinate extraction
+        let coord_set = extract_vertex_coordinate_set(tds);
         assert_eq!(coord_set.len(), 4, "Should have 4 unique coordinates");
-
-        // Verify all original points are in the set
         assert!(coord_set.contains(&Point::new([0.0, 0.0, 0.0])));
         assert!(coord_set.contains(&Point::new([1.0, 0.0, 0.0])));
         assert!(coord_set.contains(&Point::new([0.0, 1.0, 0.0])));
         assert!(coord_set.contains(&Point::new([0.0, 0.0, 1.0])));
-    }
 
-    #[test]
-    fn test_extract_edge_set() {
-        // Test edge extraction from a tetrahedron
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-
-        let edge_set = extract_edge_set(&tds).unwrap();
-        // A tetrahedron has 6 edges (binomial(4,2))
+        // Sub-test: Edge extraction - tetrahedron has 6 edges (binomial(4,2))
+        let edge_set = extract_edge_set(tds).unwrap();
         assert_eq!(edge_set.len(), 6, "Tetrahedron should have 6 edges");
-    }
 
-    #[test]
-    fn test_extract_facet_identifier_set() {
-        // Test facet identifier extraction from a tetrahedron
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-
-        let facet_set = extract_facet_identifier_set(&tds).unwrap();
-        // A tetrahedron has 4 facets
+        // Sub-test: Facet identifier extraction - tetrahedron has 4 facets
+        let facet_set = extract_facet_identifier_set(tds).unwrap();
         assert_eq!(facet_set.len(), 4, "Tetrahedron should have 4 facets");
-    }
 
-    #[test]
-    fn test_extract_hull_facet_set() {
-        // Test hull facet extraction from a simple tetrahedron
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        let hull = ConvexHull::from_triangulation(&tds).unwrap();
-
-        let facet_set = extract_hull_facet_set(&hull, &tds).unwrap();
-        // Hull of a tetrahedron has 4 facets
-        assert_eq!(facet_set.len(), 4, "Hull should have 4 facets");
-    }
-
-    #[test]
-    fn test_usize_to_u8_memory_efficiency() {
-        // Test that the function doesn't allocate memory unnecessarily
-        // This is a behavioral test - the function should use stack allocation only
-        let (result, _alloc_info) = measure_with_result(|| {
-            let mut results = Vec::new();
-            for i in 0..100 {
-                results.push(usize_to_u8(i, 200));
-            }
-            results
-        });
-
-        // Verify results are correct
-        for (i, result) in result.iter().enumerate() {
-            assert_eq!(
-                *result,
-                Ok(u8::try_from(i).unwrap()),
-                "Result should be correct for {i}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_usize_to_u8_error_message_quality() {
-        // Test that error messages contain useful information
-        let result = usize_to_u8(300, 42);
-        assert!(result.is_err());
-
-        if let Err(error) = result {
-            let error_string = format!("{error}");
-            // The error should contain information about the limits
-            assert!(
-                error_string.contains("InvalidFacetIndex") || error_string.contains("index"),
-                "Error message should indicate it's about invalid index: {error_string}"
-            );
-        }
-
-        // Test error with different values
-        let result = usize_to_u8(usize::MAX, 7);
-        assert!(result.is_err());
-        if let Err(FacetError::InvalidFacetIndexOverflow {
-            original_index,
-            facet_count,
-        }) = result
-        {
-            assert_eq!(original_index, usize::MAX);
-            assert_eq!(facet_count, 7);
-        } else {
-            panic!("Expected InvalidFacetIndexOverflow error");
-        }
-    }
-
-    #[test]
-    fn test_usize_to_u8_thread_safety() {
-        // Test that the function works correctly in multi-threaded context
-        let handles: Vec<_> = (0..4)
-            .map(|thread_id| {
-                thread::spawn(move || {
-                    let mut results = Vec::new();
-                    for i in 0..100 {
-                        let val = (thread_id * 50 + i) % 256;
-                        results.push(usize_to_u8(val, 300));
-                    }
-                    results
-                })
-            })
-            .collect();
-
-        // Join all threads and verify results
-        for handle in handles {
-            let results = handle.join().expect("Thread should complete successfully");
-            for result in results {
-                assert!(result.is_ok(), "All results should be successful");
-            }
-        }
+        // Sub-test: Hull facet extraction
+        let dt_hull =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let tri = dt_hull.triangulation();
+        let hull = ConvexHull::from_triangulation(tri).unwrap();
+        let hull_facet_set = extract_hull_facet_set(&hull, tri).unwrap();
+        assert_eq!(hull_facet_set.len(), 4, "Hull should have 4 facets");
     }
 }

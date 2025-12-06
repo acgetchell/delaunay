@@ -4,19 +4,16 @@
 //! in Delaunay triangulation operations.
 
 // Import Delaunay triangulation crate components
-use delaunay::core::triangulation_data_structure::Tds;
-use delaunay::geometry::Point;
+#[cfg(feature = "count-allocations")]
+use allocation_counter::measure;
+use delaunay::prelude::*;
 
 // Testing utilities
 use rand::Rng;
 
 /// Common test helpers for initializing and working with the allocator
 pub mod test_helpers {
-    use super::{Point, Rng, Tds};
-    #[cfg(feature = "count-allocations")]
-    use allocation_counter::measure;
-    use delaunay::geometry::Coordinate;
-    use delaunay::vertex;
+    use super::*;
 
     /// Initialize a simple allocator test environment
     pub fn init_test_env() {
@@ -83,27 +80,29 @@ pub mod test_helpers {
     ///
     /// # Panics
     ///
-    /// Panics if TDS creation fails.
+    /// Panics if triangulation creation fails.
     #[must_use]
-    pub fn create_test_tds() -> Tds<f64, Option<()>, Option<()>, 4> {
-        // Create an empty TDS with no vertices
-        Tds::empty()
+    pub fn create_test_tds()
+    -> DelaunayTriangulation<delaunay::geometry::kernel::FastKernel<f64>, (), (), 4> {
+        // Create an empty triangulation with no vertices
+        DelaunayTriangulation::empty()
     }
 
     /// Create a triangulation with some test vertices
     ///
     /// # Panics
     ///
-    /// Panics if TDS creation with vertices fails.
+    /// Panics if triangulation creation with vertices fails.
     #[must_use]
-    pub fn create_test_tds_with_vertices() -> Tds<f64, Option<()>, Option<()>, 3> {
+    pub fn create_test_tds_with_vertices()
+    -> DelaunayTriangulation<delaunay::geometry::kernel::FastKernel<f64>, (), (), 3> {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        Tds::new(&vertices).expect("Failed to create TDS with vertices")
+        DelaunayTriangulation::new(&vertices).expect("Failed to create triangulation with vertices")
     }
 
     /// Print memory allocation summary
@@ -171,11 +170,11 @@ mod tests {
     fn test_tds_creation_allocations() {
         init_test_env();
 
-        let (tds, info) = measure_with_result(create_test_tds);
+        let (dt, info) = measure_with_result(create_test_tds);
 
-        // Verify TDS was created successfully
-        assert_eq!(tds.number_of_vertices(), 0);
-        print_alloc_summary(&info, "TDS creation");
+        // Verify triangulation was created successfully
+        assert_eq!(dt.number_of_vertices(), 0);
+        print_alloc_summary(&info, "triangulation creation");
     }
 
     #[test]
@@ -186,15 +185,15 @@ mod tests {
             // Create points
             let points = create_test_points_3d(5);
 
-            // Create TDS
-            let tds = create_test_tds();
+            // Create triangulation
+            let dt = create_test_tds();
 
             // Return some result to verify the workflow
-            (points.len(), tds.number_of_vertices())
+            (points.len(), dt.number_of_vertices())
         });
 
         assert_eq!(result.0, 5); // 5 points created
-        assert_eq!(result.1, 0); // Empty TDS
+        assert_eq!(result.1, 0); // Empty triangulation
         print_alloc_summary(&info, "complex triangulation workflow");
     }
 }

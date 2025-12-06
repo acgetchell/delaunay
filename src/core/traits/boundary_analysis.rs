@@ -7,8 +7,6 @@ use crate::core::{
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use num_traits::NumCast;
-use std::iter::Sum;
-use std::ops::{AddAssign, SubAssign};
 
 /// Trait for boundary analysis operations on triangulations.
 ///
@@ -20,9 +18,7 @@ use std::ops::{AddAssign, SubAssign};
 /// # Examples
 ///
 /// ```
-/// use delaunay::core::triangulation_data_structure::Tds;
-/// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
-/// use delaunay::vertex;
+/// use delaunay::prelude::*;
 ///
 /// // Create a simple 3D triangulation (single tetrahedron)
 /// let vertices = vec![
@@ -31,7 +27,8 @@ use std::ops::{AddAssign, SubAssign};
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+/// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let tds = dt.tds();
 ///
 /// // Use the trait methods
 /// let boundary_facets = tds.boundary_facets().expect("Failed to get boundary facets");
@@ -42,7 +39,7 @@ use std::ops::{AddAssign, SubAssign};
 /// ```
 pub trait BoundaryAnalysis<T, U, V, const D: usize>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + NumCast,
+    T: CoordinateScalar + NumCast,
     U: DataType,
     V: DataType,
 {
@@ -64,9 +61,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -74,7 +69,8 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tds = dt.tds();
     ///
     /// // A single tetrahedron has 4 boundary facets (all facets are on the boundary)
     /// let boundary_facets_iter = tds.boundary_facets().expect("Failed to get boundary facets iterator");
@@ -106,9 +102,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -116,7 +110,8 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tds = dt.tds();
     ///
     /// // Get a boundary facet using the new iterator API
     /// let boundary_facets = tds.boundary_facets().unwrap();
@@ -154,9 +149,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -164,7 +157,8 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tds = dt.tds();
     ///
     /// // Build the facet map once for multiple queries (efficient for batch operations)
     /// let facet_to_cells = tds.build_facet_to_cells_map().expect("facet map should build");
@@ -202,9 +196,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::core::traits::boundary_analysis::BoundaryAnalysis;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -212,10 +204,15 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tds = dt.tds();
     ///
-    /// // A single tetrahedron has 4 boundary facets
+    /// // Direct API call (recommended for single queries)
     /// assert_eq!(tds.number_of_boundary_facets().unwrap(), 4);
+    ///
+    /// // Alternative: using iterator (useful for additional processing)
+    /// let count_via_iter = dt.boundary_facets().count();
+    /// assert_eq!(count_via_iter, 4);
     /// ```
     fn number_of_boundary_facets(&self) -> Result<usize, TriangulationValidationError>;
 }

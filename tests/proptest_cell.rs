@@ -9,10 +9,7 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
-use delaunay::core::triangulation_data_structure::Tds;
-use delaunay::core::vertex::Vertex;
-use delaunay::geometry::point::Point;
-use delaunay::geometry::traits::coordinate::Coordinate;
+use delaunay::prelude::*;
 use proptest::prelude::*;
 use std::collections::HashSet;
 
@@ -42,8 +39,8 @@ macro_rules! test_cell_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
-                        for (_cell_key, cell) in tds.cells() {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new(&vertices) {
+                        for (_cell_key, cell) in dt.cells() {
                             let vertex_keys = cell.vertices();
                             let unique_vertices: HashSet<_> = vertex_keys.iter().collect();
                             prop_assert_eq!(unique_vertices.len(), vertex_keys.len());
@@ -59,8 +56,8 @@ macro_rules! test_cell_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
-                        for (_cell_key, cell) in tds.cells() {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new(&vertices) {
+                        for (_cell_key, cell) in dt.cells() {
                             prop_assert_eq!(cell.vertices().len(), $expected_vertices);
                         }
                     }
@@ -74,8 +71,8 @@ macro_rules! test_cell_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
-                        for (_cell_key, cell) in tds.cells() {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new(&vertices) {
+                        for (_cell_key, cell) in dt.cells() {
                             if let Some(neighbors) = cell.neighbors() {
                                 prop_assert!(neighbors.len() <= $max_neighbors);
                             }
@@ -91,9 +88,9 @@ macro_rules! test_cell_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new(&vertices) {
                         let mut seen_uuids = HashSet::new();
-                        for (_cell_key, cell) in tds.cells() {
+                        for (_cell_key, cell) in dt.cells() {
                             prop_assert!(seen_uuids.insert(cell.uuid()));
                         }
                     }
@@ -107,9 +104,9 @@ macro_rules! test_cell_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, $dim>::new(&vertices) {
-                        if tds.is_valid().is_ok() {
-                            for (_cell_key, cell) in tds.cells() {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new(&vertices) {
+                        if dt.is_valid().is_ok() {
+                            for (_cell_key, cell) in dt.cells() {
                                 prop_assert_eq!(cell.vertices().len(), $expected_vertices);
                                 prop_assert!(cell.uuid().as_u128() != 0);
                             }

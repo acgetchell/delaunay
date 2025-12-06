@@ -25,11 +25,11 @@
 //! - Boundary analysis
 //! - Performance metrics
 
-#![allow(deprecated)]
-
-use delaunay::geometry::util::generate_random_triangulation;
 use delaunay::prelude::*;
+use num_traits::NumCast;
 use num_traits::cast::cast;
+use std::iter::Sum;
+use std::ops::{AddAssign, SubAssign};
 use std::time::Instant;
 
 fn main() {
@@ -46,7 +46,7 @@ fn main() {
     );
     let start = Instant::now();
 
-    let tds: Tds<f64, (), (), 3> = match generate_random_triangulation(
+    let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> = match generate_random_triangulation(
         20,          // Number of points
         (-3.0, 3.0), // Coordinate bounds
         None,        // No vertex data
@@ -64,10 +64,10 @@ fn main() {
     };
 
     // Display some vertex information by accessing the triangulation's vertices
-    let vertex_count = tds.number_of_vertices();
+    let vertex_count = dt.tds().number_of_vertices();
     println!("Generated {vertex_count} vertices");
     println!("First few vertices:");
-    for (i, (_key, vertex)) in tds.vertices().take(10).enumerate() {
+    for (i, (_key, vertex)) in dt.tds().vertices().take(10).enumerate() {
         let coords: [f64; 3] = *vertex.point().coords();
         println!(
             "  v{:2}: [{:8.3}, {:8.3}, {:8.3}]",
@@ -81,16 +81,16 @@ fn main() {
     println!();
 
     // Display triangulation properties
-    analyze_triangulation(&tds);
+    analyze_triangulation(&dt);
 
     // Validate the triangulation
-    validate_triangulation(&tds);
+    validate_triangulation(&dt);
 
     // Analyze boundary properties
-    analyze_boundary_properties(&tds);
+    analyze_boundary_properties(&dt);
 
     // Performance analysis
-    performance_analysis(&tds);
+    performance_analysis(&dt);
 
     println!("\n=================================================================");
     println!("Example completed successfully!");
@@ -98,16 +98,22 @@ fn main() {
 }
 
 /// Analyze and display triangulation properties
-fn analyze_triangulation(tds: &Tds<f64, (), (), 3>) {
+fn analyze_triangulation<K, U, V, const D: usize>(dt: &DelaunayTriangulation<K, U, V, D>)
+where
+    K: Kernel<D>,
+    K::Scalar: AddAssign + SubAssign + Sum + NumCast,
+    U: DataType,
+    V: DataType,
+{
     println!("Triangulation Analysis:");
     println!("======================");
-    println!("  Number of vertices: {}", tds.number_of_vertices());
-    println!("  Number of cells:    {}", tds.number_of_cells());
-    println!("  Dimension:          {}", tds.dim());
+    println!("  Number of vertices: {}", dt.number_of_vertices());
+    println!("  Number of cells:    {}", dt.number_of_cells());
+    println!("  Dimension:          {}", dt.dim());
 
     // Calculate vertex-to-cell ratio
-    let vertex_count = tds.number_of_vertices();
-    let cell_count = tds.number_of_cells();
+    let vertex_count = dt.number_of_vertices();
+    let cell_count = dt.number_of_cells();
     if cell_count > 0 {
         let vertex_f64 = cast(vertex_count).unwrap_or(0.0f64);
         let cell_f64 = cast(cell_count).unwrap_or(1.0f64);
@@ -122,7 +128,7 @@ fn analyze_triangulation(tds: &Tds<f64, (), (), 3>) {
         let mut total_neighbors = 0;
         let mut shown = 0;
 
-        for (cell_key, cell) in tds.cells() {
+        for (cell_key, cell) in dt.cells() {
             // Count valid cells
             if cell.is_valid().is_ok() {
                 valid_cells += 1;
@@ -156,12 +162,18 @@ fn analyze_triangulation(tds: &Tds<f64, (), (), 3>) {
 }
 
 /// Validate the triangulation and report results
-fn validate_triangulation(tds: &Tds<f64, (), (), 3>) {
+fn validate_triangulation<K, U, V, const D: usize>(dt: &DelaunayTriangulation<K, U, V, D>)
+where
+    K: Kernel<D>,
+    K::Scalar: AddAssign + SubAssign + Sum + NumCast,
+    U: DataType,
+    V: DataType,
+{
     println!("Triangulation Validation:");
     println!("========================");
 
     let start = Instant::now();
-    match tds.is_valid() {
+    match dt.is_valid() {
         Ok(()) => {
             let validation_time = start.elapsed();
             println!("✓ Triangulation is VALID");
@@ -203,23 +215,20 @@ fn validate_triangulation(tds: &Tds<f64, (), (), 3>) {
 }
 
 /// Analyze boundary properties of the triangulation
-fn analyze_boundary_properties(tds: &Tds<f64, (), (), 3>) {
+fn analyze_boundary_properties<K, U, V, const D: usize>(dt: &DelaunayTriangulation<K, U, V, D>)
+where
+    K: Kernel<D>,
+    K::Scalar: AddAssign + SubAssign + Sum + NumCast,
+    U: DataType,
+    V: DataType,
+{
     println!("Boundary Analysis:");
     println!("=================");
 
     let start = Instant::now();
 
     // Count boundary facets - use the trait method
-    let boundary_facets = match tds.boundary_facets() {
-        Ok(iter) => iter,
-        Err(e) => {
-            println!("Warning: Failed to get boundary facets: {e}");
-            println!("  Boundary facets:     0");
-            println!("  Boundary computation: {:?}", start.elapsed());
-            println!();
-            return;
-        }
-    };
+    let boundary_facets = dt.boundary_facets();
     let boundary_count = boundary_facets.clone().count();
 
     let boundary_time = start.elapsed();
@@ -247,8 +256,8 @@ fn analyze_boundary_properties(tds: &Tds<f64, (), (), 3>) {
     }
 
     // Euler characteristic check (for 3D: V - E + F - C = 1 for convex hull)
-    let vertices = tds.number_of_vertices();
-    let cells = tds.number_of_cells();
+    let vertices = dt.number_of_vertices();
+    let cells = dt.number_of_cells();
     println!("\n  Topological Properties:");
     println!("    • Vertices (V): {vertices}");
     println!("    • Cells (C):    {cells}");
@@ -258,18 +267,24 @@ fn analyze_boundary_properties(tds: &Tds<f64, (), (), 3>) {
 }
 
 /// Perform performance analysis and benchmarking
-fn performance_analysis(tds: &Tds<f64, (), (), 3>) {
+fn performance_analysis<K, U, V, const D: usize>(dt: &DelaunayTriangulation<K, U, V, D>)
+where
+    K: Kernel<D>,
+    K::Scalar: AddAssign + SubAssign + Sum + NumCast,
+    U: DataType,
+    V: DataType,
+{
     println!("Performance Analysis:");
     println!("====================");
 
-    let vertex_count = tds.number_of_vertices();
-    let cell_count = tds.number_of_cells();
+    let vertex_count = dt.number_of_vertices();
+    let cell_count = dt.number_of_cells();
 
     // Benchmark validation performance
     let validation_times: Vec<_> = (0..5)
         .map(|_| {
             let start = Instant::now();
-            let _ = tds.is_valid();
+            let _ = dt.is_valid();
             start.elapsed()
         })
         .collect();
@@ -289,7 +304,7 @@ fn performance_analysis(tds: &Tds<f64, (), (), 3>) {
     let boundary_times: Vec<_> = (0..3)
         .map(|_| {
             let start = Instant::now();
-            let _ = tds.boundary_facets().map(Iterator::count).unwrap_or(0);
+            let _ = dt.boundary_facets().count();
             start.elapsed()
         })
         .collect();

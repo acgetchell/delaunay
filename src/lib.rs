@@ -17,46 +17,38 @@
 //! This library handles **arbitrary dimensions** (subject to numerical issues). Here's a 4D triangulation example:
 //!
 //! ```rust
-//! use delaunay::core::triangulation_data_structure::Tds;
-//! use delaunay::vertex;
+//! use delaunay::prelude::*;
 //!
-//! // Create a 4D triangulation (4-dimensional space!)
-//! let mut tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::empty();
+//! // Create a 4D Delaunay triangulation (4-dimensional space!)
+//! let vertices = vec![
+//!     vertex!([0.0, 0.0, 0.0, 0.0]),
+//!     vertex!([1.0, 0.0, 0.0, 0.0]),
+//!     vertex!([0.0, 1.0, 0.0, 0.0]),
+//!     vertex!([0.0, 0.0, 1.0, 0.0]),
+//!     vertex!([0.0, 0.0, 0.0, 1.0]),  // 5 vertices (D+1) creates first 4-simplex
+//!     vertex!([0.2, 0.2, 0.2, 0.2]),  // Additional vertex uses incremental insertion
+//! ];
 //!
-//! // Add vertices incrementally - triangulation evolves automatically
-//! tds.add(vertex!([0.0, 0.0, 0.0, 0.0])).unwrap();  // 1 vertex, 0 cells
-//! tds.add(vertex!([1.0, 0.0, 0.0, 0.0])).unwrap();  // 2 vertices, 0 cells
-//! tds.add(vertex!([0.0, 1.0, 0.0, 0.0])).unwrap();  // 3 vertices, 0 cells
-//! tds.add(vertex!([0.0, 0.0, 1.0, 0.0])).unwrap();  // 4 vertices, 0 cells
-//! assert_eq!(tds.number_of_cells(), 0);
-//! tds.add(vertex!([0.0, 0.0, 0.0, 1.0])).unwrap();  // 5 vertices, 1 cell (first 4-simplex!)
-//! tds.add(vertex!([0.2, 0.2, 0.2, 0.2])).unwrap();  // 6 vertices, multiple cells
+//! let dt: DelaunayTriangulation<_, (), (), 4> =
+//!     DelaunayTriangulation::new(&vertices).unwrap();
 //!
-//! assert_eq!(tds.number_of_vertices(), 6);
-//! assert_eq!(tds.dim(), 4);                    // Full 4D triangulation
-//! assert!(tds.number_of_cells() > 1);          // Bowyer-Watson creates additional 4-simplices
-//! assert!(tds.is_valid().is_ok());             // Structural invariants hold for the triangulation
-//! // Optional (expensive): validate global Delaunay property
-//! // tds.validate_delaunay().unwrap();
+//! assert_eq!(dt.number_of_vertices(), 6);
+//! assert_eq!(dt.dim(), 4);                    // Full 4D triangulation
+//! assert!(dt.number_of_cells() > 1);          // Cavity-based insertion creates additional 4-simplices
 //! ```
 //!
-//! **Key insight**: The transition happens at D+1 vertices (5 vertices for 4D), where the first
-//! 4-simplex (5-vertex cell) is created. Additional vertices trigger the Bowyer-Watson algorithm
-//! to maintain the 4D Delaunay triangulation.
+//! **Key insight**: The triangulation uses efficient incremental cavity-based insertion after
+//! building an initial simplex from the first D+1 vertices (5 vertices for 4D).
 //!
 //! # Convex Hull Extraction
 //!
 //! Extract d-dimensional convex hulls from Delaunay triangulations:
 //!
 //! ```rust
-//! use delaunay::core::triangulation_data_structure::Tds;
-//! use delaunay::geometry::algorithms::convex_hull::ConvexHull;
-//! use delaunay::geometry::point::Point;
-//! use delaunay::geometry::traits::coordinate::Coordinate;
-//! use delaunay::vertex;
+//! use delaunay::prelude::*;
 //!
 //! // Create two tetrahedrons sharing a triangular facet (double tetrahedron)
-//! let vertices = vec![
+//! let vertices: Vec<_> = vec![
 //!     // Shared triangular facet vertices (forms base of both tetrahedrons)
 //!     vertex!([0.0, 0.0, 0.0]),    // Shared vertex A
 //!     vertex!([2.0, 0.0, 0.0]),    // Shared vertex B
@@ -67,46 +59,46 @@
 //!     vertex!([1.0, 0.7, -1.5]),   // Second tet apex
 //! ];
 //!
-//! let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
+//! let dt: DelaunayTriangulation<_, (), (), 3> =
+//!     DelaunayTriangulation::new(&vertices).unwrap();
 //!
 //! // Extract the convex hull (boundary facets of the triangulation)
-//! let hull: ConvexHull<f64, Option<()>, Option<()>, 3> =
-//!     ConvexHull::from_triangulation(&tds).unwrap();
+//! let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 //!
-//! println!("Convex hull has {} facets in {}D", hull.facet_count(), hull.dimension());
+//! println!("Convex hull has {} facets in {}D", hull.number_of_facets(), hull.dimension());
 //!
 //! // Test point containment
 //! let inside_point = Point::new([1.0, 0.5, 0.5]);
 //! let outside_point = Point::new([3.0, 3.0, 3.0]);
 //!
-//! assert!(!hull.is_point_outside(&inside_point, &tds).unwrap());  // Inside the hull
-//! assert!(hull.is_point_outside(&outside_point, &tds).unwrap());   // Outside the hull
+//! assert!(!hull.is_point_outside(&inside_point, dt.triangulation()).unwrap());  // Inside the hull
+//! assert!(hull.is_point_outside(&outside_point, dt.triangulation()).unwrap());   // Outside the hull
 //!
 //! // Find visible facets from an external point (useful for incremental construction)
-//! let visible_facets = hull.find_visible_facets(&outside_point, &tds).unwrap();
-//! println!("Point sees {} out of {} facets", visible_facets.len(), hull.facet_count());
+//! let visible_facets = hull.find_visible_facets(&outside_point, dt.triangulation()).unwrap();
+//! println!("Point sees {} out of {} facets", visible_facets.len(), hull.number_of_facets());
 //!
 //! // Works in any dimension!
-//! let vertices_4d = vec![
+//! let vertices_4d: Vec<_> = vec![
 //!     vertex!([0.0, 0.0, 0.0, 0.0]),
 //!     vertex!([1.0, 0.0, 0.0, 0.0]),
 //!     vertex!([0.0, 1.0, 0.0, 0.0]),
 //!     vertex!([0.0, 0.0, 1.0, 0.0]),
 //!     vertex!([0.0, 0.0, 0.0, 1.0]),
 //! ];
-//! let tds_4d: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices_4d).unwrap();
-//! let hull_4d: ConvexHull<f64, Option<()>, Option<()>, 4> =
-//!     ConvexHull::from_triangulation(&tds_4d).unwrap();
+//! let dt_4d: DelaunayTriangulation<_, (), (), 4> =
+//!     DelaunayTriangulation::new(&vertices_4d).unwrap();
+//! let hull_4d = ConvexHull::from_triangulation(dt_4d.triangulation()).unwrap();
 //!
-//! assert_eq!(hull_4d.facet_count(), 5);  // 4-simplex has 5 boundary facets
+//! assert_eq!(hull_4d.number_of_facets(), 5);  // 4-simplex has 5 boundary facets
 //! assert_eq!(hull_4d.dimension(), 4);     // 4D convex hull
 //! ```
 //!
 //! # Triangulation Invariants
 //!
 //! The triangulation data structure maintains a set of **structural** and **geometric** invariants
-//! that are checked by [`Tds::is_valid`](core::triangulation_data_structure::Tds::is_valid) and
-//! [`Tds::validation_report`](core::triangulation_data_structure::Tds::validation_report):
+//! that are checked by [`DelaunayTriangulation::is_valid`](core::delaunay_triangulation::DelaunayTriangulation::is_valid) and
+//! [`DelaunayTriangulation::validation_report`](core::delaunay_triangulation::DelaunayTriangulation::validation_report):
 //!
 //! - **Vertex mappings** – every vertex UUID has a corresponding key and vice versa.
 //! - **Cell mappings** – every cell UUID has a corresponding key and vice versa.
@@ -115,36 +107,35 @@
 //!   consistency checks.
 //! - **Facet sharing** – each facet is shared by at most 2 cells (1 on the boundary, 2 in the interior).
 //! - **Neighbor consistency** – neighbor relationships are mutual and reference a shared facet.
-//! - **Delaunay property** – triangulations constructed via the Bowyer–Watson
-//!   pipeline maintain the empty circumsphere invariant; no vertex lies strictly
+//! - **Delaunay property** – triangulations constructed via incremental insertion
+//!   maintain the empty circumsphere invariant; no vertex lies strictly
 //!   inside the circumsphere of any maximal cell.
 //!
 //! ## Validation helpers
 //!
 //! These invariants are exposed through focused validation helpers on
-//! [`core::triangulation_data_structure::Tds`]:
+//! [`core::delaunay_triangulation::DelaunayTriangulation`]:
 //!
 //! | Invariant | Helper method | Notes |
 //! |---|---|---|
-//! | Vertex mappings | [`Tds::validate_vertex_mappings`](core::triangulation_data_structure::Tds::validate_vertex_mappings) | Ensures UUID↔key consistency for all vertices. |
-//! | Cell mappings | [`Tds::validate_cell_mappings`](core::triangulation_data_structure::Tds::validate_cell_mappings) | Ensures UUID↔key consistency for all cells. |
-//! | Duplicate cells | [`Tds::validate_no_duplicate_cells`](core::triangulation_data_structure::Tds::validate_no_duplicate_cells) | Detects maximal cells with identical vertex sets. |
-//! | Cell validity | [`Cell::is_valid`](core::cell::Cell::is_valid) (aggregated via [`Tds::validation_report`](core::triangulation_data_structure::Tds::validation_report)) | Per-cell structural checks. |
-//! | Facet sharing | [`Tds::validate_facet_sharing`](core::triangulation_data_structure::Tds::validate_facet_sharing) | Verifies that each facet is shared by ≤ 2 cells. |
-//! | Neighbor consistency | [`Tds::validate_neighbors`](core::triangulation_data_structure::Tds::validate_neighbors) | Verifies neighbor topology and mutual relationships. |
-//! | Delaunay property | [`Tds::validate_delaunay`](core::triangulation_data_structure::Tds::validate_delaunay) | Expensive global empty-circumsphere check (optional). |
+//! | Vertex mappings | [`DelaunayTriangulation::validate_vertex_mappings`](core::delaunay_triangulation::DelaunayTriangulation::validate_vertex_mappings) | Ensures UUID↔key consistency for all vertices. |
+//! | Cell mappings | [`DelaunayTriangulation::validate_cell_mappings`](core::delaunay_triangulation::DelaunayTriangulation::validate_cell_mappings) | Ensures UUID↔key consistency for all cells. |
+//! | Duplicate cells | [`DelaunayTriangulation::validate_no_duplicate_cells`](core::delaunay_triangulation::DelaunayTriangulation::validate_no_duplicate_cells) | Detects maximal cells with identical vertex sets. |
+//! | Cell validity | [`Cell::is_valid`](core::cell::Cell::is_valid) (aggregated via [`DelaunayTriangulation::validation_report`](core::delaunay_triangulation::DelaunayTriangulation::validation_report)) | Per-cell structural checks. |
+//! | Facet sharing | [`DelaunayTriangulation::validate_facet_sharing`](core::delaunay_triangulation::DelaunayTriangulation::validate_facet_sharing) | Verifies that each facet is shared by ≤ 2 cells. |
+//! | Neighbor consistency | [`DelaunayTriangulation::validate_neighbors`](core::delaunay_triangulation::DelaunayTriangulation::validate_neighbors) | Verifies neighbor topology and mutual relationships. |
+//! | Delaunay property | [`DelaunayTriangulation::validate_delaunay`](core::delaunay_triangulation::DelaunayTriangulation::validate_delaunay) | Expensive global empty-circumsphere check (optional). |
 //!
-//! [`Tds::is_valid`](core::triangulation_data_structure::Tds::is_valid) runs all **structural**
+//! [`DelaunayTriangulation::is_valid`](core::delaunay_triangulation::DelaunayTriangulation::is_valid) runs all **structural**
 //! invariants (mappings, duplicates, per-cell validity, facet sharing, neighbors) and returns
-//! only the first failure for convenience. For full diagnostics or to include the Delaunay
-//! invariant, use [`core::triangulation_data_structure::Tds::validation_report`]
-//! with
-//! [`core::triangulation_data_structure::ValidationOptions::check_delaunay`]
-//! set to `true`.
+//! only the first failure for convenience. For full diagnostics, use
+//! [`core::delaunay_triangulation::DelaunayTriangulation::validation_report`].
+//! To check the Delaunay property, use
+//! [`core::delaunay_triangulation::DelaunayTriangulation::validate_delaunay`] separately.
 //!
 //! For detailed information, see:
-//! - [`core::algorithms::bowyer_watson`] - Primary invariant enforcement during triangulation construction
-//! - [`core::triangulation_data_structure::Tds::validation_report`] - Comprehensive validation of all invariants
+//! - [`core::algorithms::incremental_insertion`] - Primary invariant enforcement during triangulation construction
+//! - [`core::delaunay_triangulation::DelaunayTriangulation::validation_report`] - Comprehensive validation of all invariants
 //!
 //! # Correctness Guarantees and Limitations
 //!
@@ -153,13 +144,13 @@
 //!
 //! ## Guarantees
 //!
-//! When using [`Tds::add()`](core::triangulation_data_structure::Tds::add) or the underlying
+//! When using [`DelaunayTriangulation::insert()`](core::delaunay_triangulation::DelaunayTriangulation::insert) or the underlying
 //! insertion algorithms:
 //!
 //! 1. **Successful insertions maintain ALL invariants** - If insertion succeeds (`Ok(_)`), the
 //!    triangulation is guaranteed to satisfy all structural and topological invariants, including
-//!    the Delaunay property. The unified fast+robust Bowyer–Watson pipeline may skip
-//!    unsalvageable vertices, but it never leaves a non-Delaunay triangulation.
+//!    the Delaunay property. The incremental cavity-based insertion algorithm maintains
+//!    these invariants at all times.
 //!
 //! 2. **Failed insertions leave triangulation in valid state** - If insertion fails (`Err(_)`),
 //!    the triangulation remains in a valid state with all invariants maintained. No partial or
@@ -173,98 +164,71 @@
 //!
 //! 5. **Duplicate vertex detection** - Duplicate and near-duplicate vertices (within `1e-10`
 //!    epsilon) are automatically detected and rejected with
-//!    [`InsertionError::InvalidVertex`](core::traits::InsertionError::InvalidVertex), preventing
-//!    numerical instabilities.
+//!    [`InsertionError::DuplicateCoordinates`](core::algorithms::incremental_insertion::InsertionError::DuplicateCoordinates)
+//!    or [`InsertionError::DuplicateUuid`](core::algorithms::incremental_insertion::InsertionError::DuplicateUuid),
+//!    preventing numerical instabilities.
 //!
 //! When constructing a triangulation from a batch of vertices using
-//! [`Tds::new`](core::triangulation_data_structure::Tds::new):
+//! [`DelaunayTriangulation::new`](core::delaunay_triangulation::DelaunayTriangulation::new):
 //!
 //! - Successful construction yields a triangulation that passes both
-//!   `tds.is_valid()` and `tds.validate_delaunay()`.
-//! - Duplicate coordinates are silently filtered during construction.
-//! - Any vertices that cannot be inserted without breaking invariants are reported via
-//!   [`TriangulationDiagnostics::unsalvageable_vertices`](core::triangulation_data_structure::TriangulationDiagnostics).
+//!   `dt.is_valid()` and `dt.validate_delaunay()`.
+//! - Duplicate coordinates are automatically detected and rejected.
 //!
-//! Incremental construction via [`Tds::add`](core::triangulation_data_structure::Tds::add)
+//! Incremental construction via [`DelaunayTriangulation::insert`](core::delaunay_triangulation::DelaunayTriangulation::insert)
 //! follows the same invariant rules on each insertion: on success the triangulation
 //! remains structurally valid and Delaunay; on failure the data structure is rolled
 //! back to its previous state.
 //!
-//! ## Two-stage insertion pipeline and diagnostics
+//! ## Incremental insertion algorithm
 //!
-//! Triangulations are built by a unified Bowyer–Watson pipeline with two conceptual
-//! stages:
+//! Triangulations are built using an efficient incremental cavity-based insertion algorithm:
 //!
-//! - **Stage 1 – robust initial simplex search** filters exact and near-duplicate
-//!   coordinates, then searches for D+1 affinely independent vertices using robust
-//!   orientation predicates. If such a simplex is found it seeds the triangulation.
-//!   If no non-degenerate simplex exists, construction fails with
-//!   [`TriangulationConstructionError::GeometricDegeneracy`](core::triangulation_data_structure::TriangulationConstructionError::GeometricDegeneracy)
-//!   and, when possible, leaves behind a **zero-cell triangulation**: all unique
-//!   input vertices are present, but no cells are created.
+//! - **Initial simplex construction** - The first D+1 affinely independent vertices are used
+//!   to create an initial valid simplex using robust orientation predicates. If no
+//!   non-degenerate simplex can be formed, construction fails with
+//!   [`TriangulationConstructionError::GeometricDegeneracy`](core::triangulation_data_structure::TriangulationConstructionError::GeometricDegeneracy).
 //!
-//! - **Stage 2 – per-vertex fast → robust → skip insertion** classifies the remaining
-//!   vertices (unique, duplicate, near-duplicate, or degenerate) and inserts them via
-//!   a shared fast/robust pipeline. The fast path uses an incremental Bowyer–Watson
-//!   implementation; if it encounters a recoverable geometric failure, a robust
-//!   fallback is tried. If both paths fail, the vertex is marked *unsalvageable* and
-//!   skipped without modifying the triangulation, and processing continues with later
-//!   vertices.
+//! - **Incremental insertion** - Each subsequent vertex is inserted using a cavity-based
+//!   algorithm that:
+//!   1. Locates the vertex using efficient point location
+//!   2. Identifies conflicting cells (those whose circumsphere contains the new vertex)
+//!   3. Removes conflicting cells to create a cavity
+//!   4. Fills the cavity with new cells connecting the cavity boundary to the new vertex
+//!   5. Wires neighbor relationships locally without global recomputation
 //!
-//! After Stage 2 the triangulation is finalized (duplicate cells removed, facet
-//! sharing repaired, neighbors and incident cells assigned) and a global Delaunay
-//! validation/repair pass is run. A successful construction therefore satisfies both
-//! the structural invariants described above and the global Delaunay empty-
-//! circumsphere property.
+//! The incremental insertion algorithm maintains all structural invariants and the
+//! Delaunay property throughout construction. Vertices are only rejected if they would
+//! violate fundamental geometric constraints (duplicates, near-duplicates, or degenerate
+//! configurations).
 //!
-//! ## Delaunay validation cadence
+//! ## Delaunay validation
 //!
-//! Global Delaunay checks can be expensive, so the pipeline exposes a policy type
-//! [`DelaunayCheckPolicy`](core::traits::insertion_algorithm::DelaunayCheckPolicy) to
-//! control how often they run:
+//! The incremental insertion algorithm maintains the Delaunay property by construction,
+//! ensuring that the empty circumsphere property holds after each insertion. Global
+//! Delaunay validation can be performed explicitly using
+//! [`DelaunayTriangulation::validate_delaunay`](core::delaunay_triangulation::DelaunayTriangulation::validate_delaunay)
+//! when additional verification is needed.
 //!
-//! - `DelaunayCheckPolicy::EndOnly` (the default) runs validation once at the end of
-//!   triangulation. This matches the legacy behavior used by most callers.
-//! - `DelaunayCheckPolicy::EveryN(k)` runs validation after every `k` successful
-//!   vertex insertions *in addition* to the final pass, which is useful for tests and
-//!   debug builds.
+//! For construction from a batch of vertices using
+//! [`DelaunayTriangulation::new`](core::delaunay_triangulation::DelaunayTriangulation::new),
+//! the resulting triangulation is guaranteed to satisfy the Delaunay property.
 //!
-//! Zero-cell triangulations are a special case: when `number_of_cells() == 0` there
-//! is nothing to validate, so the policy-based validator is a no-op.
+//! ## Error handling
 //!
-//! You can select a policy explicitly via
-//! [`Tds::bowyer_watson_with_diagnostics_and_policy`](core::triangulation_data_structure::Tds::bowyer_watson_with_diagnostics_and_policy);
-//! higher-level constructors such as
-//! [`Tds::new`](core::triangulation_data_structure::Tds::new) use
-//! `DelaunayCheckPolicy::EndOnly` internally.
+//! The incremental insertion algorithm provides clear error reporting for vertices that
+//! cannot be inserted:
 //!
-//! ## Observability, statistics, and unsalvageable vertices
-//!
-//! To inspect how a triangulation was constructed, use
-//! [`Tds::bowyer_watson_with_diagnostics`](core::triangulation_data_structure::Tds::bowyer_watson_with_diagnostics),
-//! which returns a [`TriangulationDiagnostics`](core::triangulation_data_structure::TriangulationDiagnostics)
-//! value containing:
-//!
-//! - `unsalvageable_vertices`: a list of
-//!   [`UnsalvageableVertexReport`](core::traits::insertion_algorithm::UnsalvageableVertexReport)
-//!   entries, each with the original vertex, its classification (duplicate,
-//!   near-duplicate, or degenerate), the sequence of insertion strategies that were
-//!   attempted, and the corresponding error chain.
-//! - `statistics`: a
-//!   [`TriangulationStatistics`](core::triangulation_data_structure::TriangulationStatistics)
-//!   record aggregating Stage 1 + Stage 2 behavior (fast/robust attempts and
-//!   successes, how many vertices were skipped as duplicates vs genuinely
-//!   unsalvageable, and how many global Delaunay validation runs occurred under the
-//!   selected
-//!   [`DelaunayCheckPolicy`](core::traits::insertion_algorithm::DelaunayCheckPolicy)).
-//!
-//! Vertices that appear in `unsalvageable_vertices` are guaranteed not to appear in
-//! any triangulation cell: the unified pipeline fully skips them, so the final
-//! triangulation is always described entirely by the kept subset of vertices.
+//! - **Duplicate detection** - Exact and near-duplicate vertices are detected and rejected
+//!   with [`InsertionError::DuplicateCoordinates`](core::algorithms::incremental_insertion::InsertionError::DuplicateCoordinates)
+//!   or [`InsertionError::DuplicateUuid`](core::algorithms::incremental_insertion::InsertionError::DuplicateUuid)
+//! - **Geometric failures** - Degenerate configurations that would violate the Delaunay
+//!   property are rejected with appropriate error messages
+//! - **Validation failures** - If insertion would break structural invariants, the operation
+//!   fails and the triangulation is left in its previous valid state
 //!
 //! ```rust
-//! use delaunay::core::triangulation_data_structure::{Tds, TriangulationStatistics};
-//! use delaunay::vertex;
+//! use delaunay::prelude::*;
 //!
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0, 0.0]),
@@ -273,45 +237,24 @@
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
 //!
-//! let mut tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-//! let diagnostics = tds.bowyer_watson_with_diagnostics().unwrap();
+//! let dt: DelaunayTriangulation<_, (), (), 3> =
+//!     DelaunayTriangulation::new(&vertices).unwrap();
 //!
-//! // Aggregated statistics for this triangulation run.
-//! let stats: &TriangulationStatistics = &diagnostics.statistics;
-//! assert!(stats.fast_path_successes + stats.robust_path_successes >= 0);
-//! assert!(
-//!     stats.global_delaunay_validation_runs >= 1,
-//!     "Bowyer–Watson pipeline should run at least one global Delaunay validation",
-//! );
-//!
-//! // Convenience: access the last triangulation statistics directly from the TDS.
-//! if let Some(last) = tds.last_triangulation_statistics() {
-//!     assert_eq!(last.insertion.vertices_processed, stats.insertion.vertices_processed);
-//!     assert!(last.global_delaunay_validation_runs >= 1);
-//! }
+//! assert_eq!(dt.number_of_vertices(), 4);
+//! assert!(dt.is_valid().is_ok());
+//! assert!(dt.validate_delaunay().is_ok());
 //! ```
 //!
-//! The accessor
-//! [`Tds::last_triangulation_statistics`](core::triangulation_data_structure::Tds::last_triangulation_statistics)
-//! always returns the statistics for the most recent successful Bowyer–Watson-based
-//! construction (`Tds::new` or a subsequent call to one of the `bowyer_watson_*` helpers).
+//! ### Degenerate input handling
 //!
-//! ### Zero-cell triangulations and recovery
+//! When the input vertices cannot form a non-degenerate simplex (for example, when all points
+//! are collinear in 2D), construction fails during initial simplex construction with
+//! [`TriangulationConstructionError::GeometricDegeneracy`](core::triangulation_data_structure::TriangulationConstructionError::GeometricDegeneracy).
+//! This occurs because degenerate simplices (collinear in 2D, coplanar in 3D, etc.) are detected
+//! early using robust orientation predicates before any topology is built.
 //!
-//! When Stage 1 cannot find a non-degenerate simplex (for example, when all points
-//! are collinear in 2D), the library reports geometric degeneracy but leaves behind
-//! a valid zero-cell triangulation that still contains the unique input vertices.
-//! Callers can then recover by incrementally adding additional vertices.
-//!
-//! ```no_run
-//! use delaunay::core::algorithms::bowyer_watson::IncrementalBowyerWatson;
-//! use delaunay::core::traits::insertion_algorithm::InsertionAlgorithm;
-//! use delaunay::core::triangulation_data_structure::{
-//!     Tds, TriangulationConstructionError,
-//! };
-//! use delaunay::vertex;
-//!
-//! type Alg = IncrementalBowyerWatson<f64, Option<()>, Option<()>, 2>;
+//! ```rust
+//! use delaunay::prelude::*;
 //!
 //! // All points lie on a line in 2D: no non-degenerate simplex exists.
 //! let degenerate = vec![
@@ -321,34 +264,21 @@
 //!     vertex!([3.0, 0.0]),
 //! ];
 //!
-//! let mut tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::empty();
-//! let mut algorithm: Alg = Alg::new();
+//! let result: Result<DelaunayTriangulation<_, (), (), 2>, _> =
+//!     DelaunayTriangulation::new(&degenerate);
 //!
-//! let result = <Alg as InsertionAlgorithm<_, _, _, 2>>::triangulate(
-//!     &mut algorithm,
-//!     &mut tds,
-//!     &degenerate,
-//! );
-//!
-//! if let Err(TriangulationConstructionError::GeometricDegeneracy { .. }) = result {
-//!     // Zero-cell fallback: vertices are retained, no cells are created, and the
-//!     // triangulation remains structurally valid.
-//!     assert_eq!(tds.number_of_cells(), 0);
-//!     assert_eq!(tds.number_of_vertices(), degenerate.len());
-//!     assert!(tds.is_valid().is_ok());
-//! }
+//! // Collinear points fail during initial simplex construction due to degeneracy
+//! assert!(matches!(
+//!     result,
+//!     Err(TriangulationConstructionError::GeometricDegeneracy { .. })
+//! ));
 //! ```
-//!
-//! From this state you can continue building the triangulation incrementally with
-//! [`Tds::add`](core::triangulation_data_structure::Tds::add); additional
-//! non-degenerate vertices can be inserted without rebuilding from scratch, and the
-//! TDS remains valid throughout.
 //!
 //! ## Limitations
 //!
 //! 1. **Degenerate geometry in higher dimensions** - Highly degenerate point configurations (e.g.,
 //!    many nearly collinear or coplanar points) in 4D and 5D may cause insertion to fail gracefully
-//!    with [`InsertionError::GeometricFailure`](core::traits::InsertionError::GeometricFailure).
+//!    with [`InsertionError`](core::algorithms::incremental_insertion::InsertionError).
 //!    This is a known limitation of incremental algorithms in high-dimensional spaces with
 //!    degenerate inputs.
 //!
@@ -362,38 +292,43 @@
 //!    these issues, but extreme coordinate values or ill-conditioned point sets may still cause
 //!    problems.
 //!
-//! ## Error Handling
+//! ## Simple API Usage
 //!
 //! ```rust
-//! use delaunay::core::triangulation_data_structure::{Tds, TriangulationConstructionError};
-//! use delaunay::vertex;
+//! use delaunay::prelude::*;
 //!
-//! let mut tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::empty();
+//! // Create 4D triangulation - uses fast predicates by default (f64)
+//! let vertices = vec![
+//!     vertex!([0.0, 0.0, 0.0, 0.0]),
+//!     vertex!([1.0, 0.0, 0.0, 0.0]),
+//!     vertex!([0.0, 1.0, 0.0, 0.0]),
+//!     vertex!([0.0, 0.0, 1.0, 0.0]),
+//!     vertex!([0.0, 0.0, 0.0, 1.0]),
+//! ];
 //!
-//! // Add initial vertices
-//! tds.add(vertex!([0.0, 0.0, 0.0, 0.0])).unwrap();
-//! tds.add(vertex!([1.0, 0.0, 0.0, 0.0])).unwrap();
+//! let dt: DelaunayTriangulation<_, (), (), 4> =
+//!     DelaunayTriangulation::new(&vertices).unwrap();
 //!
-//! // Attempt to add a duplicate vertex - will fail gracefully
-//! match tds.add(vertex!([1.0, 0.0, 0.0, 0.0])) {
-//!     Ok(_) => println!("Insertion succeeded"),
-//!     Err(TriangulationConstructionError::DuplicateCoordinates { coordinates }) => {
-//!         println!("Duplicate vertex detected: {}", coordinates);
-//!         // Triangulation remains valid - can continue with other vertices
-//!     }
-//!     Err(TriangulationConstructionError::GeometricDegeneracy { message }) => {
-//!         println!("Geometry too degenerate: {}", message);
-//!         // Triangulation remains valid - insertion was rejected
-//!     }
-//!     Err(e) => println!("Other error: {}", e),
-//! }
+//! assert_eq!(dt.number_of_vertices(), 5);
+//! assert_eq!(dt.dim(), 4);
+//! assert_eq!(dt.number_of_cells(), 1);  // Single 4-simplex
 //!
-//! // Triangulation remains valid regardless of insertion outcome
-//! assert!(tds.is_valid().is_ok());
+//! // Also works in 2D
+//! let vertices_2d = vec![
+//!     vertex!([0.0, 0.0]),
+//!     vertex!([1.0, 0.0]),
+//!     vertex!([0.5, 1.0]),
+//! ];
+//!
+//! let dt_2d: DelaunayTriangulation<_, (), (), 2> =
+//!     DelaunayTriangulation::new(&vertices_2d).unwrap();
+//!
+//! assert_eq!(dt_2d.number_of_vertices(), 3);
+//! assert_eq!(dt_2d.dim(), 2);
 //! ```
 //!
 //! For implementation details on invariant validation and error handling, see
-//! [`core::traits::insertion_algorithm`].
+//! [`core::algorithms::incremental_insertion`].
 //!
 //! # References
 //!
@@ -410,8 +345,9 @@
 
 // Allow multiple crate versions due to transitive dependencies
 #![expect(clippy::multiple_crate_versions)]
-// Temporarily allow deprecated warnings during Facet -> FacetView migration
-#![expect(deprecated)]
+// Temporarily allow deprecated warnings during API migration (v0.6.0)
+// - Facet -> FacetView migration
+// - Tds::new()/add() -> DelaunayTriangulation::new()/insert()
 // Forbid unsafe code throughout the entire crate
 #![forbid(unsafe_code)]
 
@@ -425,20 +361,22 @@ extern crate derive_builder;
 pub mod core {
     /// Triangulation algorithms for construction, maintenance, and querying
     pub mod algorithms {
-        /// Pure incremental Bowyer-Watson algorithm for Delaunay triangulation
-        pub mod bowyer_watson;
-        /// Robust Bowyer-Watson implementation with enhanced numerical stability
-        pub mod robust_bowyer_watson;
-        /// Internal unified fast+robust insertion pipeline for Stage 2
-        pub mod unified_insertion_pipeline;
-        pub use bowyer_watson::*;
-        pub use robust_bowyer_watson::*;
+        /// Bistellar flip operations - Phase 3 TODO
+        pub mod flips;
+        /// Incremental cavity-based insertion (Phase 3.6)
+        pub mod incremental_insertion;
+        /// Point location algorithms (facet walking)
+        pub mod locate;
     }
     pub mod boundary;
     pub mod cell;
     /// High-performance collection types optimized for computational geometry
     pub mod collections;
+    /// Delaunay triangulation layer with incremental insertion - Phase 3 TODO
+    pub mod delaunay_triangulation;
     pub mod facet;
+    /// Generic triangulation combining kernel + Tds - Phase 2 TODO
+    pub mod triangulation;
     pub mod triangulation_data_structure;
     pub mod util;
     pub mod vertex;
@@ -447,14 +385,13 @@ pub mod core {
         pub mod boundary_analysis;
         pub mod data_type;
         pub mod facet_cache;
-        pub mod insertion_algorithm;
         pub use boundary_analysis::*;
         pub use data_type::*;
         pub use facet_cache::*;
-        pub use insertion_algorithm::*;
     }
     // Re-export the `core` modules.
     pub use cell::*;
+    pub use delaunay_triangulation::*;
     pub use facet::*;
     pub use traits::*;
     pub use triangulation_data_structure::*;
@@ -478,6 +415,8 @@ pub mod geometry {
         pub mod convex_hull;
         pub use convex_hull::*;
     }
+    /// Geometric kernel abstraction (CGAL-style) - Phase 2 TODO
+    pub mod kernel;
     pub mod matrix;
     pub mod point;
     pub mod predicates;
@@ -512,12 +451,20 @@ pub mod prelude {
     // Re-export from core
     pub use crate::core::{
         cell::*,
+        delaunay_triangulation::*,
         facet::*,
-        traits::{boundary_analysis::*, data_type::*, insertion_algorithm::*},
+        traits::{boundary_analysis::*, data_type::*},
+        triangulation::*,
         triangulation_data_structure::*,
         util::*,
         vertex::*,
     };
+
+    // Re-export point location algorithms from core::algorithms
+    pub use crate::core::algorithms::locate::{LocateError, LocateResult, locate};
+
+    // Re-export incremental insertion types from core::algorithms
+    pub use crate::core::algorithms::incremental_insertion::{InsertionError, InsertionStatistics};
 
     // Re-export commonly used collection types from core::collections
     // These are frequently used in advanced examples and downstream code
@@ -528,12 +475,12 @@ pub mod prelude {
 
     // Re-export from geometry
     pub use crate::geometry::{
-        algorithms::*, matrix::*, point::*, predicates::*, quality::*, robust_predicates::*,
-        traits::coordinate::*, util::*,
+        algorithms::*, kernel::*, matrix::*, point::*, predicates::*, quality::*,
+        robust_predicates::*, traits::coordinate::*, util::*,
     };
 
     // Convenience macros
-    pub use crate::{cell, vertex};
+    pub use crate::vertex;
 }
 
 /// The function `is_normal` checks that structs implement `auto` traits.
@@ -564,9 +511,9 @@ mod tests {
     fn normal_types() {
         assert!(is_normal::<Point<f64, 3>>());
         assert!(is_normal::<Point<f32, 3>>());
-        assert!(is_normal::<Vertex<f64, Option<()>, 3>>());
-        assert!(is_normal::<Cell<f64, Option<()>, Option<()>, 4>>());
-        assert!(is_normal::<Tds<f64, Option<()>, Option<()>, 4>>());
+        assert!(is_normal::<Vertex<f64, (), 3>>());
+        assert!(is_normal::<Cell<f64, (), (), 4>>());
+        assert!(is_normal::<Tds<f64, (), (), 4>>());
     }
 
     #[test]
@@ -604,23 +551,202 @@ mod tests {
         use crate::prelude::*;
 
         // Test that quality functions are accessible from prelude
-        // Create a simple 2D triangle
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
+        let dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
 
         // Get a cell to test quality functions
-        let (cell_key, _) = tds.cells().next().unwrap();
+        let (cell_key, _) = dt.cells().next().unwrap();
 
         // Test that quality functions are accessible
-        let ratio = radius_ratio(&tds, cell_key).unwrap();
+        let ratio = radius_ratio(dt.triangulation(), cell_key).unwrap();
         assert!(ratio > 0.0);
 
-        let norm_vol = normalized_volume(&tds, cell_key).unwrap();
+        let norm_vol = normalized_volume(dt.triangulation(), cell_key).unwrap();
         assert!(norm_vol > 0.0);
+    }
+
+    #[test]
+    fn test_prelude_kernel_exports() {
+        use crate::prelude::*;
+
+        // Test that kernel types and predicates are accessible from prelude
+        let fast_kernel = FastKernel::<f64>::new();
+        let robust_kernel = RobustKernel::<f64>::new();
+
+        // Test 2D orientation predicate
+        let triangle = [
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.0, 1.0]),
+        ];
+
+        let fast_orientation = fast_kernel.orientation(&triangle).unwrap();
+        assert_ne!(fast_orientation, 0, "Triangle should be non-degenerate");
+
+        let robust_orientation = robust_kernel.orientation(&triangle).unwrap();
+        assert_eq!(
+            fast_orientation, robust_orientation,
+            "Both kernels should agree"
+        );
+
+        // Test collinear detection
+        let collinear = [
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([2.0, 0.0]),
+        ];
+        assert_eq!(
+            fast_kernel.orientation(&collinear).unwrap(),
+            0,
+            "Collinear points should have zero orientation"
+        );
+
+        // Test in_sphere predicate
+        let inside_point = Point::new([0.25, 0.25]);
+        let result = fast_kernel.in_sphere(&triangle, &inside_point).unwrap();
+        assert_eq!(result, 1, "Point should be inside circumcircle");
+
+        let outside_point = Point::new([2.0, 2.0]);
+        let result = fast_kernel.in_sphere(&triangle, &outside_point).unwrap();
+        assert_eq!(result, -1, "Point should be outside circumcircle");
+    }
+
+    #[test]
+    fn test_prelude_core_types() {
+        use crate::prelude::*;
+
+        // Test that core types are accessible and work from prelude
+        // Point construction
+        let p1 = Point::new([0.0, 0.0, 0.0]);
+        let p2 = Point::new([1.0, 0.0, 0.0]);
+        assert_ne!(p1, p2);
+
+        // Vertex construction via macro and builder
+        let v1: Vertex<f64, (), 3> = vertex!([0.0, 0.0, 0.0]);
+        let v2: Vertex<f64, (), 3> = vertex!([1.0, 0.0, 0.0]);
+        assert_ne!(v1.point(), v2.point());
+
+        // DelaunayTriangulation construction
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        assert_eq!(dt.number_of_vertices(), 4);
+        assert_eq!(dt.number_of_cells(), 1);
+
+        // Access Triangulation, Tds, Cell types
+        let tri = dt.triangulation();
+        assert_eq!(tri.number_of_vertices(), 4);
+
+        let tds = &tri.tds;
+        assert_eq!(tds.number_of_cells(), 1);
+
+        // Iterate over cells
+        for (cell_key, _cell) in tri.cells() {
+            assert!(tds.get_cell(cell_key).is_some());
+        }
+    }
+
+    #[test]
+    fn test_prelude_point_location() {
+        use crate::prelude::*;
+
+        // Test that point location algorithms are accessible
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        // Test locate function with kernel
+        let kernel = FastKernel::<f64>::new();
+        let query_point = Point::new([0.3, 0.3]);
+        let result = locate(dt.tds(), &kernel, &query_point, None);
+        assert!(result.is_ok());
+
+        // Result should be a LocateResult
+        match result.unwrap() {
+            LocateResult::InsideCell(_)
+            | LocateResult::OnFacet { .. }
+            | LocateResult::OnEdge { .. }
+            | LocateResult::OnVertex(_) => { /* expected or acceptable */ }
+            LocateResult::Outside => panic!("Point should be inside triangulation"),
+        }
+
+        // Test outside point
+        let outside_point = Point::new([10.0, 10.0]);
+        let result = locate(dt.tds(), &kernel, &outside_point, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_prelude_geometry_types() {
+        use crate::prelude::*;
+
+        // Test Point with Coordinate trait
+        let p = Point::new([1.0_f64, 2.0_f64, 3.0_f64]);
+        assert!((p.coords()[0] - 1.0_f64).abs() < f64::EPSILON);
+        assert!((p.coords()[1] - 2.0_f64).abs() < f64::EPSILON);
+        assert!((p.coords()[2] - 3.0_f64).abs() < f64::EPSILON);
+
+        // Test predicates are accessible
+        let triangle = [
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.0, 1.0]),
+        ];
+
+        // simplex_orientation is exported from predicates
+        let orientation = simplex_orientation(&triangle).unwrap();
+        assert_ne!(orientation, Orientation::DEGENERATE);
+
+        // Test insphere predicate
+        let test_point = Point::new([0.25, 0.25]);
+        let result = insphere(&triangle, test_point).unwrap();
+        assert_eq!(result, InSphere::INSIDE);
+    }
+
+    #[test]
+    fn test_prelude_convex_hull() {
+        use crate::prelude::*;
+
+        // Test that convex hull operations are accessible
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        // ConvexHull type should be accessible
+        let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
+        assert_eq!(hull.number_of_facets(), 4); // Tetrahedron has 4 faces
+
+        // Test point visibility
+        let outside_point = Point::new([2.0, 2.0, 2.0]);
+        let is_outside = hull
+            .is_point_outside(&outside_point, dt.triangulation())
+            .unwrap();
+        assert!(is_outside);
+
+        let inside_point = Point::new([0.25, 0.25, 0.25]);
+        let is_outside = hull
+            .is_point_outside(&inside_point, dt.triangulation())
+            .unwrap();
+        assert!(!is_outside);
     }
 
     // =============================================================================
