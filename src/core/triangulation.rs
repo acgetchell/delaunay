@@ -648,7 +648,7 @@ where
                     }
                     return Ok((result, stats));
                 }
-                Err(ref e) => {
+                Err(e) => {
                     // Any error - rollback to snapshot
                     self.tds = tds_snapshot;
 
@@ -677,9 +677,9 @@ where
                                 _ => 10.0,
                             }
                         );
-                        return Err(result.unwrap_err());
+                        return Err(e);
                     } else {
-                        return Err(result.unwrap_err());
+                        return Err(e);
                     }
                 }
             }

@@ -68,6 +68,21 @@ pub enum InsertionError {
         message: String,
     },
 
+    /// Non-manifold topology detected during neighbor wiring.
+    ///
+    /// This occurs when a facet is shared by more than 2 cells, violating
+    /// the manifold property. This is typically caused by geometric degeneracy
+    /// and can often be resolved via coordinate perturbation.
+    #[error(
+        "Non-manifold topology: facet {facet_hash:#x} shared by {cell_count} cells (expected ≤2)"
+    )]
+    NonManifoldTopology {
+        /// Hash of the facet vertices
+        facet_hash: u64,
+        /// Number of cells sharing this facet
+        cell_count: usize,
+    },
+
     /// Hull extension failed (finding visible boundary facets)
     #[error("Hull extension failed: {message}")]
     HullExtension {
@@ -120,8 +135,9 @@ impl InsertionError {
             Self::Location(le) => {
                 matches!(le, LocateError::CycleDetected { .. })
             }
-            // Neighbor wiring errors: non-manifold topology from string check (legacy)
-            // TODO: Add structured error variant for non-manifold detection
+            // Non-manifold topology and topology validation errors are retryable via perturbation
+            Self::NonManifoldTopology { .. } | Self::TopologyValidation(_) => true,
+            // Legacy neighbor wiring errors: check message for non-manifold (backwards compatibility)
             Self::NeighborWiring { message } => message.contains("Non-manifold"),
             // Conflict region errors: duplicate facets or ridge fans indicate degeneracy
             Self::ConflictRegion(ce) => {
@@ -130,8 +146,6 @@ impl InsertionError {
                     ConflictError::DuplicateBoundaryFacets { .. } | ConflictError::RidgeFan { .. }
                 )
             }
-            // Topology validation errors indicate repair failures
-            Self::TopologyValidation(_) => true,
             // All other errors are not retryable
             Self::Construction(_)
             | Self::CavityFilling { .. }
@@ -431,9 +445,8 @@ where
             set_neighbor(tds, c1, idx1, Some(c2))?;
             set_neighbor(tds, c2, idx2, Some(c1))?;
         } else if cells.len() > 2 {
-            // Non-manifold topology detected - skip wiring for this facet
-            // The localized repair mechanism (detect_local_facet_issues + repair_local_facet_issues)
-            // will handle this after wiring completes by removing problematic cells.
+            // Non-manifold topology detected
+            // Return structured error for proper retry handling via coordinate perturbation
             #[cfg(debug_assertions)]
             {
                 let cell_types: Vec<String> = cells
@@ -449,11 +462,14 @@ where
                     })
                     .collect();
                 eprintln!(
-                    "Warning: Non-manifold topology during wiring: facet {facet_key} shared by {} cells (expected ≤2). Cell types: {cell_types:?}",
+                    "Non-manifold topology during wiring: facet {facet_key:#x} shared by {} cells (expected ≤2). Cell types: {cell_types:?}",
                     cells.len()
                 );
             }
-            // Skip wiring for this facet - leave neighbors unset for these cells
+            return Err(InsertionError::NonManifoldTopology {
+                facet_hash: *facet_key,
+                cell_count: cells.len(),
+            });
         }
         // cells.len() == 1 means it's a boundary facet (no neighbor)
     }
@@ -763,6 +779,72 @@ where
     #[cfg(debug_assertions)]
     eprintln!("repair_neighbor_pointers: repaired {total_repaired} facet pairs");
 
+    // Validate no cycles were introduced (debug mode only)
+    #[cfg(debug_assertions)]
+    validate_no_neighbor_cycles(tds)?;
+
+    Ok(())
+}
+
+/// Validate that the neighbor graph has no cycles using BFS.
+///
+/// This catches cycles early during development/testing. Cycles in the neighbor
+/// graph would cause infinite loops during point location.
+///
+/// **Performance**: O(n·D) - visits each cell once, checks D neighbors per cell.
+///
+/// # Errors
+/// Returns `NeighborWiring` error if a cycle is detected.
+#[cfg(debug_assertions)]
+fn validate_no_neighbor_cycles<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+) -> Result<(), InsertionError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    const MAX_WALK_STEPS: usize = 10000;
+
+    // Sample a few cells and try walking through their neighbor graph
+    let sample_cells: Vec<CellKey> = tds.cells().map(|(key, _)| key).take(10).collect();
+
+    for &start_cell in &sample_cells {
+        let mut visited = FastHashSet::default();
+        let mut to_visit = vec![start_cell];
+        let mut steps = 0;
+
+        while let Some(current) = to_visit.pop() {
+            steps += 1;
+            if steps > MAX_WALK_STEPS {
+                return Err(InsertionError::NeighborWiring {
+                    message: format!(
+                        "Possible cycle detected: BFS exceeded {MAX_WALK_STEPS} steps from cell {start_cell:?}"
+                    ),
+                });
+            }
+
+            if !visited.insert(current) {
+                continue; // Already visited
+            }
+
+            // Add all neighbors to visit queue
+            if let Some(cell) = tds.get_cell(current)
+                && let Some(neighbors) = cell.neighbors()
+            {
+                for &neighbor_opt in neighbors {
+                    if let Some(neighbor_key) = neighbor_opt
+                        && tds.contains_cell(neighbor_key)
+                        && !visited.contains(&neighbor_key)
+                    {
+                        to_visit.push(neighbor_key);
+                    }
+                }
+            }
+        }
+    }
+
+    eprintln!("validate_no_neighbor_cycles: passed (no cycles detected)");
     Ok(())
 }
 

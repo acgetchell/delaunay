@@ -52,7 +52,6 @@ delaunay/
 │   ├── CODEOWNERS
 │   └── dependabot.yml
 ├── benches/
-│   ├── assign_neighbors_performance.rs
 │   ├── ci_performance_suite.rs
 │   ├── circumsphere_containment.rs
 │   ├── large_scale_performance.rs
@@ -361,7 +360,10 @@ Version 0.4.4+ completes Phase 1-2 of the comprehensive optimization roadmap:
 - **Zero-Allocation Iterators**: 1.86x faster iteration with `vertex_uuid_iter()`
 - **Enhanced Collections**: 15-30% additional gains from FastHashSet/SmallBuffer optimizations
 - **Thread Safety**: RCU-based caching and atomic operations for concurrent operations
-- **Enhanced Error Handling**: Comprehensive `InsertionError` enum with rollback mechanisms
+- **Enhanced Error Handling**: Comprehensive `InsertionError` enum with structured error variants for geometric degeneracies
+  - `NonManifoldTopology` variant for facet sharing violations (retryable via perturbation)
+  - Robust retry semantics using structured error matching instead of string parsing
+  - Direct error propagation without unnecessary unwrapping
 - **Robustness Infrastructure**: Atomic TDS operations with validation and rollback capabilities
 
 #### Development Workflow

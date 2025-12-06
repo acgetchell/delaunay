@@ -8,14 +8,15 @@ issues, including the "No cavity boundary facets found" error and other precisio
 1. [Problem Overview](#problem-overview)
 2. [Current Implementation Status](#current-implementation-status)
 3. [Implemented Solutions](#implemented-solutions)
-4. [Robust Predicates](#robust-predicates)
-5. [Matrix Conditioning](#matrix-conditioning)
-6. [Usage Examples](#usage-examples)
-7. [Configuration Selection Guide](#configuration-selection-guide)
-8. [Convex Hull Robustness](#convex-hull-robustness)
-9. [Testing and Validation](#testing-and-validation)
-10. [Performance Considerations](#performance-considerations)
-11. [Migration Strategy](#migration-strategy)
+4. [Error Handling and Retry Logic](#error-handling-and-retry-logic)
+5. [Robust Predicates](#robust-predicates)
+6. [Matrix Conditioning](#matrix-conditioning)
+7. [Usage Examples](#usage-examples)
+8. [Configuration Selection Guide](#configuration-selection-guide)
+9. [Convex Hull Robustness](#convex-hull-robustness)
+10. [Testing and Validation](#testing-and-validation)
+11. [Performance Considerations](#performance-considerations)
+12. [Migration Strategy](#migration-strategy)
 
 ## Problem Overview
 
@@ -59,11 +60,13 @@ As of version 0.4.3, the delaunay library includes comprehensive robustness impr
    - Comprehensive error handling for edge cases
    - Multi-dimensional support (tested in 2D-5D)
 
-4. **Enhanced Error Handling**
-   - Detailed error types with diagnostic information
-   - Graceful degradation for numerical edge cases
-   - Comprehensive validation and consistency checks
-   - Recovery strategies for boundary detection failures
+4. **Enhanced Error Handling** (`src/core/algorithms/incremental_insertion.rs`, `src/core/triangulation.rs`)
+   - Structured `InsertionError` enum with geometric degeneracy classification
+   - `NonManifoldTopology` variant for facet sharing violations (retryable via perturbation)
+   - Automatic retry logic with progressive coordinate perturbation (1e-4 to 5e-2)
+   - Direct error propagation avoiding unnecessary unwrapping
+   - Transactional insertion with automatic rollback on failure
+   - Detailed error diagnostics with facet hash and cell count information
 
 5. **Robust Bowyer-Watson Algorithm** (`src/core/algorithms/robust_bowyer_watson.rs`)
    - Complete integration of robust predicates into triangulation construction
@@ -132,9 +135,108 @@ use delaunay::geometry::algorithms::convex_hull::ConvexHull;
 // Robust point-in-hull testing with fallback for degenerate cases
 let is_outside = hull.is_point_outside(&test_point, &tds)?;
 
-// Fallback visibility testing when orientation predicates fail
+### Fallback visibility testing when orientation predicates fail
 let visible_facets = hull.find_visible_facets(&external_point, &tds)?;
 ```
+
+## Error Handling and Retry Logic
+
+### Structured Error Classification
+
+Location: `src/core/algorithms/incremental_insertion.rs`
+
+The `InsertionError` enum provides structured error variants for geometric degeneracies:
+
+```rust
+use delaunay::core::algorithms::incremental_insertion::InsertionError;
+
+// Structured error for non-manifold topology
+match insertion_result {
+    Err(InsertionError::NonManifoldTopology { facet_hash, cell_count }) => {
+        eprintln!("Non-manifold: facet {:x} shared by {} cells", facet_hash, cell_count);
+        // Retryable via perturbation
+    }
+    Err(InsertionError::ConflictRegion(e)) => {
+        // Duplicate boundary facets or ridge fans - also retryable
+    }
+    Err(e) if e.is_retryable() => {
+        // Automatic retry with perturbation
+    }
+    Err(e) => {
+        // Non-retryable structural error
+        return Err(e);
+    }
+    Ok(result) => result,
+}
+```
+
+### Automatic Retry with Perturbation
+
+Location: `src/core/triangulation.rs`
+
+The `insert_transactional` method provides automatic retry logic:
+
+```rust
+use delaunay::core::triangulation::Triangulation;
+use delaunay::vertex;
+
+// Transactional insertion with automatic rollback and retry
+let vertex = vertex!([0.5, 0.5, 0.5]);
+let ((vkey, cell_hint), stats) = triangulation.insert_with_statistics(vertex, None, None)?;
+
+println!("Insertion statistics:");
+println!("  Attempts: {}", stats.attempts);
+println!("  Used perturbation: {}", stats.used_perturbation);
+println!("  Cells repaired: {}", stats.cells_removed_during_repair);
+println!("  Success: {}", stats.success);
+```
+
+### Progressive Perturbation Schedule
+
+The retry mechanism uses a progressive perturbation schedule:
+
+1. **Attempt 0**: Original coordinates (no perturbation)
+2. **Attempt 1**: ε = 1e-4 (0.01% perturbation)
+3. **Attempt 2**: ε = 1e-3 (0.1% perturbation)
+4. **Attempt 3**: ε = 1e-2 (1% perturbation)
+5. **Attempt 4**: ε = 2e-2 (2% perturbation)
+6. **Attempt 5**: ε = 5e-2 (5% perturbation)
+
+Each attempt:
+
+- Clones the TDS for rollback (transactional semantics)
+- Applies coordinate perturbation
+- Attempts insertion
+- On failure: restores TDS from snapshot and increases perturbation
+- On success: returns result with statistics
+
+### Retryable Error Detection
+
+The `is_retryable()` method classifies errors:
+
+```rust
+// Retryable errors (geometric degeneracies)
+- InsertionError::NonManifoldTopology { .. }        // Facet sharing violation
+- InsertionError::Location(CycleDetected { .. })    // Point location cycle
+- InsertionError::ConflictRegion(DuplicateBoundaryFacets { .. })
+- InsertionError::ConflictRegion(RidgeFan { .. })
+- InsertionError::TopologyValidation(_)             // Repair failure
+
+// Non-retryable errors (structural failures)
+- InsertionError::DuplicateUuid { .. }              // UUID conflict
+- InsertionError::DuplicateCoordinates { .. }       // Coordinate conflict
+- InsertionError::Construction(_)                   // Generic construction error
+- InsertionError::CavityFilling { .. }              // Cavity filling error
+- InsertionError::NeighborWiring { .. }             // Wiring error (legacy)
+```
+
+### Benefits
+
+1. **Type Safety**: Structured error variants eliminate string parsing
+2. **Automatic Recovery**: Retry logic resolves most geometric degeneracies
+3. **Transactional Semantics**: TDS always remains in valid state
+4. **Diagnostic Information**: Detailed error context for debugging
+5. **Progressive Resolution**: Increasing perturbation scales resolve degeneracies
 
 ## Robust Predicates
 
