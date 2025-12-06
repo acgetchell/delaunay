@@ -45,6 +45,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// - Specific geometric arrangements
 ///
 /// For applications requiring strict Delaunay guarantees:
+/// - Run [`validate_delaunay`](Self::validate_delaunay) in tests or debug builds
 /// - Use smaller point sets (violations are rarer)
 /// - Filter degenerate configurations when possible
 /// - Monitor for bistellar flip implementation (planned for v0.7.0+)
