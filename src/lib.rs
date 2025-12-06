@@ -107,9 +107,9 @@
 //!   consistency checks.
 //! - **Facet sharing** – each facet is shared by at most 2 cells (1 on the boundary, 2 in the interior).
 //! - **Neighbor consistency** – neighbor relationships are mutual and reference a shared facet.
-//! - **Delaunay property** – triangulations constructed via incremental insertion
-//!   maintain the empty circumsphere invariant; no vertex lies strictly
-//!   inside the circumsphere of any maximal cell.
+//! - **Delaunay property** – triangulations are constructed to satisfy the empty circumsphere
+//!   invariant; no vertex should lie strictly inside the circumsphere of any maximal cell.
+//!   Use `validate_delaunay()` for explicit verification.
 //!
 //! ## Validation Hierarchy
 //!
@@ -181,10 +181,11 @@
 //! When using [`DelaunayTriangulation::insert()`](core::delaunay_triangulation::DelaunayTriangulation::insert) or the underlying
 //! insertion algorithms:
 //!
-//! 1. **Successful insertions maintain ALL invariants** - If insertion succeeds (`Ok(_)`), the
-//!    triangulation is guaranteed to satisfy all structural and topological invariants, including
-//!    the Delaunay property. The incremental cavity-based insertion algorithm maintains
-//!    these invariants at all times.
+//! 1. **Successful insertions are designed to maintain all invariants** - If insertion succeeds
+//!    (`Ok(_)`), the triangulation is expected to satisfy all structural and topological invariants.
+//!    The incremental cavity-based insertion algorithm is designed to maintain these invariants.
+//!    For applications requiring strict guarantees, use `validate_delaunay()` (Level 4) to verify
+//!    the Delaunay property.
 //!
 //! 2. **Failed insertions leave triangulation in valid state** - If insertion fails (`Err(_)`),
 //!    the triangulation remains in a valid state with all invariants maintained. No partial or
@@ -205,8 +206,8 @@
 //! When constructing a triangulation from a batch of vertices using
 //! [`DelaunayTriangulation::new`](core::delaunay_triangulation::DelaunayTriangulation::new):
 //!
-//! - Successful construction yields a triangulation that passes both
-//!   `dt.is_valid()` and `dt.validate_delaunay()`.
+//! - Successful construction yields a triangulation that passes `dt.is_valid()` and is
+//!   designed to satisfy the Delaunay property. Use `dt.validate_delaunay()` for explicit verification.
 //! - Duplicate coordinates are automatically detected and rejected.
 //!
 //! Incremental construction via [`DelaunayTriangulation::insert`](core::delaunay_triangulation::DelaunayTriangulation::insert)
@@ -238,15 +239,17 @@
 //!
 //! ## Delaunay validation
 //!
-//! The incremental insertion algorithm maintains the Delaunay property by construction,
-//! ensuring that the empty circumsphere property holds after each insertion. Global
-//! Delaunay validation can be performed explicitly using
+//! The incremental insertion algorithm is designed to maintain the Delaunay property,
+//! aiming to ensure that the empty circumsphere property holds after each insertion.
+//! Global Delaunay validation can be performed explicitly using
 //! [`DelaunayTriangulation::validate_delaunay`](core::delaunay_triangulation::DelaunayTriangulation::validate_delaunay)
-//! when additional verification is needed.
+//! when verification is needed (see [Issue #120](https://github.com/acgetchell/delaunay/issues/120)
+//! for rare edge cases where validation may be necessary).
 //!
 //! For construction from a batch of vertices using
 //! [`DelaunayTriangulation::new`](core::delaunay_triangulation::DelaunayTriangulation::new),
-//! the resulting triangulation is guaranteed to satisfy the Delaunay property.
+//! the resulting triangulation is constructed to satisfy the Delaunay property. Call
+//! `validate_delaunay()` if you need explicit verification.
 //!
 //! ## Error handling
 //!

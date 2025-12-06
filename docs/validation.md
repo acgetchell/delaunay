@@ -206,7 +206,7 @@ Validates the geometric optimality of the triangulation.
 - **Critical Applications**: When Delaunay guarantees are essential (interpolation, mesh quality)
 - **Tests**: After construction to verify correctness
 - **Debug**: Investigating geometric issues or suspected violations
-- **Rarely**: Very expensive for large triangulations
+- **Rarely**: Expensive for large triangulations
 
 ### Example
 

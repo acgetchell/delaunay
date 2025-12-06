@@ -95,6 +95,7 @@ use crate::core::traits::data_type::DataType;
 use crate::core::triangulation_data_structure::{
     CellKey, Tds, TriangulationConstructionError, TriangulationValidationError, VertexKey,
 };
+use crate::core::util::extract_edge_set;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
@@ -379,12 +380,14 @@ where
     ///
     /// 1. **All TDS structural invariants** (validated first)
     /// 2. **Manifold facet property**: Each facet belongs to exactly 1 cell (boundary) or exactly 2 cells (interior)
-    /// 3. **Euler characteristic**: χ matches the expected value for the topological space
-    ///    - 2D closed: χ = V - E + F = 2 (sphere)
-    ///    - 3D with boundary: χ = V - E + F - C = 1 (ball)
-    ///    - General D-dimensional with boundary: χ = 1
-    ///
-    /// # Performance
+    /// 3. **Euler characteristic** (dimensions 0-5 supported; 6-7 return `Ok()` as placeholder):
+    ///    - 0D: χ = V = 1 (single vertex)
+    ///    - 1D: χ = V - E = 1 (path)
+    ///    - 2D: χ = V - E + F = 1 (disk) or 2 (sphere)
+    ///    - 3D: χ = V - E + F - C = 1 (ball) or 0 (closed 3-sphere)
+    ///    - 4D: χ = V - E + F - T + C = 1 (4-ball) or 0 (4-sphere)
+    ///    - 5D: χ = V - E + F - T + Q - C = 1 (5-ball) or 0 (5-sphere)
+    ///    - 6D-7D: No validation (returns `Ok()` without checking χ; TODO)
     ///
     /// **Time Complexity**: O(N×D²) where N = number of cells, D = dimension
     /// - Facet map construction: O(N×D)
@@ -435,11 +438,91 @@ where
         Ok(())
     }
 
+    /// Counts unique k-dimensional faces (k-simplices) across all cells by
+    /// enumerating vertex combinations per cell and deduplicating globally.
+    ///
+    /// For example:
+    /// - k = 2 counts triangles (2-faces)
+    /// - k = 3 counts tetrahedra (3-faces)
+    /// - k = D-1 counts facets
+    ///
+    /// Returns the global count of unique faces of dimension k.
+    fn count_k_faces(&self, k_dim: usize) -> Result<usize, TriangulationValidationError>
+    where
+        K::Scalar: AddAssign + SubAssign + Sum,
+    {
+        use std::collections::HashSet;
+
+        if k_dim == 0 {
+            return Ok(self.number_of_vertices());
+        }
+        // Cells store D+1 vertices, so maximum k is D
+        let mut faces: HashSet<Vec<u128>> = HashSet::new();
+
+        for (_cell_key, cell) in self.tds.cells() {
+            let vks = cell.vertices();
+            let n = vks.len(); // = D+1 for a D-cell
+            let choose = k_dim + 1;
+            if choose > n {
+                continue;
+            }
+
+            // Initialize indices [0,1,..,choose-1]
+            let mut idx: Vec<usize> = (0..choose).collect();
+            loop {
+                // Build face UUID set for current combination
+                let mut uuids: Vec<u128> = Vec::with_capacity(choose);
+                for &i in &idx {
+                    let vk = vks[i];
+                    let v = self.tds.get_vertex_by_key(vk).ok_or_else(|| {
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: "Vertex key not found while counting faces".to_string(),
+                        }
+                    })?;
+                    uuids.push(v.uuid().as_u128());
+                }
+                uuids.sort_unstable();
+                faces.insert(uuids);
+
+                // Next combination (lexicographic)
+                let mut t = choose;
+                loop {
+                    if t == 0 {
+                        break;
+                    }
+                    t -= 1;
+                    if idx[t] != t + n - choose {
+                        break;
+                    }
+                    if t == 0 {
+                        break;
+                    }
+                }
+                if idx[0] == n - choose {
+                    break;
+                }
+                idx[t] += 1;
+                for j in (t + 1)..choose {
+                    idx[j] = idx[j - 1] + 1;
+                }
+            }
+        }
+
+        Ok(faces.len())
+    }
+
     /// Validates the manifold facet property.
     ///
     /// In a valid manifold, every facet must belong to exactly 1 cell (boundary facet)
-    /// or exactly 2 cells (interior facet). This is stronger than the TDS invariant
+    /// or exactly 2 cells (interior facet). This is conceptually stronger than the TDS invariant
     /// which only requires ≤2 cells per facet.
+    ///
+    /// **Note**: In practice, since Level 2 (`tds.is_valid()`) already enforces the ≤2 constraint
+    /// and `build_facet_to_cells_map()` only includes facets that appear in cells, this check
+    /// primarily serves as an explicit assertion of the manifold property. The `count == 0` branch
+    /// is unreachable for well-formed maps. This validates the conceptual strengthening from
+    /// "at most 2" (Level 2) to "exactly 1 or 2" (Level 3), which becomes meaningful if facets
+    /// ever gain independent representation in future refactoring.
     fn validate_manifold_facets(&self) -> Result<(), TriangulationValidationError> {
         use crate::core::collections::FacetToCellsMap;
 
@@ -479,8 +562,6 @@ where
     where
         K::Scalar: AddAssign + SubAssign + Sum,
     {
-        use crate::core::util::{extract_edge_set, extract_facet_identifier_set};
-
         // Handle empty triangulation
         if self.number_of_vertices() == 0 {
             return Ok(()); // Empty triangulation is valid (χ = 0)
@@ -560,15 +641,13 @@ where
                         },
                     )?
                     .len() as i64;
-                let n_faces = extract_facet_identifier_set(&self.tds)
-                    .map_err(
-                        |e| TriangulationValidationError::InconsistentDataStructure {
-                            message: format!(
-                                "Failed to extract facets for Euler characteristic: {e}"
-                            ),
-                        },
-                    )?
-                    .len() as i64;
+                // Count all 2-faces (both interior and boundary) via facet map
+                let facet_map = self.tds.build_facet_to_cells_map().map_err(|e| {
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!("Failed to build facet map for Euler characteristic: {e}"),
+                    }
+                })?;
+                let n_faces = facet_map.len() as i64;
 
                 let chi = n_vertices - n_edges + n_faces - n_cells;
 
@@ -583,7 +662,62 @@ where
                 }
                 Ok(())
             }
-            4..=7 => {
+            4 => {
+                // 4D: χ = V - E + F - T + C
+                // F = # of 2-faces (triangles), T = # of 3-faces (tetrahedra), C = # of 4-cells
+                let n_edges = extract_edge_set(&self.tds)
+                    .map_err(
+                        |e| TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Failed to extract edges for Euler characteristic: {e}"
+                            ),
+                        },
+                    )?
+                    .len() as i64;
+
+                let n_2faces = self.count_k_faces(2)? as i64; // triangles
+                let n_3faces = self.count_k_faces(3)? as i64; // tetrahedra
+
+                let chi = n_vertices - n_edges + n_2faces - n_3faces + n_cells;
+
+                if chi != 1 && chi != 0 {
+                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Euler characteristic mismatch for 4D: χ = V - E + F - T + C = {n_vertices} - {n_edges} + {n_2faces} - {n_3faces} + {n_cells} = {chi} (expected 1 for 4-ball or 0 for 4-sphere)"
+                        ),
+                    });
+                }
+                Ok(())
+            }
+            5 => {
+                // 5D: χ = V - E + F - T + Q - C
+                // F = # of 2-faces (triangles), T = # of 3-faces (tetrahedra), Q = # of 4-faces, C = # of 5-cells
+                let n_edges = extract_edge_set(&self.tds)
+                    .map_err(
+                        |e| TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Failed to extract edges for Euler characteristic: {e}"
+                            ),
+                        },
+                    )?
+                    .len() as i64;
+
+                let n_2faces = self.count_k_faces(2)? as i64; // triangles
+                let n_3faces = self.count_k_faces(3)? as i64; // tetrahedra
+                let n_4faces = self.count_k_faces(4)? as i64; // 4-faces
+
+                let chi = n_vertices - n_edges + n_2faces - n_3faces + n_4faces - n_cells;
+
+                if chi != 1 && chi != 0 {
+                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Euler characteristic mismatch for 5D: χ = V - E + F - T + Q - C = {n_vertices} - {n_edges} + {n_2faces} - {n_3faces} + {n_4faces} - {n_cells} = {chi} (expected 1 for 5-ball or 0 for 5-sphere)"
+                        ),
+                    });
+                }
+                Ok(())
+            }
+            6..=7 => {
                 // Higher dimensions: Use generalized Euler characteristic
                 // For D-dimensional manifold with boundary: χ = 1
                 // χ = Σ(-1)^d × N_d
@@ -592,7 +726,7 @@ where
                 // Full implementation would require counting all d-simplices
                 //
                 // Simplified check: just ensure structure is consistent
-                // TODO: Implement full d-simplex counting for dimensions 4-7
+                // TODO: Implement full d-simplex counting for dimensions 6-7
                 Ok(())
             }
             _ => {
