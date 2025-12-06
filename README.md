@@ -32,6 +32,30 @@ lightweight alternative to [CGAL] for the [Rust] ecosystem.
 
 See [CHANGELOG.md](CHANGELOG.md) for details.
 
+## ⚠️ Known Limitations
+
+### Delaunay Property
+
+The incremental Bowyer-Watson algorithm produces structurally valid triangulations but may
+contain local violations of the Delaunay empty circumsphere property in rare cases. These
+violations typically occur with:
+
+- Near-degenerate point configurations
+- Specific geometric arrangements of input points
+
+Most triangulations satisfy the Delaunay property, and all structural invariants (TDS validity)
+are maintained. Full Delaunay property guarantees will require a future bistellar flip implementation,
+currently planned for v0.7.0+.
+
+For details, see: [Issue #120 Investigation](docs/issue_120_investigation.md)
+
+For applications requiring strict Delaunay guarantees, you can validate a triangulation with
+`DelaunayTriangulation::validate_delaunay()` and consider these mitigations:
+
+- Use smaller point sets (violations are rarer)
+- Filter degenerate configurations when possible
+- Monitor for updates in future releases
+
 ## 🚧 Project History
 
 This crate was originally maintained at [https://github.com/oovm/shape-rs](https://github.com/oovm/shape-rs) through version `0.1.0`.

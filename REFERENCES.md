@@ -62,6 +62,7 @@ This section contains the foundational algorithms and data structures that form 
 
 - The CGAL Project. "CGAL User and Reference Manual." CGAL Editorial Board, 6.0.1 edition, 2024.
   Available at: <https://doc.cgal.org/6.0.1/Manual/packages.html>
+  - Triangulation_3 reference: <https://doc.cgal.org/6.0.1/Triangulation_3/index.html>
 - de Berg, M., et al. "Computational Geometry: Algorithms and Applications." 3rd ed. Berlin: Springer-Verlag, 2008.
   DOI: [10.1007/978-3-540-77974-2](https://doi.org/10.1007/978-3-540-77974-2)
 - Edelsbrunner, H. "Geometry and Topology for Mesh Generation." Cambridge: Cambridge University Press, 2001.
@@ -71,6 +72,23 @@ This section contains the foundational algorithms and data structures that form 
   DOI: [10.1145/1137856.1137895](https://doi.org/10.1145/1137856.1137895)
 - Devillers, O. "The Delaunay Hierarchy." *International Journal of Foundations of Computer Science* 13,
   no. 2 (2002): 163-180. DOI: [10.1142/S0129054102001035](https://doi.org/10.1142/S0129054102001035)
+
+### Point Location in Triangulations
+
+- Devillers, O., Pion, S., and Teillaud, M. "Walking in a Triangulation."
+  *International Journal of Foundations of Computer Science* 13, no. 2 (2002): 181-199.
+  DOI: [10.1142/S0129054102001047](https://doi.org/10.1142/S0129054102001047)
+- Mücke, E.P., Saias, I., and Zhu, B. "Fast Randomized Point Location Without Preprocessing in Two- and Three-Dimensional Delaunay Triangulations."
+  *Proceedings of the Twelfth Annual Symposium on Computational Geometry* (1996): 274-283.
+  DOI: [10.1145/237218.237393](https://doi.org/10.1145/237218.237393)
+
+### Bistellar Flips and Delaunay Repair
+
+- Edelsbrunner, H., and Shah, N. R. "Incremental Topological Flipping Works for Regular Triangulations."
+  *Algorithmica* 15, no. 3 (1996): 223-241. DOI: [10.1007/BF02523408](https://doi.org/10.1007/BF02523408)
+- Joe, B. "Construction of Three-Dimensional Delaunay Triangulations Using Local Transformations."
+  *Computer Aided Geometric Design* 8, no. 2 (1991): 123-142.
+  DOI: [10.1016/0167-8396(91)90038-D](https://doi.org/10.1016/0167-8396(91)90038-D)
 
 ### Lifted Paraboloid Method
 

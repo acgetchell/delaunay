@@ -294,78 +294,168 @@ uv run compare-storage-backends --filter "construction/3D"
 
 #### `slurm_storage_comparison.sh`
 
-**Purpose**: Slurm cluster script for comprehensive SlotMap vs DenseSlotMap comparison.
+**Purpose**: Slurm HPC script for comprehensive SlotMap vs DenseSlotMap storage backend comparison.
+
+This script benchmarks the library's two storage backend options (SlotMap and DenseSlotMap) on high-performance computing clusters using the Slurm
+workload manager. It runs the `large_scale_performance` benchmark suite with each backend and generates detailed comparison reports.
 
 **Features**:
 
 - **Automated 3-phase execution**: SlotMap benchmarks → DenseSlotMap benchmarks → Analysis
-- **Baseline saving**: Uses `--save-baseline` for precise Criterion comparisons
-- **Resource management**: Configurable CPU, memory, and time limits
-- **Progress tracking**: Detailed timing and progress output
-- **Artifact archiving**: Packages all results in timestamped tarball
+- **Dual submission modes**: Self-submitting with `sbatch` or direct execution within Slurm job
+- **Baseline saving**: Uses `--save-baseline` for precise Criterion comparisons with `critcmp`
+- **Smart timeout management**: Automatically calculates per-phase timeouts from Slurm time limit
+- **Build isolation**: Uses node-local scratch (`$SLURM_TMPDIR`) for fast compilation
+- **Baseline preservation**: Backs up SlotMap results before `cargo clean` to enable comparison
+- **Progress tracking**: Detailed timing and status for each phase
+- **Artifact archiving**: Packages all results in timestamped tarball with merged baselines
 - **critcmp integration**: Automatic detailed comparison if available
-- **Error handling**: Timeout protection and graceful failure recovery
+- **Error handling**: Per-phase timeout protection with status tracking
 
 **Usage**:
 
 ```bash
-# Standard comparison (~12 hours)
+# Standard comparison (4D with 1K, 3K points)
+./scripts/slurm_storage_comparison.sh
 sbatch scripts/slurm_storage_comparison.sh
 
-# Large-scale comparison (~24 hours)
-sbatch --time=24:00:00 scripts/slurm_storage_comparison.sh --large
+# Large-scale comparison (4D with 1K, 5K, 10K points)
+./scripts/slurm_storage_comparison.sh --large
 
-# Custom resources
-sbatch --mem=64G --cpus-per-task=16 scripts/slurm_storage_comparison.sh
+# Custom time limit (default: 3 days)
+./scripts/slurm_storage_comparison.sh --time=7-00:00:00
+
+# Large-scale with extended time (recommended for completion)
+./scripts/slurm_storage_comparison.sh --large --time=14-00:00:00
+
+# Help information
+./scripts/slurm_storage_comparison.sh --help
+```
+
+**Submission Modes**:
+
+1. **Self-submission** (no `SLURM_JOB_ID`): Submits itself to Slurm with specified options
+2. **Direct execution** (inside Slurm job): Runs the benchmark workflow
+
+The script automatically detects which mode to use, making it easy to submit jobs without writing separate submission scripts.
+
+**Benchmark Scale**:
+
+- **Standard** (default): 4D triangulations use [1K, 3K] points (~2-3h per backend, ~6h total)
+- **Large** (`--large`): 4D triangulations use [1K, 5K, 10K] points (~4-6h per backend, ~12h total)
+
+The `--large` flag sets `BENCH_LARGE_SCALE=1`, which is read by the benchmark suite to enable larger point counts for more comprehensive performance testing.
+
+**Time Management**:
+
+```bash
+# Automatic timeout calculation from Slurm time limit:
+# - Reserves 2 hours for cleanup/buffer
+# - Splits remaining time equally between Phase 1 (SlotMap) and Phase 2 (DenseSlotMap)
+# - Example: 3-day limit → ~34h per phase
+
+# View calculated timeouts in job output:
+squeue -j <job-id>
+tail -f slurm-<job-id>-storage-comparison.out
 ```
 
 **Prerequisites**:
 
-- Rust toolchain (rustup)
+- Slurm workload manager
+- Rust toolchain (rustup) - loads `rust/1.91.0` module if available
 - uv package manager
+- GNU coreutils (`timeout` command)
 - critcmp (optional but recommended): `cargo install critcmp`
+
+**Cluster Configuration**:
+
+Edit the script header for your cluster setup:
+
+```bash
+#SBATCH --account=your_account     # Billing account
+#SBATCH --partition=your_partition # Compute partition
+#SBATCH --time=3-00:00:00         # Job time limit (3 days default)
+#SBATCH --cpus-per-task=8         # CPU cores
+#SBATCH --mem=32G                 # Memory allocation
+```
 
 **Output Files**:
 
 ```text
 artifacts/
-├── storage_comparison_<job-id>_<timestamp>.md   # Main report
-├── storage-comparison-<job-id>/                 # Full archive
-│   ├── criterion/                               # Criterion reports
+├── storage_comparison_<job-id>_<timestamp>.md   # Main comparison report
+├── storage-comparison-<job-id>/                 # Full archive directory
+│   ├── criterion/                               # Merged Criterion reports
+│   │   ├── <benchmark>/                         # Per-benchmark results
+│   │   │   ├── slotmap/                         # SlotMap baseline
+│   │   │   ├── denseslotmap/                    # DenseSlotMap baseline
+│   │   │   └── report/                          # HTML reports
 │   └── report.md                                # Report copy
-└── storage-comparison-<job-id>.tar.gz           # Compressed
+└── storage-comparison-<job-id>.tar.gz           # Compressed archive
 
-slurm-<job-id>-storage-comparison.out            # Stdout log
-slurm-<job-id>-storage-comparison.err            # Stderr log
+slurm-<job-id>-storage-comparison.out            # Job stdout (progress log)
+slurm-<job-id>-storage-comparison.err            # Job stderr (errors/warnings)
 ```
 
-**Configuration**:
-
-Edit the script header for your cluster:
+**Analysis Workflow**:
 
 ```bash
-#SBATCH --partition=compute        # Your partition name
-#SBATCH --time=12:00:00           # Job time limit
-#SBATCH --cpus-per-task=8         # CPU cores
-#SBATCH --mem=32G                 # Memory allocation
-```
+# 1. Monitor job progress
+squeue -j <job-id>                               # Check job status
+tail -f slurm-<job-id>-storage-comparison.out   # Live progress
 
-**Analysis Tools**:
-
-```bash
-# On cluster after completion
+# 2. After completion, view report on cluster
 cat artifacts/storage_comparison_<job-id>_<timestamp>.md
+
+# 3. Use critcmp for detailed comparison (if installed)
 critcmp slotmap denseslotmap
 
-# Download and analyze locally
+# 4. Download results for local analysis
 scp cluster:/path/to/artifacts/storage-comparison-<job-id>.tar.gz .
 tar -xzf storage-comparison-<job-id>.tar.gz
-open storage-comparison-<job-id>/criterion/*/report/index.html
+cd storage-comparison-<job-id>
+
+# 5. View HTML reports in browser
+open criterion/*/report/index.html              # macOS
+xdg-open criterion/*/report/index.html          # Linux
+
+# 6. Compare with critcmp locally (requires criterion directory)
+critcmp slotmap denseslotmap
 ```
 
-**Related**: See [Issue #74](https://github.com/acgetchell/delaunay/issues/74) for Phase 4 implementation details.
+**Understanding Results**:
 
-**Dependencies**: Slurm, Rust, cargo, uv, optional critcmp
+The comparison report includes:
+
+- **Job metadata**: Job ID, node, mode, duration for each phase
+- **Baseline locations**: Paths to saved Criterion baselines
+- **critcmp output**: Detailed performance comparison (if available)
+- **Status tracking**: Success/timeout/failure for each phase
+
+Criterion baselines are saved as:
+
+- `slotmap`: Default SlotMap backend (in `Cargo.toml`)
+- `denseslotmap`: DenseSlotMap backend (enabled with `--features dense-slotmap`)
+
+These can be compared using `critcmp slotmap denseslotmap` or Criterion's CLI tools.
+
+**Common Issues**:
+
+1. **Module loading failures**: Script continues with PATH-based Rust/Python if modules unavailable
+2. **NFS .nfs* files**: `cargo clean` warnings are expected on shared filesystems, script continues
+3. **Timeout before completion**: Increase time limit with `--time=` or use standard mode instead of `--large`
+4. **Missing critcmp**: Install with `cargo install critcmp` for detailed comparison output
+
+**Environment Variables**:
+
+- `BENCH_LARGE_SCALE=1`: Automatically set when using `--large` flag
+- `CARGO_TARGET_DIR`: Set to node-local scratch for faster builds
+- `CARGO_UPDATE_IN_JOB=1`: Optional, runs `cargo update` before benchmarks (default: skip)
+- `PROJECT_DIR`: Project root directory (default: current directory)
+
+**Related**: See [Issue #74](https://github.com/acgetchell/delaunay/issues/74) for Phase 4 storage backend evaluation.
+
+**Dependencies**: Slurm, Rust toolchain, cargo, uv, GNU coreutils, optional critcmp
 
 ---
 
