@@ -836,6 +836,11 @@ where
 
                         #[cfg(debug_assertions)]
                         eprintln!("Removed {removed} cells (total: {total_removed})");
+
+                        // Early exit if repair succeeded
+                        if self.tds.validate_facet_sharing().is_ok() {
+                            break;
+                        }
                     } else {
                         // No more non-manifold issues - safe to rebuild neighbors
                         break;
@@ -959,6 +964,11 @@ where
 
                         #[cfg(debug_assertions)]
                         eprintln!("Removed {removed} cells (total: {total_removed})");
+
+                        // Early exit if repair succeeded
+                        if self.tds.validate_facet_sharing().is_ok() {
+                            break;
+                        }
                     } else {
                         // No more non-manifold issues - safe to rebuild neighbors
                         break;
@@ -1957,22 +1967,15 @@ mod tests {
         }
     }
 
-    /// Macro to generate localized facet validation tests across dimensions.
+    /// Consolidated macro for facet validation tests across dimensions.
     ///
-    /// These tests verify the critical manifold topology invariant: each facet
-    /// must be shared by at most 2 cells (1 for boundary, 2 for interior).
-    /// This invariant is essential for facet walking used in point location.
-    ///
-    /// # Usage
-    /// ```ignore
-    /// test_local_facet_validation!(2, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
-    /// ```
-    macro_rules! test_local_facet_validation {
+    /// Verifies the manifold topology invariant: each facet shared by at most 2 cells.
+    /// Consolidates detection and repair tests into comprehensive suites.
+    macro_rules! test_facet_validation {
         ($dim:expr, [$($simplex_coords:expr),+ $(,)?]) => {
             pastey::paste! {
                 #[test]
-                fn [<test_detect_local_facet_issues_no_issues_ $dim d>]() {
-                    // Create a valid initial simplex - should have no over-sharing
+                fn [<test_detect_local_facet_issues_ $dim d>]() {
                     let vertices: Vec<Vertex<f64, (), $dim>> = vec![
                         $(vertex!($simplex_coords)),+
                     ];
@@ -1981,56 +1984,31 @@ mod tests {
                         .unwrap();
                     let tri = Triangulation::<FastKernel<f64>, (), (), $dim> { kernel: FastKernel::new(), tds };
 
-                    // Get all cell keys
+                    // Valid simplex: should have no issues
                     let cell_keys: Vec<_> = tri.tds.cell_keys().collect();
-                    assert_eq!(cell_keys.len(), 1, "{}D: Initial simplex should have 1 cell", $dim);
-
-                    // Detect issues - should find none in a valid simplex
+                    assert_eq!(cell_keys.len(), 1);
                     let issues = tri.detect_local_facet_issues(&cell_keys).unwrap();
-                    assert!(issues.is_none(),
-                        "{}D: Initial simplex should have no facet sharing issues", $dim);
-                }
+                    assert!(issues.is_none(), "{}D: Valid simplex should have no facet issues", $dim);
 
-                #[test]
-                fn [<test_detect_local_facet_issues_empty_list_ $dim d>]() {
-                    // Create a valid triangulation
-                    let vertices: Vec<Vertex<f64, (), $dim>> = vec![
-                        $(vertex!($simplex_coords)),+
-                    ];
-
-                    let tds = Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices)
-                        .unwrap();
-                    let tri = Triangulation::<FastKernel<f64>, (), (), $dim> { kernel: FastKernel::new(), tds };
-
-                    // Check empty cell list - should return None (no issues)
+                    // Empty list: should return None
                     let issues = tri.detect_local_facet_issues(&[]).unwrap();
-                    assert!(issues.is_none(),
-                        "{}D: Empty cell list should have no issues", $dim);
-                }
+                    assert!(issues.is_none(), "{}D: Empty list should have no issues", $dim);
 
-                #[test]
-                fn [<test_detect_local_facet_issues_nonexistent_cells_ $dim d>]() {
-                    // Create a valid triangulation
-                    let vertices: Vec<Vertex<f64, (), $dim>> = vec![
-                        $(vertex!($simplex_coords)),+
-                    ];
-
-                    let tds = Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices)
-                        .unwrap();
-                    let tri = Triangulation::<FastKernel<f64>, (), (), $dim> { kernel: FastKernel::new(), tds };
-
-                    // Create fake cell keys that don't exist
+                    // Nonexistent cells: should be skipped gracefully
                     let fake_keys = vec![CellKey::default()];
-
-                    // Should handle gracefully (skip nonexistent cells)
                     let issues = tri.detect_local_facet_issues(&fake_keys).unwrap();
-                    assert!(issues.is_none(),
-                        "{}D: Nonexistent cells should be skipped", $dim);
+                    assert!(issues.is_none(), "{}D: Nonexistent cells should be skipped", $dim);
+
+                    // Verify neighbors (all should be None for single cell)
+                    let (_, cell) = tri.tds.cells().next().unwrap();
+                    if let Some(neighbors) = cell.neighbors() {
+                        assert!(neighbors.iter().all(|n| n.is_none()),
+                            "{}D: Single cell should have no neighbors", $dim);
+                    }
                 }
 
                 #[test]
-                fn [<test_repair_local_facet_issues_empty_ $dim d>]() {
-                    // Create a valid triangulation
+                fn [<test_repair_local_facet_issues_ $dim d>]() {
                     let vertices: Vec<Vertex<f64, (), $dim>> = vec![
                         $(vertex!($simplex_coords)),+
                     ];
@@ -2039,55 +2017,148 @@ mod tests {
                         .unwrap();
                     let mut tri = Triangulation::<FastKernel<f64>, (), (), $dim> { kernel: FastKernel::new(), tds };
 
-                    // Create empty issues map
+                    // Empty issues map: should remove nothing
                     let empty_issues = FacetIssuesMap::default();
-
-                    // Should repair nothing
                     let removed = tri.repair_local_facet_issues(&empty_issues).unwrap();
-                    assert_eq!(removed, 0,
-                        "{}D: No cells should be removed for empty issues", $dim);
-
-                    // Triangulation should remain valid
-                    assert_eq!(tri.tds.number_of_cells(), 1,
-                        "{}D: Should still have 1 cell after empty repair", $dim);
-                }
-
-                #[test]
-                fn [<test_facet_invariant_after_validation_ $dim d>]() {
-                    // Create a valid triangulation
-                    let vertices: Vec<Vertex<f64, (), $dim>> = vec![
-                        $(vertex!($simplex_coords)),+
-                    ];
-
-                    let tds = Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices)
-                        .unwrap();
-                    let tri = Triangulation::<FastKernel<f64>, (), (), $dim> { kernel: FastKernel::new(), tds };
-
-                    // Verify the manifold topology invariant:
-                    // Each facet shared by at most 2 cells (boundary = 1, interior = 2)
-                    let cell_keys: Vec<_> = tri.tds.cell_keys().collect();
-                    let issues = tri.detect_local_facet_issues(&cell_keys).unwrap();
-
-                    // No facets should be over-shared
-                    assert!(issues.is_none(),
-                        "{}D: Manifold topology invariant violated - facets over-shared", $dim);
-
-                    // Additional check: all facets of the single cell should be boundary facets
-                    // (no neighbors since it's the only cell)
-                    let (_, cell) = tri.tds.cells().next()
-                        .expect(&format!("{}D: Should have exactly one cell", $dim));
-                    if let Some(neighbors) = cell.neighbors() {
-                        assert!(neighbors.iter().all(|n| n.is_none()),
-                            "{}D: Single cell should have no neighbors (all boundary facets)", $dim);
-                    }
+                    assert_eq!(removed, 0, "{}D: Empty issues should remove 0 cells", $dim);
+                    assert_eq!(tri.tds.number_of_cells(), 1, "{}D: Should still have 1 cell", $dim);
                 }
             }
         };
     }
 
-    // Test 2D - 5D (all practical dimensions)
-    test_local_facet_validation!(2, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
-    test_local_facet_validation!(
+    /// Dimension-parametric `remove_vertex` tests.
+    ///
+    /// Verifies that vertex removal maintains neighbor pointer integrity and
+    /// triangulation validity across dimensions.
+    macro_rules! test_remove_vertex {
+        ($dim:expr, [$($simplex_coords:expr),+ $(,)?], $interior_point:expr) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_remove_vertex_neighbor_pointers_ $dim d>]() {
+                    use crate::core::delaunay_triangulation::DelaunayTriangulation;
+
+                    // Build triangulation with D+1 simplex vertices + 1 interior point
+                    let vertices: Vec<Vertex<f64, (), $dim>> = {
+                        let mut v = vec![$(vertex!($simplex_coords)),+];
+                        v.push(vertex!($interior_point));
+                        v
+                    };
+
+                    let mut dt = DelaunayTriangulation::new(&vertices)
+                        .expect("Failed to create triangulation");
+
+                    // Find and remove the interior vertex
+                    let interior_vertex = dt
+                        .vertices()
+                        .find(|(_, v)| {
+                            let coords = v.point().coords();
+                            coords.iter()
+                                .zip($interior_point.iter())
+                                .all(|(a, b)| (a - b).abs() < 1e-10)
+                        })
+                        .map(|(_, v)| *v)
+                        .expect("Interior vertex not found");
+
+                    let initial_cell_count = dt.tds().number_of_cells();
+                    dt.remove_vertex(&interior_vertex)
+                        .expect("Failed to remove vertex");
+
+                    // After removal, should have fewer cells (or same if just 1 simplex left)
+                    assert!(dt.tds().number_of_cells() <= initial_cell_count,
+                        "{}D: Cell count should not increase after removal", $dim);
+
+                    // Verify neighbor pointer consistency:
+                    // 1. No dangling pointers (all neighbor keys exist)
+                    // 2. Neighbor relationships are symmetric
+                    for (cell_key, cell) in dt.tds().cells() {
+                        if let Some(neighbors) = cell.neighbors() {
+                            for (facet_idx, neighbor_opt) in neighbors.iter().enumerate() {
+                                if let Some(neighbor_key) = neighbor_opt {
+                                    // Verify neighbor exists
+                                    assert!(
+                                        dt.tds().contains_cell(*neighbor_key),
+                                        "{}D: Cell {cell_key:?} has neighbor pointer to non-existent cell {neighbor_key:?}",
+                                        $dim
+                                    );
+
+                                    // Verify symmetry: neighbor should point back to us
+                                    let neighbor_cell = dt
+                                        .tds()
+                                        .get_cell(*neighbor_key)
+                                        .expect("Neighbor cell should exist");
+                                    if let Some(neighbor_neighbors) = neighbor_cell.neighbors() {
+                                        let points_back = neighbor_neighbors
+                                            .iter()
+                                            .any(|n| n.as_ref() == Some(&cell_key));
+                                        assert!(
+                                            points_back,
+                                            "{}D: Cell {cell_key:?} has neighbor {neighbor_key:?} at facet {facet_idx}, but neighbor doesn't point back",
+                                            $dim
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Verify triangulation is still valid
+                    assert!(
+                        dt.is_valid().is_ok(),
+                        "{}D: Triangulation should be valid after vertex removal",
+                        $dim
+                    );
+                }
+            }
+        };
+    }
+
+    /// Basic accessor tests across dimensions.
+    macro_rules! test_basic_accessors {
+        ($dim:expr, [$($simplex_coords:expr),+ $(,)?]) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_basic_accessors_ $dim d>]() {
+                    // Empty triangulation
+                    let empty: Triangulation<FastKernel<f64>, (), (), $dim> =
+                        Triangulation::new_empty(FastKernel::new());
+                    assert_eq!(empty.number_of_vertices(), 0);
+                    assert_eq!(empty.number_of_cells(), 0);
+                    assert_eq!(empty.dim(), -1);
+                    assert_eq!(empty.cells().count(), 0);
+                    assert_eq!(empty.vertices().count(), 0);
+                    assert_eq!(empty.facets().count(), 0);
+                    assert_eq!(empty.boundary_facets().count(), 0);
+
+                    // Simplex triangulation
+                    let vertices: Vec<Vertex<f64, (), $dim>> = vec![
+                        $(vertex!($simplex_coords)),+
+                    ];
+                    let expected_vertex_count = vertices.len();
+
+                    let tds = Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices)
+                        .unwrap();
+                    let tri = Triangulation::<FastKernel<f64>, (), (), $dim> { kernel: FastKernel::new(), tds };
+
+                    assert_eq!(tri.number_of_vertices(), expected_vertex_count);
+                    assert_eq!(tri.number_of_cells(), 1);
+                    assert_eq!(tri.dim(), $dim as i32);
+                    assert_eq!(tri.cells().count(), 1);
+                    assert_eq!(tri.vertices().count(), expected_vertex_count);
+
+                    // D-simplex has D+1 facets, all on boundary
+                    let facet_count = tri.facets().count();
+                    assert_eq!(facet_count, expected_vertex_count, "{}D: D-simplex should have D+1 facets", $dim);
+                    let boundary_count = tri.boundary_facets().count();
+                    assert_eq!(boundary_count, expected_vertex_count, "{}D: All facets should be on boundary", $dim);
+                }
+            }
+        };
+    }
+
+    // Facet validation tests (2D - 5D)
+    test_facet_validation!(2, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
+    test_facet_validation!(
         3,
         [
             [0.0, 0.0, 0.0],
@@ -2096,7 +2167,7 @@ mod tests {
             [0.0, 0.0, 1.0]
         ]
     );
-    test_local_facet_validation!(
+    test_facet_validation!(
         4,
         [
             [0.0, 0.0, 0.0, 0.0],
@@ -2106,7 +2177,7 @@ mod tests {
             [0.0, 0.0, 0.0, 1.0]
         ]
     );
-    test_local_facet_validation!(
+    test_facet_validation!(
         5,
         [
             [0.0, 0.0, 0.0, 0.0, 0.0],
@@ -2118,74 +2189,72 @@ mod tests {
         ]
     );
 
-    #[test]
-    fn test_remove_vertex_neighbor_pointers_valid() {
-        // This test verifies that neighbor pointers remain valid after remove_vertex,
-        // even when facet repair removes additional cells.
-        use crate::core::delaunay_triangulation::DelaunayTriangulation;
+    // Basic accessor tests (2D - 5D)
+    test_basic_accessors!(2, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
+    test_basic_accessors!(
+        3,
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0]
+        ]
+    );
+    test_basic_accessors!(
+        4,
+        [
+            [0.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0]
+        ]
+    );
+    test_basic_accessors!(
+        5,
+        [
+            [0.0, 0.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0]
+        ]
+    );
 
-        // Create a small 3D triangulation
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.5, 0.5, 0.5]),
-        ];
-
-        let mut dt = DelaunayTriangulation::new(&vertices).expect("Failed to create triangulation");
-
-        // Remove the center vertex
-        let center_vertex = dt
-            .vertices()
-            .find(|(_, v)| {
-                let coords = v.point().coords();
-                (coords[0] - 0.5).abs() < 1e-10
-                    && (coords[1] - 0.5).abs() < 1e-10
-                    && (coords[2] - 0.5).abs() < 1e-10
-            })
-            .map(|(_, v)| *v)
-            .expect("Center vertex not found");
-
-        dt.remove_vertex(&center_vertex)
-            .expect("Failed to remove vertex");
-
-        // Verify neighbor pointer consistency:
-        // 1. No dangling pointers (all neighbor keys exist)
-        // 2. Neighbor relationships are symmetric
-        for (cell_key, cell) in dt.tds().cells() {
-            if let Some(neighbors) = cell.neighbors() {
-                for (facet_idx, neighbor_opt) in neighbors.iter().enumerate() {
-                    if let Some(neighbor_key) = neighbor_opt {
-                        // Verify neighbor exists
-                        assert!(
-                            dt.tds().contains_cell(*neighbor_key),
-                            "Cell {cell_key:?} has neighbor pointer to non-existent cell {neighbor_key:?}"
-                        );
-
-                        // Verify symmetry: neighbor should point back to us
-                        let neighbor_cell = dt
-                            .tds()
-                            .get_cell(*neighbor_key)
-                            .expect("Neighbor cell should exist");
-                        if let Some(neighbor_neighbors) = neighbor_cell.neighbors() {
-                            let points_back = neighbor_neighbors
-                                .iter()
-                                .any(|n| n.as_ref() == Some(&cell_key));
-                            assert!(
-                                points_back,
-                                "Cell {cell_key:?} has neighbor {neighbor_key:?} at facet {facet_idx}, but neighbor doesn't point back"
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
-        // Verify triangulation is still valid
-        assert!(
-            dt.is_valid().is_ok(),
-            "Triangulation should be valid after vertex removal"
-        );
-    }
+    // Remove vertex tests (2D - 5D)
+    test_remove_vertex!(2, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]], [0.3, 0.3]);
+    test_remove_vertex!(
+        3,
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0]
+        ],
+        [0.25, 0.25, 0.25]
+    );
+    test_remove_vertex!(
+        4,
+        [
+            [0.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0]
+        ],
+        [0.2, 0.2, 0.2, 0.2]
+    );
+    test_remove_vertex!(
+        5,
+        [
+            [0.0, 0.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0]
+        ],
+        [0.16, 0.16, 0.16, 0.16, 0.16]
+    );
 }

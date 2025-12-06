@@ -1041,8 +1041,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::collections::CellKeyBuffer;
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
     use crate::vertex;
+    use slotmap::KeyData;
 
     /// Macro to generate cavity filling tests for different dimensions
     macro_rules! test_fill_cavity {
@@ -1147,5 +1149,248 @@ mod tests {
         ],
         vertex!([0.15, 0.15, 0.15, 0.15, 0.15]),
         6 // D+1 facets for a 5-simplex
+    );
+
+    // Error case tests
+
+    #[test]
+    fn test_fill_cavity_with_invalid_vertex_key() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
+        let tds = dt.tds_mut();
+
+        let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
+        let cell_key = tds.cell_keys().next().unwrap();
+        let boundary_facets: Vec<FacetHandle> =
+            (0..=2).map(|i| FacetHandle::new(cell_key, i)).collect();
+
+        let result = fill_cavity(tds, invalid_vkey, &boundary_facets);
+        assert!(result.is_err());
+
+        if let Err(InsertionError::CavityFilling { message }) = result {
+            assert!(
+                message.contains("not found")
+                    || message.contains("invalid")
+                    || message.contains("does not exist")
+            );
+        } else {
+            panic!("Expected CavityFilling error");
+        }
+    }
+
+    #[test]
+    fn test_fill_cavity_with_invalid_facet_cell() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
+        let tds = dt.tds_mut();
+
+        let new_vkey = tds.insert_vertex_with_mapping(vertex!([0.5, 0.5])).unwrap();
+        let invalid_cell_key = CellKey::from(KeyData::from_ffi(u64::MAX));
+        let invalid_boundary_facets: Vec<FacetHandle> = (0..=2)
+            .map(|i| FacetHandle::new(invalid_cell_key, i))
+            .collect();
+
+        let result = fill_cavity(tds, new_vkey, &invalid_boundary_facets);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(InsertionError::CavityFilling { .. })));
+    }
+
+    #[test]
+    fn test_wire_cavity_neighbors_with_invalid_cells() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
+        let tds = dt.tds_mut();
+
+        let mut invalid_cells = CellKeyBuffer::new();
+        invalid_cells.push(CellKey::from(KeyData::from_ffi(u64::MAX)));
+        invalid_cells.push(CellKey::from(KeyData::from_ffi(u64::MAX - 1)));
+
+        let result = wire_cavity_neighbors(tds, &invalid_cells, None);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(InsertionError::NeighborWiring { .. })));
+    }
+
+    #[test]
+    fn test_fill_cavity_with_empty_boundary_facets() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
+        let tds = dt.tds_mut();
+
+        let new_vkey = tds.insert_vertex_with_mapping(vertex!([0.5, 0.5])).unwrap();
+        let empty_facets: Vec<FacetHandle> = vec![];
+        let result = fill_cavity(tds, new_vkey, &empty_facets);
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
+    }
+
+    // InsertionError::is_retryable() tests
+
+    #[test]
+    fn test_insertion_error_retryable() {
+        use crate::core::algorithms::locate::LocateError;
+        use crate::core::triangulation_data_structure::TriangulationValidationError;
+
+        // Retryable errors
+        assert!(
+            InsertionError::Location(LocateError::CycleDetected { steps: 1000 }).is_retryable()
+        );
+
+        assert!(
+            InsertionError::NonManifoldTopology {
+                facet_hash: 0x12345,
+                cell_count: 3
+            }
+            .is_retryable()
+        );
+
+        assert!(
+            InsertionError::TopologyValidation(
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: "test".to_string()
+                }
+            )
+            .is_retryable()
+        );
+
+        assert!(
+            InsertionError::NeighborWiring {
+                message: "Non-manifold topology detected".to_string()
+            }
+            .is_retryable()
+        );
+
+        // Non-retryable errors
+        assert!(
+            !InsertionError::DuplicateUuid {
+                entity: crate::core::triangulation_data_structure::EntityKind::Vertex,
+                uuid: uuid::Uuid::new_v4(),
+            }
+            .is_retryable()
+        );
+
+        assert!(
+            !InsertionError::DuplicateCoordinates {
+                coordinates: "0,0,0".to_string()
+            }
+            .is_retryable()
+        );
+
+        assert!(
+            !InsertionError::CavityFilling {
+                message: "test".to_string()
+            }
+            .is_retryable()
+        );
+
+        assert!(
+            !InsertionError::HullExtension {
+                message: "test".to_string()
+            }
+            .is_retryable()
+        );
+    }
+
+    // repair_neighbor_pointers tests
+
+    /// Macro to generate `repair_neighbor_pointers` tests for different dimensions
+    macro_rules! test_repair_neighbors {
+        ($dim:literal, $initial_vertices:expr) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_repair_neighbor_pointers_ $dim d>]() {
+                    let vertices = $initial_vertices;
+                    let mut dt = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices).unwrap();
+                    let tds = dt.tds_mut();
+
+                    // Verify all neighbor pointers are initially valid
+                    for (_, cell) in tds.cells() {
+                        if let Some(neighbors) = cell.neighbors() {
+                            for &neighbor_opt in neighbors {
+                                if let Some(neighbor_key) = neighbor_opt {
+                                    assert!(tds.contains_cell(neighbor_key), "Neighbor should exist");
+                                }
+                            }
+                        }
+                    }
+
+                    // Repair should succeed (no-op since pointers are valid)
+                    assert!(repair_neighbor_pointers(tds).is_ok());
+
+                    // Verify all pointers still valid after repair
+                    for (_, cell) in tds.cells() {
+                        if let Some(neighbors) = cell.neighbors() {
+                            for &neighbor_opt in neighbors {
+                                if let Some(neighbor_key) = neighbor_opt {
+                                    assert!(tds.contains_cell(neighbor_key), "Neighbor should still exist after repair");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+    }
+
+    test_repair_neighbors!(
+        2,
+        vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([0.5, 0.5]),
+        ]
+    );
+
+    test_repair_neighbors!(
+        3,
+        vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.25, 0.25, 0.25]),
+        ]
+    );
+
+    test_repair_neighbors!(
+        4,
+        vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+            vertex!([0.2, 0.2, 0.2, 0.2]),
+        ]
+    );
+
+    test_repair_neighbors!(
+        5,
+        vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
+            vertex!([0.15, 0.15, 0.15, 0.15, 0.15]),
+        ]
     );
 }
