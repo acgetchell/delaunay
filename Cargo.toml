@@ -31,7 +31,7 @@ rand = "0.9.2"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 serde_test = "1.0.177"
-slotmap = { version = "1.1.0", features = ["serde"] }
+slotmap = { version = "1.1.1", features = ["serde"] }
 thiserror = "2.0.17"
 uuid = { version = "1.19.0", features = ["v4", "serde"] }
 
