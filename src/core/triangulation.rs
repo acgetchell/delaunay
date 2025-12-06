@@ -710,7 +710,14 @@ where
             LocateResult, extract_cavity_boundary, find_conflict_region, locate,
         };
 
-        // Capture the inserted vertex's UUID and point before any TDS operations
+        // CRITICAL: Capture UUID and point BEFORE inserting into TDS
+        // Rationale:
+        // - inserted_uuid: Needed to remap v_key after TDS rebuild (lines 736-744)
+        //   when building initial simplex. The rebuild replaces self.tds entirely,
+        //   invalidating all previous VertexKeys.
+        // - point: Needed for locate(), find_conflict_region(), and extend_hull() calls
+        //   (lines 752, 760, 879, 895). After TDS rebuild, we cannot access the vertex
+        //   via the old v_key, so we must have the point value captured.
         let inserted_uuid = vertex.uuid();
         let point = *vertex.point();
 
@@ -807,6 +814,24 @@ where
                         );
 
                         let removed = self.repair_local_facet_issues(&issues)?;
+
+                        // Early exit if repair made no progress
+                        if removed == 0 {
+                            #[cfg(debug_assertions)]
+                            eprintln!(
+                                "No cells removed in iteration {} - repair cannot make progress",
+                                iteration + 1
+                            );
+                            return Err(InsertionError::TopologyValidation(
+                                TriangulationValidationError::InconsistentDataStructure {
+                                    message: format!(
+                                        "Repair stalled: {} over-shared facets remain but no cells could be removed",
+                                        issues.len()
+                                    ),
+                                },
+                            ));
+                        }
+
                         total_removed += removed;
 
                         #[cfg(debug_assertions)]
@@ -872,12 +897,14 @@ where
                         }
                     })?;
 
-                    // CRITICAL: Validate that locate still works after repair
-                    // If repair created cycles, we'll catch it here
-                    if let Some(test_cell) = self.tds.cells().next().map(|(k, _)| k) {
-                        // Try to locate the point we just inserted
-                        let _ = locate(&self.tds, &self.kernel, &point, Some(test_cell))?;
-                    }
+                    // Validate neighbor pointers by forcing a full facet walk (no hint).
+                    // This uses locate's built-in cycle detection (tracks visited cells,
+                    // errors after 10k steps). Cost: O(D·log(n)) for one locate call.
+                    // If repair created cycles, there's a good chance they'll be encountered
+                    // during the walk to locate the just-inserted point.
+                    // Note: Debug builds also run validate_no_neighbor_cycles() in
+                    // repair_neighbor_pointers() for comprehensive O(n·D) BFS validation.
+                    let _ = locate(&self.tds, &self.kernel, &point, None)?;
                 } else {
                     #[cfg(debug_assertions)]
                     eprintln!("No cells removed (interior), skipping neighbor rebuild");
@@ -910,6 +937,24 @@ where
                         );
 
                         let removed = self.repair_local_facet_issues(&issues)?;
+
+                        // Early exit if repair made no progress
+                        if removed == 0 {
+                            #[cfg(debug_assertions)]
+                            eprintln!(
+                                "No cells removed in iteration {} - repair cannot make progress",
+                                iteration + 1
+                            );
+                            return Err(InsertionError::TopologyValidation(
+                                TriangulationValidationError::InconsistentDataStructure {
+                                    message: format!(
+                                        "Hull extension repair stalled: {} over-shared facets remain but no cells could be removed",
+                                        issues.len()
+                                    ),
+                                },
+                            ));
+                        }
+
                         total_removed += removed;
 
                         #[cfg(debug_assertions)]
@@ -1312,18 +1357,13 @@ where
             }
         }
 
-        // Collect over-shared facets (> 2 cells)
-        let mut over_shared = FacetIssuesMap::default();
-        for (facet_hash, cell_facet_pairs) in facet_to_cells {
-            if cell_facet_pairs.len() > 2 {
-                over_shared.insert(facet_hash, cell_facet_pairs);
-            }
-        }
+        // Filter to only over-shared facets (> 2 cells) in a single pass
+        facet_to_cells.retain(|_, cell_facet_pairs| cell_facet_pairs.len() > 2);
 
-        if over_shared.is_empty() {
+        if facet_to_cells.is_empty() {
             Ok(None)
         } else {
-            Ok(Some(over_shared))
+            Ok(Some(facet_to_cells))
         }
     }
 
@@ -1376,21 +1416,38 @@ where
         for cell_facet_pairs in issues.values() {
             let involved_cells: Vec<CellKey> = cell_facet_pairs.iter().map(|(ck, _)| *ck).collect();
 
-            // Compute quality for each cell
-            let mut cell_qualities: Vec<(CellKey, f64, Uuid)> = involved_cells
-                .iter()
-                .filter_map(|&cell_key| {
-                    let quality_result = radius_ratio(self, cell_key);
-                    let uuid = self.tds.get_cell(cell_key)?.uuid();
+            // Compute quality for each cell - propagate errors from quality evaluation
+            let mut cell_qualities: Vec<(CellKey, f64, Uuid)> = Vec::new();
+            for &cell_key in &involved_cells {
+                let cell = self.tds.get_cell(cell_key).ok_or_else(|| {
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!("Cell {cell_key:?} not found during facet repair"),
+                    }
+                })?;
+                let uuid = cell.uuid();
 
-                    quality_result.ok().and_then(|ratio| {
-                        safe_scalar_to_f64(ratio)
-                            .ok()
-                            .filter(|r| r.is_finite())
-                            .map(|r| (cell_key, r, uuid))
-                    })
-                })
-                .collect();
+                // Propagate quality evaluation errors
+                let ratio = radius_ratio(self, cell_key).map_err(|e| {
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!("Quality evaluation failed for cell {cell_key:?}: {e}"),
+                    }
+                })?;
+                let ratio_f64 = safe_scalar_to_f64(ratio).map_err(|_| {
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!("Quality ratio conversion failed for cell {cell_key:?}"),
+                    }
+                })?;
+
+                if ratio_f64.is_finite() {
+                    cell_qualities.push((cell_key, ratio_f64, uuid));
+                } else {
+                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Non-finite quality ratio {ratio_f64} for cell {cell_key:?}"
+                        ),
+                    });
+                }
+            }
 
             if cell_qualities.len() >= 2 {
                 // Quality-based selection: keep 2 best, remove rest

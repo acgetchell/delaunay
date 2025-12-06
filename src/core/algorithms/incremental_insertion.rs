@@ -7,6 +7,18 @@
 //! 4. Remove conflict cells
 //! 5. Fill cavity (create new cells connecting boundary to new vertex)
 //! 6. Wire neighbors locally (no global assign_neighbors call)
+//!
+//! ## Hull Extension and Visibility
+//!
+//! When inserting a vertex outside the current convex hull, the algorithm finds
+//! *visible* boundary facets using orientation tests:
+//! - A facet is **strictly visible** if the new point and the opposite vertex
+//!   have opposite orientations relative to the facet's supporting hyperplane.
+//! - **Coplanar cases** (orientation == 0) are conservatively treated as non-visible
+//!   to avoid numerical instability. This may cause "no visible facets" errors for
+//!   points nearly on the hull surface.
+//! - For "weakly visible" behavior, a threshold-based approach would be needed
+//!   (not currently implemented).
 
 use crate::core::algorithms::locate::{ConflictError, LocateError};
 use crate::core::cell::Cell;
@@ -187,6 +199,11 @@ impl InsertionError {
 /// If you need transactional semantics (all-or-nothing insertion), you must
 /// implement rollback logic at a higher level by cloning the TDS before calling
 /// this function.
+///
+/// **Note (Debug Builds)**: In debug builds, this function checks for duplicate
+/// boundary facets and logs warnings if found. Duplicate facets will create
+/// overlapping cells, which will be detected and repaired by subsequent topology
+/// validation passes (see `detect_local_facet_issues` / `repair_local_facet_issues`).
 pub fn fill_cavity<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
     new_vertex_key: VertexKey,
@@ -289,16 +306,15 @@ where
         new_cells.push(cell_key);
     }
 
-    // Validate we created one cell per boundary facet (1:1 correspondence)
-    if boundary_facets.len() != new_cells.len() {
-        return Err(InsertionError::CavityFilling {
-            message: format!(
-                "Created {} cells for {} boundary facets (should be 1:1)",
-                new_cells.len(),
-                boundary_facets.len()
-            ),
-        });
-    }
+    // Defensive check: 1:1 correspondence is guaranteed by construction
+    // (one iteration per boundary facet, one cell push per iteration)
+    debug_assert_eq!(
+        boundary_facets.len(),
+        new_cells.len(),
+        "Created {} cells for {} boundary facets (should be 1:1)",
+        new_cells.len(),
+        boundary_facets.len()
+    );
 
     Ok(new_cells)
 }
@@ -417,10 +433,16 @@ where
 
             // Only add if this facet matches one from new cells
             if let Some(existing_facet_cells) = facet_map.get_mut(&facet_key) {
-                // Only add to boundary facets (len == 1)
-                // Internal facets of new cells (len >= 2) should not be wired to existing cells
-                // This prevents creating non-manifold topology where a facet is shared by
-                // multiple new cells AND an existing cell
+                // CRITICAL: Only wire to boundary facets (len == 1)
+                //
+                // Why: If len >= 2, the facet is already shared by multiple new cells (internal).
+                // Adding an existing cell would create a non-manifold configuration where the facet
+                // is shared by 3+ cells (>2 new cells + existing cell).
+                //
+                // By only wiring to boundary facets (len == 1), we ensure:
+                // - Boundary facets get their external neighbor (existing cell)
+                // - Internal facets remain paired between new cells only
+                // - Manifold property is preserved (each facet shared by ≤2 cells)
                 if existing_facet_cells.len() == 1 {
                     let facet_idx_u8 =
                         u8::try_from(facet_idx).map_err(|_| InsertionError::NeighborWiring {
@@ -603,6 +625,11 @@ where
 /// 3. Build facet hash for that specific facet
 /// 4. Scan all other cells to find the one sharing that facet
 /// 5. Wire mutual neighbors only for the broken facets
+///
+/// # Debug Validation
+/// In debug builds, this function performs additional cycle detection via BFS
+/// (see `validate_no_neighbor_cycles`). This adds overhead but helps catch
+/// neighbor graph corruption early during development.
 #[allow(clippy::too_many_lines)]
 pub fn repair_neighbor_pointers<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
@@ -661,13 +688,13 @@ where
         // For each facet that needs repair, find its neighbor by facet matching
         for facet_idx in facets_to_repair {
             // Build facet vertex keys (all except facet_idx)
-            let cell = tds
-                .get_cell(cell_key)
-                .ok_or_else(|| InsertionError::NeighborWiring {
-                    message: format!("Cell {cell_key:?} not found during facet matching"),
-                })?;
+            let cell_vertices =
+                tds.get_cell_vertices(cell_key)
+                    .map_err(|e| InsertionError::NeighborWiring {
+                        message: format!("Cell {cell_key:?} not found during facet matching: {e}"),
+                    })?;
             let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-            for (i, &vkey) in cell.vertices().iter().enumerate() {
+            for (i, &vkey) in cell_vertices.iter().enumerate() {
                 if i != facet_idx {
                     facet_vkeys.push(vkey);
                 }
@@ -993,6 +1020,13 @@ where
         // "no visible facets" errors for points nearly on the hull surface.
         // For "weakly visible" behavior, use: orientation_with_opposite * orientation_with_point < 0
         // (but this requires careful epsilon-based handling to avoid degenerate cases)
+        //
+        // TODO: Investigate threshold-based approaches for weakly visible behavior.
+        // This would allow treating nearly coplanar facets as visible, reducing failures
+        // for points close to the hull surface. Implementation would need:
+        // - Configurable epsilon threshold based on coordinate type and scale
+        // - Careful handling of edge cases to avoid creating degenerate cells
+        // - Testing with various numerical precision scenarios (f32 vs f64)
         let is_visible = (orientation_with_opposite > 0 && orientation_with_point < 0)
             || (orientation_with_opposite < 0 && orientation_with_point > 0);
 
