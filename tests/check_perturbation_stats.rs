@@ -48,9 +48,19 @@ fn check_perturbation_effectiveness() {
     println!("Perturbation success:  {perturbation_success}");
     println!("Skipped after retries: {skipped}");
     println!("Total attempts:        {total_attempts}");
-    #[allow(clippy::cast_precision_loss)]
-    let avg_attempts = total_attempts as f64 / (first_try_success + perturbation_success) as f64;
-    println!("Average attempts:      {avg_attempts:.2}");
+
+    let successful = first_try_success + perturbation_success;
+    if successful > 0 {
+        use num_traits::NumCast;
+        let attempts_f64: f64 =
+            NumCast::from(total_attempts).expect("usize should always fit in f64");
+        let successful_f64: f64 =
+            NumCast::from(successful).expect("usize should always fit in f64");
+        let avg_attempts = attempts_f64 / successful_f64;
+        println!("Average attempts:      {avg_attempts:.2}");
+    } else {
+        println!("Average attempts:      N/A (no successful insertions)");
+    }
 
     // Verify the triangulation is valid
     assert!(dt.is_valid().is_ok());

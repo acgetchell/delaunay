@@ -4,7 +4,7 @@
 //! triangulation using 20 randomly generated points. It showcases:
 //!
 //! - Using the `generate_random_triangulation` utility function for convenience
-//! - Building a Delaunay triangulation using the Bowyer-Watson algorithm
+//! - Building a Delaunay triangulation using the incremental cavity-based insertion algorithm
 //! - Extracting the convex hull from the triangulation
 //! - Analyzing convex hull properties (facets, vertices, dimension)
 //! - Testing point containment (inside vs outside the hull)
@@ -15,7 +15,7 @@
 //! ## Usage
 //!
 //! ```bash
-//! cargo run --example convex_hull_3d_100_points
+//! cargo run --example convex_hull_3d_20_points
 //! ```
 //!
 //! ## Output
@@ -88,7 +88,7 @@ fn main() {
     extract_and_analyze_convex_hull(&dt);
 
     // Test point containment
-    test_point_containment(&dt, &[]);
+    test_point_containment(&dt);
 
     // Analyze visible facets
     analyze_visible_facets(&dt);
@@ -197,10 +197,7 @@ fn extract_and_analyze_convex_hull(dt: &DelaunayTriangulation<FastKernel<f64>, (
 }
 
 /// Test point containment with various points (updated to work with generated triangulation)
-fn test_point_containment(
-    dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>,
-    _original_vertices: &[()], // Not needed anymore since we access vertices from tds
-) {
+fn test_point_containment(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>) {
     println!("Point Containment Tests:");
     println!("=======================");
 

@@ -100,6 +100,48 @@ pub enum InsertionError {
     ),
 }
 
+impl InsertionError {
+    /// Returns true if this error is retryable via coordinate perturbation.
+    ///
+    /// Retryable errors are geometric degeneracies that may be resolved by
+    /// slightly perturbing the vertex coordinates:
+    /// - Locate cycles (numerical degeneracy during point location)
+    /// - Non-manifold topology (duplicate boundary facets, ridge fans)
+    /// - Topology validation failures during repair
+    ///
+    /// Non-retryable errors are structural failures that won't be fixed by perturbation:
+    /// - Duplicate UUIDs
+    /// - Duplicate coordinates
+    /// - Generic construction or wiring failures
+    #[must_use]
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            // Locate errors: cycles indicate numerical degeneracy
+            Self::Location(le) => {
+                matches!(le, LocateError::CycleDetected { .. })
+            }
+            // Neighbor wiring errors: non-manifold topology from string check (legacy)
+            // TODO: Add structured error variant for non-manifold detection
+            Self::NeighborWiring { message } => message.contains("Non-manifold"),
+            // Conflict region errors: duplicate facets or ridge fans indicate degeneracy
+            Self::ConflictRegion(ce) => {
+                matches!(
+                    ce,
+                    ConflictError::DuplicateBoundaryFacets { .. } | ConflictError::RidgeFan { .. }
+                )
+            }
+            // Topology validation errors indicate repair failures
+            Self::TopologyValidation(_) => true,
+            // All other errors are not retryable
+            Self::Construction(_)
+            | Self::CavityFilling { .. }
+            | Self::HullExtension { .. }
+            | Self::DuplicateCoordinates { .. }
+            | Self::DuplicateUuid { .. } => false,
+        }
+    }
+}
+
 /// Fill cavity by creating new cells connecting boundary facets to new vertex.
 ///
 /// Each boundary facet becomes the base of a new (D+1)-cell with the new vertex as apex.
@@ -537,11 +579,7 @@ where
 /// `Ok(())` if repair succeeds
 ///
 /// # Errors
-/// Returns error if facet indexing or neighbor setting fails.
-///
-/// # Panics
-/// Panics if a cell cannot be retrieved during facet matching (should not happen
-/// during normal operation as cells are validated before matching).
+/// Returns error if facet indexing, neighbor setting, or cell retrieval fails.
 ///
 /// # Algorithm
 /// 1. For each cell, check each neighbor pointer
@@ -570,6 +608,8 @@ where
     // Track wired facet pairs to avoid double-wiring
     // Key: (min_cell, max_cell, facet_hash) to ensure unique facet pairs
     let mut wired_pairs: FastHashSet<(CellKey, CellKey, u64)> = FastHashSet::default();
+
+    #[allow(unused_variables)]
     #[cfg(debug_assertions)]
     let mut total_repaired = 0;
 
@@ -589,7 +629,7 @@ where
             for facet_idx in 0..num_vertices {
                 let neighbor = neighbors.get(facet_idx).copied().flatten();
                 // Repair if None or neighbor doesn't exist
-                if neighbor.is_none() || !tds.contains_cell(neighbor.unwrap()) {
+                if neighbor.is_none_or(|neighbor_key| !tds.contains_cell(neighbor_key)) {
                     facets_to_repair.push(facet_idx);
                 }
             }
@@ -605,7 +645,11 @@ where
         // For each facet that needs repair, find its neighbor by facet matching
         for facet_idx in facets_to_repair {
             // Build facet vertex keys (all except facet_idx)
-            let cell = tds.get_cell(cell_key).unwrap();
+            let cell = tds
+                .get_cell(cell_key)
+                .ok_or_else(|| InsertionError::NeighborWiring {
+                    message: format!("Cell {cell_key:?} not found during facet matching"),
+                })?;
             let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
             for (i, &vkey) in cell.vertices().iter().enumerate() {
                 if i != facet_idx {
@@ -623,7 +667,11 @@ where
                     continue;
                 }
 
-                let other_cell = tds.get_cell(other_key).unwrap();
+                let other_cell =
+                    tds.get_cell(other_key)
+                        .ok_or_else(|| InsertionError::NeighborWiring {
+                            message: format!("Cell {other_key:?} not found during facet matching"),
+                        })?;
 
                 // Check each facet of other_cell
                 for other_facet_idx in 0..other_cell.number_of_vertices() {
@@ -666,8 +714,16 @@ where
                 }
 
                 // Use mirror_facet_index to find the correct opposite vertex in neighbor
-                let cell = tds.get_cell(cell_key).unwrap();
-                let other_cell = tds.get_cell(other_key).unwrap();
+                let cell =
+                    tds.get_cell(cell_key)
+                        .ok_or_else(|| InsertionError::NeighborWiring {
+                            message: format!("Cell {cell_key:?} not found during neighbor wiring"),
+                        })?;
+                let other_cell =
+                    tds.get_cell(other_key)
+                        .ok_or_else(|| InsertionError::NeighborWiring {
+                            message: format!("Cell {other_key:?} not found during neighbor wiring"),
+                        })?;
 
                 // Find the mirror facet index: which vertex in other_cell is opposite the shared facet?
                 let mirror_idx = mirror_facet_index(cell, facet_idx, other_cell).ok_or_else(

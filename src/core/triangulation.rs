@@ -302,6 +302,11 @@ where
     /// with no neighbor relationships (all boundary facets). The simplex is
     /// validated to ensure it is non-degenerate (vertices span full D-dimensional space).
     ///
+    /// **Design Note**: This method uses `K::default()` to construct a kernel instance
+    /// for the orientation test, relying on the design principle that kernels are stateless
+    /// and reconstructible. If stateful kernels are introduced in the future, this method
+    /// should accept an explicit kernel parameter instead.
+    ///
     /// # Arguments
     /// - `vertices`: Exactly D+1 vertices to form the initial simplex
     ///
@@ -648,30 +653,7 @@ where
                     self.tds = tds_snapshot;
 
                     // Check if this is a retryable error (geometric degeneracy)
-                    let is_retryable = match e {
-                        // Locate errors: cycles indicate numerical degeneracy
-                        InsertionError::Location(le)
-                            if le.to_string().contains("Cycle detected") =>
-                        {
-                            true
-                        }
-                        // Neighbor wiring errors: non-manifold topology
-                        InsertionError::NeighborWiring { message }
-                            if message.contains("Non-manifold") =>
-                        {
-                            true
-                        }
-                        // Conflict region errors: duplicate facets or ridge fans indicate degeneracy
-                        InsertionError::ConflictRegion(ce) => {
-                            matches!(ce,
-                                crate::core::algorithms::locate::ConflictError::DuplicateBoundaryFacets { .. } |
-                                crate::core::algorithms::locate::ConflictError::RidgeFan { .. }
-                            )
-                        }
-                        // Topology validation errors indicate repair failures
-                        InsertionError::TopologyValidation(_) => true,
-                        _ => false,
-                    };
+                    let is_retryable = e.is_retryable();
 
                     if is_retryable && attempt < max_perturbation_attempts {
                         #[cfg(debug_assertions)]
@@ -1105,6 +1087,8 @@ where
         })?;
 
         // Remove the cells containing the vertex (now that new cells are wired up)
+        // Note: remove_cells_by_keys() automatically clears neighbor pointers in surviving
+        // cells that reference removed cells (sets them to None/boundary)
         let cells_removed = self.tds.remove_cells_by_keys(&cells_to_remove);
 
         // Validate facet topology for newly created cells (O(k*D) localized check)
@@ -1117,8 +1101,17 @@ where
             let removed = self.repair_local_facet_issues(&issues)?;
             #[cfg(debug_assertions)]
             eprintln!("Repaired by removing {removed} additional cells");
-            #[cfg(not(debug_assertions))]
-            let _ = removed;
+
+            // Repair neighbor pointers after removing additional cells
+            // This ensures neighbor consistency after repair operations
+            if removed > 0 {
+                use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
+                repair_neighbor_pointers(&mut self.tds).map_err(|e| {
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!("Neighbor repair after facet issue repair failed: {e}"),
+                    }
+                })?;
+            }
         }
 
         // Rebuild vertex-cell incidence for all vertices
@@ -1355,8 +1348,10 @@ where
     ///
     /// # Errors
     ///
-    /// Returns error if topology rebuild fails after cell removal. This indicates
-    /// the triangulation may be in an inconsistent state and should be validated.
+    /// Returns error if quality evaluation or facet bookkeeping fails while
+    /// selecting cells to remove. This function itself does not rebuild neighbors;
+    /// callers are responsible for repairing or validating topology after removal
+    /// (e.g., via `repair_neighbor_pointers` or a validation pass).
     ///
     /// # Examples
     ///
@@ -2065,4 +2060,75 @@ mod tests {
             [0.0, 0.0, 0.0, 0.0, 1.0]
         ]
     );
+
+    #[test]
+    fn test_remove_vertex_neighbor_pointers_valid() {
+        // This test verifies that neighbor pointers remain valid after remove_vertex,
+        // even when facet repair removes additional cells.
+        use crate::core::delaunay_triangulation::DelaunayTriangulation;
+
+        // Create a small 3D triangulation
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.5, 0.5, 0.5]),
+        ];
+
+        let mut dt = DelaunayTriangulation::new(&vertices).expect("Failed to create triangulation");
+
+        // Remove the center vertex
+        let center_vertex = dt
+            .vertices()
+            .find(|(_, v)| {
+                let coords = v.point().coords();
+                (coords[0] - 0.5).abs() < 1e-10
+                    && (coords[1] - 0.5).abs() < 1e-10
+                    && (coords[2] - 0.5).abs() < 1e-10
+            })
+            .map(|(_, v)| *v)
+            .expect("Center vertex not found");
+
+        dt.remove_vertex(&center_vertex)
+            .expect("Failed to remove vertex");
+
+        // Verify neighbor pointer consistency:
+        // 1. No dangling pointers (all neighbor keys exist)
+        // 2. Neighbor relationships are symmetric
+        for (cell_key, cell) in dt.tds().cells() {
+            if let Some(neighbors) = cell.neighbors() {
+                for (facet_idx, neighbor_opt) in neighbors.iter().enumerate() {
+                    if let Some(neighbor_key) = neighbor_opt {
+                        // Verify neighbor exists
+                        assert!(
+                            dt.tds().contains_cell(*neighbor_key),
+                            "Cell {cell_key:?} has neighbor pointer to non-existent cell {neighbor_key:?}"
+                        );
+
+                        // Verify symmetry: neighbor should point back to us
+                        let neighbor_cell = dt
+                            .tds()
+                            .get_cell(*neighbor_key)
+                            .expect("Neighbor cell should exist");
+                        if let Some(neighbor_neighbors) = neighbor_cell.neighbors() {
+                            let points_back = neighbor_neighbors
+                                .iter()
+                                .any(|n| n.as_ref() == Some(&cell_key));
+                            assert!(
+                                points_back,
+                                "Cell {cell_key:?} has neighbor {neighbor_key:?} at facet {facet_idx}, but neighbor doesn't point back"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // Verify triangulation is still valid
+        assert!(
+            dt.is_valid().is_ok(),
+            "Triangulation should be valid after vertex removal"
+        );
+    }
 }
