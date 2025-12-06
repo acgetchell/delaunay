@@ -25,8 +25,8 @@ These violations occur even with:
 
 All tests in `tests/proptest_delaunay_triangulation.rs`:
 
-- `prop_empty_circumsphere_{2d,3d,4d,5d}` (lines 228-231)
-- `prop_cloud_with_duplicates_is_delaunay_{2d,3d,4d,5d}` (lines 421-424)
+- `prop_empty_circumsphere_{2d,3d,4d,5d}` - Empty circumsphere property validation
+- `prop_cloud_with_duplicates_is_delaunay_{2d,3d,4d,5d}` - Duplicate cloud integration tests
 
 ## Example Failure Case (2D)
 
@@ -133,8 +133,10 @@ General bistellar flip operations based on i-to-j transformations.
 
 ### Current State
 
-- **Stub implementation**: `src/core/algorithms/flips.rs` (19 lines, TODOs only)
-- **Failing tests**: `tests/proptest_delaunay_triangulation.rs` (lines 167-231, 349-424)
+- **Stub implementation**: `src/core/algorithms/flips.rs` (placeholder with TODOs, no functional
+  implementation)
+- **Failing tests**: `tests/proptest_delaunay_triangulation.rs` (empty circumsphere and duplicate
+  cloud test sections)
 - **Documentation**: `tests/README.md` (updated to reflect bistellar flip dependency)
 
 ### References
@@ -198,7 +200,9 @@ issue.
 
 ## Proposed Resolution
 
-### Option 1: Close Issue #120 (Recommended)
+_Decision: We selected Option 2 (Repurpose Issue #120) to maintain issue continuity and discussion history. The options below remain for context._
+
+### Option 1: Close Issue #120
 
 **Status**: Won't fix for v0.6.0 - requires bistellar flip implementation
 
@@ -216,7 +220,7 @@ issue.
 3. Create new issue: "Implement bistellar flips for Delaunay repair"
 4. Link from #120 to new issue
 
-### Option 2: Repurpose Issue #120
+### Option 2: Repurpose Issue #120 (Selected)
 
 **Status**: Rename to "Implement bistellar flips"
 
@@ -238,8 +242,10 @@ issue.
 3. ⬜ **Update main README** with limitation note
 4. ⬜ **Update API docs** for `DelaunayTriangulation::new()`
 5. ⬜ **Add CHANGELOG entry** noting limitation
-6. ⬜ **Close or repurpose #120**
-7. ⬜ **Create issue for bistellar flips** (if closing #120)
+6. ⬜ **Repurpose #120** to "Implement bistellar flips" (Option 2 selected)
+
+**Note**: This document initially presented two options (close vs. repurpose). Option 2
+(repurpose) was selected to maintain issue continuity and discussion history.
 
 ### For v0.7.0 Release (Next)
 
@@ -328,18 +334,23 @@ Current state in `tests/proptest_delaunay_triangulation.rs`:
 
 **Total**: 8 passing, 12 ignored (8 for bistellar flips, 4 for duplicate rejection)
 
-## Final Recommendation
+## Resolution
 
-Recommend **Option 1: Close Issue #120** as "won't fix for v0.6.0" because:
+**Selected Approach**: Option 2 (Repurpose Issue #120)
 
-1. ✅ Clear separation between bug (test issue) and feature (bistellar flips)
-2. ✅ Allows proper scoping and estimation for flip implementation
-3. ✅ Reflects that tests are working correctly (not broken)
-4. ✅ Better issue tracking: separate concerns
+Issue #120 will be repurposed from "Stabilize property tests" to "Implement bistellar flips
+for Delaunay guarantee" because:
 
-Then create a new issue: **"Implement bistellar flips for Delaunay repair"** with:
+1. ✅ Maintains issue continuity and discussion history
+2. ✅ All stakeholders already tracking #120 will see the evolution
+3. ✅ Investigation document remains linked to original issue
 
-- Reference to this investigation document
-- Implementation plan (2D → 3D → higher dimensions)
-- Milestone: v0.7.0
-- Labels: `enhancement`, `geometry`, `algorithms`
+**Actions Taken**:
+
+- Update issue title: "Stabilize property tests" → "Implement bistellar flips for Delaunay
+  guarantee"
+- Update issue body with implementation plan (see this document for content)
+- Change labels: Remove `testing`, add `enhancement` and `algorithms`
+- Update milestone: v0.6.0 → v0.7.0
+
+**Implementation Tracking**: See repurposed Issue #120 for current status and task checklist.

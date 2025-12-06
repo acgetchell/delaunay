@@ -33,6 +33,23 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// - `V`: User data type for cells
 /// - `D`: Dimension of the triangulation
 ///
+/// # Delaunay Property Note
+///
+/// The triangulation satisfies **structural validity** (all TDS invariants) but may
+/// contain local violations of the empty circumsphere property in rare cases. This is
+/// a known limitation of incremental algorithms without post-processing.
+///
+/// Most triangulations satisfy the Delaunay property. Violations typically occur with:
+/// - Near-degenerate point configurations
+/// - Specific geometric arrangements
+///
+/// For applications requiring strict Delaunay guarantees:
+/// - Use smaller point sets (violations are rarer)
+/// - Filter degenerate configurations when possible
+/// - Monitor for bistellar flip implementation (planned for v0.7.0+)
+///
+/// See: [Issue #120 Investigation](https://github.com/acgetchell/delaunay/blob/main/docs/issue_120_investigation.md)
+///
 /// # Implementation
 ///
 /// Uses efficient incremental cavity-based insertion algorithm:

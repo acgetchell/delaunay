@@ -75,6 +75,7 @@ delaunay/
 │   │   ├── changelog.hbs
 │   │   └── README.md
 │   ├── code_organization.md
+│   ├── issue_120_investigation.md
 │   ├── numerical_robustness_guide.md
 │   ├── OPTIMIZATION_ROADMAP.md
 │   ├── phase4.md
@@ -153,6 +154,7 @@ delaunay/
 │   ├── delaunay_incremental_insertion.rs
 │   ├── proptest_cell.rs
 │   ├── proptest_convex_hull.rs
+│   ├── proptest_delaunay_triangulation.proptest-regressions
 │   ├── proptest_delaunay_triangulation.rs
 │   ├── proptest_facet.rs
 │   ├── proptest_geometry.rs
