@@ -34,6 +34,12 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::geometry::util::safe_scalar_to_f64;
 use std::hash::{Hash, Hasher};
 
+/// Maximum number of repair iterations for fixing non-manifold topology after insertion.
+///
+/// This limit prevents infinite loops in the rare case where repair cannot make progress.
+/// In practice, most insertions require 0-2 iterations to restore manifold topology.
+const MAX_REPAIR_ITERATIONS: usize = 10;
+
 /// Generic triangulation combining kernel and data structure.
 ///
 /// # Type Parameters
@@ -801,7 +807,7 @@ where
                 // 9. Iteratively repair non-manifold topology until facet sharing is valid
                 let mut total_removed = 0;
                 #[allow(unused_variables)]
-                for iteration in 0..10 {
+                for iteration in 0..MAX_REPAIR_ITERATIONS {
                     // Check for non-manifold issues in newly created cells (local scan)
                     // This keeps the repair O(k·D) where k is the cavity size, rather than O(N·D)
                     let cells_to_check: CellKeyBuffer = new_cells
@@ -934,7 +940,7 @@ where
                 // Iteratively repair non-manifold topology until facet sharing is valid
                 let mut total_removed = 0;
                 #[allow(unused_variables)]
-                for iteration in 0..10 {
+                for iteration in 0..MAX_REPAIR_ITERATIONS {
                     // Check for non-manifold issues in newly created hull cells (local scan)
                     // This keeps the repair O(k·D) where k is the number of new hull cells, rather than O(N·D)
                     let cells_to_check: CellKeyBuffer = new_cells

@@ -44,12 +44,13 @@ violations typically occur with:
 - Specific geometric arrangements of input points
 
 Most triangulations satisfy the Delaunay property, and all structural invariants (TDS validity)
-are maintained. Full Delaunay property guarantee requires bistellar flip implementation, planned
-for v0.7.0+.
+are maintained. Full Delaunay property guarantees will require a future bistellar flip implementation,
+currently planned for v0.7.0+.
 
 For details, see: [Issue #120 Investigation](docs/issue_120_investigation.md)
 
-For applications requiring strict Delaunay guarantees:
+For applications requiring strict Delaunay guarantees, you can validate a triangulation with
+`DelaunayTriangulation::validate_delaunay()` and consider these mitigations:
 
 - Use smaller point sets (violations are rarer)
 - Filter degenerate configurations when possible

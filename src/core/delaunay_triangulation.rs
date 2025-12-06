@@ -36,8 +36,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// # Delaunay Property Note
 ///
 /// The triangulation satisfies **structural validity** (all TDS invariants) but may
-/// contain local violations of the empty circumsphere property in rare cases. This is
-/// a known limitation of incremental algorithms without post-processing.
+/// contain local violations of the empty circumsphere property in rare cases. In this
+/// implementation, this arises from using an incremental Bowyer–Watson–style algorithm
+/// without topology-changing post-processing (bistellar flips).
 ///
 /// Most triangulations satisfy the Delaunay property. Violations typically occur with:
 /// - Near-degenerate point configurations
