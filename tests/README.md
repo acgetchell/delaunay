@@ -125,12 +125,16 @@ Property-based tests for `DelaunayTriangulation` invariants (all Delaunay-specif
   - Insertion-order invariance - Edge set independent of insertion order (2D, currently ignored - Issue #120)
   - Duplicate cloud integration - Full pipeline with messy real-world inputs (2D-5D: duplicates + near-duplicates)
 
-**Status:** Some tests are currently ignored due to Delaunay property violations found during development. These are being investigated:
+**Status:** Some tests are ignored pending bistellar flip implementation (Issue #120):
 
-- Empty circumsphere tests (2D-5D) - Delaunay property violations
-- Insertion-order invariance (2D) - Requires algorithmic investigation
-- Duplicate coordinate rejection - Failing on edge cases
-- Duplicate cloud integration - Related to empty circumsphere failures
+- Empty circumsphere tests (2D-5D) - Require bistellar flips to repair local violations
+- Duplicate cloud integration (2D-5D) - Same underlying issue
+- Duplicate coordinate rejection - Failing on edge cases, separate issue
+
+**Note:** The incremental Bowyer-Watson algorithm can produce locally non-Delaunay configurations
+that cannot be repaired without topology-changing operations. Bistellar flips are needed:
+- 2D: Edge flip (2-to-2) for flipping non-Delaunay edges
+- 3D+: General bistellar flip operations for higher dimensions
 
 **Dimensions Tested:** 2D-5D
 
