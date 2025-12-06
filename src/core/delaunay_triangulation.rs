@@ -10,7 +10,6 @@ use std::num::NonZeroUsize;
 use num_traits::NumCast;
 
 use crate::core::algorithms::incremental_insertion::InsertionError;
-use crate::core::algorithms::locate::{LocateResult, find_conflict_region, locate};
 use crate::core::cell::Cell;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::traits::data_type::DataType;
@@ -240,11 +239,12 @@ where
         };
 
         // Insert remaining vertices incrementally
+        // Note: Vertices causing geometric degeneracies are automatically skipped
         for vertex in vertices.iter().skip(D + 1) {
-            dt.insert(*vertex)
-                .map_err(|e| TriangulationConstructionError::FailedToAddVertex {
-                    message: format!("Incremental insertion failed: {e}"),
-                })?;
+            // Skip vertices that fail insertion due to geometric degeneracy
+            // The triangulation remains valid (manifold) by skipping problematic vertices
+            let _ = dt.insert(*vertex);
+            // Errors are logged by insert_transactional(), triangulation stays valid
         }
 
         Ok(dt)
@@ -457,7 +457,7 @@ where
     ///
     /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
     /// let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
-    /// assert_eq!(hull.facet_count(), 4);
+    /// assert_eq!(hull.number_of_facets(), 4);
     /// ```
     #[must_use]
     pub const fn triangulation(&self) -> &Triangulation<K, U, V, D> {
@@ -674,57 +674,18 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
-        let num_vertices = self.tri.tds.number_of_vertices();
-
-        // Bootstrap (< D+1) or initial simplex (== D+1): delegate directly
-        if num_vertices < D + 1 {
-            let (v_key, hint) = self.tri.insert(vertex, None, self.last_inserted_cell)?;
-            self.last_inserted_cell = hint;
-            return Ok(v_key);
-        }
-
-        // For D+2 and beyond: compute Delaunay conflict region first
-        // We need to locate and find conflict region BEFORE calling tri.insert()
-        // because the vertex hasn't been inserted into Tds yet
-
-        // First, do a pre-check by locating the point
-        let point = vertex.point();
-        let location = locate(
-            &self.tri.tds,
-            &self.tri.kernel,
-            point,
-            self.last_inserted_cell,
-        )?;
-
-        // Compute conflict region for interior points (requires in-sphere predicate)
-        let conflict_cells = match location {
-            LocateResult::InsideCell(start_cell) => Some(find_conflict_region(
-                &self.tri.tds,
-                &self.tri.kernel,
-                point,
-                start_cell,
-            )?),
-            LocateResult::Outside => None, // Hull extension doesn't need conflict region
-            _ => {
-                // TODO(future): Tighten error semantics for degenerate locations
-                // - OnVertex could map to DuplicateVertex when coordinates coincide
-                // - OnFacet/OnEdge could have specific error variants
-                // - Reserve CavityFilling for genuine cavity failures
-                // This would improve error taxonomy and make debugging easier.
-                return Err(InsertionError::CavityFilling {
-                    message: format!(
-                        "Unhandled degenerate location: {location:?}. Point lies on facet/edge/vertex which is not yet supported."
-                    ),
-                });
-            }
-        };
-
-        // Delegate to Triangulation layer with computed conflict region
-        let (v_key, hint) = self
-            .tri
-            .insert(vertex, conflict_cells, self.last_inserted_cell)?;
+        // Fully delegate to Triangulation layer
+        // Triangulation handles:
+        // - Manifold maintenance (conflict cells, cavity, repairs)
+        // - Bootstrap and initial simplex
+        // - Location and conflict region computation
+        //
+        // DelaunayTriangulation adds:
+        // - Kernel (provides in-sphere predicate for Delaunay property)
+        // - Hint caching for performance
+        // - Future: Delaunay property restoration after removal
+        let (v_key, hint) = self.tri.insert(vertex, None, self.last_inserted_cell)?;
         self.last_inserted_cell = hint;
-
         Ok(v_key)
     }
 

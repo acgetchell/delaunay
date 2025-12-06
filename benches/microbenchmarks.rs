@@ -9,10 +9,6 @@
 //! 4. **Incremental construction**: Performance of `insert()` method for vertex insertion
 //! 5. **Memory usage patterns**: Allocation and deallocation patterns
 //!
-//! **Note:** `assign_neighbors` benchmarks have been moved to `assign_neighbors_performance.rs`
-//! for more comprehensive testing with multiple distributions (random, grid, spherical) and
-//! scaling analysis. Use that benchmark file for `assign_neighbors` performance evaluation.
-//!
 //! These benchmarks measure the effectiveness of the optimization implementations
 //! completed as part of the Pure Incremental Delaunay Triangulation refactoring project.
 

@@ -577,11 +577,16 @@ where
     /// **Note**: This is a purely combinatorial operation that does not perform any coordinate
     /// operations. It works entirely with vertex keys, cell keys, and topological relationships.
     ///
+    /// **Internal use only**: This method rebuilds ALL neighbor pointers from scratch, which is
+    /// inefficient for most use cases. For external use, prefer
+    /// [`repair_neighbor_pointers`](crate::core::algorithms::incremental_insertion::repair_neighbor_pointers)
+    /// which provides more efficient surgical reconstruction by only fixing broken neighbor pointers.
+    ///
     /// # Errors
     ///
     /// Returns `TriangulationValidationError` if neighbor assignment fails due to inconsistent
     /// data structures or invalid facet sharing patterns.
-    pub fn assign_neighbors(&mut self) -> Result<(), TriangulationValidationError> {
+    fn assign_neighbors(&mut self) -> Result<(), TriangulationValidationError> {
         use crate::core::facet::facet_key_from_vertices;
 
         // Build facet mapping with vertex index information using optimized collections
@@ -2285,7 +2290,7 @@ where
     /// - Debugging neighbor-related algorithms
     /// - Implementing custom neighbor assignment algorithms
     ///
-    /// This is the inverse operation of [`assign_neighbors`](Self::assign_neighbors),
+    /// This is the inverse operation of `assign_neighbors`,
     /// and is commonly used in benchmarks and testing scenarios where you want to
     /// measure the performance of neighbor assignment starting from a clean state.
     ///

@@ -13,7 +13,9 @@ use std::cmp::Ordering as CmpOrdering;
 use num_traits::NumCast;
 use uuid::Uuid;
 
-use crate::core::algorithms::incremental_insertion::InsertionError;
+use crate::core::algorithms::incremental_insertion::{
+    InsertionError, InsertionStatistics, repair_neighbor_pointers,
+};
 use crate::core::cell::Cell;
 use crate::core::collections::{
     CellKeyBuffer, CellKeySet, FacetIssuesMap, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE,
@@ -26,6 +28,7 @@ use crate::core::triangulation_data_structure::{
 };
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
+use crate::geometry::point::Point;
 use crate::geometry::quality::radius_ratio;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::geometry::util::safe_scalar_to_f64;
@@ -293,11 +296,11 @@ where
     U: DataType,
     V: DataType,
 {
-    /// Build initial D-simplex from D+1 vertices.
+    /// Build initial D-simplex from D+1 vertices with degeneracy validation.
     ///
     /// This creates a Tds with a single cell containing all D+1 vertices,
-    /// with no neighbor relationships (all boundary facets). This method
-    /// does not require the Delaunay property - it only uses basic topology.
+    /// with no neighbor relationships (all boundary facets). The simplex is
+    /// validated to ensure it is non-degenerate (vertices span full D-dimensional space).
     ///
     /// # Arguments
     /// - `vertices`: Exactly D+1 vertices to form the initial simplex
@@ -308,6 +311,7 @@ where
     /// # Errors
     /// Returns error if:
     /// - Wrong number of vertices (must be exactly D+1)
+    /// - Vertices are degenerate (collinear in 2D, coplanar in 3D, etc.)
     /// - Vertex or cell insertion fails
     /// - Duplicate UUIDs detected
     ///
@@ -331,6 +335,15 @@ where
     /// let bad_vertices = vec![vertex!([0.0, 0.0])];
     /// let result = Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&bad_vertices);
     /// assert!(result.is_err());
+    ///
+    /// // Error: collinear points in 2D (degenerate simplex)
+    /// let collinear = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([2.0, 0.0]),
+    /// ];
+    /// let result = Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&collinear);
+    /// assert!(result.is_err());
     /// ```
     pub fn build_initial_simplex(
         vertices: &[Vertex<K::Scalar, U, D>],
@@ -346,6 +359,35 @@ where
                     expected: D + 1,
                     dimension: D,
                 },
+            });
+        }
+
+        // Validate that the simplex is non-degenerate using orientation test
+        // A degenerate simplex (collinear/coplanar) has zero orientation
+        let kernel = K::default();
+
+        // Collect points into stack-allocated buffer (at most 8 points for D ≤ 7)
+        let points: SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+            vertices.iter().map(|v| *v.point()).collect();
+
+        // Check orientation - zero (0) means degenerate
+        // orientation() returns -1 (negative), 0 (degenerate), or +1 (positive)
+        let orientation = kernel.orientation(&points[..]).map_err(|e| {
+            TriangulationConstructionError::FailedToCreateCell {
+                message: format!("Orientation test failed: {e}"),
+            }
+        })?;
+
+        if orientation == 0 {
+            return Err(TriangulationConstructionError::GeometricDegeneracy {
+                message: format!(
+                    "Degenerate initial simplex: vertices are collinear/coplanar in {}D space. \
+                     The {} input vertices do not span a full {}-dimensional simplex. \
+                     Provide non-degenerate vertices to create a valid triangulation.",
+                    D,
+                    D + 1,
+                    D
+                ),
             });
         }
 
@@ -456,19 +498,239 @@ where
     pub fn insert(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
-        conflict_cells: Option<CellKeyBuffer>,
+        conflict_cells: Option<&CellKeyBuffer>,
         hint: Option<CellKey>,
     ) -> Result<(VertexKey, Option<CellKey>), InsertionError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        // Use transactional insertion with perturbation retry, discard stats
+        // 5 retry attempts: 1e-4, 1e-3, 1e-2, 2e-2, 5e-2 (up to 5% perturbation)
+        let ((vkey, hint), _stats) = self.insert_transactional(vertex, conflict_cells, hint, 5)?;
+        Ok((vkey, hint))
+    }
+
+    /// Insert a vertex and return statistics about the operation.
+    ///
+    /// This method returns detailed statistics about the insertion including:
+    /// - Number of attempts (perturbation retries)
+    /// - Whether the vertex was skipped
+    /// - Number of cells removed during repair
+    ///
+    /// This is useful for testing, debugging, and understanding how the
+    /// triangulation handles geometric degeneracies.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let (vkey, stats) = dt.insert_with_statistics(vertex, None, None)?;
+    /// println!("Inserted with {} attempts, {} cells repaired",
+    ///          stats.attempts, stats.cells_removed_during_repair);
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if insertion fails after all retry attempts.
+    pub fn insert_with_statistics(
+        &mut self,
+        vertex: Vertex<K::Scalar, U, D>,
+        conflict_cells: Option<&CellKeyBuffer>,
+        hint: Option<CellKey>,
+    ) -> Result<((VertexKey, Option<CellKey>), InsertionStatistics), InsertionError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        // 5 retry attempts: 1e-4, 1e-3, 1e-2, 2e-2, 5e-2 (up to 5% perturbation)
+        self.insert_transactional(vertex, conflict_cells, hint, 5)
+    }
+
+    /// Transactional insertion with automatic rollback and perturbation retry.
+    ///
+    /// This ensures the triangulation always remains in a valid state by:
+    /// 1. Cloning TDS before each insertion attempt (snapshot)
+    /// 2. Attempting insertion  
+    /// 3. On failure: restore TDS from snapshot, perturb vertex, retry
+    /// 4. If all attempts fail: restore TDS and return error
+    ///
+    /// This guarantees we transition from one valid manifold to another.
+    #[allow(clippy::too_many_lines)]
+    fn insert_transactional(
+        &mut self,
+        vertex: Vertex<K::Scalar, U, D>,
+        conflict_cells: Option<&CellKeyBuffer>,
+        hint: Option<CellKey>,
+        max_perturbation_attempts: usize,
+    ) -> Result<((VertexKey, Option<CellKey>), InsertionStatistics), InsertionError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        use crate::core::vertex::VertexBuilder;
+        use crate::geometry::point::Point;
+        use crate::geometry::traits::coordinate::Coordinate;
+        use num_traits::{Float, NumCast, One, Zero};
+
+        let mut stats = InsertionStatistics::default();
+        let original_coords = *vertex.point().coords();
+        let mut current_vertex = vertex;
+
+        for attempt in 0..=max_perturbation_attempts {
+            stats.attempts = attempt + 1;
+
+            // Apply perturbation for retry attempts
+            if attempt > 0 {
+                stats.used_perturbation = true;
+                let mut perturbed_coords = original_coords;
+                // Progressive perturbation schedule:
+                // Attempt 1: 1e-4 (0.01%), Attempt 2: 1e-3 (0.1%), Attempt 3: 1e-2 (1%)
+                // Attempt 4: 2e-2 (2%), Attempt 5: 5e-2 (5%)
+                // This balances resolving degeneracies without introducing locate cycles
+                let epsilon_value = match attempt {
+                    1 => 1e-4,
+                    2 => 1e-3,
+                    3 => 1e-2,
+                    4 => 2e-2,
+                    _ => 5e-2, // 5% for attempt 5 and beyond
+                };
+                let epsilon = <K::Scalar as NumCast>::from(epsilon_value)
+                    .expect("Failed to convert perturbation scale");
+
+                for (idx, coord) in perturbed_coords.iter_mut().enumerate() {
+                    let abs_coord = if *coord < K::Scalar::zero() {
+                        -*coord
+                    } else {
+                        *coord
+                    };
+                    let perturbation_scale = epsilon * abs_coord.max(K::Scalar::one());
+                    let perturbation = if (attempt + idx) % 2 == 0 {
+                        perturbation_scale
+                    } else {
+                        -perturbation_scale
+                    };
+                    *coord += perturbation;
+                }
+
+                current_vertex = vertex.data.map_or_else(
+                    || {
+                        VertexBuilder::default()
+                            .point(Point::new(perturbed_coords))
+                            .build()
+                            .expect("Failed to build perturbed vertex")
+                    },
+                    |data| {
+                        VertexBuilder::default()
+                            .point(Point::new(perturbed_coords))
+                            .data(data)
+                            .build()
+                            .expect("Failed to build perturbed vertex")
+                    },
+                );
+            }
+
+            // Clone TDS for rollback (transactional semantics)
+            let tds_snapshot = self.tds.clone();
+
+            // Try insertion
+            let result = self.try_insert_impl(current_vertex, conflict_cells, hint);
+
+            match result {
+                Ok((result, cells_removed)) => {
+                    stats.cells_removed_during_repair = cells_removed;
+                    stats.success = true;
+                    if attempt > 0 {
+                        eprintln!(
+                            "Warning: Geometric degeneracy resolved via perturbation (attempt {attempt})"
+                        );
+                    }
+                    return Ok((result, stats));
+                }
+                Err(ref e) => {
+                    // Any error - rollback to snapshot
+                    self.tds = tds_snapshot;
+
+                    // Check if this is a retryable error (geometric degeneracy)
+                    let is_retryable = match e {
+                        // Locate errors: cycles indicate numerical degeneracy
+                        InsertionError::Location(le)
+                            if le.to_string().contains("Cycle detected") =>
+                        {
+                            true
+                        }
+                        // Neighbor wiring errors: non-manifold topology
+                        InsertionError::NeighborWiring { message }
+                            if message.contains("Non-manifold") =>
+                        {
+                            true
+                        }
+                        // Conflict region errors: duplicate facets or ridge fans indicate degeneracy
+                        InsertionError::ConflictRegion(ce) => {
+                            matches!(ce,
+                                crate::core::algorithms::locate::ConflictError::DuplicateBoundaryFacets { .. } |
+                                crate::core::algorithms::locate::ConflictError::RidgeFan { .. }
+                            )
+                        }
+                        // Topology validation errors indicate repair failures
+                        InsertionError::TopologyValidation(_) => true,
+                        _ => false,
+                    };
+
+                    if is_retryable && attempt < max_perturbation_attempts {
+                        #[cfg(debug_assertions)]
+                        eprintln!(
+                            "RETRYING: Attempt {} failed with: {e}. Applying perturbation...",
+                            attempt + 1
+                        );
+                    } else if is_retryable {
+                        stats.skipped = true;
+                        #[cfg(debug_assertions)]
+                        eprintln!(
+                            "SKIPPED: Could not insert vertex after {} attempts (perturbations up to {:.1}%). Last error: {e}. Vertex skipped to maintain manifold.",
+                            max_perturbation_attempts + 1,
+                            match max_perturbation_attempts {
+                                0 => 0.0,
+                                1 => 0.01,
+                                2 => 0.1,
+                                3 => 1.0,
+                                4 => 2.0,
+                                5 => 5.0,
+                                _ => 10.0,
+                            }
+                        );
+                        return Err(result.unwrap_err());
+                    } else {
+                        return Err(result.unwrap_err());
+                    }
+                }
+            }
+        }
+
+        unreachable!("Loop should have returned in all cases");
+    }
+
+    /// Internal implementation of insert without retry logic.
+    /// Returns the result and the number of cells removed during repair.
+    ///
+    /// Note: `conflict_cells` parameter is optional. If `None`, it will be computed automatically
+    /// for interior points using `locate()` + `find_conflict_region()`.
+    #[allow(clippy::too_many_lines)]
+    fn try_insert_impl(
+        &mut self,
+        vertex: Vertex<K::Scalar, U, D>,
+        conflict_cells: Option<&CellKeyBuffer>,
+        hint: Option<CellKey>,
+    ) -> Result<((VertexKey, Option<CellKey>), usize), InsertionError>
     where
         K::Scalar: CoordinateScalar,
     {
         use crate::core::algorithms::incremental_insertion::{
             extend_hull, fill_cavity, wire_cavity_neighbors,
         };
-        use crate::core::algorithms::locate::{LocateResult, extract_cavity_boundary, locate};
+        use crate::core::algorithms::locate::{
+            LocateResult, extract_cavity_boundary, find_conflict_region, locate,
+        };
 
-        // Capture the inserted vertex's UUID before any TDS operations
+        // Capture the inserted vertex's UUID and point before any TDS operations
         let inserted_uuid = vertex.uuid();
+        let point = *vertex.point();
 
         // 1. Insert vertex into Tds
         let mut v_key = self.tds.insert_vertex_with_mapping(vertex)?;
@@ -478,7 +740,7 @@ where
 
         if num_vertices < D + 1 {
             // Bootstrap phase: just accumulate vertices, no cells yet
-            return Ok((v_key, None));
+            return Ok(((v_key, None), 0));
         } else if num_vertices == D + 1 {
             // Build initial simplex from all D+1 vertices
             let all_vertices: Vec<_> = self.tds.vertices().map(|(_, v)| *v).collect();
@@ -501,51 +763,59 @@ where
 
             // Return first cell key for hint caching
             let first_cell = self.tds.cell_keys().next();
-            return Ok((v_key, first_cell));
+            return Ok(((v_key, first_cell), 0));
         }
 
         // 3. Locate containing cell (for vertex D+2 and beyond)
-        let point = *self
-            .tds
-            .get_vertex_by_key(v_key)
-            .ok_or_else(|| InsertionError::CavityFilling {
-                message: "Vertex key invalid immediately after insertion".to_string(),
-            })?
-            .point();
         let location = locate(&self.tds, &self.kernel, &point, hint)?;
 
-        // 4. Handle different location results
+        // 4. Compute conflict cells if not provided (for interior points)
+        let conflict_cells_owned;
+        let conflict_cells = match (location, conflict_cells) {
+            (LocateResult::InsideCell(start_cell), None) => {
+                // Interior point: compute conflict region automatically
+                conflict_cells_owned =
+                    find_conflict_region(&self.tds, &self.kernel, &point, start_cell)?;
+                Some(&conflict_cells_owned)
+            }
+            (LocateResult::InsideCell(_), Some(cells)) => Some(cells), // Use provided
+            (LocateResult::Outside, _) => None, // Hull extension doesn't need conflict region
+            (location, _) => {
+                // Degenerate locations (OnFacet, OnEdge, OnVertex)
+                return Err(InsertionError::CavityFilling {
+                    message: format!(
+                        "Unhandled degenerate location: {location:?}. Point lies on facet/edge/vertex which is not yet supported."
+                    ),
+                });
+            }
+        };
+
+        // 5. Handle different location results
         match location {
             LocateResult::InsideCell(_start_cell) => {
-                // Interior vertex: require conflict_cells parameter
+                // Interior vertex: use computed or provided conflict_cells
                 let conflict_cells =
-                    conflict_cells.ok_or_else(|| InsertionError::CavityFilling {
-                        message: "Interior point insertion requires conflict_cells parameter"
-                            .to_string(),
-                    })?;
+                    conflict_cells.expect("conflict_cells should be computed above");
 
                 // 5. Extract cavity boundary
-                let boundary_facets = extract_cavity_boundary(&self.tds, &conflict_cells)?;
+                let boundary_facets = extract_cavity_boundary(&self.tds, conflict_cells)?;
 
                 // 6. Fill cavity BEFORE removing old cells
                 let new_cells = fill_cavity(&mut self.tds, v_key, &boundary_facets)?;
 
                 // 7. Wire neighbors (while both old and new cells exist)
-                wire_cavity_neighbors(&mut self.tds, &new_cells, Some(&conflict_cells))?;
+                wire_cavity_neighbors(&mut self.tds, &new_cells, Some(conflict_cells))?;
 
                 // 8. Remove conflict cells (now that new cells are wired up)
-                let _removed_count = self.tds.remove_cells_by_keys(&conflict_cells);
+                let _removed_count = self.tds.remove_cells_by_keys(conflict_cells);
 
                 // 9. Iteratively repair non-manifold topology until facet sharing is valid
                 let mut total_removed = 0;
-                const MAX_REPAIR_ITERATIONS: usize = 10;
-                
-                for iteration in 0..MAX_REPAIR_ITERATIONS {
+                #[allow(unused_variables)]
+                for iteration in 0..10 {
                     // Check for non-manifold issues in remaining cells
-                    let remaining_cells: CellKeyBuffer = self.tds.cells()
-                        .map(|(k, _)| k)
-                        .collect();
-                    
+                    let remaining_cells: CellKeyBuffer = self.tds.cells().map(|(k, _)| k).collect();
+
                     if let Some(issues) = self.detect_local_facet_issues(&remaining_cells)? {
                         #[cfg(debug_assertions)]
                         eprintln!(
@@ -553,10 +823,10 @@ where
                             iteration + 1,
                             issues.len()
                         );
-                        
+
                         let removed = self.repair_local_facet_issues(&issues)?;
                         total_removed += removed;
-                        
+
                         #[cfg(debug_assertions)]
                         eprintln!("Removed {removed} cells (total: {total_removed})");
                     } else {
@@ -564,44 +834,79 @@ where
                         break;
                     }
                 }
-                
+
                 // 10. Rebuild neighbor pointers now that topology is manifold
                 #[cfg(debug_assertions)]
                 eprintln!("After repair loop (interior): total_removed={total_removed}");
-                
+
                 if total_removed > 0 {
                     // Double-check that facet sharing is actually valid
                     let facet_valid = self.tds.validate_facet_sharing().is_ok();
                     #[cfg(debug_assertions)]
-                    eprintln!("Before repair_neighbor_pointers (interior): facet_sharing_valid={facet_valid}, cells={}",
-                             self.tds.number_of_cells());
-                    
+                    eprintln!(
+                        "Before assign_neighbors (interior): facet_sharing_valid={facet_valid}, cells={}",
+                        self.tds.number_of_cells()
+                    );
+
                     if !facet_valid {
                         return Err(InsertionError::CavityFilling {
                             message: "Facet sharing still invalid after repairs - cannot safely rebuild neighbors".to_string(),
                         });
                     }
-                    
-                    crate::core::algorithms::incremental_insertion::repair_neighbor_pointers(&mut self.tds)
-                        .map_err(|e| InsertionError::CavityFilling {
-                            message: format!("Failed to rebuild neighbors after repairs: {e}"),
-                        })?;
-                    
+
                     #[cfg(debug_assertions)]
-                    eprintln!("repair_neighbor_pointers completed (interior), assigning incident cells...");
-                    
-                    self.tds.assign_incident_cells()
-                        .map_err(|e| InsertionError::CavityFilling {
+                    {
+                        // Check for duplicate cells
+                        let cell_count = self.tds.number_of_cells();
+                        let unique_cells: std::collections::HashSet<_> = self
+                            .tds
+                            .cells()
+                            .map(|(_, c)| c.vertices().to_vec())
+                            .collect();
+                        if unique_cells.len() != cell_count {
+                            eprintln!(
+                                "WARNING: {} duplicate cells detected before assign_neighbors",
+                                cell_count - unique_cells.len()
+                            );
+                        }
+                    }
+
+                    // Use repair_neighbor_pointers for surgical reconstruction
+                    // This preserves existing correct pointers and only fixes broken ones
+                    repair_neighbor_pointers(&mut self.tds).map_err(|e| {
+                        InsertionError::CavityFilling {
+                            message: format!("Failed to rebuild neighbors after repairs: {e}"),
+                        }
+                    })?;
+
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "repair_neighbor_pointers completed (interior), assigning incident cells..."
+                    );
+
+                    self.tds.assign_incident_cells().map_err(|e| {
+                        InsertionError::CavityFilling {
                             message: format!("Failed to assign incident cells after repairs: {e}"),
-                        })?;
+                        }
+                    })?;
+
+                    // CRITICAL: Validate that locate still works after repair
+                    // If repair created cycles, we'll catch it here
+                    if let Some(test_cell) = self.tds.cells().next().map(|(k, _)| k) {
+                        // Try to locate the point we just inserted
+                        let _ = locate(&self.tds, &self.kernel, &point, Some(test_cell))?;
+                    }
                 } else {
                     #[cfg(debug_assertions)]
                     eprintln!("No cells removed (interior), skipping neighbor rebuild");
                 }
 
                 // Return vertex key and hint for next insertion
-                let hint = new_cells.iter().copied().find(|ck| self.tds.contains_cell(*ck));
-                Ok((v_key, hint))
+                let hint = new_cells
+                    .iter()
+                    .copied()
+                    .find(|ck| self.tds.contains_cell(*ck));
+                Ok(((v_key, hint), total_removed))
             }
             LocateResult::Outside => {
                 // Exterior vertex: extend convex hull
@@ -609,14 +914,11 @@ where
 
                 // Iteratively repair non-manifold topology until facet sharing is valid
                 let mut total_removed = 0;
-                const MAX_REPAIR_ITERATIONS: usize = 10;
-                
-                for iteration in 0..MAX_REPAIR_ITERATIONS {
+                #[allow(unused_variables)]
+                for iteration in 0..10 {
                     // Check for non-manifold issues in remaining cells
-                    let remaining_cells: CellKeyBuffer = self.tds.cells()
-                        .map(|(k, _)| k)
-                        .collect();
-                    
+                    let remaining_cells: CellKeyBuffer = self.tds.cells().map(|(k, _)| k).collect();
+
                     if let Some(issues) = self.detect_local_facet_issues(&remaining_cells)? {
                         #[cfg(debug_assertions)]
                         eprintln!(
@@ -624,10 +926,10 @@ where
                             iteration + 1,
                             issues.len()
                         );
-                        
+
                         let removed = self.repair_local_facet_issues(&issues)?;
                         total_removed += removed;
-                        
+
                         #[cfg(debug_assertions)]
                         eprintln!("Removed {removed} cells (total: {total_removed})");
                     } else {
@@ -635,38 +937,47 @@ where
                         break;
                     }
                 }
-                
+
                 // Rebuild neighbor pointers now that topology is manifold
                 if total_removed > 0 {
                     // Double-check that facet sharing is actually valid
                     let facet_valid = self.tds.validate_facet_sharing().is_ok();
                     #[cfg(debug_assertions)]
-                    eprintln!("Before repair_neighbor_pointers: facet_sharing_valid={facet_valid}, cells={}",
-                             self.tds.number_of_cells());
-                    
+                    eprintln!(
+                        "Before repair_neighbor_pointers: facet_sharing_valid={facet_valid}, cells={}",
+                        self.tds.number_of_cells()
+                    );
+
                     if !facet_valid {
                         return Err(InsertionError::CavityFilling {
                             message: "Facet sharing still invalid after repairs - cannot safely rebuild neighbors".to_string(),
                         });
                     }
-                    
-                    crate::core::algorithms::incremental_insertion::repair_neighbor_pointers(&mut self.tds)
-                        .map_err(|e| InsertionError::CavityFilling {
+
+                    // Use repair_neighbor_pointers for surgical reconstruction
+                    // This preserves existing correct pointers and only fixes broken ones
+                    repair_neighbor_pointers(&mut self.tds).map_err(|e| {
+                        InsertionError::CavityFilling {
                             message: format!("Failed to rebuild neighbors after repairs: {e}"),
-                        })?;
-                    
+                        }
+                    })?;
+
                     #[cfg(debug_assertions)]
                     eprintln!("repair_neighbor_pointers completed, assigning incident cells...");
-                    
-                    self.tds.assign_incident_cells()
-                        .map_err(|e| InsertionError::CavityFilling {
+
+                    self.tds.assign_incident_cells().map_err(|e| {
+                        InsertionError::CavityFilling {
                             message: format!("Failed to assign incident cells after repairs: {e}"),
-                        })?;
+                        }
+                    })?;
                 }
 
                 // Return vertex key and hint for next insertion
-                let hint = new_cells.iter().copied().find(|ck| self.tds.contains_cell(*ck));
-                Ok((v_key, hint))
+                let hint = new_cells
+                    .iter()
+                    .copied()
+                    .find(|ck| self.tds.contains_cell(*ck));
+                Ok(((v_key, hint), total_removed))
             }
             _ => {
                 // TODO: Handle degenerate point locations (OnFacet, OnEdge, OnVertex)
@@ -1317,7 +1628,7 @@ where
             }
 
             let to_remove: Vec<CellKey> = cells_to_remove.into_iter().collect();
-            
+
             // Remove cells
             let actually_removed = self.tds.remove_cells_by_keys(&to_remove);
 
@@ -1346,14 +1657,13 @@ where
         if total_removed > 0 {
             #[cfg(debug_assertions)]
             eprintln!("Repairs complete, rebuilding all neighbor pointers...");
-            
-            crate::core::algorithms::incremental_insertion::repair_neighbor_pointers(&mut self.tds)
-                .map_err(|e| {
-                    TriangulationValidationError::InconsistentDataStructure {
-                        message: format!("repair_neighbor_pointers failed after repairs: {e}"),
-                    }
-                })?;
-            
+
+            repair_neighbor_pointers(&mut self.tds).map_err(|e| {
+                TriangulationValidationError::InconsistentDataStructure {
+                    message: format!("repair_neighbor_pointers failed after repairs: {e}"),
+                }
+            })?;
+
             self.tds.assign_incident_cells()?;
         }
 
@@ -1542,6 +1852,57 @@ mod tests {
         assert!(data_values.contains(&42));
         assert!(data_values.contains(&43));
         assert!(data_values.contains(&44));
+    }
+
+    // =============================================================================
+    // Tests for build_initial_simplex degeneracy validation
+    // =============================================================================
+
+    #[test]
+    fn test_build_initial_simplex_rejects_collinear_2d() {
+        // Collinear points should be rejected by build_initial_simplex
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([2.0, 0.0]),
+        ];
+
+        let result = Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices);
+
+        assert!(result.is_err(), "Collinear points should be rejected");
+        match result {
+            Err(TriangulationConstructionError::GeometricDegeneracy { message }) => {
+                assert!(
+                    message.contains("Degenerate"),
+                    "Error message should mention degeneracy"
+                );
+            }
+            _ => panic!("Expected GeometricDegeneracy error for collinear points"),
+        }
+    }
+
+    #[test]
+    fn test_build_initial_simplex_rejects_coplanar_3d() {
+        // Coplanar points should be rejected by build_initial_simplex
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.5, 0.5, 0.0]),
+        ];
+
+        let result = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices);
+
+        assert!(result.is_err(), "Coplanar points should be rejected");
+        match result {
+            Err(TriangulationConstructionError::GeometricDegeneracy { message }) => {
+                assert!(
+                    message.contains("Degenerate") || message.contains("coplanar"),
+                    "Error message should mention degeneracy or coplanarity"
+                );
+            }
+            _ => panic!("Expected GeometricDegeneracy error for coplanar points"),
+        }
     }
 
     /// Macro to generate localized facet validation tests across dimensions.

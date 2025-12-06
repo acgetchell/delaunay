@@ -64,7 +64,7 @@ macro_rules! test_convex_hull_properties {
 
                             // Facet count should be positive
                             prop_assert!(
-                                hull.facet_count() > 0,
+                                hull.number_of_facets() > 0,
                                 "{}D convex hull must have at least one facet",
                                 $dim
                             );
@@ -82,7 +82,7 @@ macro_rules! test_convex_hull_properties {
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
                         if let Ok(hull) = ConvexHull::from_triangulation(dt.triangulation()) {
-                            let facet_count = hull.facet_count();
+                            let facet_count = hull.number_of_facets();
                             let vertex_count = dt.tds().vertices().count();
 
                             // Lower bound: more than D facets for a simplex in D dimensions
@@ -185,7 +185,7 @@ macro_rules! test_convex_hull_properties {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
                         if let Ok(hull) = ConvexHull::from_triangulation(dt.triangulation()) {
                             let tds_vertex_count = dt.tds().vertices().count();
-                            let facet_count = hull.facet_count();
+                            let facet_count = hull.number_of_facets();
 
                             // Each facet references D vertices (D-dimensional facets in D-space)
                             // Total references could be up to facet_count * D
@@ -236,7 +236,7 @@ macro_rules! test_convex_hull_properties {
                         if let Ok(hull) = ConvexHull::from_triangulation(dt.triangulation()) {
                             // A minimal D-simplex should have exactly D+1 facets
                             prop_assert_eq!(
-                                hull.facet_count(),
+                                hull.number_of_facets(),
                                 $dim + 1,
                                 "{}D minimal simplex hull should have exactly {} facets",
                                 $dim,
@@ -259,8 +259,8 @@ macro_rules! test_convex_hull_properties {
                             if let Ok(hull2) = ConvexHull::from_triangulation(dt.triangulation()) {
                                 // Both hulls should have the same facet count
                                 prop_assert_eq!(
-                                    hull1.facet_count(),
-                                    hull2.facet_count(),
+                                    hull1.number_of_facets(),
+                                    hull2.number_of_facets(),
                                     "{}D reconstructing hull from same triangulation should give same facet count",
                                     $dim
                                 );

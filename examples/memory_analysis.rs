@@ -52,7 +52,7 @@ macro_rules! generate_memory_analysis {
             };
             let hull_time = start.elapsed();
 
-            let hull_facets = hull.facet_count();
+            let hull_facets = hull.number_of_facets();
 
             // Print results
             println!("    Triangulation: {num_vertices} vertices, {num_cells} cells");

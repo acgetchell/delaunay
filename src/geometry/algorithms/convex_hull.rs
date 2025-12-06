@@ -221,7 +221,7 @@ pub enum ConvexHullConstructionError {
 ///
 /// // Create initial hull (note: immutable binding)
 /// let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
-/// assert_eq!(hull.facet_count(), 4);
+/// assert_eq!(hull.number_of_facets(), 4);
 /// assert!(hull.is_valid_for_triangulation(dt.triangulation()));
 ///
 /// // Hull extension is now implemented - inserting outside points works!
@@ -284,7 +284,7 @@ where
     /// Use `is_valid_for_triangulation()` to check validity before use.
     ///
     /// This field is private to prevent external mutation. Use the provided read-only
-    /// accessors (`facets()`, `get_facet()`, `facet_count()`) to access hull facets.
+    /// accessors (`facets()`, `get_facet()`, `number_of_facets()`) to access hull facets.
     hull_facets: Vec<FacetHandle>,
     /// Cache for the facet-to-cells mapping to avoid rebuilding it for each facet check
     /// Uses `ArcSwapOption` for lock-free atomic updates when cache needs invalidation
@@ -329,10 +329,10 @@ where
     /// let hull =
     ///     ConvexHull::from_triangulation(dt.triangulation()).unwrap();
     ///
-    /// assert_eq!(hull.facet_count(), 4); // Tetrahedron has 4 faces
+    /// assert_eq!(hull.number_of_facets(), 4); // Tetrahedron has 4 faces
     /// ```
     #[must_use]
-    pub const fn facet_count(&self) -> usize {
+    pub const fn number_of_facets(&self) -> usize {
         self.hull_facets.len()
     }
 
@@ -664,7 +664,7 @@ where
     /// let dt_3d: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices_3d).unwrap();
     /// let hull_3d: ConvexHull<FastKernel<f64>, (), (), 3> =
     ///     ConvexHull::from_triangulation(dt_3d.triangulation()).unwrap();
-    /// assert_eq!(hull_3d.facet_count(), 4); // Tetrahedron has 4 faces
+    /// assert_eq!(hull_3d.number_of_facets(), 4); // Tetrahedron has 4 faces
     ///
     /// // 4D example
     /// let vertices_4d: Vec<_> = vec![
@@ -677,7 +677,7 @@ where
     /// let dt_4d: DelaunayTriangulation<_, (), (), 4> = DelaunayTriangulation::new(&vertices_4d).unwrap();
     /// let hull_4d =
     ///     ConvexHull::from_triangulation(dt_4d.triangulation()).unwrap();
-    /// assert_eq!(hull_4d.facet_count(), 5); // 4-simplex has 5 facets
+    /// assert_eq!(hull_4d.number_of_facets(), 5); // 4-simplex has 5 facets
     /// ```
     pub fn from_triangulation(
         tri: &Triangulation<K, U, V, D>,
@@ -1620,7 +1620,7 @@ mod tests {
     /// multiple dimensions (1D through 6D). For each dimension, it creates:
     ///
     /// 1. **Basic operations test** - Tests:
-    ///    - `facet_count()` returns expected number
+    ///    - `number_of_facets()` returns expected number
     ///    - `dimension()` returns correct dimension
     ///    - `validate()` succeeds
     ///    - `is_empty()` returns false for non-empty hull
@@ -1670,7 +1670,7 @@ mod tests {
                         ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 
                     assert_eq!(
-                        hull.facet_count(),
+                        hull.number_of_facets(),
                         $expected_facets,
                         "{}D hull ({}) should have {} facets",
                         $dim,
@@ -1813,7 +1813,7 @@ mod tests {
 
         // Basic empty hull properties
         assert_eq!(
-            empty_hull.facet_count(),
+            empty_hull.number_of_facets(),
             0,
             "Empty hull should have 0 facets"
         );
@@ -1992,7 +1992,7 @@ mod tests {
         // Verify all returned indices are valid
         for &index in &visible_facets {
             assert!(
-                index < hull_3d.facet_count(),
+                index < hull_3d.number_of_facets(),
                 "Visible facet index should be valid"
             );
             assert!(hull_3d.get_facet(index).is_some());
@@ -2163,7 +2163,7 @@ mod tests {
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 
-        assert!(hull.facet_count() > 0, "Hull should have facets");
+        assert!(hull.number_of_facets() > 0, "Hull should have facets");
         let test_facet_vertices =
             extract_facet_vertices(hull.get_facet(0).unwrap(), dt.triangulation()).unwrap();
 
@@ -2467,7 +2467,10 @@ mod tests {
             let vertices = facet_view.vertices().unwrap().count();
             assert_eq!(vertices, 2, "2D facet {i} should have exactly 2 vertices");
         }
-        println!("    2D hull: {} facets validated", hull_2d.facet_count());
+        println!(
+            "    2D hull: {} facets validated",
+            hull_2d.number_of_facets()
+        );
 
         // Test empty 2D hull validation
         let empty_hull_2d: ConvexHull<FastKernel<f64>, (), (), 2> = ConvexHull::default();
@@ -2501,7 +2504,10 @@ mod tests {
             let vertices = facet_view.vertices().unwrap().count();
             assert_eq!(vertices, 3, "3D facet {i} should have exactly 3 vertices");
         }
-        println!("    3D hull: {} facets validated", hull_3d.facet_count());
+        println!(
+            "    3D hull: {} facets validated",
+            hull_3d.number_of_facets()
+        );
 
         // Test empty 3D hull validation
         let empty_hull_3d: ConvexHull<FastKernel<f64>, (), (), 3> = ConvexHull::default();
@@ -2536,7 +2542,10 @@ mod tests {
             let vertices = facet_view.vertices().unwrap().count();
             assert_eq!(vertices, 4, "4D facet {i} should have exactly 4 vertices");
         }
-        println!("    4D hull: {} facets validated", hull_4d.facet_count());
+        println!(
+            "    4D hull: {} facets validated",
+            hull_4d.number_of_facets()
+        );
 
         // Test empty 4D hull validation
         let empty_hull_4d: ConvexHull<FastKernel<f64>, (), (), 4> = ConvexHull::default();
@@ -2572,7 +2581,10 @@ mod tests {
             let vertices = facet_view.vertices().unwrap().count();
             assert_eq!(vertices, 5, "5D facet {i} should have exactly 5 vertices");
         }
-        println!("    5D hull: {} facets validated", hull_5d.facet_count());
+        println!(
+            "    5D hull: {} facets validated",
+            hull_5d.number_of_facets()
+        );
 
         // Test empty 5D hull validation
         let empty_hull_5d: ConvexHull<FastKernel<f64>, (), (), 5> = ConvexHull::default();
@@ -2840,7 +2852,7 @@ mod tests {
 
         if let Some(facet_index) = result {
             assert!(
-                facet_index < hull.facet_count(),
+                facet_index < hull.number_of_facets(),
                 "Facet index should be valid"
             );
         }
@@ -2872,7 +2884,7 @@ mod tests {
         let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 
         // Test get_facet with valid indices
-        for i in 0..hull.facet_count() {
+        for i in 0..hull.number_of_facets() {
             assert!(
                 hull.get_facet(i).is_some(),
                 "Valid index should return facet"
@@ -2881,7 +2893,7 @@ mod tests {
 
         // Test get_facet with invalid indices
         assert!(
-            hull.get_facet(hull.facet_count()).is_none(),
+            hull.get_facet(hull.number_of_facets()).is_none(),
             "Out of bounds index should return None"
         );
         assert!(
@@ -2893,7 +2905,7 @@ mod tests {
         let facet_count_via_iter = hull.facets().count();
         assert_eq!(
             facet_count_via_iter,
-            hull.facet_count(),
+            hull.number_of_facets(),
             "Iterator count should match facet_count"
         );
 
@@ -2922,7 +2934,7 @@ mod tests {
         let dt_f64 = create_triangulation(&vertices_f64);
         let hull_f64 = ConvexHull::from_triangulation(dt_f64.triangulation()).unwrap();
 
-        assert_eq!(hull_f64.facet_count(), 4);
+        assert_eq!(hull_f64.number_of_facets(), 4);
         assert!(!hull_f64.is_empty());
 
         // Test point operations with f64
@@ -2940,7 +2952,7 @@ mod tests {
         let dt_hp = create_triangulation(&vertices_high_precision);
         let hull_hp = ConvexHull::from_triangulation(dt_hp.triangulation()).unwrap();
 
-        assert_eq!(hull_hp.facet_count(), 4);
+        assert_eq!(hull_hp.number_of_facets(), 4);
         assert_eq!(hull_hp.dimension(), 3);
         assert!(hull_hp.validate(dt_hp.triangulation()).is_ok());
         assert!(!hull_hp.is_empty());
@@ -2959,7 +2971,7 @@ mod tests {
         .unwrap();
         let hull_int = ConvexHull::from_triangulation(dt_int.triangulation()).unwrap();
 
-        assert_eq!(hull_int.facet_count(), 4);
+        assert_eq!(hull_int.number_of_facets(), 4);
         assert_eq!(hull_int.dimension(), 3);
         assert!(hull_int.validate(dt_int.triangulation()).is_ok());
 
@@ -2977,7 +2989,7 @@ mod tests {
         .unwrap();
         let hull_char = ConvexHull::from_triangulation(dt_char.triangulation()).unwrap();
 
-        assert_eq!(hull_char.facet_count(), 4);
+        assert_eq!(hull_char.number_of_facets(), 4);
         assert_eq!(hull_char.dimension(), 3);
         assert!(hull_char.validate(dt_char.triangulation()).is_ok());
 
@@ -2996,7 +3008,7 @@ mod tests {
             .unwrap();
         let hull_with_data = ConvexHull::from_triangulation(dt_with_data.triangulation()).unwrap();
 
-        assert_eq!(hull_with_data.facet_count(), 4);
+        assert_eq!(hull_with_data.number_of_facets(), 4);
         assert!(
             hull_with_data
                 .validate(dt_with_data.triangulation())
@@ -3016,7 +3028,7 @@ mod tests {
         let dt_large = create_triangulation(&vertices_large);
         let hull_large = ConvexHull::from_triangulation(dt_large.triangulation()).unwrap();
 
-        assert_eq!(hull_large.facet_count(), 4);
+        assert_eq!(hull_large.number_of_facets(), 4);
         assert!(hull_large.validate(dt_large.triangulation()).is_ok());
 
         // Test visibility with large coordinates
@@ -3045,7 +3057,7 @@ mod tests {
         let dt_small = create_triangulation(&vertices_small);
         let hull_small = ConvexHull::from_triangulation(dt_small.triangulation()).unwrap();
 
-        assert_eq!(hull_small.facet_count(), 4);
+        assert_eq!(hull_small.number_of_facets(), 4);
         assert!(hull_small.validate(dt_small.triangulation()).is_ok());
     }
 
@@ -3084,13 +3096,13 @@ mod tests {
         let dummy_dt_2d = create_triangulation(&dummy_vertices_2d);
         let hull_2d: ConvexHull<FastKernel<f64>, (), (), 2> = ConvexHull::default();
         assert!(hull_2d.is_empty());
-        assert_eq!(hull_2d.facet_count(), 0);
+        assert_eq!(hull_2d.number_of_facets(), 0);
         assert_eq!(hull_2d.dimension(), 2);
         assert!(hull_2d.validate(dummy_dt_2d.triangulation()).is_ok());
 
         let hull_3d_default: ConvexHull<FastKernel<f64>, (), (), 3> = ConvexHull::default();
         assert!(hull_3d_default.is_empty());
-        assert_eq!(hull_3d_default.facet_count(), 0);
+        assert_eq!(hull_3d_default.number_of_facets(), 0);
         assert_eq!(hull_3d_default.dimension(), 3);
         assert!(hull_3d_default.validate(dt.triangulation()).is_ok());
 
@@ -3104,7 +3116,7 @@ mod tests {
         let dummy_dt_4d = create_triangulation(&dummy_vertices_4d);
         let hull_4d: ConvexHull<FastKernel<f64>, (), (), 4> = ConvexHull::default();
         assert!(hull_4d.is_empty());
-        assert_eq!(hull_4d.facet_count(), 0);
+        assert_eq!(hull_4d.number_of_facets(), 0);
         assert_eq!(hull_4d.dimension(), 4);
         assert!(hull_4d.validate(dummy_dt_4d.triangulation()).is_ok());
     }
@@ -3334,7 +3346,7 @@ mod tests {
         // Test basic operations
         assert!(!hull.is_empty());
         assert_eq!(hull.dimension(), 3);
-        assert_eq!(hull.facet_count(), 4);
+        assert_eq!(hull.number_of_facets(), 4);
 
         // Test get_facet bounds checking
         assert!(hull.get_facet(0).is_some());
@@ -3444,7 +3456,7 @@ mod tests {
             iter_facets.push(facet);
         }
 
-        assert_eq!(iter_facets.len(), hull.facet_count());
+        assert_eq!(iter_facets.len(), hull.number_of_facets());
 
         for (i, facet_ref) in iter_facets.iter().enumerate() {
             let facet_by_index = hull.get_facet(i).unwrap();
@@ -4099,7 +4111,7 @@ mod tests {
 
         // For each facet in the hull, derive its key and check it exists in cache
         let mut keys_found = 0usize;
-        for i in 0..hull.facet_count() {
+        for i in 0..hull.number_of_facets() {
             let facet_handle = hull.get_facet(i).unwrap();
             // Create FacetView to get vertices
             let facet_view = FacetView::new(
@@ -4136,7 +4148,7 @@ mod tests {
 
         println!(
             "  Found {keys_found}/{} hull facet keys in cache",
-            hull.facet_count()
+            hull.number_of_facets()
         );
 
         // Cache should be non-empty (contains facets from the TDS)
@@ -4146,7 +4158,7 @@ mod tests {
         );
         assert_eq!(
             keys_found,
-            hull.facet_count(),
+            hull.number_of_facets(),
             "Every hull facet key should be present in the cache"
         );
 
@@ -4247,7 +4259,7 @@ mod tests {
         match nearest_result {
             Ok(Some(facet_index)) => {
                 assert!(
-                    facet_index < hull.facet_count(),
+                    facet_index < hull.number_of_facets(),
                     "Returned facet index should be valid"
                 );
                 println!("  ✓ Found nearest facet at index: {facet_index}");
@@ -4288,7 +4300,7 @@ mod tests {
 
         match far_result {
             Ok(Some(facet_index)) => {
-                assert!(facet_index < hull.facet_count());
+                assert!(facet_index < hull.number_of_facets());
                 println!("  ✓ Found nearest facet for far point at index: {facet_index}");
             }
             Ok(None) => {
@@ -4314,7 +4326,7 @@ mod tests {
                 println!(
                     "  Inside point unexpectedly sees facet {facet_index} (may be due to precision)"
                 );
-                assert!(facet_index < hull.facet_count());
+                assert!(facet_index < hull.number_of_facets());
             }
             Err(e) => {
                 panic!("find_nearest_visible_facet failed for inside point: {e:?}");
@@ -5469,7 +5481,7 @@ mod tests {
                                 .validate(collinear_dt.triangulation())
                                 .is_ok()
                         );
-                        println!("    Facet count: {}", collinear_hull.facet_count());
+                        println!("    Facet count: {}", collinear_hull.number_of_facets());
 
                         // Test operations on collinear hull
                         let test_point = Point::new([0.5, 1.0]);
@@ -5839,7 +5851,7 @@ mod tests {
                 match ConvexHull::from_triangulation(dt_6d.triangulation()) {
                     Ok(hull_6d) => {
                         println!("    ✓ 6D hull constructed successfully");
-                        println!("    6D hull facet count: {}", hull_6d.facet_count());
+                        println!("    6D hull facet count: {}", hull_6d.number_of_facets());
                         assert_eq!(hull_6d.dimension(), 6);
 
                         // Test validation in 6D
@@ -5895,7 +5907,7 @@ mod tests {
             Ok(dt_7d) => match ConvexHull::from_triangulation(dt_7d.triangulation()) {
                 Ok(hull_7d) => {
                     println!("    ✓ 7D hull constructed successfully");
-                    println!("    7D hull facet count: {}", hull_7d.facet_count());
+                    println!("    7D hull facet count: {}", hull_7d.number_of_facets());
                     assert_eq!(hull_7d.dimension(), 7);
                     assert!(!hull_7d.is_empty());
                 }
@@ -5927,7 +5939,7 @@ mod tests {
                 match ConvexHull::from_triangulation(dt_8d.triangulation()) {
                     Ok(hull_8d) => {
                         println!("    ✓ 8D hull constructed successfully (impressive!)");
-                        println!("    8D hull facet count: {}", hull_8d.facet_count());
+                        println!("    8D hull facet count: {}", hull_8d.number_of_facets());
                         assert_eq!(hull_8d.dimension(), 8);
 
                         // Stress test operations on 8D hull
@@ -5984,7 +5996,10 @@ mod tests {
                         let hull_construction_time = hull_start.elapsed();
                         println!("    ✓ Large 3D hull constructed successfully");
                         println!("    Hull construction took: {hull_construction_time:?}");
-                        println!("    Large hull facet count: {}", large_hull.facet_count());
+                        println!(
+                            "    Large hull facet count: {}",
+                            large_hull.number_of_facets()
+                        );
 
                         // Test operations on large hull
                         let ops_start = std::time::Instant::now();
@@ -6052,7 +6067,7 @@ mod tests {
                     println!("    ✓ Large 2D hull constructed in {construction_2d_time:?}");
                     println!(
                         "    2D hull facet count: {} (should be ~{})",
-                        large_2d_hull.facet_count(),
+                        large_2d_hull.number_of_facets(),
                         num_2d_vertices
                     );
 
@@ -6745,7 +6760,7 @@ mod tests {
                 // A D-simplex has D+1 facets
                 let expected_facets = $dim + 1;
                 assert_eq!(
-                    hull.facet_count(),
+                    hull.number_of_facets(),
                     expected_facets,
                     "{}D simplex should have {} facets",
                     $dim,

@@ -43,7 +43,7 @@ use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateS
 /// let result = kernel.in_sphere(&points, &test_point).unwrap();
 /// assert_eq!(result, 1); // Inside
 /// ```
-pub trait Kernel<const D: usize>: Clone {
+pub trait Kernel<const D: usize>: Clone + Default {
     /// The scalar type used for coordinates.
     type Scalar: CoordinateScalar;
 
@@ -397,7 +397,7 @@ mod tests {
         let kernel = FastKernel::<f64>::new();
 
         // Create a 3D simplex (tetrahedron)
-        let points = vec![
+        let points = [
             Point::new([0.0, 0.0, 0.0]),
             Point::new([1.0, 0.0, 0.0]),
             Point::new([0.0, 1.0, 0.0]),
@@ -415,7 +415,7 @@ mod tests {
         let kernel = FastKernel::<f64>::new();
 
         // Create a 3D simplex (tetrahedron)
-        let simplex = vec![
+        let simplex = [
             Point::new([0.0, 0.0, 0.0]),
             Point::new([1.0, 0.0, 0.0]),
             Point::new([0.0, 1.0, 0.0]),
@@ -438,7 +438,7 @@ mod tests {
         let kernel = RobustKernel::<f64>::new();
 
         // Create a 3D simplex (tetrahedron)
-        let points = vec![
+        let points = [
             Point::new([0.0, 0.0, 0.0]),
             Point::new([1.0, 0.0, 0.0]),
             Point::new([0.0, 1.0, 0.0]),
@@ -456,7 +456,7 @@ mod tests {
         let kernel = RobustKernel::<f64>::new();
 
         // Create a 3D simplex (tetrahedron)
-        let simplex = vec![
+        let simplex = [
             Point::new([0.0, 0.0, 0.0]),
             Point::new([1.0, 0.0, 0.0]),
             Point::new([0.0, 1.0, 0.0]),
@@ -480,7 +480,7 @@ mod tests {
         let robust_kernel = RobustKernel::<f64>::new();
 
         // Create a 2D simplex (triangle)
-        let simplex = vec![
+        let simplex = [
             Point::new([0.0, 0.0]),
             Point::new([1.0, 0.0]),
             Point::new([0.5, 1.0]),
@@ -503,7 +503,7 @@ mod tests {
         let kernel = FastKernel::<f64>::new();
 
         // 2D triangle
-        let points = vec![
+        let points = [
             Point::new([0.0, 0.0]),
             Point::new([1.0, 0.0]),
             Point::new([0.5, 1.0]),
@@ -523,7 +523,7 @@ mod tests {
         let config = config_presets::high_precision();
         let kernel = RobustKernel::<f64>::with_config(config);
 
-        let points = vec![
+        let points = [
             Point::new([0.0, 0.0, 0.0]),
             Point::new([1.0, 0.0, 0.0]),
             Point::new([0.0, 1.0, 0.0]),
@@ -532,5 +532,288 @@ mod tests {
 
         let orientation = kernel.orientation(&points).unwrap();
         assert!(orientation != 0); // Should be non-degenerate
+    }
+
+    // =============================================================================
+    // Degeneracy Detection Tests
+    // =============================================================================
+
+    #[test]
+    fn test_orientation_collinear_2d_fast() {
+        let kernel = FastKernel::<f64>::new();
+
+        // Three collinear points on x-axis
+        let collinear = [
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([2.0, 0.0]),
+        ];
+
+        let orientation = kernel.orientation(&collinear).unwrap();
+        assert_eq!(
+            orientation, 0,
+            "Collinear points should have zero orientation"
+        );
+    }
+
+    #[test]
+    fn test_orientation_collinear_2d_robust() {
+        let kernel = RobustKernel::<f64>::new();
+
+        // Three collinear points on x-axis
+        let collinear = [
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([2.0, 0.0]),
+        ];
+
+        let orientation = kernel.orientation(&collinear).unwrap();
+        assert_eq!(
+            orientation, 0,
+            "Collinear points should have zero orientation"
+        );
+    }
+
+    #[test]
+    fn test_orientation_collinear_diagonal_2d() {
+        let kernel = FastKernel::<f64>::new();
+
+        // Three collinear points on diagonal
+        let collinear = [
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 1.0]),
+            Point::new([2.0, 2.0]),
+        ];
+
+        let orientation = kernel.orientation(&collinear).unwrap();
+        assert_eq!(
+            orientation, 0,
+            "Diagonal collinear points should have zero orientation"
+        );
+    }
+
+    #[test]
+    fn test_orientation_valid_triangle_2d() {
+        let kernel = FastKernel::<f64>::new();
+
+        // Valid triangle (not collinear)
+        let triangle = [
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.5, 0.866]), // ~60 degree angle
+        ];
+
+        let orientation = kernel.orientation(&triangle).unwrap();
+        assert_ne!(
+            orientation, 0,
+            "Valid triangle should have non-zero orientation"
+        );
+        assert!(
+            orientation == 1 || orientation == -1,
+            "Orientation should be +1 or -1"
+        );
+    }
+
+    #[test]
+    fn test_orientation_coplanar_3d_fast() {
+        let kernel = FastKernel::<f64>::new();
+
+        // Four coplanar points in xy-plane
+        let coplanar = [
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.5, 0.5, 0.0]), // All z=0
+        ];
+
+        let orientation = kernel.orientation(&coplanar).unwrap();
+        assert_eq!(
+            orientation, 0,
+            "Coplanar points should have zero orientation"
+        );
+    }
+
+    #[test]
+    fn test_orientation_coplanar_3d_robust() {
+        let kernel = RobustKernel::<f64>::new();
+
+        // Four coplanar points in xy-plane
+        let coplanar = [
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.5, 0.5, 0.0]), // All z=0
+        ];
+
+        let orientation = kernel.orientation(&coplanar).unwrap();
+        assert_eq!(
+            orientation, 0,
+            "Coplanar points should have zero orientation"
+        );
+    }
+
+    #[test]
+    fn test_orientation_valid_tetrahedron_3d() {
+        let kernel = FastKernel::<f64>::new();
+
+        // Valid tetrahedron (not coplanar)
+        let tetrahedron = [
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+
+        let orientation = kernel.orientation(&tetrahedron).unwrap();
+        assert_ne!(
+            orientation, 0,
+            "Valid tetrahedron should have non-zero orientation"
+        );
+        assert!(
+            orientation == 1 || orientation == -1,
+            "Orientation should be +1 or -1"
+        );
+    }
+
+    #[test]
+    fn test_orientation_nearly_collinear_2d_robust() {
+        let kernel = RobustKernel::<f64>::new();
+
+        // Nearly collinear points (small perturbation)
+        let nearly_collinear = [
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([2.0, 1e-10]), // Tiny deviation from collinearity
+        ];
+
+        let orientation = kernel.orientation(&nearly_collinear).unwrap();
+        // Robust predicates should detect this as non-degenerate
+        // (though it may be very close to zero, it should return definite answer)
+        assert!(orientation == -1 || orientation == 0 || orientation == 1);
+    }
+
+    #[test]
+    fn test_orientation_extreme_coordinates_2d() {
+        let kernel = RobustKernel::<f64>::new();
+
+        // Triangle with large coordinates
+        let large_triangle = [
+            Point::new([1e6, 1e6]),
+            Point::new([1e6 + 1.0, 1e6]),
+            Point::new([1e6, 1e6 + 1.0]),
+        ];
+
+        let orientation = kernel.orientation(&large_triangle).unwrap();
+        assert_ne!(
+            orientation, 0,
+            "Triangle with large coordinates should be non-degenerate"
+        );
+    }
+
+    #[test]
+    fn test_orientation_4d_valid_simplex() {
+        let kernel = FastKernel::<f64>::new();
+
+        // 4D simplex (5 points)
+        let simplex_4d = [
+            Point::new([0.0, 0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 1.0]),
+        ];
+
+        let orientation = kernel.orientation(&simplex_4d).unwrap();
+        assert_ne!(
+            orientation, 0,
+            "4D simplex should have non-zero orientation"
+        );
+    }
+
+    #[test]
+    fn test_orientation_4d_degenerate() {
+        let kernel = FastKernel::<f64>::new();
+
+        // 4D degenerate simplex (all points in 3D hyperplane)
+        let degenerate_4d = [
+            Point::new([0.0, 0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0, 0.0]),
+            Point::new([0.5, 0.5, 0.5, 0.0]), // All w=0
+        ];
+
+        let orientation = kernel.orientation(&degenerate_4d).unwrap();
+        assert_eq!(
+            orientation, 0,
+            "Degenerate 4D simplex should have zero orientation"
+        );
+    }
+
+    #[test]
+    fn test_orientation_small_but_valid_2d() {
+        let kernel = FastKernel::<f64>::new();
+
+        // Very small but valid triangle
+        let small_triangle = [
+            Point::new([0.0, 0.0]),
+            Point::new([1e-6, 0.0]),
+            Point::new([0.0, 1e-6]),
+        ];
+
+        let orientation = kernel.orientation(&small_triangle).unwrap();
+        assert_ne!(
+            orientation, 0,
+            "Small but valid triangle should be non-degenerate"
+        );
+    }
+
+    #[test]
+    fn test_orientation_consistency_both_kernels() {
+        let fast = FastKernel::<f64>::new();
+        let robust = RobustKernel::<f64>::new();
+
+        // Test case 1: Collinear
+        let collinear = [
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([2.0, 0.0]),
+        ];
+        assert_eq!(
+            fast.orientation(&collinear).unwrap(),
+            robust.orientation(&collinear).unwrap(),
+            "Both kernels should agree on collinear points"
+        );
+
+        // Test case 2: Valid triangle
+        let triangle1 = [
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.0, 1.0]),
+        ];
+        assert_eq!(
+            fast.orientation(&triangle1).unwrap(),
+            robust.orientation(&triangle1).unwrap(),
+            "Both kernels should agree on valid triangle"
+        );
+
+        // Test case 3: Another valid triangle
+        let triangle2 = [
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.5, 0.5]),
+        ];
+        assert_eq!(
+            fast.orientation(&triangle2).unwrap(),
+            robust.orientation(&triangle2).unwrap(),
+            "Both kernels should agree on another valid triangle"
+        );
+    }
+
+    #[test]
+    fn test_kernel_default_trait() {
+        // Test that both kernels implement Default (required for simplex validation)
+        let _fast: FastKernel<f64> = FastKernel::default();
+        let _robust: RobustKernel<f64> = RobustKernel::default();
     }
 }

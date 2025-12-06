@@ -147,7 +147,7 @@ fn extract_and_analyze_convex_hull(dt: &DelaunayTriangulation<FastKernel<f64>, (
     println!("Convex Hull Analysis:");
     println!("====================");
     println!("  Dimension:          {}", hull.dimension());
-    println!("  Number of facets:   {}", hull.facet_count());
+    println!("  Number of facets:   {}", hull.number_of_facets());
     println!("  Is empty:           {}", hull.is_empty());
 
     // Validate the convex hull
@@ -165,7 +165,7 @@ fn extract_and_analyze_convex_hull(dt: &DelaunayTriangulation<FastKernel<f64>, (
     }
 
     // Analyze hull facets
-    if hull.facet_count() > 0 {
+    if hull.number_of_facets() > 0 {
         println!("\n  Facet Analysis:");
         let facets: Vec<_> = hull.facets().collect();
         let sample_size = std::cmp::min(5, facets.len());
@@ -331,7 +331,7 @@ fn analyze_visible_facets(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>
             Ok(visible_facets) => {
                 let query_time = start.elapsed();
                 let visible_count = visible_facets.len();
-                let total_facets = hull.facet_count();
+                let total_facets = hull.number_of_facets();
                 let visibility_ratio = if total_facets > 0 {
                     let visible_f64 = cast(visible_count).unwrap_or(0.0f64);
                     let total_f64 = cast(total_facets).unwrap_or(1.0f64);
@@ -455,7 +455,7 @@ fn performance_analysis(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>) 
 
     // Performance per vertex ratios
     let vertex_count = dt.tds().number_of_vertices();
-    let facet_count = hull.facet_count();
+    let facet_count = hull.number_of_facets();
 
     if vertex_count > 0 && facet_count > 0 {
         let extraction_nanos = cast(avg_extraction_time.as_nanos()).unwrap_or(0.0f64);

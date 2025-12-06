@@ -24,6 +24,21 @@ use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use std::hash::{Hash, Hasher};
 
+/// Statistics about a vertex insertion operation.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct InsertionStatistics {
+    /// Number of insertion attempts (1 = success on first try, >1 = needed perturbation)
+    pub attempts: usize,
+    /// Whether perturbation was applied
+    pub used_perturbation: bool,
+    /// Whether the vertex was skipped due to geometric degeneracy
+    pub skipped: bool,
+    /// Number of cells removed during repair
+    pub cells_removed_during_repair: usize,
+    /// Whether the insertion succeeded
+    pub success: bool,
+}
+
 /// Error during incremental insertion.
 #[derive(Debug, thiserror::Error)]
 pub enum InsertionError {
@@ -126,6 +141,47 @@ where
     U: DataType,
     V: DataType,
 {
+    #[cfg(debug_assertions)]
+    {
+        // Check for duplicate boundary facets
+        let mut seen_facets: FastHashMap<u64, Vec<FacetHandle>> = FastHashMap::default();
+        for facet_handle in boundary_facets {
+            if let Some(boundary_cell) = tds.get_cell(facet_handle.cell_key()) {
+                let facet_idx = usize::from(facet_handle.facet_index());
+                let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+                for (i, &vertex_key) in boundary_cell.vertices().iter().enumerate() {
+                    if i != facet_idx {
+                        facet_vkeys.push(vertex_key);
+                    }
+                }
+                facet_vkeys.sort_unstable();
+                let facet_hash = compute_facet_hash(&facet_vkeys);
+                seen_facets
+                    .entry(facet_hash)
+                    .or_default()
+                    .push(*facet_handle);
+            }
+        }
+        let duplicates: Vec<_> = seen_facets
+            .iter()
+            .filter(|(_, handles)| handles.len() > 1)
+            .collect();
+        if !duplicates.is_empty() {
+            eprintln!(
+                "WARNING: {} duplicate boundary facets will create overlapping cells!",
+                duplicates.len()
+            );
+            for (hash, handles) in &duplicates {
+                eprintln!(
+                    "  Facet hash {}: {} instances: {:?}",
+                    hash,
+                    handles.len(),
+                    handles
+                );
+            }
+        }
+    }
+
     let mut new_cells = CellKeyBuffer::new();
 
     for facet_handle in boundary_facets {
@@ -305,9 +361,11 @@ where
 
             // Only add if this facet matches one from new cells
             if let Some(existing_facet_cells) = facet_map.get_mut(&facet_key) {
-                // Only add if we don't already have 2 cells for this facet
-                // (prevents non-manifold topology)
-                if existing_facet_cells.len() < 2 {
+                // Only add to boundary facets (len == 1)
+                // Internal facets of new cells (len >= 2) should not be wired to existing cells
+                // This prevents creating non-manifold topology where a facet is shared by
+                // multiple new cells AND an existing cell
+                if existing_facet_cells.len() == 1 {
                     let facet_idx_u8 =
                         u8::try_from(facet_idx).map_err(|_| InsertionError::NeighborWiring {
                             message: format!("Facet index {facet_idx} exceeds u8::MAX"),
@@ -321,6 +379,7 @@ where
 
     // Wire all matching facets (both internal and external)
     // Two cells share a facet if they have the same facet key
+    #[allow(unused_variables)] // Used in debug_assertions
     for (facet_key, cells) in &facet_map {
         if cells.len() == 2 {
             let (c1, idx1) = cells[0];
@@ -334,11 +393,24 @@ where
             // The localized repair mechanism (detect_local_facet_issues + repair_local_facet_issues)
             // will handle this after wiring completes by removing problematic cells.
             #[cfg(debug_assertions)]
-            eprintln!(
-                "Warning: Non-manifold topology during wiring: facet {} shared by {} cells (expected ≤2). Will be repaired after insertion.",
-                facet_key,
-                cells.len()
-            );
+            {
+                let cell_types: Vec<String> = cells
+                    .iter()
+                    .map(|(ck, _)| {
+                        if new_cells_set.contains(ck) {
+                            format!("NEW:{ck:?}")
+                        } else if conflict_set.contains(ck) {
+                            format!("CONFLICT:{ck:?}")
+                        } else {
+                            format!("EXISTING:{ck:?}")
+                        }
+                    })
+                    .collect();
+                eprintln!(
+                    "Warning: Non-manifold topology during wiring: facet {facet_key} shared by {} cells (expected ≤2). Cell types: {cell_types:?}",
+                    cells.len()
+                );
+            }
             // Skip wiring for this facet - leave neighbors unset for these cells
         }
         // cells.len() == 1 means it's a boundary facet (no neighbor)
@@ -388,6 +460,65 @@ fn compute_facet_hash(sorted_vkeys: &[VertexKey]) -> u64 {
     hasher.finish()
 }
 
+/// Find the facet index in `neighbor_cell` that corresponds to the shared facet.
+///
+/// Given a cell and one of its facets (specified by the opposite vertex index),
+/// find the corresponding facet index in the neighboring cell that shares the same facet.
+///
+/// # Algorithm (CGAL-style mirror facet)
+///
+/// 1. Extract the facet vertices from `cell` (all except vertex at `facet_idx`)
+/// 2. For each vertex index in `neighbor_cell`, check if that vertex is NOT in the facet
+/// 3. The index of the vertex not in the facet is the mirror facet index
+///
+/// # Arguments
+///
+/// * `cell` - The source cell
+/// * `facet_idx` - Index of the vertex opposite the shared facet in `cell`
+/// * `neighbor_cell` - The neighboring cell
+///
+/// # Returns
+///
+/// The facet index in `neighbor_cell` (index of vertex opposite the shared facet),
+/// or None if no matching facet is found (shouldn't happen for valid neighbors).
+///
+/// # Example
+///
+/// ```text
+/// Cell A: [v0, v1, v2, v3], facet_idx=2 → facet=[v0,v1,v3]
+/// Cell B: [v3, v1, v0, v2] → opposite vertex is v2 at index 3
+/// Returns: Some(3)
+/// ```
+fn mirror_facet_index<T, U, V, const D: usize>(
+    cell: &Cell<T, U, V, D>,
+    facet_idx: usize,
+    neighbor_cell: &Cell<T, U, V, D>,
+) -> Option<usize>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    // Build the facet vertex set from the source cell (all except facet_idx)
+    let mut facet_vertices = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+    for (i, &vkey) in cell.vertices().iter().enumerate() {
+        if i != facet_idx {
+            facet_vertices.push(vkey);
+        }
+    }
+
+    // Find the vertex in neighbor_cell that is NOT in the facet
+    // That vertex's index is the mirror facet index
+    for (idx, &neighbor_vkey) in neighbor_cell.vertices().iter().enumerate() {
+        if !facet_vertices.contains(&neighbor_vkey) {
+            return Some(idx);
+        }
+    }
+
+    // Should never reach here for valid neighbors
+    None
+}
+
 /// Repair neighbor pointers by fixing only broken/None pointers.
 ///
 /// This function scans all cells and for each None or invalid neighbor pointer,
@@ -403,10 +534,14 @@ fn compute_facet_hash(sorted_vkeys: &[VertexKey]) -> u64 {
 /// - `tds` - Mutable triangulation data structure
 ///
 /// # Returns
-/// Ok(()) if repair succeeds
+/// `Ok(())` if repair succeeds
 ///
 /// # Errors
 /// Returns error if facet indexing or neighbor setting fails.
+///
+/// # Panics
+/// Panics if a cell cannot be retrieved during facet matching (should not happen
+/// during normal operation as cells are validated before matching).
 ///
 /// # Algorithm
 /// 1. For each cell, check each neighbor pointer
@@ -414,6 +549,7 @@ fn compute_facet_hash(sorted_vkeys: &[VertexKey]) -> u64 {
 /// 3. Build facet hash for that specific facet
 /// 4. Scan all other cells to find the one sharing that facet
 /// 5. Wire mutual neighbors only for the broken facets
+#[allow(clippy::too_many_lines)]
 pub fn repair_neighbor_pointers<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
 ) -> Result<(), InsertionError>
@@ -424,12 +560,19 @@ where
 {
     // Collect all cell keys first
     let all_cell_keys: Vec<CellKey> = tds.cells().map(|(key, _)| key).collect();
-    
+
     #[cfg(debug_assertions)]
-    eprintln!("repair_neighbor_pointers: scanning {} cells", all_cell_keys.len());
-    
+    eprintln!(
+        "repair_neighbor_pointers: scanning {} cells",
+        all_cell_keys.len()
+    );
+
+    // Track wired facet pairs to avoid double-wiring
+    // Key: (min_cell, max_cell, facet_hash) to ensure unique facet pairs
+    let mut wired_pairs: FastHashSet<(CellKey, CellKey, u64)> = FastHashSet::default();
+    #[cfg(debug_assertions)]
     let mut total_repaired = 0;
-    
+
     // For each cell, find facets that need repair (None or invalid neighbors)
     for &cell_key in &all_cell_keys {
         let cell = tds
@@ -437,10 +580,10 @@ where
             .ok_or_else(|| InsertionError::NeighborWiring {
                 message: format!("Cell {cell_key:?} not found"),
             })?;
-        
+
         let num_vertices = cell.number_of_vertices();
         let mut facets_to_repair: Vec<usize> = Vec::new();
-        
+
         // Check which facets need repair
         if let Some(neighbors) = cell.neighbors() {
             for facet_idx in 0..num_vertices {
@@ -454,11 +597,11 @@ where
             // No neighbors set at all - repair all facets
             facets_to_repair.extend(0..num_vertices);
         }
-        
+
         if facets_to_repair.is_empty() {
             continue; // All neighbors are valid
         }
-        
+
         // For each facet that needs repair, find its neighbor by facet matching
         for facet_idx in facets_to_repair {
             // Build facet vertex keys (all except facet_idx)
@@ -471,20 +614,21 @@ where
             }
             facet_vkeys.sort_unstable();
             let facet_hash = compute_facet_hash(&facet_vkeys);
-            
+
             // Scan all other cells to find one sharing this facet
             let mut matching_cell: Option<(CellKey, usize)> = None;
-            
+
             for &other_key in &all_cell_keys {
                 if other_key == cell_key {
                     continue;
                 }
-                
+
                 let other_cell = tds.get_cell(other_key).unwrap();
-                
+
                 // Check each facet of other_cell
                 for other_facet_idx in 0..other_cell.number_of_vertices() {
-                    let mut other_facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+                    let mut other_facet_vkeys =
+                        SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
                     for (i, &vkey) in other_cell.vertices().iter().enumerate() {
                         if i != other_facet_idx {
                             other_facet_vkeys.push(vkey);
@@ -492,42 +636,76 @@ where
                     }
                     other_facet_vkeys.sort_unstable();
                     let other_facet_hash = compute_facet_hash(&other_facet_vkeys);
-                    
+
                     if facet_hash == other_facet_hash {
                         // Found matching facet
                         matching_cell = Some((other_key, other_facet_idx));
                         break;
                     }
                 }
-                
+
                 if matching_cell.is_some() {
                     break;
                 }
             }
-            
+
             // Wire mutual neighbors if we found a match
-            if let Some((other_key, other_facet_idx)) = matching_cell {
-                let facet_idx_u8 = u8::try_from(facet_idx).map_err(|_| {
-                    InsertionError::NeighborWiring {
+            if let Some((other_key, _other_facet_idx)) = matching_cell {
+                // Check if we've already wired this facet pair
+                let pair_key = if cell_key < other_key {
+                    (cell_key, other_key, facet_hash)
+                } else {
+                    (other_key, cell_key, facet_hash)
+                };
+
+                if wired_pairs.contains(&pair_key) {
+                    // Already wired - skip to avoid double-wiring
+                    #[cfg(debug_assertions)]
+                    eprintln!("  Skipping already-wired pair: {cell_key:?} <-> {other_key:?}");
+                    continue;
+                }
+
+                // Use mirror_facet_index to find the correct opposite vertex in neighbor
+                let cell = tds.get_cell(cell_key).unwrap();
+                let other_cell = tds.get_cell(other_key).unwrap();
+
+                // Find the mirror facet index: which vertex in other_cell is opposite the shared facet?
+                let mirror_idx = mirror_facet_index(cell, facet_idx, other_cell).ok_or_else(
+                    || InsertionError::NeighborWiring {
+                        message: format!(
+                            "Could not find mirror facet: cell {cell_key:?} facet {facet_idx} -> other cell {other_key:?}"
+                        ),
+                    },
+                )?;
+
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "  Wiring: cell {cell_key:?}[{facet_idx}] <-> other {other_key:?}[{mirror_idx}]"
+                );
+
+                let facet_idx_u8 =
+                    u8::try_from(facet_idx).map_err(|_| InsertionError::NeighborWiring {
                         message: format!("Facet index {facet_idx} exceeds u8::MAX"),
-                    }
-                })?;
-                let other_facet_idx_u8 = u8::try_from(other_facet_idx).map_err(|_| {
-                    InsertionError::NeighborWiring {
-                        message: format!("Facet index {other_facet_idx} exceeds u8::MAX"),
-                    }
-                })?;
-                
+                    })?;
+                let mirror_idx_u8 =
+                    u8::try_from(mirror_idx).map_err(|_| InsertionError::NeighborWiring {
+                        message: format!("Mirror facet index {mirror_idx} exceeds u8::MAX"),
+                    })?;
+
                 set_neighbor(tds, cell_key, facet_idx_u8, Some(other_key))?;
-                set_neighbor(tds, other_key, other_facet_idx_u8, Some(cell_key))?;
-                total_repaired += 1;
+                set_neighbor(tds, other_key, mirror_idx_u8, Some(cell_key))?;
+                wired_pairs.insert(pair_key);
+                #[cfg(debug_assertions)]
+                {
+                    total_repaired += 1;
+                }
             }
             // If no match found, leave as None (boundary facet)
         }
     }
-    
+
     #[cfg(debug_assertions)]
-    eprintln!("repair_neighbor_pointers: repaired {} facet pairs", total_repaired);
+    eprintln!("repair_neighbor_pointers: repaired {total_repaired} facet pairs");
 
     Ok(())
 }

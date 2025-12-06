@@ -18,7 +18,8 @@
 //! - CGAL Triangulation_3 documentation
 
 use crate::core::collections::{
-    CellKeyBuffer, CellSecondaryMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
+    CellKeyBuffer, CellSecondaryMap, FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE,
+    SmallBuffer,
 };
 use crate::core::facet::FacetHandle;
 use crate::core::traits::data_type::DataType;
@@ -97,6 +98,26 @@ pub enum ConflictError {
         cell_key: CellKey,
         /// Error message
         message: String,
+    },
+
+    /// Duplicate boundary facets detected (geometric degeneracy)
+    #[error(
+        "Duplicate boundary facets detected: {count} duplicates found (indicates degenerate geometry requiring perturbation)"
+    )]
+    DuplicateBoundaryFacets {
+        /// Number of duplicate facets found
+        count: usize,
+    },
+
+    /// Ridge fan detected (many facets sharing same (D-2)-simplex)
+    #[error(
+        "Ridge fan detected: {facet_count} facets share ridge with {ridge_vertex_count} vertices (indicates degenerate geometry requiring perturbation)"
+    )]
+    RidgeFan {
+        /// Number of facets in the fan
+        facet_count: usize,
+        /// Number of vertices in the shared ridge
+        ridge_vertex_count: usize,
     },
 }
 
@@ -555,11 +576,21 @@ where
     U: DataType,
     V: DataType,
 {
+    use crate::core::collections::FastHasher;
+    use std::hash::{Hash, Hasher};
+
     // Convert conflict cells to set for O(1) lookup
     let conflict_set: FastHashSet<CellKey> = conflict_cells.iter().copied().collect();
 
-    // Result buffer for boundary facets
+    // Use a set to deduplicate boundary facets by their canonical vertex keys
+    // Deduplication prevents creating multiple identical cells in fill_cavity
+    let mut facet_set: FastHashSet<u64> = FastHashSet::default();
     let mut boundary_facets = SmallBuffer::new();
+    let mut duplicate_count = 0;
+
+    // Track ridge incidence for detecting ridge fans
+    // Map: ridge_hash -> (ridge_vertex_count, number_of_facets_sharing_this_ridge)
+    let mut ridge_map: FastHashMap<u64, (usize, usize)> = FastHashMap::default();
 
     // Examine each cell in the conflict region
     for &cell_key in conflict_cells {
@@ -583,14 +614,86 @@ where
                 neighbor_opt.is_none_or(|neighbor_key| !conflict_set.contains(&neighbor_key));
 
             if is_boundary {
-                // Create facet handle oriented with conflict cell
+                // Get facet vertices (all except opposite vertex at facet_idx)
+                let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+                for (i, &vkey) in cell.vertices().iter().enumerate() {
+                    if i != facet_idx {
+                        facet_vkeys.push(vkey);
+                    }
+                }
+
+                // Sort to get canonical representation
+                facet_vkeys.sort_unstable();
+
+                // Compute facet hash
+                let mut hasher = FastHasher::default();
+                for &vkey in &facet_vkeys {
+                    vkey.hash(&mut hasher);
+                }
+                let facet_hash = hasher.finish();
+
+                // Check for duplicates
+                if facet_set.contains(&facet_hash) {
+                    duplicate_count += 1;
+                    continue; // Skip duplicate
+                }
+
+                // Insert into set and buffer
+                facet_set.insert(facet_hash);
                 let facet_idx_u8 =
                     u8::try_from(facet_idx).map_err(|_| ConflictError::VertexRetrievalFailed {
                         cell_key,
                         message: format!("Facet index {facet_idx} exceeds u8::MAX"),
                     })?;
                 boundary_facets.push(FacetHandle::new(cell_key, facet_idx_u8));
+
+                // Track ridge incidence for fan detection
+                // A ridge is a (D-2)-simplex, which is the facet with one more vertex removed
+                // For each facet, check all possible ridges (D different ridges per facet)
+                if facet_vkeys.len() >= 2 {
+                    for ridge_idx in 0..facet_vkeys.len() {
+                        let mut ridge_vkeys =
+                            SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+                        for (i, &vkey) in facet_vkeys.iter().enumerate() {
+                            if i != ridge_idx {
+                                ridge_vkeys.push(vkey);
+                            }
+                        }
+                        ridge_vkeys.sort_unstable();
+
+                        let mut ridge_hasher = FastHasher::default();
+                        for &vkey in &ridge_vkeys {
+                            vkey.hash(&mut ridge_hasher);
+                        }
+                        let ridge_hash = ridge_hasher.finish();
+
+                        ridge_map
+                            .entry(ridge_hash)
+                            .and_modify(|(_, count)| *count += 1)
+                            .or_insert((ridge_vkeys.len(), 1));
+                    }
+                }
             }
+        }
+    }
+
+    // Check for duplicate facets (geometric degeneracy)
+    if duplicate_count > 0 {
+        return Err(ConflictError::DuplicateBoundaryFacets {
+            count: duplicate_count,
+        });
+    }
+
+    // Check for ridge fans (many facets sharing same ridge)
+    // In a manifold boundary, a ridge should be shared by at most 2 facets
+    // More than 2 indicates a degenerate fan configuration
+    for (ridge_vertex_count, facet_count) in ridge_map.values() {
+        const RIDGE_FAN_THRESHOLD: usize = 3;
+        if *facet_count >= RIDGE_FAN_THRESHOLD {
+            return Err(ConflictError::RidgeFan {
+                facet_count: *facet_count,
+                ridge_vertex_count: *ridge_vertex_count,
+            });
         }
     }
 
@@ -616,8 +719,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
-        dt.tri.tds.assign_neighbors().unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Get the single cell
@@ -1083,8 +1185,7 @@ mod tests {
             let vertices: Vec<_> = vec![
                 $(vertex!($coords)),+
             ];
-            let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
-            dt.tri.tds.assign_neighbors().unwrap();
+            let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
             let start_cell = dt.tds().cell_keys().next().unwrap();
             let mut conflict_cells = CellKeyBuffer::new();
@@ -1158,8 +1259,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
-        dt.tri.tds.assign_neighbors().unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
         let conflict_cells = CellKeyBuffer::new(); // Empty
 

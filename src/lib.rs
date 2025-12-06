@@ -65,7 +65,7 @@
 //! // Extract the convex hull (boundary facets of the triangulation)
 //! let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
 //!
-//! println!("Convex hull has {} facets in {}D", hull.facet_count(), hull.dimension());
+//! println!("Convex hull has {} facets in {}D", hull.number_of_facets(), hull.dimension());
 //!
 //! // Test point containment
 //! let inside_point = Point::new([1.0, 0.5, 0.5]);
@@ -76,7 +76,7 @@
 //!
 //! // Find visible facets from an external point (useful for incremental construction)
 //! let visible_facets = hull.find_visible_facets(&outside_point, dt.triangulation()).unwrap();
-//! println!("Point sees {} out of {} facets", visible_facets.len(), hull.facet_count());
+//! println!("Point sees {} out of {} facets", visible_facets.len(), hull.number_of_facets());
 //!
 //! // Works in any dimension!
 //! let vertices_4d: Vec<_> = vec![
@@ -90,7 +90,7 @@
 //!     DelaunayTriangulation::new(&vertices_4d).unwrap();
 //! let hull_4d = ConvexHull::from_triangulation(dt_4d.triangulation()).unwrap();
 //!
-//! assert_eq!(hull_4d.facet_count(), 5);  // 4-simplex has 5 boundary facets
+//! assert_eq!(hull_4d.number_of_facets(), 5);  // 4-simplex has 5 boundary facets
 //! assert_eq!(hull_4d.dimension(), 4);     // 4D convex hull
 //! ```
 //!
@@ -248,9 +248,10 @@
 //! ### Degenerate input handling
 //!
 //! When the input vertices cannot form a non-degenerate simplex (for example, when all points
-//! are collinear in 2D), construction fails during incremental insertion with
-//! [`TriangulationConstructionError::FailedToAddVertex`](core::triangulation_data_structure::TriangulationConstructionError::FailedToAddVertex).
-//! This occurs because degenerate simplices cannot be processed by the circumsphere containment predicates.
+//! are collinear in 2D), construction fails during initial simplex construction with
+//! [`TriangulationConstructionError::GeometricDegeneracy`](core::triangulation_data_structure::TriangulationConstructionError::GeometricDegeneracy).
+//! This occurs because degenerate simplices (collinear in 2D, coplanar in 3D, etc.) are detected
+//! early using robust orientation predicates before any topology is built.
 //!
 //! ```rust
 //! use delaunay::prelude::*;
@@ -266,10 +267,10 @@
 //! let result: Result<DelaunayTriangulation<_, (), (), 2>, _> =
 //!     DelaunayTriangulation::new(&degenerate);
 //!
-//! // Collinear points fail during incremental insertion due to degenerate simplices
+//! // Collinear points fail during initial simplex construction due to degeneracy
 //! assert!(matches!(
 //!     result,
-//!     Err(TriangulationConstructionError::FailedToAddVertex { .. })
+//!     Err(TriangulationConstructionError::GeometricDegeneracy { .. })
 //! ));
 //! ```
 //!
@@ -462,6 +463,9 @@ pub mod prelude {
     // Re-export point location algorithms from core::algorithms
     pub use crate::core::algorithms::locate::{LocateError, LocateResult, locate};
 
+    // Re-export incremental insertion types from core::algorithms
+    pub use crate::core::algorithms::incremental_insertion::{InsertionError, InsertionStatistics};
+
     // Re-export commonly used collection types from core::collections
     // These are frequently used in advanced examples and downstream code
     pub use crate::core::collections::{
@@ -564,6 +568,185 @@ mod tests {
 
         let norm_vol = normalized_volume(dt.triangulation(), cell_key).unwrap();
         assert!(norm_vol > 0.0);
+    }
+
+    #[test]
+    fn test_prelude_kernel_exports() {
+        use crate::prelude::*;
+
+        // Test that kernel types and predicates are accessible from prelude
+        let fast_kernel = FastKernel::<f64>::new();
+        let robust_kernel = RobustKernel::<f64>::new();
+
+        // Test 2D orientation predicate
+        let triangle = [
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.0, 1.0]),
+        ];
+
+        let fast_orientation = fast_kernel.orientation(&triangle).unwrap();
+        assert_ne!(fast_orientation, 0, "Triangle should be non-degenerate");
+
+        let robust_orientation = robust_kernel.orientation(&triangle).unwrap();
+        assert_eq!(
+            fast_orientation, robust_orientation,
+            "Both kernels should agree"
+        );
+
+        // Test collinear detection
+        let collinear = [
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([2.0, 0.0]),
+        ];
+        assert_eq!(
+            fast_kernel.orientation(&collinear).unwrap(),
+            0,
+            "Collinear points should have zero orientation"
+        );
+
+        // Test in_sphere predicate
+        let inside_point = Point::new([0.25, 0.25]);
+        let result = fast_kernel.in_sphere(&triangle, &inside_point).unwrap();
+        assert_eq!(result, 1, "Point should be inside circumcircle");
+
+        let outside_point = Point::new([2.0, 2.0]);
+        let result = fast_kernel.in_sphere(&triangle, &outside_point).unwrap();
+        assert_eq!(result, -1, "Point should be outside circumcircle");
+    }
+
+    #[test]
+    fn test_prelude_core_types() {
+        use crate::prelude::*;
+
+        // Test that core types are accessible and work from prelude
+        // Point construction
+        let p1 = Point::new([0.0, 0.0, 0.0]);
+        let p2 = Point::new([1.0, 0.0, 0.0]);
+        assert_ne!(p1, p2);
+
+        // Vertex construction via macro and builder
+        let v1: Vertex<f64, (), 3> = vertex!([0.0, 0.0, 0.0]);
+        let v2: Vertex<f64, (), 3> = vertex!([1.0, 0.0, 0.0]);
+        assert_ne!(v1.point(), v2.point());
+
+        // DelaunayTriangulation construction
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        assert_eq!(dt.number_of_vertices(), 4);
+        assert_eq!(dt.number_of_cells(), 1);
+
+        // Access Triangulation, Tds, Cell types
+        let tri = dt.triangulation();
+        assert_eq!(tri.number_of_vertices(), 4);
+
+        let tds = &tri.tds;
+        assert_eq!(tds.number_of_cells(), 1);
+
+        // Iterate over cells
+        for (cell_key, _cell) in tri.cells() {
+            assert!(tds.get_cell(cell_key).is_some());
+        }
+    }
+
+    #[test]
+    fn test_prelude_point_location() {
+        use crate::prelude::*;
+
+        // Test that point location algorithms are accessible
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        // Test locate function with kernel
+        let kernel = FastKernel::<f64>::new();
+        let query_point = Point::new([0.3, 0.3]);
+        let result = locate(dt.tds(), &kernel, &query_point, None);
+        assert!(result.is_ok());
+
+        // Result should be a LocateResult
+        match result.unwrap() {
+            LocateResult::InsideCell(_)
+            | LocateResult::OnFacet { .. }
+            | LocateResult::OnEdge { .. }
+            | LocateResult::OnVertex(_) => { /* expected or acceptable */ }
+            LocateResult::Outside => panic!("Point should be inside triangulation"),
+        }
+
+        // Test outside point
+        let outside_point = Point::new([10.0, 10.0]);
+        let result = locate(dt.tds(), &kernel, &outside_point, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_prelude_geometry_types() {
+        use crate::prelude::*;
+
+        // Test Point with Coordinate trait
+        let p = Point::new([1.0_f64, 2.0_f64, 3.0_f64]);
+        assert!((p.coords()[0] - 1.0_f64).abs() < f64::EPSILON);
+        assert!((p.coords()[1] - 2.0_f64).abs() < f64::EPSILON);
+        assert!((p.coords()[2] - 3.0_f64).abs() < f64::EPSILON);
+
+        // Test predicates are accessible
+        let triangle = [
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.0, 1.0]),
+        ];
+
+        // simplex_orientation is exported from predicates
+        let orientation = simplex_orientation(&triangle).unwrap();
+        assert_ne!(orientation, Orientation::DEGENERATE);
+
+        // Test insphere predicate
+        let test_point = Point::new([0.25, 0.25]);
+        let result = insphere(&triangle, test_point).unwrap();
+        assert_eq!(result, InSphere::INSIDE);
+    }
+
+    #[test]
+    fn test_prelude_convex_hull() {
+        use crate::prelude::*;
+
+        // Test that convex hull operations are accessible
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        // ConvexHull type should be accessible
+        let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
+        assert_eq!(hull.number_of_facets(), 4); // Tetrahedron has 4 faces
+
+        // Test point visibility
+        let outside_point = Point::new([2.0, 2.0, 2.0]);
+        let is_outside = hull
+            .is_point_outside(&outside_point, dt.triangulation())
+            .unwrap();
+        assert!(is_outside);
+
+        let inside_point = Point::new([0.25, 0.25, 0.25]);
+        let is_outside = hull
+            .is_point_outside(&inside_point, dt.triangulation())
+            .unwrap();
+        assert!(!is_outside);
     }
 
     // =============================================================================
