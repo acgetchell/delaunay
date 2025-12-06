@@ -133,6 +133,7 @@ Property-based tests for `DelaunayTriangulation` invariants (all Delaunay-specif
 
 **Note:** The incremental Bowyer-Watson algorithm can produce locally non-Delaunay configurations
 that cannot be repaired without topology-changing operations. Bistellar flips are needed:
+
 - 2D: Edge flip (2-to-2) for flipping non-Delaunay edges
 - 3D+: General bistellar flip operations for higher dimensions
 

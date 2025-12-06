@@ -1,25 +1,37 @@
 # Issue #120 Investigation: Property Test Stabilization
 
 ## Investigation Date
+
 2025-12-06
 
 ## Summary
-The property tests for Delaunay empty circumsphere validation cannot be stabilized without implementing bistellar flip operations. The tests are correctly identifying algorithmic limitations rather than test configuration issues.
+
+The property tests for Delaunay empty circumsphere validation cannot be stabilized
+without implementing bistellar flip operations. The tests are correctly identifying
+algorithmic limitations rather than test configuration issues.
 
 ## Root Cause
-The incremental Bowyer-Watson algorithm can produce **locally non-Delaunay configurations** that cannot be repaired through the current global repair mechanism. These violations occur even with:
+
+The incremental Bowyer-Watson algorithm can produce **locally non-Delaunay
+configurations** that cannot be repaired through the current global repair mechanism.
+These violations occur even with:
+
 - ✅ Coordinate deduplication (prevents exact duplicates)
 - ✅ General position filtering (rejects >D points on any axis)
 - ✅ Robust geometric predicates (`robust_insphere`)
 - ✅ Global repair loops (removes violated cells but cannot fix topology)
 
 ## Failing Tests
+
 All tests in `tests/proptest_delaunay_triangulation.rs`:
+
 - `prop_empty_circumsphere_{2d,3d,4d,5d}` (lines 228-231)
 - `prop_cloud_with_duplicates_is_delaunay_{2d,3d,4d,5d}` (lines 421-424)
 
 ## Example Failure Case (2D)
+
 Minimal failing input from proptest:
+
 ```rust
 [
     Point([0.0, 0.0]),
@@ -32,7 +44,8 @@ Minimal failing input from proptest:
 Error: `DelaunayViolation { cell_key: CellKey(1v1) }`
 
 The repair mechanism runs but reports:
-```
+
+```text
 After repair loop (interior): total_removed=0
 No cells removed (interior), skipping neighbor rebuild
 ```
@@ -42,7 +55,9 @@ This indicates the violation cannot be fixed by removing cells—it requires **t
 ## Why Current Approach Fails
 
 ### 1. Bowyer-Watson Limitations
+
 The incremental cavity-based insertion algorithm:
+
 - Creates a cavity around the new point
 - Removes violating cells
 - Retriangulates from the cavity boundary
@@ -50,7 +65,9 @@ The incremental cavity-based insertion algorithm:
 However, this can produce **locally non-Delaunay edges** that satisfy the immediate insertion but violate the global Delaunay property when checked against all vertices.
 
 ### 2. Global Repair Insufficient
+
 The current `repair_global_delaunay_violations()` mechanism:
+
 - Detects violating cells
 - Attempts to remove them
 - Rebuilds connectivity
@@ -60,14 +77,16 @@ But it cannot **flip edges** or change topology, which is required to fix certai
 ## Solution: Bistellar Flips
 
 ### What Are Bistellar Flips?
+
 Topology-preserving transformations that restore the Delaunay property by reconfiguring cell adjacencies without changing the vertex set.
 
 ### Required Implementations
 
 #### 2D: Edge Flip (2-to-2)
+
 Transform two triangles sharing an edge into two triangles with the flipped edge.
 
-```
+```text
 Before:         After:
    d               d
   /|\             / \
@@ -81,10 +100,12 @@ a  |  c   -->   a-----c
 Condition: Edge `bd` is flippable if the circumcircle test indicates a Delaunay violation.
 
 #### 3D: Bistellar Flips (2-to-3, 3-to-2)
+
 - **2-to-3**: Replace 2 tetrahedra sharing a facet with 3 tetrahedra sharing an edge
 - **3-to-2**: Reverse of 2-to-3
 
 #### Higher Dimensions (4D-5D)
+
 General bistellar flip operations based on i-to-j transformations.
 
 ### Implementation Plan
@@ -111,11 +132,13 @@ General bistellar flip operations based on i-to-j transformations.
 ## File Locations
 
 ### Current State
+
 - **Stub implementation**: `src/core/algorithms/flips.rs` (19 lines, TODOs only)
 - **Failing tests**: `tests/proptest_delaunay_triangulation.rs` (lines 167-231, 349-424)
 - **Documentation**: `tests/README.md` (updated to reflect bistellar flip dependency)
 
 ### References
+
 - Edelsbrunner & Shah (1996): "Incremental Topological Flipping Works for Regular Triangulations"
 - CGAL implementation: `Triangulation_3::flip()`
 - Research notes: Warp Drive Bistellar flips notebook
@@ -123,11 +146,13 @@ General bistellar flip operations based on i-to-j transformations.
 ## Impact Assessment
 
 ### Blocking
+
 - ✅ **NOT blocking**: Basic triangulation construction works correctly
 - ✅ **NOT blocking**: Structural TDS invariants are maintained
 - ✅ **NOT blocking**: Most triangulations are Delaunay (property tests found edge cases)
 
 ### Required For
+
 - ❌ **Full Delaunay guarantee**: Cannot guarantee empty circumsphere property
 - ❌ **Canonical triangulation**: Cannot produce unique triangulation for point set
 - ❌ **Property test stability**: Tests correctly identify these violations
@@ -136,53 +161,67 @@ General bistellar flip operations based on i-to-j transformations.
 ## Recommendations
 
 ### Short Term (v0.6.0)
+
 1. **Keep tests ignored** with clear documentation
 2. **Document limitation** in main README and API docs
 3. **Release with caveat**: "Triangulations are valid but may contain local Delaunay violations"
 4. **Add tracking issue** for bistellar flip implementation
 
 ### Medium Term (v0.7.0)
+
 1. **Implement 2D edge flips** (simpler, validates approach)
 2. **Re-enable 2D property tests**
 3. **Validate performance impact** of flip-based repair
 
 ### Long Term (v0.8.0+)
+
 1. **Implement 3D bistellar flips**
 2. **Generalize to higher dimensions** (4D, 5D)
 3. **Re-enable all property tests**
 4. **Add canonical triangulation guarantee**
 
 ## Related Issues
+
 - Issue #120: Stabilize property tests (this investigation)
 - Issue #98: Topology and Euler characteristic (can proceed independently)
 - Stub file: `src/core/algorithms/flips.rs` (ready for implementation)
 
 ## Conclusion
-The property tests are **working as intended**—they correctly identify that the current algorithm cannot guarantee the Delaunay property without bistellar flips. This is a known limitation of incremental algorithms without post-processing.
 
-The tests should remain ignored until bistellar flips are implemented, as they represent a fundamental algorithmic capability gap rather than a test configuration issue.
+The property tests are **working as intended**—they correctly identify that the
+current algorithm cannot guarantee the Delaunay property without bistellar flips.
+This is a known limitation of incremental algorithms without post-processing.
+
+The tests should remain ignored until bistellar flips are implemented, as they
+represent a fundamental algorithmic capability gap rather than a test configuration
+issue.
 
 ## Proposed Resolution
 
 ### Option 1: Close Issue #120 (Recommended)
+
 **Status**: Won't fix for v0.6.0 - requires bistellar flip implementation
 
 **Rationale**:
+
 - Tests correctly identify missing algorithmic capability
 - Cannot be "stabilized" through test configuration changes
 - Requires substantial new feature (bistellar flips)
 - Should be tracked as feature request, not bug
 
 **Actions**:
+
 1. Close issue #120 with explanation
 2. Update issue to reference this investigation document
 3. Create new issue: "Implement bistellar flips for Delaunay repair"
 4. Link from #120 to new issue
 
 ### Option 2: Repurpose Issue #120
+
 **Status**: Rename to "Implement bistellar flips"
 
 **Actions**:
+
 1. Update issue title: "Stabilize property tests" → "Implement bistellar flips for Delaunay guarantee"
 2. Update issue body with implementation plan
 3. Change labels: `testing` → `enhancement`, `geometry`
@@ -191,6 +230,7 @@ The tests should remain ignored until bistellar flips are implemented, as they r
 ## Path Forward
 
 ### For v0.6.0 Release (Current)
+
 **Goal**: Release with documented limitations
 
 1. ✅ **Keep tests ignored** (done)
@@ -202,6 +242,7 @@ The tests should remain ignored until bistellar flips are implemented, as they r
 7. ⬜ **Create issue for bistellar flips** (if closing #120)
 
 ### For v0.7.0 Release (Next)
+
 **Goal**: Implement 2D edge flips
 
 1. Implement 2D edge flip (2-to-2)
@@ -212,6 +253,7 @@ The tests should remain ignored until bistellar flips are implemented, as they r
 6. Benchmark performance impact
 
 ### For v0.8.0+ Release (Future)
+
 **Goal**: Full dimensional support
 
 1. Implement 3D bistellar flips (2-to-3, 3-to-2)
@@ -223,6 +265,7 @@ The tests should remain ignored until bistellar flips are implemented, as they r
 ## Documentation Updates Needed
 
 ### README.md
+
 Add to limitations section:
 
 ```markdown
@@ -241,6 +284,7 @@ See: [Issue #120 Investigation](docs/issue_120_investigation.md)
 ```
 
 ### API Documentation
+
 Add to `DelaunayTriangulation` struct docs:
 
 ```rust
@@ -257,6 +301,7 @@ Add to `DelaunayTriangulation` struct docs:
 ```
 
 ### CHANGELOG.md
+
 Add entry:
 
 ```markdown
@@ -293,6 +338,7 @@ Recommend **Option 1: Close Issue #120** as "won't fix for v0.6.0" because:
 4. ✅ Better issue tracking: separate concerns
 
 Then create a new issue: **"Implement bistellar flips for Delaunay repair"** with:
+
 - Reference to this investigation document
 - Implementation plan (2D → 3D → higher dimensions)
 - Milestone: v0.7.0
