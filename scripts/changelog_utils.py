@@ -714,9 +714,16 @@ class ChangelogUtils:
     def wrap_bare_urls(line: str) -> str:
         """Wrap bare URLs in angle brackets to satisfy markdownlint MD034.
 
-        This avoids altering markdown links of the form [text](url) and URLs already
-        wrapped in <angle brackets>.
+        This avoids altering:
+        - Markdown links of the form [text](url)
+        - URLs already wrapped in <angle brackets>
+        - URLs in code fences (```)
+        - URLs in inline code (`...`)
         """
+        # Skip URL wrapping in code contexts to preserve copy-paste behavior
+        stripped = line.lstrip()
+        if stripped.startswith("```") or re.match(r"^`[^`]+`$", stripped):
+            return line
 
         def repl(match: re.Match) -> str:
             url = match.group(0)
@@ -740,11 +747,10 @@ class ChangelogUtils:
         # Check if this is an indented code block (4+ spaces) before processing
         is_code_block = line.startswith("    ")
 
-        # For code blocks, preserve indentation; otherwise strip for processing
+        # For code blocks, preserve indentation and don't wrap URLs
         if is_code_block:
-            # Just protect crons and wrap URLs, don't downgrade headers in code
-            processed = cls._protect_cron_expressions(line)
-            return cls.wrap_bare_urls(processed)
+            # Just protect crons, don't downgrade headers or wrap URLs in code
+            return cls._protect_cron_expressions(line)
 
         # Normal text: strip, then process
         processed = cls._protect_cron_expressions(line.strip())
@@ -989,8 +995,8 @@ For detailed release notes, refer to CHANGELOG.md in the repository.
         try:
             with Path(changelog_path).open(encoding="utf-8") as f:
                 for line in f:
-                    # Find the version heading line
-                    if (line.startswith("## ") and f"v{version}" in line) or f"[{version}]" in line:
+                    # Find the version heading line (must be a ## heading)
+                    if line.startswith("## ") and (f"v{version}" in line or f"[{version}]" in line):
                         # Remove markdown link syntax: [text](url) -> text
                         heading = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", line)
                         # Remove leading ##

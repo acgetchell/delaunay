@@ -991,11 +991,8 @@ class PerformanceSummaryGenerator:
         rankings = []
         if sorted_methods:
             fastest_time = sorted_methods[0][1]
-            rank_index = {m: i for i, (m, _) in enumerate(sorted_methods)}
 
             for method, avg_time in sorted_methods:
-                idx = rank_index[method]
-
                 # Handle missing data (float("inf") from no samples)
                 if avg_time == float("inf"):
                     desc = "No benchmark data available"
@@ -1082,11 +1079,20 @@ class PerformanceSummaryGenerator:
                 else:
                     times.append(f"{time:.0f} ns")
 
+            # Extract brief labels from descriptions or use position-based defaults
+            def brief_label(desc: str, position: int) -> str:
+                """Extract label from description or use position-based default."""
+                if "best in" in desc:
+                    # Extract just the dimension info: "(best in 2D, 3D)"
+                    return desc.split(" - ")[0]
+                defaults = ["fastest average", "second fastest", "third fastest"]
+                return defaults[position] if position < len(defaults) else "slower"
+
             lines.extend(
                 [
-                    f"- `{performance_ranking[0][0]}`: {times[0]} (fastest average)",
-                    f"- `{performance_ranking[1][0]}`: {times[1]} (close second)",
-                    f"- `{performance_ranking[2][0]}`: {times[2]} (consistent across dimensions)",
+                    f"- `{performance_ranking[0][0]}`: {times[0]} ({brief_label(performance_ranking[0][2], 0)})",
+                    f"- `{performance_ranking[1][0]}`: {times[1]} ({brief_label(performance_ranking[1][2], 1)})",
+                    f"- `{performance_ranking[2][0]}`: {times[2]} ({brief_label(performance_ranking[2][2], 2)})",
                 ],
             )
 
