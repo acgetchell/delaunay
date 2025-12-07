@@ -275,10 +275,10 @@ For a 3D triangulation with 1000 vertices (~5000-6000 cells):
 ```rust
 #[test]
 fn test_my_triangulation_operation() {
-    let dt = create_test_triangulation();
+    let mut dt = create_test_triangulation();
     
     // Perform operation
-    let result = my_operation(&mut dt);
+    my_operation(&mut dt);
     
     // Validate at appropriate level
     assert!(dt.is_valid().is_ok());                          // Level 2: Always
