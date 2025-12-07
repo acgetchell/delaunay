@@ -995,7 +995,14 @@ class PerformanceSummaryGenerator:
 
             for method, avg_time in sorted_methods:
                 idx = rank_index[method]
-                slowdown = (avg_time / fastest_time) if fastest_time > 0 else 1
+
+                # Handle missing data (float("inf") from no samples)
+                if avg_time == float("inf"):
+                    desc = "No benchmark data available"
+                    rankings.append((method, avg_time, desc))
+                    continue
+
+                slowdown = (avg_time / fastest_time) if fastest_time > 0 and fastest_time != float("inf") else 1
 
                 # Generate description based on actual wins by dimension
                 wins = method_wins.get(method, [])
@@ -1065,7 +1072,15 @@ class PerformanceSummaryGenerator:
 
         # Add current benchmark-based summary with data-driven labels
         if len(performance_ranking) >= 3:
-            times = [f"{time / 1000:.1f} µs" if time >= 1000 else f"{time:.0f} ns" for _, time, _ in performance_ranking]
+            # Format times, handling inf gracefully
+            times = []
+            for _, time, _ in performance_ranking:
+                if time == float("inf"):
+                    times.append("N/A")
+                elif time >= 1000:
+                    times.append(f"{time / 1000:.1f} µs")
+                else:
+                    times.append(f"{time:.0f} ns")
 
             lines.extend(
                 [

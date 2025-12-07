@@ -452,7 +452,7 @@ class ChangelogUtils:
             List of content lines
         """
         lines = commit_msg.strip().split("\n")
-        content_lines = []
+        content_lines: list[str] = []
 
         # Skip the first line (PR title) and empty lines at start
         trailer_re = re.compile(
@@ -733,7 +733,20 @@ class ChangelogUtils:
 
     @classmethod
     def _process_body_line(cls, line: str) -> str:
-        """Process a single body line: protect crons, downgrade headers, wrap URLs."""
+        """Process a single body line: protect crons, downgrade headers, wrap URLs.
+
+        Preserves leading whitespace for code blocks (4+ spaces).
+        """
+        # Check if this is an indented code block (4+ spaces) before processing
+        is_code_block = line.startswith("    ")
+
+        # For code blocks, preserve indentation; otherwise strip for processing
+        if is_code_block:
+            # Just protect crons and wrap URLs, don't downgrade headers in code
+            processed = cls._protect_cron_expressions(line)
+            return cls.wrap_bare_urls(processed)
+
+        # Normal text: strip, then process
         processed = cls._protect_cron_expressions(line.strip())
         processed = cls._downgrade_headers(processed)
         return cls.wrap_bare_urls(processed)
@@ -931,9 +944,8 @@ class ChangelogUtils:
             print(f"{COLOR_BLUE}→ Creating annotated tag with CHANGELOG.md reference{COLOR_RESET}")
 
             # Create short message referencing CHANGELOG.md
-            # GitHub anchor format: ## [v0.6.0](...) - date → #v060---date
-            # We use just #v{version_no_dots} which GitHub will match to the heading
-            anchor = f"v{version.replace('.', '')}"
+            # Extract date from changelog heading to build proper GitHub anchor
+            anchor = ChangelogUtils._extract_github_anchor(changelog_path, version)
             short_message = f"""Version {version}
 
 This release contains extensive changes. See full changelog:
@@ -952,6 +964,50 @@ For detailed release notes, refer to CHANGELOG.md in the repository.
         print("----------------------------------------")
 
         return full_content, False
+
+    @staticmethod
+    def _extract_github_anchor(changelog_path: str, version: str) -> str:
+        """
+        Extract GitHub-compatible anchor from changelog heading.
+
+        GitHub generates anchors by:
+        1. Removing markdown link syntax and angle brackets
+        2. Converting to lowercase
+        3. Replacing spaces with hyphens
+        4. Removing dots from version numbers
+
+        For heading: ## [v0.6.0](url) - 2025-11-25
+        GitHub generates: #v060---2025-11-25
+
+        Args:
+            changelog_path: Path to CHANGELOG.md
+            version: Version number (without 'v' prefix)
+
+        Returns:
+            GitHub-compatible anchor string
+        """
+        try:
+            with Path(changelog_path).open(encoding="utf-8") as f:
+                for line in f:
+                    # Find the version heading line
+                    if (line.startswith("## ") and f"v{version}" in line) or f"[{version}]" in line:
+                        # Remove markdown link syntax: [text](url) -> text
+                        heading = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", line)
+                        # Remove leading ##
+                        heading = heading[2:].strip()
+                        # Remove angle brackets if present
+                        heading = heading.replace("<", "").replace(">", "")
+                        # Convert to lowercase
+                        heading = heading.lower()
+                        # Replace spaces with hyphens
+                        heading = heading.replace(" ", "-")
+                        # Remove dots and return
+                        return heading.replace(".", "")
+        except OSError:
+            pass
+
+        # Fallback: just use version without dots
+        return f"v{version.replace('.', '')}"
 
     @staticmethod
     def _check_git_config() -> None:
@@ -1376,7 +1432,7 @@ class ChangelogProcessor:
         """Process changelog file and write expanded content."""
         content = input_file.read_text(encoding="utf-8")
         lines = content.split("\n")
-        output_lines = []
+        output_lines: list[str] = []
 
         for line in lines:
             processed_line = self._process_line(line, output_lines)

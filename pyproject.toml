@@ -30,7 +30,6 @@ classifiers = [
 
 # Project dependencies
 dependencies = [
-    "mypy>=1.19.0",
     "packaging",
 ]
 
@@ -134,7 +133,7 @@ mypy_path = "scripts"
 # Core strictness settings - gradually adopt stricter checks
 warn_return_any = false  # Too noisy for gradual adoption
 warn_unused_configs = true
-disallow_untyped_defs = false  # Allow untyped defs for now
+disallow_untyped_defs = false  # Allow untyped defs for now (implies allow_untyped_defs = true)
 check_untyped_defs = false  # Don't check bodies of untyped functions
 no_implicit_optional = true
 strict_equality = true
@@ -147,8 +146,6 @@ pretty = true
 # Allow untyped calls and incomplete definitions during gradual adoption
 allow_untyped_calls = true
 allow_incomplete_defs = true
-# Don't require annotations everywhere yet
-allow_untyped_defs = true
 # Focus on catching real bugs, not style issues
 disallow_any_explicit = false
 disallow_any_generics = false
@@ -167,6 +164,7 @@ ignore_errors = true
 
 [dependency-groups]
 dev = [
+    "mypy>=1.19.0",
     "pytest>=8.0.0",
     "ruff>=0.12.11",
 ]
