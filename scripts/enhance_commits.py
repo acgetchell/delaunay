@@ -11,12 +11,11 @@ from collections.abc import Mapping, MutableSequence, Sequence
 from pathlib import Path
 from re import Pattern
 
+from changelog_utils import ChangelogUtils
+
 # Add the script directory to Python path for shared utilities
 SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
-
-# Shared utilities available but not yet used in this script
-# Can be imported when needed: from changelog_utils import ChangelogUtils
 
 # Precompiled regex patterns for performance
 COMMIT_BULLET_RE = re.compile(r"^\s*[-*]\s+")
@@ -258,7 +257,8 @@ def _add_section_with_entries(
     output_lines.append(f"### {section_name}")
     output_lines.append("")  # Blank line after heading
     for i, entry in enumerate(entries):
-        output_lines.append(entry)
+        # Wrap bare URLs to satisfy MD034
+        output_lines.append(ChangelogUtils.wrap_bare_urls(entry))
         # Add blank line after each entry except the last one in the section
         if i < len(entries) - 1:
             output_lines.append("")
@@ -476,8 +476,8 @@ def _process_changelog_lines(lines: Sequence[str]) -> list[str]:
             line_index += 1
             continue
 
-        # Print all other lines normally
-        output_lines.append(line)
+        # Print all other lines normally (wrap bare URLs)
+        output_lines.append(ChangelogUtils.wrap_bare_urls(line))
         line_index += 1
 
     # Process any remaining entries at the end of the file

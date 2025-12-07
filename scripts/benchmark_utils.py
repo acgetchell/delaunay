@@ -919,7 +919,7 @@ class PerformanceSummaryGenerator:
                     "",
                     "## Conclusion",
                     "",
-                    "All three methods achieve 100% agreement on correctness. Performance characteristics vary by dimension:",
+                    "All three methods are mathematically correct and produce valid results. Performance characteristics vary by dimension:",
                     "",
                 ],
             )
@@ -1023,7 +1023,7 @@ class PerformanceSummaryGenerator:
         lines = [
             "### Method Selection Guide",
             "",
-            "**All three methods produce correct results with 100% agreement.**",
+            "**All three methods are mathematically correct** (they produce valid insphere test results).",
             "Choose based on your specific requirements:",
             "",
         ]
@@ -1066,7 +1066,6 @@ class PerformanceSummaryGenerator:
                     f"- `{performance_ranking[0][0]}`: {times[0]} (fastest average)",
                     f"- `{performance_ranking[1][0]}`: {times[1]} (close second)",
                     f"- `{performance_ranking[2][0]}`: {times[2]} (consistent across dimensions)",
-                    "",
                 ],
             )
 

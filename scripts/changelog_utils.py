@@ -663,14 +663,16 @@ class ChangelogUtils:
                 # Check for setext level 1 (=== underline) or level 2 (--- underline)
                 if current_line and next_line:
                     if re.match(r"^=+$", next_line):
-                        # Level 1 heading - convert to ####
+                        # Level 1 heading - convert to #### with blank line after
                         result.append(f"#### {current_line}")
+                        result.append("")  # Add blank line after heading (MD022)
                         i += 2  # Skip both the heading and underline
                         continue
                     if re.match(r"^-+$", next_line) and not re.match(r"^-\s", current_line):
-                        # Level 2 heading - convert to ####
+                        # Level 2 heading - convert to #### with blank line after
                         # (but not if current line starts with "- " which is a list item)
                         result.append(f"#### {current_line}")
+                        result.append("")  # Add blank line after heading (MD022)
                         i += 2  # Skip both the heading and underline
                         continue
 
@@ -704,59 +706,101 @@ class ChangelogUtils:
         header_match = re.match(r"^(#{1,6})\s+(.*)$", line)
         if header_match:
             content = header_match.group(2)
-            # Convert all headers to #### for consistency
+            # Convert all headers to #### for consistency and ensure a blank line follows (handled later)
             return f"#### {content}"
         return line
 
     @staticmethod
-    def _format_entry_body(body_lines: list[str], max_line_length: int) -> list[str]:
-        """
-        Format entry body content with proper wrapping.
+    def wrap_bare_urls(line: str) -> str:
+        """Wrap bare URLs in angle brackets to satisfy markdownlint MD034.
 
-        Args:
-            body_lines: Raw body lines
-            max_line_length: Maximum line length
-
-        Returns:
-            List of formatted body lines
+        This avoids altering markdown links of the form [text](url) and URLs already
+        wrapped in <angle brackets>.
         """
+
+        def repl(match: re.Match) -> str:
+            url = match.group(0)
+            start = match.start()
+            # Skip if already inside <...>
+            if start > 0 and line[start - 1] == "<":
+                return url
+            # Skip if immediately preceded by '(' which likely means [text](url)
+            if start > 0 and line[start - 1] == "(":
+                return url
+            return f"<{url}>"
+
+        return re.sub(r"https?://[^\s<>()]+", repl, line)
+
+    @classmethod
+    def _process_body_line(cls, line: str) -> str:
+        """Process a single body line: protect crons, downgrade headers, wrap URLs."""
+        processed = cls._protect_cron_expressions(line.strip())
+        processed = cls._downgrade_headers(processed)
+        return cls.wrap_bare_urls(processed)
+
+    @classmethod
+    def _build_body_content(cls, body_lines: list[str]) -> list[str]:
+        """Build body content from raw lines with processing."""
+        body_lines = cls._convert_setext_to_atx(body_lines)
+        body_content: list[str] = []
+        for line in body_lines:
+            if line.strip():
+                body_content.append(cls._process_body_line(line))
+            elif body_content and body_content[-1]:
+                body_content.append("")  # Preserve paragraph breaks
+        # Remove trailing empty lines
+        while body_content and not body_content[-1]:
+            body_content.pop()
+        return body_content
+
+    @classmethod
+    def _format_body_line(cls, line: str, max_line_length: int) -> list[str]:
+        """Format a single line for output (wrap or preserve as-is)."""
+        if line.startswith("    ") or "```" in line or re.search(r"\[.*\]\(.*\)", line):
+            return [f"  {line}"]  # Code blocks or markdown links - preserve as-is
+        return cls.wrap_markdown_line(line, max_line_length, "  ")  # Wrap regular text
+
+    @classmethod
+    def _add_heading_spacing(cls, line: str, output_lines: list[str]) -> None:
+        """Add blank lines around headings as needed."""
+        is_header = line.startswith("#### ")
+        # Blank line before header
+        if is_header and output_lines and output_lines[-1] != "":
+            output_lines.append("")
+        return is_header
+
+    @classmethod
+    def _format_entry_body(cls, body_lines: list[str], max_line_length: int) -> list[str]:
+        """Format entry body content with proper wrapping."""
         if not body_lines:
             return []
 
-        # First, convert setext-style headings to ATX style
-        body_lines = ChangelogUtils._convert_setext_to_atx(body_lines)
-
-        body_content = []
-        for line in body_lines:
-            if line.strip():
-                # Protect cron expressions first
-                processed_line = ChangelogUtils._protect_cron_expressions(line.strip())
-                # Then downgrade any markdown headers in the content
-                processed_line = ChangelogUtils._downgrade_headers(processed_line)
-                body_content.append(processed_line)
-            elif body_content and body_content[-1]:
-                body_content.append("")  # Preserve paragraph breaks
-
-        while body_content and not body_content[-1]:
-            body_content.pop()
-
+        body_content = cls._build_body_content(body_lines)
         if not body_content:
             return []
 
-        output_lines = [""]  # Blank line before body
+        output_lines: list[str] = [""]  # Blank line before body
 
         for line in body_content:
             if not line:  # Empty line - preserve as paragraph break
-                output_lines.append("")
-            elif line.startswith("    ") or "```" in line or re.search(r"\[.*\]\(.*\)|https?://\S+", line):
-                # Code blocks, links, or structured content - preserve as-is
-                output_lines.append(f"  {line}")
-            else:
-                # Regular text - wrap it
-                wrapped_lines = ChangelogUtils.wrap_markdown_line(line, max_line_length, "  ")
-                output_lines.extend(wrapped_lines)
+                if output_lines and output_lines[-1] != "":
+                    output_lines.append("")
+                continue
 
-        return output_lines
+            is_header = cls._add_heading_spacing(line, output_lines)
+            output_lines.extend(cls._format_body_line(line, max_line_length))
+            # Blank line after header
+            if is_header and output_lines and output_lines[-1] != "":
+                output_lines.append("")
+
+        # Collapse multiple blank lines and wrap URLs
+        collapsed: list[str] = []
+        for output_line in output_lines:
+            if output_line == "" and collapsed and collapsed[-1] == "":
+                continue
+            collapsed.append(cls.wrap_bare_urls(output_line) if output_line else output_line)
+
+        return collapsed
 
     @staticmethod
     def run_git_command(args: list[str], check: bool = True) -> tuple[str, int]:
@@ -886,7 +930,7 @@ class ChangelogUtils:
             short_message = f"""Version {version}
 
 This release contains extensive changes. See full changelog:
-https://github.com/acgetchell/delaunay/blob/{tag_version}/CHANGELOG.md#{version.replace(".", "")}
+<https://github.com/acgetchell/delaunay/blob/{tag_version}/CHANGELOG.md#{version.replace(".", "")}>
 
 For detailed release notes, refer to CHANGELOG.md in the repository.
 """
@@ -1330,7 +1374,7 @@ class ChangelogProcessor:
         for line in lines:
             processed_line = self._process_line(line, output_lines)
             if processed_line is not None:
-                output_lines.append(processed_line)
+                output_lines.append(self._wrap_bare_urls(processed_line))
 
         # Handle any remaining expanded commits at end of file
         self._finalize_pending_commits(output_lines)
@@ -1338,6 +1382,10 @@ class ChangelogProcessor:
         # Write processed content
         output_content = "\n".join(output_lines)
         output_file.write_text(output_content, encoding="utf-8")
+
+    def _wrap_bare_urls(self, line: str) -> str:
+        """Wrap bare URLs in angle brackets for markdownlint compliance."""
+        return ChangelogUtils.wrap_bare_urls(line)
 
     def _process_line(self, line: str, output_lines: list[str]) -> str | None:
         """Process a single line and return the line to append or None to skip."""
