@@ -305,6 +305,7 @@ profile-mem:
 python-lint: _ensure-uv
     uv run ruff check scripts/ --fix
     uv run ruff format scripts/
+    cd scripts && uv run mypy *.py --exclude tests || echo "⚠️  mypy found type issues (non-blocking during gradual adoption)"
 
 # Comprehensive validation including slow/stress tests
 # Runs: commit-check + slow-tests feature (100+ vertices, stress tests)

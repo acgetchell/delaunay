@@ -511,7 +511,9 @@ class PerformanceSummaryGenerator:
             methods = self._parse_benchmark_methods(edge_key, edge_method_mappings)
 
             if methods:
-                test_case = CircumsphereTestCase(test_name=test_name, dimension=dimension, methods=methods)
+                # Mark boundary cases: "Boundary vertex" tests have early-exit optimizations
+                is_boundary = "boundary" in edge_key.lower()
+                test_case = CircumsphereTestCase(test_name=test_name, dimension=dimension, methods=methods, is_boundary_case=is_boundary)
                 test_cases.append(test_case)
 
         return test_cases
@@ -593,6 +595,7 @@ class PerformanceSummaryGenerator:
                     "insphere_distance": CircumspherePerformanceData("insphere_distance", 644),
                     "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 451),
                 },
+                is_boundary_case=True,
             ),
             CircumsphereTestCase(
                 "Far vertex",
@@ -621,6 +624,7 @@ class PerformanceSummaryGenerator:
                     "insphere_distance": CircumspherePerformanceData("insphere_distance", 1497),
                     "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 647),
                 },
+                is_boundary_case=True,
             ),
             CircumsphereTestCase(
                 "Far vertex",
@@ -649,6 +653,7 @@ class PerformanceSummaryGenerator:
                     "insphere_distance": CircumspherePerformanceData("insphere_distance", 1900),
                     "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 987),
                 },
+                is_boundary_case=True,
             ),
             CircumsphereTestCase(
                 "Far vertex",
@@ -677,6 +682,7 @@ class PerformanceSummaryGenerator:
                     "insphere_distance": CircumspherePerformanceData("insphere_distance", 3100),
                     "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 1500),
                 },
+                is_boundary_case=True,
             ),
             CircumsphereTestCase(
                 "Far vertex",
@@ -960,7 +966,7 @@ class PerformanceSummaryGenerator:
         # Boundary cases are trivial outliers with early-exit optimizations
         for test_case in test_data:
             # Skip boundary vertex cases as they're trivial outliers (3-4ns)
-            if "boundary" in test_case.test_name.lower():
+            if test_case.is_boundary_case:
                 continue
 
             winner = test_case.get_winner()

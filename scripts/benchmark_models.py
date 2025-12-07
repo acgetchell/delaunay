@@ -72,6 +72,7 @@ class CircumsphereTestCase:
     test_name: str
     dimension: str
     methods: dict[str, CircumspherePerformanceData]
+    is_boundary_case: bool = False  # True for boundary/edge cases with early-exit optimizations
 
     def get_winner(self) -> str | None:
         """Get the method name with the best performance."""

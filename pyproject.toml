@@ -30,6 +30,7 @@ classifiers = [
 
 # Project dependencies
 dependencies = [
+    "mypy>=1.19.0",
     "packaging",
 ]
 
@@ -125,6 +126,44 @@ testpaths = ["scripts/tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+
+[tool.mypy]
+python_version = "3.11"
+# Search paths - treat scripts/ as source directory to avoid duplicate module issues
+mypy_path = "scripts"
+# Core strictness settings - gradually adopt stricter checks
+warn_return_any = false  # Too noisy for gradual adoption
+warn_unused_configs = true
+disallow_untyped_defs = false  # Allow untyped defs for now
+check_untyped_defs = false  # Don't check bodies of untyped functions
+no_implicit_optional = true
+strict_equality = true
+warn_redundant_casts = true
+warn_unused_ignores = false  # Allow unused ignores during migration
+warn_no_return = true
+show_error_codes = true
+show_column_numbers = true
+pretty = true
+# Allow untyped calls and incomplete definitions during gradual adoption
+allow_untyped_calls = true
+allow_incomplete_defs = true
+# Don't require annotations everywhere yet
+allow_untyped_defs = true
+# Focus on catching real bugs, not style issues
+disallow_any_explicit = false
+disallow_any_generics = false
+
+# Ignore missing imports from third-party libraries without stubs
+[[tool.mypy.overrides]]
+module = [
+    "packaging.*",
+]
+ignore_missing_imports = true
+
+# Allow tests to be less strict
+[[tool.mypy.overrides]]
+module = "scripts.tests.*"
+ignore_errors = true
 
 [dependency-groups]
 dev = [

@@ -11,11 +11,12 @@ from collections.abc import Mapping, MutableSequence, Sequence
 from pathlib import Path
 from re import Pattern
 
-from changelog_utils import ChangelogUtils
-
-# Add the script directory to Python path for shared utilities
-SCRIPT_DIR = Path(__file__).parent
-sys.path.insert(0, str(SCRIPT_DIR))
+try:
+    # When executed as a script from scripts/
+    from changelog_utils import ChangelogUtils  # type: ignore[no-redef]
+except ModuleNotFoundError:
+    # When imported as a module (e.g., scripts.enhance_commits)
+    from scripts.changelog_utils import ChangelogUtils  # type: ignore[no-redef]
 
 # Precompiled regex patterns for performance
 COMMIT_BULLET_RE = re.compile(r"^\s*[-*]\s+")

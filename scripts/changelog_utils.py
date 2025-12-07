@@ -761,8 +761,12 @@ class ChangelogUtils:
         return cls.wrap_markdown_line(line, max_line_length, "  ")  # Wrap regular text
 
     @classmethod
-    def _add_heading_spacing(cls, line: str, output_lines: list[str]) -> None:
-        """Add blank lines around headings as needed."""
+    def _add_heading_spacing(cls, line: str, output_lines: list[str]) -> bool:
+        """Add blank lines around headings as needed.
+
+        Returns:
+            True if line is a header, False otherwise
+        """
         is_header = line.startswith("#### ")
         # Blank line before header
         if is_header and output_lines and output_lines[-1] != "":
@@ -927,10 +931,13 @@ class ChangelogUtils:
             print(f"{COLOR_BLUE}→ Creating annotated tag with CHANGELOG.md reference{COLOR_RESET}")
 
             # Create short message referencing CHANGELOG.md
+            # GitHub anchor format: ## [v0.6.0](...) - date → #v060---date
+            # We use just #v{version_no_dots} which GitHub will match to the heading
+            anchor = f"v{version.replace('.', '')}"
             short_message = f"""Version {version}
 
 This release contains extensive changes. See full changelog:
-<https://github.com/acgetchell/delaunay/blob/{tag_version}/CHANGELOG.md#{version.replace(".", "")}>
+<https://github.com/acgetchell/delaunay/blob/{tag_version}/CHANGELOG.md#{anchor}>
 
 For detailed release notes, refer to CHANGELOG.md in the repository.
 """
