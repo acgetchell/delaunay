@@ -734,6 +734,10 @@ class ChangelogUtils:
             # Skip if immediately preceded by '(' which likely means [text](url)
             if start > 0 and line[start - 1] == "(":
                 return url
+            # Skip if inside an inline code span (odd number of backticks before)
+            before = line[:start]
+            if before.count("`") % 2 == 1:
+                return url
             return f"<{url}>"
 
         return re.sub(r"https?://[^\s<>()]+", repl, line)
@@ -816,12 +820,12 @@ class ChangelogUtils:
             if is_header and output_lines and output_lines[-1] != "":
                 output_lines.append("")
 
-        # Collapse multiple blank lines and wrap URLs
+        # Collapse multiple blank lines (URLs already wrapped in _process_body_line)
         collapsed: list[str] = []
         for output_line in output_lines:
             if output_line == "" and collapsed and collapsed[-1] == "":
                 continue
-            collapsed.append(cls.wrap_bare_urls(output_line) if output_line else output_line)
+            collapsed.append(output_line)
 
         return collapsed
 
@@ -1433,6 +1437,7 @@ class ChangelogProcessor:
         self.in_merged_prs_section = False
         self.current_release_has_changes_section = False
         self.changes_section_index = -1
+        self._in_code_block = False  # Track fenced code block state
 
     def process_file(self, input_file: Path, output_file: Path) -> None:
         """Process changelog file and write expanded content."""
@@ -1453,7 +1458,15 @@ class ChangelogProcessor:
         output_file.write_text(output_content, encoding="utf-8")
 
     def _wrap_bare_urls(self, line: str) -> str:
-        """Wrap bare URLs in angle brackets for markdownlint compliance."""
+        """Wrap bare URLs in angle brackets, skipping fenced and indented code."""
+        stripped = line.lstrip()
+        # Toggle fenced code-block state on ``` lines; never rewrite them
+        if stripped.startswith("```"):
+            self._in_code_block = not self._in_code_block
+            return line
+        # Skip contents of fenced or indented code blocks
+        if self._in_code_block or line.startswith("    "):
+            return line
         return ChangelogUtils.wrap_bare_urls(line)
 
     def _process_line(self, line: str, output_lines: list[str]) -> str | None:

@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, mock_open, patch
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import pytest
 
-from changelog_utils import ChangelogError, ChangelogNotFoundError, ChangelogUtils, GitRepoError, VersionError
+from changelog_utils import ChangelogError, ChangelogNotFoundError, ChangelogProcessor, ChangelogUtils, GitRepoError, VersionError
 from subprocess_utils import run_git_command
 
 
@@ -368,6 +368,211 @@ class TestChangelogUtilsErrorHandling:
                 ChangelogUtils.get_repository_url()
 
             assert "Git remote origin URL is empty" in str(cm.value)
+
+
+class TestURLWrapping:
+    """Test suite for URL wrapping behavior in various contexts."""
+
+    @pytest.mark.parametrize(
+        ("line", "expected"),
+        [
+            # Bare URLs should be wrapped
+            ("Visit https://example.com for more", "Visit <https://example.com> for more"),
+            ("Check http://test.org today", "Check <http://test.org> today"),
+            # Markdown links should not be wrapped
+            ("[text](https://example.com)", "[text](https://example.com)"),
+            ("See [link](http://test.org) here", "See [link](http://test.org) here"),
+            # Already wrapped URLs should not be double-wrapped
+            ("Visit <https://example.com> today", "Visit <https://example.com> today"),
+            # Inline code should preserve URLs
+            ("`curl https://example.com`", "`curl https://example.com`"),
+            ("Use `wget http://test.org` command", "Use `wget http://test.org` command"),
+            ("Run `git clone https://github.com/repo.git`", "Run `git clone https://github.com/repo.git`"),
+            # Multiple inline code spans
+            ("`code https://one.com` and https://two.com", "`code https://one.com` and <https://two.com>"),
+            ("https://one.com and `code https://two.com`", "<https://one.com> and `code https://two.com`"),
+            # Code fence lines should be skipped
+            ("```", "```"),
+            ("```python", "```python"),
+            # Line that is entirely a single inline code span
+            ("`https://example.com`", "`https://example.com`"),
+        ],
+    )
+    def test_wrap_bare_urls(self, line, expected):
+        """Test URL wrapping in various contexts."""
+        result = ChangelogUtils.wrap_bare_urls(line)
+        assert result == expected
+
+    def test_wrap_bare_urls_indented_code_block(self):
+        """Test that indented code blocks are handled properly in _process_body_line."""
+        # Indented code blocks (4+ spaces) should not have URLs wrapped
+        code_line = "    curl https://example.com/api"
+        result = ChangelogUtils._process_body_line(code_line)  # noqa: SLF001
+        # Should preserve the line without wrapping the URL
+        assert "https://example.com/api" in result
+        assert "<https://example.com/api>" not in result
+
+    def test_changelog_processor_fenced_code_block(self, tmp_path):
+        """Test that ChangelogProcessor preserves URLs in fenced code blocks."""
+        input_file = tmp_path / "input.md"
+        output_file = tmp_path / "output.md"
+
+        content = """# Changelog
+
+## v1.0.0
+
+Some text with https://example.com which should be wrapped.
+
+```bash
+curl https://api.example.com/data
+wget http://files.example.com/file.txt
+```
+
+More text with https://another.com to wrap.
+"""
+        input_file.write_text(content, encoding="utf-8")
+
+        processor = ChangelogProcessor("https://github.com/owner/repo")
+        processor.process_file(input_file, output_file)
+
+        result = output_file.read_text(encoding="utf-8")
+
+        # URLs outside code blocks should be wrapped
+        assert "<https://example.com>" in result
+        assert "<https://another.com>" in result
+
+        # URLs inside code blocks should NOT be wrapped
+        assert "curl https://api.example.com/data" in result
+        assert "wget http://files.example.com/file.txt" in result
+        assert "<https://api.example.com/data>" not in result
+        assert "<http://files.example.com/file.txt>" not in result
+
+    def test_changelog_processor_indented_code_block(self, tmp_path):
+        """Test that ChangelogProcessor preserves URLs in indented code blocks."""
+        input_file = tmp_path / "input.md"
+        output_file = tmp_path / "output.md"
+
+        content = """# Changelog
+
+## v1.0.0
+
+Some text with https://example.com which should be wrapped.
+
+    curl https://api.example.com/data
+    wget http://files.example.com/file.txt
+
+More text.
+"""
+        input_file.write_text(content, encoding="utf-8")
+
+        processor = ChangelogProcessor("https://github.com/owner/repo")
+        processor.process_file(input_file, output_file)
+
+        result = output_file.read_text(encoding="utf-8")
+
+        # URL outside code block should be wrapped
+        assert "<https://example.com>" in result
+
+        # URLs in indented code blocks should NOT be wrapped
+        assert "curl https://api.example.com/data" in result
+        assert "wget http://files.example.com/file.txt" in result
+        assert "<https://api.example.com/data>" not in result
+        assert "<http://files.example.com/file.txt>" not in result
+
+
+class TestGitHubAnchorExtraction:
+    """Test suite for GitHub anchor extraction from changelog headings."""
+
+    @pytest.mark.parametrize(
+        ("heading_line", "version", "expected_anchor"),
+        [
+            # Standard format with link
+            ("## [v0.6.0](https://github.com/owner/repo/releases/tag/v0.6.0) - 2025-11-25", "0.6.0", "v060---2025-11-25"),
+            # Without link
+            ("## v0.6.0 - 2025-11-25", "0.6.0", "v060---2025-11-25"),
+            # Version without 'v' prefix in link text
+            ("## [0.6.0](https://github.com/owner/repo/releases/tag/v0.6.0) - 2025-11-25", "0.6.0", "060---2025-11-25"),
+            # Pre-release with link
+            ("## [v1.2.3-rc.1](https://github.com/owner/repo/releases/tag/v1.2.3-rc.1) - 2025-11-25", "1.2.3-rc.1", "v123-rc1---2025-11-25"),
+            # Pre-release without link
+            ("## v1.2.3-beta.2 - 2025-12-01", "1.2.3-beta.2", "v123-beta2---2025-12-01"),
+            # Version with build metadata
+            ("## [v2.0.0+build.123](url) - 2025-01-01", "2.0.0+build.123", "v200+build123---2025-01-01"),
+            # Simple version without date
+            ("## v1.0.0", "1.0.0", "v100"),
+            # With angle brackets (edge case)
+            ("## <v0.5.0> - 2025-10-15", "0.5.0", "v050---2025-10-15"),
+        ],
+    )
+    def test_extract_github_anchor_from_heading(self, tmp_path, heading_line, version, expected_anchor):
+        """Test GitHub anchor extraction from various changelog heading formats."""
+        # Create a temporary changelog with the heading
+        changelog_path = tmp_path / "CHANGELOG.md"
+        changelog_content = f"""# Changelog
+
+{heading_line}
+
+Some release notes here.
+
+## [v0.5.0](url) - 2025-10-01
+
+Older release.
+"""
+        changelog_path.write_text(changelog_content, encoding="utf-8")
+
+        result = ChangelogUtils._extract_github_anchor(str(changelog_path), version)  # noqa: SLF001
+        assert result == expected_anchor
+
+    def test_extract_github_anchor_fallback(self, tmp_path):
+        """Test fallback behavior when heading is not found."""
+        # Create a changelog without the target version
+        changelog_path = tmp_path / "CHANGELOG.md"
+        changelog_content = """# Changelog
+
+## [v0.5.0](url) - 2025-10-01
+
+Older release.
+"""
+        changelog_path.write_text(changelog_content, encoding="utf-8")
+
+        # Request a version that doesn't exist
+        result = ChangelogUtils._extract_github_anchor(str(changelog_path), "0.6.0")  # noqa: SLF001
+        # Should fall back to version without dots
+        assert result == "v060"
+
+    def test_extract_github_anchor_missing_file(self, tmp_path):
+        """Test fallback behavior when changelog file doesn't exist."""
+        nonexistent_path = tmp_path / "NONEXISTENT.md"
+
+        result = ChangelogUtils._extract_github_anchor(str(nonexistent_path), "1.2.3")  # noqa: SLF001
+        # Should fall back to version without dots
+        assert result == "v123"
+
+    def test_extract_github_anchor_body_text_no_match(self, tmp_path):
+        """Test that version strings in body text don't match (regression test)."""
+        changelog_path = tmp_path / "CHANGELOG.md"
+        # Version appears in body text but not as heading
+        changelog_content = """# Changelog
+
+## [v0.6.0](url) - 2025-11-25
+
+Release notes that mention v0.5.0 in the body text.
+Also references [0.5.0] in brackets.
+
+## [v0.4.0](url) - 2025-10-01
+
+Older release.
+"""
+        changelog_path.write_text(changelog_content, encoding="utf-8")
+
+        # Should find the heading for 0.5.0, not match body text
+        # Since 0.5.0 is only in body text, it should fall back
+        result = ChangelogUtils._extract_github_anchor(str(changelog_path), "0.5.0")  # noqa: SLF001
+        assert result == "v050"  # Fallback behavior
+
+        # Should find 0.6.0 heading correctly
+        result = ChangelogUtils._extract_github_anchor(str(changelog_path), "0.6.0")  # noqa: SLF001
+        assert result == "v060---2025-11-25"
 
 
 class TestChangelogTitleFormatting:

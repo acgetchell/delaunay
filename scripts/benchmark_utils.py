@@ -34,15 +34,15 @@ DEFAULT_REGRESSION_THRESHOLD = 7.5
 
 try:
     # When executed as a script from scripts/
-    from benchmark_models import (  # type: ignore[no-redef]
+    from benchmark_models import (  # type: ignore[no-redef,import-not-found]
         BenchmarkData,
         CircumspherePerformanceData,
         CircumsphereTestCase,
         extract_benchmark_data,
         format_benchmark_tables,
     )
-    from hardware_utils import HardwareComparator, HardwareInfo  # type: ignore[no-redef]
-    from subprocess_utils import (  # type: ignore[no-redef]
+    from hardware_utils import HardwareComparator, HardwareInfo  # type: ignore[no-redef,import-not-found]
+    from subprocess_utils import (  # type: ignore[no-redef,import-not-found]
         ProjectRootNotFoundError,
         find_project_root,
         get_git_commit_hash,
@@ -51,15 +51,15 @@ try:
     )
 except ModuleNotFoundError:
     # When imported as a module (e.g., scripts.benchmark_utils)
-    from scripts.benchmark_models import (  # type: ignore[no-redef]
+    from scripts.benchmark_models import (  # type: ignore[no-redef,import-not-found]
         BenchmarkData,
         CircumspherePerformanceData,
         CircumsphereTestCase,
         extract_benchmark_data,
         format_benchmark_tables,
     )
-    from scripts.hardware_utils import HardwareComparator, HardwareInfo  # type: ignore[no-redef]
-    from scripts.subprocess_utils import (  # type: ignore[no-redef]
+    from scripts.hardware_utils import HardwareComparator, HardwareInfo  # type: ignore[no-redef,import-not-found]
+    from scripts.subprocess_utils import (  # type: ignore[no-redef,import-not-found]
         ProjectRootNotFoundError,
         find_project_root,
         get_git_commit_hash,
@@ -109,7 +109,7 @@ class PerformanceSummaryGenerator:
         self.circumsphere_results_dir = project_root / "target" / "criterion"
 
         # Storage for numerical accuracy data from benchmarks
-        self.numerical_accuracy_data = None
+        self.numerical_accuracy_data: dict[str, str] | None = None
 
         # Extract current version and date information
         self.current_version = self._get_current_version()
@@ -726,7 +726,7 @@ class PerformanceSummaryGenerator:
         ]
 
         # Group test cases by dimension for better organization
-        cases_by_dimension = {}
+        cases_by_dimension: dict[str, list[CircumsphereTestCase]] = {}
         for test_case in test_cases:
             dim = test_case.dimension
             if dim not in cases_by_dimension:
@@ -959,8 +959,8 @@ class PerformanceSummaryGenerator:
         Returns:
             List of tuples (method_name, average_performance, description)
         """
-        method_totals = {"insphere": [], "insphere_distance": [], "insphere_lifted": []}
-        method_wins = {"insphere": [], "insphere_distance": [], "insphere_lifted": []}
+        method_totals: dict[str, list[float]] = {"insphere": [], "insphere_distance": [], "insphere_lifted": []}
+        method_wins: dict[str, list[str]] = {"insphere": [], "insphere_distance": [], "insphere_lifted": []}
 
         # Collect performance data from non-boundary test cases only
         # Boundary cases are trivial outliers with early-exit optimizations
@@ -1325,7 +1325,7 @@ class CriterionParser:
         Returns:
             List of BenchmarkData objects sorted by dimension and point count
         """
-        results = []
+        results: list[BenchmarkData] = []
         criterion_dir = target_dir / "criterion"
 
         if not criterion_dir.exists():

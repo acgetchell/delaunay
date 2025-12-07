@@ -317,7 +317,7 @@ def format_benchmark_tables(benchmarks: list[BenchmarkData]) -> list[str]:
     lines = []
 
     # Group benchmarks by dimension
-    by_dimension = {}
+    by_dimension: dict[str, list[BenchmarkData]] = {}
     for bench in benchmarks:
         dim = bench.dimension
         if dim not in by_dimension:

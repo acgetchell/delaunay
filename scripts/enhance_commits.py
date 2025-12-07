@@ -16,7 +16,7 @@ try:
     from changelog_utils import ChangelogUtils  # type: ignore[no-redef]
 except ModuleNotFoundError:
     # When imported as a module (e.g., scripts.enhance_commits)
-    from scripts.changelog_utils import ChangelogUtils  # type: ignore[no-redef]
+    from scripts.changelog_utils import ChangelogUtils  # type: ignore[no-redef,import-not-found]
 
 # Precompiled regex patterns for performance
 COMMIT_BULLET_RE = re.compile(r"^\s*[-*]\s+")
@@ -275,7 +275,7 @@ def process_and_output_categorized_entries(
         return
 
     # Categorize all entries
-    categorized = {
+    categorized: dict[str, list[str]] = {
         "added": [],
         "changed": [],
         "removed": [],
@@ -429,13 +429,13 @@ def _handle_release_end(
 
 def _process_changelog_lines(lines: Sequence[str]) -> list[str]:
     """Process changelog lines and return categorized output."""
-    output_lines = []
+    output_lines: list[str] = []
     section_state = {
         "in_changes_section": False,
         "in_fixed_issues": False,
         "in_merged_prs_section": False,
     }
-    categorize_entries_list = []
+    categorize_entries_list: list[str] = []
 
     line_index = 0
     while line_index < len(lines):
