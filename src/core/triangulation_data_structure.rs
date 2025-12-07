@@ -70,6 +70,69 @@
 //! The Delaunay property is enforced **proactively** during construction, while structural
 //! invariants are enforced **reactively** through validation methods.
 //!
+//! # Validation
+//!
+//! The TDS provides **Level 2** validation in the library's validation hierarchy:
+//!
+//! ## Validation Hierarchy (TDS Role)
+//!
+//! 1. **Level 1: Element Validity** - [`Cell::is_valid()`], [`Vertex::is_valid()`]
+//!    - Basic data integrity (coordinates, UUIDs, initialization)
+//! 2. **Level 2: TDS Structural Validity** - [`Tds::is_valid()`] ← **This module**
+//!    - UUID ↔ Key mapping consistency
+//!    - No duplicate cells
+//!    - Facet sharing invariant (≤2 cells per facet)
+//!    - Neighbor consistency
+//! 3. **Level 3: Manifold Topology** - [`Triangulation::validate_manifold()`](crate::core::triangulation::Triangulation::validate_manifold)
+//!    - Builds on Level 2, adds Euler characteristic
+//! 4. **Level 4: Delaunay Property** - [`DelaunayTriangulation::validate_delaunay()`]
+//!    - Empty circumsphere property
+//!
+//! ## TDS Validation Methods
+//!
+//! - [`is_valid()`](Tds::is_valid) - Returns first error, stops early
+//! - [`validation_report()`](Tds::validation_report) - Returns all violations
+//! - [`validate_vertex_mappings()`](Tds::validate_vertex_mappings) - Check vertex UUID↔Key consistency
+//! - [`validate_cell_mappings()`](Tds::validate_cell_mappings) - Check cell UUID↔Key consistency
+//! - [`validate_no_duplicate_cells()`](Tds::validate_no_duplicate_cells) - Check for duplicate cells
+//! - [`validate_facet_sharing()`](Tds::validate_facet_sharing) - Check facet sharing (≤2 cells)
+//! - [`validate_neighbors()`](Tds::validate_neighbors) - Check neighbor consistency
+//!
+//! ## Example: Using TDS Validation
+//!
+//! ```rust
+//! use delaunay::prelude::*;
+//!
+//! let vertices = [
+//!     vertex!([0.0, 0.0, 0.0]),
+//!     vertex!([1.0, 0.0, 0.0]),
+//!     vertex!([0.0, 1.0, 0.0]),
+//!     vertex!([0.0, 0.0, 1.0]),
+//! ];
+//! let dt = DelaunayTriangulation::new(&vertices).unwrap();
+//!
+//! // Level 2: TDS structural validation (quick)
+//! assert!(dt.is_valid().is_ok());
+//!
+//! // Detailed report with all violations
+//! match dt.tds().validation_report() {
+//!     Ok(()) => println!("✓ All TDS invariants satisfied"),
+//!     Err(report) => {
+//!         for violation in report.violations {
+//!             eprintln!("Invariant: {:?}, Error: {}", violation.kind, violation.error);
+//!         }
+//!     }
+//! }
+//! ```
+//!
+//! See [`docs/validation.md`](https://github.com/acgetchell/delaunay/blob/main/docs/validation.md)
+//! for comprehensive validation guide.
+//!
+//! [`Cell::is_valid()`]: crate::core::cell::Cell::is_valid
+//! [`Vertex::is_valid()`]: crate::core::vertex::Vertex::is_valid
+//! [`Triangulation::validate_manifold()`]: crate::core::triangulation::Triangulation::validate_manifold
+//! [`DelaunayTriangulation::validate_delaunay()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validate_delaunay
+//!
 //! # Examples
 //!
 //! ## Creating a 3D Triangulation

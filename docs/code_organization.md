@@ -82,7 +82,8 @@ delaunay/
 │   ├── property_testing_summary.md
 │   ├── README.md
 │   ├── RELEASING.md
-│   └── topology.md
+│   ├── topology.md
+│   └── validation.md
 ├── examples/
 │   ├── convex_hull_3d_20_points.rs
 │   ├── into_from_conversions.rs

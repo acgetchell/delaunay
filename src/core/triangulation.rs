@@ -5,6 +5,75 @@
 //! - A purely combinatorial `Tds` for topology
 //!
 //! This layer provides geometric operations while delegating topology to Tds.
+//!
+//! # Validation Hierarchy
+//!
+//! The library provides **four levels** of validation, each building on the previous:
+//!
+//! ## Level 1: Element Validity
+//! - **Methods**: [`Cell::is_valid()`], [`Vertex::is_valid()`]
+//! - **Checks**: Basic data integrity (coordinate validity, UUID presence, proper initialization)
+//! - **Cost**: O(1) per element
+//! - **Use**: Building blocks for higher-level validation
+//!
+//! ## Level 2: TDS Structural Validity
+//! - **Method**: [`Tds::is_valid()`]
+//! - **Checks**:
+//!   - UUID ↔ Key mapping consistency
+//!   - No duplicate cells (same vertex sets)
+//!   - Facet sharing invariant (≤2 cells per facet)
+//!   - Neighbor consistency (mutual relationships)
+//!   - All cells valid (calls Level 1)
+//! - **Cost**: O(N×D²) where N = cells, D = dimension
+//! - **Use**: Verify combinatorial correctness after construction or mutation
+//!
+//! ## Level 3: Manifold Topology
+//! - **Method**: [`Triangulation::validate_manifold()`](crate::core::triangulation::Triangulation::validate_manifold)
+//! - **Checks**:
+//!   - All TDS invariants (calls Level 2)
+//!   - Strengthened facet property (exactly 1 or 2 cells per facet)
+//!   - Euler characteristic (χ = V - E + F - C matches expected topology)
+//! - **Cost**: O(N×D²) for simplex counting
+//! - **Use**: Verify the triangulation forms a valid topological manifold
+//!
+//! ## Level 4: Delaunay Property
+//! - **Method**: [`DelaunayTriangulation::validate_delaunay()`]
+//! - **Checks**:
+//!   - Empty circumsphere property (no vertex inside any cell's circumsphere)
+//!   - Uses geometric predicates from kernel
+//! - **Cost**: O(N×V) where N = cells, V = vertices
+//! - **Use**: Verify geometric optimality of the triangulation
+//!
+//! ## Usage Guidelines
+//!
+//! ```rust
+//! use delaunay::prelude::*;
+//!
+//! let vertices = vec![
+//!     vertex!([0.0, 0.0, 0.0]),
+//!     vertex!([1.0, 0.0, 0.0]),
+//!     vertex!([0.0, 1.0, 0.0]),
+//!     vertex!([0.0, 0.0, 1.0]),
+//! ];
+//! let dt = DelaunayTriangulation::new(&vertices).unwrap();
+//!
+//! // Quick structural check (Level 2)
+//! assert!(dt.is_valid().is_ok());
+//!
+//! // Thorough manifold check (Level 3, includes Level 2)
+//! assert!(dt.triangulation().validate_manifold().is_ok());
+//!
+//! // Full geometric validation (Level 4, most expensive)
+//! assert!(dt.validate_delaunay().is_ok());
+//! ```
+//!
+//! **Performance**: Use Level 2 for most production validation. Reserve Level 3 for
+//! tests/debug builds, and Level 4 for critical verification or debugging geometric issues.
+//!
+//! [`Cell::is_valid()`]: crate::core::cell::Cell::is_valid
+//! [`Vertex::is_valid()`]: crate::core::vertex::Vertex::is_valid
+//! [`Tds::is_valid()`]: crate::core::triangulation_data_structure::Tds::is_valid
+//! [`DelaunayTriangulation::validate_delaunay()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validate_delaunay
 
 use core::iter::Sum;
 use core::ops::{AddAssign, Div, SubAssign};
@@ -26,6 +95,7 @@ use crate::core::traits::data_type::DataType;
 use crate::core::triangulation_data_structure::{
     CellKey, Tds, TriangulationConstructionError, TriangulationValidationError, VertexKey,
 };
+use crate::core::util::extract_edge_set;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
@@ -288,6 +358,386 @@ where
             .build_facet_to_cells_map()
             .expect("Failed to build facet map - triangulation structure is corrupted");
         BoundaryFacetsIter::new(&self.tds, facet_map)
+    }
+
+    /// Validates that the triangulation forms a valid manifold.
+    ///
+    /// This method validates **manifold topology** on top of the structural invariants checked by
+    /// [`Tds::is_valid()`](crate::core::triangulation_data_structure::Tds::is_valid).
+    ///
+    /// # Validation Hierarchy
+    ///
+    /// - **Level 1: Element Validity** - [`Cell::is_valid()`](crate::core::cell::Cell::is_valid),
+    ///   [`Vertex::is_valid()`](crate::core::vertex::Vertex::is_valid)
+    /// - **Level 2: TDS Structural Validity** - [`Tds::is_valid()`](crate::core::triangulation_data_structure::Tds::is_valid)
+    ///   (mappings, no duplicates, facet sharing ≤2, neighbor consistency)
+    /// - **Level 3: Manifold Topology** - **This method** (manifold facet property, Euler characteristic)
+    /// - **Level 4: Delaunay Property** - [`DelaunayTriangulation::validate_delaunay()`](crate::core::delaunay_triangulation::DelaunayTriangulation::validate_delaunay)
+    ///
+    /// # Manifold Requirements
+    ///
+    /// A valid manifold triangulation must satisfy:
+    ///
+    /// 1. **All TDS structural invariants** (validated first)
+    /// 2. **Manifold facet property**: Each facet belongs to exactly 1 cell (boundary) or exactly 2 cells (interior)
+    /// 3. **Euler characteristic** (dimensions 0-5 supported; 6-7 return `Ok()` as placeholder):
+    ///    - 0D: χ = V = 1 (single vertex)
+    ///    - 1D: χ = V - E = 1 (path)
+    ///    - 2D: χ = V - E + F = 1 (disk) or 2 (sphere)
+    ///    - 3D: χ = V - E + F - C = 1 (ball) or 0 (closed 3-sphere)
+    ///    - 4D: χ = V - E + F - T + C = 1 (4-ball) or 0 (4-sphere)
+    ///    - 5D: χ = V - E + F - T + Q - C = 1 (5-ball) or 0 (5-sphere)
+    ///    - 6D-7D: No validation (returns `Ok()` without checking χ; TODO)
+    ///
+    /// **Time Complexity**: O(N×D²) where N = number of cells, D = dimension
+    /// - Facet map construction: O(N×D)
+    /// - Manifold facet check: O(N×D)
+    /// - Simplex counting for Euler: O(N×D²)
+    ///
+    /// For large triangulations, this is expensive. Use judiciously in tests or debug builds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TriangulationValidationError`] if:
+    /// - Any TDS structural invariant fails (mappings, duplicates, facet sharing, neighbors)
+    /// - Any facet is shared by 0 or >2 cells (non-manifold)
+    /// - Euler characteristic doesn't match expected value
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::*;
+    ///
+    /// // Valid 3D triangulation (single tetrahedron)
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// assert!(dt.triangulation().validate_manifold().is_ok());
+    /// ```
+    pub fn validate_manifold(&self) -> Result<(), TriangulationValidationError>
+    where
+        K::Scalar: AddAssign + SubAssign + Sum,
+    {
+        // 1. First validate all TDS structural invariants
+        //    (mappings, no duplicates, facet sharing ≤2, neighbor consistency)
+        self.tds.is_valid()?;
+
+        // 2. Strengthen facet sharing to manifold property:
+        //    - Boundary facets: exactly 1 cell
+        //    - Interior facets: exactly 2 cells
+        //    (No facets with 0 cells allowed in a manifold)
+        self.validate_manifold_facets()?;
+
+        // 3. Validate Euler characteristic for the topological space
+        self.validate_euler_characteristic()?;
+
+        Ok(())
+    }
+
+    /// Counts unique k-dimensional faces (k-simplices) across all cells by
+    /// enumerating vertex combinations per cell and deduplicating globally.
+    ///
+    /// For example:
+    /// - k = 2 counts triangles (2-faces)
+    /// - k = 3 counts tetrahedra (3-faces)
+    /// - k = D-1 counts facets
+    ///
+    /// Returns the global count of unique faces of dimension k.
+    fn count_k_faces(&self, k_dim: usize) -> Result<usize, TriangulationValidationError>
+    where
+        K::Scalar: AddAssign + SubAssign + Sum,
+    {
+        use std::collections::HashSet;
+
+        if k_dim == 0 {
+            return Ok(self.number_of_vertices());
+        }
+        // Cells store D+1 vertices, so maximum k is D
+        let mut faces: HashSet<Vec<u128>> = HashSet::new();
+
+        for (_cell_key, cell) in self.tds.cells() {
+            let vks = cell.vertices();
+            let n = vks.len(); // = D+1 for a D-cell
+            let choose = k_dim + 1;
+            if choose > n {
+                continue;
+            }
+
+            // Initialize indices [0,1,..,choose-1]
+            let mut idx: Vec<usize> = (0..choose).collect();
+            loop {
+                // Build face UUID set for current combination
+                let mut uuids: Vec<u128> = Vec::with_capacity(choose);
+                for &i in &idx {
+                    let vk = vks[i];
+                    let v = self.tds.get_vertex_by_key(vk).ok_or_else(|| {
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: "Vertex key not found while counting faces".to_string(),
+                        }
+                    })?;
+                    uuids.push(v.uuid().as_u128());
+                }
+                uuids.sort_unstable();
+                faces.insert(uuids);
+
+                // Next combination (lexicographic)
+                let mut t = choose;
+                loop {
+                    if t == 0 {
+                        break;
+                    }
+                    t -= 1;
+                    if idx[t] != t + n - choose {
+                        break;
+                    }
+                    if t == 0 {
+                        break;
+                    }
+                }
+                if idx[0] == n - choose {
+                    break;
+                }
+                idx[t] += 1;
+                for j in (t + 1)..choose {
+                    idx[j] = idx[j - 1] + 1;
+                }
+            }
+        }
+
+        Ok(faces.len())
+    }
+
+    /// Validates the manifold facet property.
+    ///
+    /// In a valid manifold, every facet must belong to exactly 1 cell (boundary facet)
+    /// or exactly 2 cells (interior facet). This is conceptually stronger than the TDS invariant
+    /// which only requires ≤2 cells per facet.
+    ///
+    /// **Note**: In practice, since Level 2 (`tds.is_valid()`) already enforces the ≤2 constraint
+    /// and `build_facet_to_cells_map()` only includes facets that appear in cells, this check
+    /// primarily serves as an explicit assertion of the manifold property. The `count == 0` branch
+    /// is unreachable for well-formed maps. This validates the conceptual strengthening from
+    /// "at most 2" (Level 2) to "exactly 1 or 2" (Level 3), which becomes meaningful if facets
+    /// ever gain independent representation in future refactoring.
+    fn validate_manifold_facets(&self) -> Result<(), TriangulationValidationError> {
+        use crate::core::collections::FacetToCellsMap;
+
+        // Build facet-to-cells map
+        let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
+
+        // Check that each facet has exactly 1 or 2 cells
+        for (facet_key, cell_facet_pairs) in &facet_to_cells {
+            let count = cell_facet_pairs.len();
+            if count == 0 || count > 2 {
+                return Err(TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Non-manifold facet: facet with key {facet_key} belongs to {count} cells (expected 1 or 2 for manifold)"
+                    ),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validates the Euler characteristic for the triangulation.
+    ///
+    /// Computes χ = Σ(-1)^d × `N_d` where `N_d` is the number of d-dimensional simplices.
+    ///
+    /// # Expected Values
+    ///
+    /// - **Empty triangulation**: χ = 0 (no simplices)
+    /// - **D-dimensional manifold with boundary**: χ = 1
+    /// - **Closed 2-manifold (sphere)**: χ = 2
+    /// - **Closed 2-manifold with g handles (genus g)**: χ = 2 - 2g
+    ///
+    /// Currently assumes **manifold with boundary** (most common case for Delaunay triangulations).
+    #[allow(clippy::cast_possible_wrap)] // Vertex/cell counts won't exceed i64 range in practice
+    #[allow(clippy::too_many_lines)] // Comprehensive validation across dimensions
+    fn validate_euler_characteristic(&self) -> Result<(), TriangulationValidationError>
+    where
+        K::Scalar: AddAssign + SubAssign + Sum,
+    {
+        // Handle empty triangulation
+        if self.number_of_vertices() == 0 {
+            return Ok(()); // Empty triangulation is valid (χ = 0)
+        }
+
+        // Count simplices by dimension
+        let n_vertices = self.number_of_vertices() as i64;
+        let n_cells = self.number_of_cells() as i64;
+
+        // Compute Euler characteristic based on dimension
+        let dim = self.dim();
+
+        match dim {
+            -1 => Ok(()), // Empty triangulation
+            0 => {
+                // 0D: just isolated vertices, χ = V
+                // For a valid triangulation, we expect χ = 1 (single vertex)
+                let chi = n_vertices;
+                if chi != 1 {
+                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Euler characteristic mismatch for 0D: χ = {chi} (expected 1 for single vertex)"
+                        ),
+                    });
+                }
+                Ok(())
+            }
+            1 => {
+                // 1D: χ = V - E
+                // For a manifold with boundary (path): χ = 1
+                let n_edges = n_cells; // In 1D, cells are edges
+                let chi = n_vertices - n_edges;
+                if chi != 1 {
+                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Euler characteristic mismatch for 1D: χ = V - E = {n_vertices} - {n_edges} = {chi} (expected 1 for path)"
+                        ),
+                    });
+                }
+                Ok(())
+            }
+            2 => {
+                // 2D: χ = V - E + F
+                let n_edges = extract_edge_set(&self.tds)
+                    .map_err(
+                        |e| TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Failed to extract edges for Euler characteristic: {e}"
+                            ),
+                        },
+                    )?
+                    .len() as i64;
+                let n_faces = n_cells; // In 2D, cells are faces (triangles)
+
+                let chi = n_vertices - n_edges + n_faces;
+
+                // For a 2D manifold with boundary (disk): χ = 1
+                // For a closed 2D manifold (sphere): χ = 2
+                // We expect χ = 1 for typical Delaunay triangulations with convex hull boundary
+                if chi != 1 && chi != 2 {
+                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Euler characteristic mismatch for 2D: χ = V - E + F = {n_vertices} - {n_edges} + {n_faces} = {chi} (expected 1 for disk or 2 for sphere)"
+                        ),
+                    });
+                }
+                Ok(())
+            }
+            3 => {
+                // 3D: χ = V - E + F - C
+                let n_edges = extract_edge_set(&self.tds)
+                    .map_err(
+                        |e| TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Failed to extract edges for Euler characteristic: {e}"
+                            ),
+                        },
+                    )?
+                    .len() as i64;
+                // Count all 2-faces (both interior and boundary) via facet map
+                let facet_map = self.tds.build_facet_to_cells_map().map_err(|e| {
+                    TriangulationValidationError::InconsistentDataStructure {
+                        message: format!("Failed to build facet map for Euler characteristic: {e}"),
+                    }
+                })?;
+                let n_faces = facet_map.len() as i64;
+
+                let chi = n_vertices - n_edges + n_faces - n_cells;
+
+                // For a 3D manifold with boundary (ball): χ = 1
+                // For a closed 3D manifold (sphere): χ = 0 (but rare for Delaunay)
+                if chi != 1 && chi != 0 {
+                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Euler characteristic mismatch for 3D: χ = V - E + F - C = {n_vertices} - {n_edges} + {n_faces} - {n_cells} = {chi} (expected 1 for ball or 0 for sphere)"
+                        ),
+                    });
+                }
+                Ok(())
+            }
+            4 => {
+                // 4D: χ = V - E + F - T + C
+                // F = # of 2-faces (triangles), T = # of 3-faces (tetrahedra), C = # of 4-cells
+                let n_edges = extract_edge_set(&self.tds)
+                    .map_err(
+                        |e| TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Failed to extract edges for Euler characteristic: {e}"
+                            ),
+                        },
+                    )?
+                    .len() as i64;
+
+                let n_2faces = self.count_k_faces(2)? as i64; // triangles
+                let n_3faces = self.count_k_faces(3)? as i64; // tetrahedra
+
+                let chi = n_vertices - n_edges + n_2faces - n_3faces + n_cells;
+
+                if chi != 1 && chi != 0 {
+                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Euler characteristic mismatch for 4D: χ = V - E + F - T + C = {n_vertices} - {n_edges} + {n_2faces} - {n_3faces} + {n_cells} = {chi} (expected 1 for 4-ball or 0 for 4-sphere)"
+                        ),
+                    });
+                }
+                Ok(())
+            }
+            5 => {
+                // 5D: χ = V - E + F - T + Q - C
+                // F = # of 2-faces (triangles), T = # of 3-faces (tetrahedra), Q = # of 4-faces, C = # of 5-cells
+                let n_edges = extract_edge_set(&self.tds)
+                    .map_err(
+                        |e| TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Failed to extract edges for Euler characteristic: {e}"
+                            ),
+                        },
+                    )?
+                    .len() as i64;
+
+                let n_2faces = self.count_k_faces(2)? as i64; // triangles
+                let n_3faces = self.count_k_faces(3)? as i64; // tetrahedra
+                let n_4faces = self.count_k_faces(4)? as i64; // 4-faces
+
+                let chi = n_vertices - n_edges + n_2faces - n_3faces + n_4faces - n_cells;
+
+                if chi != 1 && chi != 0 {
+                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Euler characteristic mismatch for 5D: χ = V - E + F - T + Q - C = {n_vertices} - {n_edges} + {n_2faces} - {n_3faces} + {n_4faces} - {n_cells} = {chi} (expected 1 for 5-ball or 0 for 5-sphere)"
+                        ),
+                    });
+                }
+                Ok(())
+            }
+            6..=7 => {
+                // Higher dimensions: Use generalized Euler characteristic
+                // For D-dimensional manifold with boundary: χ = 1
+                // χ = Σ(-1)^d × N_d
+                //
+                // For now, we'll compute what we can and check if χ makes sense
+                // Full implementation would require counting all d-simplices
+                //
+                // Simplified check: just ensure structure is consistent
+                // TODO: Implement full d-simplex counting for dimensions 6-7
+                Ok(())
+            }
+            _ => {
+                // Unsupported dimension
+                Err(TriangulationValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Euler characteristic validation not supported for dimension {dim}"
+                    ),
+                })
+            }
+        }
     }
 }
 
@@ -1842,6 +2292,134 @@ mod tests {
             [0.0, 0.0, 0.0, 0.0, 1.0]
         ]
     );
+
+    /// Macro to generate `validate_manifold` tests across dimensions.
+    ///
+    /// This macro generates tests that verify manifold validation by:
+    /// 1. Creating a Delaunay triangulation from D+1 affinely independent vertices
+    /// 2. Calling `validate_manifold()` on the triangulation
+    /// 3. Verifying that the validation passes
+    ///
+    /// # Usage
+    /// ```ignore
+    /// test_validate_manifold!(2, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
+    /// ```
+    macro_rules! test_validate_manifold {
+        ($dim:expr, [$($simplex_coords:expr),+ $(,)?]) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_validate_manifold_ $dim d>]() {
+                    use crate::core::delaunay_triangulation::DelaunayTriangulation;
+
+                    // Build triangulation from D+1 vertices (initial simplex)
+                    let vertices: Vec<Vertex<f64, (), $dim>> = vec![
+                        $(vertex!($simplex_coords)),+
+                    ];
+
+                    let expected_vertices = vertices.len();
+                    assert_eq!(expected_vertices, $dim + 1,
+                        "Test must provide exactly D+1 vertices for {}D simplex", $dim);
+
+                    let dt = DelaunayTriangulation::new(&vertices)
+                        .expect(&format!("Failed to create {}D triangulation", $dim));
+                    let tri = dt.triangulation();
+
+                    // Validate manifold properties
+                    let result = tri.validate_manifold();
+                    assert!(
+                        result.is_ok(),
+                        "{}D: Simple simplex should be a valid manifold. Error: {:?}",
+                        $dim,
+                        result.err()
+                    );
+
+                    // Also verify basic properties
+                    assert_eq!(tri.number_of_vertices(), expected_vertices,
+                        "{}D: Should have {} vertices", $dim, expected_vertices);
+                    assert_eq!(tri.number_of_cells(), 1,
+                        "{}D: Should have exactly 1 cell", $dim);
+                }
+            }
+        };
+    }
+
+    // 2D: Triangle manifold
+    test_validate_manifold!(2, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
+
+    // 3D: Tetrahedron manifold
+    test_validate_manifold!(
+        3,
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0]
+        ]
+    );
+
+    // 4D: 4-simplex manifold
+    test_validate_manifold!(
+        4,
+        [
+            [0.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0]
+        ]
+    );
+
+    // 5D: 5-simplex manifold
+    test_validate_manifold!(
+        5,
+        [
+            [0.0, 0.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0]
+        ]
+    );
+
+    #[test]
+    fn test_validate_manifold_empty() {
+        // Empty triangulation should pass manifold validation
+        let tri: Triangulation<FastKernel<f64>, (), (), 3> =
+            Triangulation::new_empty(FastKernel::new());
+
+        assert!(
+            tri.validate_manifold().is_ok(),
+            "Empty triangulation should be a valid (empty) manifold"
+        );
+    }
+
+    // NOTE: Tests for multiple-cell triangulations with interior points are omitted
+    // because they may fail validation due to Issue #120 (rare Delaunay property violations
+    // in near-degenerate configurations). The validate_manifold tests focus on simple
+    // simplexes that reliably pass validation.
+
+    #[test]
+    fn test_validate_manifold_calls_tds_is_valid() {
+        use crate::core::delaunay_triangulation::DelaunayTriangulation;
+
+        // Verify that validate_manifold() checks TDS structural invariants first
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let tri = dt.triangulation();
+
+        // validate_manifold should pass if tds.is_valid() passes
+        assert!(tri.tds.is_valid().is_ok(), "TDS should be valid");
+        assert!(
+            tri.validate_manifold().is_ok(),
+            "Manifold validation should pass when TDS is valid"
+        );
+    }
 
     #[test]
     fn test_build_initial_simplex_insufficient_vertices() {
