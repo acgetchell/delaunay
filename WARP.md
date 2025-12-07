@@ -38,6 +38,8 @@ When user requests commit message generation:
 
 - Use `uv run` for all Python scripts (never `python3` or `python` directly)
 - Use pytest for tests (not unittest)
+- **Type checking**: `just python-lint` includes mypy (blocking - all code must pass type checks)
+- Add type hints to new code
 
 ## Common Commands
 

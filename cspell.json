@@ -28,6 +28,7 @@
   "words": [
     "adamgrp",
     "Algorithmica",
+    "alloca",
     "Alpes",
     "Antisymmetry",
     "Arge",
@@ -86,6 +87,7 @@
     "ORCID",
     "Outsphere",
     "Overmars",
+    "overpromised",
     "POINTTYPE",
     "precheck",
     "Parthasarathy",
@@ -188,6 +190,7 @@
     "critcmp",
     "dans",
     "degen",
+    "dedup",
     "denseslotmap",
     "derefs",
     "deser",
@@ -208,6 +211,7 @@
     "eprintln",
     "esac",
     "expl",
+    "façade",
     "facetview",
     "findutils",
     "flippable",
@@ -369,8 +373,10 @@
     "tomllib",
     "toplevel",
     "typenum",
+    "turbofish",
     "uncategorized",
     "unconstructed",
+    "unflake",
     "uninlined",
     "unittests",
     "unparseable",
@@ -397,9 +403,10 @@
     {
       "filename": "CHANGELOG.md",
       "ignoreWords": [
-        "varous",
+        "lign",
+        "runtim",
         "tarpauline",
-        "runtim"
+        "varous"
       ]
     }
   ],

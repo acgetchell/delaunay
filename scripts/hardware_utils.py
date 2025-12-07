@@ -21,10 +21,10 @@ from pathlib import Path
 
 try:
     # When executed as a script from scripts/
-    from subprocess_utils import run_safe_command  # type: ignore[no-redef]
+    from subprocess_utils import run_safe_command  # type: ignore[no-redef,import-not-found]
 except ModuleNotFoundError:
     # When imported as a module (e.g., scripts.hardware_utils)
-    from scripts.subprocess_utils import run_safe_command  # type: ignore[no-redef]
+    from scripts.subprocess_utils import run_safe_command  # type: ignore[no-redef,import-not-found]
 
 # Configure a module-level logger
 logger = logging.getLogger(__name__)

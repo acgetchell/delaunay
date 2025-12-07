@@ -34,15 +34,15 @@ DEFAULT_REGRESSION_THRESHOLD = 7.5
 
 try:
     # When executed as a script from scripts/
-    from benchmark_models import (  # type: ignore[no-redef]
+    from benchmark_models import (  # type: ignore[no-redef,import-not-found]
         BenchmarkData,
         CircumspherePerformanceData,
         CircumsphereTestCase,
         extract_benchmark_data,
         format_benchmark_tables,
     )
-    from hardware_utils import HardwareComparator, HardwareInfo  # type: ignore[no-redef]
-    from subprocess_utils import (  # type: ignore[no-redef]
+    from hardware_utils import HardwareComparator, HardwareInfo  # type: ignore[no-redef,import-not-found]
+    from subprocess_utils import (  # type: ignore[no-redef,import-not-found]
         ProjectRootNotFoundError,
         find_project_root,
         get_git_commit_hash,
@@ -51,15 +51,15 @@ try:
     )
 except ModuleNotFoundError:
     # When imported as a module (e.g., scripts.benchmark_utils)
-    from scripts.benchmark_models import (  # type: ignore[no-redef]
+    from scripts.benchmark_models import (  # type: ignore[no-redef,import-not-found]
         BenchmarkData,
         CircumspherePerformanceData,
         CircumsphereTestCase,
         extract_benchmark_data,
         format_benchmark_tables,
     )
-    from scripts.hardware_utils import HardwareComparator, HardwareInfo  # type: ignore[no-redef]
-    from scripts.subprocess_utils import (  # type: ignore[no-redef]
+    from scripts.hardware_utils import HardwareComparator, HardwareInfo  # type: ignore[no-redef,import-not-found]
+    from scripts.subprocess_utils import (  # type: ignore[no-redef,import-not-found]
         ProjectRootNotFoundError,
         find_project_root,
         get_git_commit_hash,
@@ -109,7 +109,7 @@ class PerformanceSummaryGenerator:
         self.circumsphere_results_dir = project_root / "target" / "criterion"
 
         # Storage for numerical accuracy data from benchmarks
-        self.numerical_accuracy_data = None
+        self.numerical_accuracy_data: dict[str, str] | None = None
 
         # Extract current version and date information
         self.current_version = self._get_current_version()
@@ -511,7 +511,9 @@ class PerformanceSummaryGenerator:
             methods = self._parse_benchmark_methods(edge_key, edge_method_mappings)
 
             if methods:
-                test_case = CircumsphereTestCase(test_name=test_name, dimension=dimension, methods=methods)
+                # Mark boundary cases: "Boundary vertex" tests have early-exit optimizations
+                is_boundary = "boundary" in edge_key.lower()
+                test_case = CircumsphereTestCase(test_name=test_name, dimension=dimension, methods=methods, is_boundary_case=is_boundary)
                 test_cases.append(test_case)
 
         return test_cases
@@ -593,6 +595,7 @@ class PerformanceSummaryGenerator:
                     "insphere_distance": CircumspherePerformanceData("insphere_distance", 644),
                     "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 451),
                 },
+                is_boundary_case=True,
             ),
             CircumsphereTestCase(
                 "Far vertex",
@@ -621,6 +624,7 @@ class PerformanceSummaryGenerator:
                     "insphere_distance": CircumspherePerformanceData("insphere_distance", 1497),
                     "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 647),
                 },
+                is_boundary_case=True,
             ),
             CircumsphereTestCase(
                 "Far vertex",
@@ -649,6 +653,7 @@ class PerformanceSummaryGenerator:
                     "insphere_distance": CircumspherePerformanceData("insphere_distance", 1900),
                     "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 987),
                 },
+                is_boundary_case=True,
             ),
             CircumsphereTestCase(
                 "Far vertex",
@@ -677,6 +682,7 @@ class PerformanceSummaryGenerator:
                     "insphere_distance": CircumspherePerformanceData("insphere_distance", 3100),
                     "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 1500),
                 },
+                is_boundary_case=True,
             ),
             CircumsphereTestCase(
                 "Far vertex",
@@ -720,7 +726,7 @@ class PerformanceSummaryGenerator:
         ]
 
         # Group test cases by dimension for better organization
-        cases_by_dimension = {}
+        cases_by_dimension: dict[str, list[CircumsphereTestCase]] = {}
         for test_case in test_cases:
             dim = test_case.dimension
             if dim not in cases_by_dimension:
@@ -914,16 +920,29 @@ class PerformanceSummaryGenerator:
 
         # Add dynamic conclusion based on performance ranking
         if performance_ranking:
-            fastest_method = performance_ranking[0][0]
             lines.extend(
                 [
                     "",
                     "## Conclusion",
                     "",
-                    f"The `{fastest_method}` method provides the best performance while maintaining reasonable numerical behavior.",
-                    "For most applications requiring high-performance circumsphere containment tests, it should be the preferred choice.",
+                    "All three methods are mathematically correct and produce valid results. Performance characteristics vary by dimension:",
                     "",
-                    "The standard `insphere` method remains the most numerically stable option when correctness is prioritized over performance.",
+                ],
+            )
+
+            # Add dimension-specific winners
+            for method, _, desc in performance_ranking:
+                if "best in" in desc:
+                    lines.append(f"- `{method}` {desc}")
+
+            lines.extend(
+                [
+                    "",
+                    "For general-purpose applications, choose based on your primary use case:",
+                    "",
+                    "- **Performance-critical**: Use the method that performs best in your target dimension",
+                    "- **Numerical stability**: Use `insphere` for its proven mathematical properties",
+                    "- **Educational/debugging**: Use `insphere_distance` for its transparent algorithm",
                     "",
                 ],
             )
@@ -940,10 +959,20 @@ class PerformanceSummaryGenerator:
         Returns:
             List of tuples (method_name, average_performance, description)
         """
-        method_totals = {"insphere": [], "insphere_distance": [], "insphere_lifted": []}
+        method_totals: dict[str, list[float]] = {"insphere": [], "insphere_distance": [], "insphere_lifted": []}
+        method_wins: dict[str, list[str]] = {"insphere": [], "insphere_distance": [], "insphere_lifted": []}
 
-        # Collect performance data from all test cases
+        # Collect performance data from non-boundary test cases only
+        # Boundary cases are trivial outliers with early-exit optimizations
         for test_case in test_data:
+            # Skip boundary vertex cases as they're trivial outliers (3-4ns)
+            if test_case.is_boundary_case:
+                continue
+
+            winner = test_case.get_winner()
+            if winner:
+                method_wins[winner].append(test_case.dimension)
+
             for method_name, perf_data in test_case.methods.items():
                 method_totals[method_name].append(perf_data.time_ns)
 
@@ -958,21 +987,31 @@ class PerformanceSummaryGenerator:
         # Sort by performance (lowest time first)
         sorted_methods = sorted(method_averages.items(), key=lambda x: x[1])
 
-        # Generate descriptions with relative performance
+        # Generate descriptions with relative performance and dimension wins
         rankings = []
         if sorted_methods:
             fastest_time = sorted_methods[0][1]
-            rank_index = {m: i for i, (m, _) in enumerate(sorted_methods)}
 
             for method, avg_time in sorted_methods:
-                idx = rank_index[method]
-                slowdown = (avg_time / fastest_time) if fastest_time > 0 else 1
-                if idx == 0:
-                    desc = "(fastest) - Consistently best performance across all tests"
-                elif idx == 1:
-                    desc = f"(middle) - ~{slowdown:.1f}x slower than fastest"
+                # Handle missing data (float("inf") from no samples)
+                if avg_time == float("inf"):
+                    desc = "No benchmark data available"
+                    rankings.append((method, avg_time, desc))
+                    continue
+
+                slowdown = (avg_time / fastest_time) if fastest_time > 0 and fastest_time != float("inf") else 1
+
+                # Generate description based on actual wins by dimension
+                wins = method_wins.get(method, [])
+                if wins:
+                    dims_text = ", ".join(sorted(set(wins)))
+                    desc = (
+                        f"(best in {dims_text}) - ~{slowdown:.1f}x average vs fastest"
+                        if slowdown > 1.01
+                        else f"(best in {dims_text}) - Best average performance"
+                    )
                 else:
-                    desc = f"(slowest) - ~{slowdown:.1f}x slower than fastest"
+                    desc = f"~{slowdown:.1f}x slower than fastest on average"
 
                 rankings.append((method, avg_time, desc))
 
@@ -991,63 +1030,69 @@ class PerformanceSummaryGenerator:
         if not performance_ranking:
             return []
 
-        fastest_method = performance_ranking[0][0]
-        fastest_time = performance_ranking[0][1]
-
-        # Calculate performance differences more accurately
-        performance_diffs = []
-        for method, avg_time, _ in performance_ranking[1:]:
-            if fastest_time > 0:
-                slowdown_factor = avg_time / fastest_time
-                performance_diffs.append((method, slowdown_factor))
-
         lines = [
-            "### For Performance-Critical Applications",
+            "### Method Selection Guide",
             "",
-            f"- **Use `{fastest_method}`** for maximum performance",
+            "**All three methods are mathematically correct** (they produce valid insphere test results).",
+            "Choose based on your specific requirements:",
+            "",
         ]
 
-        # Add specific performance comparison if we have data
-        if performance_diffs:
-            for method, slowdown in performance_diffs:
-                if slowdown > 1.5:  # Significant difference
-                    lines.append(f"- ~{slowdown:.1f}x faster than `{method}`")
+        # Add dimension-specific performance recommendations
+        lines.append("#### Performance Optimization by Dimension")
+        lines.append("")
+
+        for method, _avg_time, desc in performance_ranking:
+            if "best in" in desc:
+                # Extract dimension info from description
+                lines.append(f"- **`{method}`**: {desc}")
 
         lines.extend(
             [
-                "- Best choice for batch processing and high-frequency queries",
-                "- Recommended for applications requiring millions of containment tests",
                 "",
-                "### For Numerical Stability",
+                "#### General Recommendations",
                 "",
-                "- **Use `insphere`** for most reliable results",
-                "- Standard determinant-based approach with proven mathematical properties",
-                "- Good balance of performance and numerical stability",
-                "- Recommended for applications where correctness is paramount",
+                "**For maximum performance**: Choose the method that performs best in your target dimension (see above)",
                 "",
-                "### For Educational/Research Purposes",
+                "**For general-purpose use**: `insphere` provides consistent performance across all dimensions",
+                "and uses the standard determinant-based approach with well-understood numerical properties",
                 "",
-                "- **Use `insphere_distance`** to understand geometric intuition",
-                "- Explicit circumcenter calculation makes algorithm transparent",
-                "- Excellent for debugging and algorithm validation",
-                "- Useful for educational materials despite slower performance",
+                "**For algorithm transparency**: `insphere_distance` explicitly calculates the circumcenter,",
+                "making it excellent for educational purposes, debugging, and algorithm validation",
                 "",
-                "### Performance Summary",
+                "#### Performance Comparison",
+                "",
+                "Average performance across all non-boundary test cases:",
                 "",
             ],
         )
 
-        # Add current benchmark-based summary
+        # Add current benchmark-based summary with data-driven labels
         if len(performance_ranking) >= 3:
-            times = [f"{time / 1000:.1f} µs" if time >= 1000 else f"{time:.0f} ns" for _, time, _ in performance_ranking]
+            # Format times, handling inf gracefully
+            times = []
+            for _, time, _ in performance_ranking:
+                if time == float("inf"):
+                    times.append("N/A")
+                elif time >= 1000:
+                    times.append(f"{time / 1000:.1f} µs")
+                else:
+                    times.append(f"{time:.0f} ns")
+
+            # Extract brief labels from descriptions or use position-based defaults
+            def brief_label(desc: str, position: int) -> str:
+                """Extract label from description or use position-based default."""
+                if "best in" in desc:
+                    # Extract just the dimension info: "(best in 2D, 3D)"
+                    return desc.split(" - ")[0]
+                defaults = ["fastest average", "second fastest", "third fastest"]
+                return defaults[position] if position < len(defaults) else "slower"
 
             lines.extend(
                 [
-                    "Based on current benchmarks:",
-                    "",
-                    f"- `{performance_ranking[0][0]}`: {times[0]} (fastest)",
-                    f"- `{performance_ranking[1][0]}`: {times[1]} (balanced)",
-                    f"- `{performance_ranking[2][0]}`: {times[2]} (transparent)",
+                    f"- `{performance_ranking[0][0]}`: {times[0]} ({brief_label(performance_ranking[0][2], 0)})",
+                    f"- `{performance_ranking[1][0]}`: {times[1]} ({brief_label(performance_ranking[1][2], 1)})",
+                    f"- `{performance_ranking[2][0]}`: {times[2]} ({brief_label(performance_ranking[2][2], 2)})",
                 ],
             )
 
@@ -1280,7 +1325,7 @@ class CriterionParser:
         Returns:
             List of BenchmarkData objects sorted by dimension and point count
         """
-        results = []
+        results: list[BenchmarkData] = []
         criterion_dir = target_dir / "criterion"
 
         if not criterion_dir.exists():

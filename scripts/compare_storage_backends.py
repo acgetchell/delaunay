@@ -34,9 +34,9 @@ from json import loads
 from pathlib import Path
 
 try:
-    from subprocess_utils import find_project_root, run_cargo_command
+    from subprocess_utils import find_project_root, run_cargo_command  # type: ignore[import-not-found]
 except ModuleNotFoundError:
-    from scripts.subprocess_utils import find_project_root, run_cargo_command
+    from scripts.subprocess_utils import find_project_root, run_cargo_command  # type: ignore[no-redef,import-not-found]
 
 logger = logging.getLogger(__name__)
 
@@ -201,8 +201,9 @@ class StorageBackendComparator:
         Returns:
             Dictionary of parsed benchmark results
         """
+        benchmarks_list: list[dict[str, float | str]] = []
         results = {
-            "benchmarks": [],
+            "benchmarks": benchmarks_list,
             "raw_output": output,
         }
 
@@ -221,7 +222,7 @@ class StorageBackendComparator:
                         lower_bound = float(data["mean"]["confidence_interval"]["lower_bound"])
                         upper_bound = float(data["mean"]["confidence_interval"]["upper_bound"])
 
-                        results["benchmarks"].append(
+                        benchmarks_list.append(
                             {
                                 "name": name,
                                 "estimate": float(estimate),
@@ -254,7 +255,7 @@ class StorageBackendComparator:
                 upper_value = float(match.group(6))
                 # upper_unit = match.group(7)  # Same as estimate_unit
 
-                results["benchmarks"].append(
+                benchmarks_list.append(
                     {
                         "name": name,
                         "estimate": estimate,

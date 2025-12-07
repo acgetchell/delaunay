@@ -72,6 +72,7 @@ class CircumsphereTestCase:
     test_name: str
     dimension: str
     methods: dict[str, CircumspherePerformanceData]
+    is_boundary_case: bool = False  # True for boundary/edge cases with early-exit optimizations
 
     def get_winner(self) -> str | None:
         """Get the method name with the best performance."""
@@ -316,7 +317,7 @@ def format_benchmark_tables(benchmarks: list[BenchmarkData]) -> list[str]:
     lines = []
 
     # Group benchmarks by dimension
-    by_dimension = {}
+    by_dimension: dict[str, list[BenchmarkData]] = {}
     for bench in benchmarks:
         dim = bench.dimension
         if dim not in by_dimension:
