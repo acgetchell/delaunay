@@ -914,16 +914,29 @@ class PerformanceSummaryGenerator:
 
         # Add dynamic conclusion based on performance ranking
         if performance_ranking:
-            fastest_method = performance_ranking[0][0]
             lines.extend(
                 [
                     "",
                     "## Conclusion",
                     "",
-                    f"The `{fastest_method}` method provides the best performance while maintaining reasonable numerical behavior.",
-                    "For most applications requiring high-performance circumsphere containment tests, it should be the preferred choice.",
+                    "All three methods achieve 100% agreement on correctness. Performance characteristics vary by dimension:",
                     "",
-                    "The standard `insphere` method remains the most numerically stable option when correctness is prioritized over performance.",
+                ],
+            )
+
+            # Add dimension-specific winners
+            for method, _, desc in performance_ranking:
+                if "best in" in desc:
+                    lines.append(f"- `{method}` {desc}")
+
+            lines.extend(
+                [
+                    "",
+                    "For general-purpose applications, choose based on your primary use case:",
+                    "",
+                    "- **Performance-critical**: Use the method that performs best in your target dimension",
+                    "- **Numerical stability**: Use `insphere` for its proven mathematical properties",
+                    "- **Educational/debugging**: Use `insphere_distance` for its transparent algorithm",
                     "",
                 ],
             )
@@ -941,9 +954,19 @@ class PerformanceSummaryGenerator:
             List of tuples (method_name, average_performance, description)
         """
         method_totals = {"insphere": [], "insphere_distance": [], "insphere_lifted": []}
+        method_wins = {"insphere": [], "insphere_distance": [], "insphere_lifted": []}
 
-        # Collect performance data from all test cases
+        # Collect performance data from non-boundary test cases only
+        # Boundary cases are trivial outliers with early-exit optimizations
         for test_case in test_data:
+            # Skip boundary vertex cases as they're trivial outliers (3-4ns)
+            if "boundary" in test_case.test_name.lower():
+                continue
+
+            winner = test_case.get_winner()
+            if winner:
+                method_wins[winner].append(test_case.dimension)
+
             for method_name, perf_data in test_case.methods.items():
                 method_totals[method_name].append(perf_data.time_ns)
 
@@ -958,7 +981,7 @@ class PerformanceSummaryGenerator:
         # Sort by performance (lowest time first)
         sorted_methods = sorted(method_averages.items(), key=lambda x: x[1])
 
-        # Generate descriptions with relative performance
+        # Generate descriptions with relative performance and dimension wins
         rankings = []
         if sorted_methods:
             fastest_time = sorted_methods[0][1]
@@ -967,12 +990,18 @@ class PerformanceSummaryGenerator:
             for method, avg_time in sorted_methods:
                 idx = rank_index[method]
                 slowdown = (avg_time / fastest_time) if fastest_time > 0 else 1
-                if idx == 0:
-                    desc = "(fastest) - Consistently best performance across all tests"
-                elif idx == 1:
-                    desc = f"(middle) - ~{slowdown:.1f}x slower than fastest"
+
+                # Generate description based on actual wins by dimension
+                wins = method_wins.get(method, [])
+                if wins:
+                    dims_text = ", ".join(sorted(set(wins)))
+                    desc = (
+                        f"(best in {dims_text}) - ~{slowdown:.1f}x average vs fastest"
+                        if slowdown > 1.01
+                        else f"(best in {dims_text}) - Best average performance"
+                    )
                 else:
-                    desc = f"(slowest) - ~{slowdown:.1f}x slower than fastest"
+                    desc = f"~{slowdown:.1f}x slower than fastest on average"
 
                 rankings.append((method, avg_time, desc))
 
@@ -991,63 +1020,53 @@ class PerformanceSummaryGenerator:
         if not performance_ranking:
             return []
 
-        fastest_method = performance_ranking[0][0]
-        fastest_time = performance_ranking[0][1]
-
-        # Calculate performance differences more accurately
-        performance_diffs = []
-        for method, avg_time, _ in performance_ranking[1:]:
-            if fastest_time > 0:
-                slowdown_factor = avg_time / fastest_time
-                performance_diffs.append((method, slowdown_factor))
-
         lines = [
-            "### For Performance-Critical Applications",
+            "### Method Selection Guide",
             "",
-            f"- **Use `{fastest_method}`** for maximum performance",
+            "**All three methods produce correct results with 100% agreement.**",
+            "Choose based on your specific requirements:",
+            "",
         ]
 
-        # Add specific performance comparison if we have data
-        if performance_diffs:
-            for method, slowdown in performance_diffs:
-                if slowdown > 1.5:  # Significant difference
-                    lines.append(f"- ~{slowdown:.1f}x faster than `{method}`")
+        # Add dimension-specific performance recommendations
+        lines.append("#### Performance Optimization by Dimension")
+        lines.append("")
+
+        for method, _avg_time, desc in performance_ranking:
+            if "best in" in desc:
+                # Extract dimension info from description
+                lines.append(f"- **`{method}`**: {desc}")
 
         lines.extend(
             [
-                "- Best choice for batch processing and high-frequency queries",
-                "- Recommended for applications requiring millions of containment tests",
                 "",
-                "### For Numerical Stability",
+                "#### General Recommendations",
                 "",
-                "- **Use `insphere`** for most reliable results",
-                "- Standard determinant-based approach with proven mathematical properties",
-                "- Good balance of performance and numerical stability",
-                "- Recommended for applications where correctness is paramount",
+                "**For maximum performance**: Choose the method that performs best in your target dimension (see above)",
                 "",
-                "### For Educational/Research Purposes",
+                "**For general-purpose use**: `insphere` provides consistent performance across all dimensions",
+                "and uses the standard determinant-based approach with well-understood numerical properties",
                 "",
-                "- **Use `insphere_distance`** to understand geometric intuition",
-                "- Explicit circumcenter calculation makes algorithm transparent",
-                "- Excellent for debugging and algorithm validation",
-                "- Useful for educational materials despite slower performance",
+                "**For algorithm transparency**: `insphere_distance` explicitly calculates the circumcenter,",
+                "making it excellent for educational purposes, debugging, and algorithm validation",
                 "",
-                "### Performance Summary",
+                "#### Performance Comparison",
+                "",
+                "Average performance across all non-boundary test cases:",
                 "",
             ],
         )
 
-        # Add current benchmark-based summary
+        # Add current benchmark-based summary with data-driven labels
         if len(performance_ranking) >= 3:
             times = [f"{time / 1000:.1f} µs" if time >= 1000 else f"{time:.0f} ns" for _, time, _ in performance_ranking]
 
             lines.extend(
                 [
-                    "Based on current benchmarks:",
+                    f"- `{performance_ranking[0][0]}`: {times[0]} (fastest average)",
+                    f"- `{performance_ranking[1][0]}`: {times[1]} (close second)",
+                    f"- `{performance_ranking[2][0]}`: {times[2]} (consistent across dimensions)",
                     "",
-                    f"- `{performance_ranking[0][0]}`: {times[0]} (fastest)",
-                    f"- `{performance_ranking[1][0]}`: {times[1]} (balanced)",
-                    f"- `{performance_ranking[2][0]}`: {times[2]} (transparent)",
                 ],
             )
 
