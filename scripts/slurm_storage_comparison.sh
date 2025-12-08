@@ -207,9 +207,14 @@ EOF
 	echo
 
 	JOB_ARGS=()
-	[[ $LARGE_SCALE -eq 1 ]] && JOB_ARGS+=(--large)
+	[[ $LARGE_SCALE -eq 1 ]] && JOB_ARGS+=("--large")
 
-	JOB_ID=$(sbatch --time="$TIME_LIMIT" "$0" "${JOB_ARGS[@]}" | grep -oP '\d+$')
+	# Submit job with explicit --export=NONE to ensure clean environment
+	if [[ ${#JOB_ARGS[@]} -eq 0 ]]; then
+		JOB_ID=$(sbatch --export=NONE --time="$TIME_LIMIT" "$0" | grep -oP '\d+$')
+	else
+		JOB_ID=$(sbatch --export=NONE --time="$TIME_LIMIT" "$0" "${JOB_ARGS[@]}" | grep -oP '\d+$')
+	fi
 
 	if [[ -n "$JOB_ID" ]]; then
 		echo "✅ Job submitted: $JOB_ID"
