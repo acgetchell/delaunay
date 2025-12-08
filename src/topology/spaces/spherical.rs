@@ -9,10 +9,13 @@ use crate::topology::traits::topological_space::{TopologicalSpace, TopologyKind}
 ///
 /// Spherical spaces are closed manifolds. For example, a 2-sphere (S²)
 /// has Euler characteristic χ = 2.
+///
+/// The dimension `D` is a const generic parameter that must match the
+/// dimension of the associated triangulation.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct SphericalSpace;
+pub struct SphericalSpace<const D: usize>;
 
-impl SphericalSpace {
+impl<const D: usize> SphericalSpace<D> {
     /// Creates a new spherical space instance.
     #[must_use]
     pub const fn new() -> Self {
@@ -20,7 +23,9 @@ impl SphericalSpace {
     }
 }
 
-impl TopologicalSpace for SphericalSpace {
+impl<const D: usize> TopologicalSpace for SphericalSpace<D> {
+    const DIM: usize = D;
+
     fn kind(&self) -> TopologyKind {
         TopologyKind::Spherical
     }
@@ -29,11 +34,11 @@ impl TopologicalSpace for SphericalSpace {
         false
     }
 
-    fn canonicalize_point<const D: usize>(&self, _coords: &mut [f64; D]) {
+    fn canonicalize_point(&self, _coords: &mut [f64]) {
         // TODO: normalize coords to unit sphere
     }
 
-    fn fundamental_domain<const D: usize>(&self) -> Option<[f64; D]> {
+    fn fundamental_domain(&self) -> Option<&[f64]> {
         None
     }
 }

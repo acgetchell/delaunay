@@ -32,6 +32,10 @@ pub enum TopologyError {
     Classification(String),
 
     /// Euler characteristic does not match expected value.
+    ///
+    /// NOTE: Currently unused - validation returns `TopologyCheckResult` with
+    /// structured diagnostics instead. This variant is reserved for future use
+    /// when more structured error reporting is needed at the error boundary.
     #[error(
         "Euler characteristic mismatch: computed χ={computed}, expected χ={expected} for {topology_type}"
     )]
@@ -96,11 +100,18 @@ pub enum TopologyKind {
 /// This trait abstracts over different geometric spaces (Euclidean, spherical,
 /// toroidal, hyperbolic) to enable topology-aware triangulation algorithms.
 ///
+/// The dimension is specified via the associated constant `DIM`, which must
+/// match the dimension of the associated `Tds<T, U, V, D>`. This ensures
+/// type safety and prevents dimension mismatches.
+///
 /// # Future Use
 ///
 /// This is currently unused but provides the interface for future support
 /// of non-Euclidean triangulations. Implementations will handle topology-specific
 /// operations like point canonicalization and boundary conditions.
+///
+/// When implemented, the topological space will be stored in
+/// `Triangulation<K, U, V, D>` and its `DIM` must equal `D`.
 ///
 /// # Examples
 ///
@@ -108,18 +119,25 @@ pub enum TopologyKind {
 /// use delaunay::topology::traits::topological_space::{TopologicalSpace, TopologyKind};
 ///
 /// // Future: EuclideanSpace will implement this trait
-/// // let space = EuclideanSpace::new();
+/// // let space = EuclideanSpace::<3>::new();
+/// // assert_eq!(EuclideanSpace::<3>::DIM, 3);
 /// // assert_eq!(space.kind(), TopologyKind::Euclidean);
 /// // assert!(space.allows_boundary());
 /// ```
 pub trait TopologicalSpace {
+    /// The dimension of this topological space.
+    ///
+    /// This must match the dimension `D` of the associated triangulation
+    /// `Tds<T, U, V, D>` to ensure geometric consistency.
+    const DIM: usize;
+
     /// Returns the kind of topological space.
     ///
     /// # Examples
     ///
     /// ```rust,ignore
     /// // Future usage when trait is implemented
-    /// let space = EuclideanSpace::new();
+    /// let space = EuclideanSpace::<3>::new();
     /// assert_eq!(space.kind(), TopologyKind::Euclidean);
     /// ```
     fn kind(&self) -> TopologyKind;
@@ -135,10 +153,10 @@ pub trait TopologicalSpace {
     ///
     /// ```rust,ignore
     /// // Future usage
-    /// let euclidean = EuclideanSpace::new();
+    /// let euclidean = EuclideanSpace::<2>::new();
     /// assert!(euclidean.allows_boundary());
     ///
-    /// let toroidal = ToroidalSpace::new([1.0, 1.0]);
+    /// let toroidal = ToroidalSpace::<2>::new([1.0, 1.0]);
     /// assert!(!toroidal.allows_boundary());
     /// ```
     fn allows_boundary(&self) -> bool;
@@ -151,40 +169,56 @@ pub trait TopologicalSpace {
     /// - **Spherical**: Projects onto unit sphere surface
     /// - **Hyperbolic**: Projects into valid hyperbolic space region
     ///
+    /// The coordinate slice length must match `Self::DIM`.
+    ///
     /// # Arguments
     ///
-    /// * `coords` - Mutable reference to point coordinates to canonicalize
+    /// * `coords` - Mutable slice of point coordinates to canonicalize
+    ///
+    /// # Panics
+    ///
+    /// May panic if `coords.len() != Self::DIM` (implementation-defined).
     ///
     /// # Examples
     ///
     /// ```rust,ignore
     /// // Future usage for toroidal space
-    /// let space = ToroidalSpace::new([1.0, 1.0]);
+    /// let space = ToroidalSpace::<2>::new([1.0, 1.0]);
     /// let mut point = [1.5, -0.3];
     /// space.canonicalize_point(&mut point);
     /// assert_eq!(point, [0.5, 0.7]); // Wrapped into [0, 1)
     /// ```
-    fn canonicalize_point<const D: usize>(&self, coords: &mut [f64; D]);
+    ///
+    /// TODO: When implementing full topology support, consider making this generic:
+    /// `fn canonicalize_point<T: CoordinateScalar>(&self, coords: &mut [T])`
+    /// to match the triangulation's scalar type instead of hardcoding `f64`.
+    fn canonicalize_point(&self, coords: &mut [f64]);
 
     /// Returns the fundamental domain for periodic topologies.
     ///
-    /// For periodic spaces (toroidal), this returns the size of the fundamental
-    /// domain in each dimension. For non-periodic spaces, returns `None`.
+    /// For periodic spaces (toroidal), this returns a slice view of the fundamental
+    /// domain. For non-periodic spaces, returns `None`.
+    ///
+    /// The returned slice length equals `Self::DIM`.
     ///
     /// # Returns
     ///
-    /// - `Some([L₀, L₁, ..., L_D])` for periodic spaces (domain size per dimension)
+    /// - `Some(&[L₀, L₁, ..., L_D])` for periodic spaces (domain size per dimension)
     /// - `None` for non-periodic spaces (Euclidean, spherical, hyperbolic)
     ///
     /// # Examples
     ///
     /// ```rust,ignore
     /// // Future usage
-    /// let toroidal = ToroidalSpace::new([2.0, 3.0]);
-    /// assert_eq!(toroidal.fundamental_domain(), Some([2.0, 3.0]));
+    /// let toroidal = ToroidalSpace::<2>::new([2.0, 3.0]);
+    /// assert_eq!(toroidal.fundamental_domain(), Some(&[2.0, 3.0][..]));
     ///
-    /// let euclidean = EuclideanSpace::new();
+    /// let euclidean = EuclideanSpace::<2>::new();
     /// assert_eq!(euclidean.fundamental_domain(), None);
     /// ```
-    fn fundamental_domain<const D: usize>(&self) -> Option<[f64; D]>;
+    ///
+    /// TODO: When implementing full topology support, consider making this generic:
+    /// `fn fundamental_domain<T: CoordinateScalar>(&self) -> Option<&[T]>`
+    /// to match the triangulation's scalar type instead of hardcoding `f64`.
+    fn fundamental_domain(&self) -> Option<&[f64]>;
 }

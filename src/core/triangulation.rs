@@ -458,6 +458,7 @@ where
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     /// assert!(dt.triangulation().validate_manifold().is_ok());
     /// ```
+    #[allow(clippy::missing_panics_doc)] // expect() enforces internal invariant
     pub fn validate_manifold(&self) -> Result<(), TriangulationValidationError> {
         // 1. First validate all TDS structural invariants
         //    (mappings, no duplicates, facet sharing ≤2, neighbor consistency)
@@ -481,7 +482,9 @@ where
                 message: format!(
                     "Euler characteristic mismatch: computed χ={}, expected χ={} for {:?}",
                     topology_result.chi,
-                    topology_result.expected.unwrap_or(0),
+                    topology_result
+                        .expected
+                        .expect("expected should be Some when is_valid() returns false"),
                     topology_result.classification
                 ),
             });

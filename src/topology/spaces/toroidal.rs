@@ -10,6 +10,9 @@ use crate::topology::traits::topological_space::{TopologicalSpace, TopologyKind}
 /// Toroidal spaces have periodic boundary conditions defined by a
 /// fundamental domain. For example, a 2-torus (T²) has Euler
 /// characteristic χ = 0.
+///
+/// The dimension `D` is a const generic parameter that must match the
+/// dimension of the associated triangulation.
 #[derive(Debug, Clone)]
 pub struct ToroidalSpace<const D: usize> {
     /// The fundamental domain defining the period of each dimension.
@@ -29,6 +32,8 @@ impl<const D: usize> ToroidalSpace<D> {
 }
 
 impl<const D: usize> TopologicalSpace for ToroidalSpace<D> {
+    const DIM: usize = D;
+
     fn kind(&self) -> TopologyKind {
         TopologyKind::Toroidal
     }
@@ -37,11 +42,11 @@ impl<const D: usize> TopologicalSpace for ToroidalSpace<D> {
         false
     }
 
-    fn canonicalize_point<const N: usize>(&self, _coords: &mut [f64; N]) {
+    fn canonicalize_point(&self, _coords: &mut [f64]) {
         // TODO: wrap coords into domain
     }
 
-    fn fundamental_domain<const N: usize>(&self) -> Option<[f64; N]> {
-        None
+    fn fundamental_domain(&self) -> Option<&[f64]> {
+        Some(&self.domain)
     }
 }
