@@ -482,6 +482,78 @@ pub mod geometry {
     pub use util::*;
 }
 
+/// Topology analysis and validation for triangulated spaces.
+///
+/// This module provides traits, algorithms, and data structures for analyzing
+/// and validating the topological properties of triangulations.
+///
+/// # Features
+///
+/// - **Euler Characteristic Calculation**: Compute topological invariants
+/// - **Topology Classification**: Classify triangulations (Ball, Sphere, etc.)
+/// - **Validation Framework**: Verify triangulation topological correctness
+/// - **Dimensional Generic**: Works across all supported dimensions
+///
+/// # Applicability
+///
+/// These tools work for **any triangulation** (not just Delaunay triangulations).
+/// The Euler characteristic and topological properties are combinatorial invariants
+/// that depend only on the connectivity structure, not on geometric properties.
+///
+/// # Example
+///
+/// ```rust
+/// use delaunay::prelude::*;
+/// use delaunay::topology::characteristics::validation;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+///
+/// let result = validation::validate_triangulation_euler(dt.tds()).unwrap();
+/// assert_eq!(result.chi, 1);  // Tetrahedron has χ = 1
+/// assert!(result.is_valid());
+/// ```
+pub mod topology {
+    /// Traits for topological spaces and error types
+    pub mod traits {
+        pub mod topological_space;
+        pub use topological_space::*;
+    }
+    /// Topological invariants and their computation
+    pub mod characteristics {
+        pub mod euler;
+        pub mod validation;
+        pub use euler::*;
+        pub use validation::*;
+    }
+    /// Concrete topological space implementations (future work).
+    ///
+    /// This module will contain specialized implementations for different
+    /// topological spaces (Euclidean, spherical, toroidal) once the
+    /// [`TopologicalSpace`] trait is stabilized.
+    pub mod spaces {
+        /// Euclidean space topology
+        pub mod euclidean;
+        /// Spherical space topology
+        pub mod spherical;
+        /// Toroidal space topology
+        pub mod toroidal;
+
+        pub use euclidean::EuclideanSpace;
+        pub use spherical::SphericalSpace;
+        pub use toroidal::ToroidalSpace;
+    }
+
+    // Re-export commonly used types
+    pub use characteristics::*;
+    pub use traits::*;
+}
+
 /// A prelude module that re-exports commonly used types and macros.
 /// This makes it easier to import the most commonly used items from the crate.
 pub mod prelude {
