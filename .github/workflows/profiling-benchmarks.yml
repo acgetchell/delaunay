@@ -25,8 +25,8 @@ on:
 # Uses production mode for comprehensive long-term performance tracking
 
   schedule:
-    # Every Sunday at 2 AM UTC; guarded to only run on first Sunday
-    - cron: '0 2 * * 0'
+    # First Sunday of each month at 2 AM UTC (runs only when DOM is 1-7 and Sunday)
+    - cron: '0 2 1-7 * 0'
 
 # Trigger on release tags for baseline profiling data
 # Uses development mode to keep runtime reasonable (~1-2 hours) while still capturing performance snapshots
@@ -39,7 +39,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  RUST_TOOLCHAIN: 1.90.0
+  RUST_TOOLCHAIN: 1.91.0
 
 jobs:
   comprehensive-profiling:
@@ -75,15 +75,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential
 
-      - name: Guard - Only run on first Sunday (scheduled)
-        if: ${{ github.event_name == 'schedule' }}
-        run: |
-          dom="$(date -u +%d)"
-          if [ "$dom" -gt 7 ]; then
-            echo "Not first Sunday (DOM=$dom) — skipping profiling run."
-            exit 0
-          fi
-          echo "First Sunday confirmed (DOM=$dom) — proceeding with profiling."
 
       - name: Set profiling mode
         run: |
@@ -239,7 +230,14 @@ jobs:
   memory-stress-test:
     name: Memory Stress Testing
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
+    env:
+      # CI-friendly configuration to ensure completion within time limits
+      PROFILING_DEV_MODE: "1"
+      BENCH_SAMPLE_SIZE: "5"
+      BENCH_WARMUP_SECS: "1"
+      BENCH_MEASUREMENT_TIME: "5"
+      BENCH_PERCENTILE: "95"
 
     steps:
       - name: Checkout code
@@ -267,9 +265,19 @@ jobs:
           cargo test --test allocation_api --features count-allocations --verbose
 
       - name: Run memory scaling benchmarks
+        env:
+          PROFILING_DEV_MODE: "1"
+          BENCH_SAMPLE_SIZE: "5"
+          BENCH_WARMUP_SECS: "1"
+          BENCH_MEASUREMENT_TIME: "5"
+          BENCH_PERCENTILE: "95"
         run: |
-          echo "Running memory profiling analysis..."
-          CRITERION_QUIET_MODE=1 cargo bench --bench profiling_suite --features count-allocations -- memory_profiling
+          echo "Running memory profiling analysis with CI-friendly configuration..."
+          echo "PROFILING_DEV_MODE=$PROFILING_DEV_MODE"
+          echo "BENCH_SAMPLE_SIZE=$BENCH_SAMPLE_SIZE"
+          echo "BENCH_WARMUP_SECS=$BENCH_WARMUP_SECS"
+          echo "BENCH_MEASUREMENT_TIME=$BENCH_MEASUREMENT_TIME"
+          cargo bench --bench profiling_suite --features count-allocations -- memory_profiling
       - name: Upload memory test results
         uses: actions/upload-artifact@v5
         with:
