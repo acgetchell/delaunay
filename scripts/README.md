@@ -325,8 +325,17 @@ sbatch scripts/slurm_storage_comparison.sh
 # Custom time limit (default: 3 days)
 ./scripts/slurm_storage_comparison.sh --time=7-00:00:00
 
+# Use specific partition (default: med2)
+./scripts/slurm_storage_comparison.sh --partition=high2
+
+# Use specific account (default: adamgrp)
+./scripts/slurm_storage_comparison.sh --account=myaccount
+
 # Large-scale with extended time (recommended for completion)
 ./scripts/slurm_storage_comparison.sh --large --time=14-00:00:00
+
+# Combine multiple options
+./scripts/slurm_storage_comparison.sh --partition=high2 --account=myaccount --large --time=7-00:00:00
 
 # Help information
 ./scripts/slurm_storage_comparison.sh --help
@@ -338,6 +347,14 @@ sbatch scripts/slurm_storage_comparison.sh
 2. **Direct execution** (inside Slurm job): Runs the benchmark workflow
 
 The script automatically detects which mode to use, making it easy to submit jobs without writing separate submission scripts.
+
+**Command-line Options**:
+
+- `--large`: Enable large-scale benchmarks (4D with 1K, 5K, 10K points)
+- `--time=DURATION`: Custom Slurm time limit (format: D-HH:MM:SS, default: 3-00:00:00)
+- `--partition=NAME`: Slurm partition/queue to use (default: med2)
+- `--account=NAME`: Slurm account/allocation to use (default: adamgrp)
+- `--help, -h`: Show detailed help information
 
 **Benchmark Scale**:
 
@@ -369,15 +386,25 @@ tail -f slurm-<job-id>-storage-comparison.out
 
 **Cluster Configuration**:
 
-Edit the script header for your cluster setup:
+You can configure Slurm options in two ways:
+
+1. **Command-line arguments** (recommended):
 
 ```bash
-#SBATCH --account=your_account     # Billing account
-#SBATCH --partition=your_partition # Compute partition
+./scripts/slurm_storage_comparison.sh --account=your_account --partition=your_partition --time=7-00:00:00
+```
+
+2. **Edit script header** (for permanent defaults):
+
+```bash
+#SBATCH --account=your_account     # Billing account (default: adamgrp)
+#SBATCH --partition=your_partition # Compute partition (default: med2)
 #SBATCH --time=3-00:00:00         # Job time limit (3 days default)
 #SBATCH --cpus-per-task=8         # CPU cores
 #SBATCH --mem=32G                 # Memory allocation
 ```
+
+Command-line arguments override the script header defaults.
 
 **Output Files**:
 
