@@ -134,6 +134,8 @@ if [[ -z "${SLURM_JOB_ID:-}" ]]; then
 	# Not in Slurm job - parse args and submit
 
 	TIME_LIMIT="3-00:00:00" # Default: 3 days
+	PARTITION="med2"        # Default: med2
+	ACCOUNT="adamgrp"       # Default: adamgrp
 	LARGE_SCALE=0
 
 	while [[ $# -gt 0 ]]; do
@@ -144,6 +146,14 @@ if [[ -z "${SLURM_JOB_ID:-}" ]]; then
 			;;
 		--time=*)
 			TIME_LIMIT="${1#*=}" # Explicit time override
+			shift
+			;;
+		--partition=*)
+			PARTITION="${1#*=}" # Explicit partition override
+			shift
+			;;
+		--account=*)
+			ACCOUNT="${1#*=}" # Explicit account override
 			shift
 			;;
 		--help | -h)
@@ -160,10 +170,16 @@ Options:
                        Does NOT affect time limit - only benchmark point counts
   --time=DURATION      Custom Slurm time limit (Slurm format: D-HH:MM:SS)
                        Default: 3-00:00:00 (3 days)
+  --partition=NAME     Slurm partition/queue to use
+                       Default: med2
+  --account=NAME       Slurm account/allocation to use
+                       Default: adamgrp
   --help, -h           Show this help
 
 Defaults:
   Time limit: 3 days (3-00:00:00)
+  Partition: med2
+  Account: adamgrp
   Benchmark scale: Standard (4D uses [1K, 3K] points, ~6h total)
 
 Examples:
@@ -172,6 +188,9 @@ Examples:
   
   # Large-scale benchmarks (4D@10K), 3-day limit
   ./scripts/slurm_storage_comparison.sh --large
+  
+  # Use high2 partition
+  ./scripts/slurm_storage_comparison.sh --partition=high2
   
   # Standard benchmarks, 1-week limit
   ./scripts/slurm_storage_comparison.sh --time=7-00:00:00
@@ -198,6 +217,8 @@ EOF
 	fi
 
 	echo "🚀 Submitting storage comparison job"
+	echo "   Account: $ACCOUNT"
+	echo "   Partition: $PARTITION"
 	echo "   Time limit: $TIME_LIMIT"
 	if [[ $LARGE_SCALE -eq 1 ]]; then
 		echo "   Mode: large-scale (BENCH_LARGE_SCALE=1, 4D@10K points)"
@@ -211,9 +232,9 @@ EOF
 
 	# Submit job with explicit --export=NONE to ensure clean environment
 	if [[ ${#JOB_ARGS[@]} -eq 0 ]]; then
-		JOB_ID=$(sbatch --export=NONE --time="$TIME_LIMIT" "$0" | grep -oP '\d+$')
+		JOB_ID=$(sbatch --export=NONE --account="$ACCOUNT" --partition="$PARTITION" --time="$TIME_LIMIT" "$0" | grep -oP '\d+$')
 	else
-		JOB_ID=$(sbatch --export=NONE --time="$TIME_LIMIT" "$0" "${JOB_ARGS[@]}" | grep -oP '\d+$')
+		JOB_ID=$(sbatch --export=NONE --account="$ACCOUNT" --partition="$PARTITION" --time="$TIME_LIMIT" "$0" "${JOB_ARGS[@]}" | grep -oP '\d+$')
 	fi
 
 	if [[ -n "$JOB_ID" ]]; then
