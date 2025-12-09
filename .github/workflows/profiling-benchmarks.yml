@@ -234,7 +234,7 @@ jobs:
     env:
       # CI-friendly configuration to ensure completion within time limits
       PROFILING_DEV_MODE: "1"
-      BENCH_SAMPLE_SIZE: "5"
+      BENCH_SAMPLE_SIZE: "10"
       BENCH_WARMUP_SECS: "1"
       BENCH_MEASUREMENT_TIME: "5"
       BENCH_PERCENTILE: "95"
@@ -267,7 +267,7 @@ jobs:
       - name: Run memory scaling benchmarks
         env:
           PROFILING_DEV_MODE: "1"
-          BENCH_SAMPLE_SIZE: "5"
+          BENCH_SAMPLE_SIZE: "10"
           BENCH_WARMUP_SECS: "1"
           BENCH_MEASUREMENT_TIME: "5"
           BENCH_PERCENTILE: "95"
