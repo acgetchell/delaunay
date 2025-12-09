@@ -269,6 +269,44 @@ where
         Ok(dt)
     }
 
+    // TODO: Implement after bistellar flips + robust insertion (v0.7.0+)
+    // /// Create a Delaunay triangulation with a specified topological space.
+    // ///
+    // /// This will allow constructing Delaunay triangulations on different topologies
+    // /// (Euclidean, spherical, toroidal) with appropriate boundary conditions
+    // /// and topology validation. This method should delegate to
+    // /// [`Triangulation::with_topology`] after constructing the TDS.
+    // ///
+    // /// Requires:
+    // /// - Bistellar flips for topology-preserving operations
+    // /// - Robust Delaunay insertion that respects topology constraints
+    // ///
+    // /// # Examples (future)
+    // ///
+    // /// ```rust,ignore
+    // /// use delaunay::prelude::*;
+    // /// use delaunay::topology::spaces::ToroidalSpace;
+    // ///
+    // /// let space = ToroidalSpace::new([1.0, 1.0, 1.0]);
+    // /// let dt = DelaunayTriangulation::with_topology(
+    // ///     FastKernel::new(),
+    // ///     space,
+    // ///     &vertices
+    // /// ).unwrap();
+    // /// ```
+    // pub fn with_topology<T>(
+    //     kernel: K,
+    //     topology: T,
+    //     vertices: &[Vertex<K::Scalar, U, D>],
+    // ) -> Result<Self, TriangulationConstructionError>
+    // where
+    //     K::Scalar: CoordinateScalar,
+    //     T: TopologicalSpace,
+    // {
+    //     // Build TDS with Delaunay property, then delegate to Triangulation layer
+    //     unimplemented!("Requires bistellar flips + robust insertion")
+    // }
+
     /// Returns the number of vertices in the triangulation.
     ///
     /// # Examples
