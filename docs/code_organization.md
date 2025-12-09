@@ -145,6 +145,16 @@ delaunay/
 │   │   ├── quality.rs
 │   │   ├── robust_predicates.rs
 │   │   └── util.rs
+│   ├── topology/
+│   │   ├── characteristics/
+│   │   │   ├── euler.rs
+│   │   │   └── validation.rs
+│   │   ├── spaces/
+│   │   │   ├── euclidean.rs
+│   │   │   ├── spherical.rs
+│   │   │   └── toroidal.rs
+│   │   └── traits/
+│   │       └── topological_space.rs
 │   └── lib.rs
 ├── tests/
 │   ├── allocation_api.rs
@@ -296,6 +306,15 @@ with convenient `just` shortcuts for common workflows.
 - `matrix.rs` - Linear algebra support
 - `algorithms/convex_hull.rs` - Hull extraction
 - `traits/coordinate.rs` - Coordinate abstractions
+
+**`src/topology/`** - Topology analysis and validation:
+
+- `characteristics/euler.rs` - Euler characteristic computation
+- `characteristics/validation.rs` - Topological validation functions
+- `spaces/euclidean.rs` - Euclidean space topology implementation
+- `spaces/spherical.rs` - Spherical space topology implementation
+- `spaces/toroidal.rs` - Toroidal space topology implementation
+- `traits/topological_space.rs` - Core TopologicalSpace trait and error types
 
 #### Development Infrastructure
 

@@ -230,11 +230,11 @@ EOF
 	JOB_ARGS=()
 	[[ $LARGE_SCALE -eq 1 ]] && JOB_ARGS+=("--large")
 
-	# Submit job with explicit --export=NONE to ensure clean environment
+	# Submit job (environment will be inherited from current shell)
 	if [[ ${#JOB_ARGS[@]} -eq 0 ]]; then
-		JOB_ID=$(sbatch --export=NONE --account="$ACCOUNT" --partition="$PARTITION" --time="$TIME_LIMIT" "$0" | grep -oP '\d+$')
+		JOB_ID=$(sbatch --account="$ACCOUNT" --partition="$PARTITION" --time="$TIME_LIMIT" "$0" | grep -oP '\d+$')
 	else
-		JOB_ID=$(sbatch --export=NONE --account="$ACCOUNT" --partition="$PARTITION" --time="$TIME_LIMIT" "$0" "${JOB_ARGS[@]}" | grep -oP '\d+$')
+		JOB_ID=$(sbatch --account="$ACCOUNT" --partition="$PARTITION" --time="$TIME_LIMIT" "$0" "${JOB_ARGS[@]}" | grep -oP '\d+$')
 	fi
 
 	if [[ -n "$JOB_ID" ]]; then
