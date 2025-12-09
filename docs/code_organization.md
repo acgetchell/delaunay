@@ -163,16 +163,16 @@ delaunay/
 │   ├── COVERAGE.md
 │   ├── delaunay_edge_cases.rs
 │   ├── delaunay_incremental_insertion.rs
+│   ├── euler_characteristic.rs
 │   ├── proptest_cell.rs
 │   ├── proptest_convex_hull.rs
-│   ├── proptest_delaunay_triangulation.proptest-regressions
 │   ├── proptest_delaunay_triangulation.rs
+│   ├── proptest_euler_characteristic.rs
 │   ├── proptest_facet.rs
 │   ├── proptest_geometry.rs
 │   ├── proptest_point.rs
 │   ├── proptest_predicates.rs
 │   ├── proptest_safe_conversions.rs
-│   ├── proptest_serialization.proptest-regressions
 │   ├── proptest_serialization.rs
 │   ├── proptest_tds.rs
 │   ├── proptest_triangulation.rs
@@ -309,7 +309,7 @@ with convenient `just` shortcuts for common workflows.
 
 **`src/topology/`** - Topology analysis and validation:
 
-- `characteristics/euler.rs` - Euler characteristic computation
+- `characteristics/euler.rs` - Euler characteristic computation for full complexes and boundaries
 - `characteristics/validation.rs` - Topological validation functions
 - `spaces/euclidean.rs` - Euclidean space topology implementation
 - `spaces/spherical.rs` - Spherical space topology implementation

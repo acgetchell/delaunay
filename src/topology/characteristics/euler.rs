@@ -298,6 +298,182 @@ where
     k_simplex_set.len()
 }
 
+/// Count simplices on the boundary (convex hull) only.
+///
+/// This computes simplex counts for just the boundary facets,
+/// which form a (D-1)-dimensional simplicial complex.
+///
+/// # Algorithm
+///
+/// 1. Extract all boundary facets using `boundary_facets()`
+/// 2. Collect unique vertices that appear on the boundary
+/// 3. Count (D-1)-cells (the boundary facets themselves)
+/// 4. For intermediate dimensions k < D-1, enumerate k-simplices
+///    from the boundary facets' vertex combinations
+///
+/// # Expected Euler Characteristics
+///
+/// The boundary forms a (D-1)-sphere S^(D-1):
+/// - 2D triangulation: boundary is S¹ (circle) with χ = 0
+/// - 3D triangulation: boundary is S² (sphere) with χ = 2
+/// - 4D triangulation: boundary is S³ (3-sphere) with χ = 0
+/// - 5D triangulation: boundary is S⁴ (4-sphere) with χ = 2
+/// - Generally: χ(S^k) = 1 + (-1)^k
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::*;
+/// use delaunay::topology::characteristics::euler;
+///
+/// // 3D tetrahedron - boundary is S² (sphere)
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+///
+/// let boundary_counts = euler::count_boundary_simplices(dt.tds()).unwrap();
+/// let boundary_chi = euler::euler_characteristic(&boundary_counts);
+/// assert_eq!(boundary_chi, 2);  // S² has χ = 2
+/// ```
+///
+/// # Errors
+///
+/// Returns `TopologyError::Counting` if boundary enumeration fails.
+pub fn count_boundary_simplices<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+) -> Result<SimplexCounts, TopologyError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    // Get boundary facets
+    let boundary_facets: Vec<_> = tds
+        .boundary_facets()
+        .map_err(|e| TopologyError::Counting(format!("Failed to get boundary facets: {e}")))?
+        .collect();
+
+    if boundary_facets.is_empty() {
+        // No boundary - return zero counts for (D-1)-dimensional complex
+        return Ok(SimplexCounts { by_dim: vec![0; D] });
+    }
+
+    // Collect unique vertices on the boundary
+    let mut boundary_vertices = FastHashSet::default();
+    for facet in &boundary_facets {
+        let cell = facet
+            .cell()
+            .map_err(|e| TopologyError::Counting(format!("Failed to get facet cell: {e}")))?;
+        let facet_index = usize::from(facet.facet_index());
+
+        // Add all vertex keys except the opposite vertex
+        for (i, &v_key) in cell.vertices().iter().enumerate() {
+            if i != facet_index {
+                boundary_vertices.insert(v_key);
+            }
+        }
+    }
+
+    let num_boundary_vertices = boundary_vertices.len();
+    let num_boundary_facets = boundary_facets.len(); // These are (D-1)-simplices
+
+    // Initialize counts for (D-1)-dimensional complex
+    // by_dim[0] = vertices, by_dim[1] = edges, ..., by_dim[D-1] = (D-1)-cells
+    let mut by_dim = vec![0; D];
+    by_dim[0] = num_boundary_vertices;
+    by_dim[D - 1] = num_boundary_facets;
+
+    // Count intermediate k-simplices (1 ≤ k < D-1) by enumerating combinations
+    // from boundary facets
+    // Skip if D <= 2 (no intermediate dimensions in boundary)
+    if D > 2 {
+        for (k, item) in by_dim.iter_mut().enumerate().take(D - 1).skip(1) {
+            *item = count_k_simplices_on_boundary::<T, U, V, D>(k, &boundary_facets)?;
+        }
+    }
+
+    Ok(SimplexCounts { by_dim })
+}
+
+/// Helper: Count k-simplices on the boundary.
+///
+/// Enumerates all k-simplices (k+1 vertices) from boundary facets.
+fn count_k_simplices_on_boundary<T, U, V, const D: usize>(
+    k: usize,
+    boundary_facets: &[crate::core::facet::FacetView<'_, T, U, V, D>],
+) -> Result<usize, TopologyError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let mut k_simplex_set: FastHashSet<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>> =
+        FastHashSet::default();
+
+    // Each boundary facet is a (D-1)-simplex with D vertices
+    // Extract all k-simplices (k+1 vertices) from each facet
+    let simplex_size = k + 1;
+
+    for facet in boundary_facets {
+        let cell = facet
+            .cell()
+            .map_err(|e| TopologyError::Counting(format!("Failed to get facet cell: {e}")))?;
+        let facet_index = usize::from(facet.facet_index());
+
+        // Collect vertex keys for this facet (excluding opposite vertex)
+        let mut facet_vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::new();
+        for (i, &v_key) in cell.vertices().iter().enumerate() {
+            if i != facet_index {
+                facet_vertex_keys.push(v_key);
+            }
+        }
+
+        let n = facet_vertex_keys.len();
+        if n < simplex_size {
+            continue;
+        }
+
+        // Generate all C(n, simplex_size) combinations
+        let mut indices: SmallBuffer<usize, MAX_PRACTICAL_DIMENSION_SIZE> =
+            (0..simplex_size).collect();
+
+        'outer: loop {
+            // Extract k-simplex
+            let mut k_simplex: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                SmallBuffer::new();
+            for &i in &indices {
+                k_simplex.push(facet_vertex_keys[i]);
+            }
+            k_simplex.sort();
+            k_simplex_set.insert(k_simplex);
+
+            // Generate next combination
+            let mut i = simplex_size;
+            while i > 0 {
+                i -= 1;
+                if indices[i] != i + n - simplex_size {
+                    break;
+                }
+                if i == 0 {
+                    break 'outer;
+                }
+            }
+
+            indices[i] += 1;
+            for j in (i + 1)..simplex_size {
+                indices[j] = indices[j - 1] + 1;
+            }
+        }
+    }
+
+    Ok(k_simplex_set.len())
+}
+
 /// Compute Euler characteristic from simplex counts.
 ///
 /// Uses the alternating sum formula: χ = Σ(-1)^k · `f_k`

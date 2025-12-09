@@ -50,3 +50,74 @@ impl<const D: usize> TopologicalSpace for ToroidalSpace<D> {
         Some(&self.domain)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use approx::assert_relative_eq;
+
+    #[test]
+    fn test_new() {
+        let space = ToroidalSpace::<3>::new([1.0, 2.0, 3.0]);
+        assert_eq!(ToroidalSpace::<3>::DIM, 3);
+        assert_relative_eq!(space.domain[0], 1.0);
+        assert_relative_eq!(space.domain[1], 2.0);
+        assert_relative_eq!(space.domain[2], 3.0);
+    }
+
+    #[test]
+    fn test_kind() {
+        let space = ToroidalSpace::<3>::new([1.0, 1.0, 1.0]);
+        assert_eq!(space.kind(), TopologyKind::Toroidal);
+    }
+
+    #[test]
+    fn test_allows_boundary() {
+        let space = ToroidalSpace::<3>::new([1.0, 1.0, 1.0]);
+        assert!(
+            !space.allows_boundary(),
+            "Toroidal space is a closed manifold with periodic boundaries"
+        );
+    }
+
+    #[test]
+    fn test_canonicalize_point() {
+        let space = ToroidalSpace::<3>::new([2.0, 3.0, 4.0]);
+        let mut coords = [2.5, -1.0, 5.5];
+        space.canonicalize_point(&mut coords);
+        // TODO: Currently a no-op, will wrap into domain in future
+        assert_relative_eq!(coords[0], 2.5);
+        assert_relative_eq!(coords[1], -1.0);
+        assert_relative_eq!(coords[2], 5.5);
+    }
+
+    #[test]
+    fn test_fundamental_domain() {
+        let domain = [2.0, 3.0, 4.0];
+        let space = ToroidalSpace::<3>::new(domain);
+        assert_eq!(space.fundamental_domain(), Some(&domain[..]));
+    }
+
+    #[test]
+    fn test_different_domains() {
+        // 2D unit square torus
+        let unit_torus = ToroidalSpace::<2>::new([1.0, 1.0]);
+        assert_eq!(unit_torus.fundamental_domain(), Some(&[1.0, 1.0][..]));
+
+        // 2D rectangular torus
+        let rect_torus = ToroidalSpace::<2>::new([2.0, 3.0]);
+        assert_eq!(rect_torus.fundamental_domain(), Some(&[2.0, 3.0][..]));
+
+        // 3D cube torus
+        let cube_torus = ToroidalSpace::<3>::new([1.0, 1.0, 1.0]);
+        assert_eq!(cube_torus.fundamental_domain(), Some(&[1.0, 1.0, 1.0][..]));
+    }
+
+    #[test]
+    fn test_dimension_consistency() {
+        assert_eq!(ToroidalSpace::<2>::DIM, 2);
+        assert_eq!(ToroidalSpace::<3>::DIM, 3);
+        assert_eq!(ToroidalSpace::<4>::DIM, 4);
+        assert_eq!(ToroidalSpace::<5>::DIM, 5);
+    }
+}

@@ -42,3 +42,59 @@ impl<const D: usize> TopologicalSpace for EuclideanSpace<D> {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use approx::assert_relative_eq;
+
+    #[test]
+    fn test_new() {
+        let _space = EuclideanSpace::<3>::new();
+        assert_eq!(EuclideanSpace::<3>::DIM, 3);
+    }
+
+    #[test]
+    fn test_default() {
+        // Test that Default trait is implemented
+        fn assert_default<T: Default>() {}
+        assert_default::<EuclideanSpace<3>>();
+    }
+
+    #[test]
+    fn test_kind() {
+        let space = EuclideanSpace::<3>::new();
+        assert_eq!(space.kind(), TopologyKind::Euclidean);
+    }
+
+    #[test]
+    fn test_allows_boundary() {
+        let space = EuclideanSpace::<3>::new();
+        assert!(space.allows_boundary());
+    }
+
+    #[test]
+    fn test_canonicalize_point() {
+        let space = EuclideanSpace::<3>::new();
+        let mut coords = [1.5, 2.5, 3.5];
+        space.canonicalize_point(&mut coords);
+        // Euclidean space doesn't modify coordinates
+        assert_relative_eq!(coords[0], 1.5);
+        assert_relative_eq!(coords[1], 2.5);
+        assert_relative_eq!(coords[2], 3.5);
+    }
+
+    #[test]
+    fn test_fundamental_domain() {
+        let space = EuclideanSpace::<3>::new();
+        assert_eq!(space.fundamental_domain(), None);
+    }
+
+    #[test]
+    fn test_dimension_consistency() {
+        assert_eq!(EuclideanSpace::<2>::DIM, 2);
+        assert_eq!(EuclideanSpace::<3>::DIM, 3);
+        assert_eq!(EuclideanSpace::<4>::DIM, 4);
+        assert_eq!(EuclideanSpace::<5>::DIM, 5);
+    }
+}

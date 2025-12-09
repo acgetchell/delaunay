@@ -42,3 +42,62 @@ impl<const D: usize> TopologicalSpace for SphericalSpace<D> {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use approx::assert_relative_eq;
+
+    #[test]
+    fn test_new() {
+        let _space = SphericalSpace::<3>::new();
+        assert_eq!(SphericalSpace::<3>::DIM, 3);
+    }
+
+    #[test]
+    fn test_default() {
+        // Test that Default trait is implemented
+        fn assert_default<T: Default>() {}
+        assert_default::<SphericalSpace<3>>();
+    }
+
+    #[test]
+    fn test_kind() {
+        let space = SphericalSpace::<3>::new();
+        assert_eq!(space.kind(), TopologyKind::Spherical);
+    }
+
+    #[test]
+    fn test_allows_boundary() {
+        let space = SphericalSpace::<3>::new();
+        assert!(
+            !space.allows_boundary(),
+            "Spherical space is a closed manifold"
+        );
+    }
+
+    #[test]
+    fn test_canonicalize_point() {
+        let space = SphericalSpace::<3>::new();
+        let mut coords = [1.5, 2.5, 3.5];
+        space.canonicalize_point(&mut coords);
+        // TODO: Currently a no-op, will normalize to unit sphere in future
+        assert_relative_eq!(coords[0], 1.5);
+        assert_relative_eq!(coords[1], 2.5);
+        assert_relative_eq!(coords[2], 3.5);
+    }
+
+    #[test]
+    fn test_fundamental_domain() {
+        let space = SphericalSpace::<3>::new();
+        assert_eq!(space.fundamental_domain(), None);
+    }
+
+    #[test]
+    fn test_dimension_consistency() {
+        assert_eq!(SphericalSpace::<2>::DIM, 2);
+        assert_eq!(SphericalSpace::<3>::DIM, 3);
+        assert_eq!(SphericalSpace::<4>::DIM, 4);
+        assert_eq!(SphericalSpace::<5>::DIM, 5);
+    }
+}
