@@ -97,7 +97,13 @@ clean:
 
 # Code quality and formatting
 clippy:
+    # SlotMap backend (disabled default DenseSlotMap)
+    cargo clippy --workspace --all-targets --no-default-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+
+    # DenseSlotMap backend (default)
     cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+
+    # All features
     cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
 # Pre-commit workflow: comprehensive validation before committing

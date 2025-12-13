@@ -14,13 +14,13 @@ Phase 4 SlotMap evaluation** and measures:
 - ✅ Validation stress-testing (topology checks)
 - ✅ 1K-10K scale appropriate for SlotMap comparisons
 
-**Phase 4 Goal:** Enable swapping SlotMap implementations via feature flags
+**Phase 4 Goal:** Enable swapping SlotMap implementations via Cargo feature flags
 (SlotMap ↔ DenseSlotMap ↔ HopSlotMap) for benchmarking, targeting 10-15% iteration
-performance improvement.
+performance improvement. The DenseSlotMap backend is gated by the `dense-slotmap` feature.
 
 **Current state (2025-12-13):**
 
-- DenseSlotMap is the default backend (`default = ["dense-slotmap"]`)
+- Cargo feature `dense-slotmap` (DenseSlotMap backend) is enabled by default (`default = ["dense-slotmap"]`)
 - SlotMap remains supported via `--no-default-features`
 - Local comparison tooling: `uv run compare-storage-backends` (or `just compare-storage`)
 - Cluster comparison tooling: `scripts/slurm_storage_comparison.sh` (saves Criterion baselines for `critcmp`)
@@ -64,7 +64,7 @@ performance improvement.
 **Notes:**
 
 - Backend selection remains compile-time via Cargo features (no runtime abstraction)
-- DenseSlotMap is now the default backend (2025-12-13)
+- `dense-slotmap` (DenseSlotMap backend) is now enabled by default (2025-12-13)
 
 ---
 
@@ -268,7 +268,7 @@ fn get_memory_usage() -> u64 {
   type StorageBackend<K, V> = SlotMap<K, V>;
   
   // Benchmark with:
-  // cargo bench --bench large_scale_performance            # default DenseSlotMap
+  // cargo bench --bench large_scale_performance  # default (feature: dense-slotmap)
   // cargo bench --no-default-features --bench large_scale_performance  # SlotMap
   ```
 
@@ -292,7 +292,7 @@ comparison is handled via Criterion baselines and dedicated scripts.
 
 - `scripts/compare_storage_backends.py` (`uv run compare-storage-backends`)
   - Runs `cargo bench` twice:
-    - DenseSlotMap (default)
+    - DenseSlotMap (feature: `dense-slotmap`; default)
     - SlotMap (`--no-default-features`)
   - Generates a markdown report (default: `artifacts/storage_comparison.md`)
 
@@ -317,7 +317,7 @@ uv run compare-storage-backends --bench large_scale_performance
 
 - [x] Local backend comparison + markdown report (`compare_storage_backends.py`)
 - [x] Cluster backend comparison script saving baselines (`slurm_storage_comparison.sh`)
-- [x] Documentation updated for DenseSlotMap default + SlotMap via `--no-default-features`
+- [x] Documentation updated for `dense-slotmap` default (DenseSlotMap) + SlotMap via `--no-default-features`
 - [ ] (Optional) Add Phase 4 baseline JSON generation to `benchmark_utils.py` for CI-style regression testing
 
 ---
@@ -544,7 +544,7 @@ cargo bench --bench large_scale_performance -- --test
 
 Once the benchmark consolidation is complete, Phase 4 will evaluate these metrics:
 
-1. **Iteration Performance** (10-15% improvement target with DenseSlotMap)
+1. **Iteration Performance** (10-15% improvement target with DenseSlotMap; feature: `dense-slotmap`)
    - Full vertex traversal time
    - Full cell traversal time
    - Neighbor-following traversal patterns
@@ -572,13 +572,13 @@ Once the benchmark consolidation is complete, Phase 4 will evaluate these metric
 
 | Backend | Iteration | Memory | Insertion | Removal | Best For |
 |---------|-----------|--------|-----------|---------|----------|
-| DenseSlotMap (default) | **Excellent** | Dense/contiguous | O(1) amortized | O(1) with moves | Stable/iteration |
+| DenseSlotMap (`dense-slotmap`, default) | **Excellent** | Dense/contiguous | O(1) amortized | O(1) with moves | Stable/iteration |
 | SlotMap (optional) | Good | Sparse | O(1) amortized | O(1) | Dynamic changes |
 | HopSlotMap (future) | Good | Hop-optimized | O(1) | O(1) | Large scale |
 
 ### Success Criteria
 
-- [ ] DenseSlotMap implementation shows 10-15% iteration improvement
+- [ ] `dense-slotmap` (DenseSlotMap) implementation shows 10-15% iteration improvement
 - [ ] No regression in other operations (insertion, removal, lookup)
 - [ ] Memory usage comparable or better than current SlotMap
 - [ ] 100% API compatibility maintained via trait abstraction
@@ -600,7 +600,7 @@ Once the benchmark consolidation is complete, Phase 4 will evaluate these metric
 
 **Last Updated:** 2025-12-13
 
-**Overall Status:** ✅ Benchmark consolidation complete; ✅ DenseSlotMap is default
+**Overall Status:** ✅ Benchmark consolidation complete; ✅ `dense-slotmap` (DenseSlotMap) is default
 
 **Completed Steps:**
 

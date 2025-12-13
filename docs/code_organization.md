@@ -448,14 +448,17 @@ just bench-perf-summary # Generate performance summary for releases (~30-45 min)
 **Storage Backend Comparison (large-scale):**
 
 ```bash
-# Run large-scale benchmark suite
+# DenseSlotMap (default)
 cargo bench --bench large_scale_performance
+
+# SlotMap (disable default DenseSlotMap)
+cargo bench --no-default-features --bench large_scale_performance
 
 # Enable larger 4D point counts (use on a compute cluster)
 BENCH_LARGE_SCALE=1 cargo bench --bench large_scale_performance
 
-# Compare SlotMap vs DenseSlotMap (kept)
-just compare-storage    # Compare SlotMap vs DenseSlotMap (~4-6 hours)
+# Compare SlotMap (--no-default-features) vs DenseSlotMap (default)
+just compare-storage    # SlotMap (--no-default-features) vs DenseSlotMap (default) (~4-6 hours)
 ```
 
 **Performance Analysis:**

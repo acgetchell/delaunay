@@ -1869,7 +1869,8 @@ Initially implement behind feature flag:
 [features]
 default = ["dense-slotmap"]  # Current default; topology-validation could be added later
 
-topology-validation = []  # Enable Euler characteristic validation in is_valid()
+# NOTE: `topology-validation` is proposed; only document it here once it exists in Cargo.toml.
+# topology-validation = []  # Enable Euler characteristic validation in is_valid()
 ```
 
 Gate expensive checks:

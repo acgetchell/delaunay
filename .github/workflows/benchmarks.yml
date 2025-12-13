@@ -273,14 +273,54 @@ jobs:
         if: env.BASELINE_EXISTS != 'true'
         run: uv run benchmark-utils display-no-baseline
 
-      - name: Run performance regression test
+      - name: Run performance regression test (same-runner A/B)
         if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false'
+        env:
+          SAFE_COMMIT_SHA: ${{ github.sha }}
         run: |
-          echo "   Baseline origin: ${BASELINE_ORIGIN:-unknown}"
+          set -euo pipefail
 
-          # Run regression test using Python utility with dev mode for faster execution
-          uv run benchmark-utils run-regression-test \
-            --baseline "baseline-artifact/baseline_results.txt" \
+          echo "   Baseline origin: ${BASELINE_ORIGIN:-unknown}"
+          echo "   Baseline commit: ${BASELINE_COMMIT:-}"
+          echo "   Current commit:  ${SAFE_COMMIT_SHA:-}"
+
+          # Security: validate SHAs before using in git commands
+          if [[ ! "${BASELINE_COMMIT:-}" =~ ^[0-9A-Fa-f]{7,40}$ ]]; then
+            echo "Invalid BASELINE_COMMIT: ${BASELINE_COMMIT:-}" >&2
+            exit 1
+          fi
+          if [[ ! "${SAFE_COMMIT_SHA:-}" =~ ^[0-9A-Fa-f]{7,40}$ ]]; then
+            echo "Invalid SAFE_COMMIT_SHA: ${SAFE_COMMIT_SHA:-}" >&2
+            exit 1
+          fi
+
+          # Always return to the current commit so follow-on steps run with current scripts.
+          cleanup() {
+            git checkout --force "${SAFE_COMMIT_SHA}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          # Generate an on-runner baseline at BASELINE_COMMIT, then compare at SAFE_COMMIT_SHA.
+          # This avoids cross-runner/cross-day noise on GitHub-hosted macOS runners.
+          mkdir -p ab-baseline
+          rm -f ab-baseline/baseline_results.txt
+
+          # Preserve the benchmark harness so BASELINE_COMMIT and SAFE_COMMIT_SHA
+          # are measured with identical benchmark code.
+          cp benches/ci_performance_suite.rs ab-baseline/ci_performance_suite.rs
+
+          echo "=== Baseline benchmark (same runner) ==="
+          git checkout --force "${BASELINE_COMMIT}"
+          cp ab-baseline/ci_performance_suite.rs benches/ci_performance_suite.rs
+          uv run benchmark-utils generate-baseline \
+            --output "ab-baseline/baseline_results.txt" \
+            --bench-timeout "${BENCHMARK_TIMEOUT}" \
+            --dev
+
+          echo "=== Current benchmark + compare ==="
+          git checkout --force "${SAFE_COMMIT_SHA}"
+          uv run benchmark-utils compare \
+            --baseline "ab-baseline/baseline_results.txt" \
             --bench-timeout "${BENCHMARK_TIMEOUT}" \
             --dev
 
@@ -293,7 +333,10 @@ jobs:
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
         with:
           name: performance-regression-results-${{ github.run_number }}
-          path: benches/compare_results.txt
+          path: |
+            benches/compare_results.txt
+            ab-baseline/baseline_results.txt
+            ab-baseline/ci_performance_suite.rs
           if-no-files-found: warn
           retention-days: 30
 

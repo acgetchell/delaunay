@@ -28,6 +28,7 @@ Usage:
 import argparse
 import logging
 import re
+import shutil
 import sys
 from datetime import UTC, datetime
 from json import loads
@@ -133,14 +134,19 @@ class StorageBackendComparator:
             Dictionary of benchmark results, or None if failed
         """
         try:
+            # Avoid mixing results between backends and/or prior runs.
+            shutil.rmtree(self.criterion_dir, ignore_errors=True)
+
             # Build cargo bench command
             args = ["bench", "--bench", benchmark_name]
 
+            # Keep the feature set explicit so we always compare the intended backends,
+            # even if crate defaults change in the future.
+            # SlotMap is the baseline when `dense-slotmap` is not enabled.
+            args.insert(1, "--no-default-features")
+
             if use_dense_slotmap:
                 args.extend(["--features", "dense-slotmap"])
-            else:
-                # DenseSlotMap is the default backend; SlotMap requires disabling default features.
-                args.insert(1, "--no-default-features")
 
             # Add development mode arguments or extra args
             if dev_mode or extra_args:
@@ -419,8 +425,8 @@ class StorageBackendComparator:
                 "To reproduce these results:",
                 "",
                 "```bash",
-                "# DenseSlotMap (default)",
-                f"cargo bench --bench {benchmark_name}",
+                "# DenseSlotMap",
+                f"cargo bench --no-default-features --features dense-slotmap --bench {benchmark_name}",
                 "",
                 "# SlotMap",
                 f"cargo bench --no-default-features --bench {benchmark_name}",
