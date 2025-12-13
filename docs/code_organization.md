@@ -70,6 +70,7 @@ delaunay/
 │   │   ├── phase_3c_action_plan.md
 │   │   ├── phase2_bowyer_watson_optimization.md
 │   │   ├── phase2_uuid_iter_optimization.md
+│   │   ├── phase4.md
 │   │   └── testing.md
 │   ├── templates/
 │   │   ├── changelog.hbs
@@ -78,7 +79,6 @@ delaunay/
 │   ├── issue_120_investigation.md
 │   ├── numerical_robustness_guide.md
 │   ├── OPTIMIZATION_ROADMAP.md
-│   ├── phase4.md
 │   ├── property_testing_summary.md
 │   ├── README.md
 │   ├── RELEASING.md
@@ -445,13 +445,20 @@ just bench-quick   # Quick validation (minimal samples, ~30 sec)
 just bench-perf-summary # Generate performance summary for releases (~30-45 min)
 ```
 
-**Phase 4 and Storage Comparison:**
+**Storage Backend Comparison (large-scale):**
 
 ```bash
-just bench-phase4       # Run Phase 4 benchmarks (~10-30 min default)
-just bench-phase4-large # Large scale with BENCH_LARGE_SCALE=1 (~2-3 hours)
-just bench-phase4-quick # Quick validation tests (~90 seconds)
-just compare-storage    # Compare SlotMap vs DenseSlotMap (~4-6 hours)
+# DenseSlotMap (default)
+cargo bench --bench large_scale_performance
+
+# SlotMap (disable default DenseSlotMap)
+cargo bench --no-default-features --bench large_scale_performance
+
+# Enable larger 4D point counts (use on a compute cluster)
+BENCH_LARGE_SCALE=1 cargo bench --bench large_scale_performance
+
+# Compare SlotMap (--no-default-features) vs DenseSlotMap (default)
+just compare-storage    # SlotMap (--no-default-features) vs DenseSlotMap (default) (~4-6 hours)
 ```
 
 **Performance Analysis:**

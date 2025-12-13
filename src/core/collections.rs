@@ -146,14 +146,15 @@ pub use uuid::Uuid;
 /// Internal storage backend for triangulation data structures.
 ///
 /// This type alias abstracts over the concrete storage implementation,
-/// allowing the choice between `SlotMap` (default) and `DenseSlotMap`
-/// (via the `dense-slotmap` feature flag) without exposing the choice
+/// allowing the choice between `DenseSlotMap` (**default**) and `SlotMap`
+/// (when built with `--no-default-features`) without exposing the choice
 /// in public APIs.
 ///
 /// # Feature Flags
 ///
-/// - **default**: Uses `SlotMap` for balanced performance
-/// - **dense-slotmap**: Uses `DenseSlotMap` for denser memory layout
+/// - **default**: Uses `DenseSlotMap` (enabled via the default `dense-slotmap` feature)
+/// - **--no-default-features**: Uses `SlotMap` for comparison and experimentation
+/// - **dense-slotmap**: Explicitly selects `DenseSlotMap` (redundant with defaults)
 ///
 /// # Internal Use Only
 ///

@@ -43,3 +43,4 @@ Trace*.run/
 
 # Samply profiling output (if any temp files created)
 *.samply
+/storage-comparison-*

@@ -33,9 +33,9 @@ This directory contains performance benchmarks for the delaunay library, organiz
 
 ## Phase 4 SlotMap Evaluation
 
-**Status:** Active - just targets completed (2025-10-20)  
+**Status:** Active (consolidation plan archived)  
 **Primary Benchmark:** `large_scale_performance.rs`  
-**Documentation:** See [docs/phase4.md](../docs/phase4.md) for detailed consolidation plan and implementation progress
+**Documentation:** See [docs/archive/phase4.md](../docs/archive/phase4.md) for the archived consolidation plan and progress log
 
 ### Purpose
 
@@ -72,11 +72,6 @@ cargo bench --bench large_scale_performance
 cargo bench --bench large_scale_performance -- "construction/3D"
 cargo bench --bench large_scale_performance -- "queries/neighbors"
 cargo bench --bench large_scale_performance -- "iteration/vertices"
-
-# Phase 4 just targets (available now)
-just bench-phase4        # Run Phase 4 benchmarks (~10-30 min default scale)
-just bench-phase4-large  # Large scale with BENCH_LARGE_SCALE=1 (~2-3 hours)
-just bench-phase4-quick  # Quick validation tests (~90 seconds)
 
 # Storage backend comparison
 just compare-storage       # Compare SlotMap vs DenseSlotMap (~4-6 hours)

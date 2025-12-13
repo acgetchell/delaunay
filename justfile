@@ -55,19 +55,6 @@ bench-dev: _ensure-uv
 bench-perf-summary: _ensure-uv
     uv run benchmark-utils generate-summary --run-benchmarks
 
-# Phase 4 SlotMap evaluation benchmarks
-bench-phase4:
-    @echo "🔬 Running Phase 4 SlotMap evaluation benchmarks (~10-30 min default scale)"
-    cargo bench --bench large_scale_performance
-
-bench-phase4-large:
-    @echo "🔬 Running Phase 4 large-scale benchmarks with BENCH_LARGE_SCALE=1 (~2-3 hours)"
-    BENCH_LARGE_SCALE=1 cargo bench --bench large_scale_performance
-
-bench-phase4-quick:
-    @echo "⚡ Quick Phase 4 validation tests (~90 seconds)"
-    cargo test --release --test storage_backend_compatibility -- --ignored
-
 # Quick benchmark validation: minimal samples for sanity checking
 bench-quick:
     CRIT_SAMPLE_SIZE=5 CRIT_MEASUREMENT_MS=500 CRIT_WARMUP_MS=200 cargo bench --workspace
@@ -110,7 +97,13 @@ clean:
 
 # Code quality and formatting
 clippy:
+    # SlotMap backend (disabled default DenseSlotMap)
+    cargo clippy --workspace --all-targets --no-default-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+
+    # DenseSlotMap backend (default)
     cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+
+    # All features
     cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
 # Pre-commit workflow: comprehensive validation before committing
@@ -193,11 +186,6 @@ help-workflows:
     @echo "  just bench-dev          # Development mode (10x faster, ~1-2 min)"
     @echo "  just bench-perf-summary # Generate performance summary for releases (~30-45 min)"
     @echo "  just bench-quick        # Quick validation (minimal samples, ~30 sec)"
-    @echo ""
-    @echo "Phase 4 SlotMap Evaluation:"
-    @echo "  just bench-phase4       # Run Phase 4 benchmarks (~10-30 min default)"
-    @echo "  just bench-phase4-large # Large scale with BENCH_LARGE_SCALE=1 (~2-3 hours)"
-    @echo "  just bench-phase4-quick # Quick validation tests (~90 seconds)"
     @echo ""
     @echo "Storage Backend Comparison:"
     @echo "  just compare-storage       # Compare SlotMap vs DenseSlotMap (~4-6 hours)"

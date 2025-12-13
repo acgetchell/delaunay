@@ -27,7 +27,9 @@
 #![allow(missing_docs)]
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use delaunay::geometry::util::generate_random_triangulation;
+use delaunay::geometry::util::generate_random_points_seeded;
+use delaunay::prelude::DelaunayTriangulation;
+use delaunay::vertex;
 use std::hint::black_box;
 
 /// Common sample sizes used across all CI performance benchmarks
@@ -57,19 +59,26 @@ macro_rules! benchmark_tds_new_dimension {
                 group.throughput(Throughput::Elements(count as u64));
 
                 group.bench_with_input(BenchmarkId::new("tds_new", count), &count, |b, &count| {
-                    b.iter(|| {
-                        black_box(
-                            generate_random_triangulation::<f64, (), (), $dim>(
-                                count,
-                                (-100.0, 100.0),
-                                None,
-                                Some($seed),
-                            )
+                    // Reduce variance: pre-generate deterministic inputs outside the measured loop,
+                    // then benchmark only triangulation construction.
+                    let points =
+                        generate_random_points_seeded::<f64, $dim>(count, (-100.0, 100.0), $seed)
                             .expect(concat!(
-                                "generate_random_triangulation failed for ",
+                                "generate_random_points_seeded failed for ",
                                 stringify!($dim),
                                 "D"
-                            )),
+                            ));
+                    let vertices = points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>();
+
+                    b.iter(|| {
+                        black_box(
+                            DelaunayTriangulation::<_, (), (), $dim>::new(&vertices).expect(
+                                concat!(
+                                    "DelaunayTriangulation::new failed for ",
+                                    stringify!($dim),
+                                    "D"
+                                ),
+                            ),
                         );
                     });
                 });

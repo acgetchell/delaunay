@@ -507,8 +507,8 @@ Evaluate different SlotMap implementations via feature flags to find optimal ite
 ```rust
 // In Cargo.toml
 [features]
-default = []
-dense-slotmap = []  # Use DenseSlotMap for better iteration
+default = ["dense-slotmap"]
+dense-slotmap = []  # Default: Use DenseSlotMap for better iteration
 hop-slotmap = []    # Use HopSlotMap for very large scale
 
 // In src/core/triangulation_data_structure.rs
@@ -531,13 +531,13 @@ pub struct Tds<T, U, V, const D: usize> {
 #### Benchmarking Different Backends
 
 ```bash
-# Benchmark with default SlotMap
+# Benchmark with default DenseSlotMap
 cargo bench --bench large_scale_performance
 
-# Benchmark with DenseSlotMap
-cargo bench --bench large_scale_performance --features dense-slotmap
+# Benchmark with SlotMap
+cargo bench --no-default-features --bench large_scale_performance
 
-# Benchmark with HopSlotMap
+# Benchmark with HopSlotMap (planned)
 cargo bench --bench large_scale_performance --features hop-slotmap
 ```
 
@@ -545,14 +545,14 @@ cargo bench --bench large_scale_performance --features hop-slotmap
 
 #### Performance Characteristics Comparison
 
-| Aspect | SlotMap (Current) | DenseSlotMap | HopSlotMap |
-|--------|------------------|--------------|------------|
-| Insert | O(1) amortized | O(1) amortized | O(1) |
-| Remove | O(1) | O(1) with moves | O(1) |
-| Lookup | O(1) | O(1) | O(1) |
-| Memory | Sparse | Dense/contiguous | Hop-optimized |
-| Iteration | Good | **Excellent** | Good |
-| Best For | Dynamic changes | Stable/iteration | Large scale |
+|| Aspect | DenseSlotMap (Default) | SlotMap | HopSlotMap |
+||--------|-------------------------|--------|------------|
+|| Insert | O(1) amortized | O(1) amortized | O(1) |
+|| Remove | O(1) with moves | O(1) | O(1) |
+|| Lookup | O(1) | O(1) | O(1) |
+|| Memory | Dense/contiguous | Sparse | Hop-optimized |
+|| Iteration | **Excellent** | Good | Good |
+|| Best For | Stable/iteration | Dynamic changes | Large scale |
 
 #### Expected Improvements
 
@@ -570,12 +570,12 @@ cargo bench --bench large_scale_performance --features hop-slotmap
 3. Update TDS to use type aliases instead of concrete types
 4. Ensure all tests pass with each feature
 
-#### Phase 4B: Benchmarking and Evaluation  
+#### Phase 4B: Benchmarking and Evaluation
 
 1. Run `large_scale_performance.rs` with all three backends
 2. Compare iteration, memory, and query performance
 3. Document actual performance characteristics
-4. Select default based on results
+4. Select default based on results (now: **DenseSlotMap**)
 
 #### Phase 4C: Documentation and Release
 
@@ -613,21 +613,21 @@ pub struct CellBuilder<T, U, V, const D: usize> { /* ... */ }
 
 All other changes were internal - Cell and Vertex structures refactored to use keys without breaking public APIs.
 
-### Phase 4: Opt-in Performance
+### Phase 4: Storage Backend Selection
 
 ```toml
 # In user's Cargo.toml
 [dependencies]
-delaunay = "0.6"  # Default: SlotMap
+delaunay = "0.6"  # Default: DenseSlotMap
 
-# Or for better iteration performance:
-delaunay = { version = "0.6", features = ["dense-slotmap"] }
+# Use SlotMap instead (disable default features)
+delaunay = { version = "0.6", default-features = false }
 
-# Or for very large scale:
+# Or for very large scale (planned)
 delaunay = { version = "0.6", features = ["hop-slotmap"] }
 ```
 
-No code changes required - just select the feature flag.
+No code changes required - just select the Cargo feature/default-features setting.
 
 ---
 

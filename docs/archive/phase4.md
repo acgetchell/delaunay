@@ -14,9 +14,16 @@ Phase 4 SlotMap evaluation** and measures:
 - ✅ Validation stress-testing (topology checks)
 - ✅ 1K-10K scale appropriate for SlotMap comparisons
 
-**Phase 4 Goal:** Enable swapping SlotMap implementations via feature flags
-(SlotMap → DenseSlotMap → HopSlotMap) for benchmarking, targeting 10-15% iteration
-performance improvement.
+**Phase 4 Goal:** Enable swapping SlotMap implementations via Cargo feature flags
+(SlotMap ↔ DenseSlotMap ↔ HopSlotMap) for benchmarking, targeting 10-15% iteration
+performance improvement. The DenseSlotMap backend is gated by the `dense-slotmap` feature.
+
+**Current state (2025-12-13):**
+
+- Cargo feature `dense-slotmap` (DenseSlotMap backend) is enabled by default (`default = ["dense-slotmap"]`)
+- SlotMap remains supported via `--no-default-features`
+- Local comparison tooling: `uv run compare-storage-backends` (or `just compare-storage`)
+- Cluster comparison tooling: `scripts/slurm_storage_comparison.sh` (saves Criterion baselines for `critcmp`)
 
 ## Current Benchmark Suite Issues
 
@@ -31,33 +38,33 @@ performance improvement.
    - `assign_neighbors_performance.rs` is more comprehensive (grid, spherical, scaling tests)
 
 3. **Memory Measurement Overlap:**
-   - `large_scale_performance.rs`, `memory_scaling.rs`, `triangulation_vs_hull_memory.rs`, and `profiling_suite.rs` all measure memory
-   - Each has slightly different focus but significant overlap
+   - `large_scale_performance.rs` and `profiling_suite.rs` both measure memory
+   - Redundant memory bench files were consolidated into `profiling_suite.rs`
 
 ### Scripts Integration
 
 - `scripts/benchmark_utils.py` is hardcoded to use **`ci_performance_suite.rs`** for baseline generation and regression testing
-- No Phase 4-specific tooling exists yet
-- Need to add `generate-phase4-baseline` and `compare-phase4` commands
+- Phase 4 backend comparison tooling exists via:
+  - `scripts/compare_storage_backends.py` (`uv run compare-storage-backends`)
+  - `scripts/slurm_storage_comparison.sh` (cluster runs; saves Criterion baselines for `critcmp`)
 
 ## Implementation Plan
 
-### ☐ 1. Kickoff and Scope Alignment
+### ✅ 1. Kickoff and Scope Alignment
 
-**Status:** Not Started
+**Status:** ✅ Completed (2025-10-20)
 
 **Tasks:**
 
-- [ ] Confirm Phase 4's primary goal: evaluate SlotMap-backed TDS performance and memory behavior at large scale
-- [ ] Agree to make `large_scale_performance.rs` the primary benchmark for Phase 4, replacing `triangulation_creation.rs` usage
-- [ ] Decide deprecation vs immediate removal policy for redundant benches (recommend: deprecate for one release, then remove)
-- [ ] Create a working branch for Rust changes separate from docs/Python to avoid long CI runs on every change
+- [x] Confirm Phase 4's primary goal: evaluate SlotMap-backed TDS performance and memory behavior at large scale
+- [x] Make `large_scale_performance.rs` the primary Phase 4 benchmark (replacing `triangulation_creation.rs`)
+- [x] Adopt one-cycle deprecation policy for redundant benches
+- [x] Keep work isolated in feature branches when convenient (process note)
 
 **Notes:**
 
-- Phase 4 targets 10-15% iteration improvement with DenseSlotMap
-- SlotMap implementations selected via feature flags (no runtime abstraction)
-- Need to maintain baseline compatibility across changes
+- Backend selection remains compile-time via Cargo features (no runtime abstraction)
+- `dense-slotmap` (DenseSlotMap backend) is now enabled by default (2025-12-13)
 
 ---
 
@@ -69,16 +76,14 @@ performance improvement.
 
 - [x] List current benches: `ls benches/*.rs`
 - [x] Record per file: purpose, operations covered, dataset sizes, CLI parameters/env vars, Criterion groups/IDs, output format
-- [ ] Validate expected set:
+- [x] Validate expected bench set (current):
   - `ci_performance_suite.rs`
-  - `triangulation_creation.rs`
-  - `large_scale_performance.rs`
+  - `large_scale_performance.rs` (Phase 4 primary)
   - `profiling_suite.rs`
-  - `memory_scaling.rs`
-  - `triangulation_vs_hull_memory.rs`
   - `microbenchmarks.rs`
   - `assign_neighbors_performance.rs`
   - `circumsphere_containment.rs`
+  - `triangulation_creation.rs` (deprecated harness)
 
 **Deliverable:** `benches/INVENTORY.md` (temporary, to be folded into `benches/README.md`)
 
@@ -113,33 +118,33 @@ performance improvement.
 
 | Benchmark | Purpose | Scale | Operations | Phase 4 Relevant? |
 |-----------|---------|-------|------------|-------------------|
-| `ci_performance_suite.rs` | CI regression detection | 10-50 pts, 2D-5D | Basic construction | No - too small |
-| `triangulation_creation.rs` | Simple construction bench | 1000 pts, 2D-5D | Construction only | **REDUNDANT** |
-| `large_scale_performance.rs` | **Phase 4 SlotMap eval** | 1K-10K vertices | Construction, memory, **iteration**, queries | **YES - PRIMARY** |
-| `profiling_suite.rs` | Comprehensive profiling | 10³-10⁶ pts | All operations, multiple distributions | Partial - too heavy |
-| `memory_scaling.rs` | Memory allocation patterns | 10-100 pts | Memory tracking | Merge candidate |
-| `triangulation_vs_hull_memory.rs` | TDS vs hull memory comparison | 10-50 pts | Memory comparison | Merge candidate |
-| `microbenchmarks.rs` | Core operations (Bowyer-Watson, assign_neighbors, validation) | Various | Individual operations | Has duplicates |
-| `assign_neighbors_performance.rs` | Neighbor assignment comprehensive | 10-50 pts, 2D-5D | Neighbor assignment with multiple distributions | Keep |
-| `circumsphere_containment.rs` | Algorithm comparison (insphere variants) | Random queries | Circumsphere predicates | Keep |
+| `ci_performance_suite.rs` | CI regression detection | 10-50 pts, 2D-5D | Basic construction | No |
+| `triangulation_creation.rs` | Deprecated harness | N/A | Prints deprecation notice | No |
+| `large_scale_performance.rs` | **Phase 4 backend eval** | 1K-10K vertices | Construction, memory, iteration, queries, validation | **YES - PRIMARY** |
+| `profiling_suite.rs` | Comprehensive profiling | 10³-10⁶ pts | Scaling, memory profiling, query latency, etc. | Partial - too heavy |
+| `microbenchmarks.rs` | Core operations | Various | Bowyer-Watson + validation microbenches | Keep |
+| `assign_neighbors_performance.rs` | Neighbor assignment | 10-50 pts, 2D-5D | Distributions + scaling | Keep |
+| `circumsphere_containment.rs` | Algorithm comparison | Random queries | Circumsphere predicates | Keep |
 
 **Deliverable:** Consolidated section in `benches/README.md` with detailed table
 
 ---
 
-### ☐ 5. Design the Consolidation Plan
+### ✅ 5. Design the Consolidation Plan
 
-**Status:** Not Started
+**Status:** ✅ Completed (2025-10-20)
 
-**Proposals:**
+**Decisions (implemented):**
 
-- [ ] **Deprecate then remove** `triangulation_creation.rs` (redundant with `ci_performance_suite.rs`)
-- [ ] **Merge** `memory_scaling.rs` and `triangulation_vs_hull_memory.rs` into `profiling_suite.rs` as dedicated Criterion groups
-- [ ] **Update** `microbenchmarks.rs` to drop `assign_neighbors` duplicates and delegate to `assign_neighbors_performance.rs` groups
-- [ ] **Codify** `large_scale_performance.rs` as the Phase 4 primary with stable Criterion IDs and JSON output
-- [ ] **Define** standard CLI/env params across benches: `BENCH_N`, `BENCH_DIM`, `BENCH_SEED`, `BENCH_DISTRIBUTION`, `BENCH_OP_MIX`
+- [x] Deprecate `triangulation_creation.rs` (keep as a one-cycle deprecation harness)
+- [x] Consolidate memory benchmarks into `profiling_suite.rs`
+- [x] Deduplicate `microbenchmarks.rs` around `assign_neighbors`
+- [x] Codify `large_scale_performance.rs` as the Phase 4 primary benchmark
+- [ ] Standardize CLI/env controls across benches (optional; partially addressed via env vars)
 
-**Deliverable:** `benches/CONSOLIDATION_PLAN.md` (brief; later summarized in CHANGELOG)
+**Deliverable:**
+
+- This document (`docs/archive/phase4.md`) serves as the consolidation plan and progress log.
 
 ---
 
@@ -173,15 +178,10 @@ performance improvement.
 
 **Tasks:**
 
-- [ ] Move/port scenarios from `memory_scaling.rs` → `profiling_suite.rs::memory::scaling`
-- [ ] Move/port scenarios from `triangulation_vs_hull_memory.rs` → `profiling_suite.rs::memory::triangulation_vs_hull`
-- [ ] Normalize memory measurement approach:
-  - Current: Uses `sysinfo` crate for RSS tracking
-  - Option: Add `dhat` support behind feature flag
-  - Decision: Keep `sysinfo` for Phase 4, add `allocation-counter` usage where appropriate
-- [ ] Preserve Criterion group names for baseline comparability
-- [ ] Add bench metadata JSON fields: dataset, dim, seed, metric units
-- [ ] Remove old files or leave thin wrappers with deprecation warnings
+- [x] Consolidate memory profiling into `profiling_suite.rs` (memory_profiling group)
+- [x] Remove redundant memory benchmark files (`memory_scaling.rs`, `triangulation_vs_hull_memory.rs`)
+- [x] Update docs and Cargo configuration to reflect the consolidation
+- [ ] (Optional) Add richer metadata export (dataset/dim/seed/units) for automated analysis
 
 **Memory Measurement Strategy:**
 
@@ -205,14 +205,10 @@ fn get_memory_usage() -> u64 {
 
 **Tasks:**
 
-- [ ] Remove `assign_neighbors` duplicates from `microbenchmarks.rs`:
-  - `benchmark_assign_neighbors_2d`
-  - `benchmark_assign_neighbors_3d`
-  - `benchmark_assign_neighbors_4d`
-  - `benchmark_assign_neighbors_5d`
-- [ ] Add reference/re-export to `assign_neighbors_performance.rs` groups
-- [ ] Ensure Criterion IDs align to maintain baseline history
-- [ ] Add module doc explaining what remains and where `assign_neighbors` moved
+- [x] Remove `assign_neighbors` duplicates from `microbenchmarks.rs`
+- [x] Centralize neighbor-assignment benchmarking in `assign_neighbors_performance.rs`
+- [x] Preserve baseline history by keeping benchmark names stable where possible
+- [x] Add module docs pointing contributors to the consolidated benchmark
 
 **What Remains in microbenchmarks.rs:**
 
@@ -238,25 +234,21 @@ fn get_memory_usage() -> u64 {
 
 **Enhancements Needed:**
 
-- [ ] **Add standardized CLI/env control:**
-  - `--n` or `BENCH_N`: point count
-  - `--dim` or `BENCH_DIM`: dimension (2-5)
-  - `--seed` or `BENCH_SEED`: RNG seed
-  - `--distribution` or `BENCH_DISTRIBUTION`: grid, random, clustered
-  - `--op-mix` or `BENCH_OP_MIX`: operation ratio
-  - `--json-out` or `BENCH_JSON_OUT`: structured results path
+- [ ] **Add standardized CLI/env control for datasets:**
+  - `BENCH_N`: point count
+  - `BENCH_DIM`: dimension (2-5)
+  - `BENCH_SEED`: RNG seed
+  - `BENCH_DISTRIBUTION`: grid, random, clustered
+  - `BENCH_OP_MIX`: operation ratio
+  - `BENCH_JSON_OUT`: structured results path
 
-- [ ] **Stabilize Criterion IDs for baseline tracking:**
+  Already supported:
+  - `BENCH_LARGE_SCALE` (toggles larger 4D point counts)
+  - `BENCH_SAMPLE_SIZE`, `BENCH_WARMUP_SECS`, `BENCH_MEASUREMENT_TIME` (Criterion tuning)
 
-  ```rust
-  // Suggested stable IDs:
-  // - phase4/construction/{dim}/{n}
-  // - phase4/iteration/vertices/{dim}/{n}
-  // - phase4/iteration/cells/{dim}/{n}
-  // - phase4/queries/neighbors/{dim}/{n}
-  // - phase4/validation/{dim}/{n}
-  // - phase4/memory/{dim}/{n}
-  ```
+- [x] **Criterion IDs are stable and baseline-friendly**
+
+  Current scheme: `<category>/<dim>/<n>v` (e.g. `construction/3D/1000v`).
 
 - [ ] **Add cache locality measurement (optional):**
 
@@ -265,7 +257,7 @@ fn get_memory_usage() -> u64 {
   // Use perf/callgrind hooks for cache miss analysis
   ```
 
-- [ ] **Support SlotMap vs alternative comparison:**
+- [x] **Support SlotMap vs alternative comparison:**
 
   ```rust
   // Use feature flags + type aliases for zero-cost abstraction:
@@ -276,8 +268,8 @@ fn get_memory_usage() -> u64 {
   type StorageBackend<K, V> = SlotMap<K, V>;
   
   // Benchmark with:
-  // cargo bench --bench large_scale_performance
-  // cargo bench --bench large_scale_performance --features dense-slotmap
+  // cargo bench --bench large_scale_performance  # default (feature: dense-slotmap)
+  // cargo bench --no-default-features --bench large_scale_performance  # SlotMap
   ```
 
 **Key Metrics for Phase 4:**
@@ -289,76 +281,44 @@ fn get_memory_usage() -> u64 {
 
 ---
 
-### ◔ 10. Add Phase 4 Helpers to benchmark_utils.py and justfile
+### ✅ 10. Phase 4 Storage Backend Comparison Tooling
 
-**Status:** Partial - Justfile targets completed (2025-10-20)
+**Status:** ✅ Completed (2025-12-13)
 
-**Python Script Commands (uv run):**
+Instead of adding Phase 4 baseline JSON subcommands to `benchmark_utils.py`, Phase 4 backend
+comparison is handled via Criterion baselines and dedicated scripts.
 
-```python
-# New subcommands to add to benchmark_utils.py
+**Tooling:**
 
-def generate_phase4_baseline(n: int, dim: int, seed: int, distribution: str, output: Path):
-    """Generate Phase 4 baseline using large_scale_performance.rs"""
-    # Run: cargo bench --bench large_scale_performance
-    # Parse Criterion results
-    # Save to output (e.g., artifacts/phase4_baseline.json)
+- `scripts/compare_storage_backends.py` (`uv run compare-storage-backends`)
+  - Runs `cargo bench` twice:
+    - DenseSlotMap (feature: `dense-slotmap`; default)
+    - SlotMap (`--no-default-features`)
+  - Generates a markdown report (default: `artifacts/storage_comparison.md`)
 
-def compare_phase4(baseline: Path, threshold: float):
-    """Compare current Phase 4 performance against baseline"""
-    # Run: cargo bench --bench large_scale_performance
-    # Parse results and compare against baseline
-    # Report regressions > threshold
-```
+- `scripts/slurm_storage_comparison.sh`
+  - Runs both backends on a Slurm cluster
+  - Saves Criterion baselines (`slotmap`, `denseslotmap`) and supports `critcmp`
 
-**CLI Shape:**
+**Commands:**
 
 ```bash
-# Generate baseline
-uv run benchmark-utils generate-phase4-baseline \
-  --n 10000 \
-  --dim 3 \
-  --seed 42 \
-  --distribution random \
-  --out artifacts/phase4_baseline.json
+# Local comparison report
+just compare-storage
 
-# Compare against baseline
-uv run benchmark-utils compare-phase4 \
-  --baseline artifacts/phase4_baseline.json \
-  --threshold 5  # 5% regression threshold
-```
+# Large scale comparison (sets BENCH_LARGE_SCALE=1)
+just compare-storage-large
 
-**Justfile Targets:**
-
-```makefile
-# Add to justfile
-
-# Generate Phase 4 baseline
-bench-phase4-baseline n="10000" dim="3":
-    uv run benchmark-utils generate-phase4-baseline \
-      --n {{n}} --dim {{dim}} --seed 42 --distribution random \
-      --out artifacts/phase4_baseline.json
-
-# Compare Phase 4 performance
-bench-phase4-compare:
-    uv run benchmark-utils compare-phase4 \
-      --baseline artifacts/phase4_baseline.json \
-      --threshold 5
-
-# Run Phase 4 benchmarks only (no baseline)
-bench-phase4:
-    cargo bench --bench large_scale_performance
+# Direct invocation
+uv run compare-storage-backends --bench large_scale_performance
 ```
 
 **Tasks:**
 
-- [ ] Add `generate-phase4-baseline` subcommand to `benchmark_utils.py`
-- [ ] Add `compare-phase4` subcommand to `benchmark_utils.py`
-- [ ] Add `bench-phase4-baseline` target to `justfile`
-- [ ] Add `bench-phase4-compare` target to `justfile`
-- [ ] Add `bench-phase4` target to `justfile`
-- [ ] Ensure JSON schema compatibility with existing baseline/compare utilities
-- [ ] Add schema version if needed
+- [x] Local backend comparison + markdown report (`compare_storage_backends.py`)
+- [x] Cluster backend comparison script saving baselines (`slurm_storage_comparison.sh`)
+- [x] Documentation updated for `dense-slotmap` default (DenseSlotMap) + SlotMap via `--no-default-features`
+- [ ] (Optional) Add Phase 4 baseline JSON generation to `benchmark_utils.py` for CI-style regression testing
 
 ---
 
@@ -368,14 +328,14 @@ bench-phase4:
 
 **benchmarks.yml (Performance Regression Testing):**
 
-- [ ] Replace any `triangulation_creation` references with `ci_performance_suite.rs` or `large_scale_performance.rs`
+- [x] Replace any `triangulation_creation` references with `ci_performance_suite.rs` or `large_scale_performance.rs`
 - [ ] Add optional Phase 4 job that runs reduced-size `large_scale_performance.rs` smoke test
-- [ ] Keep runtime reasonable for PRs (use `--sample-size 10` or similar)
+- [x] Keep runtime reasonable for CI runs (use dev settings/timeouts where appropriate)
 
 **profiling-benchmarks.yml (Comprehensive Profiling):**
 
-- [ ] Point memory jobs to `profiling_suite.rs` memory groups (after consolidation)
-- [ ] Gate heavy runs by workflow_dispatch labels or schedules
+- [x] Point memory jobs to `profiling_suite.rs` memory groups (after consolidation)
+- [x] Gate heavy runs by workflow_dispatch labels or schedules
 - [ ] Add Phase 4-specific profiling job (optional, manual trigger)
 
 **generate-baseline.yml (Baseline Generation):**
@@ -415,7 +375,7 @@ phase4-smoke-test:
 
 **benches/README.md:**
 
-- [ ] Add categorization section:
+- [x] Add categorization section:
   - **CI Benchmarks**: `ci_performance_suite.rs` (fast, regression detection)
   - **Profiling Benchmarks**: `profiling_suite.rs` (comprehensive, 1-2 hours)
   - **Phase 4 Benchmarks**: `large_scale_performance.rs` (SlotMap evaluation)
@@ -423,7 +383,7 @@ phase4-smoke-test:
   - **Specialized**: `assign_neighbors_performance.rs`
   - **Deprecated**: `triangulation_creation.rs` (use `ci_performance_suite.rs` or `large_scale_performance.rs`)
 
-- [ ] Add "When to use which" guidance:
+- [x] Add "When to use which" guidance:
 
   ```markdown
   ## Benchmark Selection Guide
@@ -431,49 +391,25 @@ phase4-smoke-test:
   | Use Case | Benchmark | Command |
   |----------|-----------|---------|
   | Quick CI regression check | `ci_performance_suite.rs` | `just bench` or `cargo bench --bench ci_performance_suite` |
-  | Phase 4 SlotMap evaluation | `large_scale_performance.rs` | `just bench-phase4` |
+  | Phase 4 SlotMap evaluation | `large_scale_performance.rs` | `cargo bench --bench large_scale_performance` |
   | Deep profiling (1-2 hours) | `profiling_suite.rs` | `cargo bench --bench profiling_suite` |
   | Memory analysis | `profiling_suite.rs` (memory groups) | `cargo bench --bench profiling_suite -- memory` |
   | Algorithm comparison | `circumsphere_containment.rs` | `cargo bench --bench circumsphere_containment` |
   ```
 
-- [ ] Explicitly document `large_scale_performance.rs` as Phase 4 primary
-- [ ] Add deprecation notice for `triangulation_creation.rs`
+- [x] Explicitly document `large_scale_performance.rs` as Phase 4 primary
+- [x] Add deprecation notice for `triangulation_creation.rs`
 
 **docs/code_organization.md:**
 
-- [ ] Update benchmark section to reflect new layout
-- [ ] Add Phase 4 benchmark responsibilities
-- [ ] Document memory benchmark consolidation
+- [x] Update benchmark section to reflect new layout
+- [x] Add Phase 4 benchmark responsibilities
+- [x] Document memory benchmark consolidation
 
 **CHANGELOG.md:**
 
-- [ ] Add "Benchmark consolidation" entry:
-
-  ```markdown
-  ### Benchmark Suite Reorganization
-  
-  **Deprecated:**
-  - `triangulation_creation.rs` - redundant with `ci_performance_suite.rs`
-    - For CI benchmarks, use: `cargo bench --bench ci_performance_suite`
-    - For Phase 4 evaluation, use: `cargo bench --bench large_scale_performance`
-  
-  **Consolidated:**
-  - `memory_scaling.rs` → `profiling_suite.rs::memory::scaling`
-  - `triangulation_vs_hull_memory.rs` → `profiling_suite.rs::memory::triangulation_vs_hull`
-  
-  **Enhanced:**
-  - `large_scale_performance.rs` - now the primary Phase 4 SlotMap evaluation benchmark
-    - Added standardized CLI/env controls
-    - Stabilized Criterion IDs for baseline tracking
-    - Measures iteration, memory, queries, and validation
-  
-  **New Tooling:**
-  - `just bench-phase4-baseline` - generate Phase 4 baseline
-  - `just bench-phase4-compare` - compare against baseline
-  - `uv run benchmark-utils generate-phase4-baseline` - Python command
-  - `uv run benchmark-utils compare-phase4` - Python command
-  ```
+- Note: `CHANGELOG.md` is auto-generated from git history in this repo.
+- Do not edit it manually; ensure the relevant commits exist and run `just changelog` before release.
 
 ---
 
@@ -486,7 +422,7 @@ phase4-smoke-test:
 - [ ] **Convex hull timing benchmarks**
   - Add to `profiling_suite.rs` or separate file
   - Cover varied distributions (random, grid, clustered) and dimensions (2D-5D)
-  - Currently only memory benchmarks exist in `triangulation_vs_hull_memory.rs`
+  - Currently only memory benchmarks exist in `profiling_suite.rs` (`memory_profiling` group)
 
 **Priority 2 (Moderate Value):**
 
@@ -508,9 +444,9 @@ phase4-smoke-test:
 
 ---
 
-### ☐ 14. Quality Gates, Validation, and CI Safety
+### ✅ 14. Quality Gates, Validation, and CI Safety
 
-**Status:** Not Started
+**Status:** ✅ Completed (2025-12-13)
 
 **Pre-commit Checks (for all changes):**
 
@@ -557,75 +493,48 @@ cargo bench --bench large_scale_performance -- --test
 
 **Tasks:**
 
-- [ ] Run all quality gates on changed files
-- [ ] Verify benchmark compilation with `just bench-compile`
-- [ ] Run Python tests with `uv run pytest`
+- [x] Run all quality gates on changed files (`just ci`)
+- [x] Verify benchmark compilation with `just bench-compile`
+- [x] Run Python tests with `uv run pytest`
+- [x] Verify SlotMap builds/tests with `cargo test --no-default-features`
 - [ ] Test smoke runs of modified benchmarks
 
 ---
 
-### ☐ 15. Acceptance Criteria and Sign-Off
+### ◔ 15. Acceptance Criteria and Sign-Off
 
-**Status:** Not Started
-
-**Completion Checklist:**
+**Status:** ◔ In Progress (updated 2025-12-13)
 
 **Benchmark Files:**
 
-- [ ] No broken references to removed/deprecated benches in workflows, scripts, or justfile
-- [ ] `large_scale_performance.rs` provides:
-  - [ ] Iteration speed metrics (vertex/cell/neighbor traversals)
-  - [ ] Memory usage tracking (RSS, per-element footprint)
-  - [ ] Cache locality measurement (where supported)
-  - [ ] Query performance metrics (lookups, contains, incident-entities)
-  - [ ] Stable Criterion IDs (`phase4/operation/dim/n`)
-  - [ ] JSON output schema documented
+- [x] No broken references to removed/deprecated benches in workflows, scripts, or justfile
+- [x] `large_scale_performance.rs` covers construction, memory, iteration, queries, and validation (2D–5D)
+- [ ] Cache locality measurement (optional; not implemented)
+- [x] Stable Criterion IDs (scheme: `<category>/<dim>/<n>v`)
+- [ ] JSON output schema beyond Criterion (optional; not implemented)
 
-**Python Tooling:**
+**Backend Comparison Tooling:**
 
-- [ ] `benchmark_utils.py` has `generate-phase4-baseline` command
-- [ ] `benchmark_utils.py` has `compare-phase4` command
-- [ ] Commands work end-to-end on developer machine
-- [ ] JSON schema compatible with existing baseline/compare utilities
+- [x] Local comparison report generator: `uv run compare-storage-backends`
+- [x] Cluster comparison script: `scripts/slurm_storage_comparison.sh` (saves baselines for `critcmp`)
+- [ ] Optional CI-style Phase 4 baseline JSON generation (deferred)
 
 **Build System:**
 
-- [ ] `justfile` has `bench-phase4-baseline` target
-- [ ] `justfile` has `bench-phase4-compare` target
-- [ ] `justfile` has `bench-phase4` target (no baseline)
-- [ ] All targets work correctly
-
-**CI/CD:**
-
-- [ ] All benchmark-related workflow jobs succeed
-- [ ] Phase 4 baseline artifacts uploaded for release tags
-- [ ] Phase 4 smoke test runs on PRs (if implemented)
-- [ ] No references to deprecated benchmarks
+- [x] Compare storage backends: `just compare-storage`, `just compare-storage-large`
+- [x] Run large-scale benchmark directly: `cargo bench --bench large_scale_performance`
 
 **Documentation:**
 
-- [ ] `benches/README.md` clearly guides contributors
-- [ ] Phase 4 benchmarks explicitly documented as primary
-- [ ] Deprecation notices for removed/consolidated benchmarks
-- [ ] `docs/code_organization.md` reflects new layout
-- [ ] `CHANGELOG.md` documents consolidation
-- [ ] Migration guide for users of deprecated benchmarks
+- [x] `benches/README.md` guides contributors and documents Phase 4 benchmarks
+- [x] `docs/code_organization.md` reflects benchmark layout and memory consolidation
+- [ ] Changelog entry is generated (do not edit `CHANGELOG.md` directly)
 
 **Quality Gates:**
 
-- [ ] `just quality` passes locally
-- [ ] `just bench-compile` succeeds
-- [ ] `uv run pytest` passes
-- [ ] All 781 tests still pass
-- [ ] No clippy warnings
-- [ ] Documentation builds successfully
-
-**Performance Validation:**
-
-- [ ] Baseline generation completes successfully
-- [ ] Comparison against baseline works correctly
-- [ ] Regression detection threshold (5%) is reasonable
-- [ ] Benchmark results are reproducible (±2% variance)
+- [x] `just ci` passes locally
+- [x] `cargo test --no-default-features` passes
+- [x] `uv run pytest` passes
 
 ---
 
@@ -635,7 +544,7 @@ cargo bench --bench large_scale_performance -- --test
 
 Once the benchmark consolidation is complete, Phase 4 will evaluate these metrics:
 
-1. **Iteration Performance** (10-15% improvement target with DenseSlotMap)
+1. **Iteration Performance** (10-15% improvement target with DenseSlotMap; feature: `dense-slotmap`)
    - Full vertex traversal time
    - Full cell traversal time
    - Neighbor-following traversal patterns
@@ -663,13 +572,13 @@ Once the benchmark consolidation is complete, Phase 4 will evaluate these metric
 
 | Backend | Iteration | Memory | Insertion | Removal | Best For |
 |---------|-----------|--------|-----------|---------|----------|
-| SlotMap (current) | Good | Sparse | O(1) amortized | O(1) | Dynamic changes |
-| DenseSlotMap (target) | **Excellent** | Dense/contiguous | O(1) amortized | O(1) with moves | Stable/iteration |
+| DenseSlotMap (`dense-slotmap`, default) | **Excellent** | Dense/contiguous | O(1) amortized | O(1) with moves | Stable/iteration |
+| SlotMap (optional) | Good | Sparse | O(1) amortized | O(1) | Dynamic changes |
 | HopSlotMap (future) | Good | Hop-optimized | O(1) | O(1) | Large scale |
 
 ### Success Criteria
 
-- [ ] DenseSlotMap implementation shows 10-15% iteration improvement
+- [ ] `dense-slotmap` (DenseSlotMap) implementation shows 10-15% iteration improvement
 - [ ] No regression in other operations (insertion, removal, lookup)
 - [ ] Memory usage comparable or better than current SlotMap
 - [ ] 100% API compatibility maintained via trait abstraction
@@ -689,31 +598,31 @@ Once the benchmark consolidation is complete, Phase 4 will evaluate these metric
 
 ## Progress Tracking
 
-**Last Updated:** 2025-10-20 18:39
+**Last Updated:** 2025-12-13
 
-**Overall Status:** ✅ Core Consolidation Complete (Steps 6-9, 11-12)
+**Overall Status:** ✅ Benchmark consolidation complete; ✅ `dense-slotmap` (DenseSlotMap) is default
 
 **Completed Steps:**
 
+- ✅ Step 1: Kickoff and scope alignment
 - ✅ Step 2: Inventory all benchmark files
-- ✅ Step 3: Map benchmark usage in workflows/scripts  
+- ✅ Step 3: Map benchmark usage in workflows/scripts
 - ✅ Step 4: Document purpose and overlap
+- ✅ Step 5: Consolidation plan (this document)
 - ✅ Step 6: Deprecate `triangulation_creation.rs`
 - ✅ Step 7: Consolidate memory benchmarks
 - ✅ Step 8: Deduplicate `assign_neighbors` benchmarks
 - ✅ Step 9: Elevate `large_scale_performance.rs` for Phase 4
-- ◔ Step 10: Add Phase 4 tooling (justfile targets complete, Python scripts deferred)
-- ✅ Step 11: Update GitHub Actions workflows
-- ✅ Step 12: Final documentation updates
-- ✅ Updated `benches/README.md` with comprehensive overview
-- ✅ Quality checks passing (fmt, clippy, markdown lint, spell check)
+- ✅ Step 10: Backend comparison tooling (local + Slurm)
+- ✅ Step 12: Documentation updates
+- ✅ Step 14: Quality gates and validation
 
-**Next Steps:**
+**Next Steps (optional):**
 
-1. ☐ Design consolidation plan and get approval (step 5 - optional)
-2. ☐ Complete Python script tooling for Phase 4 (step 10 remainder - optional)
-3. ☐ Update CHANGELOG.md before next release
-4. ☐ Quality validation and sign-off (steps 14-15)
+1. ☐ Add Phase 4 smoke test job in CI for `large_scale_performance.rs` (reduced scale)
+2. ☐ Add dataset CLI/env controls (`BENCH_N`, `BENCH_DIM`, `BENCH_SEED`, distributions)
+3. ☐ Add cache locality measurement (optional)
+4. ✅ Archived under `docs/archive/phase4.md`
 
 ---
 
@@ -781,12 +690,9 @@ Once the benchmark consolidation is complete, Phase 4 will evaluate these metric
   - Complete dimensional coverage: 2D, 3D, 4D, 5D
   - All Phase 4 metrics covered: construction, memory, iteration, queries, validation
 
-- **Step 10 Justfile Targets (Partial):**
-  - Added `bench-phase4`: Run Phase 4 benchmarks (~2-3 hours)
-  - Added `bench-phase4-large`: Large scale with 4D@10K (~4-6 hours, cluster)
-  - Added `bench-phase4-quick`: Quick smoke test (~5-10 min)
-  - Updated help-workflows with Phase 4 section
-  - Python script commands deferred (require deeper integration with benchmark_utils.py)
+- **Step 10 Justfile Targets (historical):**
+  - The `bench-phase4*` targets were later removed (2025-12-13).
+  - Use `cargo bench --bench large_scale_performance` and `just compare-storage*` instead.
 
 - **Step 11 GitHub Actions Workflows:**
   - Updated profiling-benchmarks.yml: memory_scaling → profiling_suite (memory_profiling)
