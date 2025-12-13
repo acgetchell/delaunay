@@ -40,12 +40,12 @@ Project structure and module organization
 - Module responsibilities
 - Design patterns used
 
-#### **[phase4.md](./phase4.md)**
+#### **[archive/phase4.md](./archive/phase4.md)**
 
-Phase 4 benchmark consolidation plan and progress
+Phase 4 benchmark consolidation plan and progress (archived)
 
 - Benchmark suite reorganization
-- SlotMap evaluation strategy
+- Storage backend evaluation strategy
 - Migration from `triangulation_creation.rs` to `large_scale_performance.rs`
 
 ### Historical Documentation
@@ -91,7 +91,7 @@ Release process and versioning guidelines
 1. **Starting a new optimization?** → Read [OPTIMIZATION_ROADMAP.md](./OPTIMIZATION_ROADMAP.md)
 2. **Dealing with numerical issues?** → Consult [numerical_robustness_guide.md](./numerical_robustness_guide.md)
 3. **Understanding the codebase?** → Review [code_organization.md](./code_organization.md)
-4. **Working on Phase 4 benchmarks?** → See [phase4.md](./phase4.md)
+4. **Working on large-scale backend benchmarks?** → See [archive/phase4.md](./archive/phase4.md)
 5. **Writing property tests?** → Check [property_testing_summary.md](./property_testing_summary.md)
 6. **Understanding topology?** → See [topology.md](./topology.md)
 7. **Preparing a release?** → Follow [RELEASING.md](./RELEASING.md)

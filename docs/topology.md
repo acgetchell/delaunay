@@ -1867,7 +1867,8 @@ Initially implement behind feature flag:
 ```toml
 # Cargo.toml
 [features]
-default = []
+default = ["dense-slotmap"]  # Current default; topology-validation could be added later
+
 topology-validation = []  # Enable Euler characteristic validation in is_valid()
 ```
 

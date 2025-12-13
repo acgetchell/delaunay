@@ -461,8 +461,8 @@ The comparison report includes:
 
 Criterion baselines are saved as:
 
-- `slotmap`: Default SlotMap backend (in `Cargo.toml`)
-- `denseslotmap`: DenseSlotMap backend (enabled with `--features dense-slotmap`)
+- `denseslotmap`: Default DenseSlotMap backend (enabled by default)
+- `slotmap`: SlotMap backend (run with `--no-default-features`)
 
 These can be compared using `critcmp slotmap denseslotmap` or Criterion's CLI tools.
 

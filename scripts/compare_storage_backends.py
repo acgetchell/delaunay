@@ -80,7 +80,7 @@ class StorageBackendComparator:
             print(f"   Mode: {'Development (reduced scale)' if dev_mode else 'Production (full scale)'}")
             print()
 
-            # Run benchmarks with SlotMap (default)
+            # Run benchmarks with SlotMap (non-default; requires --no-default-features)
             print("📊 Running benchmarks with SlotMap backend...")
             logger.debug("Running SlotMap benchmarks with extra_args=%s", extra_args)
             slotmap_results = self._run_benchmark(benchmark_name, use_dense_slotmap=False, dev_mode=dev_mode, extra_args=extra_args)
@@ -89,7 +89,7 @@ class StorageBackendComparator:
                 print("❌ SlotMap benchmark failed", file=sys.stderr)
                 return False
 
-            # Run benchmarks with DenseSlotMap
+            # Run benchmarks with DenseSlotMap (default)
             print("\n📊 Running benchmarks with DenseSlotMap backend...")
             logger.debug("Running DenseSlotMap benchmarks with extra_args=%s", extra_args)
             denseslotmap_results = self._run_benchmark(benchmark_name, use_dense_slotmap=True, dev_mode=dev_mode, extra_args=extra_args)
@@ -138,6 +138,9 @@ class StorageBackendComparator:
 
             if use_dense_slotmap:
                 args.extend(["--features", "dense-slotmap"])
+            else:
+                # DenseSlotMap is the default backend; SlotMap requires disabling default features.
+                args.insert(1, "--no-default-features")
 
             # Add development mode arguments or extra args
             if dev_mode or extra_args:
@@ -328,7 +331,7 @@ class StorageBackendComparator:
             "",
             "## Executive Summary",
             "",
-            "This report compares the performance of SlotMap (default) vs DenseSlotMap storage backends",
+            "This report compares the performance of DenseSlotMap (default) vs SlotMap storage backends",
             "for the Delaunay triangulation data structure.",
             "",
             "### Key Metrics",
@@ -380,18 +383,18 @@ class StorageBackendComparator:
             if avg_diff < -5:
                 lines.extend(
                     [
-                        "✅ **Recommend DenseSlotMap** for this workload:",
+                        "✅ **Recommend DenseSlotMap (default)** for this workload:",
                         "- Significant iteration performance improvement",
                         "- Better cache locality for traversal patterns",
-                        "- Use `--features dense-slotmap` to enable",
+                        "- No flags needed (it is the default backend)",
                     ]
                 )
             elif avg_diff > 5:
                 lines.extend(
                     [
-                        "✅ **Recommend SlotMap (default)** for this workload:",
+                        "✅ **Recommend SlotMap** for this workload:",
                         "- Better overall performance",
-                        "- Default backend requires no feature flags",
+                        "- Use `--no-default-features` to enable SlotMap",
                     ]
                 )
             else:
@@ -416,11 +419,11 @@ class StorageBackendComparator:
                 "To reproduce these results:",
                 "",
                 "```bash",
-                "# SlotMap (default)",
+                "# DenseSlotMap (default)",
                 f"cargo bench --bench {benchmark_name}",
                 "",
-                "# DenseSlotMap",
-                f"cargo bench --bench {benchmark_name} --features dense-slotmap",
+                "# SlotMap",
+                f"cargo bench --no-default-features --bench {benchmark_name}",
                 "```",
                 "",
                 "---",

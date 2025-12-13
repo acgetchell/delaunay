@@ -62,7 +62,8 @@ The incremental cavity-based insertion algorithm:
 - Removes violating cells
 - Retriangulates from the cavity boundary
 
-However, this can produce **locally non-Delaunay edges** that satisfy the immediate insertion but violate the global Delaunay property when checked against all vertices.
+However, this can produce **locally non-Delaunay edges** that satisfy the immediate insertion
+but violate the global Delaunay property when checked against all vertices.
 
 ### 2. Global Repair Insufficient
 

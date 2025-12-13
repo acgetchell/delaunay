@@ -17,8 +17,8 @@
 #   preserves baselines, and generates comparison reports.
 #
 # WORKFLOW:
-#   Phase 1: SlotMap benchmarks → backup results → clean build
-#   Phase 2: DenseSlotMap benchmarks (--features dense-slotmap)
+#   Phase 1: SlotMap benchmarks (--no-default-features) → backup results → clean build
+#   Phase 2: DenseSlotMap benchmarks (default)
 #   Phase 3: Merge baselines, generate comparison report, create archive
 #
 # SUBMISSION MODES:
@@ -400,7 +400,7 @@ else
 	echo
 fi
 
-# Run benchmarks with SlotMap (default backend)
+# Run benchmarks with SlotMap (non-default backend)
 echo "=================================="
 echo "Phase 1: SlotMap Benchmarks"
 echo "=================================="
@@ -409,7 +409,7 @@ SLOTMAP_START=$(date +%s)
 echo "⏰ Start time: $(date)"
 echo
 
-if timeout "$PHASE_TIMEOUT" cargo bench --bench large_scale_performance -- --save-baseline slotmap; then
+if timeout "$PHASE_TIMEOUT" cargo bench --no-default-features --bench large_scale_performance -- --save-baseline slotmap; then
 	echo "✅ SlotMap benchmarks completed successfully"
 	SLOTMAP_STATUS="ok"
 else
@@ -458,7 +458,7 @@ DENSESLOTMAP_START=$(date +%s)
 echo "⏰ Start time: $(date)"
 echo
 
-if timeout "$PHASE_TIMEOUT" cargo bench --bench large_scale_performance --features dense-slotmap -- --save-baseline denseslotmap; then
+if timeout "$PHASE_TIMEOUT" cargo bench --bench large_scale_performance -- --save-baseline denseslotmap; then
 	echo "✅ DenseSlotMap benchmarks completed successfully"
 	DENSESLOTMAP_STATUS="ok"
 else

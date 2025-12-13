@@ -1,21 +1,22 @@
 //! Storage Backend Compatibility Tests
 //!
-//! This test suite verifies that both `SlotMap` (default) and `DenseSlotMap` (feature flag)
-//! storage backends work correctly with the triangulation data structure.
+//! This test suite verifies that both `DenseSlotMap` (default) and `SlotMap`
+//! (when built with `--no-default-features`) storage backends work correctly with
+//! the triangulation data structure.
 //!
 //! **NOTE**: All tests in this file are ignored by default because they are Phase 4
 //! evaluation tests (not regression tests) and take ~92 seconds to run.
 //!
 //! ## Running Tests
 //!
-//! Test with default `SlotMap` backend:
+//! Test with default `DenseSlotMap` backend:
 //! ```bash
 //! cargo test --test storage_backend_compatibility -- --ignored
 //! ```
 //!
-//! Test with `DenseSlotMap` backend:
+//! Test with `SlotMap` backend:
 //! ```bash
-//! cargo test --test storage_backend_compatibility --features dense-slotmap -- --ignored
+//! cargo test --no-default-features --test storage_backend_compatibility -- --ignored
 //! ```
 //!
 //! For faster validation in release mode:
