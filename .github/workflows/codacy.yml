@@ -42,10 +42,23 @@ jobs:
       actions: read
     name: Codacy Security Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       # Checkout the repository to the GitHub Actions runner
       - name: Checkout code
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6.0.1
+
+      - name: Set Codacy paths
+        run: |
+          set -euo pipefail
+          echo "CODACY_WORKDIR=$RUNNER_TEMP/codacy-src" >> "$GITHUB_ENV"
+          echo "CODACY_SARIF=$RUNNER_TEMP/results.sarif" >> "$GITHUB_ENV"
+
+      - name: Prepare workspace copy without .git
+        run: |
+          set -euo pipefail
+          mkdir -p "$CODACY_WORKDIR"
+          rsync -a --delete --exclude '.git' ./ "$CODACY_WORKDIR/"
 
       # Execute Codacy Analysis CLI and generate a SARIF output with
       # the security issues identified during the analysis
@@ -58,8 +71,10 @@ jobs:
           # default configurations
           project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
           verbose: true
-          output: results.sarif
+          directory: ${{ env.CODACY_WORKDIR }}
+          output: ${{ env.CODACY_SARIF }}
           format: sarif
+          skip-uncommitted-files-check: true
           # Adjust severity of non-security issues
           gh-code-scanning-compat: true
           # Force 0 exit code to allow SARIF file generation
@@ -71,24 +86,25 @@ jobs:
         run: |
           # Fail fast and surface errors clearly
           set -euo pipefail
-          if [ -f "results.sarif" ] && [ -s "results.sarif" ]; then
-            echo "results.sarif present; preselecting for upload and skipping split."
-            echo "SARIF_FILE=results.sarif" >> "$GITHUB_ENV"
+          if [ -f "$CODACY_SARIF" ] && [ -s "$CODACY_SARIF" ]; then
+            echo "$CODACY_SARIF present; preselecting for upload and skipping split."
+            echo "SARIF_FILE=$CODACY_SARIF" >> "$GITHUB_ENV"
             exit 0
           else
-            echo "No SARIF file found or file is empty"
+            echo "No SARIF file found or file is empty: $CODACY_SARIF"
             echo "Creating empty SARIF file to prevent workflow failure"
             # Create empty SARIF file with proper schema
             schema_url="https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json"
+            empty_sarif="$RUNNER_TEMP/sarif_empty.sarif"
             {
               echo '{'
               echo "  \"\$schema\": \"$schema_url\","
               echo '  "version": "2.1.0",'
               echo '  "runs": []'
               echo '}'
-            } > sarif_empty.sarif
+            } > "$empty_sarif"
             # Mark the empty SARIF for upload
-            echo "SARIF_FILE=sarif_empty.sarif" >> "$GITHUB_ENV"
+            echo "SARIF_FILE=$empty_sarif" >> "$GITHUB_ENV"
             exit 0
           fi
 
@@ -101,10 +117,10 @@ jobs:
             echo "Preselected SARIF_FILE=$SARIF_FILE; not overriding."
             exit 0
           fi
-          # First, try to upload the original results.sarif if it exists
-          if [ -f "results.sarif" ] && [ -s "results.sarif" ]; then
-            echo "Found results.sarif, attempting upload..."
-            echo "SARIF_FILE=results.sarif" >> "$GITHUB_ENV"
+          # First, try to upload the original SARIF file if it exists
+          if [ -f "$CODACY_SARIF" ] && [ -s "$CODACY_SARIF" ]; then
+            echo "Found $CODACY_SARIF, attempting upload..."
+            echo "SARIF_FILE=$CODACY_SARIF" >> "$GITHUB_ENV"
           else
             echo "No valid SARIF files found"
             echo "SARIF_FILE=" >> "$GITHUB_ENV"
