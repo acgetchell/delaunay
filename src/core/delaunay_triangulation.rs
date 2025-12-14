@@ -808,7 +808,7 @@ where
     ///     .insert_with_statistics(vertex!([0.0, 0.0, 0.0]))
     ///     .unwrap();
     ///
-    /// assert!(stats.success);
+    /// assert!(stats.success());
     /// assert!(matches!(outcome, InsertionOutcome::Inserted { .. }));
     /// ```
     pub fn insert_with_statistics(

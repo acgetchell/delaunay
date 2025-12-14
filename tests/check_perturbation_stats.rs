@@ -28,7 +28,7 @@ fn check_perturbation_effectiveness() {
                 total_attempts += stats.attempts;
                 if stats.attempts == 1 {
                     first_try_success += 1;
-                } else if stats.used_perturbation {
+                } else if stats.used_perturbation() {
                     perturbation_success += 1;
                     println!(
                         "SUCCESS after {} attempts with perturbation",
@@ -37,7 +37,7 @@ fn check_perturbation_effectiveness() {
                 }
             }
             Ok((InsertionOutcome::Skipped { error }, stats)) => {
-                debug_assert!(stats.skipped);
+                debug_assert!(stats.skipped());
                 skipped += 1;
                 println!("SKIPPED: {error:?}");
             }

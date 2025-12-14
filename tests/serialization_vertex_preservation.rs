@@ -31,9 +31,9 @@ fn test_vertex_preservation_with_duplicates_3d() {
     println!("Input vertices: {}", vertices.len());
     println!("Unique input coordinates: {}", input_coords.len());
 
-    // Construct triangulation
+    // Construct triangulation - duplicates should be skipped
     let dt =
-        DelaunayTriangulation::<_, (), (), 3>::new(&vertices).expect("Tds construction failed");
+        DelaunayTriangulation::<_, (), (), 3>::new(&vertices).expect("Tds construction succeeded");
     let tds = dt.tds();
 
     let tds_vertex_count = tds.vertices().count();
@@ -43,6 +43,9 @@ fn test_vertex_preservation_with_duplicates_3d() {
         "Unique coordinates after Tds construction: {}",
         tds_coords.len()
     );
+
+    // Verify duplicate was skipped (4 unique vertices expected)
+    assert_eq!(tds_vertex_count, 4, "Duplicate should have been skipped");
 
     // Serialize
     let json = serde_json::to_string(&tds).expect("Serialization failed");
@@ -55,31 +58,6 @@ fn test_vertex_preservation_with_duplicates_3d() {
     let deser_vertex_count = deserialized.vertices().count();
     let deser_coords = extract_vertex_coordinate_set(&deserialized);
     println!("Vertices after deserialization: {deser_vertex_count}");
-    println!(
-        "Unique coordinates after deserialization: {}",
-        deser_coords.len()
-    );
-
-    // Analysis
-    let vertices_len = vertices.len();
-    let input_coords_len = input_coords.len();
-    println!("\n=== Analysis ===");
-    println!("Input vertices: {vertices_len}");
-    println!("Unique input coords: {input_coords_len}");
-    println!("After Tds construction: {tds_vertex_count}");
-    println!("After serialization roundtrip: {deser_vertex_count}");
-
-    // Check if vertex loss happens during construction or serialization
-    if tds_vertex_count < vertices_len {
-        println!("\n⚠️  Vertices lost during Tds construction (likely duplicate merging)");
-        println!("   Input: {vertices_len} -> After construction: {tds_vertex_count}");
-    }
-
-    if deser_vertex_count < tds_vertex_count {
-        println!("\n🚨 CRITICAL: Vertices lost during serialization/deserialization!");
-        println!("   Before: {tds_vertex_count} -> After: {deser_vertex_count}");
-        panic!("Serialization lost vertices: {tds_vertex_count} -> {deser_vertex_count}");
-    }
 
     // Verify coordinate preservation using Jaccard similarity (≥ 0.99 threshold)
     // This accounts for potential floating-point precision differences in JSON serialization
@@ -90,7 +68,9 @@ fn test_vertex_preservation_with_duplicates_3d() {
         "Vertex coordinate preservation via serialization (3D with duplicates)"
     );
 
-    println!("\n✅ Serialization preserved all vertices from constructed Tds (Jaccard ≥ 0.99)");
+    println!(
+        "\n✅ Duplicate skipped, serialization preserved all unique vertices (Jaccard ≥ 0.99)"
+    );
 }
 
 /// Test vertex preservation without duplicates (baseline)
@@ -161,11 +141,15 @@ fn test_vertex_preservation_many_duplicates_3d() {
     let unique_coords_len = unique_coords.len();
     println!("Unique coordinates: {unique_coords_len}");
 
+    // Duplicates should be skipped
     let dt =
-        DelaunayTriangulation::<_, (), (), 3>::new(&vertices).expect("Tds construction failed");
+        DelaunayTriangulation::<_, (), (), 3>::new(&vertices).expect("Tds construction succeeded");
     let tds = dt.tds();
     let tds_vertex_count = tds.vertices().count();
     println!("Vertices after Tds construction: {tds_vertex_count}");
+
+    // Verify duplicates were skipped (5 unique vertices expected)
+    assert_eq!(tds_vertex_count, 5, "Duplicates should have been skipped");
 
     // Extract vertex coordinate sets for Jaccard comparison
     let before_coords = extract_vertex_coordinate_set(tds);
@@ -186,9 +170,7 @@ fn test_vertex_preservation_many_duplicates_3d() {
         "Vertex coordinate preservation via serialization (3D with many duplicates)"
     );
 
-    println!(
-        "✅ Serialization preserved vertices (duplicates merged during construction as expected, Jaccard ≥ 0.99)"
-    );
+    println!("✅ Duplicates skipped, serialization preserved all unique vertices (Jaccard ≥ 0.99)");
 }
 
 /// Test to verify exact vertex coordinate preservation (not just count)

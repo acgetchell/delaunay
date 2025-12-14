@@ -36,19 +36,56 @@ use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use std::hash::{Hash, Hasher};
 
+/// Result of an insertion attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InsertionResult {
+    /// The vertex was successfully inserted.
+    #[default]
+    Inserted,
+    /// The vertex was skipped due to duplicate coordinates.
+    SkippedDuplicate,
+    /// The vertex was skipped due to geometric degeneracy after retries.
+    SkippedDegeneracy,
+}
+
 /// Statistics about a vertex insertion operation.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct InsertionStatistics {
     /// Number of insertion attempts (1 = success on first try, >1 = needed perturbation)
     pub attempts: usize,
-    /// Whether perturbation was applied
-    pub used_perturbation: bool,
-    /// Whether the vertex was skipped due to geometric degeneracy
-    pub skipped: bool,
     /// Number of cells removed during repair
     pub cells_removed_during_repair: usize,
-    /// Whether the insertion succeeded
-    pub success: bool,
+    /// Result of the insertion attempt
+    pub result: InsertionResult,
+}
+
+impl InsertionStatistics {
+    /// Returns true if perturbation was applied (attempts > 1).
+    #[must_use]
+    pub const fn used_perturbation(&self) -> bool {
+        self.attempts > 1
+    }
+
+    /// Returns true if the insertion succeeded.
+    #[must_use]
+    pub const fn success(&self) -> bool {
+        matches!(self.result, InsertionResult::Inserted)
+    }
+
+    /// Returns true if the vertex was skipped (any reason).
+    #[must_use]
+    pub const fn skipped(&self) -> bool {
+        matches!(
+            self.result,
+            InsertionResult::SkippedDuplicate | InsertionResult::SkippedDegeneracy
+        )
+    }
+
+    /// Returns true if the vertex was skipped due to duplicate coordinates.
+    #[must_use]
+    pub const fn skipped_duplicate(&self) -> bool {
+        matches!(self.result, InsertionResult::SkippedDuplicate)
+    }
 }
 
 /// Outcome of a single-vertex insertion attempt.
@@ -59,7 +96,7 @@ pub struct InsertionStatistics {
 ///   manifold triangulation (`Skipped`)
 ///
 /// Non-retryable failures are returned as `Err(InsertionError)` instead.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum InsertionOutcome {
     /// The vertex was inserted successfully.
     Inserted {
@@ -78,7 +115,7 @@ pub enum InsertionOutcome {
 }
 
 /// Error during incremental insertion.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum InsertionError {
     /// Conflict region finding failed
     #[error("Conflict region error: {0}")]
