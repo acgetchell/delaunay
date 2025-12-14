@@ -51,6 +51,32 @@ pub struct InsertionStatistics {
     pub success: bool,
 }
 
+/// Outcome of a single-vertex insertion attempt.
+///
+/// This distinguishes between:
+/// - A successful insertion (`Inserted`)
+/// - A recoverable failure where the vertex was intentionally skipped to preserve a valid
+///   manifold triangulation (`Skipped`)
+///
+/// Non-retryable failures are returned as `Err(InsertionError)` instead.
+#[derive(Debug)]
+pub enum InsertionOutcome {
+    /// The vertex was inserted successfully.
+    Inserted {
+        /// Key of the inserted vertex.
+        vertex_key: VertexKey,
+        /// Optional cell key that can be used as a hint for subsequent insertions.
+        hint: Option<CellKey>,
+    },
+    /// The vertex could not be inserted after all retry attempts and was skipped.
+    ///
+    /// The triangulation is left unchanged for this vertex (transactional rollback).
+    Skipped {
+        /// The last retryable error encountered.
+        error: InsertionError,
+    },
+}
+
 /// Error during incremental insertion.
 #[derive(Debug, thiserror::Error)]
 pub enum InsertionError {

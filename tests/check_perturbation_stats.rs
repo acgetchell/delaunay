@@ -24,7 +24,7 @@ fn check_perturbation_effectiveness() {
             .triangulation_mut()
             .insert_with_statistics(vertex, None, None)
         {
-            Ok(((_vkey, _hint), stats)) => {
+            Ok((InsertionOutcome::Inserted { .. }, stats)) => {
                 total_attempts += stats.attempts;
                 if stats.attempts == 1 {
                     first_try_success += 1;
@@ -36,9 +36,14 @@ fn check_perturbation_effectiveness() {
                     );
                 }
             }
+            Ok((InsertionOutcome::Skipped { error }, stats)) => {
+                debug_assert!(stats.skipped);
+                skipped += 1;
+                println!("SKIPPED: {error:?}");
+            }
             Err(e) => {
                 skipped += 1;
-                println!("SKIPPED: {e:?}");
+                println!("ERROR (non-retryable): {e:?}");
             }
         }
     }

@@ -83,7 +83,7 @@ use num_traits::NumCast;
 use uuid::Uuid;
 
 use crate::core::algorithms::incremental_insertion::{
-    InsertionError, InsertionStatistics, repair_neighbor_pointers,
+    InsertionError, InsertionOutcome, InsertionStatistics, repair_neighbor_pointers,
 };
 use crate::core::cell::Cell;
 use crate::core::collections::{
@@ -753,8 +753,11 @@ where
     {
         // Use transactional insertion with perturbation retry, discard stats
         // 5 retry attempts: 1e-4, 1e-3, 1e-2, 2e-2, 5e-2 (up to 5% perturbation)
-        let ((vkey, hint), _stats) = self.insert_transactional(vertex, conflict_cells, hint, 5)?;
-        Ok((vkey, hint))
+        let (outcome, _stats) = self.insert_transactional(vertex, conflict_cells, hint, 5)?;
+        match outcome {
+            InsertionOutcome::Inserted { vertex_key, hint } => Ok((vertex_key, hint)),
+            InsertionOutcome::Skipped { error } => Err(error),
+        }
     }
 
     /// Insert a vertex and return statistics about the operation.
@@ -769,21 +772,49 @@ where
     ///
     /// # Examples
     ///
-    /// ```ignore
-    /// let (vkey, stats) = dt.insert_with_statistics(vertex, None, None)?;
-    /// println!("Inserted with {} attempts, {} cells repaired",
-    ///          stats.attempts, stats.cells_removed_during_repair);
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// // Create an empty 3D triangulation.
+    /// let mut tri: Triangulation<FastKernel<f64>, (), (), 3> =
+    ///     Triangulation::new_empty(FastKernel::new());
+    ///
+    /// // Insert a vertex and inspect the outcome + statistics.
+    /// let (outcome, stats) = tri
+    ///     .insert_with_statistics(vertex!([0.0, 0.0, 0.0]), None, None)
+    ///     .unwrap();
+    ///
+    /// assert!(stats.success);
+    /// assert!(!stats.skipped);
+    /// assert!(matches!(outcome, InsertionOutcome::Inserted { hint: None, .. }));
+    ///
+    /// // Insert enough vertices to trigger initial simplex creation (D+1 vertices).
+    /// tri.insert_with_statistics(vertex!([1.0, 0.0, 0.0]), None, None)
+    ///     .unwrap();
+    /// tri.insert_with_statistics(vertex!([0.0, 1.0, 0.0]), None, None)
+    ///     .unwrap();
+    ///
+    /// let (outcome, _stats) = tri
+    ///     .insert_with_statistics(vertex!([0.0, 0.0, 1.0]), None, None)
+    ///     .unwrap();
+    ///
+    /// match outcome {
+    ///     InsertionOutcome::Inserted { hint, .. } => assert!(hint.is_some()),
+    ///     InsertionOutcome::Skipped { .. } => panic!("unexpected skip"),
+    /// }
     /// ```
     ///
     /// # Errors
     ///
-    /// Returns an error if insertion fails after all retry attempts.
+    /// Returns an error only for non-retryable structural failures (e.g. duplicate UUID).
+    /// Retryable geometric degeneracies that exhaust all attempts return
+    /// `Ok((InsertionOutcome::Skipped { .. }, stats))`.
     pub fn insert_with_statistics(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
         conflict_cells: Option<&CellKeyBuffer>,
         hint: Option<CellKey>,
-    ) -> Result<((VertexKey, Option<CellKey>), InsertionStatistics), InsertionError>
+    ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError>
     where
         K::Scalar: CoordinateScalar,
     {
@@ -807,7 +838,7 @@ where
         conflict_cells: Option<&CellKeyBuffer>,
         hint: Option<CellKey>,
         max_perturbation_attempts: usize,
-    ) -> Result<((VertexKey, Option<CellKey>), InsertionStatistics), InsertionError>
+    ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError>
     where
         K::Scalar: CoordinateScalar,
     {
@@ -888,7 +919,9 @@ where
                             "Warning: Geometric degeneracy resolved via perturbation (attempt {attempt})"
                         );
                     }
-                    return Ok((result, stats));
+
+                    let (vertex_key, hint) = result;
+                    return Ok((InsertionOutcome::Inserted { vertex_key, hint }, stats));
                 }
                 Err(e) => {
                     // Any error - rollback to snapshot
@@ -919,8 +952,9 @@ where
                                 _ => 10.0,
                             }
                         );
-                        return Err(e);
+                        return Ok((InsertionOutcome::Skipped { error: e }, stats));
                     } else {
+                        // Non-retryable structural error
                         return Err(e);
                     }
                 }

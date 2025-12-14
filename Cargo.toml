@@ -2,7 +2,7 @@
 name = "delaunay"
 version = "0.6.0"
 edition = "2024"
-rust-version = "1.91.0"
+rust-version = "1.92.0"
 authors = ["Adam Getchell <adam@adamgetchell.org>"]
 homepage = "https://github.com/acgetchell/delaunay"
 documentation = "https://docs.rs/delaunay"

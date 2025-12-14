@@ -573,7 +573,9 @@ pub mod prelude {
     pub use crate::core::algorithms::locate::{LocateError, LocateResult, locate};
 
     // Re-export incremental insertion types from core::algorithms
-    pub use crate::core::algorithms::incremental_insertion::{InsertionError, InsertionStatistics};
+    pub use crate::core::algorithms::incremental_insertion::{
+        InsertionError, InsertionOutcome, InsertionStatistics,
+    };
 
     // Re-export commonly used collection types from core::collections
     // These are frequently used in advanced examples and downstream code
