@@ -828,9 +828,12 @@ where
     ///
     /// This ensures the triangulation always remains in a valid state by:
     /// 1. Cloning TDS before each insertion attempt (snapshot)
-    /// 2. Attempting insertion  
-    /// 3. On failure: restore TDS from snapshot, perturb vertex, retry
-    /// 4. If all attempts fail: restore TDS and return error
+    /// 2. Attempting insertion
+    /// 3. On failure: restore TDS from snapshot
+    /// 4. If the error is retryable: perturb vertex and retry (up to `max_perturbation_attempts`)
+    /// 5. If retryable attempts are exhausted, or the vertex is a duplicate: return
+    ///    `Ok((InsertionOutcome::Skipped { error }, stats))`
+    /// 6. If the error is non-retryable: return `Err(InsertionError)`
     ///
     /// This guarantees we transition from one valid manifold to another.
     #[allow(clippy::too_many_lines)]
