@@ -260,8 +260,9 @@ where
         };
 
         // Insert remaining vertices incrementally.
-        // Retryable geometric degeneracies are skipped (transactional rollback) to keep
-        // the triangulation manifold.
+        // Retryable geometric degeneracies are retried with perturbation and ultimately skipped
+        // (transactional rollback) to keep the triangulation manifold. Duplicate/near-duplicate
+        // coordinates are skipped immediately.
         for vertex in vertices.iter().skip(D + 1) {
             match dt
                 .tri
@@ -278,7 +279,8 @@ where
                     dt.last_inserted_cell = hint;
                 }
                 Ok((InsertionOutcome::Skipped { error }, stats)) => {
-                    // Keep going: this vertex was unsalvageable even after perturbation.
+                    // Keep going: this vertex was intentionally skipped (e.g. duplicate/near-duplicate
+                    // coordinates, or an unsalvageable geometric degeneracy after retries).
                     #[cfg(debug_assertions)]
                     eprintln!(
                         "SKIPPED: vertex insertion after {} attempts during construction: {error}",
@@ -290,8 +292,21 @@ where
                     }
                 }
                 Err(e) => {
-                    // Non-retryable structural error: abort construction.
+                    // Non-retryable failure: abort construction with a structured error.
                     return Err(match e {
+                        // Preserve underlying construction errors (e.g. duplicate UUID).
+                        InsertionError::Construction(source) => source,
+                        InsertionError::CavityFilling { message } => {
+                            TriangulationConstructionError::FailedToCreateCell { message }
+                        }
+                        InsertionError::NeighborWiring { message } => {
+                            TriangulationConstructionError::ValidationError(
+                                TriangulationValidationError::InvalidNeighbors { message },
+                            )
+                        }
+                        InsertionError::TopologyValidation(source) => {
+                            TriangulationConstructionError::ValidationError(source)
+                        }
                         InsertionError::DuplicateUuid { entity, uuid } => {
                             TriangulationConstructionError::DuplicateUuid { entity, uuid }
                         }

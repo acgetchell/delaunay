@@ -92,10 +92,13 @@ impl InsertionStatistics {
 ///
 /// This distinguishes between:
 /// - A successful insertion (`Inserted`)
-/// - A recoverable failure where the vertex was intentionally skipped to preserve a valid
-///   manifold triangulation (`Skipped`)
+/// - An intentionally skipped insertion (`Skipped`) where the triangulation is left unchanged
+///   for this vertex (transactional rollback). This can happen for example when:
+///   - The input vertex is a duplicate/near-duplicate (skipped immediately)
+///   - A retryable geometric degeneracy exhausts all perturbation attempts
 ///
-/// Non-retryable failures are returned as `Err(InsertionError)` instead.
+/// Other non-recoverable structural failures are returned as `Err(InsertionError)` instead
+/// (e.g. duplicate UUID).
 #[derive(Debug, Clone)]
 pub enum InsertionOutcome {
     /// The vertex was inserted successfully.
@@ -105,11 +108,17 @@ pub enum InsertionOutcome {
         /// Optional cell key that can be used as a hint for subsequent insertions.
         hint: Option<CellKey>,
     },
-    /// The vertex could not be inserted after all retry attempts and was skipped.
+    /// The vertex was intentionally not inserted.
+    ///
+    /// This covers both immediate skips (e.g. duplicate/near-duplicate coordinates) and skips
+    /// after exhausting retry attempts for geometric degeneracies.
     ///
     /// The triangulation is left unchanged for this vertex (transactional rollback).
     Skipped {
-        /// The last retryable error encountered.
+        /// The reason the vertex was skipped.
+        ///
+        /// This may be non-retryable (e.g. [`InsertionError::DuplicateCoordinates`]) or, for
+        /// retry-based skips, the last error encountered.
         error: InsertionError,
     },
 }

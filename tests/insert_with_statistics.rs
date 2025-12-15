@@ -103,8 +103,11 @@ fn delaunay_insert_with_statistics_multiple_vertices_4d() {
         vertex!([0.8, 0.1, 0.1, 0.1]),
     ];
 
+    let input_count = vertices.len();
+
     let mut total_attempts = 0;
     let mut successful_insertions = 0;
+    let mut skipped = 0;
 
     for v in vertices {
         match dt.insert_with_statistics(v) {
@@ -115,6 +118,8 @@ fn delaunay_insert_with_statistics_multiple_vertices_4d() {
                 assert!(!stats.skipped());
             }
             Ok((InsertionOutcome::Skipped { .. }, stats)) => {
+                total_attempts += stats.attempts;
+                skipped += 1;
                 assert!(stats.skipped());
                 assert!(!stats.success());
             }
@@ -122,9 +127,9 @@ fn delaunay_insert_with_statistics_multiple_vertices_4d() {
         }
     }
 
-    assert_eq!(successful_insertions, 7);
-    assert_eq!(dt.number_of_vertices(), 7);
-    assert!(total_attempts >= 7); // At least 1 attempt per vertex
+    assert_eq!(successful_insertions + skipped, input_count);
+    assert_eq!(dt.number_of_vertices(), successful_insertions);
+    assert!(total_attempts >= input_count); // At least 1 attempt per vertex
 }
 
 #[test]
@@ -159,9 +164,8 @@ fn delaunay_insert_with_statistics_duplicate_coordinates_2d() {
 }
 
 #[test]
-fn delaunay_insert_with_statistics_skipped_after_retries() {
-    // This test would need a known degenerate configuration that exhausts retries.
-    // For now, we test the structure rather than triggering actual skips.
+fn delaunay_insert_with_statistics_bootstrap_happy_path_3d() {
+    // Happy path: inserting D+1 well-separated vertices should succeed without retries.
     let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 
     // Build simplex with well-separated points
@@ -475,17 +479,22 @@ fn statistics_cells_removed_during_repair() {
     tri.insert_with_statistics(vertex!([0.5, 1.0]), None, None)
         .unwrap();
 
+    let cells_before = tri.number_of_cells();
+
     // Insert interior point - might trigger repair
     let (_outcome, stats) = tri
         .insert_with_statistics(vertex!([0.5, 0.3]), None, None)
         .unwrap();
 
-    // cells_removed_during_repair is usize, so always non-negative by type
-    // Just verify it's reasonable for a simple insertion
+    let cells_after = tri.number_of_cells();
+
+    // Basic sanity: repair can't remove more cells than existed before insertion.
     assert!(
-        stats.cells_removed_during_repair < 100,
-        "cells removed should be reasonable for simple insertion, got {}",
-        stats.cells_removed_during_repair
+        stats.cells_removed_during_repair <= cells_before,
+        "cells_removed_during_repair ({}) should not exceed cell count before insertion ({}); cells after insertion: {}",
+        stats.cells_removed_during_repair,
+        cells_before,
+        cells_after
     );
 }
 

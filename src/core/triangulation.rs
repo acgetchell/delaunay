@@ -915,6 +915,7 @@ where
                 Ok((result, cells_removed)) => {
                     stats.cells_removed_during_repair = cells_removed;
                     stats.result = InsertionResult::Inserted;
+                    #[cfg(debug_assertions)]
                     if attempt > 0 {
                         eprintln!(
                             "Warning: Geometric degeneracy resolved via perturbation (attempt {attempt})"
@@ -1007,9 +1008,14 @@ where
         let point = *vertex.point();
 
         // Check for duplicate coordinates (tolerance: 1e-10)
-        // This prevents inserting vertices with same/very similar coordinates
+        // This prevents inserting vertices with same/very similar coordinates.
+        // NOTE: This is an O(n·D) scan per insertion. If this becomes a hotspot,
+        // consider maintaining a keyed/quantized coordinate index per kernel/dimension.
+        let duplicate_tolerance: K::Scalar =
+            <K::Scalar as NumCast>::from(1e-10_f64).unwrap_or_else(K::Scalar::default_tolerance);
+        let duplicate_tolerance_sq = duplicate_tolerance * duplicate_tolerance;
+
         for (_, existing_vertex) in self.tds.vertices() {
-            const DUPLICATE_TOLERANCE: f64 = 1e-10;
             let existing_point = existing_vertex.point();
             let existing_coords: &[K::Scalar] = existing_point.coords();
             let new_coords: &[K::Scalar] = point.coords();
@@ -1021,14 +1027,11 @@ where
                 dist_sq += diff * diff;
             }
 
-            // Convert to f64 for comparison with tolerance
-            let dist_sq_f64 = safe_scalar_to_f64(dist_sq).unwrap_or(f64::INFINITY);
-
-            if dist_sq_f64 < DUPLICATE_TOLERANCE * DUPLICATE_TOLERANCE {
+            if dist_sq < duplicate_tolerance_sq {
                 // Format coordinates for error message
                 let coord_str = new_coords
                     .iter()
-                    .map(|c| format!("{}", safe_scalar_to_f64(*c).unwrap_or(f64::NAN)))
+                    .map(|c| format!("{c:?}"))
                     .collect::<Vec<_>>()
                     .join(", ");
 

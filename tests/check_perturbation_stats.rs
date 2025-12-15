@@ -15,6 +15,7 @@ fn check_perturbation_effectiveness() {
     let mut first_try_success = 0usize;
     let mut perturbation_success = 0usize;
     let mut skipped = 0usize;
+    let mut errored = 0usize;
 
     for point in points {
         let vertex = VertexBuilder::default().point(point).build().unwrap();
@@ -42,7 +43,7 @@ fn check_perturbation_effectiveness() {
                 println!("SKIPPED: {error:?}");
             }
             Err(e) => {
-                skipped += 1;
+                errored += 1;
                 println!("ERROR (non-retryable): {e:?}");
             }
         }
@@ -52,6 +53,7 @@ fn check_perturbation_effectiveness() {
     println!("First try success:     {first_try_success}");
     println!("Perturbation success:  {perturbation_success}");
     println!("Skipped after retries: {skipped}");
+    println!("Non-retryable errors:  {errored}");
     println!("Total attempts:        {total_attempts}");
 
     let successful = first_try_success + perturbation_success;

@@ -44,8 +44,12 @@ fn test_vertex_preservation_with_duplicates_3d() {
         tds_coords.len()
     );
 
-    // Verify duplicate was skipped (4 unique vertices expected)
-    assert_eq!(tds_vertex_count, 4, "Duplicate should have been skipped");
+    // Verify duplicates were skipped (should match unique coordinate count)
+    assert_eq!(
+        tds_vertex_count,
+        input_coords.len(),
+        "Vertex count after construction should equal unique input coordinates"
+    );
 
     // Serialize
     let json = serde_json::to_string(&tds).expect("Serialization failed");
@@ -148,8 +152,11 @@ fn test_vertex_preservation_many_duplicates_3d() {
     let tds_vertex_count = tds.vertices().count();
     println!("Vertices after Tds construction: {tds_vertex_count}");
 
-    // Verify duplicates were skipped (5 unique vertices expected)
-    assert_eq!(tds_vertex_count, 5, "Duplicates should have been skipped");
+    // Verify duplicates were skipped (should match unique coordinate count)
+    assert_eq!(
+        tds_vertex_count, unique_coords_len,
+        "Vertex count after construction should equal unique input coordinates"
+    );
 
     // Extract vertex coordinate sets for Jaccard comparison
     let before_coords = extract_vertex_coordinate_set(tds);
