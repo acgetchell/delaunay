@@ -1164,8 +1164,8 @@ where
     /// topology assignment, use `insert_vertex_with_topology_assignment()` instead.
     ///
     /// **Note:** This method does NOT check for duplicate coordinates. It only checks
-    /// for UUID uniqueness. For public API use where coordinate uniqueness is required,
-    /// prefer using the `add()` method instead, which enforces coordinate-uniqueness.
+    /// for UUID uniqueness. Duplicate coordinate checking is performed at a higher layer
+    /// in `Triangulation::try_insert_impl()` before calling this method.
     ///
     /// # Arguments
     ///
@@ -3498,15 +3498,10 @@ mod tests {
             let vertex = vertex!([1.0, 2.0, 3.0]);
             dt.insert(vertex).unwrap();
 
-            let result = dt.insert(vertex); // Same vertex again (same UUID)
+            let result = dt.insert(vertex); // Same vertex again (same coordinates AND UUID)
             assert!(
-                matches!(
-                    result,
-                    Err(InsertionError::Construction(
-                        TriangulationConstructionError::DuplicateUuid { .. }
-                    ))
-                ),
-                "Adding same vertex object should fail with DuplicateUuid, got: {result:?}"
+                matches!(result, Err(InsertionError::DuplicateCoordinates { .. })),
+                "Adding same vertex object should fail with DuplicateCoordinates (checked before UUID), got: {result:?}"
             );
         }
 

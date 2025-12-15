@@ -178,17 +178,28 @@ The `insert_transactional` method provides automatic retry logic:
 
 ```rust
 use delaunay::core::triangulation::Triangulation;
+use delaunay::core::algorithms::incremental_insertion::InsertionOutcome;
 use delaunay::vertex;
 
 // Transactional insertion with automatic rollback and retry
 let vertex = vertex!([0.5, 0.5, 0.5]);
-let ((vkey, cell_hint), stats) = triangulation.insert_with_statistics(vertex, None, None)?;
+let (outcome, stats) = triangulation.insert_with_statistics(vertex, None, None)?;
 
 println!("Insertion statistics:");
 println!("  Attempts: {}", stats.attempts);
 println!("  Used perturbation: {}", stats.used_perturbation);
 println!("  Cells repaired: {}", stats.cells_removed_during_repair);
 println!("  Success: {}", stats.success);
+println!("  Skipped: {}", stats.skipped);
+
+match outcome {
+    InsertionOutcome::Inserted { vertex_key, hint } => {
+        println!("Inserted vertex {vertex_key:?}, hint={hint:?}");
+    }
+    InsertionOutcome::Skipped { error } => {
+        eprintln!("Vertex skipped: {error}");
+    }
+}
 ```
 
 ### Progressive Perturbation Schedule

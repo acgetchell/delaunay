@@ -379,7 +379,7 @@ tail -f slurm-<job-id>-storage-comparison.out
 **Prerequisites**:
 
 - Slurm workload manager
-- Rust toolchain (rustup) - loads `rust/1.91.0` module if available
+- Rust toolchain (rustup) - loads `rust/1.92.0` module if available
 - uv package manager
 - GNU coreutils (`timeout` command)
 - critcmp (optional but recommended): `cargo install critcmp`

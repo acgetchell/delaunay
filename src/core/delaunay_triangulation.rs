@@ -9,7 +9,9 @@ use std::num::NonZeroUsize;
 
 use num_traits::NumCast;
 
-use crate::core::algorithms::incremental_insertion::InsertionError;
+use crate::core::algorithms::incremental_insertion::{
+    InsertionError, InsertionOutcome, InsertionStatistics,
+};
 use crate::core::cell::Cell;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::traits::data_type::DataType;
@@ -257,13 +259,66 @@ where
             last_inserted_cell: None,
         };
 
-        // Insert remaining vertices incrementally
-        // Note: Vertices causing geometric degeneracies are automatically skipped
+        // Insert remaining vertices incrementally.
+        // Retryable geometric degeneracies are retried with perturbation and ultimately skipped
+        // (transactional rollback) to keep the triangulation manifold. Duplicate/near-duplicate
+        // coordinates are skipped immediately.
         for vertex in vertices.iter().skip(D + 1) {
-            // Skip vertices that fail insertion due to geometric degeneracy
-            // The triangulation remains valid (manifold) by skipping problematic vertices
-            let _ = dt.insert(*vertex);
-            // Errors are logged by insert_transactional(), triangulation stays valid
+            match dt
+                .tri
+                .insert_with_statistics(*vertex, None, dt.last_inserted_cell)
+            {
+                Ok((
+                    InsertionOutcome::Inserted {
+                        vertex_key: _v_key,
+                        hint,
+                    },
+                    _stats,
+                )) => {
+                    // Cache hint for faster subsequent insertions.
+                    dt.last_inserted_cell = hint;
+                }
+                Ok((InsertionOutcome::Skipped { error }, stats)) => {
+                    // Keep going: this vertex was intentionally skipped (e.g. duplicate/near-duplicate
+                    // coordinates, or an unsalvageable geometric degeneracy after retries).
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "SKIPPED: vertex insertion after {} attempts during construction: {error}",
+                        stats.attempts
+                    );
+                    #[cfg(not(debug_assertions))]
+                    {
+                        let _ = (error, stats);
+                    }
+                }
+                Err(e) => {
+                    // Non-retryable failure: abort construction with a structured error.
+                    return Err(match e {
+                        // Preserve underlying construction errors (e.g. duplicate UUID).
+                        InsertionError::Construction(source) => source,
+                        InsertionError::CavityFilling { message } => {
+                            TriangulationConstructionError::FailedToCreateCell { message }
+                        }
+                        InsertionError::NeighborWiring { message } => {
+                            TriangulationConstructionError::ValidationError(
+                                TriangulationValidationError::InvalidNeighbors { message },
+                            )
+                        }
+                        InsertionError::TopologyValidation(source) => {
+                            TriangulationConstructionError::ValidationError(source)
+                        }
+                        InsertionError::DuplicateUuid { entity, uuid } => {
+                            TriangulationConstructionError::DuplicateUuid { entity, uuid }
+                        }
+                        InsertionError::DuplicateCoordinates { coordinates } => {
+                            TriangulationConstructionError::DuplicateCoordinates { coordinates }
+                        }
+                        other => TriangulationConstructionError::GeometricDegeneracy {
+                            message: other.to_string(),
+                        },
+                    });
+                }
+            }
         }
 
         Ok(dt)
@@ -744,6 +799,49 @@ where
         let (v_key, hint) = self.tri.insert(vertex, None, self.last_inserted_cell)?;
         self.last_inserted_cell = hint;
         Ok(v_key)
+    }
+
+    /// Insert a vertex and return the insertion outcome plus statistics.
+    ///
+    /// This is a convenience wrapper around [`Triangulation::insert_with_statistics`] that also
+    /// updates the internal `last_inserted_cell` hint cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(InsertionError)` only for non-retryable structural failures.
+    /// Retryable geometric degeneracies that exhaust all attempts return
+    /// `Ok((InsertionOutcome::Skipped { .. }, stats))`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    ///
+    /// let (outcome, stats) = dt
+    ///     .insert_with_statistics(vertex!([0.0, 0.0, 0.0]))
+    ///     .unwrap();
+    ///
+    /// assert!(stats.success());
+    /// assert!(matches!(outcome, InsertionOutcome::Inserted { .. }));
+    /// ```
+    pub fn insert_with_statistics(
+        &mut self,
+        vertex: Vertex<K::Scalar, U, D>,
+    ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        let (outcome, stats) =
+            self.tri
+                .insert_with_statistics(vertex, None, self.last_inserted_cell)?;
+
+        if let InsertionOutcome::Inserted { hint, .. } = &outcome {
+            self.last_inserted_cell = *hint;
+        }
+
+        Ok((outcome, stats))
     }
 
     /// Removes a vertex and retriangulates the resulting cavity using fan triangulation.

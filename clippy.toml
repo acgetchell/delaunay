@@ -2,7 +2,7 @@
 # This ensures consistent configuration across all developers and IDEs
 
 # Minimum Supported Rust Version - matches WARP.md and Cargo.toml
-msrv = "1.91.0"
+msrv = "1.92.0"
 
 # Note: Lint levels are controlled via command-line flags in WARP.md:
 # cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo

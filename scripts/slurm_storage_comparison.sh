@@ -117,7 +117,7 @@
 #
 # PREREQUISITES:
 #   - Slurm cluster with sbatch command
-#   - Rust toolchain (1.91.0+, Edition 2024)
+#   - Rust toolchain (1.92.0+, Edition 2024)
 #   - uv (Python package manager)
 #   - GNU coreutils (timeout command)
 #   - delaunay project in working directory
@@ -282,7 +282,7 @@ fi
 
 # Load modules if the module system is available
 if command -v module &>/dev/null; then
-	module load rust/1.91.0 || echo "⚠️  Warning: failed to load rust/1.91.0" >&2
+	module load rust/1.92.0 || echo "⚠️  Warning: failed to load rust/1.92.0" >&2
 	module load python/3.11 || echo "⚠️  Warning: failed to load python/3.11" >&2
 else
 	echo "ℹ️  module command not available; using existing PATH for rust/python" >&2

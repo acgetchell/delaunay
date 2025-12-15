@@ -79,11 +79,12 @@ use core::iter::Sum;
 use core::ops::{AddAssign, Div, SubAssign};
 use std::cmp::Ordering as CmpOrdering;
 
-use num_traits::NumCast;
+use num_traits::{NumCast, Zero};
 use uuid::Uuid;
 
 use crate::core::algorithms::incremental_insertion::{
-    InsertionError, InsertionStatistics, repair_neighbor_pointers,
+    InsertionError, InsertionOutcome, InsertionResult, InsertionStatistics,
+    repair_neighbor_pointers,
 };
 use crate::core::cell::Cell;
 use crate::core::collections::{
@@ -702,6 +703,7 @@ where
     ///
     /// # Errors
     /// Returns error if:
+    /// - Duplicate coordinates detected (within 1e-10 tolerance)
     /// - Duplicate UUID detected
     /// - Initial simplex construction fails
     /// - Point location fails
@@ -753,8 +755,11 @@ where
     {
         // Use transactional insertion with perturbation retry, discard stats
         // 5 retry attempts: 1e-4, 1e-3, 1e-2, 2e-2, 5e-2 (up to 5% perturbation)
-        let ((vkey, hint), _stats) = self.insert_transactional(vertex, conflict_cells, hint, 5)?;
-        Ok((vkey, hint))
+        let (outcome, _stats) = self.insert_transactional(vertex, conflict_cells, hint, 5)?;
+        match outcome {
+            InsertionOutcome::Inserted { vertex_key, hint } => Ok((vertex_key, hint)),
+            InsertionOutcome::Skipped { error } => Err(error),
+        }
     }
 
     /// Insert a vertex and return statistics about the operation.
@@ -769,21 +774,49 @@ where
     ///
     /// # Examples
     ///
-    /// ```ignore
-    /// let (vkey, stats) = dt.insert_with_statistics(vertex, None, None)?;
-    /// println!("Inserted with {} attempts, {} cells repaired",
-    ///          stats.attempts, stats.cells_removed_during_repair);
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// // Create an empty 3D triangulation.
+    /// let mut tri: Triangulation<FastKernel<f64>, (), (), 3> =
+    ///     Triangulation::new_empty(FastKernel::new());
+    ///
+    /// // Insert a vertex and inspect the outcome + statistics.
+    /// let (outcome, stats) = tri
+    ///     .insert_with_statistics(vertex!([0.0, 0.0, 0.0]), None, None)
+    ///     .unwrap();
+    ///
+    /// assert!(stats.success());
+    /// assert!(!stats.skipped());
+    /// assert!(matches!(outcome, InsertionOutcome::Inserted { hint: None, .. }));
+    ///
+    /// // Insert enough vertices to trigger initial simplex creation (D+1 vertices).
+    /// tri.insert_with_statistics(vertex!([1.0, 0.0, 0.0]), None, None)
+    ///     .unwrap();
+    /// tri.insert_with_statistics(vertex!([0.0, 1.0, 0.0]), None, None)
+    ///     .unwrap();
+    ///
+    /// let (outcome, _stats) = tri
+    ///     .insert_with_statistics(vertex!([0.0, 0.0, 1.0]), None, None)
+    ///     .unwrap();
+    ///
+    /// match outcome {
+    ///     InsertionOutcome::Inserted { hint, .. } => assert!(hint.is_some()),
+    ///     InsertionOutcome::Skipped { .. } => panic!("unexpected skip"),
+    /// }
     /// ```
     ///
     /// # Errors
     ///
-    /// Returns an error if insertion fails after all retry attempts.
+    /// Returns an error only for non-retryable structural failures (e.g. duplicate UUID).
+    /// Retryable geometric degeneracies that exhaust all attempts, and duplicate coordinates,
+    /// return `Ok((InsertionOutcome::Skipped { .. }, stats))`.
     pub fn insert_with_statistics(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
         conflict_cells: Option<&CellKeyBuffer>,
         hint: Option<CellKey>,
-    ) -> Result<((VertexKey, Option<CellKey>), InsertionStatistics), InsertionError>
+    ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError>
     where
         K::Scalar: CoordinateScalar,
     {
@@ -795,9 +828,12 @@ where
     ///
     /// This ensures the triangulation always remains in a valid state by:
     /// 1. Cloning TDS before each insertion attempt (snapshot)
-    /// 2. Attempting insertion  
-    /// 3. On failure: restore TDS from snapshot, perturb vertex, retry
-    /// 4. If all attempts fail: restore TDS and return error
+    /// 2. Attempting insertion
+    /// 3. On failure: restore TDS from snapshot
+    /// 4. If the error is retryable: perturb vertex and retry (up to `max_perturbation_attempts`)
+    /// 5. If retryable attempts are exhausted, or the vertex is a duplicate: return
+    ///    `Ok((InsertionOutcome::Skipped { error }, stats))`
+    /// 6. If the error is non-retryable: return `Err(InsertionError)`
     ///
     /// This guarantees we transition from one valid manifold to another.
     #[allow(clippy::too_many_lines)]
@@ -807,7 +843,7 @@ where
         conflict_cells: Option<&CellKeyBuffer>,
         hint: Option<CellKey>,
         max_perturbation_attempts: usize,
-    ) -> Result<((VertexKey, Option<CellKey>), InsertionStatistics), InsertionError>
+    ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError>
     where
         K::Scalar: CoordinateScalar,
     {
@@ -825,7 +861,6 @@ where
 
             // Apply perturbation for retry attempts
             if attempt > 0 {
-                stats.used_perturbation = true;
                 let mut perturbed_coords = original_coords;
                 // Progressive perturbation schedule:
                 // Attempt 1: 1e-4 (0.01%), Attempt 2: 1e-3 (0.1%), Attempt 3: 1e-2 (1%)
@@ -882,17 +917,28 @@ where
             match result {
                 Ok((result, cells_removed)) => {
                     stats.cells_removed_during_repair = cells_removed;
-                    stats.success = true;
+                    stats.result = InsertionResult::Inserted;
+                    #[cfg(debug_assertions)]
                     if attempt > 0 {
                         eprintln!(
                             "Warning: Geometric degeneracy resolved via perturbation (attempt {attempt})"
                         );
                     }
-                    return Ok((result, stats));
+
+                    let (vertex_key, hint) = result;
+                    return Ok((InsertionOutcome::Inserted { vertex_key, hint }, stats));
                 }
                 Err(e) => {
                     // Any error - rollback to snapshot
                     self.tds = tds_snapshot;
+
+                    // Handle duplicate coordinates specially - skip immediately without retry
+                    if matches!(e, InsertionError::DuplicateCoordinates { .. }) {
+                        stats.result = InsertionResult::SkippedDuplicate;
+                        #[cfg(debug_assertions)]
+                        eprintln!("SKIPPED: {e}");
+                        return Ok((InsertionOutcome::Skipped { error: e }, stats));
+                    }
 
                     // Check if this is a retryable error (geometric degeneracy)
                     let is_retryable = e.is_retryable();
@@ -904,7 +950,7 @@ where
                             attempt + 1
                         );
                     } else if is_retryable {
-                        stats.skipped = true;
+                        stats.result = InsertionResult::SkippedDegeneracy;
                         #[cfg(debug_assertions)]
                         eprintln!(
                             "SKIPPED: Could not insert vertex after {} attempts (perturbations up to {:.1}%). Last error: {e}. Vertex skipped to maintain manifold.",
@@ -919,8 +965,9 @@ where
                                 _ => 10.0,
                             }
                         );
-                        return Err(e);
+                        return Ok((InsertionOutcome::Skipped { error: e }, stats));
                     } else {
+                        // Non-retryable structural error (e.g., duplicate UUID)
                         return Err(e);
                     }
                 }
@@ -962,6 +1009,40 @@ where
         //   via the old v_key, so we must have the point value captured.
         let inserted_uuid = vertex.uuid();
         let point = *vertex.point();
+
+        // Check for duplicate coordinates (tolerance: 1e-10)
+        // This prevents inserting vertices with same/very similar coordinates.
+        // NOTE: This is an O(n·D) scan per insertion. If this becomes a hotspot,
+        // consider maintaining a keyed/quantized coordinate index per kernel/dimension.
+        let duplicate_tolerance: K::Scalar =
+            <K::Scalar as NumCast>::from(1e-10_f64).unwrap_or_else(K::Scalar::default_tolerance);
+        let duplicate_tolerance_sq = duplicate_tolerance * duplicate_tolerance;
+
+        for (_, existing_vertex) in self.tds.vertices() {
+            let existing_point = existing_vertex.point();
+            let existing_coords: &[K::Scalar] = existing_point.coords();
+            let new_coords: &[K::Scalar] = point.coords();
+
+            // Compute squared distance to avoid sqrt
+            let mut dist_sq = K::Scalar::zero();
+            for i in 0..D {
+                let diff = new_coords[i] - existing_coords[i];
+                dist_sq += diff * diff;
+            }
+
+            if dist_sq < duplicate_tolerance_sq {
+                // Format coordinates for error message
+                let coord_str = new_coords
+                    .iter()
+                    .map(|c| format!("{c:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                return Err(InsertionError::DuplicateCoordinates {
+                    coordinates: format!("[{coord_str}]"),
+                });
+            }
+        }
 
         // 1. Insert vertex into Tds
         let mut v_key = self.tds.insert_vertex_with_mapping(vertex)?;

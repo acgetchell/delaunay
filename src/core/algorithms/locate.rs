@@ -44,7 +44,7 @@ pub enum LocateResult {
 }
 
 /// Error during point location.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum LocateError {
     /// Triangulation has no cells
     #[error("Cannot locate in empty triangulation")]
@@ -74,7 +74,7 @@ pub enum LocateError {
 }
 
 /// Error during conflict region finding.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum ConflictError {
     /// Starting cell is invalid
     #[error("Invalid starting cell: {cell_key:?}")]

@@ -24,7 +24,7 @@ When user requests commit message generation:
 
 - **ALLOWED**: Run formatters/linters: `cargo fmt`, `cargo clippy`, `uvx ruff format/check --fix`, `shfmt -w`, `markdownlint --fix`
 - **NEVER**: Use `sed`, `awk`, `perl` for code edits
-- **ALWAYS**: Use `edit_files` tool for code changes
+- **ALWAYS**: Use `apply_patch` for edits (and `create_file` for new files)
 - **EXCEPTION**: Shell text tools OK for read-only analysis only
 
 ### Validation
@@ -59,7 +59,7 @@ just examples         # Run all examples
 
 ## Project Context
 
-- **Rust** d-dimensional Delaunay triangulation library (MSRV 1.91.0, Edition 2024)
+- **Rust** d-dimensional Delaunay triangulation library (MSRV 1.92.0, Edition 2024)
 - **No unsafe code**: `#![forbid(unsafe_code)]`
 - **Architecture**: Generic with `const D: usize` for dimension (tested 2D-5D)
 - **Modules**: `src/core/` (data structures), `src/geometry/` (predicates)

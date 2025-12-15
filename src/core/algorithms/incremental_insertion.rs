@@ -36,23 +36,95 @@ use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use std::hash::{Hash, Hasher};
 
+/// Result of an insertion attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InsertionResult {
+    /// The vertex was successfully inserted.
+    #[default]
+    Inserted,
+    /// The vertex was skipped due to duplicate coordinates.
+    SkippedDuplicate,
+    /// The vertex was skipped due to geometric degeneracy after retries.
+    SkippedDegeneracy,
+}
+
 /// Statistics about a vertex insertion operation.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct InsertionStatistics {
     /// Number of insertion attempts (1 = success on first try, >1 = needed perturbation)
     pub attempts: usize,
-    /// Whether perturbation was applied
-    pub used_perturbation: bool,
-    /// Whether the vertex was skipped due to geometric degeneracy
-    pub skipped: bool,
     /// Number of cells removed during repair
     pub cells_removed_during_repair: usize,
-    /// Whether the insertion succeeded
-    pub success: bool,
+    /// Result of the insertion attempt
+    pub result: InsertionResult,
+}
+
+impl InsertionStatistics {
+    /// Returns true if perturbation was applied (attempts > 1).
+    #[must_use]
+    pub const fn used_perturbation(&self) -> bool {
+        self.attempts > 1
+    }
+
+    /// Returns true if the insertion succeeded.
+    #[must_use]
+    pub const fn success(&self) -> bool {
+        matches!(self.result, InsertionResult::Inserted)
+    }
+
+    /// Returns true if the vertex was skipped (any reason).
+    #[must_use]
+    pub const fn skipped(&self) -> bool {
+        matches!(
+            self.result,
+            InsertionResult::SkippedDuplicate | InsertionResult::SkippedDegeneracy
+        )
+    }
+
+    /// Returns true if the vertex was skipped due to duplicate coordinates.
+    #[must_use]
+    pub const fn skipped_duplicate(&self) -> bool {
+        matches!(self.result, InsertionResult::SkippedDuplicate)
+    }
+}
+
+/// Outcome of a single-vertex insertion attempt.
+///
+/// This distinguishes between:
+/// - A successful insertion (`Inserted`)
+/// - An intentionally skipped insertion (`Skipped`) where the triangulation is left unchanged
+///   for this vertex (transactional rollback). This can happen for example when:
+///   - The input vertex is a duplicate/near-duplicate (skipped immediately)
+///   - A retryable geometric degeneracy exhausts all perturbation attempts
+///
+/// Other non-recoverable structural failures are returned as `Err(InsertionError)` instead
+/// (e.g. duplicate UUID).
+#[derive(Debug, Clone)]
+pub enum InsertionOutcome {
+    /// The vertex was inserted successfully.
+    Inserted {
+        /// Key of the inserted vertex.
+        vertex_key: VertexKey,
+        /// Optional cell key that can be used as a hint for subsequent insertions.
+        hint: Option<CellKey>,
+    },
+    /// The vertex was intentionally not inserted.
+    ///
+    /// This covers both immediate skips (e.g. duplicate/near-duplicate coordinates) and skips
+    /// after exhausting retry attempts for geometric degeneracies.
+    ///
+    /// The triangulation is left unchanged for this vertex (transactional rollback).
+    Skipped {
+        /// The reason the vertex was skipped.
+        ///
+        /// This may be non-retryable (e.g. [`InsertionError::DuplicateCoordinates`]) or, for
+        /// retry-based skips, the last error encountered.
+        error: InsertionError,
+    },
 }
 
 /// Error during incremental insertion.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum InsertionError {
     /// Conflict region finding failed
     #[error("Conflict region error: {0}")]

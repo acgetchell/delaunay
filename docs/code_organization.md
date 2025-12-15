@@ -158,12 +158,14 @@ delaunay/
 │   └── lib.rs
 ├── tests/
 │   ├── allocation_api.rs
+│   ├── check_perturbation_stats.rs
 │   ├── circumsphere_debug_tools.rs
 │   ├── coordinate_conversion_errors.rs
 │   ├── COVERAGE.md
 │   ├── delaunay_edge_cases.rs
 │   ├── delaunay_incremental_insertion.rs
 │   ├── euler_characteristic.rs
+│   ├── insert_with_statistics.rs
 │   ├── proptest_cell.rs
 │   ├── proptest_convex_hull.rs
 │   ├── proptest_delaunay_triangulation.rs
