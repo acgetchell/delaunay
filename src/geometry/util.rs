@@ -1115,10 +1115,19 @@ where
     }
 }
 
-/// Clamp a Gram determinant with numerical tolerance handling.
+/// Clamp and validate a Gram determinant.
 ///
 /// For valid inputs, Gram determinants should be non-negative. Small negative values can
-/// arise from floating-point error; we clamp those close to zero.
+/// arise from floating-point rounding error; we clamp those close to zero **only** as numerical
+/// hygiene before applying degeneracy checks.
+///
+/// This function treats any non-positive determinant as a degenerate simplex:
+/// - non-finite determinants error
+/// - sufficiently negative determinants error
+/// - determinants in `(-1e-12, 0)` are clamped to `0.0`, and **zero always errors**
+///
+/// In other words, clamping does not “allow near-zero volumes”; it just avoids propagating
+/// tiny negative values caused by floating-point noise.
 fn clamp_gram_determinant(mut det: f64) -> Result<f64, CircumcenterError> {
     if !det.is_finite() {
         return Err(CircumcenterError::MatrixInversionFailed {

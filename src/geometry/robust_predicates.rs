@@ -192,6 +192,53 @@ where
     ))
 }
 
+#[inline]
+fn fill_insphere_predicate_matrix<T, const D: usize, const K: usize>(
+    matrix: &mut crate::geometry::matrix::Matrix<K>,
+    simplex_points: &[Point<T, D>],
+    test_point: &Point<T, D>,
+) -> Result<(), CoordinateConversionError>
+where
+    T: CoordinateScalar,
+    [T; D]: Copy + Sized,
+{
+    debug_assert_eq!(K, D + 2);
+
+    // Add simplex points
+    for (i, point) in simplex_points.iter().enumerate() {
+        let coords: [T; D] = point.into();
+
+        // Coordinates - use safe conversion
+        let coords_f64 = safe_coords_to_f64(coords)?;
+        for (j, &v) in coords_f64.iter().enumerate() {
+            matrix_set(matrix, i, j, v);
+        }
+
+        // Squared norm - use safe conversion
+        let norm_sq = squared_norm(coords);
+        let norm_sq_f64 = safe_scalar_to_f64(norm_sq)?;
+        matrix_set(matrix, i, D, norm_sq_f64);
+
+        // Constant term
+        matrix_set(matrix, i, D + 1, 1.0);
+    }
+
+    // Add test point
+    let test_coords: [T; D] = (*test_point).into();
+
+    let test_coords_f64 = safe_coords_to_f64(test_coords)?;
+    for (j, &v) in test_coords_f64.iter().enumerate() {
+        matrix_set(matrix, D + 1, j, v);
+    }
+
+    let test_norm_sq = squared_norm(test_coords);
+    let test_norm_sq_f64 = safe_scalar_to_f64(test_norm_sq)?;
+    matrix_set(matrix, D + 1, D, test_norm_sq_f64);
+    matrix_set(matrix, D + 1, D + 1, 1.0);
+
+    Ok(())
+}
+
 /// Insphere test with adaptive tolerance based on operand magnitude.
 ///
 /// This approach computes tolerances that scale with the magnitude of the
@@ -213,40 +260,10 @@ where
 
     let k = D + 2;
     let (det, tol_f64) = try_with_la_stack_matrix!(k, |matrix| {
-        // Add simplex points
-        for (i, point) in simplex_points.iter().enumerate() {
-            let coords: [T; D] = point.into();
+        fill_insphere_predicate_matrix(&mut matrix, simplex_points, test_point)?;
 
-            // Coordinates - use safe conversion
-            let coords_f64 = safe_coords_to_f64(coords)?;
-            for (j, &v) in coords_f64.iter().enumerate() {
-                matrix_set(&mut matrix, i, j, v);
-            }
-
-            // Squared norm - use safe conversion
-            let norm_sq = squared_norm(coords);
-            let norm_sq_f64 = safe_scalar_to_f64(norm_sq)?;
-            matrix_set(&mut matrix, i, D, norm_sq_f64);
-
-            // Constant term
-            matrix_set(&mut matrix, i, D + 1, 1.0);
-        }
-
-        // Add test point
-        let test_coords: [T; D] = (*test_point).into();
-
-        let test_coords_f64 = safe_coords_to_f64(test_coords)?;
-        for (j, &v) in test_coords_f64.iter().enumerate() {
-            matrix_set(&mut matrix, D + 1, j, v);
-        }
-
-        let test_norm_sq = squared_norm(test_coords);
-        let test_norm_sq_f64 = safe_scalar_to_f64(test_norm_sq)?;
-        matrix_set(&mut matrix, D + 1, D, test_norm_sq_f64);
-        matrix_set(&mut matrix, D + 1, D + 1, 1.0);
-
-        let det = determinant(matrix);
         let tol_f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
+        let det = determinant(matrix);
 
         Ok::<(f64, f64), CoordinateConversionError>((det, tol_f64))
     })?;
@@ -282,37 +299,7 @@ where
 
     let k = D + 2;
     let (det, tolerance_raw) = try_with_la_stack_matrix!(k, |matrix| {
-        // Add simplex points
-        for (i, point) in simplex_points.iter().enumerate() {
-            let coords: [T; D] = point.into();
-
-            // Coordinates - use safe conversion
-            let coords_f64 = safe_coords_to_f64(coords)?;
-            for (j, &v) in coords_f64.iter().enumerate() {
-                matrix_set(&mut matrix, i, j, v);
-            }
-
-            // Squared norm - use safe conversion
-            let norm_sq = squared_norm(coords);
-            let norm_sq_f64 = safe_scalar_to_f64(norm_sq)?;
-            matrix_set(&mut matrix, i, D, norm_sq_f64);
-
-            // Constant term
-            matrix_set(&mut matrix, i, D + 1, 1.0);
-        }
-
-        // Add test point
-        let test_coords: [T; D] = (*test_point).into();
-
-        let test_coords_f64 = safe_coords_to_f64(test_coords)?;
-        for (j, &v) in test_coords_f64.iter().enumerate() {
-            matrix_set(&mut matrix, D + 1, j, v);
-        }
-
-        let test_norm_sq = squared_norm(test_coords);
-        let test_norm_sq_f64 = safe_scalar_to_f64(test_norm_sq)?;
-        matrix_set(&mut matrix, D + 1, D, test_norm_sq_f64);
-        matrix_set(&mut matrix, D + 1, D + 1, 1.0);
+        fill_insphere_predicate_matrix(&mut matrix, simplex_points, test_point)?;
 
         // Compute adaptive tolerance from original matrix BEFORE conditioning.
         // This keeps determinant and tolerance in the same scale.
@@ -416,12 +403,12 @@ where
             matrix_set(&mut matrix, i, D, 1.0);
         }
 
-        // Calculate determinant (singular => 0; non-finite => NaN).
-        let det = determinant(matrix);
-
-        // Use adaptive tolerance
+        // Use adaptive tolerance before consuming the matrix.
         let base_tol = safe_scalar_to_f64(config.base_tolerance)?;
         let tolerance_f64: f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
+
+        // Calculate determinant (singular => 0; non-finite => NaN).
+        let det = determinant(matrix);
 
         if det > tolerance_f64 {
             Ok(Orientation::POSITIVE)

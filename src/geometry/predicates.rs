@@ -141,12 +141,12 @@ where
             matrix_set(&mut matrix, i, D, 1.0);
         }
 
-        // Calculate determinant (singular => 0; non-finite => NaN).
-        let det = determinant(matrix);
-
-        // Use adaptive tolerance based on matrix magnitude.
+        // Use adaptive tolerance based on matrix magnitude before consuming the matrix.
         let base_tol = safe_scalar_to_f64(T::default_tolerance())?;
         let tolerance_f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
+
+        // Calculate determinant (singular => 0; non-finite => NaN).
+        let det = determinant(matrix);
 
         if det > tolerance_f64 {
             Ok(Orientation::POSITIVE)
@@ -401,12 +401,13 @@ where
         );
         matrix_set(&mut matrix, D + 1, D + 1, 1.0);
 
-        let det = determinant(matrix);
-        let orientation = simplex_orientation(simplex_points)?;
-
         // Adaptive tolerance scaled by matrix magnitude to improve robustness in release mode
+        // (compute before consuming the matrix).
         let base_tol = safe_scalar_to_f64(T::default_tolerance())?;
         let tolerance_f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
+
+        let det = determinant(matrix);
+        let orientation = simplex_orientation(simplex_points)?;
 
         match orientation {
             Orientation::DEGENERATE => Err(CoordinateConversionError::ConversionFailed {
@@ -597,18 +598,18 @@ where
         // Add squared norm to the last column
         matrix_set(&mut matrix, D, D, test_squared_norm_f64);
 
-        // Calculate determinant (singular => 0; non-finite => NaN).
-        let det = determinant(matrix);
-
         // For this matrix formulation using relative coordinates, we need to check
         // the simplex orientation to correctly interpret the determinant sign.
         let orientation = simplex_orientation(simplex_points)
             .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
 
-        // Use adaptive tolerance for boundary detection
+        // Use adaptive tolerance for boundary detection before consuming the matrix.
         let base_tol = safe_scalar_to_f64(T::default_tolerance())
             .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
         let tolerance_f64: f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
+
+        // Calculate determinant (singular => 0; non-finite => NaN).
+        let det = determinant(matrix);
 
         // The sign interpretation depends on both orientation and dimension parity
         // For the lifted matrix formulation, even and odd dimensions have opposite sign conventions

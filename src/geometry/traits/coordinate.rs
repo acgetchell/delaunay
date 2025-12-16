@@ -76,7 +76,11 @@ pub enum CoordinateConversionError {
         "Failed to convert coordinate at index {coordinate_index} from {from_type} to {to_type}: {coordinate_value}"
     )]
     ConversionFailed {
-        /// Index of the coordinate that failed to convert
+        /// Index of the coordinate that failed to convert.
+        ///
+        /// Some conversion failures are not associated with a particular coordinate (for example,
+        /// matrix dimension dispatch or linear algebra errors). In those cases, this field may be
+        /// set to `0` as a placeholder.
         coordinate_index: usize,
         /// String representation of the problematic coordinate value
         coordinate_value: String,
