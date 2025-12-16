@@ -454,6 +454,7 @@ pub mod geometry {
     }
     /// Geometric kernel abstraction (CGAL-style) - Phase 2 TODO
     pub mod kernel;
+    #[macro_use]
     pub mod matrix;
     pub mod point;
     pub mod predicates;

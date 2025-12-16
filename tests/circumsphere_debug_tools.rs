@@ -13,8 +13,9 @@
 //! cargo test --test circumsphere_debug_tools test_all_debug -- --ignored --nocapture
 //! ```
 
+use delaunay::geometry::matrix::{Matrix, determinant};
+use delaunay::geometry::util::hypot;
 use delaunay::prelude::*;
-use nalgebra as na;
 use serde::{Deserialize, Serialize};
 
 // Macro for standard test output formatting
@@ -52,6 +53,23 @@ macro_rules! print_result {
             }
         );
     };
+}
+
+fn distance<const D: usize>(a: &[f64; D], b: &[f64; D]) -> f64 {
+    let mut diff = [0.0f64; D];
+    for i in 0..D {
+        diff[i] = a[i] - b[i];
+    }
+    hypot(diff)
+}
+
+fn matrix_set<const D: usize>(m: &mut Matrix<D>, r: usize, c: usize, value: f64) {
+    assert!(m.set(r, c, value), "matrix index out of bounds: ({r}, {c})");
+}
+
+fn matrix_get<const D: usize>(m: &Matrix<D>, r: usize, c: usize) -> f64 {
+    m.get(r, c)
+        .unwrap_or_else(|| panic!("matrix index out of bounds: ({r}, {c})"))
 }
 
 // Test functions organized by category
@@ -241,11 +259,8 @@ fn test_point_generic<const D: usize>(
     let result_distance = insphere_distance(&vertex_points, Point::from(&test_vertex));
     let result_lifted = insphere_lifted(&vertex_points, Point::from(&test_vertex));
 
-    // Calculate actual distance to center using nalgebra
-    let distance_to_center = na::distance(
-        &na::Point::<f64, D>::from(*center),
-        &na::Point::<f64, D>::from(coords),
-    );
+    // Calculate actual distance to center
+    let distance_to_center = distance(center, &coords);
 
     println!("Point {description} {coords:?}:");
     println!("  Distance to center: {distance_to_center:.6}");
@@ -791,10 +806,7 @@ fn test_point_against_3d_simplex(
     let test_vertex_3d = vertex!([0.9, 0.9, 0.9], 3);
 
     // Calculate distance from circumcenter to test point
-    let distance_to_test_3d = na::distance(
-        &na::Point::<f64, 3>::from(circumcenter_3d.to_array()),
-        &na::Point::<f64, 3>::from([0.9, 0.9, 0.9]),
-    );
+    let distance_to_test_3d = distance(&circumcenter_3d.to_array(), &[0.9, 0.9, 0.9]);
 
     println!("Test point [0.9, 0.9, 0.9]:");
     println!("  Distance from circumcenter: {distance_to_test_3d:.6}");
@@ -886,17 +898,17 @@ fn setup_3d_matrix_test() -> Setup3DResult {
 /// Build and analyze the matrix for the 3D test
 fn build_and_analyze_matrix(simplex_vertices: &[Vertex<f64, i32, 3>]) -> (f64, bool) {
     // Manually build the matrix as in the matrix method
-    let mut matrix = Matrix::zeros(4, 4); // D+1 x D+1 for D=3
+    let mut matrix = Matrix::<4>::zero(); // D+1 x D+1 for D=3
 
     println!("Building matrix rows:");
 
     // Row 0: v1 - v0 = (1,0,0) - (0,0,0) = (1,0,0), ||v1-v0||² = 1
     let v1_rel = [1.0, 0.0, 0.0];
     let v1_norm2 = 1.0;
-    matrix[(0, 0)] = v1_rel[0];
-    matrix[(0, 1)] = v1_rel[1];
-    matrix[(0, 2)] = v1_rel[2];
-    matrix[(0, 3)] = v1_norm2;
+    matrix_set(&mut matrix, 0, 0, v1_rel[0]);
+    matrix_set(&mut matrix, 0, 1, v1_rel[1]);
+    matrix_set(&mut matrix, 0, 2, v1_rel[2]);
+    matrix_set(&mut matrix, 0, 3, v1_norm2);
     println!(
         "  Row 0 (v1-v0): [{}, {}, {}, {}]",
         v1_rel[0], v1_rel[1], v1_rel[2], v1_norm2
@@ -905,10 +917,10 @@ fn build_and_analyze_matrix(simplex_vertices: &[Vertex<f64, i32, 3>]) -> (f64, b
     // Row 1: v2 - v0 = (0,1,0) - (0,0,0) = (0,1,0), ||v2-v0||² = 1
     let v2_rel = [0.0, 1.0, 0.0];
     let v2_norm2 = 1.0;
-    matrix[(1, 0)] = v2_rel[0];
-    matrix[(1, 1)] = v2_rel[1];
-    matrix[(1, 2)] = v2_rel[2];
-    matrix[(1, 3)] = v2_norm2;
+    matrix_set(&mut matrix, 1, 0, v2_rel[0]);
+    matrix_set(&mut matrix, 1, 1, v2_rel[1]);
+    matrix_set(&mut matrix, 1, 2, v2_rel[2]);
+    matrix_set(&mut matrix, 1, 3, v2_norm2);
     println!(
         "  Row 1 (v2-v0): [{}, {}, {}, {}]",
         v2_rel[0], v2_rel[1], v2_rel[2], v2_norm2
@@ -917,10 +929,10 @@ fn build_and_analyze_matrix(simplex_vertices: &[Vertex<f64, i32, 3>]) -> (f64, b
     // Row 2: v3 - v0 = (0,0,1) - (0,0,0) = (0,0,1), ||v3-v0||² = 1
     let v3_rel = [0.0, 0.0, 1.0];
     let v3_norm2 = 1.0;
-    matrix[(2, 0)] = v3_rel[0];
-    matrix[(2, 1)] = v3_rel[1];
-    matrix[(2, 2)] = v3_rel[2];
-    matrix[(2, 3)] = v3_norm2;
+    matrix_set(&mut matrix, 2, 0, v3_rel[0]);
+    matrix_set(&mut matrix, 2, 1, v3_rel[1]);
+    matrix_set(&mut matrix, 2, 2, v3_rel[2]);
+    matrix_set(&mut matrix, 2, 3, v3_norm2);
     println!(
         "  Row 2 (v3-v0): [{}, {}, {}, {}]",
         v3_rel[0], v3_rel[1], v3_rel[2], v3_norm2
@@ -929,10 +941,10 @@ fn build_and_analyze_matrix(simplex_vertices: &[Vertex<f64, i32, 3>]) -> (f64, b
     // Row 3: test_point - v0 = (0.9,0.9,0.9) - (0,0,0) = (0.9,0.9,0.9), ||test-v0||² = 0.9² + 0.9² + 0.9² = 2.43
     let test_rel = [0.9, 0.9, 0.9];
     let test_norm2 = squared_norm(test_rel);
-    matrix[(3, 0)] = test_rel[0];
-    matrix[(3, 1)] = test_rel[1];
-    matrix[(3, 2)] = test_rel[2];
-    matrix[(3, 3)] = test_norm2;
+    matrix_set(&mut matrix, 3, 0, test_rel[0]);
+    matrix_set(&mut matrix, 3, 1, test_rel[1]);
+    matrix_set(&mut matrix, 3, 2, test_rel[2]);
+    matrix_set(&mut matrix, 3, 3, test_norm2);
     println!(
         "  Row 3 (test-v0): [{}, {}, {}, {}]",
         test_rel[0], test_rel[1], test_rel[2], test_norm2
@@ -943,14 +955,14 @@ fn build_and_analyze_matrix(simplex_vertices: &[Vertex<f64, i32, 3>]) -> (f64, b
     for i in 0..4 {
         println!(
             "  [{:5.1}, {:5.1}, {:5.1}, {:5.1}]",
-            matrix[(i, 0)],
-            matrix[(i, 1)],
-            matrix[(i, 2)],
-            matrix[(i, 3)]
+            matrix_get(&matrix, i, 0),
+            matrix_get(&matrix, i, 1),
+            matrix_get(&matrix, i, 2),
+            matrix_get(&matrix, i, 3)
         );
     }
 
-    let det = matrix.determinant();
+    let det = determinant(matrix);
     println!();
     println!("Determinant: {det:.6}");
 
@@ -1006,10 +1018,7 @@ fn compare_methods_with_geometry(
         Ok(circumcenter) => {
             match circumradius(&simplex_points) {
                 Ok(circumradius) => {
-                    let distance_to_test = na::distance(
-                        &na::Point::<f64, 3>::from(circumcenter.to_array()),
-                        &na::Point::<f64, 3>::from(test_point),
-                    );
+                    let distance_to_test = distance(&circumcenter.to_array(), &test_point);
 
                     println!();
                     println!("Geometric verification:");
@@ -1138,10 +1147,7 @@ fn debug_3d_circumsphere_properties() {
     println!("Circumradius: {radius}");
 
     // Test the point (0.9, 0.9, 0.9)
-    let distance_to_center = na::distance(
-        &na::Point::<f64, 3>::from(center.to_array()),
-        &na::Point::<f64, 3>::from([0.9, 0.9, 0.9]),
-    );
+    let distance_to_center = distance(&center.to_array(), &[0.9, 0.9, 0.9]);
     println!("Point (0.9, 0.9, 0.9) distance to circumcenter: {distance_to_center}");
     println!(
         "Is point inside circumsphere (distance < radius)? {}",
@@ -1178,10 +1184,7 @@ fn debug_4d_circumsphere_properties() {
     println!("4D Circumradius: {radius_4d}");
 
     // Test the origin (0, 0, 0, 0)
-    let distance_to_center_4d = na::distance(
-        &na::Point::<f64, 4>::from(center_4d.to_array()),
-        &na::Point::<f64, 4>::from([0.0, 0.0, 0.0, 0.0]),
-    );
+    let distance_to_center_4d = distance(&center_4d.to_array(), &[0.0, 0.0, 0.0, 0.0]);
     println!("Origin distance to circumcenter: {distance_to_center_4d}");
     println!(
         "Is origin inside circumsphere (distance < radius)? {}",
