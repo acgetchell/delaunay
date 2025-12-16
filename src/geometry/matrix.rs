@@ -26,6 +26,22 @@ pub enum MatrixError {
     SingularMatrix,
 }
 
+/// Error type for stack-matrix dispatch.
+#[derive(Debug, Error)]
+pub(crate) enum StackMatrixDispatchError {
+    /// The requested matrix size is not supported by the stack-matrix dispatcher.
+    #[error("unsupported stack matrix size: {k} (max {max})")]
+    UnsupportedDim {
+        /// Requested matrix dimension.
+        k: usize,
+        /// Maximum supported matrix dimension.
+        max: usize,
+    },
+    /// A linear algebra error originating from `la-stack`.
+    #[error(transparent)]
+    La(#[from] LaError),
+}
+
 /// Default tolerance for matrix singularity checks.
 ///
 /// This value is chosen to be appropriately small for typical geometric computations
@@ -36,6 +52,10 @@ pub const SINGULARITY_TOLERANCE: f64 = 1e-12;
 ///
 /// This is used to bridge the gap between const-generic sizes and `D+1`/`D+2` shapes,
 /// which are not available as stable const-generic expressions.
+///
+/// # Panics
+///
+/// Panics if `k` exceeds [`MAX_STACK_MATRIX_DIM`] (18).
 macro_rules! with_la_stack_matrix {
     ($k:expr, |$m:ident| $body:block) => {{
         match $k {
@@ -124,16 +144,37 @@ macro_rules! with_la_stack_matrix {
     }};
 }
 
+/// Fallible variant of [`with_la_stack_matrix!`] that returns an error instead of panicking.
+///
+/// The provided block must evaluate to `Result<_, E>`, where `E` can be constructed from
+/// [`StackMatrixDispatchError`].
+macro_rules! try_with_la_stack_matrix {
+    ($k:expr, |$m:ident| $body:block) => {{
+        let k = $k;
+        if k > $crate::geometry::matrix::MAX_STACK_MATRIX_DIM {
+            Err(
+                $crate::geometry::matrix::StackMatrixDispatchError::UnsupportedDim {
+                    k,
+                    max: $crate::geometry::matrix::MAX_STACK_MATRIX_DIM,
+                }
+                .into(),
+            )
+        } else {
+            with_la_stack_matrix!(k, |$m| $body)
+        }
+    }};
+}
+
 #[inline]
-pub(crate) fn get_unchecked<const D: usize>(m: &Matrix<D>, r: usize, c: usize) -> f64 {
+pub(crate) fn matrix_get<const D: usize>(m: &Matrix<D>, r: usize, c: usize) -> f64 {
     m.get(r, c)
         .unwrap_or_else(|| unreachable!("matrix index out of bounds: ({r}, {c}) for {D}x{D}"))
 }
 
 #[inline]
-pub(crate) fn set_unchecked<const D: usize>(m: &mut Matrix<D>, r: usize, c: usize, value: f64) {
+pub(crate) fn matrix_set<const D: usize>(m: &mut Matrix<D>, r: usize, c: usize, value: f64) {
     let ok = m.set(r, c, value);
-    debug_assert!(ok, "matrix index out of bounds: ({r}, {c}) for {D}x{D}");
+    assert!(ok, "matrix index out of bounds: ({r}, {c}) for {D}x{D}");
 }
 
 /// Compute an LU-based determinant, returning 0.0 for singular matrices.
@@ -160,7 +201,7 @@ pub fn adaptive_tolerance<const D: usize>(matrix: &Matrix<D>, base_tol: f64) -> 
 
     // Check if the last column is (approximately) all ones.
     let last_col_is_all_ones = ncols > 0
-        && (0..nrows).all(|i| (get_unchecked(matrix, i, ncols - 1) - 1.0).abs() <= f64::EPSILON);
+        && (0..nrows).all(|i| (matrix_get(matrix, i, ncols - 1) - 1.0).abs() <= f64::EPSILON);
 
     // Infinity norm (max absolute row sum), optionally excluding constant 1 column
     let mut max_row_sum = 0.0f64;
@@ -172,7 +213,7 @@ pub fn adaptive_tolerance<const D: usize>(matrix: &Matrix<D>, base_tol: f64) -> 
             ncols
         };
         for j in 0..col_limit {
-            row_sum += get_unchecked(matrix, i, j).abs();
+            row_sum += matrix_get(matrix, i, j).abs();
         }
         if row_sum > max_row_sum {
             max_row_sum = row_sum;
@@ -189,6 +230,17 @@ mod tests {
 
     use approx::assert_relative_eq;
 
+    #[test]
+    fn try_with_la_stack_matrix_returns_err_on_unsupported_dim() {
+        let k = MAX_STACK_MATRIX_DIM + 1;
+        let res: Result<(), StackMatrixDispatchError> =
+            try_with_la_stack_matrix!(k, |_m| { Ok(()) });
+        assert!(matches!(
+            res,
+            Err(StackMatrixDispatchError::UnsupportedDim { .. })
+        ));
+    }
+
     macro_rules! gen_adaptive_tol_tests {
         ($d:literal) => {
             pastey::paste! {
@@ -199,7 +251,7 @@ mod tests {
 
                     let tol = with_la_stack_matrix!(n, |m| {
                         for i in 0..n {
-                            set_unchecked(&mut m, i, n - 1, 1.0);
+                            matrix_set(&mut m, i, n - 1, 1.0);
                         }
                         adaptive_tolerance(&m, base)
                     });
@@ -214,7 +266,7 @@ mod tests {
 
                     let tol = with_la_stack_matrix!(n, |m| {
                         for i in 0..n {
-                            set_unchecked(&mut m, i, n - 1, 2.0);
+                            matrix_set(&mut m, i, n - 1, 2.0);
                         }
                         adaptive_tolerance(&m, base)
                     });

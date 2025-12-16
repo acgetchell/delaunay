@@ -4,7 +4,7 @@
 //! that operate on points and simplices, including circumcenter and circumradius
 //! calculations.
 
-use crate::geometry::matrix::{determinant, set_unchecked};
+use crate::geometry::matrix::{determinant, matrix_set};
 use num_traits::{Float, Zero};
 use std::iter::Sum;
 
@@ -125,7 +125,7 @@ where
 
     let k = D + 1;
 
-    with_la_stack_matrix!(k, |matrix| {
+    try_with_la_stack_matrix!(k, |matrix| {
         // Populate rows with the coordinates of the points of the simplex.
         for (i, p) in simplex_points.iter().enumerate() {
             // Use implicit conversion from point to coordinates
@@ -134,11 +134,11 @@ where
 
             // Add coordinates
             for (j, &v) in point_coords_f64.iter().enumerate() {
-                set_unchecked(&mut matrix, i, j, v);
+                matrix_set(&mut matrix, i, j, v);
             }
 
             // Add one to the last column
-            set_unchecked(&mut matrix, i, D, 1.0);
+            matrix_set(&mut matrix, i, D, 1.0);
         }
 
         // Calculate determinant (singular => 0; non-finite => NaN).
@@ -372,33 +372,34 @@ where
 
     let k = D + 2;
 
-    with_la_stack_matrix!(k, |matrix| {
+    try_with_la_stack_matrix!(k, |matrix| {
         for (i, p) in simplex_points.iter().enumerate() {
             let point_coords: [T; D] = p.into();
             let point_coords_f64 = safe_coords_to_f64(point_coords)?;
+
             for (j, &v) in point_coords_f64.iter().enumerate() {
-                set_unchecked(&mut matrix, i, j, v);
+                matrix_set(&mut matrix, i, j, v);
             }
 
             let squared_norm_t = squared_norm(point_coords);
-            set_unchecked(&mut matrix, i, D, safe_scalar_to_f64(squared_norm_t)?);
-            set_unchecked(&mut matrix, i, D + 1, 1.0);
+            matrix_set(&mut matrix, i, D, safe_scalar_to_f64(squared_norm_t)?);
+            matrix_set(&mut matrix, i, D + 1, 1.0);
         }
 
         let test_point_coords: [T; D] = (&test_point).into();
         let test_point_coords_f64 = safe_coords_to_f64(test_point_coords)?;
         for (j, &v) in test_point_coords_f64.iter().enumerate() {
-            set_unchecked(&mut matrix, D + 1, j, v);
+            matrix_set(&mut matrix, D + 1, j, v);
         }
 
         let test_squared_norm_t = squared_norm(test_point_coords);
-        set_unchecked(
+        matrix_set(
             &mut matrix,
             D + 1,
             D,
             safe_scalar_to_f64(test_squared_norm_t)?,
         );
-        set_unchecked(&mut matrix, D + 1, D + 1, 1.0);
+        matrix_set(&mut matrix, D + 1, D + 1, 1.0);
 
         let det = determinant(matrix);
         let orientation = simplex_orientation(simplex_points)?;
@@ -535,7 +536,7 @@ where
 
     let k = D + 1;
 
-    with_la_stack_matrix!(k, |matrix| {
+    try_with_la_stack_matrix!(k, |matrix| {
         // Populate rows with the coordinates relative to the reference point.
         for (row, point) in simplex_points.iter().skip(1).enumerate() {
             let point_coords: [T; D] = point.into();
@@ -555,7 +556,7 @@ where
 
             // Fill matrix row
             for (j, &v) in relative_coords_f64.iter().enumerate() {
-                set_unchecked(&mut matrix, row, j, v);
+                matrix_set(&mut matrix, row, j, v);
             }
 
             // Calculate squared norm using generic arithmetic on T
@@ -564,7 +565,7 @@ where
                 .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
 
             // Add squared norm to the last column
-            set_unchecked(&mut matrix, row, D, squared_norm_f64);
+            matrix_set(&mut matrix, row, D, squared_norm_f64);
         }
 
         // Add the test point to the last row
@@ -585,7 +586,7 @@ where
 
         // Fill matrix row
         for (j, &v) in test_relative_coords_f64.iter().enumerate() {
-            set_unchecked(&mut matrix, D, j, v);
+            matrix_set(&mut matrix, D, j, v);
         }
 
         // Calculate squared norm using generic arithmetic on T
@@ -594,7 +595,7 @@ where
             .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
 
         // Add squared norm to the last column
-        set_unchecked(&mut matrix, D, D, test_squared_norm_f64);
+        matrix_set(&mut matrix, D, D, test_squared_norm_f64);
 
         // Calculate determinant (singular => 0; non-finite => NaN).
         let det = determinant(matrix);

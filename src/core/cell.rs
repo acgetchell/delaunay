@@ -133,6 +133,12 @@ pub enum CellValidationError {
     },
 }
 
+impl From<crate::geometry::matrix::StackMatrixDispatchError> for CellValidationError {
+    fn from(source: crate::geometry::matrix::StackMatrixDispatchError) -> Self {
+        CoordinateConversionError::from(source).into()
+    }
+}
+
 // =============================================================================
 // CONVENIENCE MACROS AND HELPERS
 // =============================================================================

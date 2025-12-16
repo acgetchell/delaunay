@@ -18,7 +18,7 @@ use crate::core::traits::data_type::DataType;
 use crate::core::triangulation_data_structure::TriangulationConstructionError;
 use crate::core::vertex::{Vertex, VertexBuilder};
 use crate::geometry::kernel::FastKernel;
-use crate::geometry::matrix::MatrixError;
+use crate::geometry::matrix::{MatrixError, StackMatrixDispatchError, matrix_get, matrix_set};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar,
@@ -118,6 +118,19 @@ pub enum CircumcenterError {
     /// Value conversion error
     #[error("Value conversion error: {0}")]
     ValueConversion(#[from] ValueConversionError),
+}
+
+impl From<StackMatrixDispatchError> for CircumcenterError {
+    fn from(source: StackMatrixDispatchError) -> Self {
+        match source {
+            StackMatrixDispatchError::UnsupportedDim { k, max } => Self::MatrixInversionFailed {
+                details: format!("unsupported stack matrix size: {k} (max {max})"),
+            },
+            StackMatrixDispatchError::La(source) => Self::MatrixInversionFailed {
+                details: format!("la-stack error: {source}"),
+            },
+        }
+    }
 }
 
 /// Error type for surface measure computation operations.
@@ -769,12 +782,7 @@ where
 
         // Fill matrix row
         for j in 0..D {
-            crate::geometry::matrix::set_unchecked(
-                &mut a,
-                i,
-                j,
-                coords_point_f64[j] - coords_0_f64[j],
-            );
+            matrix_set(&mut a, i, j, coords_point_f64[j] - coords_0_f64[j]);
         }
 
         // Calculate squared distance using squared_norm for consistency
@@ -796,6 +804,16 @@ where
     let lu = match a.lu(DEFAULT_PIVOT_TOL) {
         Ok(lu) => lu,
         Err(LaError::Singular { .. }) => {
+            // Debugging hook: the fallback typically indicates an extremely scaled-but-invertible
+            // system that tripped `DEFAULT_PIVOT_TOL`. Enable this message in debug builds via:
+            //   DELAUNAY_DEBUG_LU_FALLBACK=1
+            #[cfg(debug_assertions)]
+            if std::env::var_os("DELAUNAY_DEBUG_LU_FALLBACK").is_some() {
+                eprintln!(
+                    "circumcenter<{D}>: LU factorization fell back to zero pivot tolerance (DEFAULT_PIVOT_TOL={DEFAULT_PIVOT_TOL})",
+                );
+            }
+
             a.lu(0.0)
                 .map_err(|e| CircumcenterError::MatrixInversionFailed {
                     details: format!("LU factorization failed: {e}"),
@@ -1157,7 +1175,7 @@ where
         let point_f64 = safe_coords_to_f64(*point.coords())?;
 
         for (j, (&p, &p0)) in point_f64.iter().zip(p0_f64.iter()).enumerate() {
-            crate::geometry::matrix::set_unchecked(&mut edge_matrix, row, j, p - p0);
+            matrix_set(&mut edge_matrix, row, j, p - p0);
         }
     }
 
@@ -1167,10 +1185,9 @@ where
         for j in 0..D {
             let mut dot_product = 0.0;
             for k in 0..D {
-                dot_product += crate::geometry::matrix::get_unchecked(&edge_matrix, i, k)
-                    * crate::geometry::matrix::get_unchecked(&edge_matrix, j, k);
+                dot_product += matrix_get(&edge_matrix, i, k) * matrix_get(&edge_matrix, j, k);
             }
-            crate::geometry::matrix::set_unchecked(&mut gram_matrix, i, j, dot_product);
+            matrix_set(&mut gram_matrix, i, j, dot_product);
         }
     }
 
@@ -1511,7 +1528,7 @@ where
     // For a (D-1)-simplex embedded in D dimensions, there are (D-1) edge vectors from
     // one vertex to the remaining vertices, so the Gram matrix is (D-1)×(D-1).
     let gram_dim = D - 1;
-    let det = with_la_stack_matrix!(gram_dim, |gram_matrix| {
+    let det = try_with_la_stack_matrix!(gram_dim, |gram_matrix| {
         for i in 0..gram_dim {
             for j in 0..gram_dim {
                 let mut dot_product = 0.0;
@@ -1524,7 +1541,7 @@ where
                     let dj = aj - a0;
                     dot_product += di * dj;
                 }
-                crate::geometry::matrix::set_unchecked(&mut gram_matrix, i, j, dot_product);
+                matrix_set(&mut gram_matrix, i, j, dot_product);
             }
         }
 
@@ -3133,14 +3150,14 @@ mod tests {
     ) -> Result<f64, CircumcenterError> {
         let k = edges.len();
 
-        with_la_stack_matrix!(k, |gram_matrix| {
+        try_with_la_stack_matrix!(k, |gram_matrix| {
             for i in 0..k {
                 for j in 0..k {
                     let mut dot_product = 0.0;
                     for (&a, &b) in edges[i].iter().zip(edges[j].iter()) {
                         dot_product += a * b;
                     }
-                    crate::geometry::matrix::set_unchecked(&mut gram_matrix, i, j, dot_product);
+                    matrix_set(&mut gram_matrix, i, j, dot_product);
                 }
             }
 

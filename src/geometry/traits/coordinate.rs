@@ -97,6 +97,29 @@ pub enum CoordinateConversionError {
     },
 }
 
+impl From<crate::geometry::matrix::StackMatrixDispatchError> for CoordinateConversionError {
+    fn from(source: crate::geometry::matrix::StackMatrixDispatchError) -> Self {
+        match source {
+            crate::geometry::matrix::StackMatrixDispatchError::UnsupportedDim { k, max } => {
+                Self::ConversionFailed {
+                    coordinate_index: 0,
+                    coordinate_value: format!("unsupported stack matrix size: {k} (max {max})"),
+                    from_type: "matrix dimension",
+                    to_type: "stack matrix",
+                }
+            }
+            crate::geometry::matrix::StackMatrixDispatchError::La(source) => {
+                Self::ConversionFailed {
+                    coordinate_index: 0,
+                    coordinate_value: source.to_string(),
+                    from_type: "la-stack",
+                    to_type: "linear algebra",
+                }
+            }
+        }
+    }
+}
+
 /// Errors that can occur during coordinate validation.
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CoordinateValidationError {

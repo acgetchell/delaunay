@@ -10,7 +10,7 @@ use std::fmt::Debug;
 
 use super::predicates::{InSphere, Orientation};
 use super::util::{safe_coords_to_f64, safe_scalar_to_f64, squared_norm};
-use crate::geometry::matrix::{determinant, get_unchecked, set_unchecked};
+use crate::geometry::matrix::{determinant, matrix_get, matrix_set};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar,
@@ -212,7 +212,7 @@ where
     let orientation = robust_orientation(simplex_points, config)?;
 
     let k = D + 2;
-    let (det, tol_f64) = with_la_stack_matrix!(k, |matrix| {
+    let (det, tol_f64) = try_with_la_stack_matrix!(k, |matrix| {
         // Add simplex points
         for (i, point) in simplex_points.iter().enumerate() {
             let coords: [T; D] = point.into();
@@ -220,16 +220,16 @@ where
             // Coordinates - use safe conversion
             let coords_f64 = safe_coords_to_f64(coords)?;
             for (j, &v) in coords_f64.iter().enumerate() {
-                set_unchecked(&mut matrix, i, j, v);
+                matrix_set(&mut matrix, i, j, v);
             }
 
             // Squared norm - use safe conversion
             let norm_sq = squared_norm(coords);
             let norm_sq_f64 = safe_scalar_to_f64(norm_sq)?;
-            set_unchecked(&mut matrix, i, D, norm_sq_f64);
+            matrix_set(&mut matrix, i, D, norm_sq_f64);
 
             // Constant term
-            set_unchecked(&mut matrix, i, D + 1, 1.0);
+            matrix_set(&mut matrix, i, D + 1, 1.0);
         }
 
         // Add test point
@@ -237,18 +237,18 @@ where
 
         let test_coords_f64 = safe_coords_to_f64(test_coords)?;
         for (j, &v) in test_coords_f64.iter().enumerate() {
-            set_unchecked(&mut matrix, D + 1, j, v);
+            matrix_set(&mut matrix, D + 1, j, v);
         }
 
         let test_norm_sq = squared_norm(test_coords);
         let test_norm_sq_f64 = safe_scalar_to_f64(test_norm_sq)?;
-        set_unchecked(&mut matrix, D + 1, D, test_norm_sq_f64);
-        set_unchecked(&mut matrix, D + 1, D + 1, 1.0);
+        matrix_set(&mut matrix, D + 1, D, test_norm_sq_f64);
+        matrix_set(&mut matrix, D + 1, D + 1, 1.0);
 
         let det = determinant(matrix);
         let tol_f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
 
-        Ok((det, tol_f64))
+        Ok::<(f64, f64), CoordinateConversionError>((det, tol_f64))
     })?;
 
     let adaptive_tolerance: T = super::util::safe_scalar_from_f64::<T>(tol_f64)?;
@@ -281,7 +281,7 @@ where
     let orientation = robust_orientation(simplex_points, config)?;
 
     let k = D + 2;
-    let (det, tolerance_raw) = with_la_stack_matrix!(k, |matrix| {
+    let (det, tolerance_raw) = try_with_la_stack_matrix!(k, |matrix| {
         // Add simplex points
         for (i, point) in simplex_points.iter().enumerate() {
             let coords: [T; D] = point.into();
@@ -289,16 +289,16 @@ where
             // Coordinates - use safe conversion
             let coords_f64 = safe_coords_to_f64(coords)?;
             for (j, &v) in coords_f64.iter().enumerate() {
-                set_unchecked(&mut matrix, i, j, v);
+                matrix_set(&mut matrix, i, j, v);
             }
 
             // Squared norm - use safe conversion
             let norm_sq = squared_norm(coords);
             let norm_sq_f64 = safe_scalar_to_f64(norm_sq)?;
-            set_unchecked(&mut matrix, i, D, norm_sq_f64);
+            matrix_set(&mut matrix, i, D, norm_sq_f64);
 
             // Constant term
-            set_unchecked(&mut matrix, i, D + 1, 1.0);
+            matrix_set(&mut matrix, i, D + 1, 1.0);
         }
 
         // Add test point
@@ -306,13 +306,13 @@ where
 
         let test_coords_f64 = safe_coords_to_f64(test_coords)?;
         for (j, &v) in test_coords_f64.iter().enumerate() {
-            set_unchecked(&mut matrix, D + 1, j, v);
+            matrix_set(&mut matrix, D + 1, j, v);
         }
 
         let test_norm_sq = squared_norm(test_coords);
         let test_norm_sq_f64 = safe_scalar_to_f64(test_norm_sq)?;
-        set_unchecked(&mut matrix, D + 1, D, test_norm_sq_f64);
-        set_unchecked(&mut matrix, D + 1, D + 1, 1.0);
+        matrix_set(&mut matrix, D + 1, D, test_norm_sq_f64);
+        matrix_set(&mut matrix, D + 1, D + 1, 1.0);
 
         // Compute adaptive tolerance from original matrix BEFORE conditioning.
         // This keeps determinant and tolerance in the same scale.
@@ -323,13 +323,13 @@ where
         for i in 0..k {
             let mut max_element = 0.0;
             for j in 0..k {
-                max_element = max_element.max(get_unchecked(&matrix, i, j).abs());
+                max_element = max_element.max(matrix_get(&matrix, i, j).abs());
             }
 
             if max_element > 1e-100 {
                 for j in 0..k {
-                    let v = get_unchecked(&matrix, i, j) / max_element;
-                    set_unchecked(&mut matrix, i, j, v);
+                    let v = matrix_get(&matrix, i, j) / max_element;
+                    matrix_set(&mut matrix, i, j, v);
                 }
                 scale_factor *= max_element;
             }
@@ -338,7 +338,7 @@ where
         // Determinant with scale correction.
         let det = determinant(matrix) * scale_factor;
 
-        Ok((det, tolerance_raw))
+        Ok::<(f64, f64), CoordinateConversionError>((det, tolerance_raw))
     })?;
 
     let tolerance: T = super::util::safe_scalar_from_f64::<T>(tolerance_raw)?;
@@ -402,18 +402,18 @@ where
 
     let k = D + 1;
 
-    with_la_stack_matrix!(k, |matrix| {
+    try_with_la_stack_matrix!(k, |matrix| {
         for (i, point) in simplex_points.iter().enumerate() {
             let coords: [T; D] = point.into();
 
             // Add coordinates using safe conversion
             let coords_f64 = safe_coords_to_f64(coords)?;
             for (j, &v) in coords_f64.iter().enumerate() {
-                set_unchecked(&mut matrix, i, j, v);
+                matrix_set(&mut matrix, i, j, v);
             }
 
             // Add constant term
-            set_unchecked(&mut matrix, i, D, 1.0);
+            matrix_set(&mut matrix, i, D, 1.0);
         }
 
         // Calculate determinant (singular => 0; non-finite => NaN).
@@ -1163,21 +1163,21 @@ mod tests {
 
         // Test matrix with very small elements
         let scale_small = with_la_stack_matrix!(3, |m| {
-            set_unchecked(&mut m, 0, 0, 1e-100);
-            set_unchecked(&mut m, 1, 1, 1e-99);
-            set_unchecked(&mut m, 2, 2, 1e-98);
+            matrix_set(&mut m, 0, 0, 1e-100);
+            matrix_set(&mut m, 1, 1, 1e-99);
+            matrix_set(&mut m, 2, 2, 1e-98);
 
             let mut scale_factor = 1.0;
             for i in 0..3 {
                 let mut max_element = 0.0;
                 for j in 0..3 {
-                    max_element = max_element.max(get_unchecked(&m, i, j).abs());
+                    max_element = max_element.max(matrix_get(&m, i, j).abs());
                 }
 
                 if max_element > 1e-100 {
                     for j in 0..3 {
-                        let v = get_unchecked(&m, i, j) / max_element;
-                        set_unchecked(&mut m, i, j, v);
+                        let v = matrix_get(&m, i, j) / max_element;
+                        matrix_set(&mut m, i, j, v);
                     }
                     scale_factor *= max_element;
                 }
@@ -1185,7 +1185,7 @@ mod tests {
 
             for i in 0..3 {
                 for j in 0..3 {
-                    assert!(get_unchecked(&m, i, j).is_finite());
+                    assert!(matrix_get(&m, i, j).is_finite());
                 }
             }
 
@@ -1195,23 +1195,23 @@ mod tests {
 
         // Test matrix with mixed large and small elements
         let scale_mixed = with_la_stack_matrix!(3, |m| {
-            set_unchecked(&mut m, 0, 0, 1e10);
-            set_unchecked(&mut m, 0, 1, 1e-10);
-            set_unchecked(&mut m, 1, 0, 1e5);
-            set_unchecked(&mut m, 1, 1, 1e-5);
-            set_unchecked(&mut m, 2, 2, 1.0);
+            matrix_set(&mut m, 0, 0, 1e10);
+            matrix_set(&mut m, 0, 1, 1e-10);
+            matrix_set(&mut m, 1, 0, 1e5);
+            matrix_set(&mut m, 1, 1, 1e-5);
+            matrix_set(&mut m, 2, 2, 1.0);
 
             let mut scale_factor = 1.0;
             for i in 0..3 {
                 let mut max_element = 0.0;
                 for j in 0..3 {
-                    max_element = max_element.max(get_unchecked(&m, i, j).abs());
+                    max_element = max_element.max(matrix_get(&m, i, j).abs());
                 }
 
                 if max_element > 1e-100 {
                     for j in 0..3 {
-                        let v = get_unchecked(&m, i, j) / max_element;
-                        set_unchecked(&mut m, i, j, v);
+                        let v = matrix_get(&m, i, j) / max_element;
+                        matrix_set(&mut m, i, j, v);
                     }
                     scale_factor *= max_element;
                 }
@@ -1219,7 +1219,7 @@ mod tests {
 
             for i in 0..3 {
                 for j in 0..3 {
-                    assert!(get_unchecked(&m, i, j).is_finite());
+                    assert!(matrix_get(&m, i, j).is_finite());
                 }
             }
 
@@ -1229,21 +1229,21 @@ mod tests {
 
         // Test matrix with some zero elements
         let scale_zero = with_la_stack_matrix!(3, |m| {
-            set_unchecked(&mut m, 0, 0, 1.0);
-            set_unchecked(&mut m, 1, 1, 0.0); // This row will not be scaled
-            set_unchecked(&mut m, 2, 2, 2.0);
+            matrix_set(&mut m, 0, 0, 1.0);
+            matrix_set(&mut m, 1, 1, 0.0); // This row will not be scaled
+            matrix_set(&mut m, 2, 2, 2.0);
 
             let mut scale_factor = 1.0;
             for i in 0..3 {
                 let mut max_element = 0.0;
                 for j in 0..3 {
-                    max_element = max_element.max(get_unchecked(&m, i, j).abs());
+                    max_element = max_element.max(matrix_get(&m, i, j).abs());
                 }
 
                 if max_element > 1e-100 {
                     for j in 0..3 {
-                        let v = get_unchecked(&m, i, j) / max_element;
-                        set_unchecked(&mut m, i, j, v);
+                        let v = matrix_get(&m, i, j) / max_element;
+                        matrix_set(&mut m, i, j, v);
                     }
                     scale_factor *= max_element;
                 }
@@ -1251,7 +1251,7 @@ mod tests {
 
             for i in 0..3 {
                 for j in 0..3 {
-                    assert!(get_unchecked(&m, i, j).is_finite());
+                    assert!(matrix_get(&m, i, j).is_finite());
                 }
             }
 
@@ -1457,10 +1457,10 @@ mod tests {
 
         // Small matrix with moderate values
         let tolerance_small = with_la_stack_matrix!(2, |m| {
-            set_unchecked(&mut m, 0, 0, 1.0);
-            set_unchecked(&mut m, 0, 1, 2.0);
-            set_unchecked(&mut m, 1, 0, 3.0);
-            set_unchecked(&mut m, 1, 1, 4.0);
+            matrix_set(&mut m, 0, 0, 1.0);
+            matrix_set(&mut m, 0, 1, 2.0);
+            matrix_set(&mut m, 1, 0, 3.0);
+            matrix_set(&mut m, 1, 1, 4.0);
             crate::geometry::matrix::adaptive_tolerance(&m, config.base_tolerance)
         });
         assert!(tolerance_small > 0.0);
@@ -1470,7 +1470,7 @@ mod tests {
             for i in 0..5 {
                 for j in 0..5 {
                     let sum_f64 = num_traits::cast::<usize, f64>(i + j).unwrap_or(0.0);
-                    set_unchecked(&mut m, i, j, sum_f64 * 1000.0);
+                    matrix_set(&mut m, i, j, sum_f64 * 1000.0);
                 }
             }
 
@@ -1484,7 +1484,7 @@ mod tests {
         let tolerance_tiny = with_la_stack_matrix!(3, |m| {
             for i in 0..3 {
                 for j in 0..3 {
-                    set_unchecked(&mut m, i, j, 1e-10);
+                    matrix_set(&mut m, i, j, 1e-10);
                 }
             }
 
@@ -1716,23 +1716,23 @@ mod tests {
             for (i, point) in zero_points.iter().enumerate() {
                 let coords: [f64; 3] = point.into();
                 for (j, &v) in coords.iter().enumerate() {
-                    set_unchecked(&mut matrix, i, j, v);
+                    matrix_set(&mut matrix, i, j, v);
                 }
-                set_unchecked(&mut matrix, i, 3, squared_norm(coords));
-                set_unchecked(&mut matrix, i, 4, 1.0);
+                matrix_set(&mut matrix, i, 3, squared_norm(coords));
+                matrix_set(&mut matrix, i, 4, 1.0);
             }
 
             let test_coords: [f64; 3] = zero_test.into();
             for (j, &v) in test_coords.iter().enumerate() {
-                set_unchecked(&mut matrix, 4, j, v);
+                matrix_set(&mut matrix, 4, j, v);
             }
-            set_unchecked(&mut matrix, 4, 3, squared_norm(test_coords));
-            set_unchecked(&mut matrix, 4, 4, 1.0);
+            matrix_set(&mut matrix, 4, 3, squared_norm(test_coords));
+            matrix_set(&mut matrix, 4, 4, 1.0);
 
             let mut ok = true;
             for r in 0..5 {
                 for c in 0..5 {
-                    ok &= get_unchecked(&matrix, r, c).is_finite();
+                    ok &= matrix_get(&matrix, r, c).is_finite();
                 }
             }
             ok
@@ -1743,15 +1743,15 @@ mod tests {
             for (i, point) in zero_points.iter().enumerate() {
                 let coords: [f64; 3] = point.into();
                 for (j, &v) in coords.iter().enumerate() {
-                    set_unchecked(&mut matrix, i, j, v);
+                    matrix_set(&mut matrix, i, j, v);
                 }
-                set_unchecked(&mut matrix, i, 3, 1.0);
+                matrix_set(&mut matrix, i, 3, 1.0);
             }
 
             let mut ok = true;
             for r in 0..4 {
                 for c in 0..4 {
-                    ok &= get_unchecked(&matrix, r, c).is_finite();
+                    ok &= matrix_get(&matrix, r, c).is_finite();
                 }
             }
             ok
@@ -1770,23 +1770,23 @@ mod tests {
             for (i, point) in large_points.iter().enumerate() {
                 let coords: [f64; 2] = point.into();
                 for (j, &v) in coords.iter().enumerate() {
-                    set_unchecked(&mut matrix, i, j, v);
+                    matrix_set(&mut matrix, i, j, v);
                 }
-                set_unchecked(&mut matrix, i, 2, squared_norm(coords));
-                set_unchecked(&mut matrix, i, 3, 1.0);
+                matrix_set(&mut matrix, i, 2, squared_norm(coords));
+                matrix_set(&mut matrix, i, 3, 1.0);
             }
 
             let test_coords: [f64; 2] = large_test.into();
             for (j, &v) in test_coords.iter().enumerate() {
-                set_unchecked(&mut matrix, 3, j, v);
+                matrix_set(&mut matrix, 3, j, v);
             }
-            set_unchecked(&mut matrix, 3, 2, squared_norm(test_coords));
-            set_unchecked(&mut matrix, 3, 3, 1.0);
+            matrix_set(&mut matrix, 3, 2, squared_norm(test_coords));
+            matrix_set(&mut matrix, 3, 3, 1.0);
 
             let mut ok = true;
             for r in 0..4 {
                 for c in 0..4 {
-                    ok &= get_unchecked(&matrix, r, c).is_finite();
+                    ok &= matrix_get(&matrix, r, c).is_finite();
                 }
             }
             ok
