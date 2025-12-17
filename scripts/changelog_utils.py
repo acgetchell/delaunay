@@ -1380,7 +1380,7 @@ def _cleanup_final_output(file_paths: dict[str, Path]) -> None:
 
 @dataclass(frozen=True)
 class _ReleaseNoteEntry:
-    lines: list[str]
+    lines: tuple[str, ...]
     title: str
     sha: str | None
     url: str | None
@@ -1748,7 +1748,7 @@ class _ReleaseNotesPostProcessor:
     @classmethod
     def _parse_entry_info(cls, entry: list[str]) -> _ReleaseNoteEntry:
         return _ReleaseNoteEntry(
-            lines=entry,
+            lines=tuple(entry),
             title=cls._extract_entry_title(entry),
             sha=cls._extract_commit_sha(entry),
             url=cls._extract_commit_url(entry),
