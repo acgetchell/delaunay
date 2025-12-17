@@ -10,7 +10,7 @@ import re
 
 import pytest
 
-import changelog_utils
+from changelog_utils import _ReleaseNotesPostProcessor
 
 
 def _require(condition: bool, message: str) -> None:
@@ -53,7 +53,7 @@ class TestReleaseNotesPostProcessor:
 - **Some new feature** [`999999999`](https://github.com/acgetchell/delaunay/commit/999999999)
 """
 
-        processed = changelog_utils._ReleaseNotesPostProcessor.process(content)  # noqa: SLF001
+        processed = _ReleaseNotesPostProcessor.process(content)
         lines = processed.splitlines()
 
         _require(
@@ -103,7 +103,7 @@ class TestReleaseNotesPostProcessor:
     [`{nested_sha}`](https://github.com/acgetchell/delaunay/commit/{nested_sha})
 """
 
-        processed = changelog_utils._ReleaseNotesPostProcessor.process(content)  # noqa: SLF001
+        processed = _ReleaseNotesPostProcessor.process(content)
 
         # Top-level bullet should keep an attached (shortened) commit link.
         _require(
@@ -140,7 +140,7 @@ class TestReleaseNotesPostProcessor:
 - **Add tests for new API** [`{sha}`]({url})
 """
 
-        processed = changelog_utils._ReleaseNotesPostProcessor.process(content)  # noqa: SLF001
+        processed = _ReleaseNotesPostProcessor.process(content)
         lines = processed.splitlines()
 
         added_body = _section_body(lines, "### Added")
@@ -169,7 +169,7 @@ class TestReleaseNotesPostProcessor:
 - **Fix retriable dets edge case** [`beefbeef0`](https://github.com/acgetchell/delaunay/commit/beefbeef0)
 """
 
-        processed = changelog_utils._ReleaseNotesPostProcessor.process(content)  # noqa: SLF001
+        processed = _ReleaseNotesPostProcessor.process(content)
 
         _require("retryable" in processed, "Expected 'retriable' to be normalized to 'retryable'")
         _require("determinants" in processed, "Expected 'dets' to be normalized to 'determinants'")
