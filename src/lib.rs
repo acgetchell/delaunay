@@ -96,8 +96,8 @@
 //!
 //! # Triangulation Invariants
 //!
-//! The triangulation data structure maintains a set of **structural** and **geometric** invariants
-//! that are checked by [`DelaunayTriangulation::is_valid`](core::delaunay_triangulation::DelaunayTriangulation::is_valid) and
+//! The triangulation data structure maintains a set of **structural invariants** that are checked by
+//! [`DelaunayTriangulation::is_valid`](core::delaunay_triangulation::DelaunayTriangulation::is_valid) and
 //! [`DelaunayTriangulation::validation_report`](core::delaunay_triangulation::DelaunayTriangulation::validation_report):
 //!
 //! - **Vertex mappings** – every vertex UUID has a corresponding key and vice versa.
@@ -107,18 +107,28 @@
 //!   consistency checks.
 //! - **Facet sharing** – each facet is shared by at most 2 cells (1 on the boundary, 2 in the interior).
 //! - **Neighbor consistency** – neighbor relationships are mutual and reference a shared facet.
-//! - **Delaunay property** – triangulations are constructed to satisfy the empty circumsphere
-//!   invariant; no vertex should lie strictly inside the circumsphere of any maximal cell.
-//!   Use `validate_delaunay()` for explicit verification.
 //!
-//! ## Validation Hierarchy
+//! Separately, the **geometric** empty-circumsphere (Delaunay) property can be checked with
+//! [`DelaunayTriangulation::validate_delaunay`](core::delaunay_triangulation::DelaunayTriangulation::validate_delaunay).
+//! Construction is designed to satisfy this property, but in rare cases it may be violated for
+//! near-degenerate inputs (see [Issue #120](https://github.com/acgetchell/delaunay/issues/120)).
 //!
-//! The library provides **four levels** of validation, each building on the previous:
+//! ## Validation
 //!
-//! 1. **Level 1: Element Validity** - [`Cell::is_valid()`](core::cell::Cell::is_valid), [`Vertex::is_valid()`](core::vertex::Vertex::is_valid)
-//! 2. **Level 2: TDS Structural Validity** - [`Tds::is_valid()`](core::triangulation_data_structure::Tds::is_valid)
-//! 3. **Level 3: Manifold Topology** - [`Triangulation::validate_manifold()`](crate::core::triangulation::Triangulation::validate_manifold)
-//! 4. **Level 4: Delaunay Property** - [`DelaunayTriangulation::validate_delaunay()`](core::delaunay_triangulation::DelaunayTriangulation::validate_delaunay)
+//! The crate exposes four validation levels (element → structural → manifold → Delaunay). The
+//! canonical guide (when to use each level, complexity, examples, troubleshooting) lives in
+//! `docs/validation.md`:
+//! <https://github.com/acgetchell/delaunay/blob/main/docs/validation.md>
+//!
+//! In brief:
+//! - Level 2 (structural): [`DelaunayTriangulation::is_valid`](core::delaunay_triangulation::DelaunayTriangulation::is_valid)
+//!   for a quick check, or [`DelaunayTriangulation::validation_report`](core::delaunay_triangulation::DelaunayTriangulation::validation_report)
+//!   for full diagnostics.
+//! - Level 3 (topology): [`Triangulation::validate_manifold`](crate::core::triangulation::Triangulation::validate_manifold)
+//!   for manifold + Euler checks.
+//! - Level 4 (Delaunay): [`DelaunayTriangulation::validate_delaunay`](core::delaunay_triangulation::DelaunayTriangulation::validate_delaunay)
+//!   for the empty-circumsphere property (expensive; see [Issue #120](https://github.com/acgetchell/delaunay/issues/120)
+//!   for rare failures on near-degenerate inputs).
 //!
 //! ```rust
 //! use delaunay::prelude::*;
@@ -130,47 +140,10 @@
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
 //! let dt = DelaunayTriangulation::new(&vertices).unwrap();
-//!
-//! // Level 2: Quick structural check (recommended for production)
 //! assert!(dt.is_valid().is_ok());
-//!
-//! // Level 3: Thorough manifold validation (includes Level 2 + Euler characteristic)
-//! assert!(dt.triangulation().validate_manifold().is_ok());
-//!
-//! // Level 4: Full geometric validation (expensive, use in tests)
-//! assert!(dt.validate_delaunay().is_ok());
 //! ```
 //!
-//! **Performance**: Use Level 2 (`is_valid()`) for most production validation. Reserve Level 3
-//! for tests/debug builds, and Level 4 for critical verification.
-//!
-//! For a comprehensive guide with decision trees, troubleshooting, and performance analysis,
-//! see the [Validation Guide](https://github.com/acgetchell/delaunay/blob/main/docs/validation.md).
-//!
-//! ## Validation Helpers
-//!
-//! Individual invariants can be checked using focused validation helpers:
-//!
-//! | Invariant | Helper method | Notes |
-//! |---|---|---|
-//! | Vertex mappings | [`DelaunayTriangulation::validate_vertex_mappings`](core::delaunay_triangulation::DelaunayTriangulation::validate_vertex_mappings) | Ensures UUID↔key consistency for all vertices. |
-//! | Cell mappings | [`DelaunayTriangulation::validate_cell_mappings`](core::delaunay_triangulation::DelaunayTriangulation::validate_cell_mappings) | Ensures UUID↔key consistency for all cells. |
-//! | Duplicate cells | [`DelaunayTriangulation::validate_no_duplicate_cells`](core::delaunay_triangulation::DelaunayTriangulation::validate_no_duplicate_cells) | Detects maximal cells with identical vertex sets. |
-//! | Cell validity | [`Cell::is_valid`](core::cell::Cell::is_valid) (aggregated via [`DelaunayTriangulation::validation_report`](core::delaunay_triangulation::DelaunayTriangulation::validation_report)) | Per-cell structural checks. |
-//! | Facet sharing | [`DelaunayTriangulation::validate_facet_sharing`](core::delaunay_triangulation::DelaunayTriangulation::validate_facet_sharing) | Verifies that each facet is shared by ≤ 2 cells. |
-//! | Neighbor consistency | [`DelaunayTriangulation::validate_neighbors`](core::delaunay_triangulation::DelaunayTriangulation::validate_neighbors) | Verifies neighbor topology and mutual relationships. |
-//! | Manifold topology | [`Triangulation::validate_manifold`](crate::core::triangulation::Triangulation::validate_manifold) | Validates manifold properties and Euler characteristic. |
-//! | Delaunay property | [`DelaunayTriangulation::validate_delaunay`](core::delaunay_triangulation::DelaunayTriangulation::validate_delaunay) | Expensive global empty-circumsphere check (optional). |
-//!
-//! [`DelaunayTriangulation::is_valid`](core::delaunay_triangulation::DelaunayTriangulation::is_valid) runs all **structural**
-//! invariants (mappings, duplicates, per-cell validity, facet sharing, neighbors) and returns
-//! only the first failure for convenience. For full diagnostics, use
-//! [`core::delaunay_triangulation::DelaunayTriangulation::validation_report`].
-//!
-//! For detailed information, see:
-//! - [`core::algorithms::incremental_insertion`] - Primary invariant enforcement during triangulation construction
-//! - [`core::delaunay_triangulation::DelaunayTriangulation::validation_report`] - Comprehensive validation of all invariants
-//!
+//! For implementation details on invariant enforcement, see [`core::algorithms::incremental_insertion`].
 //! # Correctness Guarantees and Limitations
 //!
 //! The library provides strong correctness guarantees for vertex insertion operations while being
@@ -211,9 +184,9 @@
 //! - Duplicate coordinates are automatically detected and rejected.
 //!
 //! Incremental construction via [`DelaunayTriangulation::insert`](core::delaunay_triangulation::DelaunayTriangulation::insert)
-//! follows the same invariant rules on each insertion: on success the triangulation
-//! remains structurally valid and Delaunay; on failure the data structure is rolled
-//! back to its previous state.
+//! follows the same invariant rules on each insertion: on success the triangulation remains
+//! structurally valid; on failure the data structure is rolled back to its previous state.
+//! Use `validate_delaunay()` (Level 4) if you need explicit verification of the Delaunay property.
 //!
 //! ## Incremental insertion algorithm
 //!
@@ -232,9 +205,9 @@
 //!   4. Fills the cavity with new cells connecting the cavity boundary to the new vertex
 //!   5. Wires neighbor relationships locally without global recomputation
 //!
-//! The incremental insertion algorithm maintains all structural invariants and the
-//! Delaunay property throughout construction. Vertices are only rejected if they would
-//! violate fundamental geometric constraints (duplicates, near-duplicates, or degenerate
+//! The incremental insertion algorithm maintains all structural invariants throughout construction,
+//! and is designed to satisfy the Delaunay (empty-circumsphere) property. Vertices are only rejected
+//! if they would violate fundamental geometric constraints (duplicates, near-duplicates, or degenerate
 //! configurations).
 //!
 //! ## Delaunay validation

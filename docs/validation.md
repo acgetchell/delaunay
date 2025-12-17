@@ -69,10 +69,12 @@ assert!(v.is_valid().is_ok());
 
 Validates the combinatorial structure of the Triangulation Data Structure.
 
-### Method
+### Methods
 
-- `Tds::is_valid()` - Comprehensive TDS validation
-- `Tds::validation_report()` - Detailed validation with all violations
+- `DelaunayTriangulation::is_valid()` - Convenience entry point for structural checks (recommended).
+- `DelaunayTriangulation::validation_report()` - Detailed report with all violations.
+- `Tds::is_valid()` - Same structural checks at the TDS layer.
+- `Tds::validation_report()` - Detailed report at the TDS layer.
 
 ### What It Checks
 
@@ -119,6 +121,19 @@ match dt.tds().validation_report() {
     }
 }
 ```
+
+### Focused invariant checks (debugging)
+
+When you want to pinpoint a failure, `DelaunayTriangulation` exposes focused helpers that map
+closely to the main structural invariants:
+
+- `DelaunayTriangulation::validate_vertex_mappings()`
+- `DelaunayTriangulation::validate_cell_mappings()`
+- `DelaunayTriangulation::validate_no_duplicate_cells()`
+- `DelaunayTriangulation::validate_facet_sharing()`
+- `DelaunayTriangulation::validate_neighbors()`
+
+For most users, start with `dt.is_valid()` (fast-fail) or `dt.validation_report()` (full diagnostics).
 
 ---
 
@@ -195,6 +210,8 @@ Validates the geometric optimality of the triangulation.
 - **Empty Circumsphere Property**: For every D-dimensional cell, no vertex lies strictly inside its circumsphere
 - Uses geometric predicates from the kernel (`insphere` test)
 - **Independent of Levels 1-3**: Checks geometric property, not structural/topological
+- **Known limitation (Issue #120)**: Construction is designed to satisfy this property, but rare local
+  violations have been observed for near-degenerate inputs. See [Issue #120 Investigation](issue_120_investigation.md).
 
 ### Complexity
 
@@ -350,6 +367,8 @@ pub fn validate_with_level(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3
 | 1 | `Vertex::is_valid()` | `core::vertex` | O(1) |
 | 2 | `Tds::is_valid()` | `core::triangulation_data_structure` | O(N×D²) |
 | 2 | `Tds::validation_report()` | `core::triangulation_data_structure` | O(N×D²) |
+| 2 | `DelaunayTriangulation::is_valid()` | `core::delaunay_triangulation` | O(N×D²) |
+| 2 | `DelaunayTriangulation::validation_report()` | `core::delaunay_triangulation` | O(N×D²) |
 | 3 | `Triangulation::validate_manifold()` | `core::triangulation` | O(N×D²) |
 | 4 | `DelaunayTriangulation::validate_delaunay()` | `core::delaunay_triangulation` | O(N×V) |
 
