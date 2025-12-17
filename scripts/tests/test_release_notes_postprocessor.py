@@ -13,18 +13,13 @@ import pytest
 from changelog_utils import _ReleaseNotesPostProcessor
 
 
-def _require(condition: bool, message: str) -> None:
-    if not condition:
-        pytest.fail(message)
-
-
 def _section_body(lines: list[str], header: str) -> list[str]:
     """Return lines between a section header and the next section/release header."""
     try:
         start = next(i for i, line in enumerate(lines) if line.strip() == header)
     except StopIteration as exc:  # pragma: no cover
-        msg = f"Section header not found: {header!r}"
-        raise AssertionError(msg) from exc
+        pytest.fail(f"Section header not found: {header!r}")
+        raise AssertionError from exc
 
     body: list[str] = []
     i = start + 1
@@ -56,34 +51,21 @@ class TestReleaseNotesPostProcessor:
         processed = _ReleaseNotesPostProcessor.process(content)
         lines = processed.splitlines()
 
-        _require(
-            "### ⚠️ Breaking Changes" in processed,
-            "Expected breaking changes section to be present",
-        )
+        assert "### ⚠️ Breaking Changes" in processed, "Expected breaking changes section to be present"
 
         breaking_start = lines.index("### ⚠️ Breaking Changes")
         changed_start = lines.index("### Changed")
-        _require(
-            breaking_start < changed_start,
-            "Expected breaking changes section to appear before the Changed section",
-        )
+        assert breaking_start < changed_start, "Expected breaking changes section to appear before the Changed section"
 
         breaking_body = _section_body(lines, "### ⚠️ Breaking Changes")
-        _require(
-            any("MSRV" in line for line in breaking_body),
-            "Expected MSRV entry to be present in breaking changes section",
-        )
+        assert any("MSRV" in line for line in breaking_body), "Expected MSRV entry to be present in breaking changes section"
 
         changed_body = _section_body(lines, "### Changed")
-        _require(
-            not any("MSRV" in line for line in changed_body),
-            "Expected MSRV entry to be removed from Changed section",
-        )
+        assert not any("MSRV" in line for line in changed_body), "Expected MSRV entry to be removed from Changed section"
 
         # The breaking section should not include verbose body details.
-        _require(
-            not any("Details that should not appear" in line for line in breaking_body),
-            "Expected verbose breaking-change body details to be trimmed",
+        assert not any("Details that should not appear" in line for line in breaking_body), (
+            "Expected verbose breaking-change body details to be trimmed"
         )
 
     def test_commit_links_attached_to_top_level_only(self):
@@ -106,23 +88,14 @@ class TestReleaseNotesPostProcessor:
         processed = _ReleaseNotesPostProcessor.process(content)
 
         # Top-level bullet should keep an attached (shortened) commit link.
-        _require(
-            "`1234567`" in processed,
-            "Expected top-level bullet to keep an attached (shortened) commit link",
-        )
+        assert "`1234567`" in processed, "Expected top-level bullet to keep an attached (shortened) commit link"
 
         # Nested bullets should not include commit links (they're dropped).
-        _require(
-            "`9876543`" not in processed,
-            "Expected nested bullet commit links to be dropped",
-        )
+        assert "`9876543`" not in processed, "Expected nested bullet commit links to be dropped"
 
         # No standalone commit-link-only lines should remain.
         commit_only_re = re.compile(r"^\s*\[`[a-f0-9]{7,40}`\]\([^)]*\)\s*$")
-        _require(
-            not any(commit_only_re.match(line) for line in processed.splitlines()),
-            "Expected no standalone commit-link-only lines to remain",
-        )
+        assert not any(commit_only_re.match(line) for line in processed.splitlines()), "Expected no standalone commit-link-only lines to remain"
 
     def test_added_section_consolidates_many_entries_from_same_commit(self):
         sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"  # 40 chars
@@ -145,19 +118,16 @@ class TestReleaseNotesPostProcessor:
 
         added_body = _section_body(lines, "### Added")
         top_level_bullets = [line for line in added_body if line.startswith("- **")]
-        _require(
-            len(top_level_bullets) == 1,
-            "Expected Added section to consolidate into a single top-level bullet",
-        )
+        assert len(top_level_bullets) == 1, "Expected Added section to consolidate into a single top-level bullet"
 
         # Ensure we preserved the details as nested items.
-        _require("Add helper function" in processed, "Expected helper entry to be preserved")
-        _require("Add another helper" in processed, "Expected helper entry to be preserved")
-        _require("Add tests for new API" in processed, "Expected tests entry to be preserved")
+        assert "Add helper function" in processed, "Expected helper entry to be preserved"
+        assert "Add another helper" in processed, "Expected helper entry to be preserved"
+        assert "Add tests for new API" in processed, "Expected tests entry to be preserved"
 
         # Bucket structure should be present.
-        _require("  - Tests" in processed, "Expected consolidated output to include a Tests bucket")
-        _require("  - Other" in processed, "Expected consolidated output to include an Other bucket")
+        assert "  - Tests" in processed, "Expected consolidated output to include a Tests bucket"
+        assert "  - Other" in processed, "Expected consolidated output to include an Other bucket"
 
     def test_wording_normalization_replacements(self):
         content = """# Changelog
@@ -171,10 +141,7 @@ class TestReleaseNotesPostProcessor:
 
         processed = _ReleaseNotesPostProcessor.process(content)
 
-        _require("retryable" in processed, "Expected 'retriable' to be normalized to 'retryable'")
-        _require("determinants" in processed, "Expected 'dets' to be normalized to 'determinants'")
-        _require("retriable" not in processed, "Expected original word 'retriable' to be removed")
-        _require(
-            re.search(r"\bdets\b", processed, flags=re.IGNORECASE) is None,
-            "Expected original token 'dets' to be removed",
-        )
+        assert "retryable" in processed, "Expected 'retriable' to be normalized to 'retryable'"
+        assert "determinants" in processed, "Expected 'dets' to be normalized to 'determinants'"
+        assert "retriable" not in processed, "Expected original word 'retriable' to be removed"
+        assert re.search(r"\bdets\b", processed, flags=re.IGNORECASE) is None, "Expected original token 'dets' to be removed"
