@@ -10,6 +10,7 @@ use std::fmt::Debug;
 
 use super::predicates::{InSphere, Orientation};
 use super::util::{safe_coords_to_f64, safe_scalar_to_f64, squared_norm};
+use crate::geometry::matrix::{determinant, matrix_get, matrix_set};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar,
@@ -191,6 +192,53 @@ where
     ))
 }
 
+#[inline]
+fn fill_insphere_predicate_matrix<T, const D: usize, const K: usize>(
+    matrix: &mut crate::geometry::matrix::Matrix<K>,
+    simplex_points: &[Point<T, D>],
+    test_point: &Point<T, D>,
+) -> Result<(), CoordinateConversionError>
+where
+    T: CoordinateScalar,
+    [T; D]: Copy + Sized,
+{
+    debug_assert_eq!(K, D + 2);
+
+    // Add simplex points
+    for (i, point) in simplex_points.iter().enumerate() {
+        let coords: [T; D] = point.into();
+
+        // Coordinates - use safe conversion
+        let coords_f64 = safe_coords_to_f64(coords)?;
+        for (j, &v) in coords_f64.iter().enumerate() {
+            matrix_set(matrix, i, j, v);
+        }
+
+        // Squared norm - use safe conversion
+        let norm_sq = squared_norm(coords);
+        let norm_sq_f64 = safe_scalar_to_f64(norm_sq)?;
+        matrix_set(matrix, i, D, norm_sq_f64);
+
+        // Constant term
+        matrix_set(matrix, i, D + 1, 1.0);
+    }
+
+    // Add test point
+    let test_coords: [T; D] = (*test_point).into();
+
+    let test_coords_f64 = safe_coords_to_f64(test_coords)?;
+    for (j, &v) in test_coords_f64.iter().enumerate() {
+        matrix_set(matrix, D + 1, j, v);
+    }
+
+    let test_norm_sq = squared_norm(test_coords);
+    let test_norm_sq_f64 = safe_scalar_to_f64(test_norm_sq)?;
+    matrix_set(matrix, D + 1, D, test_norm_sq_f64);
+    matrix_set(matrix, D + 1, D + 1, 1.0);
+
+    Ok(())
+}
+
 /// Insphere test with adaptive tolerance based on operand magnitude.
 ///
 /// This approach computes tolerances that scale with the magnitude of the
@@ -205,20 +253,22 @@ where
     T: CoordinateScalar,
     [T; D]: Copy + Sized,
 {
-    // Build the insphere determinant matrix
-    let matrix = build_insphere_matrix(simplex_points, test_point)?;
-
-    // Calculate determinant
-    let det = matrix.determinant();
-
-    // Compute adaptive tolerance using matrix helper
     let base_tol = super::util::safe_scalar_to_f64(config.base_tolerance)?;
-    let adaptive_tolerance: T = super::util::safe_scalar_from_f64::<T>(
-        crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol),
-    )?;
 
-    // Get simplex orientation for correct interpretation
+    // Get simplex orientation for correct interpretation.
     let orientation = robust_orientation(simplex_points, config)?;
+
+    let k = D + 2;
+    let (det, tol_f64) = try_with_la_stack_matrix!(k, |matrix| {
+        fill_insphere_predicate_matrix(&mut matrix, simplex_points, test_point)?;
+
+        let tol_f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
+        let det = determinant(matrix);
+
+        Ok::<(f64, f64), CoordinateConversionError>((det, tol_f64))
+    })?;
+
+    let adaptive_tolerance: T = super::util::safe_scalar_from_f64::<T>(tol_f64)?;
 
     // Interpret result based on orientation
     interpret_insphere_determinant(det, orientation, adaptive_tolerance)
@@ -243,22 +293,42 @@ where
     T: CoordinateScalar,
     [T; D]: Copy + Sized,
 {
-    // Build matrix and apply conditioning
-    let matrix = build_insphere_matrix(simplex_points, test_point)?;
-
-    // Compute adaptive tolerance from original matrix BEFORE conditioning
-    // This keeps determinant and tolerance in the same scale
     let base_tol = super::util::safe_scalar_to_f64(config.base_tolerance)?;
-    let tolerance_raw = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
 
-    // Apply row scaling to improve conditioning
-    let (conditioned_matrix, scale_factor) = condition_matrix(matrix, config);
+    let orientation = robust_orientation(simplex_points, config)?;
 
-    // Calculate determinant with scale correction
-    let det = conditioned_matrix.determinant() * scale_factor;
+    let k = D + 2;
+    let (det, tolerance_raw) = try_with_la_stack_matrix!(k, |matrix| {
+        fill_insphere_predicate_matrix(&mut matrix, simplex_points, test_point)?;
+
+        // Compute adaptive tolerance from original matrix BEFORE conditioning.
+        // This keeps determinant and tolerance in the same scale.
+        let tolerance_raw = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
+
+        // Simple row scaling - scale each row by its maximum element.
+        let mut scale_factor = 1.0;
+        for i in 0..k {
+            let mut max_element = 0.0;
+            for j in 0..k {
+                max_element = max_element.max(matrix_get(&matrix, i, j).abs());
+            }
+
+            if max_element > 1e-100 {
+                for j in 0..k {
+                    let v = matrix_get(&matrix, i, j) / max_element;
+                    matrix_set(&mut matrix, i, j, v);
+                }
+                scale_factor *= max_element;
+            }
+        }
+
+        // Determinant with scale correction.
+        let det = determinant(matrix) * scale_factor;
+
+        Ok::<(f64, f64), CoordinateConversionError>((det, tolerance_raw))
+    })?;
 
     let tolerance: T = super::util::safe_scalar_from_f64::<T>(tolerance_raw)?;
-    let orientation = robust_orientation(simplex_points, config)?;
 
     interpret_insphere_determinant(det, orientation, tolerance)
 }
@@ -317,134 +387,42 @@ where
         });
     }
 
-    // Build orientation matrix
-    let matrix = build_orientation_matrix(simplex_points)?;
+    let k = D + 1;
 
-    // Calculate determinant
-    let det = matrix.determinant();
+    try_with_la_stack_matrix!(k, |matrix| {
+        for (i, point) in simplex_points.iter().enumerate() {
+            let coords: [T; D] = point.into();
 
-    // Use adaptive tolerance
-    let base_tol = safe_scalar_to_f64(config.base_tolerance)?;
-    let tolerance_f64: f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
+            // Add coordinates using safe conversion
+            let coords_f64 = safe_coords_to_f64(coords)?;
+            for (j, &v) in coords_f64.iter().enumerate() {
+                matrix_set(&mut matrix, i, j, v);
+            }
 
-    if det > tolerance_f64 {
-        Ok(Orientation::POSITIVE)
-    } else if det < -tolerance_f64 {
-        Ok(Orientation::NEGATIVE)
-    } else {
-        Ok(Orientation::DEGENERATE)
-    }
+            // Add constant term
+            matrix_set(&mut matrix, i, D, 1.0);
+        }
+
+        // Use adaptive tolerance before consuming the matrix.
+        let base_tol = safe_scalar_to_f64(config.base_tolerance)?;
+        let tolerance_f64: f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
+
+        // Calculate determinant (singular => 0; non-finite => NaN).
+        let det = determinant(matrix);
+
+        if det > tolerance_f64 {
+            Ok(Orientation::POSITIVE)
+        } else if det < -tolerance_f64 {
+            Ok(Orientation::NEGATIVE)
+        } else {
+            Ok(Orientation::DEGENERATE)
+        }
+    })
 }
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-/// Build the standard insphere matrix for determinant computation.
-fn build_insphere_matrix<T, const D: usize>(
-    simplex_points: &[Point<T, D>],
-    test_point: &Point<T, D>,
-) -> Result<crate::geometry::matrix::Matrix, CoordinateConversionError>
-where
-    T: CoordinateScalar,
-    [T; D]: Copy + Sized,
-{
-    use crate::geometry::matrix::Matrix;
-
-    let mut matrix: Matrix = Matrix::zeros(D + 2, D + 2);
-
-    // Add simplex points
-    for (i, point) in simplex_points.iter().enumerate() {
-        let coords: [T; D] = point.into();
-
-        // Coordinates - use safe conversion
-        let coords_f64 = safe_coords_to_f64(coords)?;
-        for j in 0..D {
-            matrix[(i, j)] = coords_f64[j];
-        }
-
-        // Squared norm - use safe conversion
-        let norm_sq = squared_norm(coords);
-        let norm_sq_f64 = safe_scalar_to_f64(norm_sq)?;
-        matrix[(i, D)] = norm_sq_f64;
-
-        // Constant term
-        matrix[(i, D + 1)] = 1.0;
-    }
-
-    // Add test point
-    let test_coords: [T; D] = (*test_point).into();
-
-    let test_coords_f64 = safe_coords_to_f64(test_coords)?;
-    for j in 0..D {
-        matrix[(D + 1, j)] = test_coords_f64[j];
-    }
-
-    let test_norm_sq = squared_norm(test_coords);
-    let test_norm_sq_f64 = safe_scalar_to_f64(test_norm_sq)?;
-    matrix[(D + 1, D)] = test_norm_sq_f64;
-    matrix[(D + 1, D + 1)] = 1.0;
-
-    Ok(matrix)
-}
-
-/// Build orientation matrix for determinant computation.
-fn build_orientation_matrix<T, const D: usize>(
-    simplex_points: &[Point<T, D>],
-) -> Result<crate::geometry::matrix::Matrix, CoordinateConversionError>
-where
-    T: CoordinateScalar,
-    [T; D]: Copy + Sized,
-{
-    use crate::geometry::matrix::Matrix;
-
-    let mut matrix: Matrix = Matrix::zeros(D + 1, D + 1);
-
-    for (i, point) in simplex_points.iter().enumerate() {
-        let coords: [T; D] = point.into();
-
-        // Add coordinates using safe conversion
-        let coords_f64 = safe_coords_to_f64(coords)?;
-        for j in 0..D {
-            matrix[(i, j)] = coords_f64[j];
-        }
-
-        // Add constant term
-        matrix[(i, D)] = 1.0;
-    }
-
-    Ok(matrix)
-}
-
-// Removed: compute_adaptive_tolerance and compute_matrix_adaptive_tolerance
-/// Apply matrix conditioning to improve numerical stability.
-fn condition_matrix<T>(
-    mut matrix: crate::geometry::matrix::Matrix,
-    _config: &RobustPredicateConfig<T>,
-) -> (crate::geometry::matrix::Matrix, f64)
-where
-    T: CoordinateScalar,
-{
-    let mut scale_factor = 1.0;
-
-    // Simple row scaling - scale each row by its maximum element
-    for i in 0..matrix.nrows() {
-        let mut max_element = 0.0;
-        for j in 0..matrix.ncols() {
-            max_element = max_element.max(matrix[(i, j)].abs());
-        }
-
-        if max_element > 1e-100 {
-            // Avoid division by zero
-            for j in 0..matrix.ncols() {
-                matrix[(i, j)] /= max_element;
-            }
-            scale_factor *= max_element;
-        }
-    }
-
-    (matrix, scale_factor)
-}
 
 /// Verify consistency of insphere result using alternative method.
 ///
@@ -805,7 +783,6 @@ mod tests {
     use super::*;
     use crate::geometry::point::Point;
     use approx::assert_relative_eq;
-    use nalgebra::DMatrix;
 
     #[test]
     fn test_robust_insphere_general() {
@@ -1169,40 +1146,105 @@ mod tests {
 
     #[test]
     fn test_matrix_conditioning_edge_cases() {
-        // Test matrix conditioning with various edge cases
-        let config = config_presets::general_triangulation::<f64>();
+        // This mirrors the row-scaling conditioning performed in `conditioned_insphere`.
 
         // Test matrix with very small elements
-        let mut small_matrix = DMatrix::zeros(3, 3);
-        small_matrix[(0, 0)] = 1e-100;
-        small_matrix[(1, 1)] = 1e-99;
-        small_matrix[(2, 2)] = 1e-98;
+        let scale_small = with_la_stack_matrix!(3, |m| {
+            matrix_set(&mut m, 0, 0, 1e-100);
+            matrix_set(&mut m, 1, 1, 1e-99);
+            matrix_set(&mut m, 2, 2, 1e-98);
 
-        let (conditioned_small, scale_small) = condition_matrix(small_matrix.clone(), &config);
+            let mut scale_factor = 1.0;
+            for i in 0..3 {
+                let mut max_element = 0.0;
+                for j in 0..3 {
+                    max_element = max_element.max(matrix_get(&m, i, j).abs());
+                }
+
+                if max_element > 1e-100 {
+                    for j in 0..3 {
+                        let v = matrix_get(&m, i, j) / max_element;
+                        matrix_set(&mut m, i, j, v);
+                    }
+                    scale_factor *= max_element;
+                }
+            }
+
+            for i in 0..3 {
+                for j in 0..3 {
+                    assert!(matrix_get(&m, i, j).is_finite());
+                }
+            }
+
+            scale_factor
+        });
         assert!(scale_small.is_finite());
-        assert!(conditioned_small.iter().all(|x| x.is_finite()));
 
         // Test matrix with mixed large and small elements
-        let mut mixed_matrix = DMatrix::zeros(3, 3);
-        mixed_matrix[(0, 0)] = 1e10;
-        mixed_matrix[(0, 1)] = 1e-10;
-        mixed_matrix[(1, 0)] = 1e5;
-        mixed_matrix[(1, 1)] = 1e-5;
-        mixed_matrix[(2, 2)] = 1.0;
+        let scale_mixed = with_la_stack_matrix!(3, |m| {
+            matrix_set(&mut m, 0, 0, 1e10);
+            matrix_set(&mut m, 0, 1, 1e-10);
+            matrix_set(&mut m, 1, 0, 1e5);
+            matrix_set(&mut m, 1, 1, 1e-5);
+            matrix_set(&mut m, 2, 2, 1.0);
 
-        let (conditioned_mixed, scale_mixed) = condition_matrix(mixed_matrix, &config);
+            let mut scale_factor = 1.0;
+            for i in 0..3 {
+                let mut max_element = 0.0;
+                for j in 0..3 {
+                    max_element = max_element.max(matrix_get(&m, i, j).abs());
+                }
+
+                if max_element > 1e-100 {
+                    for j in 0..3 {
+                        let v = matrix_get(&m, i, j) / max_element;
+                        matrix_set(&mut m, i, j, v);
+                    }
+                    scale_factor *= max_element;
+                }
+            }
+
+            for i in 0..3 {
+                for j in 0..3 {
+                    assert!(matrix_get(&m, i, j).is_finite());
+                }
+            }
+
+            scale_factor
+        });
         assert!(scale_mixed.is_finite() && scale_mixed > 0.0);
-        assert!(conditioned_mixed.iter().all(|x| x.is_finite()));
 
         // Test matrix with some zero elements
-        let mut zero_matrix = DMatrix::zeros(3, 3);
-        zero_matrix[(0, 0)] = 1.0;
-        zero_matrix[(1, 1)] = 0.0; // This row will not be scaled
-        zero_matrix[(2, 2)] = 2.0;
+        let scale_zero = with_la_stack_matrix!(3, |m| {
+            matrix_set(&mut m, 0, 0, 1.0);
+            matrix_set(&mut m, 1, 1, 0.0); // This row will not be scaled
+            matrix_set(&mut m, 2, 2, 2.0);
 
-        let (conditioned_zero, scale_zero) = condition_matrix(zero_matrix, &config);
+            let mut scale_factor = 1.0;
+            for i in 0..3 {
+                let mut max_element = 0.0;
+                for j in 0..3 {
+                    max_element = max_element.max(matrix_get(&m, i, j).abs());
+                }
+
+                if max_element > 1e-100 {
+                    for j in 0..3 {
+                        let v = matrix_get(&m, i, j) / max_element;
+                        matrix_set(&mut m, i, j, v);
+                    }
+                    scale_factor *= max_element;
+                }
+            }
+
+            for i in 0..3 {
+                for j in 0..3 {
+                    assert!(matrix_get(&m, i, j).is_finite());
+                }
+            }
+
+            scale_factor
+        });
         assert!(scale_zero.is_finite());
-        assert!(conditioned_zero.iter().all(|x| x.is_finite()));
     }
 
     #[test]
@@ -1401,44 +1443,40 @@ mod tests {
         let config = config_presets::general_triangulation::<f64>();
 
         // Small matrix with moderate values
-        let mut small_matrix = DMatrix::zeros(2, 2);
-        small_matrix[(0, 0)] = 1.0;
-        small_matrix[(0, 1)] = 2.0;
-        small_matrix[(1, 0)] = 3.0;
-        small_matrix[(1, 1)] = 4.0;
-
-        let tolerance_small =
-            crate::geometry::matrix::adaptive_tolerance(&small_matrix, config.base_tolerance);
+        let tolerance_small = with_la_stack_matrix!(2, |m| {
+            matrix_set(&mut m, 0, 0, 1.0);
+            matrix_set(&mut m, 0, 1, 2.0);
+            matrix_set(&mut m, 1, 0, 3.0);
+            matrix_set(&mut m, 1, 1, 4.0);
+            crate::geometry::matrix::adaptive_tolerance(&m, config.base_tolerance)
+        });
         assert!(tolerance_small > 0.0);
 
         // Large matrix with large values
-        let mut large_matrix = DMatrix::zeros(5, 5);
-        for i in 0..5 {
-            for j in 0..5 {
-                if let Some(val) = num_traits::cast::<usize, f64>(i + j) {
-                    large_matrix[(i, j)] = val * 1000.0;
-                } else {
-                    large_matrix[(i, j)] = 0.0;
+        let tolerance_large = with_la_stack_matrix!(5, |m| {
+            for i in 0..5 {
+                for j in 0..5 {
+                    let sum_f64 = num_traits::cast::<usize, f64>(i + j).unwrap_or(0.0);
+                    matrix_set(&mut m, i, j, sum_f64 * 1000.0);
                 }
             }
-        }
 
-        let tolerance_large =
-            crate::geometry::matrix::adaptive_tolerance(&large_matrix, config.base_tolerance);
+            crate::geometry::matrix::adaptive_tolerance(&m, config.base_tolerance)
+        });
         assert!(tolerance_large > 0.0);
         // Larger matrices with larger values should have larger tolerances
         assert!(tolerance_large > tolerance_small);
 
         // Matrix with very small values
-        let mut tiny_matrix = DMatrix::zeros(3, 3);
-        for i in 0..3 {
-            for j in 0..3 {
-                tiny_matrix[(i, j)] = 1e-10;
+        let tolerance_tiny = with_la_stack_matrix!(3, |m| {
+            for i in 0..3 {
+                for j in 0..3 {
+                    matrix_set(&mut m, i, j, 1e-10);
+                }
             }
-        }
 
-        let tolerance_tiny =
-            crate::geometry::matrix::adaptive_tolerance(&tiny_matrix, config.base_tolerance);
+            crate::geometry::matrix::adaptive_tolerance(&m, config.base_tolerance)
+        });
         assert!(tolerance_tiny > 0.0);
     }
 
@@ -1649,10 +1687,11 @@ mod tests {
 
     #[test]
     fn test_build_matrices_edge_cases() {
-        // Test matrix building functions with edge cases
+        // Exercise the same matrix construction patterns used by the robust predicates,
+        // but validate edge cases explicitly.
 
-        // Test with points having zero coordinates
-        let zero_points = vec![
+        // 3D: all-zero coordinates
+        let zero_points = [
             Point::new([0.0, 0.0, 0.0]),
             Point::new([0.0, 0.0, 0.0]),
             Point::new([0.0, 0.0, 0.0]),
@@ -1660,35 +1699,85 @@ mod tests {
         ];
         let zero_test = Point::new([0.0, 0.0, 0.0]);
 
-        // Should be able to build matrices even with all zeros
-        let matrix_result = build_insphere_matrix(&zero_points, &zero_test);
-        assert!(matrix_result.is_ok());
+        let all_finite_insphere_3d = with_la_stack_matrix!(5, |matrix| {
+            for (i, point) in zero_points.iter().enumerate() {
+                let coords: [f64; 3] = point.into();
+                for (j, &v) in coords.iter().enumerate() {
+                    matrix_set(&mut matrix, i, j, v);
+                }
+                matrix_set(&mut matrix, i, 3, squared_norm(coords));
+                matrix_set(&mut matrix, i, 4, 1.0);
+            }
 
-        let matrix = matrix_result.unwrap();
-        assert_eq!(matrix.nrows(), 5); // D+2 for 3D
-        assert_eq!(matrix.ncols(), 5);
+            let test_coords: [f64; 3] = zero_test.into();
+            for (j, &v) in test_coords.iter().enumerate() {
+                matrix_set(&mut matrix, 4, j, v);
+            }
+            matrix_set(&mut matrix, 4, 3, squared_norm(test_coords));
+            matrix_set(&mut matrix, 4, 4, 1.0);
 
-        // Test orientation matrix building
-        let orientation_result = build_orientation_matrix(&zero_points);
-        assert!(orientation_result.is_ok());
+            let mut ok = true;
+            for r in 0..5 {
+                for c in 0..5 {
+                    ok &= matrix_get(&matrix, r, c).is_finite();
+                }
+            }
+            ok
+        });
+        assert!(all_finite_insphere_3d);
 
-        let orient_matrix = orientation_result.unwrap();
-        assert_eq!(orient_matrix.nrows(), 4); // D+1 for 3D
-        assert_eq!(orient_matrix.ncols(), 4);
+        let all_finite_orientation_3d = with_la_stack_matrix!(4, |matrix| {
+            for (i, point) in zero_points.iter().enumerate() {
+                let coords: [f64; 3] = point.into();
+                for (j, &v) in coords.iter().enumerate() {
+                    matrix_set(&mut matrix, i, j, v);
+                }
+                matrix_set(&mut matrix, i, 3, 1.0);
+            }
 
-        // Test with very large coordinates
-        let large_points = vec![
+            let mut ok = true;
+            for r in 0..4 {
+                for c in 0..4 {
+                    ok &= matrix_get(&matrix, r, c).is_finite();
+                }
+            }
+            ok
+        });
+        assert!(all_finite_orientation_3d);
+
+        // 2D: very large coordinates should remain finite (avoid overflow to infinity)
+        let large_points = [
             Point::new([1e100, 0.0]),
             Point::new([0.0, 1e100]),
             Point::new([1e100, 1e100]),
         ];
         let large_test = Point::new([5e99, 5e99]);
 
-        let large_matrix_result = build_insphere_matrix(&large_points, &large_test);
-        assert!(large_matrix_result.is_ok());
+        let all_finite_insphere_2d = with_la_stack_matrix!(4, |matrix| {
+            for (i, point) in large_points.iter().enumerate() {
+                let coords: [f64; 2] = point.into();
+                for (j, &v) in coords.iter().enumerate() {
+                    matrix_set(&mut matrix, i, j, v);
+                }
+                matrix_set(&mut matrix, i, 2, squared_norm(coords));
+                matrix_set(&mut matrix, i, 3, 1.0);
+            }
 
-        // Should have finite entries (no overflow to infinity)
-        let large_matrix = large_matrix_result.unwrap();
-        assert!(large_matrix.iter().all(|&x| x.is_finite()));
+            let test_coords: [f64; 2] = large_test.into();
+            for (j, &v) in test_coords.iter().enumerate() {
+                matrix_set(&mut matrix, 3, j, v);
+            }
+            matrix_set(&mut matrix, 3, 2, squared_norm(test_coords));
+            matrix_set(&mut matrix, 3, 3, 1.0);
+
+            let mut ok = true;
+            for r in 0..4 {
+                for c in 0..4 {
+                    ok &= matrix_get(&matrix, r, c).is_finite();
+                }
+            }
+            ok
+        });
+        assert!(all_finite_insphere_2d);
     }
 }

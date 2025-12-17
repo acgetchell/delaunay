@@ -4,7 +4,7 @@
 //! that operate on points and simplices, including circumcenter and circumradius
 //! calculations.
 
-use crate::geometry::matrix::Matrix;
+use crate::geometry::matrix::{determinant, matrix_set};
 use num_traits::{Float, Zero};
 use std::iter::Sum;
 
@@ -123,39 +123,39 @@ where
         });
     }
 
-    // Create matrix for orientation test
-    // Matrix has D+1 columns: D coordinates + 1
-    let mut matrix: Matrix = Matrix::zeros(D + 1, D + 1);
+    let k = D + 1;
 
-    // Populate rows with the coordinates of the points of the simplex
-    for (i, p) in simplex_points.iter().enumerate() {
-        // Use implicit conversion from point to coordinates
-        let point_coords: [T; D] = p.into();
-        let point_coords_f64 = safe_coords_to_f64(point_coords)?;
+    try_with_la_stack_matrix!(k, |matrix| {
+        // Populate rows with the coordinates of the points of the simplex.
+        for (i, p) in simplex_points.iter().enumerate() {
+            // Use implicit conversion from point to coordinates
+            let point_coords: [T; D] = p.into();
+            let point_coords_f64 = safe_coords_to_f64(point_coords)?;
 
-        // Add coordinates
-        for j in 0..D {
-            matrix[(i, j)] = point_coords_f64[j];
+            // Add coordinates
+            for (j, &v) in point_coords_f64.iter().enumerate() {
+                matrix_set(&mut matrix, i, j, v);
+            }
+
+            // Add one to the last column
+            matrix_set(&mut matrix, i, D, 1.0);
         }
 
-        // Add one to the last column
-        matrix[(i, D)] = 1.0;
-    }
+        // Use adaptive tolerance based on matrix magnitude before consuming the matrix.
+        let base_tol = safe_scalar_to_f64(T::default_tolerance())?;
+        let tolerance_f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
 
-    // Calculate the determinant of the matrix
-    let det = matrix.determinant();
+        // Calculate determinant (singular => 0; non-finite => NaN).
+        let det = determinant(matrix);
 
-    // Use adaptive tolerance based on matrix magnitude
-    let base_tol = safe_scalar_to_f64(T::default_tolerance())?;
-    let tolerance_f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
-
-    if det > tolerance_f64 {
-        Ok(Orientation::POSITIVE)
-    } else if det < -tolerance_f64 {
-        Ok(Orientation::NEGATIVE)
-    } else {
-        Ok(Orientation::DEGENERATE)
-    }
+        if det > tolerance_f64 {
+            Ok(Orientation::POSITIVE)
+        } else if det < -tolerance_f64 {
+            Ok(Orientation::NEGATIVE)
+        } else {
+            Ok(Orientation::DEGENERATE)
+        }
+    })
 }
 
 /// Check if a point is contained within the circumsphere of a simplex using distance calculations.
@@ -226,8 +226,11 @@ where
     let circumcenter_coords: [T; D] = *circumcenter.coords();
 
     let mut diff_coords = [T::zero(); D];
-    for i in 0..D {
-        diff_coords[i] = point_coords[i] - circumcenter_coords[i];
+    for (dst, (p, c)) in diff_coords
+        .iter_mut()
+        .zip(point_coords.iter().zip(circumcenter_coords.iter()))
+    {
+        *dst = *p - *c;
     }
     let radius = hypot(diff_coords);
 
@@ -367,60 +370,69 @@ where
         return Ok(InSphere::BOUNDARY);
     }
 
-    let mut matrix: Matrix = Matrix::zeros(D + 2, D + 2);
+    let k = D + 2;
 
-    for (i, p) in simplex_points.iter().enumerate() {
-        let point_coords: [T; D] = p.into();
-        let point_coords_f64 = safe_coords_to_f64(point_coords)?;
-        for j in 0..D {
-            matrix[(i, j)] = point_coords_f64[j];
+    try_with_la_stack_matrix!(k, |matrix| {
+        for (i, p) in simplex_points.iter().enumerate() {
+            let point_coords: [T; D] = p.into();
+            let point_coords_f64 = safe_coords_to_f64(point_coords)?;
+
+            for (j, &v) in point_coords_f64.iter().enumerate() {
+                matrix_set(&mut matrix, i, j, v);
+            }
+
+            let squared_norm_t = squared_norm(point_coords);
+            matrix_set(&mut matrix, i, D, safe_scalar_to_f64(squared_norm_t)?);
+            matrix_set(&mut matrix, i, D + 1, 1.0);
         }
 
-        let squared_norm_t = squared_norm(point_coords);
-        matrix[(i, D)] = safe_scalar_to_f64(squared_norm_t)?;
-        matrix[(i, D + 1)] = 1.0;
-    }
+        let test_point_coords: [T; D] = (&test_point).into();
+        let test_point_coords_f64 = safe_coords_to_f64(test_point_coords)?;
+        for (j, &v) in test_point_coords_f64.iter().enumerate() {
+            matrix_set(&mut matrix, D + 1, j, v);
+        }
 
-    let test_point_coords: [T; D] = (&test_point).into();
-    let test_point_coords_f64 = safe_coords_to_f64(test_point_coords)?;
-    for j in 0..D {
-        matrix[(D + 1, j)] = test_point_coords_f64[j];
-    }
+        let test_squared_norm_t = squared_norm(test_point_coords);
+        matrix_set(
+            &mut matrix,
+            D + 1,
+            D,
+            safe_scalar_to_f64(test_squared_norm_t)?,
+        );
+        matrix_set(&mut matrix, D + 1, D + 1, 1.0);
 
-    let test_squared_norm_t = squared_norm(test_point_coords);
-    matrix[(D + 1, D)] = safe_scalar_to_f64(test_squared_norm_t)?;
-    matrix[(D + 1, D + 1)] = 1.0;
+        // Adaptive tolerance scaled by matrix magnitude to improve robustness in release mode
+        // (compute before consuming the matrix).
+        let base_tol = safe_scalar_to_f64(T::default_tolerance())?;
+        let tolerance_f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
 
-    let det = matrix.determinant();
-    let orientation = simplex_orientation(simplex_points)?;
+        let det = determinant(matrix);
+        let orientation = simplex_orientation(simplex_points)?;
 
-    // Adaptive tolerance scaled by matrix magnitude to improve robustness in release mode
-    let base_tol = safe_scalar_to_f64(T::default_tolerance())?;
-    let tolerance_f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
-
-    match orientation {
-        Orientation::DEGENERATE => Err(CoordinateConversionError::ConversionFailed {
-            coordinate_index: 0,
-            coordinate_value: "degenerate simplex".to_string(),
-            from_type: "simplex",
-            to_type: "circumsphere containment",
-        }),
-        Orientation::POSITIVE | Orientation::NEGATIVE => {
-            let orient_sign = if matches!(orientation, Orientation::POSITIVE) {
-                1.0
-            } else {
-                -1.0
-            };
-            let det_norm = det * orient_sign;
-            if det_norm > tolerance_f64 {
-                Ok(InSphere::INSIDE)
-            } else if det_norm < -tolerance_f64 {
-                Ok(InSphere::OUTSIDE)
-            } else {
-                Ok(InSphere::BOUNDARY)
+        match orientation {
+            Orientation::DEGENERATE => Err(CoordinateConversionError::ConversionFailed {
+                coordinate_index: 0,
+                coordinate_value: "degenerate simplex".to_string(),
+                from_type: "simplex",
+                to_type: "circumsphere containment",
+            }),
+            Orientation::POSITIVE | Orientation::NEGATIVE => {
+                let orient_sign = if matches!(orientation, Orientation::POSITIVE) {
+                    1.0
+                } else {
+                    -1.0
+                };
+                let det_norm = det * orient_sign;
+                if det_norm > tolerance_f64 {
+                    Ok(InSphere::INSIDE)
+                } else if det_norm < -tolerance_f64 {
+                    Ok(InSphere::OUTSIDE)
+                } else {
+                    Ok(InSphere::BOUNDARY)
+                }
             }
         }
-    }
+    })
 }
 
 /// Check if a point is contained within the circumsphere of a simplex using the lifted paraboloid determinant method.
@@ -523,103 +535,107 @@ where
     // Get the reference point (first point of the simplex)
     let ref_point_coords: [T; D] = (&simplex_points[0]).into();
 
-    // Create matrix for in-sphere test
-    // Matrix dimensions: (D+1) x (D+1)
-    //   rows = D simplex points (relative to first) + 1 test point
-    //   cols = D coordinates + 1 squared norm
-    let mut matrix: Matrix = Matrix::zeros(D + 1, D + 1);
+    let k = D + 1;
 
-    // Populate rows with the coordinates relative to the reference point
-    for i in 1..=D {
-        let point_coords: [T; D] = (&simplex_points[i]).into();
+    try_with_la_stack_matrix!(k, |matrix| {
+        // Populate rows with the coordinates relative to the reference point.
+        for (row, point) in simplex_points.iter().skip(1).enumerate() {
+            let point_coords: [T; D] = point.into();
 
-        // Calculate relative coordinates using generic arithmetic on T
-        let mut relative_coords_t: [T; D] = [T::zero(); D];
-        for j in 0..D {
-            relative_coords_t[j] = point_coords[j] - ref_point_coords[j];
+            // Calculate relative coordinates using generic arithmetic on T
+            let mut relative_coords_t: [T; D] = [T::zero(); D];
+            for (dst, (p, r)) in relative_coords_t
+                .iter_mut()
+                .zip(point_coords.iter().zip(ref_point_coords.iter()))
+            {
+                *dst = *p - *r;
+            }
+
+            // Convert to f64 for matrix operations using safe conversion
+            let relative_coords_f64: [f64; D] = safe_coords_to_f64(relative_coords_t)
+                .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
+
+            // Fill matrix row
+            for (j, &v) in relative_coords_f64.iter().enumerate() {
+                matrix_set(&mut matrix, row, j, v);
+            }
+
+            // Calculate squared norm using generic arithmetic on T
+            let squared_norm_t = squared_norm(relative_coords_t);
+            let squared_norm_f64: f64 = safe_scalar_to_f64(squared_norm_t)
+                .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
+
+            // Add squared norm to the last column
+            matrix_set(&mut matrix, row, D, squared_norm_f64);
+        }
+
+        // Add the test point to the last row
+        let test_point_coords: [T; D] = (&test_point).into();
+
+        // Calculate relative coordinates for test point using generic arithmetic on T
+        let mut test_relative_coords_t: [T; D] = [T::zero(); D];
+        for (dst, (p, r)) in test_relative_coords_t
+            .iter_mut()
+            .zip(test_point_coords.iter().zip(ref_point_coords.iter()))
+        {
+            *dst = *p - *r;
         }
 
         // Convert to f64 for matrix operations using safe conversion
-        let relative_coords_f64: [f64; D] = safe_coords_to_f64(relative_coords_t)
+        let test_relative_coords_f64: [f64; D] = safe_coords_to_f64(test_relative_coords_t)
             .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
 
         // Fill matrix row
-        for j in 0..D {
-            matrix[(i - 1, j)] = relative_coords_f64[j];
+        for (j, &v) in test_relative_coords_f64.iter().enumerate() {
+            matrix_set(&mut matrix, D, j, v);
         }
 
         // Calculate squared norm using generic arithmetic on T
-        let squared_norm_t = squared_norm(relative_coords_t);
-        let squared_norm_f64: f64 = safe_scalar_to_f64(squared_norm_t)
+        let test_squared_norm_t = squared_norm(test_relative_coords_t);
+        let test_squared_norm_f64: f64 = safe_scalar_to_f64(test_squared_norm_t)
             .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
 
         // Add squared norm to the last column
-        matrix[(i - 1, D)] = squared_norm_f64;
-    }
+        matrix_set(&mut matrix, D, D, test_squared_norm_f64);
 
-    // Add the test point to the last row
-    let test_point_coords: [T; D] = (&test_point).into();
+        // For this matrix formulation using relative coordinates, we need to check
+        // the simplex orientation to correctly interpret the determinant sign.
+        let orientation = simplex_orientation(simplex_points)
+            .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
 
-    // Calculate relative coordinates for test point using generic arithmetic on T
-    let mut test_relative_coords_t: [T; D] = [T::zero(); D];
-    for j in 0..D {
-        test_relative_coords_t[j] = test_point_coords[j] - ref_point_coords[j];
-    }
+        // Use adaptive tolerance for boundary detection before consuming the matrix.
+        let base_tol = safe_scalar_to_f64(T::default_tolerance())
+            .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
+        let tolerance_f64: f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
 
-    // Convert to f64 for matrix operations using safe conversion
-    let test_relative_coords_f64: [f64; D] = safe_coords_to_f64(test_relative_coords_t)
-        .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
+        // Calculate determinant (singular => 0; non-finite => NaN).
+        let det = determinant(matrix);
 
-    // Fill matrix row
-    for j in 0..D {
-        matrix[(D, j)] = test_relative_coords_f64[j];
-    }
+        // The sign interpretation depends on both orientation and dimension parity
+        // For the lifted matrix formulation, even and odd dimensions have opposite sign conventions
+        let dimension_is_even = D.is_multiple_of(2);
 
-    // Calculate squared norm using generic arithmetic on T
-    let test_squared_norm_t = squared_norm(test_relative_coords_t);
-    let test_squared_norm_f64: f64 = safe_scalar_to_f64(test_squared_norm_t)
-        .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
-
-    // Add squared norm to the last column
-    matrix[(D, D)] = test_squared_norm_f64;
-
-    // Calculate the determinant of the matrix
-    let det = matrix.determinant();
-
-    // For this matrix formulation using relative coordinates, we need to check
-    // the simplex orientation to correctly interpret the determinant sign.
-    let orientation = simplex_orientation(simplex_points)
-        .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
-
-    // Use adaptive tolerance for boundary detection
-    let base_tol = safe_scalar_to_f64(T::default_tolerance())
-        .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
-    let tolerance_f64: f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
-
-    // The sign interpretation depends on both orientation and dimension parity
-    // For the lifted matrix formulation, even and odd dimensions have opposite sign conventions
-    let dimension_is_even = D.is_multiple_of(2);
-
-    match orientation {
-        Orientation::DEGENERATE => Err(CellValidationError::DegenerateSimplex),
-        Orientation::POSITIVE | Orientation::NEGATIVE => {
-            // Normalize determinant by parity (even dims invert sign) and orientation
-            let parity_sign = if dimension_is_even { -1.0 } else { 1.0 };
-            let orient_sign = if matches!(orientation, Orientation::POSITIVE) {
-                1.0
-            } else {
-                -1.0
-            };
-            let det_norm = det * parity_sign * orient_sign;
-            if det_norm > tolerance_f64 {
-                Ok(InSphere::INSIDE)
-            } else if det_norm < -tolerance_f64 {
-                Ok(InSphere::OUTSIDE)
-            } else {
-                Ok(InSphere::BOUNDARY)
+        match orientation {
+            Orientation::DEGENERATE => Err(CellValidationError::DegenerateSimplex),
+            Orientation::POSITIVE | Orientation::NEGATIVE => {
+                // Normalize determinant by parity (even dims invert sign) and orientation
+                let parity_sign = if dimension_is_even { -1.0 } else { 1.0 };
+                let orient_sign = if matches!(orientation, Orientation::POSITIVE) {
+                    1.0
+                } else {
+                    -1.0
+                };
+                let det_norm = det * parity_sign * orient_sign;
+                if det_norm > tolerance_f64 {
+                    Ok(InSphere::INSIDE)
+                } else if det_norm < -tolerance_f64 {
+                    Ok(InSphere::OUTSIDE)
+                } else {
+                    Ok(InSphere::BOUNDARY)
+                }
             }
         }
-    }
+    })
 }
 
 #[cfg(test)]

@@ -76,7 +76,11 @@ pub enum CoordinateConversionError {
         "Failed to convert coordinate at index {coordinate_index} from {from_type} to {to_type}: {coordinate_value}"
     )]
     ConversionFailed {
-        /// Index of the coordinate that failed to convert
+        /// Index of the coordinate that failed to convert.
+        ///
+        /// Some conversion failures are not associated with a particular coordinate (for example,
+        /// matrix dimension dispatch or linear algebra errors). In those cases, this field may be
+        /// set to `0` as a placeholder.
         coordinate_index: usize,
         /// String representation of the problematic coordinate value
         coordinate_value: String,
@@ -95,6 +99,29 @@ pub enum CoordinateConversionError {
         /// String representation of the non-finite coordinate value
         coordinate_value: String,
     },
+}
+
+impl From<crate::geometry::matrix::StackMatrixDispatchError> for CoordinateConversionError {
+    fn from(source: crate::geometry::matrix::StackMatrixDispatchError) -> Self {
+        match source {
+            crate::geometry::matrix::StackMatrixDispatchError::UnsupportedDim { k, max } => {
+                Self::ConversionFailed {
+                    coordinate_index: 0,
+                    coordinate_value: format!("unsupported stack matrix size: {k} (max {max})"),
+                    from_type: "matrix dimension",
+                    to_type: "stack matrix",
+                }
+            }
+            crate::geometry::matrix::StackMatrixDispatchError::La(source) => {
+                Self::ConversionFailed {
+                    coordinate_index: 0,
+                    coordinate_value: source.to_string(),
+                    from_type: "la-stack",
+                    to_type: "linear algebra",
+                }
+            }
+        }
+    }
 }
 
 /// Errors that can occur during coordinate validation.

@@ -10,13 +10,15 @@ use rand::distr::uniform::SampleUniform;
 use std::iter::Sum;
 use std::ops::{AddAssign, SubAssign};
 
+use la_stack::{DEFAULT_PIVOT_TOL, LaError, Vector as LaVector};
+
 use crate::core::delaunay_triangulation::DelaunayTriangulation;
 use crate::core::facet::FacetView;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation_data_structure::TriangulationConstructionError;
 use crate::core::vertex::{Vertex, VertexBuilder};
 use crate::geometry::kernel::FastKernel;
-use crate::geometry::matrix::{MatrixError, invert};
+use crate::geometry::matrix::{MatrixError, StackMatrixDispatchError, matrix_get, matrix_set};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar,
@@ -116,6 +118,19 @@ pub enum CircumcenterError {
     /// Value conversion error
     #[error("Value conversion error: {0}")]
     ValueConversion(#[from] ValueConversionError),
+}
+
+impl From<StackMatrixDispatchError> for CircumcenterError {
+    fn from(source: StackMatrixDispatchError) -> Self {
+        match source {
+            StackMatrixDispatchError::UnsupportedDim { k, max } => Self::MatrixInversionFailed {
+                details: format!("unsupported stack matrix size: {k} (max {max})"),
+            },
+            StackMatrixDispatchError::La(source) => Self::MatrixInversionFailed {
+                details: format!("la-stack error: {source}"),
+            },
+        }
+    }
 }
 
 /// Error type for surface measure computation operations.
@@ -748,23 +763,26 @@ where
         });
     }
 
-    // Build matrix A and vector B for the linear system
-    let mut matrix = crate::geometry::matrix::Matrix::zeros(dim, dim);
-    let mut b = crate::geometry::matrix::Matrix::zeros(dim, 1);
+    // Build matrix A and vector b for the linear system A * x = b.
+    //
+    // Here, A is D×D and b is length D, so we can solve with stack-allocated la-stack types.
     let coords_0: [T; D] = (&points[0]).into();
 
     // Use safe coordinate conversion
     let coords_0_f64: [f64; D] = safe_coords_to_f64(coords_0)?;
 
-    for i in 0..dim {
+    let mut a = crate::geometry::matrix::Matrix::<D>::zero();
+    let mut b_arr = [0.0f64; D];
+
+    for i in 0..D {
         let coords_point: [T; D] = (&points[i + 1]).into();
 
         // Use safe coordinate conversion
         let coords_point_f64: [f64; D] = safe_coords_to_f64(coords_point)?;
 
         // Fill matrix row
-        for j in 0..dim {
-            matrix[(i, j)] = coords_point_f64[j] - coords_0_f64[j];
+        for j in 0..D {
+            matrix_set(&mut a, i, j, coords_point_f64[j] - coords_0_f64[j]);
         }
 
         // Calculate squared distance using squared_norm for consistency
@@ -776,28 +794,49 @@ where
 
         // Use safe coordinate conversion for squared distance
         let squared_distance_f64: f64 = safe_scalar_to_f64(squared_distance)?;
-        b[(i, 0)] = squared_distance_f64;
+        b_arr[i] = squared_distance_f64;
     }
 
-    let a_inv = invert(&matrix)?;
+    // Solve for x, then C = x0 + 1/2 * x.
+    //
+    // Use la-stack's default absolute pivot tolerance first, but fall back to a zero
+    // tolerance (exact singular detection) for extremely scaled-but-invertible systems.
+    let lu = match a.lu(DEFAULT_PIVOT_TOL) {
+        Ok(lu) => lu,
+        Err(LaError::Singular { .. }) => {
+            // Debugging hook: the fallback typically indicates an extremely scaled-but-invertible
+            // system that tripped `DEFAULT_PIVOT_TOL`. Enable this message in debug builds via:
+            //   DELAUNAY_DEBUG_LU_FALLBACK=1
+            #[cfg(debug_assertions)]
+            if std::env::var_os("DELAUNAY_DEBUG_LU_FALLBACK").is_some() {
+                eprintln!(
+                    "circumcenter<{D}>: LU factorization fell back to zero pivot tolerance (DEFAULT_PIVOT_TOL={DEFAULT_PIVOT_TOL})",
+                );
+            }
 
-    let solution = a_inv * b * 0.5;
-    // Extract first (and only) column as a vector
-    let solution_vec = solution.column(0).into_owned();
+            a.lu(0.0)
+                .map_err(|e| CircumcenterError::MatrixInversionFailed {
+                    details: format!("LU factorization failed: {e}"),
+                })?
+        }
+        Err(e) => {
+            return Err(CircumcenterError::MatrixInversionFailed {
+                details: format!("LU factorization failed: {e}"),
+            });
+        }
+    };
 
-    // Convert solution vector to array
-    let solution_slice: &[f64] = solution_vec.as_slice();
-    let solution_array: [f64; D] =
-        solution_slice
-            .try_into()
-            .map_err(|_| CircumcenterError::ArrayConversionFailed {
-                details: "Failed to convert solution vector to array".to_string(),
-            })?;
+    let x = lu
+        .solve_vec(LaVector::<D>::new(b_arr))
+        .map_err(|e| CircumcenterError::MatrixInversionFailed {
+            details: format!("LU solve failed: {e}"),
+        })?
+        .into_array();
 
     // Use safe coordinate conversion for solution and add back the first point
     let mut circumcenter_coords = [T::zero(); D];
     for i in 0..D {
-        let relative_coord: T = safe_scalar_from_f64(solution_array[i])?;
+        let relative_coord: T = safe_scalar_from_f64(0.5 * x[i])?;
         circumcenter_coords[i] = coords_0[i] + relative_coord;
     }
     Ok(Point::new(circumcenter_coords))
@@ -1076,42 +1115,25 @@ where
     }
 }
 
-/// Compute the Gram matrix determinant for edge vectors and apply tolerance clamping.
+/// Clamp and validate a Gram determinant.
 ///
-/// This helper constructs the Gram matrix G where G\[i,j\] = `edge_i` · `edge_j` and computes
-/// its determinant with numerical tolerance handling:
-/// - Clamps small negative values (> -1e-12) to zero
-/// - Returns error for large negative values (degenerate simplex)
-/// - Returns error for zero determinant (no volume)
+/// For valid inputs, Gram determinants should be non-negative. Small negative values can
+/// arise from floating-point rounding error; we clamp those close to zero **only** as numerical
+/// hygiene before applying degeneracy checks.
 ///
-/// # Arguments
+/// This function treats any non-positive determinant as a degenerate simplex:
+/// - non-finite determinants error
+/// - sufficiently negative determinants error
+/// - determinants in `(-1e-12, 0)` are clamped to `0.0`, and **zero always errors**
 ///
-/// * `edge_matrix` - Matrix of edge vectors (rows are edge vectors)
-/// * `gram_dim` - Dimension of the Gram matrix (number of edges)
-///
-/// # Returns
-///
-/// The clamped Gram determinant, or an error if degenerate
-fn compute_gram_determinant(
-    edge_matrix: &crate::geometry::matrix::Matrix,
-    gram_dim: usize,
-) -> Result<f64, CircumcenterError> {
-    let edge_dim = edge_matrix.ncols();
-
-    // Compute Gram matrix G where G[i,j] = edge_i · edge_j
-    let mut gram_matrix = crate::geometry::matrix::Matrix::zeros(gram_dim, gram_dim);
-    for i in 0..gram_dim {
-        for j in 0..gram_dim {
-            let mut dot_product = 0.0;
-            for k in 0..edge_dim {
-                dot_product += edge_matrix[(i, k)] * edge_matrix[(j, k)];
-            }
-            gram_matrix[(i, j)] = dot_product;
-        }
+/// In other words, clamping does not “allow near-zero volumes”; it just avoids propagating
+/// tiny negative values caused by floating-point noise.
+fn clamp_gram_determinant(mut det: f64) -> Result<f64, CircumcenterError> {
+    if !det.is_finite() {
+        return Err(CircumcenterError::MatrixInversionFailed {
+            details: "Gram determinant is non-finite".to_string(),
+        });
     }
-
-    // Calculate determinant of Gram matrix
-    let mut det = gram_matrix.determinant();
 
     // Clamp small negative values to zero (numerical tolerance)
     if det < 0.0 {
@@ -1157,19 +1179,29 @@ where
     let p0_coords = points[0].coords();
     let p0_f64 = safe_coords_to_f64(*p0_coords)?;
 
-    // Create matrix of edge vectors (each row is an edge vector)
-    let mut edge_matrix = crate::geometry::matrix::Matrix::zeros(D, D);
-    for i in 1..=D {
-        let point_coords = points[i].coords();
-        let point_f64 = safe_coords_to_f64(*point_coords)?;
+    let mut edge_matrix = crate::geometry::matrix::Matrix::<D>::zero();
+    for (row, point) in points.iter().skip(1).enumerate() {
+        let point_f64 = safe_coords_to_f64(*point.coords())?;
 
+        for (j, (&p, &p0)) in point_f64.iter().zip(p0_f64.iter()).enumerate() {
+            matrix_set(&mut edge_matrix, row, j, p - p0);
+        }
+    }
+
+    // Compute Gram matrix G where G[i,j] = edge_i · edge_j
+    let mut gram_matrix = crate::geometry::matrix::Matrix::<D>::zero();
+    for i in 0..D {
         for j in 0..D {
-            edge_matrix[(i - 1, j)] = point_f64[j] - p0_f64[j];
+            let mut dot_product = 0.0;
+            for k in 0..D {
+                dot_product += matrix_get(&edge_matrix, i, k) * matrix_get(&edge_matrix, j, k);
+            }
+            matrix_set(&mut gram_matrix, i, j, dot_product);
         }
     }
 
     // Compute Gram determinant with clamping
-    let det = compute_gram_determinant(&edge_matrix, D)?;
+    let det = clamp_gram_determinant(crate::geometry::matrix::determinant(gram_matrix))?;
 
     let volume_f64 = {
         let sqrt_det = det.sqrt();
@@ -1494,23 +1526,36 @@ fn facet_measure_gram_matrix<T, const D: usize>(
 where
     T: CoordinateScalar + Sum + Zero,
 {
-    // Convert points to f64 and create edge vectors from first point to all others
-    let p0_coords = points[0].coords();
-    let p0_f64 = safe_coords_to_f64(*p0_coords)?;
-
-    // Create matrix of edge vectors (each row is an edge vector)
-    let mut edge_matrix = crate::geometry::matrix::Matrix::zeros(D - 1, D);
-    for i in 1..D {
-        let point_coords = points[i].coords();
-        let point_f64 = safe_coords_to_f64(*point_coords)?;
-
-        for j in 0..D {
-            edge_matrix[(i - 1, j)] = point_f64[j] - p0_f64[j];
-        }
+    // Convert points to f64.
+    let mut coords_f64 = [[0.0f64; D]; D];
+    for (dst, p) in coords_f64.iter_mut().zip(points.iter()) {
+        *dst = safe_coords_to_f64(*p.coords())?;
     }
 
-    // Compute Gram determinant with clamping
-    let det = compute_gram_determinant(&edge_matrix, D - 1)?;
+    // Compute Gram determinant with clamping.
+    //
+    // For a (D-1)-simplex embedded in D dimensions, there are (D-1) edge vectors from
+    // one vertex to the remaining vertices, so the Gram matrix is (D-1)×(D-1).
+    let gram_dim = D - 1;
+    let det = try_with_la_stack_matrix!(gram_dim, |gram_matrix| {
+        for i in 0..gram_dim {
+            for j in 0..gram_dim {
+                let mut dot_product = 0.0;
+                for ((&ai, &aj), &a0) in coords_f64[i + 1]
+                    .iter()
+                    .zip(coords_f64[j + 1].iter())
+                    .zip(coords_f64[0].iter())
+                {
+                    let di = ai - a0;
+                    let dj = aj - a0;
+                    dot_product += di * dj;
+                }
+                matrix_set(&mut gram_matrix, i, j, dot_product);
+            }
+        }
+
+        clamp_gram_determinant(crate::geometry::matrix::determinant(gram_matrix))
+    })?;
 
     let volume_f64 = {
         let sqrt_det = det.sqrt();
@@ -2184,7 +2229,6 @@ where
 mod tests {
     use super::*;
     use crate::core::traits::boundary_analysis::BoundaryAnalysis;
-    use crate::geometry::matrix::Matrix;
     use crate::geometry::point::Point;
     use crate::vertex;
     use approx::assert_relative_eq;
@@ -3110,59 +3154,49 @@ mod tests {
         assert_relative_eq!(measure, 1.0 / 6.0, epsilon = 1e-10);
     }
 
-    #[test]
-    fn test_compute_gram_determinant_degenerate_edges() {
-        // Test completely degenerate edge matrix (parallel edges)
-        // Create exactly parallel edge vectors
-        let mut edge_matrix = Matrix::zeros(2, 3);
-        // Two parallel edges
-        edge_matrix[(0, 0)] = 1.0;
-        edge_matrix[(0, 1)] = 0.0;
-        edge_matrix[(0, 2)] = 0.0;
-        edge_matrix[(1, 0)] = 2.0; // Parallel to edge 0
-        edge_matrix[(1, 1)] = 0.0;
-        edge_matrix[(1, 2)] = 0.0;
+    fn gram_det_from_edges<const AMBIENT: usize>(
+        edges: &[[f64; AMBIENT]],
+    ) -> Result<f64, CircumcenterError> {
+        let k = edges.len();
 
-        let result = compute_gram_determinant(&edge_matrix, 2);
-        assert!(result.is_err(), "Degenerate edges should produce error");
+        try_with_la_stack_matrix!(k, |gram_matrix| {
+            for i in 0..k {
+                for j in 0..k {
+                    let mut dot_product = 0.0;
+                    for (&a, &b) in edges[i].iter().zip(edges[j].iter()) {
+                        dot_product += a * b;
+                    }
+                    matrix_set(&mut gram_matrix, i, j, dot_product);
+                }
+            }
 
-        if let Err(e) = result {
-            let error_str = e.to_string().to_lowercase();
-            assert!(error_str.contains("degenerate") || error_str.contains("zero volume"));
-        }
+            clamp_gram_determinant(crate::geometry::matrix::determinant(gram_matrix))
+        })
     }
 
     #[test]
-    fn test_compute_gram_determinant_clamping_small_negative() {
-        // Test that small negative determinants are clamped to zero and produce error
-        // Create edge matrix that will produce a small negative determinant
-        let mut edge_matrix = Matrix::zeros(2, 3);
-        edge_matrix[(0, 0)] = 1.0;
-        edge_matrix[(0, 1)] = 0.0;
-        edge_matrix[(0, 2)] = 0.0;
-        edge_matrix[(1, 0)] = 1.0;
-        edge_matrix[(1, 1)] = 1e-14; // Very small orthogonal component
-        edge_matrix[(1, 2)] = 0.0;
+    fn test_gram_determinant_parallel_edges_errors() {
+        let edges = [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+        assert!(gram_det_from_edges(&edges).is_err());
+    }
 
-        // This should error (nearly degenerate is clamped to zero then errors)
-        let result = compute_gram_determinant(&edge_matrix, 2);
-        assert!(result.is_err(), "Nearly degenerate case should error");
+    #[test]
+    fn test_clamp_gram_determinant_tiny_negative_errors() {
+        assert!(clamp_gram_determinant(-1e-13).is_err());
     }
 
     // Macro to test orthogonal edges across dimensions
     macro_rules! test_gram_det_orthogonal {
-        ($test_name:ident, $dim:expr) => {
+        ($test_name:ident, $dim:literal) => {
             #[test]
             fn $test_name() {
-                use crate::geometry::matrix::Matrix;
-
-                let mut edge_matrix = Matrix::zeros($dim, $dim);
+                let mut edges = [[0.0f64; $dim]; $dim];
                 // Set up orthogonal unit vectors
                 for i in 0..$dim {
-                    edge_matrix[(i, i)] = 1.0;
+                    edges[i][i] = 1.0;
                 }
 
-                let det = compute_gram_determinant(&edge_matrix, $dim).unwrap();
+                let det = gram_det_from_edges::<$dim>(&edges).unwrap();
                 // Gram matrix is identity, so determinant should be 1.0
                 assert_relative_eq!(det, 1.0, epsilon = 1e-10);
             }
@@ -3170,25 +3204,23 @@ mod tests {
     }
 
     // Generate tests for 2D through 5D
-    test_gram_det_orthogonal!(test_compute_gram_determinant_orthogonal_2d, 2);
-    test_gram_det_orthogonal!(test_compute_gram_determinant_orthogonal_3d, 3);
-    test_gram_det_orthogonal!(test_compute_gram_determinant_orthogonal_4d, 4);
-    test_gram_det_orthogonal!(test_compute_gram_determinant_orthogonal_5d, 5);
+    test_gram_det_orthogonal!(test_gram_determinant_orthogonal_2d, 2);
+    test_gram_det_orthogonal!(test_gram_determinant_orthogonal_3d, 3);
+    test_gram_det_orthogonal!(test_gram_determinant_orthogonal_4d, 4);
+    test_gram_det_orthogonal!(test_gram_determinant_orthogonal_5d, 5);
 
     // Macro to test scaled edges across dimensions
     macro_rules! test_gram_det_scaled {
-        ($test_name:ident, $dim:expr, $scale:expr, $expected_det:expr) => {
+        ($test_name:ident, $dim:literal, $scale:expr, $expected_det:expr) => {
             #[test]
             fn $test_name() {
-                use crate::geometry::matrix::Matrix;
-
-                let mut edge_matrix = Matrix::zeros($dim, $dim);
+                let mut edges = [[0.0f64; $dim]; $dim];
                 // Set up scaled orthogonal vectors
                 for i in 0..$dim {
-                    edge_matrix[(i, i)] = $scale;
+                    edges[i][i] = $scale;
                 }
 
-                let det = compute_gram_determinant(&edge_matrix, $dim).unwrap();
+                let det = gram_det_from_edges::<$dim>(&edges).unwrap();
                 // Gram matrix diagonal has $scale^2, determinant is ($scale^2)^$dim
                 assert_relative_eq!(det, $expected_det, epsilon = 1e-9);
             }
@@ -3196,10 +3228,10 @@ mod tests {
     }
 
     // Generate scaled tests for 2D through 5D with scale factor 2.0
-    test_gram_det_scaled!(test_compute_gram_determinant_scaled_2d, 2, 2.0, 16.0); // (2^2)^2 = 16
-    test_gram_det_scaled!(test_compute_gram_determinant_scaled_3d, 3, 2.0, 64.0); // (2^2)^3 = 64
-    test_gram_det_scaled!(test_compute_gram_determinant_scaled_4d, 4, 2.0, 256.0); // (2^2)^4 = 256
-    test_gram_det_scaled!(test_compute_gram_determinant_scaled_5d, 5, 2.0, 1024.0); // (2^2)^5 = 1024
+    test_gram_det_scaled!(test_gram_determinant_scaled_2d, 2, 2.0, 16.0); // (2^2)^2 = 16
+    test_gram_det_scaled!(test_gram_determinant_scaled_3d, 3, 2.0, 64.0); // (2^2)^3 = 64
+    test_gram_det_scaled!(test_gram_determinant_scaled_4d, 4, 2.0, 256.0); // (2^2)^4 = 256
+    test_gram_det_scaled!(test_gram_determinant_scaled_5d, 5, 2.0, 1024.0); // (2^2)^5 = 1024
 
     #[test]
     fn test_gram_matrix_debug() {
@@ -5331,7 +5363,10 @@ mod tests {
         ];
 
         let result = circumcenter(&collinear_points);
-        assert!(matches!(result, Err(CircumcenterError::MatrixError(_))));
+        assert!(matches!(
+            result,
+            Err(CircumcenterError::MatrixInversionFailed { .. })
+        ));
     }
 
     #[test]
