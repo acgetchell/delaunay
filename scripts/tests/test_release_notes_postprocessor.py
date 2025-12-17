@@ -8,7 +8,14 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 import changelog_utils
+
+
+def _require(condition: bool, message: str) -> None:
+    if not condition:
+        pytest.fail(message)
 
 
 def _section_body(lines: list[str], header: str) -> list[str]:
@@ -49,20 +56,35 @@ class TestReleaseNotesPostProcessor:
         processed = changelog_utils._ReleaseNotesPostProcessor.process(content)  # noqa: SLF001
         lines = processed.splitlines()
 
-        assert "### ⚠️ Breaking Changes" in processed
+        _require(
+            "### ⚠️ Breaking Changes" in processed,
+            "Expected breaking changes section to be present",
+        )
 
         breaking_start = lines.index("### ⚠️ Breaking Changes")
         changed_start = lines.index("### Changed")
-        assert breaking_start < changed_start
+        _require(
+            breaking_start < changed_start,
+            "Expected breaking changes section to appear before the Changed section",
+        )
 
         breaking_body = _section_body(lines, "### ⚠️ Breaking Changes")
-        assert any("MSRV" in line for line in breaking_body)
+        _require(
+            any("MSRV" in line for line in breaking_body),
+            "Expected MSRV entry to be present in breaking changes section",
+        )
 
         changed_body = _section_body(lines, "### Changed")
-        assert not any("MSRV" in line for line in changed_body)
+        _require(
+            not any("MSRV" in line for line in changed_body),
+            "Expected MSRV entry to be removed from Changed section",
+        )
 
         # The breaking section should not include verbose body details.
-        assert not any("Details that should not appear" in line for line in breaking_body)
+        _require(
+            not any("Details that should not appear" in line for line in breaking_body),
+            "Expected verbose breaking-change body details to be trimmed",
+        )
 
     def test_commit_links_attached_to_top_level_only(self):
         top_sha = "1234567890123456789012345678901234567890"  # 40 chars
@@ -84,14 +106,23 @@ class TestReleaseNotesPostProcessor:
         processed = changelog_utils._ReleaseNotesPostProcessor.process(content)  # noqa: SLF001
 
         # Top-level bullet should keep an attached (shortened) commit link.
-        assert "`1234567`" in processed
+        _require(
+            "`1234567`" in processed,
+            "Expected top-level bullet to keep an attached (shortened) commit link",
+        )
 
         # Nested bullets should not include commit links (they're dropped).
-        assert "`9876543`" not in processed
+        _require(
+            "`9876543`" not in processed,
+            "Expected nested bullet commit links to be dropped",
+        )
 
         # No standalone commit-link-only lines should remain.
         commit_only_re = re.compile(r"^\s*\[`[a-f0-9]{7,40}`\]\([^)]*\)\s*$")
-        assert not any(commit_only_re.match(line) for line in processed.splitlines())
+        _require(
+            not any(commit_only_re.match(line) for line in processed.splitlines()),
+            "Expected no standalone commit-link-only lines to remain",
+        )
 
     def test_added_section_consolidates_many_entries_from_same_commit(self):
         sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"  # 40 chars
@@ -114,16 +145,19 @@ class TestReleaseNotesPostProcessor:
 
         added_body = _section_body(lines, "### Added")
         top_level_bullets = [line for line in added_body if line.startswith("- **")]
-        assert len(top_level_bullets) == 1
+        _require(
+            len(top_level_bullets) == 1,
+            "Expected Added section to consolidate into a single top-level bullet",
+        )
 
         # Ensure we preserved the details as nested items.
-        assert "Add helper function" in processed
-        assert "Add another helper" in processed
-        assert "Add tests for new API" in processed
+        _require("Add helper function" in processed, "Expected helper entry to be preserved")
+        _require("Add another helper" in processed, "Expected helper entry to be preserved")
+        _require("Add tests for new API" in processed, "Expected tests entry to be preserved")
 
         # Bucket structure should be present.
-        assert "  - Tests" in processed
-        assert "  - Other" in processed
+        _require("  - Tests" in processed, "Expected consolidated output to include a Tests bucket")
+        _require("  - Other" in processed, "Expected consolidated output to include an Other bucket")
 
     def test_wording_normalization_replacements(self):
         content = """# Changelog
@@ -137,7 +171,10 @@ class TestReleaseNotesPostProcessor:
 
         processed = changelog_utils._ReleaseNotesPostProcessor.process(content)  # noqa: SLF001
 
-        assert "retryable" in processed
-        assert "determinants" in processed
-        assert "retriable" not in processed
-        assert re.search(r"\bdets\b", processed, flags=re.IGNORECASE) is None
+        _require("retryable" in processed, "Expected 'retriable' to be normalized to 'retryable'")
+        _require("determinants" in processed, "Expected 'dets' to be normalized to 'determinants'")
+        _require("retriable" not in processed, "Expected original word 'retriable' to be removed")
+        _require(
+            re.search(r"\bdets\b", processed, flags=re.IGNORECASE) is None,
+            "Expected original token 'dets' to be removed",
+        )
