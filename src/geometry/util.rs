@@ -5022,7 +5022,7 @@ mod tests {
             "Expected at least 3 vertices in 2D triangulation with data, got {}",
             tri_with_char_array.number_of_vertices()
         );
-        let valid_char = tri_with_char_array.is_valid();
+        let valid_char = tri_with_char_array.tds().is_valid();
         if let Err(e) = &valid_char {
             println!(
                 "test_generate_random_triangulation_with_data (2D char data): TDS invalid: {e}"
@@ -5045,7 +5045,7 @@ mod tests {
             "Expected at least 4 vertices in 3D triangulation with data, got {}",
             tri_with_int_data.number_of_vertices()
         );
-        let valid_int = tri_with_int_data.is_valid();
+        let valid_int = tri_with_int_data.tds().is_valid();
         if let Err(e) = &valid_int {
             println!(
                 "test_generate_random_triangulation_with_data (3D int data): TDS invalid: {e}"
@@ -5063,7 +5063,7 @@ mod tests {
             "Expected at least 3 vertices in 2D triangulation without data, got {}",
             tri_no_data.number_of_vertices()
         );
-        let valid_no_data = tri_no_data.is_valid();
+        let valid_no_data = tri_no_data.tds().is_valid();
         if let Err(e) = &valid_no_data {
             println!("test_generate_random_triangulation_with_data (2D no data): TDS invalid: {e}");
         }

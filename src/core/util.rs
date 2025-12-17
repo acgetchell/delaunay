@@ -1659,6 +1659,10 @@ where
 /// // Check if triangulation is Delaunay
 /// assert!(is_delaunay(tds).is_ok());
 /// ```
+#[deprecated(
+    since = "0.6.1",
+    note = "Use DelaunayTriangulation::is_valid() (Level 4) or DelaunayTriangulation::validate() (Levels 1-4). This will be removed in v0.7.0."
+)]
 pub fn is_delaunay<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
 ) -> Result<(), DelaunayValidationError>
@@ -1673,6 +1677,22 @@ where
     tds.is_valid()
         .map_err(|source| DelaunayValidationError::TriangulationState { source })?;
 
+    is_delaunay_property_only(tds)
+}
+
+/// Internal helper: validate the Delaunay empty-circumsphere property only.
+///
+/// This performs the expensive geometric check but intentionally does **not** run
+/// `tds.is_valid()` up front. Callers that want cumulative validation should run
+/// lower-layer checks separately.
+pub(crate) fn is_delaunay_property_only<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+) -> Result<(), DelaunayValidationError>
+where
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + std::iter::Sum + NumCast,
+    U: DataType,
+    V: DataType,
+{
     // Use robust predicates configuration for reliability
     let config = crate::geometry::robust_predicates::config_presets::general_triangulation::<T>();
 
@@ -2670,8 +2690,8 @@ mod tests {
 
         // Basic Delaunay helpers should report no violations.
         assert!(
-            is_delaunay(tds).is_ok(),
-            "Simple tetrahedron should be Delaunay"
+            is_delaunay_property_only(tds).is_ok(),
+            "Simple tetrahedron should satisfy the Delaunay property"
         );
         let violations = find_delaunay_violations(tds, None).unwrap();
         assert!(

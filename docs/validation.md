@@ -71,18 +71,23 @@ Validates the combinatorial structure of the Triangulation Data Structure.
 
 ### Methods
 
-- `DelaunayTriangulation::is_valid()` - Convenience entry point for structural checks (recommended).
-- `DelaunayTriangulation::validation_report()` - Detailed report with all violations.
-- `Tds::is_valid()` - Same structural checks at the TDS layer.
-- `Tds::validation_report()` - Detailed report at the TDS layer.
+- `Tds::is_valid()` - Level 2 (structural) checks only (fast-fail).
+- `Tds::validate()` - Levels 1–2 (elements + structural).
+- `DelaunayTriangulation::validation_report()` - Cumulative diagnostic report across Levels 1–4.
 
 ### What It Checks
+
+`Tds::is_valid()` (Level 2) checks:
 
 1. **UUID ↔ Key Mappings**: Bidirectional consistency for vertices and cells
 2. **No Duplicate Cells**: No cells with identical vertex sets
 3. **Facet Sharing Invariant**: Each facet shared by at most 2 cells
 4. **Neighbor Consistency**: Mutual neighbor relationships are correct
-5. **Cell Validity**: All cells pass Level 1 validation
+
+`Tds::validate()` (Levels 1–2) additionally checks:
+
+- **Vertex Validity**: All vertices pass `Vertex::is_valid()`
+- **Cell Validity**: All cells pass `Cell::is_valid()`
 
 ### Complexity
 
@@ -93,7 +98,7 @@ Validates the combinatorial structure of the Triangulation Data Structure.
 
 - **Production**: After construction or major modifications
 - **Tests**: In test suites to catch structural bugs
-- **Debug builds**: Use `debug_assert!(dt.is_valid().is_ok())`
+- **Debug builds**: Use `debug_assert!(dt.tds().is_valid().is_ok())`
 
 ### Example
 
@@ -108,12 +113,12 @@ let vertices = vec![
 ];
 let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-// Quick structural check
-assert!(dt.is_valid().is_ok());
+// Quick structural check (Level 2)
+assert!(dt.tds().is_valid().is_ok());
 
-// Detailed report showing all violations
-match dt.tds().validation_report() {
-    Ok(()) => println!("✓ All TDS invariants satisfied"),
+// Detailed report showing all violations across Levels 1–4
+match dt.validation_report() {
+    Ok(()) => println!("✓ All invariants satisfied"),
     Err(report) => {
         for violation in report.violations {
             eprintln!("Invariant violation: {:?}", violation);
@@ -122,18 +127,9 @@ match dt.tds().validation_report() {
 }
 ```
 
-### Focused invariant checks (debugging)
+### Diagnostics
 
-When you want to pinpoint a failure, `DelaunayTriangulation` exposes focused helpers that map
-closely to the main structural invariants:
-
-- `DelaunayTriangulation::validate_vertex_mappings()`
-- `DelaunayTriangulation::validate_cell_mappings()`
-- `DelaunayTriangulation::validate_no_duplicate_cells()`
-- `DelaunayTriangulation::validate_facet_sharing()`
-- `DelaunayTriangulation::validate_neighbors()`
-
-For most users, start with `dt.is_valid()` (fast-fail) or `dt.validation_report()` (full diagnostics).
+For most users, start with `dt.tds().is_valid()` (fast-fail) or `dt.validation_report()` (full diagnostics across Levels 1–4).
 
 ---
 
@@ -143,22 +139,25 @@ For most users, start with `dt.is_valid()` (fast-fail) or `dt.validation_report(
 
 Validates that the triangulation forms a valid topological manifold.
 
-### Method
+### Methods
 
-- `Triangulation::validate_manifold()` - Full manifold validation
+- `Triangulation::is_valid()` - Level 3 topology validation only.
+- `Triangulation::validate()` - Levels 1–3 (elements + structure + topology).
 
 ### What It Checks
 
-1. **All TDS Structural Invariants** (calls Level 2)
-2. **Manifold Facet Property**: Each facet belongs to exactly 1 cell (boundary) or exactly 2 cells (interior)
+`Triangulation::is_valid()` (Level 3) checks:
+
+1. **Manifold Facet Property**: Each facet belongs to exactly 1 cell (boundary) or exactly 2 cells (interior)
    - Stronger than Level 2's "≤2 cells per facet"
-   - Ensures no facets with 0 cells (disconnected components)
-3. **Euler Characteristic**: χ matches expected topology
+2. **Euler Characteristic**: χ matches expected topology
    - 0D: χ = 1 (single vertex)
    - 1D: χ = V - E = 1 (path with boundary)
    - 2D: χ = V - E + F ∈ {1, 2} (disk or sphere)
    - 3D: χ = V - E + F - C ∈ {0, 1} (ball or sphere)
    - 4D+: Currently allows all values (TODO: full k-simplex counting)
+
+`Triangulation::validate()` (Levels 1–3) additionally runs `Tds::validate()` first.
 
 ### Complexity
 
@@ -186,10 +185,10 @@ let vertices = vec![
 ];
 let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-// Thorough manifold validation (includes all TDS checks)
-match dt.triangulation().validate_manifold() {
+// Thorough topology validation (includes Levels 1–2 TDS checks)
+match dt.triangulation().validate() {
     Ok(()) => println!("✓ Valid manifold with correct Euler characteristic"),
-    Err(e) => eprintln!("✗ Manifold validation failed: {}", e),
+    Err(e) => eprintln!("✗ Topology validation failed: {}", e),
 }
 ```
 
@@ -201,9 +200,10 @@ match dt.triangulation().validate_manifold() {
 
 Validates the geometric optimality of the triangulation.
 
-### Method
+### Methods
 
-- `DelaunayTriangulation::validate_delaunay()` - Check empty circumsphere property
+- `DelaunayTriangulation::is_valid()` - Level 4 Delaunay property only (empty circumsphere).
+- `DelaunayTriangulation::validate()` - Levels 1–4 (elements + structure + topology + Delaunay property).
 
 ### What It Checks
 
@@ -238,8 +238,8 @@ let vertices = vec![
 ];
 let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-// Full Delaunay property validation
-match dt.validate_delaunay() {
+// Delaunay property validation (Level 4)
+match dt.is_valid() {
     Ok(()) => println!("✓ All cells satisfy empty circumsphere property"),
     Err(e) => eprintln!("✗ Delaunay violation: {}", e),
 }
@@ -252,20 +252,20 @@ match dt.validate_delaunay() {
 ```text
 Start: Do you need to validate?
     │
-    ├─ Just built triangulation? → Skip (construction ensures validity)
+    ├─ Just built triangulation? → Usually skip (construction maintains invariants; validate if you need certainty)
     │
-    ├─ After manual TDS mutation? → Level 2 (Tds::is_valid)
+    ├─ After manual TDS mutation? → Level 2 (`dt.tds().is_valid()`)
     │
-    ├─ Debugging geometric issues? → Level 4 (validate_delaunay)
+    ├─ Debugging geometric issues? → Level 4 (`dt.is_valid()`)
     │
     ├─ Writing tests? → Level 2 or 3 depending on what you're testing
     │
     ├─ Production validation?
-    │   ├─ Performance critical? → Level 2 (Tds::is_valid)
-    │   ├─ Topological correctness critical? → Level 3 (validate_manifold)
-    │   └─ Geometric correctness critical? → Level 4 (validate_delaunay)
+    │   ├─ Performance critical? → Level 2 (`dt.tds().is_valid()`)
+    │   ├─ Topological correctness critical? → Level 3 (`dt.triangulation().is_valid()`)
+    │   └─ Geometric correctness critical? → Level 4 (`dt.is_valid()`)
     │
-    └─ Paranoid mode? → All levels (2, 3, 4)
+    └─ Paranoid mode? → All levels (`dt.validate()`)
 ```
 
 ---
@@ -298,9 +298,10 @@ fn test_my_triangulation_operation() {
     my_operation(&mut dt);
     
     // Validate at appropriate level
-    assert!(dt.is_valid().is_ok());                          // Level 2: Always
-    assert!(dt.triangulation().validate_manifold().is_ok()); // Level 3: For topology tests
-    assert!(dt.validate_delaunay().is_ok());                 // Level 4: For geometric tests
+    assert!(dt.tds().is_valid().is_ok());        // Level 2: Structural
+    assert!(dt.triangulation().is_valid().is_ok()); // Level 3: Topology
+    assert!(dt.is_valid().is_ok());                 // Level 4: Delaunay property
+    assert!(dt.validate().is_ok());                 // Levels 1–4: Full validation
 }
 ```
 
@@ -314,8 +315,8 @@ pub fn my_algorithm(dt: &mut DelaunayTriangulation<FastKernel<f64>, (), (), 3>) 
     
     #[cfg(debug_assertions)]
     {
-        dt.is_valid().expect("TDS structure violated");
-        dt.triangulation().validate_manifold().expect("Manifold property violated");
+        dt.tds().is_valid().expect("TDS structure violated");
+        dt.triangulation().is_valid().expect("Topology invariant violated");
     }
 }
 ```
@@ -327,9 +328,9 @@ use delaunay::prelude::*;
 
 pub fn validate_with_level(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>, level: u8) -> Result<(), String> {
     match level {
-        2 => dt.is_valid().map_err(|e| e.to_string()),
-        3 => dt.triangulation().validate_manifold().map_err(|e| e.to_string()),
-        4 => dt.validate_delaunay().map_err(|e| e.to_string()),
+        2 => dt.tds().is_valid().map_err(|e| e.to_string()),
+        3 => dt.triangulation().is_valid().map_err(|e| e.to_string()),
+        4 => dt.is_valid().map_err(|e| e.to_string()),
         _ => Err("Invalid validation level".to_string()),
     }
 }
@@ -366,11 +367,12 @@ pub fn validate_with_level(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3
 | 1 | `Cell::is_valid()` | `core::cell` | O(1) |
 | 1 | `Vertex::is_valid()` | `core::vertex` | O(1) |
 | 2 | `Tds::is_valid()` | `core::triangulation_data_structure` | O(N×D²) |
-| 2 | `Tds::validation_report()` | `core::triangulation_data_structure` | O(N×D²) |
-| 2 | `DelaunayTriangulation::is_valid()` | `core::delaunay_triangulation` | O(N×D²) |
-| 2 | `DelaunayTriangulation::validation_report()` | `core::delaunay_triangulation` | O(N×D²) |
-| 3 | `Triangulation::validate_manifold()` | `core::triangulation` | O(N×D²) |
-| 4 | `DelaunayTriangulation::validate_delaunay()` | `core::delaunay_triangulation` | O(N×V) |
+| 2 | `Tds::validate()` | `core::triangulation_data_structure` | O(N×D²) |
+| 3 | `Triangulation::is_valid()` | `core::triangulation` | O(N×D²) |
+| 3 | `Triangulation::validate()` | `core::triangulation` | O(N×D²) |
+| 4 | `DelaunayTriangulation::is_valid()` | `core::delaunay_triangulation` | O(N×V) |
+| 4 | `DelaunayTriangulation::validate()` | `core::delaunay_triangulation` | O(N×V) |
+| — | `DelaunayTriangulation::validation_report()` | `core::delaunay_triangulation` | O(N×V) |
 
 ---
 

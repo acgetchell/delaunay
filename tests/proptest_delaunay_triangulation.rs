@@ -94,10 +94,23 @@ macro_rules! gen_incremental_insertion_validity {
                 ) {
                     let initial_vertices = Vertex::from_points(&initial_points);
                     if let Ok(mut dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&initial_vertices) {
-                        prop_assert!(dt.is_valid().is_ok(), "Initial {}D triangulation should be valid", $dim);
+                        let validation = dt.triangulation().validate();
+                        prop_assert!(
+                            validation.is_ok(),
+                            "Initial {}D triangulation should be structurally valid (Levels 1–3): {:?}",
+                            $dim,
+                            validation.err()
+                        );
+
                         let additional_vertex = vertex!(additional_point);
                         if dt.insert(additional_vertex).is_ok() {
-                            prop_assert!(dt.is_valid().is_ok(), "{}D triangulation should remain valid after insertion: {:?}", $dim, dt.is_valid().err());
+                            let validation = dt.triangulation().validate();
+                            prop_assert!(
+                                validation.is_ok(),
+                                "{}D triangulation should remain structurally valid after insertion (Levels 1–3): {:?}",
+                                $dim,
+                                validation.err()
+                            );
                         }
                     }
                 }
@@ -214,8 +227,8 @@ proptest! {
                         unreachable!();
                     };
 
-                    // Verify the triangulation satisfies the Delaunay property
-                    let delaunay_result = is_delaunay(dt.tds());
+                    // Verify the triangulation satisfies the Delaunay property (Level 4)
+                    let delaunay_result = dt.is_valid();
                     prop_assert!(
                         delaunay_result.is_ok(),
                         "{}D triangulation should satisfy Delaunay property: {:?}",
@@ -246,11 +259,12 @@ macro_rules! gen_insertion_order_robustness_test {
                 ///
                 /// **Status**: Passing - validates insertion-order robustness.
                 ///
-                /// This test verifies that the triangulation algorithm produces valid Delaunay
-                /// triangulations regardless of the insertion order of the input points:
-                /// - Both triangulations are structurally valid (TDS invariants hold)
+                /// This test verifies that the triangulation algorithm produces valid triangulations
+                /// regardless of the insertion order of the input points:
+                /// - Both triangulations are structurally/topologically valid (Levels 1–3)
                 /// - Same vertex counts (all input points successfully inserted)
-                /// - Both satisfy the Delaunay property
+                ///
+                /// The Delaunay property (Level 4) is not asserted here (see Issue #120).
                 ///
                 /// **Note**: The exact edge sets may differ between different insertion orders, as
                 /// Delaunay triangulation is not unique for degenerate/co-spherical point sets.
@@ -289,7 +303,14 @@ macro_rules! gen_insertion_order_robustness_test {
                     let dt_a = DelaunayTriangulation::<_, (), (), $dim>::new(&points);
                     prop_assume!(dt_a.is_ok());
                     let dt_a = dt_a.unwrap();
-                    prop_assert!(dt_a.is_valid().is_ok(), "{}D: Triangulation A should be valid", $dim);
+
+                    let validation_a = dt_a.triangulation().validate();
+                    prop_assert!(
+                        validation_a.is_ok(),
+                        "{}D: Triangulation A should be structurally valid (Levels 1–3): {:?}",
+                        $dim,
+                        validation_a.err()
+                    );
 
                     // Build second triangulation with shuffled order
                     let mut rng = rand::rngs::StdRng::seed_from_u64(0x00DE_C0DE);
@@ -299,7 +320,14 @@ macro_rules! gen_insertion_order_robustness_test {
                     let dt_b = DelaunayTriangulation::<_, (), (), $dim>::new(&points_shuffled);
                     prop_assume!(dt_b.is_ok());
                     let dt_b = dt_b.unwrap();
-                    prop_assert!(dt_b.is_valid().is_ok(), "{}D: Triangulation B should be valid", $dim);
+
+                    let validation_b = dt_b.triangulation().validate();
+                    prop_assert!(
+                        validation_b.is_ok(),
+                        "{}D: Triangulation B should be structurally valid (Levels 1–3): {:?}",
+                        $dim,
+                        validation_b.err()
+                    );
 
                     // Verify both triangulations have the same number of vertices
                     // With early degeneracy detection, different insertion orders may reject
@@ -404,21 +432,22 @@ macro_rules! gen_duplicate_cloud_test {
                         unreachable!();
                     };
 
-                    // Structural and Delaunay validity for kept subset
-                    let validity_result = dt.is_valid();
+                    // Structural/topological validity (Levels 1–3) for kept subset
+                    let structural = dt.triangulation().validate();
                     prop_assert!(
-                        validity_result.is_ok(),
-                        "{}D triangulation should be structurally valid: {:?}",
+                        structural.is_ok(),
+                        "{}D triangulation should be structurally valid (Levels 1–3): {:?}",
                         $dim,
-                        validity_result.err()
+                        structural.err()
                     );
 
-                    let delaunay_result = is_delaunay(dt.tds());
+                    // Delaunay validity (Level 4) for kept subset
+                    let delaunay = dt.is_valid();
                     prop_assert!(
-                        delaunay_result.is_ok(),
+                        delaunay.is_ok(),
                         "{}D triangulation should satisfy Delaunay property: {:?}",
                         $dim,
-                        delaunay_result.err()
+                        delaunay.err()
                     );
                 }
             }

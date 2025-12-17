@@ -289,8 +289,11 @@ where
 /// - `cell.vertices()[facet_idx]` is the vertex opposite the facet
 /// - The facet consists of all vertices EXCEPT `vertices[facet_idx]`
 /// - This invariant is documented in [`Cell`](crate::core::cell::Cell) and enforced by
-///   [`Tds::assign_neighbors`](crate::core::triangulation_data_structure::Tds::assign_neighbors)
-///   and validated by [`Tds::validate_neighbors`](crate::core::triangulation_data_structure::Tds::validate_neighbors)
+///   [`Tds::assign_neighbors`](crate::core::triangulation_data_structure::Tds::assign_neighbors).
+///
+/// It is validated as part of Level 2 structural validation via
+/// [`Tds::is_valid`](crate::core::triangulation_data_structure::Tds::is_valid)
+/// (or cumulatively via [`Tds::validate`](crate::core::triangulation_data_structure::Tds::validate)).
 ///
 /// This correspondence is essential for the canonical ordering used in orientation tests.
 /// If this invariant is violated, point location will produce incorrect results.

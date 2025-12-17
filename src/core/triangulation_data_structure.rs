@@ -60,10 +60,10 @@
 //!
 //! | Invariant Type | Enforcement Location | Method |
 //! |---|---|---|
-//! | **Delaunay Property** | `bowyer_watson::find_bad_cells()` | Empty circumsphere test using `insphere()` |
-//! | **Facet Sharing** | `validate_facet_sharing()` | Each facet shared by ≤ 2 cells |
-//! | **No Duplicate Cells** | `validate_no_duplicate_cells()` | No cells with identical vertex sets |
-//! | **Neighbor Consistency** | `validate_neighbors()` | Mutual neighbor relationships |
+//! | **Delaunay Property** | incremental insertion (`core::algorithms::incremental_insertion`) | Empty circumsphere test using `insphere()` |
+//! | **Facet Sharing** | `Tds::is_valid()` / `Tds::validate()` | Each facet shared by ≤ 2 cells |
+//! | **No Duplicate Cells** | `Tds::is_valid()` / `Tds::validate()` | No cells with identical vertex sets |
+//! | **Neighbor Consistency** | `Tds::is_valid()` / `Tds::validate()` | Mutual neighbor relationships |
 //! | **Cell Validity** | `CellBuilder::validate()` (vertex count) + `cell.is_valid()` (comprehensive) | Construction + runtime validation |
 //! | **Vertex Validity** | `Point::from()` (coordinates) + UUID auto-gen + `vertex.is_valid()` | Construction + runtime validation |
 //!
@@ -72,7 +72,7 @@
 //!
 //! # Validation
 //!
-//! The TDS provides **Level 2** validation in the library's validation hierarchy:
+//! The TDS participates in a layered validation hierarchy:
 //!
 //! ## Validation Hierarchy (TDS Role)
 //!
@@ -83,22 +83,20 @@
 //!    - No duplicate cells
 //!    - Facet sharing invariant (≤2 cells per facet)
 //!    - Neighbor consistency
-//! 3. **Level 3: Manifold Topology** - [`Triangulation::validate_manifold()`](crate::core::triangulation::Triangulation::validate_manifold)
-//!    - Builds on Level 2, adds Euler characteristic
-//! 4. **Level 4: Delaunay Property** - [`DelaunayTriangulation::validate_delaunay()`]
+//! 3. **Level 3: Manifold Topology** - [`Triangulation::is_valid()`](crate::core::triangulation::Triangulation::is_valid)
+//!    - Builds on Level 2, adds manifold-with-boundary + Euler characteristic
+//! 4. **Level 4: Delaunay Property** - [`DelaunayTriangulation::is_valid()`](crate::core::delaunay_triangulation::DelaunayTriangulation::is_valid)
 //!    - Empty circumsphere property
 //!
 //! ## TDS Validation Methods
 //!
-//! - [`is_valid()`](Tds::is_valid) - Returns first error, stops early
-//! - [`validation_report()`](Tds::validation_report) - Returns all violations
-//! - [`validate_vertex_mappings()`](Tds::validate_vertex_mappings) - Check vertex UUID↔Key consistency
-//! - [`validate_cell_mappings()`](Tds::validate_cell_mappings) - Check cell UUID↔Key consistency
-//! - [`validate_no_duplicate_cells()`](Tds::validate_no_duplicate_cells) - Check for duplicate cells
-//! - [`validate_facet_sharing()`](Tds::validate_facet_sharing) - Check facet sharing (≤2 cells)
-//! - [`validate_neighbors()`](Tds::validate_neighbors) - Check neighbor consistency
+//! - [`is_valid()`](Tds::is_valid) - Level 2 only (structural); returns first error, stops early
+//! - [`validate()`](Tds::validate) - Levels 1–2 (elements + structural); returns first error, stops early
 //!
-//! ## Example: Using TDS Validation
+//! For cumulative diagnostics across the full stack (Levels 1–4), use
+//! [`DelaunayTriangulation::validation_report()`](crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report).
+//!
+//! ## Example: Using Validation
 //!
 //! ```rust
 //! use delaunay::prelude::*;
@@ -111,12 +109,15 @@
 //! ];
 //! let dt = DelaunayTriangulation::new(&vertices).unwrap();
 //!
-//! // Level 2: TDS structural validation (quick)
-//! assert!(dt.is_valid().is_ok());
+//! // Level 2: structural only (fast)
+//! assert!(dt.tds().is_valid().is_ok());
 //!
-//! // Detailed report with all violations
-//! match dt.tds().validation_report() {
-//!     Ok(()) => println!("✓ All TDS invariants satisfied"),
+//! // Levels 1–2: elements + structural
+//! assert!(dt.tds().validate().is_ok());
+//!
+//! // Full report across Levels 1–4
+//! match dt.validation_report() {
+//!     Ok(()) => println!("✓ All invariants satisfied"),
 //!     Err(report) => {
 //!         for violation in report.violations {
 //!             eprintln!("Invariant: {:?}, Error: {}", violation.kind, violation.error);
@@ -126,12 +127,12 @@
 //! ```
 //!
 //! See [`docs/validation.md`](https://github.com/acgetchell/delaunay/blob/main/docs/validation.md)
-//! for comprehensive validation guide.
+//! for a comprehensive validation guide.
 //!
 //! [`Cell::is_valid()`]: crate::core::cell::Cell::is_valid
 //! [`Vertex::is_valid()`]: crate::core::vertex::Vertex::is_valid
-//! [`Triangulation::validate_manifold()`]: crate::core::triangulation::Triangulation::validate_manifold
-//! [`DelaunayTriangulation::validate_delaunay()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validate_delaunay
+//! [`Triangulation::is_valid()`]: crate::core::triangulation::Triangulation::is_valid
+//! [`DelaunayTriangulation::is_valid()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::is_valid
 //!
 //! # Examples
 //!
@@ -155,7 +156,7 @@
 //! assert_eq!(dt.number_of_vertices(), 4);
 //! assert_eq!(dt.number_of_cells(), 1);
 //! assert_eq!(dt.dim(), 3);
-//! assert!(dt.is_valid().is_ok());
+//! assert!(dt.validate().is_ok());
 //! ```
 //!
 //! ## Adding Vertices to Existing Triangulation
@@ -174,11 +175,11 @@
 //! let mut dt = DelaunayTriangulation::new(&initial_vertices).unwrap();
 //!
 //! // Add a new vertex
-//! let new_vertex = vertex!([0.5, 0.5, 0.5]);
+//! let new_vertex = vertex!([0.2, 0.2, 0.2]);
 //! dt.insert(new_vertex).unwrap();
 //!
 //! assert_eq!(dt.number_of_vertices(), 5);
-//! assert!(dt.is_valid().is_ok());
+//! assert!(dt.validate().is_ok());
 //! ```
 //!
 //! ## 4D Triangulation
@@ -199,7 +200,7 @@
 //! assert_eq!(dt_4d.dim(), 4);
 //! assert_eq!(dt_4d.number_of_vertices(), 5);
 //! assert_eq!(dt_4d.number_of_cells(), 1);
-//! assert!(dt_4d.is_valid().is_ok());
+//! assert!(dt_4d.validate().is_ok());
 //! ```
 //!
 //! # References
@@ -248,7 +249,7 @@ use super::{
     facet::{FacetHandle, facet_key_from_vertices},
     traits::data_type::DataType,
     util::usize_to_u8,
-    vertex::Vertex,
+    vertex::{Vertex, VertexValidationError},
 };
 
 // =============================================================================
@@ -359,6 +360,14 @@ pub enum EntityKind {
 /// Errors that can occur during triangulation validation (post-construction).
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum TriangulationValidationError {
+    /// The triangulation contains an invalid vertex.
+    #[error("Invalid vertex {vertex_id}: {source}")]
+    InvalidVertex {
+        /// The UUID of the invalid vertex.
+        vertex_id: Uuid,
+        /// The underlying vertex validation error.
+        source: VertexValidationError,
+    },
     /// The triangulation contains an invalid cell.
     #[error("Invalid cell {cell_id}: {source}")]
     InvalidCell {
@@ -439,18 +448,24 @@ pub enum TriangulationValidationError {
 /// This is used by [`TriangulationValidationReport`] to group related errors.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InvariantKind {
+    /// Per-vertex validity (finite coordinates, non-nil UUID, etc.).
+    VertexValidity,
+    /// Per-cell validity (vertex count, duplicate vertices, nil UUID, etc.).
+    CellValidity,
     /// Vertex UUID↔key mapping invariants.
     VertexMappings,
     /// Cell UUID↔key mapping invariants.
     CellMappings,
     /// No duplicate maximal cells with identical vertex sets.
     DuplicateCells,
-    /// Per-cell validity (vertex count, duplicate vertices, nil UUID, etc.).
-    CellValidity,
     /// Facet sharing invariants (each facet shared by at most 2 cells).
     FacetSharing,
     /// Neighbor topology and mutual-consistency invariants.
     NeighborConsistency,
+    /// Triangulation/topology invariants (manifold-with-boundary, Euler characteristic).
+    Topology,
+    /// Delaunay empty-circumsphere property.
+    DelaunayProperty,
 }
 
 /// A single invariant violation recorded during validation diagnostics.
@@ -464,8 +479,9 @@ pub struct InvariantViolation {
 
 /// Aggregate report of one or more validation failures.
 ///
-/// This is returned by [`Tds::validation_report`] to surface all failed
-/// invariants at once for debugging and test diagnostics.
+/// This is returned by
+/// [`DelaunayTriangulation::validation_report`](crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report)
+/// to surface all failed invariants at once for debugging and test diagnostics.
 #[derive(Clone, Debug)]
 pub struct TriangulationValidationReport {
     /// The ordered list of invariant violations that occurred.
@@ -1885,7 +1901,7 @@ where
     /// let cells_removed = dt.remove_vertex(&vertex_to_remove).unwrap();
     /// println!("Removed {} cells along with the vertex", cells_removed);
     ///
-    /// assert!(dt.is_valid().is_ok());
+    /// assert!(dt.tds().validate().is_ok());
     /// ```
     pub fn remove_vertex(
         &mut self,
@@ -2000,31 +2016,10 @@ where
     /// - Can be called by `is_valid()` to check entire triangulation
     /// - Useful during incremental construction to identify cells needing repair
     ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::*;
-    ///
-    /// let vertices = [
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
-    /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let tds = dt.tds();
-    /// let (cell_key, cell) = tds.cells().next().unwrap();
-    /// let neighbors = tds.find_neighbors_by_key(cell_key);
-    ///
-    /// // Validate specific cell's neighbors
-    /// if let Err(e) = tds.validate_neighbor_topology(cell_key, &neighbors) {
-    ///     eprintln!("Cell {:?} has invalid neighbors: {}", cell_key, e);
-    ///     // Fix the neighbors...
-    /// }
-    /// ```
     /// # Errors
     ///
     /// Returns `TriangulationValidationError` if topology validation fails.
-    pub fn validate_neighbor_topology(
+    fn validate_neighbor_topology(
         &self,
         cell_key: CellKey,
         neighbors: &[Option<CellKey>],
@@ -2536,9 +2531,9 @@ where
     ///
     /// `Ok(())` if all vertex mappings are consistent, otherwise a `TriangulationValidationError`.
     ///
-    /// This corresponds to [`InvariantKind::VertexMappings`], which is reported by
-    /// [`Tds::validation_report`](Self::validation_report) and is included in
-    /// [`Tds::is_valid`](Self::is_valid).
+    /// This corresponds to [`InvariantKind::VertexMappings`], which is included in
+    /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
+    /// [`DelaunayTriangulation::validation_report`](crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report).
     ///
     /// # Errors
     ///
@@ -2549,23 +2544,7 @@ where
     /// - A vertex exists without a corresponding key-to-UUID mapping
     /// - The bidirectional mappings are inconsistent (UUID maps to key A, but key A maps to different UUID)
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// use delaunay::prelude::*;
-    ///
-    /// let vertices = [
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
-    /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    ///
-    /// // Validation should pass for a properly constructed triangulation
-    /// assert!(dt.validate_vertex_mappings().is_ok());
-    /// ```
-    pub fn validate_vertex_mappings(&self) -> Result<(), TriangulationValidationError> {
+    fn validate_vertex_mappings(&self) -> Result<(), TriangulationValidationError> {
         if self.uuid_to_vertex_key.len() != self.vertices.len() {
             return Err(TriangulationValidationError::MappingInconsistency {
                 entity: EntityKind::Vertex,
@@ -2618,9 +2597,9 @@ where
     ///
     /// `Ok(())` if all cell mappings are consistent, otherwise a `TriangulationValidationError`.
     ///
-    /// This corresponds to [`InvariantKind::CellMappings`], which is reported by
-    /// [`Tds::validation_report`](Self::validation_report) and is included in
-    /// [`Tds::is_valid`](Self::is_valid).
+    /// This corresponds to [`InvariantKind::CellMappings`], which is included in
+    /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
+    /// [`DelaunayTriangulation::validation_report`](crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report).
     ///
     /// # Errors
     ///
@@ -2631,23 +2610,7 @@ where
     /// - A cell exists without a corresponding key-to-UUID mapping
     /// - The bidirectional mappings are inconsistent (UUID maps to key A, but key A maps to different UUID)
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// use delaunay::prelude::*;
-    ///
-    /// let vertices = [
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
-    /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    ///
-    /// // Validation should pass for a properly constructed triangulation
-    /// assert!(dt.validate_cell_mappings().is_ok());
-    /// ```
-    pub fn validate_cell_mappings(&self) -> Result<(), TriangulationValidationError> {
+    fn validate_cell_mappings(&self) -> Result<(), TriangulationValidationError> {
         if self.uuid_to_cell_key.len() != self.cells.len() {
             return Err(TriangulationValidationError::MappingInconsistency {
                 entity: EntityKind::Cell,
@@ -2734,10 +2697,10 @@ where
     /// Returns a [`TriangulationValidationError`] if cell vertex retrieval fails
     /// or if any duplicate cells are detected.
     ///
-    /// This corresponds to [`InvariantKind::DuplicateCells`], which is reported by
-    /// [`Tds::validation_report`](Self::validation_report) and is included in
-    /// [`Tds::is_valid`](Self::is_valid).
-    pub fn validate_no_duplicate_cells(&self) -> Result<(), TriangulationValidationError> {
+    /// This corresponds to [`InvariantKind::DuplicateCells`], which is included in
+    /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
+    /// [`DelaunayTriangulation::validation_report`](crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report).
+    fn validate_no_duplicate_cells(&self) -> Result<(), TriangulationValidationError> {
         // Use CellVertexUuidBuffer as HashMap key directly to avoid extra Vec allocation
         // Pre-size to avoid rehashing during insertion (minor optimization for hot path)
         let mut unique_cells: FastHashMap<CellVertexUuidBuffer, CellKey> =
@@ -2797,10 +2760,10 @@ where
     /// Returns a [`TriangulationValidationError`] if building the facet map fails
     /// or if any facet is shared by more than two cells.
     ///
-    /// This corresponds to [`InvariantKind::FacetSharing`], which is reported by
-    /// [`Tds::validation_report`](Self::validation_report) and is included in
-    /// [`Tds::is_valid`](Self::is_valid).
-    pub fn validate_facet_sharing(&self) -> Result<(), TriangulationValidationError> {
+    /// This corresponds to [`InvariantKind::FacetSharing`], which is included in
+    /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
+    /// [`DelaunayTriangulation::validation_report`](crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report).
+    pub(crate) fn validate_facet_sharing(&self) -> Result<(), TriangulationValidationError> {
         // Build a map from facet keys to the cells that contain them
         // Use the strict version to ensure we catch any missing vertex keys
         let facet_to_cells = self.build_facet_to_cells_map()?;
@@ -2821,86 +2784,59 @@ where
         Ok(())
     }
 
-    /// Checks whether the triangulation data structure is valid.
+    /// Checks whether the triangulation data structure is structurally valid.
+    ///
+    /// This is a **Level 2 (TDS structural)** check in the validation hierarchy.
+    /// It intentionally does **not** validate individual vertices/cells (Level 1),
+    /// nor triangulation topology (Level 3), nor the Delaunay property (Level 4).
+    ///
+    /// # Structural invariants checked
+    /// - Vertex UUID↔key mapping consistency
+    /// - Cell UUID↔key mapping consistency
+    /// - No duplicate cells (same vertex set)
+    /// - Facet sharing invariant (each facet is shared by at most 2 cells)
+    /// - Neighbor consistency (topology + mutual neighbors)
     ///
     /// # ⚠️ Performance Warning
     ///
-    /// **This method is computationally expensive** and should be used judiciously:
-    /// - **Time Complexity**: O(N×F + N×D²) where N is the number of cells, F is facets per cell (D+1),
-    ///   and D is the spatial dimension
-    /// - **Space Complexity**: O(N×F) for building facet-to-cell mappings
-    /// - For large triangulations (>10K cells), this can take significant time
-    /// - Consider using this primarily for debugging, testing, or after major structural changes
+    /// **This method can be expensive** for large triangulations:
+    /// - **Time Complexity**: O(N×F + N×D²) where N is the number of cells and F = D+1 facets per cell
+    /// - **Space Complexity**: O(N×F) for facet-to-cell mappings
     ///
-    /// For production code, prefer individual validation methods like [`validate_cell_mappings()`](Self::validate_cell_mappings)
-    /// when only specific checks are needed.
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` if the triangulation is valid, otherwise a [`TriangulationValidationError`].
+    /// For a cumulative validator that also checks vertices/cells (Level 1), use
+    /// [`Tds::validate`](Self::validate).
     ///
     /// # Errors
     ///
-    /// Returns a [`TriangulationValidationError`] if:
-    /// - Vertex or cell UUID-to-key mappings are inconsistent
-    /// - Any cell is invalid (contains invalid vertices, has nil UUID, or contains duplicate vertices)
-    /// - Duplicate cells exist (cells with identical vertex sets)
-    /// - Any facet is shared by more than 2 cells
-    /// - Neighbor relationships are not mutual between cells
-    /// - Cells have too many neighbors for their dimension
+    /// Returns a [`TriangulationValidationError`] if any structural invariant fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices_4d = [
+    ///     vertex!([0.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 4> =
+    ///     DelaunayTriangulation::new(&vertices_4d).unwrap();
+    ///
+    /// // Level 2: TDS structural validation
+    /// assert!(dt.tds().is_valid().is_ok());
+    /// ```
     ///
     /// # Panics
     ///
     /// Panics if an internal invariant is violated such that
     /// `validation_report` returns an error with an empty violations list.
     /// This should never occur in a correctly implemented validator.
-    ///
-    /// # Validation Checks
-    ///
-    /// This function performs comprehensive validation including:
-    /// 1. **Mapping consistency**: Validates vertex and cell UUID-to-key mappings
-    /// 2. **Cell uniqueness**: Checks for duplicate cells with identical vertex sets
-    /// 3. **Individual cell validation**: Calls [`is_valid()`](crate::core::cell::Cell::is_valid) on each cell
-    /// 4. **Facet sharing validation**: Ensures no facet is shared by >2 cells
-    /// 5. **Neighbor relationship validation**: Validates mutual neighbor relationships
-    ///
-    /// # Examples
-    ///
-    /// Basic usage with a 3D triangulation:
-    ///
-    /// ```
-    /// use delaunay::prelude::*;
-    ///
-    /// let points = [
-    ///     Point::new([0.0, 0.0, 0.0]),
-    ///     Point::new([1.0, 0.0, 0.0]),
-    ///     Point::new([0.0, 1.0, 0.0]),
-    ///     Point::new([0.0, 0.0, 1.0]),
-    /// ];
-    ///
-    /// let vertices = Vertex::from_points(&points);
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// assert!(dt.is_valid().is_ok());
-    /// ```
-    ///
-    /// Empty triangulations are valid:
-    ///
-    /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    ///
-    /// let tds = Tds::<f64, (), (), 3>::empty();
-    /// assert!(tds.is_valid().is_ok());
-    /// ```
-    ///
-    /// This convenience method runs all **structural invariants** (vertex and cell
-    /// mappings, duplicate cells, per-cell validity, facet sharing, and neighbor
-    /// consistency) and returns only the first failure.
-    ///
-    /// **Note**: This does NOT check the Delaunay property. Use
-    /// `DelaunayTriangulation::validate_delaunay()` for geometric validation.
     pub fn is_valid(&self) -> Result<(), TriangulationValidationError> {
         // Delegate to the multi-invariant report API and return only the first
-        // error for backward compatibility.
+        // error.
         match self.validation_report() {
             Ok(()) => Ok(()),
             Err(report) => {
@@ -2914,7 +2850,63 @@ where
         }
     }
 
-    /// Runs all structural validation checks and returns a report containing **all** failed invariants.
+    /// Performs cumulative validation for Levels 1–2.
+    ///
+    /// This validates:
+    /// - **Level 1**: all vertices (`Vertex::is_valid`) and all cells (`Cell::is_valid`)
+    /// - **Level 2**: structural invariants (`Tds::is_valid`)
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`TriangulationValidationError`] if any vertex/cell is invalid or if any
+    /// structural invariant fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices_4d = [
+    ///     vertex!([0.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 4> =
+    ///     DelaunayTriangulation::new(&vertices_4d).unwrap();
+    ///
+    /// // Levels 1–2: elements + TDS structure
+    /// assert!(dt.tds().validate().is_ok());
+    /// ```
+    pub fn validate(&self) -> Result<(), TriangulationValidationError> {
+        for (_vertex_key, vertex) in &self.vertices {
+            if let Err(source) = (*vertex).is_valid() {
+                return Err(TriangulationValidationError::InvalidVertex {
+                    vertex_id: vertex.uuid(),
+                    source,
+                });
+            }
+        }
+
+        for (cell_key, cell) in &self.cells {
+            if let Err(source) = cell.is_valid() {
+                let Some(cell_id) = self.cell_uuid_from_key(cell_key) else {
+                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Cell key {cell_key:?} has no UUID mapping during validation",
+                        ),
+                    });
+                };
+
+                return Err(TriangulationValidationError::InvalidCell { cell_id, source });
+            }
+        }
+
+        self.is_valid()
+    }
+
+    /// Runs structural validation checks and returns a report containing **all** failed invariants.
     ///
     /// Unlike [`is_valid()`](Self::is_valid), this method does **not** stop at the
     /// first error. Instead it records a [`TriangulationValidationError`] for each
@@ -2925,13 +2917,14 @@ where
     /// want to surface every violated invariant at once.
     ///
     /// **Note**: This does NOT check the Delaunay property. Use
-    /// `DelaunayTriangulation::validate_delaunay()` for geometric validation.
+    /// `DelaunayTriangulation::is_valid()` (Level 4) or `DelaunayTriangulation::validate()` (Levels 1–4)
+    /// for geometric validation.
     ///
     /// # Errors
     ///
     /// Returns a [`TriangulationValidationReport`] containing all invariant
     /// violations if any validation step fails.
-    pub fn validation_report(&self) -> Result<(), TriangulationValidationReport> {
+    pub(crate) fn validation_report(&self) -> Result<(), TriangulationValidationReport> {
         let mut violations = Vec::new();
 
         // 1. Mapping consistency (vertex + cell UUID↔key mappings)
@@ -2963,28 +2956,7 @@ where
             });
         }
 
-        // 3. Individual cell validation
-        for (cell_id, cell) in &self.cells {
-            if let Err(source) = cell.is_valid() {
-                let error = self.cell_uuid_from_key(cell_id).map_or_else(
-                    || TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Cell key {cell_id:?} has no UUID mapping during validation",
-                        ),
-                    },
-                    |cell_uuid| TriangulationValidationError::InvalidCell {
-                        cell_id: cell_uuid,
-                        source,
-                    },
-                );
-                violations.push(InvariantViolation {
-                    kind: InvariantKind::CellValidity,
-                    error,
-                });
-            }
-        }
-
-        // 4. Facet sharing (no facet shared by more than 2 cells)
+        // 3. Facet sharing (no facet shared by more than 2 cells)
         if let Err(e) = self.validate_facet_sharing() {
             violations.push(InvariantViolation {
                 kind: InvariantKind::FacetSharing,
@@ -2992,7 +2964,7 @@ where
             });
         }
 
-        // 5. Neighbor relationships (mutual neighbors, correct shared facets)
+        // 4. Neighbor relationships (mutual neighbors, correct shared facets)
         if let Err(e) = self.validate_neighbors() {
             violations.push(InvariantViolation {
                 kind: InvariantKind::NeighborConsistency,
@@ -3024,10 +2996,10 @@ where
     /// Returns a [`TriangulationValidationError`] if any neighbor relationship
     /// violates topological or consistency invariants.
     ///
-    /// This corresponds to [`InvariantKind::NeighborConsistency`], which is reported by
-    /// [`Tds::validation_report`](Self::validation_report) and is included in
-    /// [`Tds::is_valid`](Self::is_valid).
-    pub fn validate_neighbors(&self) -> Result<(), TriangulationValidationError> {
+    /// This corresponds to [`InvariantKind::NeighborConsistency`], which is included in
+    /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
+    /// [`DelaunayTriangulation::validation_report`](crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report).
+    fn validate_neighbors(&self) -> Result<(), TriangulationValidationError> {
         // Pre-compute vertex keys for all cells to avoid repeated computation
         let mut cell_vertices: CellVerticesMap = fast_hash_map_with_capacity(self.cells.len());
 
@@ -3056,7 +3028,7 @@ where
             // Get this cell's vertices from pre-computed maps
             let this_vertices = &cell_vertices[&cell_key];
 
-            for neighbor_key_opt in &neighbors {
+            for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
                 // Skip None neighbors (missing neighbors)
                 let Some(neighbor_key) = neighbor_key_opt else {
                     continue;
@@ -3069,38 +3041,46 @@ where
                     });
                 };
 
-                // Early termination: mutual neighbor check using linear search (faster for small neighbor lists)
-                // Phase 3A: Check neighbors (CellKey-based) instead of neighbor UUIDs
-                if let Some(neighbor_neighbors) = &neighbor_cell.neighbors {
-                    if !neighbor_neighbors.contains(&Some(cell_key)) {
-                        return Err(TriangulationValidationError::InvalidNeighbors {
-                            message: format!(
-                                "Neighbor relationship not mutual: {:?} → {:?}",
-                                cell.uuid(),
-                                neighbor_cell.uuid()
-                            ),
-                        });
-                    }
-                } else {
-                    // Neighbor has no neighbors, so relationship cannot be mutual
-                    return Err(TriangulationValidationError::InvalidNeighbors {
-                        message: format!(
-                            "Neighbor relationship not mutual: {:?} → {:?}",
-                            cell.uuid(),
-                            neighbor_cell.uuid()
-                        ),
-                    });
-                }
-
-                // Optimized shared facet check: count intersections without creating intermediate collections
+                // Shared facet check: neighbors must share exactly D vertices.
                 let neighbor_vertices = &cell_vertices[neighbor_key];
                 let shared_count = this_vertices.intersection(neighbor_vertices).count();
 
-                // Early termination: check shared vertex count
                 if shared_count != D {
                     return Err(TriangulationValidationError::NotNeighbors {
                         cell1: cell.uuid(),
                         cell2: neighbor_cell.uuid(),
+                    });
+                }
+
+                // Mutual neighbor check at the correct (mirror) facet index.
+                let mirror_idx = cell
+                    .mirror_facet_index(facet_idx, neighbor_cell)
+                    .ok_or_else(|| TriangulationValidationError::InvalidNeighbors {
+                        message: format!(
+                            "Could not find mirror facet: cell {:?}[{facet_idx}] -> neighbor {:?}",
+                            cell.uuid(),
+                            neighbor_cell.uuid()
+                        ),
+                    })?;
+
+                let Some(neighbor_neighbors) = &neighbor_cell.neighbors else {
+                    return Err(TriangulationValidationError::InvalidNeighbors {
+                        message: format!(
+                            "Neighbor relationship not mutual: {:?}[{facet_idx}] -> {:?} (neighbor has no neighbors)",
+                            cell.uuid(),
+                            neighbor_cell.uuid()
+                        ),
+                    });
+                };
+
+                let back_ref = neighbor_neighbors.get(mirror_idx).copied().flatten();
+                if back_ref != Some(cell_key) {
+                    return Err(TriangulationValidationError::InvalidNeighbors {
+                        message: format!(
+                            "Neighbor relationship not mutual: {:?}[{facet_idx}] -> {:?}[{mirror_idx}] (expected back-reference)",
+                            cell.uuid(),
+                            neighbor_cell.uuid()
+                        ),
                     });
                 }
             }

@@ -114,11 +114,12 @@ fn analyze_triangulation(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>)
     match dt.tds().is_valid() {
         Ok(()) => {
             let validation_time = start.elapsed();
-            println!("  Validation:         ✓ VALID ({validation_time:?})");
+            println!("  TDS validation:     ✓ VALID ({validation_time:?})");
+            println!("  (Level 2: structural invariants)");
         }
         Err(e) => {
             let validation_time = start.elapsed();
-            println!("  Validation:         ✗ INVALID ({validation_time:?})");
+            println!("  TDS validation:     ✗ INVALID ({validation_time:?})");
             println!("  Error: {e}");
         }
     }

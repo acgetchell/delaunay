@@ -14,7 +14,6 @@
 //! - **Methods**: [`Cell::is_valid()`], [`Vertex::is_valid()`]
 //! - **Checks**: Basic data integrity (coordinate validity, UUID presence, proper initialization)
 //! - **Cost**: O(1) per element
-//! - **Use**: Building blocks for higher-level validation
 //!
 //! ## Level 2: TDS Structural Validity
 //! - **Method**: [`Tds::is_valid()`]
@@ -23,26 +22,25 @@
 //!   - No duplicate cells (same vertex sets)
 //!   - Facet sharing invariant (≤2 cells per facet)
 //!   - Neighbor consistency (mutual relationships)
-//!   - All cells valid (calls Level 1)
 //! - **Cost**: O(N×D²) where N = cells, D = dimension
-//! - **Use**: Verify combinatorial correctness after construction or mutation
+//!
+//! Use [`Tds::validate()`] for cumulative Levels 1–2 (element + structural) validation.
 //!
 //! ## Level 3: Manifold Topology
-//! - **Method**: [`Triangulation::validate_manifold()`](crate::core::triangulation::Triangulation::validate_manifold)
+//! - **Method**: [`Triangulation::is_valid()`](crate::core::triangulation::Triangulation::is_valid)
 //! - **Checks**:
-//!   - All TDS invariants (calls Level 2)
-//!   - Strengthened facet property (exactly 1 or 2 cells per facet)
+//!   - Manifold-with-boundary facet property (exactly 1 boundary cell or 2 interior cells per facet)
 //!   - Euler characteristic (χ = V - E + F - C matches expected topology)
 //! - **Cost**: O(N×D²) for simplex counting
-//! - **Use**: Verify the triangulation forms a valid topological manifold
+//!
+//! Use [`Triangulation::validate()`](crate::core::triangulation::Triangulation::validate) for cumulative Levels 1–3.
 //!
 //! ## Level 4: Delaunay Property
-//! - **Method**: [`DelaunayTriangulation::validate_delaunay()`]
-//! - **Checks**:
-//!   - Empty circumsphere property (no vertex inside any cell's circumsphere)
-//!   - Uses geometric predicates from kernel
+//! - **Method**: [`DelaunayTriangulation::is_valid()`](crate::core::delaunay_triangulation::DelaunayTriangulation::is_valid)
+//! - **Checks**: Empty circumsphere property (no vertex inside any cell's circumsphere)
 //! - **Cost**: O(N×V) where N = cells, V = vertices
-//! - **Use**: Verify geometric optimality of the triangulation
+//!
+//! Use [`DelaunayTriangulation::validate()`](crate::core::delaunay_triangulation::DelaunayTriangulation::validate) for cumulative Levels 1–4.
 //!
 //! ## Usage Guidelines
 //!
@@ -57,14 +55,17 @@
 //! ];
 //! let dt = DelaunayTriangulation::new(&vertices).unwrap();
 //!
-//! // Quick structural check (Level 2)
+//! // Level 2: structural only (fast)
+//! assert!(dt.tds().is_valid().is_ok());
+//!
+//! // Level 3: topology only (assumes structural validity)
+//! assert!(dt.triangulation().is_valid().is_ok());
+//!
+//! // Level 4: Delaunay property only (assumes Levels 1–3)
 //! assert!(dt.is_valid().is_ok());
 //!
-//! // Thorough manifold check (Level 3, includes Level 2)
-//! assert!(dt.triangulation().validate_manifold().is_ok());
-//!
-//! // Full geometric validation (Level 4, most expensive)
-//! assert!(dt.validate_delaunay().is_ok());
+//! // Full cumulative validation (Levels 1–4)
+//! assert!(dt.validate().is_ok());
 //! ```
 //!
 //! **Performance**: Use Level 2 for most production validation. Reserve Level 3 for
@@ -73,7 +74,7 @@
 //! [`Cell::is_valid()`]: crate::core::cell::Cell::is_valid
 //! [`Vertex::is_valid()`]: crate::core::vertex::Vertex::is_valid
 //! [`Tds::is_valid()`]: crate::core::triangulation_data_structure::Tds::is_valid
-//! [`DelaunayTriangulation::validate_delaunay()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validate_delaunay
+//! [`Tds::validate()`]: crate::core::triangulation_data_structure::Tds::validate
 
 use core::iter::Sum;
 use core::ops::{AddAssign, Div, SubAssign};
@@ -94,7 +95,8 @@ use crate::core::collections::{
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation_data_structure::{
-    CellKey, Tds, TriangulationConstructionError, TriangulationValidationError, VertexKey,
+    CellKey, InvariantKind, InvariantViolation, Tds, TriangulationConstructionError,
+    TriangulationValidationError, TriangulationValidationReport, VertexKey,
 };
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
@@ -405,73 +407,46 @@ where
         BoundaryFacetsIter::new(&self.tds, facet_map)
     }
 
-    /// Validates that the triangulation forms a valid manifold.
+    /// Validates topological invariants of the triangulation (Level 3).
     ///
-    /// This method validates **manifold topology** on top of the structural invariants checked by
-    /// [`Tds::is_valid()`](crate::core::triangulation_data_structure::Tds::is_valid).
+    /// This checks the triangulation/topology layer **only**:
+    /// - Manifold facet property allowing a boundary
+    /// - Boundary consistency with neighbor pointers (boundary facets must have no neighbor)
+    /// - Euler characteristic
     ///
-    /// # Validation Hierarchy
-    ///
-    /// - **Level 1: Element Validity** - [`Cell::is_valid()`](crate::core::cell::Cell::is_valid),
-    ///   [`Vertex::is_valid()`](crate::core::vertex::Vertex::is_valid)
-    /// - **Level 2: TDS Structural Validity** - [`Tds::is_valid()`](crate::core::triangulation_data_structure::Tds::is_valid)
-    ///   (mappings, no duplicates, facet sharing ≤2, neighbor consistency)
-    /// - **Level 3: Manifold Topology** - **This method** (manifold facet property, Euler characteristic)
-    /// - **Level 4: Delaunay Property** - [`DelaunayTriangulation::validate_delaunay()`](crate::core::delaunay_triangulation::DelaunayTriangulation::validate_delaunay)
-    ///
-    /// # Manifold Requirements
-    ///
-    /// A valid manifold triangulation must satisfy:
-    ///
-    /// 1. **All TDS structural invariants** (validated first)
-    /// 2. **Manifold facet property**: Each facet belongs to exactly 1 cell (boundary) or exactly 2 cells (interior)
-    /// 3. **Euler characteristic**: χ = 1 for manifolds with boundary (typical case)
-    ///    - Uses the generic topology module for dimensional-generic validation
-    ///    - Supports all dimensions through simplex counting
-    ///    - See [`crate::topology`] for details on topological validation
-    ///
-    /// **Time Complexity**: O(N×D²) where N = number of cells, D = dimension
-    /// - Facet map construction: O(N×D)
-    /// - Manifold facet check: O(N×D)
-    /// - Simplex counting for Euler: O(N×D²)
-    ///
-    /// For large triangulations, this is expensive. Use judiciously in tests or debug builds.
+    /// It intentionally does **not** validate lower layers (vertices/cells or TDS structure).
+    /// For cumulative validation, use [`Triangulation::validate`](Self::validate).
     ///
     /// # Errors
     ///
-    /// Returns [`TriangulationValidationError`] if:
-    /// - Any TDS structural invariant fails (mappings, duplicates, facet sharing, neighbors)
-    /// - Any facet is shared by 0 or >2 cells (non-manifold)
-    /// - Euler characteristic doesn't match expected value for the topology
+    /// Returns a [`TriangulationValidationError`] if:
+    /// - The manifold-with-boundary facet property is violated.
+    /// - Euler characteristic validation fails.
+    /// - The topology module reports an error (treated as inconsistent data structure).
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust
     /// use delaunay::prelude::*;
     ///
-    /// // Valid 3D triangulation (single tetrahedron)
-    /// let vertices = [
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    /// let vertices_4d = [
+    ///     vertex!([0.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// assert!(dt.triangulation().validate_manifold().is_ok());
+    /// let dt: DelaunayTriangulation<_, (), (), 4> =
+    ///     DelaunayTriangulation::new(&vertices_4d).unwrap();
+    ///
+    /// // Level 3: topology validation (manifold-with-boundary + Euler characteristic)
+    /// assert!(dt.triangulation().is_valid().is_ok());
     /// ```
-    #[allow(clippy::missing_panics_doc)] // expect() enforces internal invariant
-    pub fn validate_manifold(&self) -> Result<(), TriangulationValidationError> {
-        // 1. First validate all TDS structural invariants
-        //    (mappings, no duplicates, facet sharing ≤2, neighbor consistency)
-        self.tds.is_valid()?;
-
-        // 2. Strengthen facet sharing to manifold property:
-        //    - Boundary facets: exactly 1 cell
-        //    - Interior facets: exactly 2 cells
-        //    (No facets with 0 cells allowed in a manifold)
+    pub fn is_valid(&self) -> Result<(), TriangulationValidationError> {
+        // 1. Manifold facet property (with boundary-aware neighbor consistency)
         self.validate_manifold_facets()?;
 
-        // 3. Validate Euler characteristic using the topology module
+        // 2. Euler characteristic using the topology module
         let topology_result = validate_triangulation_euler(&self.tds).map_err(|e| {
             TriangulationValidationError::InconsistentDataStructure {
                 message: format!("Topology validation failed: {e}"),
@@ -479,14 +454,14 @@ where
         })?;
 
         if !topology_result.is_valid() {
+            let expected = topology_result
+                .expected
+                .map_or_else(|| "<unknown>".to_string(), |chi| chi.to_string());
+
             return Err(TriangulationValidationError::InconsistentDataStructure {
                 message: format!(
                     "Euler characteristic mismatch: computed χ={}, expected χ={} for {:?}",
-                    topology_result.chi,
-                    topology_result
-                        .expected
-                        .expect("expected should be Some when is_valid() returns false"),
-                    topology_result.classification
+                    topology_result.chi, expected, topology_result.classification
                 ),
             });
         }
@@ -494,33 +469,203 @@ where
         Ok(())
     }
 
-    /// Validates that all facets in the triangulation satisfy the manifold property.
+    /// Performs cumulative validation for Levels 1–3.
     ///
-    /// In a valid manifold, every facet must belong to exactly 1 cell (boundary facet)
-    /// or exactly 2 cells (interior facet). This is conceptually stronger than the TDS invariant
-    /// which only requires ≤2 cells per facet.
+    /// This validates:
+    /// - **Level 1–2** via [`Tds::validate`](crate::core::triangulation_data_structure::Tds::validate)
+    /// - **Level 3** via [`Triangulation::is_valid`](Self::is_valid)
     ///
-    /// **Note**: In practice, since Level 2 (`tds.is_valid()`) already enforces the ≤2 constraint
-    /// and `build_facet_to_cells_map()` only includes facets that appear in cells, this check
-    /// primarily serves as an explicit assertion of the manifold property. The `count == 0` branch
-    /// is unreachable for well-formed maps. This validates the conceptual strengthening from
-    /// "at most 2" (Level 2) to "exactly 1 or 2" (Level 3), which becomes meaningful if facets
-    /// ever gain independent representation in future refactoring.
+    /// # Errors
+    ///
+    /// Returns a [`TriangulationValidationError`] if:
+    /// - Any vertex/cell is invalid (Level 1).
+    /// - The TDS structural invariants fail (Level 2).
+    /// - Topology validation fails (Level 3).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices_4d = [
+    ///     vertex!([0.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 4> =
+    ///     DelaunayTriangulation::new(&vertices_4d).unwrap();
+    ///
+    /// // Levels 1–3: elements + TDS structure + topology
+    /// assert!(dt.triangulation().validate().is_ok());
+    /// ```
+    pub fn validate(&self) -> Result<(), TriangulationValidationError> {
+        self.tds.validate()?;
+        self.is_valid()
+    }
+
+    /// Generate a comprehensive validation report for Levels 1–3.
+    ///
+    /// This is intended for debugging/telemetry where you want to see *all* violated
+    /// invariants, not just the first one.
+    ///
+    /// # Notes
+    /// - If UUID↔key mappings are inconsistent, this returns only mapping failures (other
+    ///   checks may produce misleading secondary errors).
+    /// - This report is **cumulative** across Levels 1–3.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(TriangulationValidationReport)` containing all invariant violations.
+    pub(crate) fn validation_report(&self) -> Result<(), TriangulationValidationReport> {
+        let mut violations: Vec<InvariantViolation> = Vec::new();
+
+        // Level 2 (structural): reuse the TDS report.
+        match self.tds.validation_report() {
+            Ok(()) => {}
+            Err(report) => {
+                if report.violations.iter().any(|v| {
+                    matches!(
+                        v.kind,
+                        InvariantKind::VertexMappings | InvariantKind::CellMappings
+                    )
+                }) {
+                    return Err(report);
+                }
+                violations.extend(report.violations);
+            }
+        }
+
+        // Level 1 (element validity): vertices
+        for (_vertex_key, vertex) in self.tds.vertices() {
+            if let Err(source) = (*vertex).is_valid() {
+                violations.push(InvariantViolation {
+                    kind: InvariantKind::VertexValidity,
+                    error: TriangulationValidationError::InvalidVertex {
+                        vertex_id: vertex.uuid(),
+                        source,
+                    },
+                });
+            }
+        }
+
+        // Level 1 (element validity): cells
+        for (_cell_key, cell) in self.tds.cells() {
+            if let Err(source) = cell.is_valid() {
+                violations.push(InvariantViolation {
+                    kind: InvariantKind::CellValidity,
+                    error: TriangulationValidationError::InvalidCell {
+                        cell_id: cell.uuid(),
+                        source,
+                    },
+                });
+            }
+        }
+
+        // Level 3 (topology)
+        if let Err(e) = self.is_valid() {
+            violations.push(InvariantViolation {
+                kind: InvariantKind::Topology,
+                error: e,
+            });
+        }
+
+        if violations.is_empty() {
+            Ok(())
+        } else {
+            Err(TriangulationValidationReport { violations })
+        }
+    }
+
+    /// Validates that all facets in the triangulation satisfy the manifold property,
+    /// and that boundary facets correspond to "outside" adjacency.
     fn validate_manifold_facets(&self) -> Result<(), TriangulationValidationError> {
         use crate::core::collections::FacetToCellsMap;
 
-        // Build facet-to-cells map
         let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
 
-        // Check that each facet has exactly 1 or 2 cells
         for (facet_key, cell_facet_pairs) in &facet_to_cells {
-            let count = cell_facet_pairs.len();
-            if count == 0 || count > 2 {
-                return Err(TriangulationValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Non-manifold facet: facet with key {facet_key} belongs to {count} cells (expected 1 or 2 for manifold)"
-                    ),
-                });
+            match cell_facet_pairs.as_slice() {
+                [handle] => {
+                    // Boundary facet: must not have a neighbor across this facet.
+                    let cell_key = handle.cell_key();
+                    let facet_index = handle.facet_index() as usize;
+
+                    let cell = self.tds.get_cell(cell_key).ok_or_else(|| {
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Cell key {cell_key:?} not found during manifold validation"
+                            ),
+                        }
+                    })?;
+
+                    if let Some(neighbors) = cell.neighbors() {
+                        let neighbor = neighbors.get(facet_index).and_then(|n| *n);
+                        if neighbor.is_some() {
+                            return Err(TriangulationValidationError::InvalidNeighbors {
+                                message: format!(
+                                    "Boundary facet {facet_key} unexpectedly has a neighbor across cell {:?}[{facet_index}]",
+                                    cell.uuid()
+                                ),
+                            });
+                        }
+                    }
+                }
+                [a, b] => {
+                    // Interior facet: both cells must be neighbors across the corresponding facet indices.
+                    let first_cell_key = a.cell_key();
+                    let first_facet_index = a.facet_index() as usize;
+                    let second_cell_key = b.cell_key();
+                    let second_facet_index = b.facet_index() as usize;
+
+                    let first_cell = self.tds.get_cell(first_cell_key).ok_or_else(|| {
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Cell key {first_cell_key:?} not found during manifold validation"
+                            ),
+                        }
+                    })?;
+                    let second_cell = self.tds.get_cell(second_cell_key).ok_or_else(|| {
+                        TriangulationValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Cell key {second_cell_key:?} not found during manifold validation"
+                            ),
+                        }
+                    })?;
+
+                    let first_neighbor = first_cell
+                        .neighbors()
+                        .and_then(|n| n.get(first_facet_index))
+                        .and_then(|n| *n);
+                    let second_neighbor = second_cell
+                        .neighbors()
+                        .and_then(|n| n.get(second_facet_index))
+                        .and_then(|n| *n);
+
+                    if first_neighbor != Some(second_cell_key)
+                        || second_neighbor != Some(first_cell_key)
+                    {
+                        return Err(TriangulationValidationError::InvalidNeighbors {
+                            message: format!(
+                                "Interior facet {facet_key} has inconsistent neighbor pointers: {:?}[{first_facet_index}] -> {:?}, {:?}[{second_facet_index}] -> {:?}",
+                                first_cell.uuid(),
+                                first_neighbor,
+                                second_cell.uuid(),
+                                second_neighbor
+                            ),
+                        });
+                    }
+                }
+                _ => {
+                    // Non-manifold facet multiplicity (0 or >2).
+                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Non-manifold facet: facet with key {facet_key} belongs to {} cells (expected 1 or 2)",
+                            cell_facet_pairs.len()
+                        ),
+                    });
+                }
             }
         }
 
@@ -1403,7 +1548,7 @@ where
     /// // Remove a vertex - cavity is automatically retriangulated
     /// let vertex_to_remove = dt.vertices().next().unwrap().1.clone();
     /// let cells_removed = dt.remove_vertex(&vertex_to_remove).unwrap();
-    /// assert!(dt.is_valid().is_ok());
+    /// assert!(dt.triangulation().validate().is_ok());
     /// ```
     pub fn remove_vertex(
         &mut self,
@@ -2160,22 +2305,22 @@ mod tests {
         ]
     );
 
-    /// Macro to generate `validate_manifold` tests across dimensions.
+    /// Macro to generate Level 3 (topology) validation tests across dimensions.
     ///
-    /// This macro generates tests that verify manifold validation by:
+    /// This macro generates tests that verify manifold-with-boundary validation by:
     /// 1. Creating a Delaunay triangulation from D+1 affinely independent vertices
-    /// 2. Calling `validate_manifold()` on the triangulation
+    /// 2. Calling `Triangulation::is_valid()` (Level 3)
     /// 3. Verifying that the validation passes
     ///
     /// # Usage
     /// ```ignore
-    /// test_validate_manifold!(2, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
+    /// test_is_valid_topology!(2, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
     /// ```
-    macro_rules! test_validate_manifold {
+    macro_rules! test_is_valid_topology {
         ($dim:expr, [$($simplex_coords:expr),+ $(,)?]) => {
             pastey::paste! {
                 #[test]
-                fn [<test_validate_manifold_ $dim d>]() {
+                fn [<test_is_valid_topology_ $dim d>]() {
                     use crate::core::delaunay_triangulation::DelaunayTriangulation;
 
                     // Build triangulation from D+1 vertices (initial simplex)
@@ -2191,11 +2336,11 @@ mod tests {
                         .expect(&format!("Failed to create {}D triangulation", $dim));
                     let tri = dt.triangulation();
 
-                    // Validate manifold properties
-                    let result = tri.validate_manifold();
+                    // Level 3: topology validation
+                    let result = tri.is_valid();
                     assert!(
                         result.is_ok(),
-                        "{}D: Simple simplex should be a valid manifold. Error: {:?}",
+                        "{}D: Simple simplex should be a valid manifold-with-boundary. Error: {:?}",
                         $dim,
                         result.err()
                     );
@@ -2211,10 +2356,10 @@ mod tests {
     }
 
     // 2D: Triangle manifold
-    test_validate_manifold!(2, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
+    test_is_valid_topology!(2, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
 
     // 3D: Tetrahedron manifold
-    test_validate_manifold!(
+    test_is_valid_topology!(
         3,
         [
             [0.0, 0.0, 0.0],
@@ -2225,7 +2370,7 @@ mod tests {
     );
 
     // 4D: 4-simplex manifold
-    test_validate_manifold!(
+    test_is_valid_topology!(
         4,
         [
             [0.0, 0.0, 0.0, 0.0],
@@ -2237,7 +2382,7 @@ mod tests {
     );
 
     // 5D: 5-simplex manifold
-    test_validate_manifold!(
+    test_is_valid_topology!(
         5,
         [
             [0.0, 0.0, 0.0, 0.0, 0.0],
@@ -2250,27 +2395,21 @@ mod tests {
     );
 
     #[test]
-    fn test_validate_manifold_empty() {
-        // Empty triangulation should pass manifold validation
+    fn test_is_valid_topology_empty() {
+        // Empty triangulation should pass topology validation
         let tri: Triangulation<FastKernel<f64>, (), (), 3> =
             Triangulation::new_empty(FastKernel::new());
 
         assert!(
-            tri.validate_manifold().is_ok(),
+            tri.is_valid().is_ok(),
             "Empty triangulation should be a valid (empty) manifold"
         );
     }
 
-    // NOTE: Tests for multiple-cell triangulations with interior points are omitted
-    // because they may fail validation due to Issue #120 (rare Delaunay property violations
-    // in near-degenerate configurations). The validate_manifold tests focus on simple
-    // simplexes that reliably pass validation.
-
     #[test]
-    fn test_validate_manifold_calls_tds_is_valid() {
+    fn test_validate_includes_tds_validation() {
         use crate::core::delaunay_triangulation::DelaunayTriangulation;
 
-        // Verify that validate_manifold() checks TDS structural invariants first
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -2280,11 +2419,11 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let tri = dt.triangulation();
 
-        // validate_manifold should pass if tds.is_valid() passes
-        assert!(tri.tds.is_valid().is_ok(), "TDS should be valid");
+        // Triangulation::validate should pass if the underlying TDS validates.
+        assert!(tri.tds.validate().is_ok(), "TDS should validate");
         assert!(
-            tri.validate_manifold().is_ok(),
-            "Manifold validation should pass when TDS is valid"
+            tri.validate().is_ok(),
+            "Triangulation::validate should pass"
         );
     }
 
@@ -2547,11 +2686,13 @@ mod tests {
                         }
                     }
 
-                    // Verify triangulation is still valid
+                    // Verify triangulation is still valid (Levels 1–3; removal does not guarantee Delaunay)
+                    let validation = dt.triangulation().validate();
                     assert!(
-                        dt.is_valid().is_ok(),
-                        "{}D: Triangulation should be valid after vertex removal",
-                        $dim
+                        validation.is_ok(),
+                        "{}D: Triangulation should be structurally valid after vertex removal: {:?}",
+                        $dim,
+                        validation.err()
                     );
                 }
             }

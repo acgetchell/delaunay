@@ -681,8 +681,8 @@ The robust predicates system has comprehensive test coverage demonstrating real-
 - Demonstrates consistent results across dimensions (2D-5D)
 - Validates error recovery for "No cavity boundary facets found" scenarios
 - Confirms that structural invariants checked by `Tds::is_valid()` remain intact
-  and can be further inspected via `Tds::validation_report()` and
-  `Tds::validate_delaunay()` in targeted tests.
+  and can be further inspected via `DelaunayTriangulation::validation_report()` and
+  (when needed) `DelaunayTriangulation::is_valid()` / `DelaunayTriangulation::validate()` in targeted tests.
 
 ### Degenerate Case Tests
 

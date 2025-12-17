@@ -600,6 +600,48 @@ where
         &self.vertices[..]
     }
 
+    /// Find the facet index in `neighbor_cell` that corresponds to the shared facet.
+    ///
+    /// `facet_idx` is interpreted as the index of the vertex opposite the facet in `self`.
+    /// If `neighbor_cell` shares exactly that facet, this returns the index of the vertex
+    /// opposite the same facet in `neighbor_cell` (CGAL-style "mirror facet").
+    ///
+    /// Returns `None` if `facet_idx` is out of range, or if the cells do not appear to share
+    /// a single facet.
+    #[inline]
+    pub(crate) fn mirror_facet_index(
+        &self,
+        facet_idx: usize,
+        neighbor_cell: &Self,
+    ) -> Option<usize> {
+        if facet_idx >= self.vertices.len() {
+            return None;
+        }
+
+        // Build the facet vertex set from the source cell (all except facet_idx)
+        let mut facet_vertices: CellVertexBuffer = CellVertexBuffer::new();
+        for (i, &vkey) in self.vertices().iter().enumerate() {
+            if i != facet_idx {
+                facet_vertices.push(vkey);
+            }
+        }
+
+        // Find the vertex in neighbor_cell that is NOT in the facet.
+        // That vertex's index is the mirror facet index.
+        let mut mirror_idx: Option<usize> = None;
+        for (idx, &neighbor_vkey) in neighbor_cell.vertices().iter().enumerate() {
+            if !facet_vertices.contains(&neighbor_vkey) {
+                if mirror_idx.is_some() {
+                    // More than one vertex is not in the facet -> not a valid facet neighbor relation.
+                    return None;
+                }
+                mirror_idx = Some(idx);
+            }
+        }
+
+        mirror_idx
+    }
+
     /// Adds a vertex key to this cell.
     ///
     /// # Phase 3A: Internal Use Only
@@ -1938,6 +1980,126 @@ mod tests {
         let cell_key_3d = dt_3d.tds().cell_keys().next().unwrap();
         let tetrahedron = dt_3d.tds().get_cell(cell_key_3d).unwrap();
         assert_eq!(tetrahedron.number_of_vertices(), 4);
+    }
+
+    #[test]
+    fn cell_mirror_facet_index_shared_facet_2d() {
+        // Four points in convex position should yield two triangles that share an edge.
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 1.1]), // break cocircular symmetry
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+
+        let cells: Vec<_> = dt.cells().map(|(_, cell)| cell).collect();
+        assert!(
+            cells.len() >= 2,
+            "Expected at least 2 cells, got {}",
+            cells.len()
+        );
+
+        // Find two distinct cells that share exactly D vertices (i.e., a facet).
+        // For 2D, D = 2, so the shared facet is an edge.
+        let mut found = None;
+        for i in 0..cells.len() {
+            for j in (i + 1)..cells.len() {
+                let cell_a = cells[i];
+                let cell_b = cells[j];
+
+                let shared: FastHashSet<VertexKey> = cell_a
+                    .vertices()
+                    .iter()
+                    .copied()
+                    .filter(|v| cell_b.vertices().contains(v))
+                    .collect();
+
+                if shared.len() == 2 {
+                    let facet_idx_a = cell_a
+                        .vertices()
+                        .iter()
+                        .position(|v| !shared.contains(v))
+                        .expect("cell_a should have one vertex not in the shared facet");
+
+                    let facet_idx_b = cell_b
+                        .vertices()
+                        .iter()
+                        .position(|v| !shared.contains(v))
+                        .expect("cell_b should have one vertex not in the shared facet");
+
+                    found = Some((cell_a, cell_b, facet_idx_a, facet_idx_b));
+                    break;
+                }
+            }
+            if found.is_some() {
+                break;
+            }
+        }
+
+        let Some((cell_a, cell_b, facet_idx_a, facet_idx_b)) = found else {
+            panic!("Expected to find a pair of neighboring cells that share an edge");
+        };
+
+        assert_eq!(
+            cell_a.mirror_facet_index(facet_idx_a, cell_b),
+            Some(facet_idx_b)
+        );
+        assert_eq!(
+            cell_b.mirror_facet_index(facet_idx_b, cell_a),
+            Some(facet_idx_a)
+        );
+
+        // Out-of-range facet index
+        assert_eq!(
+            cell_a.mirror_facet_index(cell_a.number_of_vertices(), cell_b),
+            None
+        );
+    }
+
+    #[test]
+    fn cell_mirror_facet_index_returns_none_when_cells_do_not_share_facet_2d() {
+        // Add a point strictly inside the convex hull to yield multiple triangles.
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 1.0]),
+            vertex!([0.5, 0.5]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+
+        let cells: Vec<_> = dt.cells().map(|(_, cell)| cell).collect();
+        assert!(
+            cells.len() >= 3,
+            "Expected at least 3 cells, got {}",
+            cells.len()
+        );
+
+        // Find two cells that share fewer than D vertices (D=2 in 2D).
+        let mut non_adjacent = None;
+        'outer: for i in 0..cells.len() {
+            for j in (i + 1)..cells.len() {
+                let cell_a = cells[i];
+                let cell_b = cells[j];
+                let shared_count = cell_a
+                    .vertices()
+                    .iter()
+                    .filter(|v| cell_b.vertices().contains(v))
+                    .count();
+
+                if shared_count < 2 {
+                    non_adjacent = Some((cell_a, cell_b));
+                    break 'outer;
+                }
+            }
+        }
+
+        let Some((cell_a, cell_b)) = non_adjacent else {
+            panic!("Expected to find a pair of non-adjacent cells");
+        };
+
+        assert_eq!(cell_a.mirror_facet_index(0, cell_b), None);
     }
 
     #[test]

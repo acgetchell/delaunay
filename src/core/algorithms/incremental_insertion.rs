@@ -612,65 +612,6 @@ fn compute_facet_hash(sorted_vkeys: &[VertexKey]) -> u64 {
     hasher.finish()
 }
 
-/// Find the facet index in `neighbor_cell` that corresponds to the shared facet.
-///
-/// Given a cell and one of its facets (specified by the opposite vertex index),
-/// find the corresponding facet index in the neighboring cell that shares the same facet.
-///
-/// # Algorithm (CGAL-style mirror facet)
-///
-/// 1. Extract the facet vertices from `cell` (all except vertex at `facet_idx`)
-/// 2. For each vertex index in `neighbor_cell`, check if that vertex is NOT in the facet
-/// 3. The index of the vertex not in the facet is the mirror facet index
-///
-/// # Arguments
-///
-/// * `cell` - The source cell
-/// * `facet_idx` - Index of the vertex opposite the shared facet in `cell`
-/// * `neighbor_cell` - The neighboring cell
-///
-/// # Returns
-///
-/// The facet index in `neighbor_cell` (index of vertex opposite the shared facet),
-/// or None if no matching facet is found (shouldn't happen for valid neighbors).
-///
-/// # Example
-///
-/// ```text
-/// Cell A: [v0, v1, v2, v3], facet_idx=2 → facet=[v0,v1,v3]
-/// Cell B: [v3, v1, v0, v2] → opposite vertex is v2 at index 3
-/// Returns: Some(3)
-/// ```
-fn mirror_facet_index<T, U, V, const D: usize>(
-    cell: &Cell<T, U, V, D>,
-    facet_idx: usize,
-    neighbor_cell: &Cell<T, U, V, D>,
-) -> Option<usize>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
-    // Build the facet vertex set from the source cell (all except facet_idx)
-    let mut facet_vertices = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-    for (i, &vkey) in cell.vertices().iter().enumerate() {
-        if i != facet_idx {
-            facet_vertices.push(vkey);
-        }
-    }
-
-    // Find the vertex in neighbor_cell that is NOT in the facet
-    // That vertex's index is the mirror facet index
-    for (idx, &neighbor_vkey) in neighbor_cell.vertices().iter().enumerate() {
-        if !facet_vertices.contains(&neighbor_vkey) {
-            return Some(idx);
-        }
-    }
-
-    // Should never reach here for valid neighbors
-    None
-}
-
 /// Repair neighbor pointers by fixing only broken/None pointers.
 ///
 /// This function scans all cells and for each None or invalid neighbor pointer,
@@ -828,7 +769,7 @@ where
                     continue;
                 }
 
-                // Use mirror_facet_index to find the correct opposite vertex in neighbor
+                // Use Cell::mirror_facet_index to find the correct opposite vertex in neighbor
                 let cell =
                     tds.get_cell(cell_key)
                         .ok_or_else(|| InsertionError::NeighborWiring {
@@ -841,7 +782,7 @@ where
                         })?;
 
                 // Find the mirror facet index: which vertex in other_cell is opposite the shared facet?
-                let mirror_idx = mirror_facet_index(cell, facet_idx, other_cell).ok_or_else(
+                let mirror_idx = cell.mirror_facet_index(facet_idx, other_cell).ok_or_else(
                     || InsertionError::NeighborWiring {
                         message: format!(
                             "Could not find mirror facet: cell {cell_key:?} facet {facet_idx} -> other cell {other_key:?}"

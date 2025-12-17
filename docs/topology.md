@@ -34,7 +34,7 @@ Delaunay triangulations possess well-defined topological properties that can be 
 3. **Extensible Architecture**: Design for future topology types (spherical, toroidal)
 4. **Dimensional Genericity**: Support topology validation across all dimensions D ≥ 2
 5. **Integration with Existing Validation**: Extend current
-   `Tds::is_valid()` / `Tds::validation_report()` framework
+   `Tds::is_valid()` / `Tds::validate()` framework
 6. **Comprehensive Testing**: Validate randomly generated triangulations
 
 ---
@@ -97,8 +97,7 @@ The topology module integrates with existing modules through:
 - **Testing Integration**: Extend existing validation and testing frameworks
 
 Topology validation is layered on top of the existing structural invariants
-validated by `Tds::validation_report()` / `Tds::is_valid()`, rather than
-duplicating those checks.
+validated by `Tds::is_valid()` / `Tds::validate()`, rather than duplicating those checks.
 
 ---
 
