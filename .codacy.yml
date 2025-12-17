@@ -127,6 +127,9 @@ engines:
       - "src/**/*.rs"
       - "scripts/**/*.py"
       - "scripts/**/*.sh"
+    exclude_paths:
+      # Test code often uses pytest-style asserts which are safe and intentional.
+      - "scripts/tests/**"
 
   # Spectral (OpenAPI/AsyncAPI linting)
   spectral:

@@ -1,8 +1,11 @@
-"""
-Tests for changelog_utils.py git tag size limit handling.
+"""Tests for changelog_utils.py git tag size limit handling.
 
 Tests the 125KB GitHub tag annotation limit detection and annotated tag creation with
-CHANGELOG.md references using real changelog data from v0.5.4 which exceeds the limit.
+CHANGELOG.md references.
+
+Note: these tests use real CHANGELOG.md sections as a base, but may synthetically
+inflate content to ensure we exercise the "oversized tag" code path even if the
+repository's changelog is later compacted.
 """
 
 import sys
@@ -20,18 +23,24 @@ class TestTagSizeLimitHandling:
     For large changelogs, creates annotated tags with a short message referencing CHANGELOG.md.
     """
 
-    def test_v0_5_4_changelog_exceeds_limit(self):
-        """Test that v0.5.4 changelog content exceeds 125KB limit (real-world regression test)."""
-        # This is the actual version that triggered the issue
+    def test_oversized_changelog_triggers_reference_message(self):
+        """Oversized changelog content should be replaced with a short CHANGELOG.md reference."""
+        # Use a real section as a base to avoid hard-coding huge fixtures.
         changelog_path = ChangelogUtils.find_changelog_path()
-        content = ChangelogUtils.extract_changelog_section(changelog_path, "0.5.4")
+        base_content = ChangelogUtils.extract_changelog_section(changelog_path, "0.5.4")
 
-        # Verify it actually exceeds the limit
-        content_size = len(content.encode("utf-8"))
-        assert content_size > 125000, f"Expected >125000 bytes, got {content_size}"
+        # Force the content over GitHub's 125KB annotated-tag message limit.
+        max_tag_size = 125000
+        base_size = len(base_content.encode("utf-8"))
+        assert base_size > 0
 
-        # Verify _get_changelog_content handles it correctly
-        tag_message, is_truncated = ChangelogUtils._get_changelog_content("v0.5.4")  # noqa: SLF001
+        repeats = (max_tag_size // base_size) + 2
+        oversized_content = "\n\n".join([base_content] * repeats)
+        assert len(oversized_content.encode("utf-8")) > max_tag_size
+
+        # Patch extraction so _get_changelog_content sees our oversized payload.
+        with patch.object(ChangelogUtils, "extract_changelog_section", return_value=oversized_content):
+            tag_message, is_truncated = ChangelogUtils._get_changelog_content("v0.5.4")  # noqa: SLF001
 
         assert is_truncated is True, "Large changelog should be truncated"
         assert "See full changelog" in tag_message, "Should contain CHANGELOG.md reference"

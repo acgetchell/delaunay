@@ -18,6 +18,7 @@ import signal
 import subprocess
 import sys
 import textwrap
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -1221,6 +1222,7 @@ def _execute_changelog_generation(debug_mode: bool) -> None:
             _post_process_dates(file_paths)
             _expand_squashed_commits(file_paths, repo_url)
             _enhance_with_ai(file_paths, project_root)
+            _post_process_release_notes(file_paths)
             _cleanup_final_output(file_paths)
 
             # Cleanup and success
@@ -1374,6 +1376,555 @@ def _cleanup_final_output(file_paths: dict[str, Path]) -> None:
 
     final_content = "\n".join(cleaned_lines)
     file_paths["changelog"].write_text(final_content, encoding="utf-8")
+
+
+@dataclass(frozen=True)
+class _ReleaseNoteEntry:
+    lines: tuple[str, ...]
+    title: str
+    sha: str | None
+    url: str | None
+
+
+class _ReleaseNotesPostProcessor:
+    """Post-process the generated changelog to improve release-note readability.
+
+    This is intentionally conservative (heuristics-based) and aims to:
+    - Promote breaking changes into a dedicated section near the top of each release.
+    - Remove operational/test-metrics lines that are not user-facing release notes.
+    - Reduce redundancy in large "Added" sections by consolidating many entries
+      from the same commit into a single entry with sub-bullets.
+    """
+
+    _TEST_METRICS_RE = re.compile(r"^\s*All tests pass\s*:\s*", re.IGNORECASE)
+    _PERF_RESULTS_RE = re.compile(r"refresh performance results", re.IGNORECASE)
+
+    _BREAKING_TITLE_PATTERNS: tuple[re.Pattern[str], ...] = (
+        re.compile(r"\bmsrv\b", re.IGNORECASE),
+        re.compile(r"\bminimum supported rust version\b", re.IGNORECASE),
+        re.compile(r"\brust-version\b", re.IGNORECASE),
+        re.compile(r"\binsert_with_statistics\b", re.IGNORECASE),
+        re.compile(r"\binsert_transactional\b", re.IGNORECASE),
+        re.compile(r"\bsignature changed\b", re.IGNORECASE),
+        re.compile(r"\bnow returns\b", re.IGNORECASE),
+    )
+
+    _COMMIT_LINK_RE = re.compile(r"\[`(?P<sha>[a-f0-9]{7,40})`\]\((?P<url>[^)]+)\)")
+    _TITLE_RE = re.compile(r"^\s*-\s+\*\*(?P<title>.*?)\*\*")
+    _META_TITLE_RE = re.compile(
+        r"^(feat|fix|perf|docs|refactor|chore|style|build|ci)(\([^)]*\))?:\s*",
+        re.IGNORECASE,
+    )
+
+    _CONSOLIDATE_ADDED_MIN_ENTRIES = 4
+
+    @classmethod
+    def process(cls, content: str) -> str:
+        lines = content.split("\n")
+        release_starts = [i for i, line in enumerate(lines) if line.startswith("## ")]
+        if not release_starts:
+            return content
+
+        out: list[str] = []
+        # Preserve preamble before first release header
+        out.extend(lines[: release_starts[0]])
+
+        for idx, start in enumerate(release_starts):
+            end = release_starts[idx + 1] if idx + 1 < len(release_starts) else len(lines)
+            release_block = lines[start:end]
+            processed_block = cls._process_release_block(release_block)
+            # Avoid double blank lines across concatenated blocks
+            if out and processed_block and out[-1] == "" and processed_block[0] == "":
+                processed_block = processed_block[1:]
+            out.extend(processed_block)
+
+        return "\n".join(out)
+
+    @classmethod
+    def _process_release_block(cls, block_lines: list[str]) -> list[str]:
+        if not block_lines:
+            return []
+
+        # First line is the release header (## ...)
+        header = block_lines[0]
+        body = block_lines[1:]
+
+        # Drop non-user-facing operational lines.
+        body = [line for line in body if not cls._TEST_METRICS_RE.match(line)]
+
+        # Add small navigational hint for performance-results refresh entries.
+        body = [cls._annotate_perf_results_line(line) for line in body]
+
+        # Extract breaking-change entries from "### Changed".
+        breaking_entries: list[list[str]] = []
+        body = cls._extract_breaking_changes(body, breaking_entries)
+
+        # Consolidate very large "### Added" groups (same commit) into a single entry.
+        body = cls._consolidate_added_section(body)
+
+        # Normalize wording (readability + spellcheck).
+        body = cls._normalize_wording(body)
+
+        # If we found breaking changes, insert a dedicated section near the top.
+        if breaking_entries:
+            body = cls._insert_breaking_changes_section(body, breaking_entries)
+
+        # Contributor-first formatting: keep commit links only on top-level bullets and
+        # reduce vertical bloat by inlining short SHAs when possible.
+        body = cls._format_commit_links(body)
+
+        return [header, *body]
+
+    @classmethod
+    def _annotate_perf_results_line(cls, line: str) -> str:
+        if not cls._PERF_RESULTS_RE.search(line):
+            return line
+        if "benches/PERFORMANCE_RESULTS.md" in line:
+            return line
+
+        # Try to inject the reference inside the bold title when present.
+        if m := cls._TITLE_RE.match(line):
+            title = m.group("title")
+            new_title = f"{title} (see benches/PERFORMANCE_RESULTS.md)"
+            return line.replace(f"**{title}**", f"**{new_title}**", 1)
+
+        return line + " (see benches/PERFORMANCE_RESULTS.md)"
+
+    @classmethod
+    def _normalize_wording(cls, lines: list[str]) -> list[str]:
+        word_boundary = r"\b"
+        replacements: tuple[tuple[re.Pattern[str], str], ...] = (
+            (re.compile(word_boundary + "dets" + word_boundary, re.IGNORECASE), "determinants"),
+            (re.compile(word_boundary + "retriable" + word_boundary, re.IGNORECASE), "retryable"),
+        )
+
+        out: list[str] = []
+        for line in lines:
+            new_line = line
+            for pattern, replacement in replacements:
+                new_line = pattern.sub(replacement, new_line)
+            out.append(new_line)
+        return out
+
+    @staticmethod
+    def _skip_blank_lines(lines: list[str], start: int) -> int:
+        i = start
+        while i < len(lines) and lines[i] == "":
+            i += 1
+        return i
+
+    @classmethod
+    def _commit_link_fullmatch(cls, line: str) -> re.Match[str] | None:
+        return cls._COMMIT_LINK_RE.fullmatch(line.strip())
+
+    @staticmethod
+    def _shorten_commit_url(url: str, short_sha: str) -> str:
+        if "/commit/" not in url:
+            return url
+        prefix, _sep, _rest = url.partition("/commit/")
+        return f"{prefix}/commit/{short_sha}"
+
+    @classmethod
+    def _strip_commit_link_inline(cls, line: str) -> str:
+        return cls._COMMIT_LINK_RE.sub("", line).rstrip()
+
+    @staticmethod
+    def _commit_markup(short_sha: str, short_url: str) -> str:
+        return f"[`{short_sha}`]({short_url})"
+
+    @classmethod
+    def _format_top_level_bullet_commit_link(
+        cls,
+        title_line: str,
+        commit_match: re.Match[str],
+        max_len: int,
+    ) -> list[str]:
+        short_sha = commit_match.group("sha")[:7]
+        short_url = cls._shorten_commit_url(commit_match.group("url"), short_sha)
+        markup = cls._commit_markup(short_sha, short_url)
+
+        candidate = title_line + " " + markup
+        if len(candidate) <= max_len:
+            return [candidate]
+        return [title_line, "  " + markup]
+
+    @classmethod
+    def _format_commit_links(cls, lines: list[str]) -> list[str]:
+        max_len = ChangelogUtils.get_markdown_line_limit()
+
+        out: list[str] = []
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+
+            bullet_match = re.match(r"^(?P<indent>\s*)-\s+", line)
+            if not bullet_match:
+                # Drop standalone commit-link-only lines (they should be attached to a bullet).
+                if cls._commit_link_fullmatch(line) is not None:
+                    i += 1
+                    continue
+                out.append(line)
+                i += 1
+                continue
+
+            indent = bullet_match.group("indent")
+            is_top_level = indent == ""
+
+            title_line = cls._strip_commit_link_inline(line)
+
+            j = cls._skip_blank_lines(lines, i + 1)
+            next_commit = cls._commit_link_fullmatch(lines[j]) if j < len(lines) else None
+            inline_commit = cls._COMMIT_LINK_RE.search(line)
+            commit_match = inline_commit or next_commit
+
+            if not is_top_level:
+                out.append(title_line)
+                # Skip any trailing commit link line attached to this nested bullet.
+                i = j + 1 if next_commit is not None else i + 1
+                continue
+
+            if commit_match is None:
+                out.append(line)
+                i += 1
+                continue
+
+            out.extend(cls._format_top_level_bullet_commit_link(title_line, commit_match, max_len))
+
+            # If we used a following commit-link-only line, skip it (and any preceding blank lines).
+            i = j + 1 if next_commit is not None else i + 1
+
+        return out
+
+    @classmethod
+    def _extract_breaking_changes(cls, lines: list[str], breaking_entries: list[list[str]]) -> list[str]:
+        out: list[str] = []
+        i = 0
+        in_changed = False
+
+        while i < len(lines):
+            line = lines[i]
+
+            # Track section boundaries
+            if line.startswith("### "):
+                in_changed = line.strip() == "### Changed"
+                out.append(line)
+                i += 1
+                continue
+
+            if in_changed and line.startswith("- "):
+                entry, next_i = cls._collect_top_level_entry(lines, i)
+                title = cls._extract_entry_title(entry)
+                if cls._is_breaking_title(title):
+                    breaking_entries.append(cls._trim_entry_to_title_and_link(entry))
+                else:
+                    out.extend(entry)
+                    out.append("")
+                i = next_i
+                continue
+
+            out.append(line)
+            i += 1
+
+        out = cls._remove_empty_section(out, "### Changed")
+        # Trim trailing separator blanks added by entry writes
+        while out and out[-1] == "":
+            out.pop()
+        out.append("")
+        return out
+
+    @classmethod
+    def _trim_entry_to_title_and_link(cls, entry: list[str]) -> list[str]:
+        """Keep only the entry title and its commit link (drop verbose body content)."""
+        if not entry:
+            return []
+
+        first = entry[0]
+        # If the commit link is already inline on the title line, keep only that.
+        if cls._COMMIT_LINK_RE.search(first):
+            return [first]
+
+        link_line = next((line for line in entry[1:] if cls._COMMIT_LINK_RE.search(line)), None)
+        if link_line:
+            return [first, "", link_line]
+        return [first]
+
+    @classmethod
+    def _insert_breaking_changes_section(cls, lines: list[str], breaking_entries: list[list[str]]) -> list[str]:
+        # Insert before the first section header (typically "### Merged Pull Requests").
+        insert_at = next((i for i, line in enumerate(lines) if line.startswith("### ")), len(lines))
+
+        section_lines: list[str] = []
+        # Ensure we start with a blank line after the header
+        if insert_at == 0 or lines[0] != "":
+            section_lines.append("")
+
+        section_lines.extend(["### ⚠️ Breaking Changes", ""])
+
+        for idx, entry in enumerate(breaking_entries):
+            if idx > 0:
+                section_lines.append("")
+            section_lines.extend(entry)
+
+        section_lines.append("")
+
+        return [*lines[:insert_at], *section_lines, *lines[insert_at:]]
+
+    @classmethod
+    def _consolidate_added_section(cls, lines: list[str]) -> list[str]:
+        out: list[str] = []
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if line.strip() != "### Added":
+                out.append(line)
+                i += 1
+                continue
+
+            # Copy section header and following blank line(s)
+            out.append(line)
+            i += 1
+            while i < len(lines) and lines[i] == "":
+                out.append(lines[i])
+                i += 1
+
+            # Collect entries until next section/release header
+            entries: list[list[str]] = []
+            while i < len(lines) and not lines[i].startswith("### ") and not lines[i].startswith("## "):
+                if not lines[i].strip():
+                    i += 1
+                    continue
+                if lines[i].startswith("- "):
+                    entry, next_i = cls._collect_top_level_entry(lines, i)
+                    entries.append(entry)
+                    i = next_i
+                    continue
+                # Unexpected free text in Added section; preserve
+                out.append(lines[i])
+                i += 1
+
+            out.extend(cls._consolidate_entries_by_commit(entries))
+            # Ensure a blank line before the next section header
+            if out and out[-1] != "":
+                out.append("")
+
+        return out
+
+    @classmethod
+    def _consolidate_entries_by_commit(cls, entries: list[list[str]]) -> list[str]:
+        if not entries:
+            return []
+
+        groups = cls._group_entries_by_commit(entries)
+        max_len = ChangelogUtils.get_markdown_line_limit()
+
+        out: list[str] = []
+        for group in groups:
+            if cls._should_consolidate_group(group):
+                out.extend(cls._render_group_consolidated(group, max_len=max_len))
+            else:
+                out.extend(cls._render_group_as_is(group))
+            out.append("")
+
+        # Trim trailing blanks
+        while out and out[-1] == "":
+            out.pop()
+        return out
+
+    @classmethod
+    def _group_entries_by_commit(cls, entries: list[list[str]]) -> list[list[_ReleaseNoteEntry]]:
+        parsed = [cls._parse_entry_info(entry) for entry in entries]
+
+        order: list[str] = []
+        groups: dict[str, list[_ReleaseNoteEntry]] = {}
+        for idx, info in enumerate(parsed):
+            key = info.sha if info.sha else f"__no_sha_{idx}"
+            if key not in groups:
+                groups[key] = []
+                order.append(key)
+            groups[key].append(info)
+
+        return [groups[key] for key in order]
+
+    @classmethod
+    def _parse_entry_info(cls, entry: list[str]) -> _ReleaseNoteEntry:
+        return _ReleaseNoteEntry(
+            lines=tuple(entry),
+            title=cls._extract_entry_title(entry),
+            sha=cls._extract_commit_sha(entry),
+            url=cls._extract_commit_url(entry),
+        )
+
+    @classmethod
+    def _should_consolidate_group(cls, group: list[_ReleaseNoteEntry]) -> bool:
+        sha = group[0].sha
+        return bool(sha) and len(group) >= cls._CONSOLIDATE_ADDED_MIN_ENTRIES
+
+    @staticmethod
+    def _render_group_as_is(group: list[_ReleaseNoteEntry]) -> list[str]:
+        out: list[str] = []
+        for info in group:
+            out.extend(info.lines)
+            out.append("")
+        while out and out[-1] == "":
+            out.pop()
+        return out
+
+    @classmethod
+    def _render_group_consolidated(cls, group: list[_ReleaseNoteEntry], max_len: int) -> list[str]:
+        sha = group[0].sha or ""
+
+        parent = cls._choose_group_parent(group)
+        parent_title = parent.title
+        parent_url = parent.url or ""
+
+        subtitles = cls._collect_subtitles(group, parent_title)
+
+        out: list[str] = [f"- **{parent_title}**", "", f"  [`{sha}`]({parent_url})"]
+
+        buckets = cls._bucket_subtitles(subtitles)
+        for bucket_name in ["API", "Behavior", "Tests", "Other"]:
+            items = buckets.get(bucket_name, [])
+            if not items:
+                continue
+            out.append(f"  - {bucket_name}")
+            for item in items:
+                out.extend(cls._wrap_list_item(item, prefix="    - ", max_len=max_len))
+
+        return out
+
+    @classmethod
+    def _collect_subtitles(cls, group: list[_ReleaseNoteEntry], parent_title: str) -> list[str]:
+        subtitles: list[str] = []
+        seen: set[str] = set()
+
+        for info in group:
+            title = info.title
+            if not title or title == parent_title:
+                continue
+            if cls._META_TITLE_RE.match(title):
+                continue
+            norm = cls._normalize_title(title)
+            if norm in seen:
+                continue
+            seen.add(norm)
+            subtitles.append(title)
+
+        return subtitles
+
+    @classmethod
+    def _bucket_subtitles(cls, subtitles: list[str]) -> dict[str, list[str]]:
+        buckets: dict[str, list[str]] = {"API": [], "Behavior": [], "Tests": [], "Other": []}
+        for title in subtitles:
+            t = title.lower()
+            if "test" in t or "tests/" in t or "doctest" in t:
+                buckets["Tests"].append(title)
+            elif any(k in t for k in ["debug", "logging", "observability", "trace", "instrument"]):
+                buckets["Behavior"].append(title)
+            elif any(k in t for k in ["enum", "method", "api", "trait", "type", "variant", "re-export"]):
+                buckets["API"].append(title)
+            else:
+                buckets["Other"].append(title)
+        return buckets
+
+    @classmethod
+    def _choose_group_parent(cls, group: list[_ReleaseNoteEntry]) -> _ReleaseNoteEntry:
+        candidates = [g for g in group if cls._META_TITLE_RE.match(g.title)]
+        if candidates:
+            return max(candidates, key=lambda g: len(g.title))
+        return max(group, key=lambda g: len(g.title))
+
+    @staticmethod
+    def _normalize_title(title: str) -> str:
+        lowered = title.lower().replace("`", "")
+        normalized = re.sub(r"[^a-z0-9\s]", " ", lowered)
+        return re.sub(r"\s+", " ", normalized).strip()
+
+    @classmethod
+    def _collect_top_level_entry(cls, lines: list[str], start: int) -> tuple[list[str], int]:
+        entry: list[str] = [lines[start]]
+        i = start + 1
+        while i < len(lines):
+            nxt = lines[i]
+            if nxt.startswith(("## ", "### ", "- ")):
+                break
+            entry.append(nxt)
+            i += 1
+
+        # Trim trailing empty lines inside the entry
+        while entry and not entry[-1].strip():
+            entry.pop()
+        return entry, i
+
+    @classmethod
+    def _extract_entry_title(cls, entry: list[str]) -> str:
+        if not entry:
+            return ""
+        first = entry[0]
+        if m := cls._TITLE_RE.match(first):
+            return m.group("title").strip()
+        # Fallback: strip "- " prefix
+        return first.lstrip("- ").strip()
+
+    @classmethod
+    def _extract_commit_sha(cls, entry: list[str]) -> str | None:
+        joined = "\n".join(entry)
+        if m := cls._COMMIT_LINK_RE.search(joined):
+            return m.group("sha")
+        return None
+
+    @classmethod
+    def _extract_commit_url(cls, entry: list[str]) -> str | None:
+        joined = "\n".join(entry)
+        if m := cls._COMMIT_LINK_RE.search(joined):
+            return m.group("url")
+        return None
+
+    @classmethod
+    def _is_breaking_title(cls, title: str) -> bool:
+        return any(p.search(title) for p in cls._BREAKING_TITLE_PATTERNS)
+
+    @staticmethod
+    def _remove_empty_section(lines: list[str], section_header: str) -> list[str]:
+        out: list[str] = []
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if line.strip() != section_header:
+                out.append(line)
+                i += 1
+                continue
+
+            # Find section end (next header)
+            j = i + 1
+            while j < len(lines) and not lines[j].startswith("### ") and not lines[j].startswith("## "):
+                j += 1
+
+            section_body = lines[i + 1 : j]
+            has_entry = any(section_line.startswith("- ") for section_line in section_body)
+            if has_entry:
+                out.extend(lines[i:j])
+            # else: drop empty section completely
+            i = j
+
+        return out
+
+    @staticmethod
+    def _wrap_list_item(text: str, prefix: str, max_len: int) -> list[str]:
+        """Wrap a list item to respect markdown line-length limits."""
+        if not text:
+            return [prefix.rstrip()]
+
+        available = max(1, max_len - len(prefix))
+        wrapped = textwrap.wrap(text, width=available, break_long_words=True, break_on_hyphens=False) or [text]
+        cont_prefix = " " * len(prefix)
+        return [prefix + wrapped[0], *[cont_prefix + w for w in wrapped[1:]]]
+
+
+def _post_process_release_notes(file_paths: dict[str, Path]) -> None:
+    """Post-process the generated changelog for readability (breaking changes, de-duping, etc.)."""
+    content = file_paths["enhanced"].read_text(encoding="utf-8")
+    processed = _ReleaseNotesPostProcessor.process(content)
+    file_paths["enhanced"].write_text(processed, encoding="utf-8")
 
 
 def _cleanup_temp_files(file_paths: dict[str, Path], debug_mode: bool) -> None:
