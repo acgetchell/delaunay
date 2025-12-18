@@ -3180,6 +3180,192 @@ mod tests {
         );
     }
 
+    #[test]
+    fn cell_new_rejects_insufficient_and_duplicate_vertices() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let vkeys: Vec<_> = dt.tds().vertices().map(|(k, _)| k).collect();
+
+        // Too few vertices for a 3D cell (D+1 = 4)
+        let err =
+            Cell::<f64, (), (), 3>::new(vec![vkeys[0], vkeys[1], vkeys[2]], None).unwrap_err();
+        assert!(matches!(
+            err,
+            CellValidationError::InsufficientVertices {
+                actual: 3,
+                expected: 4,
+                dimension: 3,
+            }
+        ));
+
+        // Duplicate vertex keys are rejected
+        let err = Cell::<f64, (), (), 3>::new(vec![vkeys[0], vkeys[1], vkeys[2], vkeys[0]], None)
+            .unwrap_err();
+        assert!(matches!(err, CellValidationError::DuplicateVertices));
+    }
+
+    #[test]
+    fn cell_is_valid_rejects_insufficient_and_duplicate_vertices() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let (_, cell_ref) = dt.cells().next().unwrap();
+
+        // Insufficient vertices (wrong vertex buffer length)
+        let mut wrong_len = cell_ref.clone();
+        wrong_len.vertices.pop();
+        assert!(matches!(
+            wrong_len.is_valid(),
+            Err(CellValidationError::InsufficientVertices { .. })
+        ));
+
+        // Duplicate vertices
+        let mut dup = cell_ref.clone();
+        dup.vertices[1] = dup.vertices[0];
+        assert!(matches!(
+            dup.is_valid(),
+            Err(CellValidationError::DuplicateVertices)
+        ));
+    }
+
+    #[test]
+    fn cell_ensure_neighbors_buffer_mut_initializes_and_reuses() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let (cell_key, cell_ref) = dt.cells().next().unwrap();
+
+        let mut cell = cell_ref.clone();
+        assert!(cell.neighbors.is_none());
+
+        let buf = cell.ensure_neighbors_buffer_mut();
+        assert_eq!(buf.len(), 3);
+        assert!(buf.iter().all(Option::is_none));
+
+        // Mutate through the returned buffer and ensure it's preserved
+        buf[0] = Some(cell_key);
+        let buf2 = cell.ensure_neighbors_buffer_mut();
+        assert_eq!(buf2[0], Some(cell_key));
+    }
+
+    #[test]
+    fn cell_facet_view_helpers_reject_excessive_vertex_count() {
+        use crate::core::facet::FacetError;
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let cell_key = dt.tds().cell_keys().next().unwrap();
+
+        // Grab a stable key we can duplicate to inflate the vertex buffer.
+        let vkey0 = {
+            let cell = dt.tds().get_cell(cell_key).unwrap();
+            cell.vertices()[0]
+        };
+
+        {
+            let cell = dt
+                .tri
+                .tds
+                .cells_mut()
+                .get_mut(cell_key)
+                .expect("cell key should be valid in test");
+            while u8::try_from(cell.number_of_vertices()).is_ok() {
+                cell.push_vertex_key(vkey0);
+            }
+            assert!(u8::try_from(cell.number_of_vertices()).is_err());
+        }
+
+        // Both helpers should fail early (before attempting to build individual FacetViews).
+        let err = Cell::facet_views_from_tds(dt.tds(), cell_key).unwrap_err();
+        assert!(matches!(
+            err,
+            FacetError::InvalidFacetIndex {
+                index: u8::MAX,
+                facet_count,
+            } if u8::try_from(facet_count).is_err()
+        ));
+
+        let err = Cell::facet_view_iter(dt.tds(), cell_key)
+            .err()
+            .expect("Expected facet_view_iter to fail on vertex_count overflow");
+        assert!(matches!(
+            err,
+            FacetError::InvalidFacetIndex {
+                index: u8::MAX,
+                facet_count,
+            } if u8::try_from(facet_count).is_err()
+        ));
+    }
+
+    #[test]
+    fn cell_deserialize_rejects_missing_uuid_and_duplicate_fields_and_invalid_uuid() {
+        // Expecting() should surface for non-map inputs.
+        let err = serde_json::from_str::<Cell<f64, (), i32, 3>>("null").unwrap_err();
+        assert!(err.to_string().contains("a Cell struct"));
+
+        // Missing required field.
+        let err = serde_json::from_str::<Cell<f64, (), i32, 3>>("{\"data\":1}").unwrap_err();
+        assert!(err.to_string().contains("missing field `uuid`"));
+
+        // Duplicate uuid.
+        let uuid = uuid::Uuid::new_v4();
+        let json = format!("{{\"uuid\":\"{uuid}\",\"uuid\":\"{uuid}\"}}");
+        let err = serde_json::from_str::<Cell<f64, (), i32, 3>>(&json).unwrap_err();
+        assert!(err.to_string().contains("duplicate field `uuid`"));
+
+        // Duplicate data.
+        let uuid = uuid::Uuid::new_v4();
+        let json = format!("{{\"uuid\":\"{uuid}\",\"data\":1,\"data\":2}}");
+        let err = serde_json::from_str::<Cell<f64, (), i32, 3>>(&json).unwrap_err();
+        assert!(err.to_string().contains("duplicate field `data`"));
+
+        // Invalid uuid (nil) should be rejected by validate_uuid.
+        let json = "{\"uuid\":\"00000000-0000-0000-0000-000000000000\"}";
+        let err = serde_json::from_str::<Cell<f64, (), i32, 3>>(json).unwrap_err();
+        assert!(err.to_string().contains("invalid uuid"));
+
+        // Unknown fields are ignored.
+        let uuid = uuid::Uuid::new_v4();
+        let json = format!("{{\"uuid\":\"{uuid}\",\"data\":5,\"neighbors\":[1,2,3]}}");
+        let cell = serde_json::from_str::<Cell<f64, (), i32, 3>>(&json).unwrap();
+        assert_eq!(cell.data, Some(5));
+        assert!(cell.neighbors.is_none());
+        assert_eq!(cell.number_of_vertices(), 0, "vertices are not serialized");
+    }
+
+    #[test]
+    fn cell_validation_error_from_stack_matrix_dispatch_error_maps_to_coordinate_conversion() {
+        use crate::geometry::matrix::{MAX_STACK_MATRIX_DIM, StackMatrixDispatchError};
+
+        let err = StackMatrixDispatchError::UnsupportedDim {
+            k: MAX_STACK_MATRIX_DIM + 1,
+            max: MAX_STACK_MATRIX_DIM,
+        };
+        let cell_err: CellValidationError = err.into();
+
+        assert!(matches!(
+            cell_err,
+            CellValidationError::CoordinateConversion { .. }
+        ));
+    }
+
     // =============================================================================
     // CELL PARTIALEQ AND EQ TESTS
     // =============================================================================

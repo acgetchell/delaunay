@@ -74,6 +74,7 @@ pub enum ConvexHullConstructionError {
     #[error("Failed to extract boundary facets from triangulation: {source}")]
     BoundaryFacetExtractionFailed {
         /// The underlying TDS validation error that caused the failure.
+        #[source]
         source: TdsValidationError,
     },
     /// Failed to check facet visibility from a point.

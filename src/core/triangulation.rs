@@ -577,13 +577,9 @@ where
         // 2. Euler characteristic using the topology module
         let topology_result = validate_triangulation_euler(&self.tds)?;
 
-        if !topology_result.is_valid() {
-            // If expected is None, the topology module considers this "valid"
-            // because it cannot determine an expected χ.
-            let Some(expected) = topology_result.expected else {
-                return Ok(());
-            };
-
+        if let Some(expected) = topology_result.expected
+            && topology_result.chi != expected
+        {
             return Err(TriangulationValidationError::EulerCharacteristicMismatch {
                 computed: topology_result.chi,
                 expected,
@@ -1912,16 +1908,23 @@ where
     ///
     /// # Examples
     ///
-    /// ```ignore
-    /// // After inserting new cells via cavity filling, check for topology issues
-    /// let new_cells = fill_cavity(&mut tri.tds, new_vertex_key, &boundary_facets)?;
+    /// ```rust
+    /// use delaunay::prelude::*;
     ///
-    /// // Detect any over-shared facets (> 2 cells per facet)
-    /// if let Some(issues) = tri.detect_local_facet_issues(&new_cells)? {
-    ///     // Repair by removing lower-quality cells
-    ///     let removed = tri.repair_local_facet_issues(&issues)?;
-    ///     eprintln!("Warning: Repaired {} over-shared facets", issues.len());
-    /// }
+    /// // A single simplex has no over-shared facets.
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// let cell_keys: Vec<_> = dt.cells().map(|(ck, _)| ck).collect();
+    /// let issues = dt
+    ///     .triangulation()
+    ///     .detect_local_facet_issues(&cell_keys)
+    ///     .unwrap();
+    /// assert!(issues.is_none());
     /// ```
     pub fn detect_local_facet_issues(
         &self,
@@ -2011,13 +2014,24 @@ where
     ///
     /// # Examples
     ///
-    /// ```ignore
-    /// // After detecting issues, repair them locally
-    /// if let Some(issues) = tri.detect_local_facet_issues(&new_cells)? {
-    ///     let removed = tri.repair_local_facet_issues(&issues)?;
-    ///     println!("Repaired {} over-shared facets by removing {} cells",
-    ///              issues.len(), removed);
-    /// }
+    /// ```rust
+    /// use delaunay::core::collections::FacetIssuesMap;
+    /// use delaunay::prelude::*;
+    ///
+    /// // Start with a valid 2D simplex.
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// // Empty issues map => nothing to remove.
+    /// let removed = dt
+    ///     .triangulation_mut()
+    ///     .repair_local_facet_issues(&FacetIssuesMap::default())
+    ///     .unwrap();
+    /// assert_eq!(removed, 0);
     /// ```
     pub fn repair_local_facet_issues(
         &mut self,
@@ -2555,6 +2569,313 @@ mod tests {
             tri.validate().is_ok(),
             "Triangulation::validate should pass"
         );
+    }
+
+    #[test]
+    fn test_is_valid_euler_mismatch_in_bootstrap_phase() {
+        // A triangulation with vertices but no cells is not a valid manifold (Level 3).
+        // This exercises the Euler characteristic mismatch path.
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 3> =
+            Triangulation::new_empty(FastKernel::new());
+
+        // Bootstrap insertion (no cells yet)
+        tri.insert(vertex!([0.0, 0.0, 0.0]), None, None)
+            .expect("bootstrap insertion should succeed");
+
+        match tri.is_valid() {
+            Err(TriangulationValidationError::EulerCharacteristicMismatch {
+                computed,
+                expected,
+                classification,
+            }) => {
+                assert_eq!(classification, TopologyClassification::Empty);
+                assert_eq!(expected, 0);
+                assert_eq!(computed, 1);
+            }
+            other => panic!("Expected EulerCharacteristicMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_is_valid_boundary_facet_has_neighbor() {
+        // Create two disjoint tetrahedra and manually introduce an invalid neighbor pointer
+        // across a boundary facet.
+        let vertices_cell_1 = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let mut tds =
+            Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices_cell_1)
+                .unwrap();
+        let first_cell_key = tds.cell_keys().next().unwrap();
+
+        // Add a disjoint second tetrahedron.
+        let v4 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 0.0, 0.0]))
+            .unwrap();
+        let v5 = tds
+            .insert_vertex_with_mapping(vertex!([11.0, 0.0, 0.0]))
+            .unwrap();
+        let v6 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 1.0, 0.0]))
+            .unwrap();
+        let v7 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 0.0, 1.0]))
+            .unwrap();
+
+        let cell_2 = Cell::new(vec![v4, v5, v6, v7], None).unwrap();
+        let second_cell_key = tds.insert_cell_with_mapping(cell_2).unwrap();
+
+        // Invalidate: boundary facet has a neighbor pointer.
+        let first_cell = tds.get_cell_by_key_mut(first_cell_key).unwrap();
+        let mut neighbors = crate::core::collections::NeighborBuffer::<Option<CellKey>>::new();
+        neighbors.resize(4, None);
+        neighbors[0] = Some(second_cell_key);
+        first_cell.neighbors = Some(neighbors);
+
+        let tri = Triangulation::<FastKernel<f64>, (), (), 3> {
+            kernel: FastKernel::new(),
+            tds,
+        };
+
+        match tri.is_valid() {
+            Err(TriangulationValidationError::BoundaryFacetHasNeighbor {
+                neighbor_key, ..
+            }) => {
+                assert_eq!(neighbor_key, second_cell_key);
+            }
+            other => panic!("Expected BoundaryFacetHasNeighbor, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_is_valid_interior_facet_neighbor_mismatch() {
+        // Two tetrahedra share a facet, but we leave neighbor pointers unset.
+        // This should trigger InteriorFacetNeighborMismatch.
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+
+        let v0 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .unwrap();
+        let v4 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 2.0]))
+            .unwrap();
+
+        let cell_1 = Cell::new(vec![v0, v1, v2, v3], None).unwrap();
+        let cell_2 = Cell::new(vec![v0, v1, v2, v4], None).unwrap();
+        let _c1 = tds.insert_cell_with_mapping(cell_1).unwrap();
+        let _c2 = tds.insert_cell_with_mapping(cell_2).unwrap();
+
+        let tri = Triangulation::<FastKernel<f64>, (), (), 3> {
+            kernel: FastKernel::new(),
+            tds,
+        };
+
+        assert!(matches!(
+            tri.is_valid(),
+            Err(TriangulationValidationError::InteriorFacetNeighborMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn test_is_valid_non_manifold_facet_multiplicity() {
+        // Three tetrahedra share a single facet -> not a manifold-with-boundary.
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+
+        let v0 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .unwrap();
+        let v4 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 2.0]))
+            .unwrap();
+        let v5 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 3.0]))
+            .unwrap();
+
+        let cell_1 = Cell::new(vec![v0, v1, v2, v3], None).unwrap();
+        let cell_2 = Cell::new(vec![v0, v1, v2, v4], None).unwrap();
+        let cell_3 = Cell::new(vec![v0, v1, v2, v5], None).unwrap();
+
+        let _ = tds.insert_cell_with_mapping(cell_1).unwrap();
+        let _ = tds.insert_cell_with_mapping(cell_2).unwrap();
+        let _ = tds.insert_cell_with_mapping(cell_3).unwrap();
+
+        let tri = Triangulation::<FastKernel<f64>, (), (), 3> {
+            kernel: FastKernel::new(),
+            tds,
+        };
+
+        match tri.is_valid() {
+            Err(TriangulationValidationError::ManifoldFacetMultiplicity { cell_count, .. }) => {
+                assert_eq!(cell_count, 3);
+            }
+            other => panic!("Expected ManifoldFacetMultiplicity, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_triangulation_validation_report_ok_for_valid_simplex() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
+        let tri = Triangulation::<FastKernel<f64>, (), (), 3> {
+            kernel: FastKernel::new(),
+            tds,
+        };
+
+        assert!(tri.validation_report().is_ok());
+    }
+
+    #[test]
+    fn test_triangulation_validation_report_returns_mapping_failures_only() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
+        let mut tri = Triangulation::<FastKernel<f64>, (), (), 3> {
+            kernel: FastKernel::new(),
+            tds,
+        };
+
+        // Break UUID↔key mappings: remove one vertex UUID entry.
+        let uuid = tri.tds.vertices().next().unwrap().1.uuid();
+        tri.tds.uuid_to_vertex_key.remove(&uuid);
+
+        let report = tri.validation_report().unwrap_err();
+        assert!(!report.violations.is_empty());
+        assert!(report.violations.iter().all(|v| {
+            matches!(
+                v.kind,
+                InvariantKind::VertexMappings | InvariantKind::CellMappings
+            )
+        }));
+    }
+
+    #[test]
+    fn test_triangulation_validation_report_includes_vertex_and_cell_validity() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
+        let mut tri = Triangulation::<FastKernel<f64>, (), (), 3> {
+            kernel: FastKernel::new(),
+            tds,
+        };
+
+        // Insert an invalid vertex (nil UUID) to exercise VertexValidity reporting.
+        let invalid_vertex: Vertex<f64, (), 3> = Vertex::empty();
+        let _ = tri.tds.insert_vertex_with_mapping(invalid_vertex).unwrap();
+
+        // Corrupt one cell locally: neighbors buffer with the wrong length.
+        let cell_key = tri.tds.cell_keys().next().unwrap();
+        let cell = tri.tds.get_cell_by_key_mut(cell_key).unwrap();
+        let mut bad_neighbors = crate::core::collections::NeighborBuffer::<Option<CellKey>>::new();
+        bad_neighbors.resize(3, None); // expected D+1 = 4
+        cell.neighbors = Some(bad_neighbors);
+
+        let report = tri.validation_report().unwrap_err();
+
+        assert!(
+            report
+                .violations
+                .iter()
+                .any(|v| v.kind == InvariantKind::VertexValidity),
+            "Report should include a VertexValidity violation"
+        );
+        assert!(
+            report
+                .violations
+                .iter()
+                .any(|v| v.kind == InvariantKind::CellValidity),
+            "Report should include a CellValidity violation"
+        );
+    }
+
+    #[test]
+    fn test_insert_duplicate_coordinates_skips_with_statistics_and_errors_without() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 3> =
+            Triangulation::new_empty(FastKernel::new());
+
+        // First insertion succeeds.
+        tri.insert(vertex!([0.0, 0.0, 0.0]), None, None)
+            .expect("first insertion should succeed");
+        assert_eq!(tri.number_of_vertices(), 1);
+
+        // Second insertion at same coordinates: insert() returns Err, insert_with_statistics() reports Skipped.
+        let err = tri
+            .insert(vertex!([0.0, 0.0, 0.0]), None, None)
+            .unwrap_err();
+        assert!(matches!(err, InsertionError::DuplicateCoordinates { .. }));
+
+        let (outcome, stats) = tri
+            .insert_with_statistics(vertex!([0.0, 0.0, 0.0]), None, None)
+            .unwrap();
+        assert!(stats.skipped());
+        assert!(matches!(outcome, InsertionOutcome::Skipped { .. }));
+
+        // No new vertex should have been inserted.
+        assert_eq!(tri.number_of_vertices(), 1);
+    }
+
+    #[test]
+    fn test_insert_duplicate_uuid_is_non_retryable_and_rolls_back() {
+        // Insert a vertex, then attempt to insert another vertex with the same UUID.
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 3> =
+            Triangulation::new_empty(FastKernel::new());
+
+        tri.insert(vertex!([0.0, 0.0, 0.0]), None, None)
+            .expect("first insertion should succeed");
+        assert_eq!(tri.number_of_vertices(), 1);
+
+        let existing_uuid = tri.tds.vertices().next().unwrap().1.uuid();
+        let mut dup = vertex!([1.0, 0.0, 0.0]);
+        dup.set_uuid(existing_uuid).unwrap();
+
+        let err = tri.insert(dup, None, None).unwrap_err();
+        assert!(
+            !err.is_retryable(),
+            "Duplicate UUID should be non-retryable"
+        );
+
+        // Ensure rollback: vertex count unchanged.
+        assert_eq!(tri.number_of_vertices(), 1);
     }
 
     #[test]

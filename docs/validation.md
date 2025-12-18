@@ -49,8 +49,9 @@ The library separates **construction-time** failures from **validation-time** in
 
 ### Reporting (full diagnostics)
 
-`DelaunayTriangulation::validation_report()` returns a `TriangulationValidationReport` containing an
-`InvariantError` union so reports can preserve the structured error from the layer that failed.
+`DelaunayTriangulation::validation_report()` returns `Result<(), TriangulationValidationReport>`.
+On failure, the `Err(TriangulationValidationReport)` contains an `InvariantError` union so reports can
+preserve the structured error from the layer that failed.
 
 ---
 
@@ -145,7 +146,7 @@ let dt = DelaunayTriangulation::new(&vertices).unwrap();
 // Quick structural check (Level 2)
 assert!(dt.tds().is_valid().is_ok());
 
-// Detailed report showing all violations across Levels 1–4
+// Detailed report showing all violations across Levels 1–4 (on failure)
 match dt.validation_report() {
     Ok(()) => println!("✓ All invariants satisfied"),
     Err(report) => {

@@ -1975,6 +1975,7 @@ mod tests {
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::vertex;
+    use slotmap::KeyData;
     use std::thread;
     use std::time::Instant;
 
@@ -3584,5 +3585,136 @@ mod tests {
         let hull = ConvexHull::from_triangulation(tri).unwrap();
         let hull_facet_set = extract_hull_facet_set(&hull, tri).unwrap();
         assert_eq!(hull_facet_set.len(), 4, "Hull should have 4 facets");
+    }
+
+    #[test]
+    fn test_extract_edge_set_errors_on_missing_vertex_key() {
+        use crate::core::facet::FacetError;
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut dt =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+
+        let cell_key = dt.triangulation().tds.cell_keys().next().unwrap();
+        let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
+        dt.tri
+            .tds
+            .get_cell_by_key_mut(cell_key)
+            .unwrap()
+            .push_vertex_key(invalid_vkey);
+
+        let err = extract_edge_set(&dt.triangulation().tds).unwrap_err();
+        assert!(matches!(
+            err,
+            FacetError::VertexKeyNotFoundInTriangulation { key } if key == invalid_vkey
+        ));
+    }
+
+    #[test]
+    fn test_extract_facet_identifier_set_errors_on_boundary_facet_retrieval_failure() {
+        use crate::core::facet::FacetError;
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut dt =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+
+        let cell_key = dt.triangulation().tds.cell_keys().next().unwrap();
+        let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
+        dt.tri
+            .tds
+            .get_cell_by_key_mut(cell_key)
+            .unwrap()
+            .push_vertex_key(invalid_vkey);
+
+        let err = extract_facet_identifier_set(&dt.triangulation().tds).unwrap_err();
+        assert!(matches!(
+            err,
+            FacetError::BoundaryFacetRetrievalFailed { .. }
+        ));
+    }
+
+    #[test]
+    fn test_format_jaccard_report_includes_metrics_and_handles_empty_sets() {
+        use std::collections::HashSet;
+
+        let empty: HashSet<i32> = HashSet::new();
+        let report = format_jaccard_report(&empty, &empty, "A", "B").unwrap();
+        assert!(report.contains("A: 0 elements"));
+        assert!(report.contains("B: 0 elements"));
+        assert!(report.contains("Intersection: 0"));
+        assert!(report.contains("Union: 0"));
+        assert!(report.contains("Jaccard Index: 1"));
+
+        let a: HashSet<_> = [1, 2, 3].into_iter().collect();
+        let b: HashSet<_> = [3, 4].into_iter().collect();
+        let report = format_jaccard_report(&a, &b, "A", "B").unwrap();
+        assert!(report.contains("Intersection: 1"));
+        assert!(report.contains("Union: 4"));
+    }
+
+    #[test]
+    fn test_verify_facet_index_consistency_true_false_and_error_cases() {
+        use crate::core::facet::FacetError;
+
+        // True case: comparing a cell to itself.
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let dt =
+            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let tds = &dt.triangulation().tds;
+        let cell_key = tds.cell_keys().next().unwrap();
+        assert!(verify_facet_index_consistency(tds, cell_key, cell_key, 0).unwrap());
+
+        // Error case: facet index out of bounds.
+        let err = verify_facet_index_consistency(tds, cell_key, cell_key, 99).unwrap_err();
+        assert!(matches!(err, FacetError::InvalidFacetIndex { .. }));
+
+        // False case: two disjoint triangles in the same TDS share no facet keys.
+        let mut tds2: Tds<f64, (), (), 2> = Tds::empty();
+        let v_a = tds2
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+            .unwrap();
+        let v_b = tds2
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]))
+            .unwrap();
+        let v_c = tds2
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]))
+            .unwrap();
+        let v_d = tds2
+            .insert_vertex_with_mapping(vertex!([10.0, 10.0]))
+            .unwrap();
+        let v_e = tds2
+            .insert_vertex_with_mapping(vertex!([11.0, 10.0]))
+            .unwrap();
+        let v_f = tds2
+            .insert_vertex_with_mapping(vertex!([10.0, 11.0]))
+            .unwrap();
+
+        let c1 = tds2
+            .insert_cell_with_mapping(
+                crate::core::cell::Cell::new(vec![v_a, v_b, v_c], None).unwrap(),
+            )
+            .unwrap();
+        let c2 = tds2
+            .insert_cell_with_mapping(
+                crate::core::cell::Cell::new(vec![v_d, v_e, v_f], None).unwrap(),
+            )
+            .unwrap();
+
+        assert!(!verify_facet_index_consistency(&tds2, c1, c2, 0).unwrap());
     }
 }

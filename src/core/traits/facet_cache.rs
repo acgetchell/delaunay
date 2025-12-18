@@ -94,10 +94,11 @@ where
 
     /// Strict helper method to build cache with RCU and proper error handling.
     ///
-    /// This method uses Read-Copy-Update (RCU) pattern to ensure that only one thread
-    /// builds the cache even under high contention, avoiding duplicate work. Unlike
-    /// the deprecated `build_cache_with_rcu`, this method returns errors if the TDS
-    /// has missing vertex keys instead of masking them.
+    /// This method uses the Read-Copy-Update (RCU) pattern to ensure that only one thread
+    /// builds the cache even under high contention, avoiding duplicate work.
+    ///
+    /// Unlike best-effort caching helpers that may mask structural issues, this method
+    /// returns errors if facet map building fails (e.g., missing vertex keys / corrupted TDS).
     ///
     /// # Arguments
     ///
@@ -156,9 +157,10 @@ where
     /// Gets or builds the facet-to-cells mapping cache with strict error handling.
     ///
     /// This method handles cache invalidation and thread-safe rebuilding of the
-    /// facet-to-cells mapping when the triangulation has been modified. Unlike
-    /// the deprecated `get_or_build_facet_cache`, this method returns errors if
-    /// the TDS has corrupted data instead of masking them.
+    /// facet-to-cells mapping when the triangulation has been modified.
+    ///
+    /// Unlike best-effort caching helpers that may mask structural issues, this method
+    /// returns errors if the TDS has corrupted data instead of masking them.
     ///
     /// # Arguments
     ///
@@ -329,7 +331,6 @@ where
 }
 
 #[cfg(test)]
-#[allow(deprecated)] // Tests intentionally use deprecated methods for backward compatibility testing
 mod tests {
     use super::*;
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
@@ -1031,27 +1032,27 @@ mod tests {
     }
 
     #[test]
-    fn test_deprecated_methods_forward_correctly() {
+    fn test_cache_methods_can_be_called_multiple_times() {
         let provider = TestCacheProvider::new();
         let dt = create_test_triangulation();
 
-        // Test get_or_build_facet_cache (already using try version internally)
+        // Smoke test: calling the cache getter multiple times should succeed.
         let _cache = provider.try_get_or_build_facet_cache(dt.tds()).unwrap();
         let cache_strict_result = provider.try_get_or_build_facet_cache(dt.tds());
 
         assert!(
             cache_strict_result.is_ok(),
-            "Strict version should work after deprecated version"
+            "Cache getter should succeed on repeated calls"
         );
 
-        // Test build_cache_with_rcu (already using try version internally)
+        // Smoke test: calling the cache builder multiple times should succeed.
         provider.invalidate_facet_cache(); // Clear cache first
         let _old = provider.try_build_cache_with_rcu(dt.tds()).unwrap();
         let old_strict_result = provider.try_build_cache_with_rcu(dt.tds());
 
         assert!(
             old_strict_result.is_ok(),
-            "Strict version should work after deprecated version"
+            "Cache builder should succeed on repeated calls"
         );
     }
 
@@ -1164,8 +1165,8 @@ mod tests {
     }
 
     #[test]
-    fn test_deprecated_fallback_behavior() {
-        // Test that deprecated methods handle errors gracefully with fallback
+    fn test_cache_methods_succeed_on_valid_tds() {
+        // Smoke test that cache methods succeed on a valid triangulation.
         let provider = TestCacheProvider::new();
         let dt = create_test_triangulation();
 
@@ -1173,7 +1174,7 @@ mod tests {
         let cache = provider.try_get_or_build_facet_cache(dt.tds()).unwrap();
         assert!(
             !cache.is_empty(),
-            "Deprecated method should return valid cache"
+            "Cache getter should return a non-empty cache"
         );
 
         // Build using RCU should also succeed
