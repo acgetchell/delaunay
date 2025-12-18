@@ -2,7 +2,7 @@
 
 This document outlines the design and implementation strategy for introducing topology analysis and validation into the delaunay triangulation library.
 
-> Note: Euler characteristic validation is implemented in `Triangulation::is_valid()` (Level 3).
+> Note: Euler characteristic validation is implemented in `Triangulation::is_valid()` (Level 3) as of v0.6.x.
 > Some sections below describe earlier plans and are marked as historical/superseded.
 
 ## Table of Contents
@@ -36,8 +36,8 @@ Delaunay triangulations possess well-defined topological properties that can be 
 2. **Euler Characteristic Validation**: Implement Euler characteristic calculation and validation
 3. **Extensible Architecture**: Design for future topology types (spherical, toroidal)
 4. **Dimensional Genericity**: Support topology validation across all dimensions D ≥ 2
-5. **Integration with Existing Validation**: Extend current
-   `Tds::is_valid()` / `Tds::validate()` framework
+5. **Integration with Existing Validation**: Build on
+   `Tds::is_valid()` / `Tds::validate()` (Levels 1–2) via the Triangulation layer (Level 3)
 6. **Comprehensive Testing**: Validate randomly generated triangulations
 
 ---
@@ -100,7 +100,8 @@ The topology module integrates with existing modules through:
 - **Testing Integration**: Extend existing validation and testing frameworks
 
 Topology validation is layered on top of the existing structural invariants
-validated by `Tds::is_valid()` / `Tds::validate()`, rather than duplicating those checks.
+validated by `Tds::is_valid()` / `Tds::validate()` (Levels 1–2) and exposed at the
+Triangulation layer (Level 3), rather than duplicating those checks.
 
 ---
 
@@ -949,11 +950,16 @@ The result will be a more robust, validated, and theoretically sound triangulati
 
 ## Euler-Poincaré Validation: Detailed Implementation Plan
 
+> Note: The core Level 3 Euler characteristic check is implemented in `Triangulation::is_valid()` as of v0.6.x.
+> The remainder of this section is retained as historical design notes for future topology work.
+
 ### Status and Metadata
 
-**Status:** Design Phase - Implementation Deferred  
+**Status:** Partially implemented  
 **Created:** 2025-10-16  
-**Target Release:** v0.6.0  
+**Implemented:** v0.6.x (Level 3: `Triangulation::is_valid()`)  
+**Original Target Release:** v0.6.0 (historical)  
+**Target Release (remaining work):** TBD  
 **Priority:** High  
 **Complexity:** High  
 
@@ -1881,15 +1887,17 @@ fn test_boundary_report_includes_euler() {
 
 #### Feature Flag Strategy
 
-Initially implement behind feature flag:
+Currently, Euler characteristic validation runs as part of `Triangulation::is_valid()` (Level 3) and is not feature-gated.
+
+If we later decide to make it optional, a potential feature could look like:
 
 ```toml
 # Cargo.toml
 [features]
-default = ["dense-slotmap"]  # Current default; topology-validation could be added later
+default = ["dense-slotmap"]  # Current default
 
 # NOTE: `topology-validation` is proposed; only document it here once it exists in Cargo.toml.
-# topology-validation = []  # Enable Euler characteristic validation in is_valid()
+# topology-validation = []  # Gate Level 3 Euler characteristic validation
 ```
 
 Gate expensive checks:

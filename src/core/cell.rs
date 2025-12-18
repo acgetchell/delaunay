@@ -618,6 +618,13 @@ where
             return None;
         }
 
+        // Mirror facet semantics are defined for same-dimensional simplices.
+        debug_assert_eq!(
+            self.vertices().len(),
+            neighbor_cell.vertices().len(),
+            "mirror_facet_index requires cells with matching vertex counts",
+        );
+
         // Build the facet vertex set from the source cell (all except facet_idx)
         let mut facet_vertices: CellVertexBuffer = CellVertexBuffer::new();
         for (i, &vkey) in self.vertices().iter().enumerate() {

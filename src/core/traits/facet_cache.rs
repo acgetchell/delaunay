@@ -108,11 +108,11 @@ where
     /// A `Result` containing:
     /// - `Ok(Some(Arc<FacetToCellsMap>))`: The old cache value before update
     /// - `Ok(None)`: No cache existed before this build
-    /// - `Err(TriangulationValidationError)`: If facet map building fails
+    /// - `Err(TdsValidationError)`: If facet map building fails
     ///
     /// # Errors
     ///
-    /// Returns a `TriangulationValidationError` if the TDS has corrupted data
+    /// Returns a `TdsValidationError` if the TDS has corrupted data
     /// (e.g., missing vertex keys) that prevents building a complete facet map.
     fn try_build_cache_with_rcu(
         &self,
@@ -168,7 +168,7 @@ where
     ///
     /// A `Result` containing:
     /// - `Ok(Arc<FacetToCellsMap>)`: The current facet-to-cells mapping
-    /// - `Err(TriangulationValidationError)`: If facet map building fails
+    /// - `Err(TdsValidationError)`: If facet map building fails
     ///
     /// # Performance
     ///
@@ -179,7 +179,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a `TriangulationValidationError` if the TDS has corrupted data
+    /// Returns a `TdsValidationError` if the TDS has corrupted data
     /// (e.g., missing vertex keys) that prevents building a complete facet map.
     ///
     /// # Examples

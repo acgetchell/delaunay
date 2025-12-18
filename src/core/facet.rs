@@ -173,14 +173,14 @@ pub enum FacetError {
     /// Failed to retrieve boundary facets from triangulation.
     #[error("Failed to retrieve boundary facets: {source}")]
     BoundaryFacetRetrievalFailed {
-        /// The underlying triangulation validation error.
+        /// The underlying TDS validation error.
         #[source]
         source: Arc<TdsValidationError>,
     },
     /// Cell operation failed due to validation error.
     #[error("Cell operation failed: {source}")]
     CellOperationFailed {
-        /// The underlying triangulation validation error.
+        /// The underlying TDS validation error.
         #[source]
         source: Arc<TdsValidationError>,
     },

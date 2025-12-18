@@ -244,7 +244,12 @@ Validates the geometric optimality of the triangulation.
 
 ### Complexity
 
-- **Time**: O(N×V) where N = cells, V = total vertices
+- **Time**:
+  - `DelaunayTriangulation::is_valid()` (Level 4 only): O(N×V) in the worst case.
+  - `DelaunayTriangulation::validate()` (Levels 1–4): O(N×D² + N×V)
+    (typically dominated by O(N×V)).
+  - `DelaunayTriangulation::validation_report()` (Levels 1–4): O(N×D² + N×V)
+    (typically dominated by O(N×V)).
 - **Space**: O(1) per test
 
 ### When to Use
@@ -400,8 +405,8 @@ pub fn validate_with_level(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3
 | 3 | `Triangulation::is_valid()` | `core::triangulation` | O(N×D²) |
 | 3 | `Triangulation::validate()` | `core::triangulation` | O(N×D²) |
 | 4 | `DelaunayTriangulation::is_valid()` | `core::delaunay_triangulation` | O(N×V) |
-| 4 | `DelaunayTriangulation::validate()` | `core::delaunay_triangulation` | O(N×V) |
-| — | `DelaunayTriangulation::validation_report()` | `core::delaunay_triangulation` | O(N×V) |
+| 4 | `DelaunayTriangulation::validate()` | `core::delaunay_triangulation` | O(N×D² + N×V) |
+| — | `DelaunayTriangulation::validation_report()` | `core::delaunay_triangulation` | O(N×D² + N×V) |
 
 ---
 

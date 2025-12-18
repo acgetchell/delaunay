@@ -73,7 +73,7 @@ pub enum ConvexHullConstructionError {
     /// Failed to extract boundary facets from the triangulation.
     #[error("Failed to extract boundary facets from triangulation: {source}")]
     BoundaryFacetExtractionFailed {
-        /// The underlying validation error that caused the failure.
+        /// The underlying TDS validation error that caused the failure.
         source: TdsValidationError,
     },
     /// Failed to check facet visibility from a point.
@@ -112,14 +112,14 @@ pub enum ConvexHullConstructionError {
     /// Failed to build facet cache during convex hull operations.
     #[error("Failed to build facet cache: {source}")]
     FacetCacheBuildFailed {
-        /// The underlying triangulation validation error.
+        /// The underlying TDS validation error.
         #[source]
         source: TdsValidationError,
     },
     /// Failed to resolve adjacent cell vertices for visibility testing.
     #[error("Failed to resolve adjacent cell: {source}")]
     AdjacentCellResolutionFailed {
-        /// The underlying triangulation validation error.
+        /// The underlying TDS validation error.
         #[source]
         source: TdsValidationError,
     },
@@ -4187,7 +4187,7 @@ mod tests {
     fn test_facet_cache_build_failed_error() {
         println!("Testing FacetCacheBuildFailed error path");
 
-        // This test is challenging because we need to trigger a TriangulationValidationError
+        // This test is challenging because we need to trigger a TdsValidationError
         // during facet cache building. In practice, this is rare with valid TDS objects.
         // We'll test the error propagation pattern by verifying the error types are properly
         // connected and that the method signature returns the right error type.
@@ -4205,7 +4205,7 @@ mod tests {
         let test_facet = hull.get_facet(0).unwrap();
         let test_point = Point::new([2.0, 2.0, 2.0]);
 
-        // Call the method that should propagate TriangulationValidationError as FacetCacheBuildFailed
+        // Call the method that should propagate TdsValidationError as FacetCacheBuildFailed
         let result = hull.is_facet_visible_from_point(test_facet, &test_point, dt.triangulation());
 
         // In the normal case, this should succeed
@@ -4658,7 +4658,7 @@ mod tests {
         );
 
         println!("  ✓ AdjacentCellResolutionFailed error variant properly implemented");
-        println!("  ✓ Error preserves underlying TriangulationValidationError as source");
+        println!("  ✓ Error preserves underlying TdsValidationError as source");
         println!("  ✓ Error display format correct: {error_message}");
     }
 

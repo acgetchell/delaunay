@@ -64,7 +64,7 @@ pub enum DelaunayValidationError {
     /// TDS data structure corruption or other structural issues detected during validation.
     #[error("TDS corruption: {source}")]
     TriangulationState {
-        /// The underlying triangulation validation error
+        /// The underlying TDS validation error (TDS-level invariants).
         #[source]
         source: TdsValidationError,
     },

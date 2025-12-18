@@ -65,8 +65,13 @@ where
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     ///
-    /// // A single tetrahedron has 4 boundary facets (all facets are on the boundary)
+    /// // High-level API (infallible): panics if the underlying TDS is corrupted.
     /// assert_eq!(dt.boundary_facets().count(), 4);
+    ///
+    /// // TDS-level API (fallible): returns `TdsValidationError` on corruption.
+    /// let count = dt.tds().boundary_facets()?.count();
+    /// assert_eq!(count, 4);
+    /// # Ok::<(), delaunay::core::triangulation_data_structure::TdsValidationError>(())
     /// ```
     fn boundary_facets(&self) -> Result<BoundaryFacetsIter<'_, T, U, V, D>, TdsValidationError> {
         // Build a map from facet keys to the cells that contain them
@@ -204,7 +209,8 @@ where
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     ///
     /// // A single tetrahedron has 4 boundary facets
-    /// assert_eq!(dt.boundary_facets().count(), 4);
+    /// assert_eq!(dt.tds().number_of_boundary_facets()?, 4);
+    /// # Ok::<(), delaunay::core::triangulation_data_structure::TdsValidationError>(())
     /// ```
     fn number_of_boundary_facets(&self) -> Result<usize, TdsValidationError> {
         self.build_facet_to_cells_map()

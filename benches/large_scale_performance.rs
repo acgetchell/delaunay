@@ -254,7 +254,8 @@ fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_p
     group.bench_function("validate_topology", |b| {
         b.iter(|| {
             // Level 3 topology check (manifold-with-boundary + Euler characteristic)
-            black_box(tri.is_valid())
+            tri.is_valid()
+                .expect("triangulation should be structurally valid during validation benchmark");
         });
     });
 

@@ -655,9 +655,9 @@ where
     ///
     /// # Errors
     ///
-    /// Returns `TriangulationValidationError` if neighbor assignment fails due to inconsistent
+    /// Returns `TdsValidationError` if neighbor assignment fails due to inconsistent
     /// data structures or invalid facet sharing patterns.
-    fn assign_neighbors(&mut self) -> Result<(), TriangulationValidationError> {
+    fn assign_neighbors(&mut self) -> Result<(), TdsValidationError> {
         use crate::core::facet::facet_key_from_vertices;
 
         // Build facet mapping with vertex index information using optimized collections
@@ -1310,11 +1310,11 @@ where
     /// # Returns
     ///
     /// A `Result` containing a `VertexKeyBuffer` if the cell exists and all vertices are valid,
-    /// or a `TriangulationValidationError` if the cell doesn't exist or vertices are missing.
+    /// or a `TdsValidationError` if the cell doesn't exist or vertices are missing.
     ///
     /// # Errors
     ///
-    /// Returns a `TriangulationValidationError` if:
+    /// Returns a `TdsValidationError` if:
     /// - The cell with the given key doesn't exist
     /// - A vertex key from the cell doesn't exist in the vertex storage (TDS corruption)
     ///
@@ -1865,11 +1865,11 @@ where
     /// # Returns
     ///
     /// `Ok(usize)` with the number of cells that were removed along with the vertex,
-    /// or `Err(TriangulationValidationError)` if incident cell assignment fails.
+    /// or `Err(TdsValidationError)` if incident cell assignment fails.
     ///
     /// # Errors
     ///
-    /// Returns `TriangulationValidationError` if the vertex-cell incidence cannot be rebuilt
+    /// Returns `TdsValidationError` if the vertex-cell incidence cannot be rebuilt
     /// after removing cells. This indicates a corrupted data structure.
     ///
     /// # Examples
@@ -1997,7 +1997,7 @@ where
     /// # Returns
     ///
     /// * `Ok(())` if the topology is valid
-    /// * `Err(TriangulationValidationError)` with details about which neighbors violate the invariant
+    /// * `Err(TdsValidationError)` with details about which neighbors violate the invariant
     ///
     /// # Use Cases
     ///
@@ -2007,12 +2007,12 @@ where
     ///
     /// # Errors
     ///
-    /// Returns `TriangulationValidationError` if topology validation fails.
+    /// Returns `TdsValidationError` if topology validation fails.
     fn validate_neighbor_topology(
         &self,
         cell_key: CellKey,
         neighbors: &[Option<CellKey>],
-    ) -> Result<(), TriangulationValidationError> {
+    ) -> Result<(), TdsValidationError> {
         if neighbors.len() != D + 1 {
             return Err(TriangulationValidationError::InvalidNeighbors {
                 message: format!(
@@ -2113,7 +2113,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a `TriangulationValidationError` if:
+    /// Returns a `TdsValidationError` if:
     /// - The cell with the given key doesn't exist
     /// - The neighbor vector length is not D+1
     /// - Any neighbor key references a non-existent cell
@@ -2164,8 +2164,8 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a `TriangulationValidationError` if a cell references a non-existent vertex key.
-    fn build_vertex_to_cells_map(&self) -> Result<VertexToCellsMap, TriangulationValidationError> {
+    /// Returns a `TdsValidationError` if a cell references a non-existent vertex key.
+    fn build_vertex_to_cells_map(&self) -> Result<VertexToCellsMap, TdsValidationError> {
         let mut vertex_to_cells: VertexToCellsMap =
             fast_hash_map_with_capacity(self.vertices.len());
 
@@ -2225,11 +2225,11 @@ where
     /// # Returns
     ///
     /// `Ok(())` if incident cells were successfully assigned to all vertices,
-    /// otherwise a `TriangulationValidationError`.
+    /// otherwise a `TdsValidationError`.
     ///
     /// # Errors
     ///
-    /// Returns a `TriangulationValidationError` if:
+    /// Returns a `TdsValidationError` if:
     /// - A cell references a non-existent vertex key (`InconsistentDataStructure`)
     /// - A cell key cannot be found in the cells storage map (`InconsistentDataStructure`)
     /// - A vertex key cannot be found in the vertices storage map (`InconsistentDataStructure`)
@@ -2381,11 +2381,11 @@ where
     ///
     /// A `Result` containing:
     /// - `Ok(FacetToCellsMap)`: A complete mapping of facet keys to cells
-    /// - `Err(TriangulationValidationError)`: If any cell has missing vertex keys
+    /// - `Err(TdsValidationError)`: If any cell has missing vertex keys
     ///
     /// # Errors
     ///
-    /// Returns a `TriangulationValidationError::InconsistentDataStructure` if any cell
+    /// Returns a `TdsValidationError::InconsistentDataStructure` if any cell
     /// cannot resolve its vertex keys, which would indicate a corrupted triangulation state.
     ///
     /// # Performance
@@ -2408,7 +2408,7 @@ where
         // Iterate over all cells and their facets
         for (cell_id, _cell) in &self.cells {
             // Use direct key-based method to avoid UUID→Key lookups
-            // The error from get_cell_vertices is already TriangulationValidationError
+            // The error from get_cell_vertices is already TdsValidationError
             let vertices = self.get_cell_vertices(cell_id)?;
 
             for i in 0..vertices.len() {
@@ -2447,7 +2447,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a `TriangulationValidationError` if:
+    /// Returns a `TdsValidationError` if:
     /// - Vertex keys cannot be retrieved for any cell (data structure corruption)
     /// - Neighbor assignment fails after cell removal
     /// - Incident cell assignment fails after cell removal
@@ -2516,7 +2516,7 @@ where
     ///
     /// # Returns
     ///
-    /// `Ok(())` if all vertex mappings are consistent, otherwise a `TriangulationValidationError`.
+    /// `Ok(())` if all vertex mappings are consistent, otherwise a `TdsValidationError`.
     ///
     /// This corresponds to [`InvariantKind::VertexMappings`], which is included in
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
@@ -2524,14 +2524,14 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a `TriangulationValidationError::MappingInconsistency` with a descriptive message if:
+    /// Returns a `TdsValidationError::MappingInconsistency` with a descriptive message if:
     /// - The number of UUID-to-key mappings doesn't match the number of vertices
     /// - The number of key-to-UUID mappings doesn't match the number of vertices
     /// - A vertex exists without a corresponding UUID-to-key mapping
     /// - A vertex exists without a corresponding key-to-UUID mapping
     /// - The bidirectional mappings are inconsistent (UUID maps to key A, but key A maps to different UUID)
     ///
-    fn validate_vertex_mappings(&self) -> Result<(), TriangulationValidationError> {
+    fn validate_vertex_mappings(&self) -> Result<(), TdsValidationError> {
         if self.uuid_to_vertex_key.len() != self.vertices.len() {
             return Err(TriangulationValidationError::MappingInconsistency {
                 entity: EntityKind::Vertex,
@@ -2582,7 +2582,7 @@ where
     ///
     /// # Returns
     ///
-    /// `Ok(())` if all cell mappings are consistent, otherwise a `TriangulationValidationError`.
+    /// `Ok(())` if all cell mappings are consistent, otherwise a `TdsValidationError`.
     ///
     /// This corresponds to [`InvariantKind::CellMappings`], which is included in
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
@@ -2590,14 +2590,14 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a `TriangulationValidationError::MappingInconsistency` with a descriptive message if:
+    /// Returns a `TdsValidationError::MappingInconsistency` with a descriptive message if:
     /// - The number of UUID-to-key mappings doesn't match the number of cells
     /// - The number of key-to-UUID mappings doesn't match the number of cells
     /// - A cell exists without a corresponding UUID-to-key mapping
     /// - A cell exists without a corresponding key-to-UUID mapping
     /// - The bidirectional mappings are inconsistent (UUID maps to key A, but key A maps to different UUID)
     ///
-    fn validate_cell_mappings(&self) -> Result<(), TriangulationValidationError> {
+    fn validate_cell_mappings(&self) -> Result<(), TdsValidationError> {
         if self.uuid_to_cell_key.len() != self.cells.len() {
             return Err(TriangulationValidationError::MappingInconsistency {
                 entity: EntityKind::Cell,
@@ -2648,14 +2648,14 @@ where
     ///
     /// # Returns
     ///
-    /// `Ok(())` if all vertex keys in all cells are valid, otherwise a `TriangulationValidationError`.
+    /// `Ok(())` if all vertex keys in all cells are valid, otherwise a `TdsValidationError`.
     ///
     /// # Errors
     ///
-    /// Returns `TriangulationValidationError::InconsistentDataStructure` if any cell
+    /// Returns `TdsValidationError::InconsistentDataStructure` if any cell
     /// references a vertex key that doesn't exist in the vertices `storage map`.
     #[allow(dead_code)]
-    fn validate_cell_vertex_keys(&self) -> Result<(), TriangulationValidationError> {
+    fn validate_cell_vertex_keys(&self) -> Result<(), TdsValidationError> {
         for (cell_key, cell) in &self.cells {
             let cell_uuid = cell.uuid();
             for (vertex_idx, &vertex_key) in cell.vertices().iter().enumerate() {
@@ -2681,13 +2681,13 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`TriangulationValidationError`] if cell vertex retrieval fails
+    /// Returns a [`TdsValidationError`] if cell vertex retrieval fails
     /// or if any duplicate cells are detected.
     ///
     /// This corresponds to [`InvariantKind::DuplicateCells`], which is included in
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
     /// [`DelaunayTriangulation::validation_report`](crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report).
-    fn validate_no_duplicate_cells(&self) -> Result<(), TriangulationValidationError> {
+    fn validate_no_duplicate_cells(&self) -> Result<(), TdsValidationError> {
         // Use CellVertexUuidBuffer as HashMap key directly to avoid extra Vec allocation
         // Pre-size to avoid rehashing during insertion (minor optimization for hot path)
         let mut unique_cells: FastHashMap<CellVertexUuidBuffer, CellKey> =
@@ -2696,7 +2696,7 @@ where
 
         for (cell_key, cell) in &self.cells {
             // Use Cell::vertex_uuids() helper to avoid duplicating VertexKey→UUID mapping logic
-            // Convert CellValidationError to TriangulationValidationError for propagation
+            // Convert CellValidationError to TdsValidationError for propagation
             let mut vertex_uuids = cell.vertex_uuids(self).map_err(|e| {
                 TriangulationValidationError::InconsistentDataStructure {
                     message: format!("Failed to get vertex UUIDs for cell {cell_key:?}: {e}"),
@@ -2985,19 +2985,19 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`TriangulationValidationError`] if any neighbor relationship
+    /// Returns a [`TdsValidationError`] if any neighbor relationship
     /// violates topological or consistency invariants.
     ///
     /// This corresponds to [`InvariantKind::NeighborConsistency`], which is included in
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
     /// [`DelaunayTriangulation::validation_report`](crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report).
-    fn validate_neighbors(&self) -> Result<(), TriangulationValidationError> {
+    fn validate_neighbors(&self) -> Result<(), TdsValidationError> {
         // Pre-compute vertex keys for all cells to avoid repeated computation
         let mut cell_vertices: CellVerticesMap = fast_hash_map_with_capacity(self.cells.len());
 
         for cell_key in self.cells.keys() {
             // Use get_cell_vertices to ensure all vertex keys are present
-            // The error is already TriangulationValidationError, so just propagate it
+            // The error is already TdsValidationError, so just propagate it
             let vertices = self.get_cell_vertices(cell_key)?;
 
             // Store the HashSet for containment checks
