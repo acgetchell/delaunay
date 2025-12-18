@@ -307,7 +307,7 @@ pub enum TriangulationConstructionError {
     },
     /// Validation error during construction.
     #[error("Validation error during construction: {0}")]
-    ValidationError(#[from] TriangulationValidationError),
+    ValidationError(#[from] TdsValidationError),
     /// Attempted to insert an entity with a UUID that already exists.
     #[error("Duplicate UUID: {entity:?} with UUID {uuid} already exists")]
     DuplicateUuid {
@@ -359,7 +359,7 @@ pub enum EntityKind {
 ///
 /// Errors that can occur during triangulation validation (post-construction).
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
-pub enum TriangulationValidationError {
+pub enum TdsValidationError {
     /// The triangulation contains an invalid vertex.
     #[error("Invalid vertex {vertex_id}: {source}")]
     InvalidVertex {
@@ -443,6 +443,10 @@ pub enum TriangulationValidationError {
     },
 }
 
+// Temporary internal alias to ease refactors within this module.
+// This does not affect the public API.
+type TriangulationValidationError = TdsValidationError;
+
 /// Classifies the kind of triangulation invariant that failed during validation.
 ///
 /// This is used by [`TriangulationValidationReport`] to group related errors.
@@ -474,7 +478,7 @@ pub struct InvariantViolation {
     /// The kind of invariant that failed.
     pub kind: InvariantKind,
     /// The detailed validation error explaining the failure.
-    pub error: TriangulationValidationError,
+    pub error: TdsValidationError,
 }
 
 /// Aggregate report of one or more validation failures.
@@ -1335,7 +1339,7 @@ where
     pub fn get_cell_vertices(
         &self,
         cell_key: CellKey,
-    ) -> Result<VertexKeyBuffer, TriangulationValidationError> {
+    ) -> Result<VertexKeyBuffer, TdsValidationError> {
         let cell = self.cells.get(cell_key).ok_or_else(|| {
             TriangulationValidationError::InconsistentDataStructure {
                 message: format!("Cell key {cell_key:?} not found in cells storage map"),
@@ -1903,10 +1907,7 @@ where
     ///
     /// assert!(dt.tds().validate().is_ok());
     /// ```
-    pub fn remove_vertex(
-        &mut self,
-        vertex: &Vertex<T, U, D>,
-    ) -> Result<usize, TriangulationValidationError> {
+    pub fn remove_vertex(&mut self, vertex: &Vertex<T, U, D>) -> Result<usize, TdsValidationError> {
         // Find the vertex key
         let Some(vertex_key) = self.vertex_key_from_uuid(&vertex.uuid()) else {
             return Ok(0); // Vertex not found, nothing to remove
@@ -2133,7 +2134,7 @@ where
         &mut self,
         cell_key: CellKey,
         neighbors: &[Option<CellKey>],
-    ) -> Result<(), TriangulationValidationError> {
+    ) -> Result<(), TdsValidationError> {
         // Validate the topological invariant before applying changes
         // (includes length check: neighbors.len() == D+1)
         self.validate_neighbor_topology(cell_key, neighbors)?;
@@ -2251,7 +2252,7 @@ where
     /// 2. For each vertex that appears in at least one cell, assign the first cell as its incident cell
     /// 3. Update the vertex's `incident_cell` field with the `CellKey` of the selected cell (Phase 3)
     ///
-    pub fn assign_incident_cells(&mut self) -> Result<(), TriangulationValidationError> {
+    pub fn assign_incident_cells(&mut self) -> Result<(), TdsValidationError> {
         if self.cells.is_empty() {
             // No cells remain; all vertices must have incident_cell cleared to avoid
             // dangling pointers to previously removed cells.
@@ -2403,9 +2404,7 @@ where
     ///
     /// O(N×F) time complexity where N is the number of cells and F is the
     /// number of facets per cell (typically D+1 for D-dimensional cells).
-    pub fn build_facet_to_cells_map(
-        &self,
-    ) -> Result<FacetToCellsMap, TriangulationValidationError> {
+    pub fn build_facet_to_cells_map(&self) -> Result<FacetToCellsMap, TdsValidationError> {
         // Ensure facet indices fit in u8 range
         debug_assert!(
             D <= 255,
@@ -2464,7 +2463,7 @@ where
     /// - Vertex keys cannot be retrieved for any cell (data structure corruption)
     /// - Neighbor assignment fails after cell removal
     /// - Incident cell assignment fails after cell removal
-    pub fn remove_duplicate_cells(&mut self) -> Result<usize, TriangulationValidationError> {
+    pub fn remove_duplicate_cells(&mut self) -> Result<usize, TdsValidationError> {
         let mut unique_cells = FastHashMap::default();
         let mut cells_to_remove = CellRemovalBuffer::new();
 
@@ -2757,13 +2756,13 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`TriangulationValidationError`] if building the facet map fails
+    /// Returns a [`TdsValidationError`] if building the facet map fails
     /// or if any facet is shared by more than two cells.
     ///
     /// This corresponds to [`InvariantKind::FacetSharing`], which is included in
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
     /// [`DelaunayTriangulation::validation_report`](crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report).
-    pub(crate) fn validate_facet_sharing(&self) -> Result<(), TriangulationValidationError> {
+    pub(crate) fn validate_facet_sharing(&self) -> Result<(), TdsValidationError> {
         // Build a map from facet keys to the cells that contain them
         // Use the strict version to ensure we catch any missing vertex keys
         let facet_to_cells = self.build_facet_to_cells_map()?;
@@ -2808,7 +2807,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`TriangulationValidationError`] if any structural invariant fails.
+    /// Returns a [`TdsValidationError`] if any structural invariant fails.
     ///
     /// # Examples
     ///
@@ -2834,7 +2833,7 @@ where
     /// Panics if an internal invariant is violated such that
     /// `validation_report` returns an error with an empty violations list.
     /// This should never occur in a correctly implemented validator.
-    pub fn is_valid(&self) -> Result<(), TriangulationValidationError> {
+    pub fn is_valid(&self) -> Result<(), TdsValidationError> {
         // Delegate to the multi-invariant report API and return only the first
         // error.
         match self.validation_report() {
@@ -2858,7 +2857,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`TriangulationValidationError`] if any vertex/cell is invalid or if any
+    /// Returns a [`TdsValidationError`] if any vertex/cell is invalid or if any
     /// structural invariant fails.
     ///
     /// # Examples
@@ -2879,7 +2878,7 @@ where
     /// // Levels 1–2: elements + TDS structure
     /// assert!(dt.tds().validate().is_ok());
     /// ```
-    pub fn validate(&self) -> Result<(), TriangulationValidationError> {
+    pub fn validate(&self) -> Result<(), TdsValidationError> {
         for (_vertex_key, vertex) in &self.vertices {
             if let Err(source) = (*vertex).is_valid() {
                 return Err(TriangulationValidationError::InvalidVertex {
@@ -2909,7 +2908,7 @@ where
     /// Runs structural validation checks and returns a report containing **all** failed invariants.
     ///
     /// Unlike [`is_valid()`](Self::is_valid), this method does **not** stop at the
-    /// first error. Instead it records a [`TriangulationValidationError`] for each
+    /// first error. Instead it records a [`TdsValidationError`] for each
     /// invariant group that fails and returns them as a
     /// [`TriangulationValidationReport`].
     ///

@@ -7,8 +7,10 @@ Essential guidance for AI assistants working in this repository.
 ### Git Operations
 
 - **NEVER** run `git commit`, `git push`, `git tag`, or any git commands that modify version control state
+- **ALLOWED**: Run read-only git commands (e.g. `git --no-pager status`, `git --no-pager diff`,
+  `git --no-pager log`, `git --no-pager show`, `git --no-pager blame`) to inspect changes/history
 - **ALWAYS** use `git --no-pager` when reading git output
-- Suggest git commands for the user but never execute them
+- Suggest git commands that modify version control state for the user to run manually
 
 ### Commit Messages
 

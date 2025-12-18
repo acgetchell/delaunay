@@ -15,17 +15,55 @@ use crate::core::algorithms::incremental_insertion::{
 use crate::core::cell::Cell;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation::Triangulation;
+use crate::core::triangulation::{Triangulation, TriangulationValidationError};
 use crate::core::triangulation_data_structure::{
-    CellKey, InvariantKind, InvariantViolation, Tds, TriangulationConstructionError,
-    TriangulationValidationError, TriangulationValidationReport, VertexKey,
+    CellKey, InvariantKind, InvariantViolation, Tds, TdsValidationError,
+    TriangulationConstructionError, TriangulationValidationReport, VertexKey,
 };
 use crate::core::util::DelaunayValidationError;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{FastKernel, Kernel};
-use crate::geometry::traits::coordinate::CoordinateScalar;
+use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use thiserror::Error;
+use uuid::Uuid;
+
+/// Errors that can occur during Delaunay triangulation validation (Level 4).
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DelaunayTriangulationValidationError {
+    /// Lower-layer validation error (Levels 1–3).
+    #[error(transparent)]
+    Triangulation(#[from] TriangulationValidationError),
+
+    /// A cell violates the empty circumsphere property.
+    #[error(
+        "Delaunay property violated: Cell {cell_uuid} (key: {cell_key:?}) violates empty circumsphere invariant"
+    )]
+    DelaunayViolation {
+        /// Key of the violating cell.
+        cell_key: CellKey,
+        /// UUID of the violating cell (or nil if the UUID mapping is unavailable).
+        cell_uuid: Uuid,
+    },
+
+    /// Numeric predicate failure during Delaunay validation.
+    #[error(
+        "Numeric predicate failure while validating Delaunay property for cell {cell_uuid} (key: {cell_key:?}), vertex {vertex_key:?}: {source}"
+    )]
+    NumericPredicateError {
+        /// The key of the cell whose circumsphere was being tested.
+        cell_key: CellKey,
+        /// UUID of the cell whose predicate evaluation failed (or nil if unavailable).
+        cell_uuid: Uuid,
+        /// The key of the vertex being classified relative to the circumsphere.
+        vertex_key: VertexKey,
+        /// Underlying robust predicate error (e.g., conversion failure).
+        #[source]
+        source: CoordinateConversionError,
+    },
+}
 
 /// Delaunay triangulation with incremental insertion support.
 ///
@@ -301,7 +339,7 @@ where
                         }
                         InsertionError::NeighborWiring { message } => {
                             TriangulationConstructionError::ValidationError(
-                                TriangulationValidationError::InvalidNeighbors { message },
+                                TdsValidationError::InvalidNeighbors { message },
                             )
                         }
                         InsertionError::TopologyValidation(source) => {
@@ -905,7 +943,7 @@ where
     {
         // Delegate to Triangulation layer
         // Future: Could add Delaunay property restoration after removal
-        self.tri.remove_vertex(vertex)
+        self.tri.remove_vertex(vertex).map_err(Into::into)
     }
 
     /// Validates the Delaunay empty-circumsphere property (Level 4).
@@ -917,7 +955,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`TriangulationValidationError`] if the empty-circumsphere test fails, or if
+    /// Returns a [`DelaunayTriangulationValidationError`] if the empty-circumsphere test fails, or if
     /// the underlying triangulation state is inconsistent and prevents geometric predicates
     /// from being evaluated.
     ///
@@ -939,7 +977,7 @@ where
     /// // Level 4: Delaunay property only
     /// assert!(dt.is_valid().is_ok());
     /// ```
-    pub fn is_valid(&self) -> Result<(), TriangulationValidationError>
+    pub fn is_valid(&self) -> Result<(), DelaunayTriangulationValidationError>
     where
         K::Scalar: CoordinateScalar,
     {
@@ -949,21 +987,21 @@ where
                     .tri
                     .tds
                     .cell_uuid_from_key(cell_key)
-                    .unwrap_or_else(uuid::Uuid::nil);
-                TriangulationValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Delaunay property violated: Cell {cell_uuid} (key: {cell_key:?}) violates empty circumsphere invariant"
-                    ),
+                    .unwrap_or_else(Uuid::nil);
+                DelaunayTriangulationValidationError::DelaunayViolation {
+                    cell_key,
+                    cell_uuid,
                 }
             }
-            DelaunayValidationError::TriangulationState { source } => source,
+            DelaunayValidationError::TriangulationState { source } => {
+                TriangulationValidationError::from(source).into()
+            }
             DelaunayValidationError::InvalidCell { source } => {
-                // CellValidationError variants don't contain cell UUID context,
-                // so we use nil() for the cell_id field
-                TriangulationValidationError::InvalidCell {
-                    cell_id: uuid::Uuid::nil(),
+                TriangulationValidationError::from(TdsValidationError::InvalidCell {
+                    cell_id: Uuid::nil(),
                     source,
-                }
+                })
+                .into()
             }
             DelaunayValidationError::NumericPredicateError {
                 cell_key,
@@ -975,11 +1013,12 @@ where
                     .tri
                     .tds
                     .cell_uuid_from_key(cell_key)
-                    .unwrap_or_else(uuid::Uuid::nil);
-                TriangulationValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Numeric predicate failure while validating Delaunay property for cell {cell_uuid} (key: {cell_key:?}), vertex {vertex_key:?}: {source}"
-                    ),
+                    .unwrap_or_else(Uuid::nil);
+                DelaunayTriangulationValidationError::NumericPredicateError {
+                    cell_key,
+                    cell_uuid,
+                    vertex_key,
+                    source,
                 }
             }
         })
@@ -993,7 +1032,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`TriangulationValidationError`] if Levels 1–3 validation fails or if the
+    /// Returns a [`DelaunayTriangulationValidationError`] if Levels 1–3 validation fails or if the
     /// Delaunay property check (Level 4) fails.
     ///
     /// # Examples
@@ -1014,7 +1053,7 @@ where
     /// // Levels 1–4: elements + structure + topology + Delaunay property
     /// assert!(dt.validate().is_ok());
     /// ```
-    pub fn validate(&self) -> Result<(), TriangulationValidationError>
+    pub fn validate(&self) -> Result<(), DelaunayTriangulationValidationError>
     where
         K::Scalar: CoordinateScalar,
     {
@@ -1097,10 +1136,14 @@ where
         }
 
         // Level 4 (Delaunay property)
+        // TODO: Once the report error type can carry per-layer errors, preserve the
+        // structured Delaunay error instead of stringifying it.
         if let Err(e) = self.is_valid() {
             violations.push(InvariantViolation {
                 kind: InvariantKind::DelaunayProperty,
-                error: e,
+                error: TdsValidationError::InconsistentDataStructure {
+                    message: format!("Delaunay property validation failed: {e}"),
+                },
             });
         }
 
@@ -1140,9 +1183,7 @@ where
     {
         // Delegate to Triangulation layer
         #[allow(deprecated)]
-        {
-            self.tri.fix_invalid_facet_sharing()
-        }
+        Ok(self.tri.fix_invalid_facet_sharing()?)
     }
 }
 

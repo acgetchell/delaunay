@@ -194,9 +194,7 @@ pub enum InsertionError {
 
     /// Topology validation or repair failed.
     #[error("Topology validation error: {0}")]
-    TopologyValidation(
-        #[from] crate::core::triangulation_data_structure::TriangulationValidationError,
-    ),
+    TopologyValidation(#[from] crate::core::triangulation_data_structure::TdsValidationError),
 }
 
 impl InsertionError {
@@ -1258,7 +1256,7 @@ mod tests {
     #[test]
     fn test_insertion_error_retryable() {
         use crate::core::algorithms::locate::LocateError;
-        use crate::core::triangulation_data_structure::TriangulationValidationError;
+        use crate::core::triangulation_data_structure::TdsValidationError;
 
         // Retryable errors
         assert!(
@@ -1274,11 +1272,9 @@ mod tests {
         );
 
         assert!(
-            InsertionError::TopologyValidation(
-                TriangulationValidationError::InconsistentDataStructure {
-                    message: "test".to_string()
-                }
-            )
+            InsertionError::TopologyValidation(TdsValidationError::InconsistentDataStructure {
+                message: "test".to_string()
+            })
             .is_retryable()
         );
 

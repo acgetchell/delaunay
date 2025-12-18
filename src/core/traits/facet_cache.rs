@@ -7,7 +7,7 @@
 use super::data_type::DataType;
 use crate::core::{
     collections::FacetToCellsMap,
-    triangulation_data_structure::{Tds, TriangulationValidationError},
+    triangulation_data_structure::{Tds, TdsValidationError},
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use arc_swap::ArcSwapOption;
@@ -117,10 +117,10 @@ where
     fn try_build_cache_with_rcu(
         &self,
         tds: &Tds<T, U, V, D>,
-    ) -> Result<Option<Arc<FacetToCellsMap>>, TriangulationValidationError> {
+    ) -> Result<Option<Arc<FacetToCellsMap>>, TdsValidationError> {
         // We memoize the built cache outside the RCU closure to avoid recomputation
         // if RCU needs to retry due to concurrent updates.
-        let mut built: Option<Result<Arc<FacetToCellsMap>, TriangulationValidationError>> = None;
+        let mut built: Option<Result<Arc<FacetToCellsMap>, TdsValidationError>> = None;
 
         let old_cache = self.facet_cache().rcu(|old| {
             if let Some(existing) = old {
@@ -208,7 +208,7 @@ where
     fn try_get_or_build_facet_cache(
         &self,
         tds: &Tds<T, U, V, D>,
-    ) -> Result<Arc<FacetToCellsMap>, TriangulationValidationError> {
+    ) -> Result<Arc<FacetToCellsMap>, TdsValidationError> {
         let mut current_generation = tds.generation();
 
         loop {

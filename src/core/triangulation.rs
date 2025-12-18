@@ -95,8 +95,8 @@ use crate::core::collections::{
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation_data_structure::{
-    CellKey, InvariantKind, InvariantViolation, Tds, TriangulationConstructionError,
-    TriangulationValidationError, TriangulationValidationReport, VertexKey,
+    CellKey, InvariantKind, InvariantViolation, Tds, TdsValidationError,
+    TriangulationConstructionError, TriangulationValidationReport, VertexKey,
 };
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
@@ -104,14 +104,94 @@ use crate::geometry::point::Point;
 use crate::geometry::quality::radius_ratio;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::geometry::util::safe_scalar_to_f64;
+use crate::topology::characteristics::euler::TopologyClassification;
 use crate::topology::characteristics::validation::validate_triangulation_euler;
+use crate::topology::traits::topological_space::TopologyError;
 use std::hash::{Hash, Hasher};
+use thiserror::Error;
 
 /// Maximum number of repair iterations for fixing non-manifold topology after insertion.
 ///
 /// This limit prevents infinite loops in the rare case where repair cannot make progress.
 /// In practice, most insertions require 0-2 iterations to restore manifold topology.
 const MAX_REPAIR_ITERATIONS: usize = 10;
+
+/// Errors that can occur during triangulation topology validation (Level 3).
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TriangulationValidationError {
+    /// Lower-layer element or TDS structural validation error (Levels 1–2).
+    #[error(transparent)]
+    Tds(#[from] TdsValidationError),
+
+    /// A facet belongs to an unexpected number of cells for a manifold-with-boundary.
+    #[error(
+        "Non-manifold facet: facet {facet_key} belongs to {cell_count} cells (expected 1 or 2)"
+    )]
+    ManifoldFacetMultiplicity {
+        /// The facet key with invalid multiplicity.
+        facet_key: u64,
+        /// The number of incident cells observed.
+        cell_count: usize,
+    },
+
+    /// A boundary facet unexpectedly has a neighbor pointer across it.
+    #[error(
+        "Boundary facet {facet_key} unexpectedly has a neighbor across cell {cell_uuid}[{facet_index}] -> {neighbor_key:?}"
+    )]
+    BoundaryFacetHasNeighbor {
+        /// The facet key.
+        facet_key: u64,
+        /// UUID of the cell that owns the boundary facet.
+        cell_uuid: Uuid,
+        /// The facet index within the cell.
+        facet_index: usize,
+        /// The neighbor key that was unexpectedly present.
+        neighbor_key: CellKey,
+    },
+
+    /// Two cells that share a facet do not point to each other as neighbors across that facet.
+    #[error(
+        "Interior facet {facet_key} has inconsistent neighbor pointers: {first_cell_uuid}[{first_facet_index}] -> {first_neighbor:?}, {second_cell_uuid}[{second_facet_index}] -> {second_neighbor:?}"
+    )]
+    InteriorFacetNeighborMismatch {
+        /// The facet key.
+        facet_key: u64,
+        /// The first cell key.
+        first_cell_key: CellKey,
+        /// The first cell UUID.
+        first_cell_uuid: Uuid,
+        /// The facet index in the first cell.
+        first_facet_index: usize,
+        /// The neighbor recorded in the first cell.
+        first_neighbor: Option<CellKey>,
+        /// The second cell key.
+        second_cell_key: CellKey,
+        /// The second cell UUID.
+        second_cell_uuid: Uuid,
+        /// The facet index in the second cell.
+        second_facet_index: usize,
+        /// The neighbor recorded in the second cell.
+        second_neighbor: Option<CellKey>,
+    },
+
+    /// Euler characteristic does not match the expected value for the classified topology.
+    #[error(
+        "Euler characteristic mismatch: computed χ={computed}, expected χ={expected} for {classification:?}"
+    )]
+    EulerCharacteristicMismatch {
+        /// Computed Euler characteristic.
+        computed: isize,
+        /// Expected Euler characteristic for the classification.
+        expected: isize,
+        /// The topology classification used to determine expectation.
+        classification: TopologyClassification,
+    },
+
+    /// Topology computation/classification failed.
+    #[error(transparent)]
+    Topology(#[from] TopologyError),
+}
 
 /// Generic triangulation combining kernel and data structure.
 ///
@@ -447,22 +527,19 @@ where
         self.validate_manifold_facets()?;
 
         // 2. Euler characteristic using the topology module
-        let topology_result = validate_triangulation_euler(&self.tds).map_err(|e| {
-            TriangulationValidationError::InconsistentDataStructure {
-                message: format!("Topology validation failed: {e}"),
-            }
-        })?;
+        let topology_result = validate_triangulation_euler(&self.tds)?;
 
         if !topology_result.is_valid() {
-            let expected = topology_result
-                .expected
-                .map_or_else(|| "<unknown>".to_string(), |chi| chi.to_string());
+            // If expected is None, the topology module considers this "valid"
+            // because it cannot determine an expected χ.
+            let Some(expected) = topology_result.expected else {
+                return Ok(());
+            };
 
-            return Err(TriangulationValidationError::InconsistentDataStructure {
-                message: format!(
-                    "Euler characteristic mismatch: computed χ={}, expected χ={} for {:?}",
-                    topology_result.chi, expected, topology_result.classification
-                ),
+            return Err(TriangulationValidationError::EulerCharacteristicMismatch {
+                computed: topology_result.chi,
+                expected,
+                classification: topology_result.classification,
             });
         }
 
@@ -542,7 +619,7 @@ where
             if let Err(source) = (*vertex).is_valid() {
                 violations.push(InvariantViolation {
                     kind: InvariantKind::VertexValidity,
-                    error: TriangulationValidationError::InvalidVertex {
+                    error: TdsValidationError::InvalidVertex {
                         vertex_id: vertex.uuid(),
                         source,
                     },
@@ -555,7 +632,7 @@ where
             if let Err(source) = cell.is_valid() {
                 violations.push(InvariantViolation {
                     kind: InvariantKind::CellValidity,
-                    error: TriangulationValidationError::InvalidCell {
+                    error: TdsValidationError::InvalidCell {
                         cell_id: cell.uuid(),
                         source,
                     },
@@ -564,10 +641,14 @@ where
         }
 
         // Level 3 (topology)
+        // TODO: Once the report error type can carry per-layer errors, preserve the
+        // structured topology error instead of stringifying it.
         if let Err(e) = self.is_valid() {
             violations.push(InvariantViolation {
                 kind: InvariantKind::Topology,
-                error: e,
+                error: TdsValidationError::InconsistentDataStructure {
+                    message: format!("Topology validation failed: {e}"),
+                },
             });
         }
 
@@ -593,7 +674,7 @@ where
                     let facet_index = handle.facet_index() as usize;
 
                     let cell = self.tds.get_cell(cell_key).ok_or_else(|| {
-                        TriangulationValidationError::InconsistentDataStructure {
+                        TdsValidationError::InconsistentDataStructure {
                             message: format!(
                                 "Cell key {cell_key:?} not found during manifold validation"
                             ),
@@ -602,12 +683,12 @@ where
 
                     if let Some(neighbors) = cell.neighbors() {
                         let neighbor = neighbors.get(facet_index).and_then(|n| *n);
-                        if neighbor.is_some() {
-                            return Err(TriangulationValidationError::InvalidNeighbors {
-                                message: format!(
-                                    "Boundary facet {facet_key} unexpectedly has a neighbor across cell {:?}[{facet_index}]",
-                                    cell.uuid()
-                                ),
+                        if let Some(neighbor_key) = neighbor {
+                            return Err(TriangulationValidationError::BoundaryFacetHasNeighbor {
+                                facet_key: *facet_key,
+                                cell_uuid: cell.uuid(),
+                                facet_index,
+                                neighbor_key,
                             });
                         }
                     }
@@ -620,14 +701,14 @@ where
                     let second_facet_index = b.facet_index() as usize;
 
                     let first_cell = self.tds.get_cell(first_cell_key).ok_or_else(|| {
-                        TriangulationValidationError::InconsistentDataStructure {
+                        TdsValidationError::InconsistentDataStructure {
                             message: format!(
                                 "Cell key {first_cell_key:?} not found during manifold validation"
                             ),
                         }
                     })?;
                     let second_cell = self.tds.get_cell(second_cell_key).ok_or_else(|| {
-                        TriangulationValidationError::InconsistentDataStructure {
+                        TdsValidationError::InconsistentDataStructure {
                             message: format!(
                                 "Cell key {second_cell_key:?} not found during manifold validation"
                             ),
@@ -646,24 +727,26 @@ where
                     if first_neighbor != Some(second_cell_key)
                         || second_neighbor != Some(first_cell_key)
                     {
-                        return Err(TriangulationValidationError::InvalidNeighbors {
-                            message: format!(
-                                "Interior facet {facet_key} has inconsistent neighbor pointers: {:?}[{first_facet_index}] -> {:?}, {:?}[{second_facet_index}] -> {:?}",
-                                first_cell.uuid(),
+                        return Err(
+                            TriangulationValidationError::InteriorFacetNeighborMismatch {
+                                facet_key: *facet_key,
+                                first_cell_key,
+                                first_cell_uuid: first_cell.uuid(),
+                                first_facet_index,
                                 first_neighbor,
-                                second_cell.uuid(),
-                                second_neighbor
-                            ),
-                        });
+                                second_cell_key,
+                                second_cell_uuid: second_cell.uuid(),
+                                second_facet_index,
+                                second_neighbor,
+                            },
+                        );
                     }
                 }
                 _ => {
                     // Non-manifold facet multiplicity (0 or >2).
-                    return Err(TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Non-manifold facet: facet with key {facet_key} belongs to {} cells (expected 1 or 2)",
-                            cell_facet_pairs.len()
-                        ),
+                    return Err(TriangulationValidationError::ManifoldFacetMultiplicity {
+                        facet_key: *facet_key,
+                        cell_count: cell_facet_pairs.len(),
                     });
                 }
             }
@@ -1296,7 +1379,7 @@ where
                                 iteration + 1
                             );
                             return Err(InsertionError::TopologyValidation(
-                                TriangulationValidationError::InconsistentDataStructure {
+                                TdsValidationError::InconsistentDataStructure {
                                     message: format!(
                                         "Repair stalled: {} over-shared facets remain but no cells could be removed",
                                         issues.len()
@@ -1429,7 +1512,7 @@ where
                                 iteration + 1
                             );
                             return Err(InsertionError::TopologyValidation(
-                                TriangulationValidationError::InconsistentDataStructure {
+                                TdsValidationError::InconsistentDataStructure {
                                     message: format!(
                                         "Hull extension repair stalled: {} over-shared facets remain but no cells could be removed",
                                         issues.len()
@@ -1553,7 +1636,7 @@ where
     pub fn remove_vertex(
         &mut self,
         vertex: &Vertex<K::Scalar, U, D>,
-    ) -> Result<usize, crate::core::triangulation_data_structure::TriangulationValidationError>
+    ) -> Result<usize, crate::core::triangulation_data_structure::TdsValidationError>
     where
         K::Scalar: CoordinateScalar,
     {
@@ -1585,7 +1668,7 @@ where
 
         // Extract cavity boundary BEFORE removing cells
         let boundary_facets = extract_cavity_boundary(&self.tds, &cells_to_remove)
-            .map_err(|e| crate::core::triangulation_data_structure::TriangulationValidationError::InconsistentDataStructure {
+            .map_err(|e| crate::core::triangulation_data_structure::TdsValidationError::InconsistentDataStructure {
                 message: format!("Failed to extract cavity boundary: {e}"),
             })?;
 
@@ -1597,7 +1680,7 @@ where
 
         // Pick apex vertex for fan triangulation (first vertex of first boundary facet)
         let apex_vertex_key = self.pick_fan_apex(&boundary_facets)
-            .ok_or_else(|| crate::core::triangulation_data_structure::TriangulationValidationError::InconsistentDataStructure {
+            .ok_or_else(|| crate::core::triangulation_data_structure::TdsValidationError::InconsistentDataStructure {
                 message: "Failed to find apex vertex for fan triangulation".to_string(),
             })?;
 
@@ -1605,13 +1688,13 @@ where
         // Use fan triangulation that skips boundary facets which already include the apex
         let new_cells = self
             .fan_fill_cavity(apex_vertex_key, &boundary_facets)
-            .map_err(|e| crate::core::triangulation_data_structure::TriangulationValidationError::InconsistentDataStructure {
+            .map_err(|e| crate::core::triangulation_data_structure::TdsValidationError::InconsistentDataStructure {
                 message: format!("Fan triangulation failed: {e}"),
             })?;
 
         // Wire neighbors for the new cells (while both old and new cells exist)
         wire_cavity_neighbors(&mut self.tds, &new_cells, Some(&cells_to_remove)).map_err(|e| {
-            TriangulationValidationError::InconsistentDataStructure {
+            TdsValidationError::InconsistentDataStructure {
                 message: format!("Neighbor wiring failed: {e}"),
             }
         })?;
@@ -1638,7 +1721,7 @@ where
             if removed > 0 {
                 use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
                 repair_neighbor_pointers(&mut self.tds).map_err(|e| {
-                    TriangulationValidationError::InconsistentDataStructure {
+                    TdsValidationError::InconsistentDataStructure {
                         message: format!("Neighbor repair after facet issue repair failed: {e}"),
                     }
                 })?;
@@ -1796,7 +1879,7 @@ where
     pub fn detect_local_facet_issues(
         &self,
         cells: &[CellKey],
-    ) -> Result<Option<FacetIssuesMap>, TriangulationValidationError>
+    ) -> Result<Option<FacetIssuesMap>, TdsValidationError>
     where
         K::Scalar: CoordinateScalar,
     {
@@ -1830,7 +1913,7 @@ where
 
                 // Track this cell/facet pair
                 let facet_idx_u8 = u8::try_from(facet_idx).map_err(|_| {
-                    TriangulationValidationError::InconsistentDataStructure {
+                    TdsValidationError::InconsistentDataStructure {
                         message: format!(
                             "Facet index {facet_idx} exceeds u8::MAX (dimension too high)"
                         ),
@@ -1892,7 +1975,7 @@ where
     pub fn repair_local_facet_issues(
         &mut self,
         issues: &FacetIssuesMap,
-    ) -> Result<usize, TriangulationValidationError>
+    ) -> Result<usize, TdsValidationError>
     where
         K::Scalar: CoordinateScalar + Div<Output = K::Scalar>,
     {
@@ -1906,7 +1989,7 @@ where
             let mut cell_qualities: Vec<(CellKey, f64, Uuid)> = Vec::new();
             for &cell_key in &involved_cells {
                 let cell = self.tds.get_cell(cell_key).ok_or_else(|| {
-                    TriangulationValidationError::InconsistentDataStructure {
+                    TdsValidationError::InconsistentDataStructure {
                         message: format!("Cell {cell_key:?} not found during facet repair"),
                     }
                 })?;
@@ -1914,12 +1997,12 @@ where
 
                 // Propagate quality evaluation errors
                 let ratio = radius_ratio(self, cell_key).map_err(|e| {
-                    TriangulationValidationError::InconsistentDataStructure {
+                    TdsValidationError::InconsistentDataStructure {
                         message: format!("Quality evaluation failed for cell {cell_key:?}: {e}"),
                     }
                 })?;
                 let ratio_f64 = safe_scalar_to_f64(ratio).map_err(|_| {
-                    TriangulationValidationError::InconsistentDataStructure {
+                    TdsValidationError::InconsistentDataStructure {
                         message: format!("Quality ratio conversion failed for cell {cell_key:?}"),
                     }
                 })?;
@@ -1927,7 +2010,7 @@ where
                 if ratio_f64.is_finite() {
                     cell_qualities.push((cell_key, ratio_f64, uuid));
                 } else {
-                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                    return Err(TdsValidationError::InconsistentDataStructure {
                         message: format!(
                             "Non-finite quality ratio {ratio_f64} for cell {cell_key:?}"
                         ),
@@ -2002,7 +2085,7 @@ where
         note = "Use detect_local_facet_issues() + repair_local_facet_issues() for localized O(k·D) repair."
     )]
     #[allow(clippy::too_many_lines)]
-    pub fn fix_invalid_facet_sharing(&mut self) -> Result<usize, TriangulationValidationError>
+    pub fn fix_invalid_facet_sharing(&mut self) -> Result<usize, TdsValidationError>
     where
         K::Scalar: crate::geometry::traits::coordinate::CoordinateScalar + Div<Output = K::Scalar>,
     {
@@ -2183,7 +2266,7 @@ where
             eprintln!("Repairs complete, rebuilding all neighbor pointers...");
 
             repair_neighbor_pointers(&mut self.tds).map_err(|e| {
-                TriangulationValidationError::InconsistentDataStructure {
+                TdsValidationError::InconsistentDataStructure {
                     message: format!("repair_neighbor_pointers failed after repairs: {e}"),
                 }
             })?;

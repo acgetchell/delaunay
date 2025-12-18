@@ -6,7 +6,7 @@ use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
 use crate::core::traits::facet_cache::FacetCacheProvider;
 use crate::core::triangulation::Triangulation;
-use crate::core::triangulation_data_structure::TriangulationValidationError;
+use crate::core::triangulation_data_structure::TdsValidationError;
 use crate::core::util::derive_facet_key_from_vertex_keys;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
@@ -74,7 +74,7 @@ pub enum ConvexHullConstructionError {
     #[error("Failed to extract boundary facets from triangulation: {source}")]
     BoundaryFacetExtractionFailed {
         /// The underlying validation error that caused the failure.
-        source: TriangulationValidationError,
+        source: TdsValidationError,
     },
     /// Failed to check facet visibility from a point.
     #[error("Failed to check facet visibility from point: {source}")]
@@ -114,14 +114,14 @@ pub enum ConvexHullConstructionError {
     FacetCacheBuildFailed {
         /// The underlying triangulation validation error.
         #[source]
-        source: TriangulationValidationError,
+        source: TdsValidationError,
     },
     /// Failed to resolve adjacent cell vertices for visibility testing.
     #[error("Failed to resolve adjacent cell: {source}")]
     AdjacentCellResolutionFailed {
         /// The underlying triangulation validation error.
         #[source]
-        source: TriangulationValidationError,
+        source: TdsValidationError,
     },
     /// Failed to access facet data during convex hull construction.
     #[error("Failed to access facet data during convex hull construction: {source}")]
@@ -1560,7 +1560,7 @@ mod tests {
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
     use crate::core::traits::facet_cache::FacetCacheProvider;
     use crate::core::triangulation_data_structure::{
-        TriangulationConstructionError, TriangulationValidationError,
+        TdsValidationError, TriangulationConstructionError,
     };
     use crate::core::util::{derive_facet_key_from_vertex_keys, facet_view_to_vertices};
     use crate::geometry::kernel::FastKernel;
@@ -4633,7 +4633,7 @@ mod tests {
         // by creating a synthetic error (we can't easily trigger the actual error path
         // with a valid TDS, but we can verify the error type is properly defined)
         let synthetic_error = ConvexHullConstructionError::AdjacentCellResolutionFailed {
-            source: TriangulationValidationError::InconsistentDataStructure {
+            source: TdsValidationError::InconsistentDataStructure {
                 message: "Test error for adjacent cell resolution".to_string(),
             },
         };
@@ -4843,7 +4843,7 @@ mod tests {
         println!("  Testing ConvexHullConstructionError variants...");
 
         let boundary_error = ConvexHullConstructionError::BoundaryFacetExtractionFailed {
-            source: TriangulationValidationError::InconsistentDataStructure {
+            source: TdsValidationError::InconsistentDataStructure {
                 message: "Test boundary extraction failure".to_string(),
             },
         };
