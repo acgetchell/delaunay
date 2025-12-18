@@ -495,7 +495,9 @@ fn test_collinear_points_2d() {
     assert!(
         matches!(
             result,
-            Err(TriangulationConstructionError::GeometricDegeneracy { .. })
+            Err(DelaunayTriangulationConstructionError::Triangulation(
+                TriangulationConstructionError::GeometricDegeneracy { .. },
+            ))
         ),
         "Expected GeometricDegeneracy error for collinear points, got: {result:?}"
     );

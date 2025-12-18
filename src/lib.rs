@@ -214,7 +214,7 @@
 //! - **Initial simplex construction** - The first D+1 affinely independent vertices are used
 //!   to create an initial valid simplex using robust orientation predicates. If no
 //!   non-degenerate simplex can be formed, construction fails with
-//!   [`TriangulationConstructionError::GeometricDegeneracy`](core::triangulation_data_structure::TriangulationConstructionError::GeometricDegeneracy).
+//!   [`TriangulationConstructionError::GeometricDegeneracy`](core::triangulation::TriangulationConstructionError::GeometricDegeneracy).
 //!
 //! - **Incremental insertion** - Each subsequent vertex is inserted using a cavity-based
 //!   algorithm that:
@@ -277,7 +277,7 @@
 //!
 //! When the input vertices cannot form a non-degenerate simplex (for example, when all points
 //! are collinear in 2D), construction fails during initial simplex construction with
-//! [`TriangulationConstructionError::GeometricDegeneracy`](core::triangulation_data_structure::TriangulationConstructionError::GeometricDegeneracy).
+//! [`TriangulationConstructionError::GeometricDegeneracy`](core::triangulation::TriangulationConstructionError::GeometricDegeneracy).
 //! This occurs because degenerate simplices (collinear in 2D, coplanar in 3D, etc.) are detected
 //! early using robust orientation predicates before any topology is built.
 //!
@@ -298,7 +298,9 @@
 //! // Collinear points fail during initial simplex construction due to degeneracy
 //! assert!(matches!(
 //!     result,
-//!     Err(TriangulationConstructionError::GeometricDegeneracy { .. })
+//!     Err(DelaunayTriangulationConstructionError::Triangulation(
+//!         TriangulationConstructionError::GeometricDegeneracy { .. },
+//!     ))
 //! ));
 //! ```
 //!

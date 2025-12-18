@@ -25,6 +25,35 @@ Level 4: Delaunay Property
 
 ---
 
+## Error Types by Layer
+
+The library separates **construction-time** failures from **validation-time** invariant violations, and also separates errors by layer.
+
+### Construction errors (building a triangulation)
+
+- `TdsConstructionError` (Level 2 construction): internal TDS insertion/mapping failures
+  (e.g. duplicate UUIDs).
+- `TriangulationConstructionError` (Level 3 construction): wraps `TdsConstructionError` and adds
+  triangulation-layer failures (e.g. `GeometricDegeneracy`, `DuplicateCoordinates`,
+  `InsufficientVertices`).
+- `DelaunayTriangulationConstructionError` (Level 4 construction): wraps
+  `TriangulationConstructionError`.
+
+### Validation errors (checking invariants)
+
+- `TdsValidationError` (Levels 1–2): element + structural invariants.
+- `TriangulationValidationError` (Level 3): wraps `TdsValidationError` and adds
+  manifold-with-boundary + Euler characteristic checks.
+- `DelaunayTriangulationValidationError` (Level 4): wraps `TriangulationValidationError` and adds
+  the empty-circumsphere (Delaunay) checks.
+
+### Reporting (full diagnostics)
+
+`DelaunayTriangulation::validation_report()` returns a `TriangulationValidationReport` containing an
+`InvariantError` union so reports can preserve the structured error from the layer that failed.
+
+---
+
 ## Level 1: Element Validity
 
 ### Purpose

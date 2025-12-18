@@ -1557,11 +1557,12 @@ pub type ConvexHull4D<K, U, V> = ConvexHull<K, U, V, 4>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::delaunay_triangulation::DelaunayTriangulation;
-    use crate::core::traits::facet_cache::FacetCacheProvider;
-    use crate::core::triangulation_data_structure::{
-        TdsValidationError, TriangulationConstructionError,
+    use crate::core::delaunay_triangulation::{
+        DelaunayTriangulation, DelaunayTriangulationConstructionError,
     };
+    use crate::core::traits::facet_cache::FacetCacheProvider;
+    use crate::core::triangulation::TriangulationConstructionError;
+    use crate::core::triangulation_data_structure::TdsValidationError;
     use crate::core::util::{derive_facet_key_from_vertex_keys, facet_view_to_vertices};
     use crate::geometry::kernel::FastKernel;
     use crate::vertex;
@@ -2689,7 +2690,9 @@ mod tests {
                         "Hull with {desc} coordinates should validate successfully"
                     );
                 }
-                Err(TriangulationConstructionError::GeometricDegeneracy { .. }) => {
+                Err(DelaunayTriangulationConstructionError::Triangulation(
+                    TriangulationConstructionError::GeometricDegeneracy { .. },
+                )) => {
                     // Extremely large/small/mixed coordinate sets may be rejected as
                     // numerically unstable by the robust initial simplex search.
                     // This is acceptable as long as it is surfaced as a clear
@@ -3661,7 +3664,9 @@ mod tests {
                     );
                 println!("  Extreme precision fallback result: {fallback_result:?}");
             }
-            Err(TriangulationConstructionError::GeometricDegeneracy { .. }) => {
+            Err(DelaunayTriangulationConstructionError::Triangulation(
+                TriangulationConstructionError::GeometricDegeneracy { .. },
+            )) => {
                 // On some platforms, these extreme coordinates may be judged too
                 // numerically unstable to form a reliable 3D simplex. In that
                 // case, it's acceptable for DelaunayTriangulation::new to fail with geometric

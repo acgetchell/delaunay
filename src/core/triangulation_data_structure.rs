@@ -276,35 +276,10 @@ impl Default for TriangulationConstructionState {
 // ERROR TYPES
 // =============================================================================
 
-/// Errors that can occur during triangulation construction.
+/// Errors that can occur during TDS construction operations.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
-pub enum TriangulationConstructionError {
-    /// Failed to create a cell during triangulation construction.
-    #[error("Failed to create cell during construction: {message}")]
-    FailedToCreateCell {
-        /// Description of the cell creation failure.
-        message: String,
-    },
-    /// Insufficient vertices to create a triangulation.
-    #[error("Insufficient vertices for {dimension}D triangulation: {source}")]
-    InsufficientVertices {
-        /// The dimension that was attempted.
-        dimension: usize,
-        /// The underlying cell validation error.
-        source: CellValidationError,
-    },
-    /// Failed to add vertex during triangulation construction.
-    #[error("Failed to add vertex during construction: {message}")]
-    FailedToAddVertex {
-        /// Description of the vertex addition failure.
-        message: String,
-    },
-    /// Geometric degeneracy prevents triangulation construction.
-    #[error("Geometric degeneracy encountered during construction: {message}")]
-    GeometricDegeneracy {
-        /// Description of the degeneracy issue.
-        message: String,
-    },
+#[non_exhaustive]
+pub enum TdsConstructionError {
     /// Validation error during construction.
     #[error("Validation error during construction: {0}")]
     ValidationError(#[from] TdsValidationError),
@@ -315,14 +290,6 @@ pub enum TriangulationConstructionError {
         entity: EntityKind,
         /// The UUID that was duplicated.
         uuid: Uuid,
-    },
-    /// Attempted to insert a vertex with coordinates that already exist.
-    #[error(
-        "Duplicate coordinates: vertex with coordinates {coordinates} already exists in the triangulation"
-    )]
-    DuplicateCoordinates {
-        /// String representation of the duplicate coordinates.
-        coordinates: String,
     },
 }
 
@@ -472,13 +439,34 @@ pub enum InvariantKind {
     DelaunayProperty,
 }
 
+/// A union error type that can represent any layer's validation failure.
+///
+/// This is used by [`TriangulationValidationReport`] so that diagnostic reporting can
+/// preserve structured errors from each layer (TDS / topology / Delaunay) without
+/// stringification.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum InvariantError {
+    /// Level 1–2 (elements + TDS structure).
+    #[error(transparent)]
+    Tds(#[from] TdsValidationError),
+
+    /// Level 3 (topology).
+    #[error(transparent)]
+    Triangulation(#[from] crate::core::triangulation::TriangulationValidationError),
+
+    /// Level 4 (Delaunay property).
+    #[error(transparent)]
+    Delaunay(#[from] crate::core::delaunay_triangulation::DelaunayTriangulationValidationError),
+}
+
 /// A single invariant violation recorded during validation diagnostics.
 #[derive(Clone, Debug)]
 pub struct InvariantViolation {
     /// The kind of invariant that failed.
     pub kind: InvariantKind,
     /// The detailed validation error explaining the failure.
-    pub error: TdsValidationError,
+    pub error: InvariantError,
 }
 
 /// Aggregate report of one or more validation failures.
@@ -1197,7 +1185,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns `TriangulationConstructionError::DuplicateUuid` if a vertex with the
+    /// Returns [`TdsConstructionError::DuplicateUuid`] if a vertex with the
     /// same UUID already exists in the triangulation.
     ///
     /// # Examples
@@ -1207,12 +1195,12 @@ where
     pub(crate) fn insert_vertex_with_mapping(
         &mut self,
         vertex: Vertex<T, U, D>,
-    ) -> Result<VertexKey, TriangulationConstructionError> {
+    ) -> Result<VertexKey, TdsConstructionError> {
         let vertex_uuid = vertex.uuid();
 
         // Use Entry API for atomic check-and-insert
         match self.uuid_to_vertex_key.entry(vertex_uuid) {
-            Entry::Occupied(_) => Err(TriangulationConstructionError::DuplicateUuid {
+            Entry::Occupied(_) => Err(TdsConstructionError::DuplicateUuid {
                 entity: EntityKind::Vertex,
                 uuid: vertex_uuid,
             }),
@@ -1243,7 +1231,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns `TriangulationConstructionError::DuplicateUuid` if a cell with the
+    /// Returns [`TdsConstructionError::DuplicateUuid`] if a cell with the
     /// same UUID already exists in the triangulation.
     ///
     /// # Examples
@@ -1253,7 +1241,7 @@ where
     pub(crate) fn insert_cell_with_mapping(
         &mut self,
         cell: Cell<T, U, V, D>,
-    ) -> Result<CellKey, TriangulationConstructionError> {
+    ) -> Result<CellKey, TdsConstructionError> {
         // Phase 3A: Validate structural invariants using vertices
         debug_assert_eq!(
             cell.number_of_vertices(),
@@ -1261,7 +1249,7 @@ where
             "Cell should have exactly D+1 vertices for quick failure in dev"
         );
         if cell.number_of_vertices() != D + 1 {
-            return Err(TriangulationConstructionError::ValidationError(
+            return Err(TdsConstructionError::ValidationError(
                 TriangulationValidationError::InconsistentDataStructure {
                     message: format!(
                         "Cell must have exactly {} vertices for {}-dimensional simplex, but has {}",
@@ -1276,7 +1264,7 @@ where
         // Phase 3A: Verify all vertex keys exist in the triangulation
         for &vkey in cell.vertices() {
             if !self.vertices.contains_key(vkey) {
-                return Err(TriangulationConstructionError::ValidationError(
+                return Err(TdsConstructionError::ValidationError(
                     TriangulationValidationError::InconsistentDataStructure {
                         message: format!(
                             "Cell references vertex key {vkey:?} that does not exist in the triangulation"
@@ -1290,7 +1278,7 @@ where
 
         // Use Entry API for atomic check-and-insert
         match self.uuid_to_cell_key.entry(cell_uuid) {
-            Entry::Occupied(_) => Err(TriangulationConstructionError::DuplicateUuid {
+            Entry::Occupied(_) => Err(TdsConstructionError::DuplicateUuid {
                 entity: EntityKind::Cell,
                 uuid: cell_uuid,
             }),
@@ -2844,7 +2832,12 @@ where
                     .into_iter()
                     .next()
                     .expect("validation_report returned an error with no violations");
-                Err(first.error)
+                match first.error {
+                    InvariantError::Tds(e) => Err(e),
+                    other => Err(TdsValidationError::InconsistentDataStructure {
+                        message: format!("Expected a TDS validation error, got: {other}"),
+                    }),
+                }
             }
         }
     }
@@ -2930,13 +2923,13 @@ where
         if let Err(e) = self.validate_vertex_mappings() {
             violations.push(InvariantViolation {
                 kind: InvariantKind::VertexMappings,
-                error: e,
+                error: e.into(),
             });
         }
         if let Err(e) = self.validate_cell_mappings() {
             violations.push(InvariantViolation {
                 kind: InvariantKind::CellMappings,
-                error: e,
+                error: e.into(),
             });
         }
 
@@ -2951,7 +2944,7 @@ where
         if let Err(e) = self.validate_no_duplicate_cells() {
             violations.push(InvariantViolation {
                 kind: InvariantKind::DuplicateCells,
-                error: e,
+                error: e.into(),
             });
         }
 
@@ -2959,7 +2952,7 @@ where
         if let Err(e) = self.validate_facet_sharing() {
             violations.push(InvariantViolation {
                 kind: InvariantKind::FacetSharing,
-                error: e,
+                error: e.into(),
             });
         }
 
@@ -2967,7 +2960,7 @@ where
         if let Err(e) = self.validate_neighbors() {
             violations.push(InvariantViolation {
                 kind: InvariantKind::NeighborConsistency,
-                error: e,
+                error: e.into(),
             });
         }
 
@@ -3503,10 +3496,12 @@ mod tests {
                 matches!(
                     result,
                     Err(InsertionError::Construction(
-                        TriangulationConstructionError::DuplicateUuid {
-                            entity: EntityKind::Vertex,
-                            ..
-                        }
+                        crate::core::triangulation::TriangulationConstructionError::Tds(
+                            TdsConstructionError::DuplicateUuid {
+                                entity: EntityKind::Vertex,
+                                ..
+                            },
+                        ),
                     ))
                 ),
                 "Same UUID with different coordinates should fail with DuplicateUuid"

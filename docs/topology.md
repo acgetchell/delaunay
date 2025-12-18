@@ -2,6 +2,9 @@
 
 This document outlines the design and implementation strategy for introducing topology analysis and validation into the delaunay triangulation library.
 
+> Note: Euler characteristic validation is implemented in `Triangulation::is_valid()` (Level 3).
+> Some sections below describe earlier plans and are marked as historical/superseded.
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -1372,7 +1375,24 @@ pub struct TopologyConfig {
 }
 ```
 
-### Integration Points
+### Current Integration (implemented)
+
+As of v0.6.x, Euler characteristic validation is integrated at the **Triangulation** layer (Level 3):
+
+- `Tds::is_valid()` / `Tds::validate()` cover element + structural invariants (Levels 1–2).
+- `Triangulation::is_valid()` adds topology checks (manifold-with-boundary + Euler characteristic).
+- `Triangulation::validate()` runs `Tds::validate()` first, then `Triangulation::is_valid()`.
+
+The implementation uses the topology module's helper:
+
+```rust
+// Simplified from src/core/triangulation.rs
+let topology = validate_triangulation_euler(&self.tds)?;
+```
+
+For the current user-facing behavior and error-type layering, see `docs/validation.md`.
+
+### Integration Points (historical / superseded)
 
 #### 1. Tds Integration
 

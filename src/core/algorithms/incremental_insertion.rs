@@ -28,9 +28,8 @@ use crate::core::collections::{
 use crate::core::facet::FacetHandle;
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation_data_structure::{
-    CellKey, Tds, TriangulationConstructionError, VertexKey,
-};
+use crate::core::triangulation::TriangulationConstructionError;
+use crate::core::triangulation_data_structure::{CellKey, Tds, VertexKey};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateScalar;

@@ -87,7 +87,7 @@ use crate::core::algorithms::incremental_insertion::{
     InsertionError, InsertionOutcome, InsertionResult, InsertionStatistics,
     repair_neighbor_pointers,
 };
-use crate::core::cell::Cell;
+use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::{
     CellKeyBuffer, CellKeySet, FacetIssuesMap, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE,
     SmallBuffer, ValidCellsBuffer, VertexKeySet,
@@ -95,8 +95,8 @@ use crate::core::collections::{
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation_data_structure::{
-    CellKey, InvariantKind, InvariantViolation, Tds, TdsValidationError,
-    TriangulationConstructionError, TriangulationValidationReport, VertexKey,
+    CellKey, InvariantError, InvariantKind, InvariantViolation, Tds, TdsConstructionError,
+    TdsValidationError, TriangulationValidationReport, VertexKey,
 };
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
@@ -115,6 +115,54 @@ use thiserror::Error;
 /// This limit prevents infinite loops in the rare case where repair cannot make progress.
 /// In practice, most insertions require 0-2 iterations to restore manifold topology.
 const MAX_REPAIR_ITERATIONS: usize = 10;
+
+/// Errors that can occur during triangulation construction.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TriangulationConstructionError {
+    /// Lower-layer construction error in the TDS.
+    #[error(transparent)]
+    Tds(#[from] TdsConstructionError),
+
+    /// Failed to create a cell during triangulation construction.
+    #[error("Failed to create cell during construction: {message}")]
+    FailedToCreateCell {
+        /// Description of the cell creation failure.
+        message: String,
+    },
+
+    /// Insufficient vertices to create a triangulation.
+    #[error("Insufficient vertices for {dimension}D triangulation: {source}")]
+    InsufficientVertices {
+        /// The dimension that was attempted.
+        dimension: usize,
+        /// The underlying cell validation error.
+        source: CellValidationError,
+    },
+
+    /// Failed to add vertex during triangulation construction.
+    #[error("Failed to add vertex during construction: {message}")]
+    FailedToAddVertex {
+        /// Description of the vertex addition failure.
+        message: String,
+    },
+
+    /// Geometric degeneracy prevents triangulation construction.
+    #[error("Geometric degeneracy encountered during construction: {message}")]
+    GeometricDegeneracy {
+        /// Description of the degeneracy issue.
+        message: String,
+    },
+
+    /// Attempted to insert a vertex with coordinates that already exist.
+    #[error(
+        "Duplicate coordinates: vertex with coordinates {coordinates} already exists in the triangulation"
+    )]
+    DuplicateCoordinates {
+        /// String representation of the duplicate coordinates.
+        coordinates: String,
+    },
+}
 
 /// Errors that can occur during triangulation topology validation (Level 3).
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -619,10 +667,10 @@ where
             if let Err(source) = (*vertex).is_valid() {
                 violations.push(InvariantViolation {
                     kind: InvariantKind::VertexValidity,
-                    error: TdsValidationError::InvalidVertex {
+                    error: InvariantError::Tds(TdsValidationError::InvalidVertex {
                         vertex_id: vertex.uuid(),
                         source,
-                    },
+                    }),
                 });
             }
         }
@@ -632,23 +680,19 @@ where
             if let Err(source) = cell.is_valid() {
                 violations.push(InvariantViolation {
                     kind: InvariantKind::CellValidity,
-                    error: TdsValidationError::InvalidCell {
+                    error: InvariantError::Tds(TdsValidationError::InvalidCell {
                         cell_id: cell.uuid(),
                         source,
-                    },
+                    }),
                 });
             }
         }
 
         // Level 3 (topology)
-        // TODO: Once the report error type can carry per-layer errors, preserve the
-        // structured topology error instead of stringifying it.
         if let Err(e) = self.is_valid() {
             violations.push(InvariantViolation {
                 kind: InvariantKind::Topology,
-                error: TdsValidationError::InconsistentDataStructure {
-                    message: format!("Topology validation failed: {e}"),
-                },
+                error: e.into(),
             });
         }
 
@@ -891,7 +935,7 @@ where
         // Assign incident cells to vertices (each vertex points to this one cell)
         // This is required for proper Tds structure
         tds.assign_incident_cells()
-            .map_err(TriangulationConstructionError::ValidationError)?;
+            .map_err(TdsConstructionError::ValidationError)?;
 
         Ok(tds)
     }
@@ -1273,7 +1317,10 @@ where
         }
 
         // 1. Insert vertex into Tds
-        let mut v_key = self.tds.insert_vertex_with_mapping(vertex)?;
+        let mut v_key = self
+            .tds
+            .insert_vertex_with_mapping(vertex)
+            .map_err(TriangulationConstructionError::from)?;
 
         // 2. Check if we need to bootstrap the initial simplex
         let num_vertices = self.tds.number_of_vertices();

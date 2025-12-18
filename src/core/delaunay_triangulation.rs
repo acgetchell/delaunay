@@ -15,10 +15,12 @@ use crate::core::algorithms::incremental_insertion::{
 use crate::core::cell::Cell;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation::{Triangulation, TriangulationValidationError};
+use crate::core::triangulation::{
+    Triangulation, TriangulationConstructionError, TriangulationValidationError,
+};
 use crate::core::triangulation_data_structure::{
-    CellKey, InvariantKind, InvariantViolation, Tds, TdsValidationError,
-    TriangulationConstructionError, TriangulationValidationReport, VertexKey,
+    CellKey, InvariantKind, InvariantViolation, Tds, TdsConstructionError, TdsValidationError,
+    TriangulationValidationReport, VertexKey,
 };
 use crate::core::util::DelaunayValidationError;
 use crate::core::vertex::Vertex;
@@ -28,6 +30,15 @@ use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateS
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 use uuid::Uuid;
+
+/// Errors that can occur during Delaunay triangulation construction.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DelaunayTriangulationConstructionError {
+    /// Lower-layer construction error (Triangulation / TDS).
+    #[error(transparent)]
+    Triangulation(#[from] TriangulationConstructionError),
+}
 
 /// Errors that can occur during Delaunay triangulation validation (Level 4).
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -152,7 +163,9 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     /// assert_eq!(dt.number_of_vertices(), 4);
     /// ```
-    pub fn new(vertices: &[Vertex<f64, (), D>]) -> Result<Self, TriangulationConstructionError> {
+    pub fn new(
+        vertices: &[Vertex<f64, (), D>],
+    ) -> Result<Self, DelaunayTriangulationConstructionError> {
         Self::with_kernel(FastKernel::<f64>::new(), vertices)
     }
 
@@ -273,7 +286,7 @@ where
     pub fn with_kernel(
         kernel: K,
         vertices: &[Vertex<K::Scalar, U, D>],
-    ) -> Result<Self, TriangulationConstructionError>
+    ) -> Result<Self, DelaunayTriangulationConstructionError>
     where
         K::Scalar: CoordinateScalar,
     {
@@ -285,7 +298,8 @@ where
                     expected: D + 1,
                     dimension: D,
                 },
-            });
+            }
+            .into());
         }
 
         // Build initial simplex directly (no Bowyer-Watson)
@@ -338,15 +352,21 @@ where
                             TriangulationConstructionError::FailedToCreateCell { message }
                         }
                         InsertionError::NeighborWiring { message } => {
-                            TriangulationConstructionError::ValidationError(
-                                TdsValidationError::InvalidNeighbors { message },
+                            TriangulationConstructionError::from(
+                                TdsConstructionError::ValidationError(
+                                    TdsValidationError::InvalidNeighbors { message },
+                                ),
                             )
                         }
                         InsertionError::TopologyValidation(source) => {
-                            TriangulationConstructionError::ValidationError(source)
+                            TriangulationConstructionError::from(
+                                TdsConstructionError::ValidationError(source),
+                            )
                         }
                         InsertionError::DuplicateUuid { entity, uuid } => {
-                            TriangulationConstructionError::DuplicateUuid { entity, uuid }
+                            TriangulationConstructionError::from(
+                                TdsConstructionError::DuplicateUuid { entity, uuid },
+                            )
                         }
                         InsertionError::DuplicateCoordinates { coordinates } => {
                             TriangulationConstructionError::DuplicateCoordinates { coordinates }
@@ -354,7 +374,8 @@ where
                         other => TriangulationConstructionError::GeometricDegeneracy {
                             message: other.to_string(),
                         },
-                    });
+                    }
+                    .into());
                 }
             }
         }
@@ -1136,14 +1157,10 @@ where
         }
 
         // Level 4 (Delaunay property)
-        // TODO: Once the report error type can carry per-layer errors, preserve the
-        // structured Delaunay error instead of stringifying it.
         if let Err(e) = self.is_valid() {
             violations.push(InvariantViolation {
                 kind: InvariantKind::DelaunayProperty,
-                error: TdsValidationError::InconsistentDataStructure {
-                    message: format!("Delaunay property validation failed: {e}"),
-                },
+                error: e.into(),
             });
         }
 
@@ -1535,7 +1552,9 @@ mod tests {
 
         assert!(result.is_err());
         match result {
-            Err(TriangulationConstructionError::InsufficientVertices { dimension, .. }) => {
+            Err(DelaunayTriangulationConstructionError::Triangulation(
+                TriangulationConstructionError::InsufficientVertices { dimension, .. },
+            )) => {
                 assert_eq!(dimension, 2);
             }
             _ => panic!("Expected InsufficientVertices error"),
@@ -1555,7 +1574,9 @@ mod tests {
 
         assert!(result.is_err());
         match result {
-            Err(TriangulationConstructionError::InsufficientVertices { dimension, .. }) => {
+            Err(DelaunayTriangulationConstructionError::Triangulation(
+                TriangulationConstructionError::InsufficientVertices { dimension, .. },
+            )) => {
                 assert_eq!(dimension, 3);
             }
             _ => panic!("Expected InsufficientVertices error"),

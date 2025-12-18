@@ -12,10 +12,12 @@ use std::ops::{AddAssign, SubAssign};
 
 use la_stack::{DEFAULT_PIVOT_TOL, LaError, Vector as LaVector};
 
-use crate::core::delaunay_triangulation::DelaunayTriangulation;
+use crate::core::delaunay_triangulation::{
+    DelaunayTriangulation, DelaunayTriangulationConstructionError,
+};
 use crate::core::facet::FacetView;
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation_data_structure::TriangulationConstructionError;
+use crate::core::triangulation::TriangulationConstructionError;
 use crate::core::vertex::{Vertex, VertexBuilder};
 use crate::geometry::kernel::FastKernel;
 use crate::geometry::matrix::{MatrixError, StackMatrixDispatchError, matrix_get, matrix_set};
@@ -2059,11 +2061,11 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
 ///
 /// A `Result` containing either:
 /// - `Ok(DelaunayTriangulation<FastKernel<T>, U, V, D>)` - The successfully created triangulation
-/// - `Err(TriangulationConstructionError)` - An error from point generation or triangulation construction
+/// - `Err(DelaunayTriangulationConstructionError)` - An error from point generation or triangulation construction
 ///
 /// # Errors
 ///
-/// Returns `TriangulationConstructionError` with different variants depending on the failure:
+/// Returns `DelaunayTriangulationConstructionError` with different variants depending on the failure:
 ///
 /// **Invalid parameters** (mapped to `GeometricDegeneracy`):
 /// - Point generation fails due to invalid bounds (e.g., `min > max`)
@@ -2162,7 +2164,7 @@ pub fn generate_random_triangulation<T, U, V, const D: usize>(
     bounds: (T, T),
     vertex_data: Option<U>,
     seed: Option<u64>,
-) -> Result<DelaunayTriangulation<FastKernel<T>, U, V, D>, TriangulationConstructionError>
+) -> Result<DelaunayTriangulation<FastKernel<T>, U, V, D>, DelaunayTriangulationConstructionError>
 where
     T: CoordinateScalar
         + SampleUniform

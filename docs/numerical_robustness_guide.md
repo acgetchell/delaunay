@@ -511,15 +511,19 @@ let dt_robust: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
 ```rust
 use delaunay::prelude::*;
 use delaunay::geometry::kernel::{FastKernel, RobustKernel};
-use delaunay::core::triangulation_data_structure::TriangulationConstructionError;
 use delaunay::core::vertex::Vertex;
 
 pub fn create_triangulation_with_fallback(
-    vertices: &[Vertex<f64, (), 3>]
-) -> Result<DelaunayTriangulation<RobustKernel<f64>, (), (), 3>, TriangulationConstructionError> {
+    vertices: &[Vertex<f64, (), 3>],
+) -> Result<
+    DelaunayTriangulation<RobustKernel<f64>, (), (), 3>,
+    DelaunayTriangulationConstructionError,
+> {
     // Strategy 1: Try fast kernel first for performance
-    let fast_result: Result<DelaunayTriangulation<FastKernel<f64>, (), (), 3>, _> =
-        DelaunayTriangulation::new(vertices);
+    let fast_result: Result<
+        DelaunayTriangulation<FastKernel<f64>, (), (), 3>,
+        DelaunayTriangulationConstructionError,
+    > = DelaunayTriangulation::new(vertices);
     
     if fast_result.is_ok() {
         println!("Fast kernel succeeded");
