@@ -1179,8 +1179,87 @@ where
             // Clone TDS for rollback (transactional semantics)
             let tds_snapshot = self.tds.clone();
 
-            // Try insertion
-            let result = self.try_insert_impl(current_vertex, conflict_cells, hint);
+            // Try insertion.
+            //
+            // Debug-only safety net: ensure we don't commit an insertion that breaks Level 3 topology.
+            // If the cavity-based insertion produces an Euler/topology mismatch, roll back and retry a
+            // conservative fallback (star-split of the containing cell) within the same transactional attempt.
+            let result = match self.try_insert_impl(current_vertex, conflict_cells, hint) {
+                Ok(ok) => {
+                    #[cfg(debug_assertions)]
+                    {
+                        // Skip Level 3 validation during bootstrap (vertices but no cells yet).
+                        if self.tds.number_of_cells() > 0 {
+                            if let Err(validation_err) = self.is_valid() {
+                                // Roll back to snapshot and attempt a star-split fallback for interior points.
+                                self.tds = tds_snapshot.clone();
+
+                                let point = *current_vertex.point();
+                                let location = crate::core::algorithms::locate::locate(
+                                    &self.tds,
+                                    &self.kernel,
+                                    &point,
+                                    hint,
+                                );
+
+                                if let Ok(
+                                    crate::core::algorithms::locate::LocateResult::InsideCell(
+                                        start_cell,
+                                    ),
+                                ) = location
+                                {
+                                    let mut star_conflict = CellKeyBuffer::new();
+                                    star_conflict.push(start_cell);
+
+                                    match self.try_insert_impl(
+                                        current_vertex,
+                                        Some(&star_conflict),
+                                        hint,
+                                    ) {
+                                        Ok(fallback_ok) => {
+                                            if self.tds.number_of_cells() > 0 {
+                                                if let Err(fallback_validation_err) =
+                                                    self.is_valid()
+                                                {
+                                                    Err(InsertionError::TopologyValidation(
+                                                        TdsValidationError::InconsistentDataStructure {
+                                                            message: format!(
+                                                                "Topology invalid after star-split fallback: {fallback_validation_err}"
+                                                            ),
+                                                        },
+                                                    ))
+                                                } else {
+                                                    Ok(fallback_ok)
+                                                }
+                                            } else {
+                                                Ok(fallback_ok)
+                                            }
+                                        }
+                                        Err(fallback_err) => Err(fallback_err),
+                                    }
+                                } else {
+                                    Err(InsertionError::TopologyValidation(
+                                        TdsValidationError::InconsistentDataStructure {
+                                            message: format!(
+                                                "Topology invalid after insertion: {validation_err}"
+                                            ),
+                                        },
+                                    ))
+                                }
+                            } else {
+                                Ok(ok)
+                            }
+                        } else {
+                            Ok(ok)
+                        }
+                    }
+                    #[cfg(not(debug_assertions))]
+                    {
+                        Ok(ok)
+                    }
+                }
+                Err(e) => Err(e),
+            };
 
             match result {
                 Ok((result, cells_removed)) => {
@@ -1353,15 +1432,43 @@ where
         let location = locate(&self.tds, &self.kernel, &point, hint)?;
 
         // 4. Compute conflict cells if not provided (for interior points)
-        let conflict_cells_owned;
+        let mut conflict_cells_owned: CellKeyBuffer;
         let conflict_cells = match (location, conflict_cells) {
             (LocateResult::InsideCell(start_cell), None) => {
-                // Interior point: compute conflict region automatically
+                // Interior point: compute conflict region automatically.
+                //
+                // IMPORTANT:
+                // `find_conflict_region()` (Bowyer–Watson style) can legitimately return an empty
+                // set when the point lies inside the triangulation but is not strictly inside any
+                // existing cell circumsphere (e.g., obtuse tetrahedra whose circumsphere does not
+                // contain all interior points).
+                //
+                // An empty conflict region would produce an empty cavity boundary, create no new
+                // cells, and leave the inserted vertex isolated (not incident to any cell), which
+                // breaks Level 3 topology validation via Euler characteristic.
+                //
+                // Fallback: treat the containing cell as the conflict region, effectively performing
+                // a star-split of that cell to keep the simplicial complex connected.
                 conflict_cells_owned =
                     find_conflict_region(&self.tds, &self.kernel, &point, start_cell)?;
+                if conflict_cells_owned.is_empty() {
+                    conflict_cells_owned.push(start_cell);
+                }
                 Some(&conflict_cells_owned)
             }
-            (LocateResult::InsideCell(_), Some(cells)) => Some(cells), // Use provided
+            (LocateResult::InsideCell(start_cell), Some(cells)) => {
+                // If the caller provided an empty conflict region (can happen if the Delaunay layer
+                // computes conflicts using a strict in-sphere test), we must still replace at least
+                // one cell; otherwise we'd create no cavity, no new cells, and leave a dangling
+                // vertex (χ increases by 1, typically showing up as χ=2 for Ball(3)).
+                if cells.is_empty() {
+                    conflict_cells_owned = CellKeyBuffer::new();
+                    conflict_cells_owned.push(start_cell);
+                    Some(&conflict_cells_owned)
+                } else {
+                    Some(cells)
+                }
+            }
             (LocateResult::Outside, _) => None, // Hull extension doesn't need conflict region
             (location, _) => {
                 // Degenerate locations (OnFacet, OnEdge, OnVertex)
@@ -1375,13 +1482,39 @@ where
 
         // 5. Handle different location results
         match location {
-            LocateResult::InsideCell(_start_cell) => {
+            LocateResult::InsideCell(start_cell) => {
                 // Interior vertex: use computed or provided conflict_cells
                 let conflict_cells =
                     conflict_cells.expect("conflict_cells should be computed above");
+                let mut conflict_cells = conflict_cells;
 
                 // 5. Extract cavity boundary
-                let boundary_facets = extract_cavity_boundary(&self.tds, conflict_cells)?;
+                let mut boundary_facets = extract_cavity_boundary(&self.tds, conflict_cells)?;
+
+                // Fallback: never allow an interior insertion to create a dangling vertex.
+                //
+                // If the boundary is empty, `fill_cavity()` would create zero cells, leaving the
+                // inserted vertex isolated (increases χ by 1; observed as χ=2 for Ball(3)).
+                // In that case, force a star-split of the containing cell.
+                if boundary_facets.is_empty() {
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "WARNING: empty cavity boundary for interior insertion; falling back to splitting containing cell {start_cell:?}"
+                    );
+
+                    conflict_cells_owned = CellKeyBuffer::new();
+                    conflict_cells_owned.push(start_cell);
+                    conflict_cells = &conflict_cells_owned;
+
+                    boundary_facets = (0..=D)
+                        .map(|i| {
+                            crate::core::facet::FacetHandle::new(
+                                start_cell,
+                                u8::try_from(i).expect("facet index must fit in u8"),
+                            )
+                        })
+                        .collect();
+                }
 
                 // 6. Fill cavity BEFORE removing old cells
                 let new_cells = fill_cavity(&mut self.tds, v_key, &boundary_facets)?;
@@ -1450,68 +1583,96 @@ where
                 #[cfg(debug_assertions)]
                 eprintln!("After repair loop (interior): total_removed={total_removed}");
 
-                if total_removed > 0 {
-                    // Double-check that facet sharing is actually valid
-                    let facet_valid = self.tds.validate_facet_sharing().is_ok();
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "Before assign_neighbors (interior): facet_sharing_valid={facet_valid}, cells={}",
-                        self.tds.number_of_cells()
-                    );
+                // After interior insertion we ALWAYS removed the conflict region (step 8),
+                // which can leave broken/None neighbor pointers in surviving cells.
+                // Even if the subsequent non-manifold repair loop removed 0 cells,
+                // we still must repair neighbor pointers to ensure the cavity is glued.
+                //
+                // Double-check that facet sharing is valid before repairing neighbors.
+                let facet_valid = self.tds.validate_facet_sharing().is_ok();
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "Before repair_neighbor_pointers (interior): facet_sharing_valid={facet_valid}, cells={}",
+                    self.tds.number_of_cells()
+                );
 
-                    if !facet_valid {
-                        return Err(InsertionError::CavityFilling {
-                            message: "Facet sharing still invalid after repairs - cannot safely rebuild neighbors".to_string(),
-                        });
+                if !facet_valid {
+                    return Err(InsertionError::CavityFilling {
+                        message: "Facet sharing invalid after insertion/repairs - cannot safely repair neighbors".to_string(),
+                    });
+                }
+
+                // Surgical reconstruction: fix broken/None pointers by facet matching.
+                repair_neighbor_pointers(&mut self.tds).map_err(|e| {
+                    InsertionError::CavityFilling {
+                        message: format!("Failed to repair neighbor pointers after insertion: {e}"),
                     }
+                })?;
 
-                    #[cfg(debug_assertions)]
-                    {
-                        // Check for duplicate cells
-                        let cell_count = self.tds.number_of_cells();
-                        let unique_cells: std::collections::HashSet<_> = self
-                            .tds
-                            .cells()
-                            .map(|(_, c)| c.vertices().to_vec())
-                            .collect();
-                        if unique_cells.len() != cell_count {
-                            eprintln!(
-                                "WARNING: {} duplicate cells detected before assign_neighbors",
-                                cell_count - unique_cells.len()
-                            );
-                        }
-                    }
+                // Validate neighbor pointers by forcing a full facet walk (no hint).
+                let _ = locate(&self.tds, &self.kernel, &point, None)?;
 
-                    // Use repair_neighbor_pointers for surgical reconstruction
-                    // This preserves existing correct pointers and only fixes broken ones
-                    repair_neighbor_pointers(&mut self.tds).map_err(|e| {
-                        InsertionError::CavityFilling {
-                            message: format!("Failed to rebuild neighbors after repairs: {e}"),
-                        }
+                // Always rebuild vertex→cell incidence after insertion.
+                self.tds
+                    .assign_incident_cells()
+                    .map_err(|e| InsertionError::CavityFilling {
+                        message: format!("Failed to assign incident cells after insertion: {e}"),
                     })?;
 
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "repair_neighbor_pointers completed (interior), assigning incident cells..."
-                    );
+                // If any vertex is not incident to a cell, topology is not a pure ball anymore
+                // (χ typically increases by 1 per isolated vertex). Treat as retryable degeneracy.
+                if self.tds.vertices().any(|(_, v)| v.incident_cell.is_none()) {
+                    return Err(InsertionError::TopologyValidation(
+                        TdsValidationError::InconsistentDataStructure {
+                            message:
+                                "Isolated vertex detected after insertion (vertex not in any cell)"
+                                    .to_string(),
+                        },
+                    ));
+                }
 
-                    self.tds.assign_incident_cells().map_err(|e| {
-                        InsertionError::CavityFilling {
-                            message: format!("Failed to assign incident cells after repairs: {e}"),
+                // Connectedness guard: a valid Ball(3) triangulation should be a single connected component.
+                // If the neighbor graph splits into multiple components, χ becomes additive (often χ=2).
+                let total_cells = self.tds.number_of_cells();
+                if total_cells > 0 {
+                    let start = self
+                        .tds
+                        .cell_keys()
+                        .next()
+                        .expect("number_of_cells() > 0 implies at least one cell key");
+                    let mut visited: std::collections::HashSet<CellKey> =
+                        std::collections::HashSet::with_capacity(total_cells);
+                    let mut stack: Vec<CellKey> = vec![start];
+
+                    while let Some(ck) = stack.pop() {
+                        if !visited.insert(ck) {
+                            continue;
                         }
-                    })?;
+                        if let Some(cell) = self.tds.get_cell(ck)
+                            && let Some(neighbors) = cell.neighbors()
+                        {
+                            for &n_opt in neighbors {
+                                if let Some(nk) = n_opt
+                                    && self.tds.contains_cell(nk)
+                                    && !visited.contains(&nk)
+                                {
+                                    stack.push(nk);
+                                }
+                            }
+                        }
+                    }
 
-                    // Validate neighbor pointers by forcing a full facet walk (no hint).
-                    // This uses locate's built-in cycle detection (tracks visited cells,
-                    // errors after 10k steps). Cost: O(D·log(n)) for one locate call.
-                    // If repair created cycles, there's a good chance they'll be encountered
-                    // during the walk to locate the just-inserted point.
-                    // Note: Debug builds also run validate_no_neighbor_cycles() in
-                    // repair_neighbor_pointers() for comprehensive O(n·D) BFS validation.
-                    let _ = locate(&self.tds, &self.kernel, &point, None)?;
-                } else {
-                    #[cfg(debug_assertions)]
-                    eprintln!("No cells removed (interior), skipping neighbor rebuild");
+                    if visited.len() != total_cells {
+                        return Err(InsertionError::TopologyValidation(
+                            TdsValidationError::InconsistentDataStructure {
+                                message: format!(
+                                    "Disconnected triangulation detected after insertion: visited {} of {} cells",
+                                    visited.len(),
+                                    total_cells
+                                ),
+                            },
+                        ));
+                    }
                 }
 
                 // Return vertex key and hint for next insertion
@@ -1602,15 +1763,67 @@ where
                             message: format!("Failed to rebuild neighbors after repairs: {e}"),
                         }
                     })?;
+                }
 
-                    #[cfg(debug_assertions)]
-                    eprintln!("repair_neighbor_pointers completed, assigning incident cells...");
-
-                    self.tds.assign_incident_cells().map_err(|e| {
-                        InsertionError::CavityFilling {
-                            message: format!("Failed to assign incident cells after repairs: {e}"),
-                        }
+                // Always rebuild vertex→cell incidence after insertion.
+                self.tds
+                    .assign_incident_cells()
+                    .map_err(|e| InsertionError::CavityFilling {
+                        message: format!("Failed to assign incident cells after insertion: {e}"),
                     })?;
+
+                // Detect isolated vertices and treat as retryable degeneracy.
+                if self.tds.vertices().any(|(_, v)| v.incident_cell.is_none()) {
+                    return Err(InsertionError::TopologyValidation(
+                        TdsValidationError::InconsistentDataStructure {
+                            message:
+                                "Isolated vertex detected after insertion (vertex not in any cell)"
+                                    .to_string(),
+                        },
+                    ));
+                }
+
+                // Connectedness guard: a valid Ball(3) triangulation should be a single connected component.
+                let total_cells = self.tds.number_of_cells();
+                if total_cells > 0 {
+                    let start = self
+                        .tds
+                        .cell_keys()
+                        .next()
+                        .expect("number_of_cells() > 0 implies at least one cell key");
+                    let mut visited: std::collections::HashSet<CellKey> =
+                        std::collections::HashSet::with_capacity(total_cells);
+                    let mut stack: Vec<CellKey> = vec![start];
+
+                    while let Some(ck) = stack.pop() {
+                        if !visited.insert(ck) {
+                            continue;
+                        }
+                        if let Some(cell) = self.tds.get_cell(ck)
+                            && let Some(neighbors) = cell.neighbors()
+                        {
+                            for &n_opt in neighbors {
+                                if let Some(nk) = n_opt
+                                    && self.tds.contains_cell(nk)
+                                    && !visited.contains(&nk)
+                                {
+                                    stack.push(nk);
+                                }
+                            }
+                        }
+                    }
+
+                    if visited.len() != total_cells {
+                        return Err(InsertionError::TopologyValidation(
+                            TdsValidationError::InconsistentDataStructure {
+                                message: format!(
+                                    "Disconnected triangulation detected after insertion: visited {} of {} cells",
+                                    visited.len(),
+                                    total_cells
+                                ),
+                            },
+                        ));
+                    }
                 }
 
                 // Return vertex key and hint for next insertion
@@ -1656,8 +1869,7 @@ where
     /// if the removal cannot be completed while maintaining triangulation invariants.
     ///
     /// (Note: `TdsMutationError` is currently an alias of
-    /// [`TdsValidationError`](crate::core::triangulation_data_structure::TdsValidationError); the
-    /// alias exists to make mutation call sites/docs more semantically explicit.)
+    /// [`TdsValidationError`]; the alias exists to make mutation call sites/docs more semantically explicit.)
     ///
     /// # Examples
     ///

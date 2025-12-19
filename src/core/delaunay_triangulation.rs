@@ -1094,6 +1094,13 @@ where
     /// This is useful when you've serialized just the `Tds` and want to reconstruct
     /// the `DelaunayTriangulation` with default kernel settings.
     ///
+    /// # Notes
+    ///
+    /// - The internal `last_inserted_cell` "locate hint" is intentionally **not** persisted
+    ///   across serialization boundaries. Constructing via `from_tds` (including the serde
+    ///   `Deserialize` impl below) always resets it to `None`. This can make the first few
+    ///   insertions after loading slightly slower, but is otherwise behaviorally irrelevant.
+    ///
     /// # Examples
     ///
     /// ```rust
@@ -1269,6 +1276,13 @@ where
 /// - It's the most common configuration (matches `DelaunayTriangulation::new()` default)
 /// - Rust doesn't allow overlapping `impl` blocks for generic types
 /// - Custom kernels are rare and can deserialize manually
+///
+/// # Note on Locate Hint Persistence
+///
+/// The internal `last_inserted_cell` "locate hint" is intentionally **not** serialized.
+/// Deserialization reconstructs a fresh triangulation via [`from_tds()`](Self::from_tds),
+/// which resets the hint to `None`. This only affects performance for the first few
+/// insertions after loading.
 ///
 /// # Usage with Custom Kernels
 ///
@@ -2172,6 +2186,10 @@ mod tests {
 
         assert_eq!(roundtrip.number_of_vertices(), dt.number_of_vertices());
         assert_eq!(roundtrip.number_of_cells(), dt.number_of_cells());
+
+        // `last_inserted_cell` is a performance-only locate hint and is intentionally not
+        // persisted across serde round-trips (it is reset to `None` in `from_tds`).
+        assert!(roundtrip.last_inserted_cell.is_none());
     }
 
     #[test]

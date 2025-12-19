@@ -84,15 +84,20 @@ fn dedup_vertices_by_coords<const D: usize>(
     unique
 }
 
-/// Conservative “general position” filter for 3D insertion-order tests.
+/// Conservative “general position” filter for the specialized 3D insertion-order property.
 ///
 /// This rejects point sets that contain *any* nearly-coplanar tetrahedron (4-point subset).
-/// The insertion algorithm can hit ridge-fan degeneracy/topology repair edge cases on such inputs,
-/// and the insertion-order robustness property is meant to exercise typical non-degenerate behavior.
+///
+/// Rationale:
+/// - Nearly-coplanar tetrahedra are a common proptest shrink target and correlate with 3D
+///   cavity-boundary ridge-fan degeneracy / topology-repair edge cases.
+/// - This property is specifically scoped to the “standard incremental path” where we want
+///   insertion-order invariance for **validation Levels 1–3** (elements + structure + topology),
+///   leaving degenerate/perturbation behavior to dedicated suites.
 fn has_no_nearly_coplanar_tetrahedra_3d(vertices: &[Vertex<f64, (), 3>]) -> bool {
     // Relative threshold: volume6 scales with L^3, so compare against scale^3.
-    // The constant is intentionally loose: we only want to drop “shrink-pathological”
-    // nearly-coplanar cases, not typical random inputs.
+    // Intentionally loose: we only want to drop “shrink-pathological” nearly-coplanar cases,
+    // not typical random inputs.
     const REL_EPS: f64 = 1e-12;
 
     fn sub(lhs: [f64; 3], rhs: [f64; 3]) -> [f64; 3] {
@@ -154,14 +159,17 @@ fn has_no_nearly_coplanar_tetrahedra_3d(vertices: &[Vertex<f64, (), 3>]) -> bool
     true
 }
 
-/// Conservative “general position” filter for 3D insertion-order tests.
+/// Conservative “general position” filter for the specialized 3D insertion-order property.
 ///
 /// Rejects point sets that contain any co-spherical degeneracy among 5 points.
 ///
-/// In a non-degenerate 3D Delaunay triangulation, no 5 points lie on the same sphere.
-/// Co-spherical inputs are exactly where the cavity boundary can become non-manifold
-/// (ridge fan: >2 boundary facets sharing an edge) and where insertion-order can change
-/// the chosen triangulation.
+/// Rationale:
+/// - In a non-degenerate 3D Delaunay triangulation, no 5 points lie on the same sphere.
+/// - Co-spherical inputs are exactly where the cavity boundary can become non-manifold
+///   (ridge fan: >2 boundary facets sharing an edge) and where insertion-order can change
+///   the chosen triangulation.
+/// - This property is intentionally scoped to a slice of 3D space where we expect insertion-order
+///   invariance for **validation Levels 1–3** without depending on perturbation heuristics.
 fn has_no_cospherical_5_tuples_3d(vertices: &[Vertex<f64, (), 3>]) -> bool {
     let n = vertices.len();
     if n < 5 {
@@ -218,6 +226,50 @@ fn has_no_cospherical_5_tuples_3d(vertices: &[Vertex<f64, (), 3>]) -> bool {
     true
 }
 
+/// Assert the layered validation contract we rely on in these properties:
+/// - Levels 1–3 only (elements + structure + topology)
+/// - Level 4 (Delaunay empty-circumsphere) is intentionally NOT asserted here
+macro_rules! prop_assert_levels_1_to_3_valid {
+    ($dim:expr, $dt:expr, $context:expr) => {{
+        let validation = ($dt).triangulation().validate();
+        prop_assert!(
+            validation.is_ok(),
+            "{}D: {} failed Levels 1–3 validation: {:?}",
+            $dim,
+            $context,
+            validation.err()
+        );
+    }};
+}
+
+/// 3D-only helper for the insertion-order robustness property: perform incremental insertion and
+/// classify whether the run stayed within the "no retry / no skip" scope.
+///
+/// This makes the contract explicit in the test: we only accept "clean" runs where insertion
+/// succeeded on the first attempt for every vertex and did not skip any input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InsertionOrder3dRunStatus {
+    Clean,
+    UsedRetryOrSkip,
+    NonRetryableError,
+}
+
+fn insert_vertices_3d_no_retry_or_skip(
+    dt: &mut DelaunayTriangulation<FastKernel<f64>, (), (), 3>,
+    vertices: &[Vertex<f64, (), 3>],
+) -> InsertionOrder3dRunStatus {
+    for v in vertices {
+        let Ok((outcome, stats)) = dt.insert_with_statistics(*v) else {
+            return InsertionOrder3dRunStatus::NonRetryableError;
+        };
+
+        if stats.attempts > 1 || matches!(outcome, InsertionOutcome::Skipped { .. }) {
+            return InsertionOrder3dRunStatus::UsedRetryOrSkip;
+        }
+    }
+    InsertionOrder3dRunStatus::Clean
+}
+
 // =============================================================================
 // INCREMENTAL INSERTION VALIDITY TESTS
 // =============================================================================
@@ -233,23 +285,11 @@ macro_rules! gen_incremental_insertion_validity {
                 ) {
                     let initial_vertices = Vertex::from_points(&initial_points);
                     if let Ok(mut dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&initial_vertices) {
-                        let validation = dt.triangulation().validate();
-                        prop_assert!(
-                            validation.is_ok(),
-                            "Initial {}D triangulation should be structurally valid (Levels 1–3): {:?}",
-                            $dim,
-                            validation.err()
-                        );
+                        prop_assert_levels_1_to_3_valid!($dim, &dt, "initial triangulation");
 
                         let additional_vertex = vertex!(additional_point);
                         if dt.insert(additional_vertex).is_ok() {
-                            let validation = dt.triangulation().validate();
-                            prop_assert!(
-                                validation.is_ok(),
-                                "{}D triangulation should remain structurally valid after insertion (Levels 1–3): {:?}",
-                                $dim,
-                                validation.err()
-                            );
+                            prop_assert_levels_1_to_3_valid!($dim, &dt, "after insertion");
                         }
                     }
                 }
@@ -457,13 +497,7 @@ macro_rules! gen_insertion_order_robustness_test {
                     prop_assume!(dt_a.is_ok());
                     let dt_a = dt_a.unwrap();
 
-                    let validation_a = dt_a.triangulation().validate();
-                    prop_assert!(
-                        validation_a.is_ok(),
-                        "{}D: Triangulation A should be structurally valid (Levels 1–3): {:?}",
-                        $dim,
-                        validation_a.err()
-                    );
+                    prop_assert_levels_1_to_3_valid!($dim, &dt_a, "Triangulation A");
 
                     // Build second triangulation with shuffled order
                     let mut rng = rand::rngs::StdRng::seed_from_u64(0x00DE_C0DE);
@@ -474,13 +508,7 @@ macro_rules! gen_insertion_order_robustness_test {
                     prop_assume!(dt_b.is_ok());
                     let dt_b = dt_b.unwrap();
 
-                    let validation_b = dt_b.triangulation().validate();
-                    prop_assert!(
-                        validation_b.is_ok(),
-                        "{}D: Triangulation B should be structurally valid (Levels 1–3): {:?}",
-                        $dim,
-                        validation_b.err()
-                    );
+                    prop_assert_levels_1_to_3_valid!($dim, &dt_b, "Triangulation B");
 
                     // Verify both triangulations have the same number of vertices
                     // With early degeneracy detection, different insertion orders may reject
@@ -569,56 +597,27 @@ proptest! {
         // Reject point sets with co-spherical 5-tuples (degenerate Delaunay cases).
         prop_assume!(has_no_cospherical_5_tuples_3d(&points));
 
-        // Build triangulation A by inserting incrementally and tracking retry/perturbation.
-        let mut dt_a: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
-        let mut a_used_retry_or_skip = false;
-        for v in &points {
-            let Ok((outcome, stats)) = dt_a.insert_with_statistics(*v) else {
-                // Non-retryable error: outside scope for this property.
-                prop_assume!(false);
-                return Ok(());
-            };
+        // Build triangulation A via incremental insertion, requiring a "clean run":
+        // - no retry/perturbation (stats.attempts == 1 for all insertions)
+        // - no skipped vertices
+        let mut dt_a: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+            DelaunayTriangulation::empty();
+        let run_a = insert_vertices_3d_no_retry_or_skip(&mut dt_a, &points);
+        prop_assume!(matches!(run_a, InsertionOrder3dRunStatus::Clean));
 
-            if stats.attempts > 1 || matches!(outcome, InsertionOutcome::Skipped { .. }) {
-                a_used_retry_or_skip = true;
-                break;
-            }
-        }
-        prop_assume!(!a_used_retry_or_skip);
-
-        let validation_a = dt_a.triangulation().validate();
-        prop_assert!(
-            validation_a.is_ok(),
-            "3D: Triangulation A should be structurally valid (Levels 1–3): {:?}",
-            validation_a.err()
-        );
+        prop_assert_levels_1_to_3_valid!(3, &dt_a, "Triangulation A (clean insertion run)");
 
         // Build triangulation B with shuffled order, same retry/skip rejection.
         let mut rng = rand::rngs::StdRng::seed_from_u64(0x00DE_C0DE);
         let mut points_shuffled = points;
         points_shuffled.shuffle(&mut rng);
 
-        let mut dt_b: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
-        let mut b_used_retry_or_skip = false;
-        for v in &points_shuffled {
-            let Ok((outcome, stats)) = dt_b.insert_with_statistics(*v) else {
-                prop_assume!(false);
-                return Ok(());
-            };
+        let mut dt_b: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+            DelaunayTriangulation::empty();
+        let run_b = insert_vertices_3d_no_retry_or_skip(&mut dt_b, &points_shuffled);
+        prop_assume!(matches!(run_b, InsertionOrder3dRunStatus::Clean));
 
-            if stats.attempts > 1 || matches!(outcome, InsertionOutcome::Skipped { .. }) {
-                b_used_retry_or_skip = true;
-                break;
-            }
-        }
-        prop_assume!(!b_used_retry_or_skip);
-
-        let validation_b = dt_b.triangulation().validate();
-        prop_assert!(
-            validation_b.is_ok(),
-            "3D: Triangulation B should be structurally valid (Levels 1–3): {:?}",
-            validation_b.err()
-        );
+        prop_assert_levels_1_to_3_valid!(3, &dt_b, "Triangulation B (clean insertion run)");
 
         // Both should have inserted all vertices (we reject Skipped cases above).
         prop_assert_eq!(
@@ -710,13 +709,7 @@ macro_rules! gen_duplicate_cloud_test {
                     };
 
                     // Structural/topological validity (Levels 1–3) for kept subset
-                    let structural = dt.triangulation().validate();
-                    prop_assert!(
-                        structural.is_ok(),
-                        "{}D triangulation should be structurally valid (Levels 1–3): {:?}",
-                        $dim,
-                        structural.err()
-                    );
+                    prop_assert_levels_1_to_3_valid!($dim, &dt, "triangulation (kept subset)");
 
                     // Delaunay validity (Level 4) for kept subset
                     let delaunay = dt.is_valid();

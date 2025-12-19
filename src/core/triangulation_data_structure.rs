@@ -58,19 +58,19 @@
 //!
 //! ## Invariant Enforcement
 //!
- //! | Invariant Type | Enforcement Location | Method |
- //! |---|---|---|
- //! | **Delaunay Property** | incremental insertion (`core::algorithms::incremental_insertion`) | Empty circumsphere test via `insphere()` (best-effort) |
- //! | **Facet Sharing** | `Tds::is_valid()` / `Tds::validate()` | Each facet shared by ≤ 2 cells |
- //! | **No Duplicate Cells** | `Tds::is_valid()` / `Tds::validate()` | No cells with identical vertex sets |
- //! | **Neighbor Consistency** | `Tds::is_valid()` / `Tds::validate()` | Mutual neighbor relationships |
- //! | **Cell Validity** | `CellBuilder::validate()` (vertex count) + `cell.is_valid()` (comprehensive) | Construction + runtime validation |
- //! | **Vertex Validity** | `Point::from()` (coordinates) + UUID auto-gen + `vertex.is_valid()` | Construction + runtime validation |
- //!
- //! The incremental insertion algorithm attempts to maintain the Delaunay property during
- //! construction, but rare violations can remain. Structural invariants are enforced
- //! **reactively** through validation methods. For a definitive Delaunay check, run
- //! Level 4 validation via `DelaunayTriangulation::is_valid()` / `DelaunayTriangulation::validate()`.
+//! | Invariant Type | Enforcement Location | Method |
+//! |---|---|---|
+//! | **Delaunay Property** | incremental insertion (`core::algorithms::incremental_insertion`) | Empty circumsphere test via `insphere()` (best-effort) |
+//! | **Facet Sharing** | `Tds::is_valid()` / `Tds::validate()` | Each facet shared by ≤ 2 cells |
+//! | **No Duplicate Cells** | `Tds::is_valid()` / `Tds::validate()` | No cells with identical vertex sets |
+//! | **Neighbor Consistency** | `Tds::is_valid()` / `Tds::validate()` | Mutual neighbor relationships |
+//! | **Cell Validity** | `CellBuilder::validate()` (vertex count) + `cell.is_valid()` (comprehensive) | Construction + runtime validation |
+//! | **Vertex Validity** | `Point::from()` (coordinates) + UUID auto-gen + `vertex.is_valid()` | Construction + runtime validation |
+//!
+//! The incremental insertion algorithm attempts to maintain the Delaunay property during
+//! construction, but rare violations can remain. Structural invariants are enforced
+//! **reactively** through validation methods. For a definitive Delaunay check, run
+//! Level 4 validation via `DelaunayTriangulation::is_valid()` / `DelaunayTriangulation::validate()`.
 //!
 //! # Validation
 //!
@@ -85,9 +85,9 @@
 //!    - No duplicate cells
 //!    - Facet sharing invariant (≤2 cells per facet)
 //!    - Neighbor consistency
-//! 3. **Level 3: Manifold Topology** - [`Triangulation::is_valid()`](crate::core::triangulation::Triangulation::is_valid)
+//! 3. **Level 3: Manifold Topology** - [`Triangulation::is_valid()`]
 //!    - Builds on Level 2, adds manifold-with-boundary + Euler characteristic
-//! 4. **Level 4: Delaunay Property** - [`DelaunayTriangulation::is_valid()`](crate::core::delaunay_triangulation::DelaunayTriangulation::is_valid)
+//! 4. **Level 4: Delaunay Property** - [`DelaunayTriangulation::is_valid()`]
 //!    - Empty circumsphere property
 //!
 //! ## TDS Validation Methods
@@ -96,7 +96,7 @@
 //! - [`validate()`](Tds::validate) - Levels 1–2 (elements + structural); returns first error, stops early
 //!
 //! For cumulative diagnostics across the full stack (Levels 1–4), use
-//! [`DelaunayTriangulation::validation_report()`](crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report).
+//! [`DelaunayTriangulation::validation_report()`].
 //!
 //! ## Example: Using Validation
 //!
@@ -135,6 +135,7 @@
 //! [`Vertex::is_valid()`]: crate::core::vertex::Vertex::is_valid
 //! [`Triangulation::is_valid()`]: crate::core::triangulation::Triangulation::is_valid
 //! [`DelaunayTriangulation::is_valid()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::is_valid
+//! [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
 //!
 //! # Examples
 //!
@@ -485,8 +486,10 @@ pub struct InvariantViolation {
 /// Aggregate report of one or more validation failures.
 ///
 /// This is returned by
-/// [`DelaunayTriangulation::validation_report`](crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report)
+/// [`DelaunayTriangulation::validation_report()`]
 /// to surface all failed invariants at once for debugging and test diagnostics.
+///
+/// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
 #[derive(Clone, Debug)]
 pub struct TriangulationValidationReport {
     /// The ordered list of invariant violations that occurred.
@@ -1341,11 +1344,12 @@ where
         &self,
         cell_key: CellKey,
     ) -> Result<VertexKeyBuffer, TdsValidationError> {
-        let cell = self.cells.get(cell_key).ok_or_else(|| {
-            TdsError::InconsistentDataStructure {
+        let cell = self
+            .cells
+            .get(cell_key)
+            .ok_or_else(|| TdsError::InconsistentDataStructure {
                 message: format!("Cell key {cell_key:?} not found in cells storage map"),
-            }
-        })?;
+            })?;
 
         // Phase 3A: Cell now stores vertex keys directly
         // Validate and collect keys in one pass to avoid redundant iteration
@@ -2036,11 +2040,12 @@ where
             });
         }
 
-        let cell = self.cells.get(cell_key).ok_or_else(|| {
-            TdsError::InconsistentDataStructure {
+        let cell = self
+            .cells
+            .get(cell_key)
+            .ok_or_else(|| TdsError::InconsistentDataStructure {
                 message: format!("Cell key {cell_key:?} not found"),
-            }
-        })?;
+            })?;
 
         let cell_vertices = cell.vertices();
 
@@ -2533,7 +2538,9 @@ where
     ///
     /// This corresponds to [`InvariantKind::VertexMappings`], which is included in
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
-    /// [`DelaunayTriangulation::validation_report`](crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report).
+    /// [`DelaunayTriangulation::validation_report()`].
+    ///
+    /// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
     ///
     /// # Errors
     ///
@@ -2599,7 +2606,9 @@ where
     ///
     /// This corresponds to [`InvariantKind::CellMappings`], which is included in
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
-    /// [`DelaunayTriangulation::validation_report`](crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report).
+    /// [`DelaunayTriangulation::validation_report()`].
+    ///
+    /// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
     ///
     /// # Errors
     ///
@@ -2698,7 +2707,9 @@ where
     ///
     /// This corresponds to [`InvariantKind::DuplicateCells`], which is included in
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
-    /// [`DelaunayTriangulation::validation_report`](crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report).
+    /// [`DelaunayTriangulation::validation_report()`].
+    ///
+    /// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
     fn validate_no_duplicate_cells(&self) -> Result<(), TdsValidationError> {
         // Use CellVertexUuidBuffer as HashMap key directly to avoid extra Vec allocation
         // Pre-size to avoid rehashing during insertion (minor optimization for hot path)
@@ -2709,11 +2720,11 @@ where
         for (cell_key, cell) in &self.cells {
             // Use Cell::vertex_uuids() helper to avoid duplicating VertexKey→UUID mapping logic
             // Convert CellValidationError to TdsValidationError for propagation
-            let mut vertex_uuids = cell.vertex_uuids(self).map_err(|e| {
-                TdsError::InconsistentDataStructure {
-                    message: format!("Failed to get vertex UUIDs for cell {cell_key:?}: {e}"),
-                }
-            })?;
+            let mut vertex_uuids =
+                cell.vertex_uuids(self)
+                    .map_err(|e| TdsError::InconsistentDataStructure {
+                        message: format!("Failed to get vertex UUIDs for cell {cell_key:?}: {e}"),
+                    })?;
 
             // Canonicalize by sorting UUIDs for backend-agnostic equality
             // Note: Don't sort by VertexKey as slotmap::Key's Ord is implementation-defined
@@ -2761,7 +2772,9 @@ where
     ///
     /// This corresponds to [`InvariantKind::FacetSharing`], which is included in
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
-    /// [`DelaunayTriangulation::validation_report`](crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report).
+    /// [`DelaunayTriangulation::validation_report()`].
+    ///
+    /// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
     pub(crate) fn validate_facet_sharing(&self) -> Result<(), TdsValidationError> {
         // Build a map from facet keys to the cells that contain them
         // Use the strict version to ensure we catch any missing vertex keys
@@ -2994,7 +3007,9 @@ where
     ///
     /// This corresponds to [`InvariantKind::NeighborConsistency`], which is included in
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
-    /// [`DelaunayTriangulation::validation_report`](crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report).
+    /// [`DelaunayTriangulation::validation_report()`].
+    ///
+    /// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
     fn validate_neighbors(&self) -> Result<(), TdsValidationError> {
         // Pre-compute vertex keys for all cells to avoid repeated computation
         let mut cell_vertices: CellVerticesMap = fast_hash_map_with_capacity(self.cells.len());
@@ -3917,10 +3932,7 @@ mod tests {
             .push_vertex_key(invalid_vkey);
 
         let err = tds.assign_neighbors().unwrap_err();
-        assert!(matches!(
-            err,
-            TdsError::VertexKeyRetrievalFailed { .. }
-        ));
+        assert!(matches!(err, TdsError::VertexKeyRetrievalFailed { .. }));
     }
 
     #[test]
@@ -3943,10 +3955,7 @@ mod tests {
             .unwrap();
 
         let err = tds.assign_neighbors().unwrap_err();
-        assert!(matches!(
-            err,
-            TdsError::InconsistentDataStructure { .. }
-        ));
+        assert!(matches!(err, TdsError::InconsistentDataStructure { .. }));
     }
 
     #[test]
@@ -4035,10 +4044,7 @@ mod tests {
         let err = tds
             .set_neighbors_by_key(cell1, &[Some(cell_far), None, None])
             .unwrap_err();
-        assert!(matches!(
-            err,
-            TdsError::InvalidNeighbors { .. }
-        ));
+        assert!(matches!(err, TdsError::InvalidNeighbors { .. }));
 
         // A true facet-neighbor (shares {v_a,v_b}) placed at the wrong facet index.
         let cell2 = tds
@@ -4047,10 +4053,7 @@ mod tests {
         let err = tds
             .set_neighbors_by_key(cell1, &[Some(cell2), None, None])
             .unwrap_err();
-        assert!(matches!(
-            err,
-            TdsError::InvalidNeighbors { .. }
-        ));
+        assert!(matches!(err, TdsError::InvalidNeighbors { .. }));
     }
 
     #[test]
@@ -4158,10 +4161,7 @@ mod tests {
             .push_vertex_key(invalid_vkey);
 
         let err = tds.validate_cell_vertex_keys().unwrap_err();
-        assert!(matches!(
-            err,
-            TdsError::InconsistentDataStructure { .. }
-        ));
+        assert!(matches!(err, TdsError::InconsistentDataStructure { .. }));
 
         // Now wired into structural validation: is_valid() should fail early with the
         // more precise "missing vertex key" diagnostic.

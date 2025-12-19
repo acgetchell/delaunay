@@ -582,77 +582,93 @@ where
     use crate::core::collections::FastHasher;
     use std::hash::{Hash, Hasher};
 
-    // Convert conflict cells to set for O(1) lookup
+    // Empty conflict region => empty boundary
+    if conflict_cells.is_empty() {
+        return Ok(SmallBuffer::new());
+    }
+
+    // IMPORTANT:
+    // We intentionally do NOT rely on neighbor pointers to classify boundary facets here.
+    //
+    // Neighbor pointers can be temporarily incomplete during incremental updates (e.g., after
+    // cell removal or before a full neighbor repair). If we rely on `cell.neighbors()` and a
+    // shared facet between two conflict cells is missing a neighbor pointer, that facet will be
+    // misclassified as a boundary facet. This can introduce internal boundary components and
+    // break Level-3 Euler/topology validation (observed as χ=2 for Ball(3)).
+    //
+    // Instead, classify facets purely by facet incidence *within the conflict region*:
+    // - A facet is on the cavity boundary iff it is incident to exactly 1 conflict cell.
     let conflict_set: FastHashSet<CellKey> = conflict_cells.iter().copied().collect();
 
-    // Use a set to deduplicate boundary facets by their canonical vertex keys
-    // Deduplication prevents creating multiple identical cells in fill_cavity
-    let mut facet_set: FastHashSet<u64> = FastHashSet::default();
+    // facet_hash -> all (cell_key, facet_index) pairs in the conflict region that contain the facet
+    let mut facet_to_conflict: FastHashMap<u64, Vec<(CellKey, u8)>> = FastHashMap::default();
+
+    for &cell_key in &conflict_set {
+        let cell = tds
+            .get_cell(cell_key)
+            .ok_or(ConflictError::InvalidStartCell { cell_key })?;
+
+        let facet_count = cell.number_of_vertices(); // D+1 facets
+        for facet_idx in 0..facet_count {
+            // Compute canonical facet hash: sorted vertex keys excluding the opposite vertex.
+            let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+            for (i, &vkey) in cell.vertices().iter().enumerate() {
+                if i != facet_idx {
+                    facet_vkeys.push(vkey);
+                }
+            }
+            facet_vkeys.sort_unstable();
+
+            let mut hasher = FastHasher::default();
+            for &vkey in &facet_vkeys {
+                vkey.hash(&mut hasher);
+            }
+            let facet_hash = hasher.finish();
+
+            let facet_idx_u8 =
+                u8::try_from(facet_idx).map_err(|_| ConflictError::VertexRetrievalFailed {
+                    cell_key,
+                    message: format!("Facet index {facet_idx} exceeds u8::MAX"),
+                })?;
+
+            facet_to_conflict
+                .entry(facet_hash)
+                .or_default()
+                .push((cell_key, facet_idx_u8));
+        }
+    }
+
     let mut boundary_facets = SmallBuffer::new();
-    let mut duplicate_count = 0;
 
     // Track ridge incidence for detecting ridge fans
     // Map: ridge_hash -> (ridge_vertex_count, number_of_facets_sharing_this_ridge)
     let mut ridge_map: FastHashMap<u64, (usize, usize)> = FastHashMap::default();
 
-    // Examine each cell in the conflict region
-    for &cell_key in conflict_cells {
-        let cell = tds
-            .get_cell(cell_key)
-            .ok_or(ConflictError::InvalidStartCell { cell_key })?;
+    for cell_facet_pairs in facet_to_conflict.values() {
+        match cell_facet_pairs.as_slice() {
+            // Exactly one conflict cell owns this facet => boundary facet
+            [(cell_key, facet_idx_u8)] => {
+                boundary_facets.push(FacetHandle::new(*cell_key, *facet_idx_u8));
 
-        // Check each facet of the cell
-        let facet_count = cell.number_of_vertices(); // D+1 facets
-        for facet_idx in 0..facet_count {
-            // Get neighbor across this facet
-            let neighbor_opt = cell
-                .neighbors()
-                .and_then(|neighbors| neighbors.get(facet_idx))
-                .and_then(|&opt_key| opt_key);
+                // Track ridge incidence for fan detection on boundary facets.
+                let cell = tds
+                    .get_cell(*cell_key)
+                    .ok_or(ConflictError::InvalidStartCell {
+                        cell_key: *cell_key,
+                    })?;
 
-            // Boundary facet if:
-            // 1. No neighbor (hull facet), OR
-            // 2. Neighbor exists but is NOT in conflict
-            let is_boundary =
-                neighbor_opt.is_none_or(|neighbor_key| !conflict_set.contains(&neighbor_key));
+                let facet_idx = usize::from(*facet_idx_u8);
 
-            if is_boundary {
-                // Get facet vertices (all except opposite vertex at facet_idx)
+                // Rebuild facet vertex keys (canonical) for ridge analysis.
                 let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
                 for (i, &vkey) in cell.vertices().iter().enumerate() {
                     if i != facet_idx {
                         facet_vkeys.push(vkey);
                     }
                 }
-
-                // Sort to get canonical representation
                 facet_vkeys.sort_unstable();
 
-                // Compute facet hash
-                let mut hasher = FastHasher::default();
-                for &vkey in &facet_vkeys {
-                    vkey.hash(&mut hasher);
-                }
-                let facet_hash = hasher.finish();
-
-                // Check for duplicates
-                if facet_set.contains(&facet_hash) {
-                    duplicate_count += 1;
-                    continue; // Skip duplicate
-                }
-
-                // Insert into set and buffer
-                facet_set.insert(facet_hash);
-                let facet_idx_u8 =
-                    u8::try_from(facet_idx).map_err(|_| ConflictError::VertexRetrievalFailed {
-                        cell_key,
-                        message: format!("Facet index {facet_idx} exceeds u8::MAX"),
-                    })?;
-                boundary_facets.push(FacetHandle::new(cell_key, facet_idx_u8));
-
-                // Track ridge incidence for fan detection
-                // A ridge is a (D-2)-simplex, which is the facet with one more vertex removed
-                // For each facet, check all possible ridges (D different ridges per facet)
+                // A ridge is a (D-2)-simplex: remove one more vertex from this (D-1)-facet.
                 if facet_vkeys.len() >= 2 {
                     for ridge_idx in 0..facet_vkeys.len() {
                         let mut ridge_vkeys =
@@ -677,17 +693,21 @@ where
                     }
                 }
             }
+
+            // Two conflict cells share this facet => internal facet (not on boundary)
+            [_, _] => {}
+
+            // >2 conflict cells share this facet => non-manifold (should be impossible in valid TDS)
+            // Treat as a retryable degeneracy.
+            many => {
+                return Err(ConflictError::DuplicateBoundaryFacets {
+                    count: many.len().saturating_sub(2),
+                });
+            }
         }
     }
 
-    // Check for duplicate facets (geometric degeneracy)
-    if duplicate_count > 0 {
-        return Err(ConflictError::DuplicateBoundaryFacets {
-            count: duplicate_count,
-        });
-    }
-
-    // Check for ridge fans (many facets sharing same ridge)
+    // Check for ridge fans (many boundary facets sharing same ridge)
     // In a manifold boundary, a ridge should be shared by at most 2 facets
     // More than 2 indicates a degenerate fan configuration
     for (ridge_vertex_count, facet_count) in ridge_map.values() {
