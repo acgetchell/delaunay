@@ -1163,12 +1163,22 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
-        let mut violations: Vec<InvariantViolation> = Vec::new();
-
         // Levels 1–3: reuse the Triangulation layer report.
         match self.tri.validation_report() {
-            Ok(()) => {}
-            Err(report) => {
+            Ok(()) => {
+                // Level 4 (Delaunay property)
+                if let Err(e) = self.is_valid() {
+                    return Err(TriangulationValidationReport {
+                        violations: vec![InvariantViolation {
+                            kind: InvariantKind::DelaunayProperty,
+                            error: e.into(),
+                        }],
+                    });
+                }
+                Ok(())
+            }
+            Err(mut report) => {
+                // If mappings are inconsistent, return the lower-layer report unchanged.
                 if report.violations.iter().any(|v| {
                     matches!(
                         v.kind,
@@ -1177,22 +1187,21 @@ where
                 }) {
                     return Err(report);
                 }
-                violations.extend(report.violations);
+
+                // Level 4 (Delaunay property)
+                if let Err(e) = self.is_valid() {
+                    report.violations.push(InvariantViolation {
+                        kind: InvariantKind::DelaunayProperty,
+                        error: e.into(),
+                    });
+                }
+
+                if report.violations.is_empty() {
+                    Ok(())
+                } else {
+                    Err(report)
+                }
             }
-        }
-
-        // Level 4 (Delaunay property)
-        if let Err(e) = self.is_valid() {
-            violations.push(InvariantViolation {
-                kind: InvariantKind::DelaunayProperty,
-                error: e.into(),
-            });
-        }
-
-        if violations.is_empty() {
-            Ok(())
-        } else {
-            Err(TriangulationValidationReport { violations })
         }
     }
 

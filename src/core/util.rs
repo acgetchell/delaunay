@@ -1661,7 +1661,7 @@ where
 /// ```
 #[deprecated(
     since = "0.6.1",
-    note = "Use DelaunayTriangulation::is_valid() (Level 4) or DelaunayTriangulation::validate() (Levels 1-4). This will be removed in v0.7.0."
+    note = "Use `DelaunayTriangulation::is_valid()` for Delaunay property validation (Level 4) or `DelaunayTriangulation::validate()` for layered validation (Levels 1-4). This will be removed in v0.7.0."
 )]
 pub fn is_delaunay<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,

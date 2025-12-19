@@ -511,16 +511,45 @@ macro_rules! gen_insertion_order_robustness_test {
 // Generate tests for 2D-5D
 gen_insertion_order_robustness_test!(2, 6, 10);
 
-// 3D is specialized below to add a “near-coplanar tetrahedra” filter that avoids
-// ridge-fan degeneracy cases which can break topology/Euler validation.
-// (The generic filter based on x_i == 0.0 is not sufficient.)
+// 3D is specialized below because 3D incremental insertion has a larger surface area
+// for “almost-degenerate” inputs to trigger topology-repair edge cases (e.g. ridge-fan
+// non-manifold cavity boundaries when points are nearly coplanar or nearly cospherical).
+//
+// Why this test is more complex than 2D/4D/5D:
+// - We want a *pure insertion-order robustness* signal for typical (non-degenerate) 3D inputs.
+// - Proptest shrinking aggressively produces nearly-coplanar / nearly-cospherical configurations,
+//   and those cases are known to correlate with occasional Level-3 (topology/Euler) validation failures.
+// - The insertion algorithm sometimes resolves degeneracy by retrying with perturbation. Those
+//   runs are useful for robustness tracking, but they add noise to this property (and can make the
+//   test “pass/fail” depend more on perturbation heuristics than on insertion order).
+//
+// Coverage note:
+// - The filters below intentionally trade breadth for determinism and debuggability.
+// - Degenerate/perturbation paths are exercised elsewhere (see e.g. [`tests/check_perturbation_stats.rs`](tests/check_perturbation_stats.rs:1)
+//   and the curated edge-case suites in [`tests/delaunay_edge_cases.rs`](tests/delaunay_edge_cases.rs:1) / [`tests/delaunay_incremental_insertion.rs`](tests/delaunay_incremental_insertion.rs:1)).
+// - If these filters start rejecting a large fraction of generated cases, that is a signal
+//   to improve the generator or to strengthen the underlying 3D robustness (rather than to
+//   further weaken the property).
 proptest! {
-    /// Property: Delaunay triangulations remain valid across different insertion orders (3D),
-    /// restricted to point sets without nearly-coplanar tetrahedra.
+    /// Property: Delaunay triangulations remain structurally valid across different insertion orders (3D).
     ///
-    /// NOTE: We additionally reject any run that required retry/perturbation during insertion.
-    /// Those cases are explicitly logged by the insertion algorithm as "degenerate geometry requiring perturbation"
-    /// and are known to correlate with occasional Level-3 topology/Euler validation failures.
+    /// Scope/rationale (3D-specific):
+    /// - We restrict to “general position” point sets by rejecting:
+    ///   - nearly-coplanar tetrahedra (4-point subsets) and
+    ///   - co-spherical 5-tuples (non-unique Delaunay / non-manifold cavity boundaries).
+    /// - We additionally reject any run that required retry/perturbation during insertion.
+    ///
+    /// Interpretation:
+    /// - This property is intended to catch *order-dependent topology/structure bugs* in the
+    ///   standard incremental path, not to validate the perturbation machinery itself.
+    /// - When the insertion code reports "degenerate geometry requiring perturbation", we treat that
+    ///   run as “out of scope” for this test because the resulting behavior can legitimately depend
+    ///   on heuristic choices (and historically correlates with sporadic Level-3 Euler/topology failures).
+    ///
+    /// Limitation:
+    /// - Because we filter, this test does not measure robustness on degenerate inputs. Those cases
+    ///   should be covered by targeted tests that assert the expected perturbation/retry behavior and
+    ///   then validate the post-perturbation triangulation separately.
     #[test]
     fn prop_insertion_order_robustness_3d(
         points in prop::collection::vec(

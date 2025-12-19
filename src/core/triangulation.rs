@@ -1652,11 +1652,12 @@ where
     ///
     /// # Errors
     ///
-    /// Returns error if:
-    /// - Cavity extraction fails
-    /// - Fan triangulation fails
-    /// - Neighbor wiring fails
-    /// - Vertex removal fails
+    /// Returns [`TdsMutationError`](crate::core::triangulation_data_structure::TdsMutationError)
+    /// if the removal cannot be completed while maintaining triangulation invariants.
+    ///
+    /// (Note: `TdsMutationError` is currently an alias of
+    /// [`TdsValidationError`](crate::core::triangulation_data_structure::TdsValidationError); the
+    /// alias exists to make mutation call sites/docs more semantically explicit.)
     ///
     /// # Examples
     ///
@@ -1679,7 +1680,7 @@ where
     pub fn remove_vertex(
         &mut self,
         vertex: &Vertex<K::Scalar, U, D>,
-    ) -> Result<usize, crate::core::triangulation_data_structure::TdsValidationError>
+    ) -> Result<usize, crate::core::triangulation_data_structure::TdsMutationError>
     where
         K::Scalar: CoordinateScalar,
     {
