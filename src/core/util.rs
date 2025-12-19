@@ -69,9 +69,11 @@ pub enum DelaunayValidationError {
         source: TdsValidationError,
     },
     /// Invalid cell structure detected during validation.
-    #[error("Invalid cell: {source}")]
+    #[error("Invalid cell {cell_key:?}: {source}")]
     InvalidCell {
-        /// The underlying cell error
+        /// The key of the invalid cell.
+        cell_key: CellKey,
+        /// The underlying cell error.
         #[source]
         source: CellValidationError,
     },
@@ -1557,7 +1559,7 @@ where
 
     // Validate cell structure first
     cell.is_valid()
-        .map_err(|source| DelaunayValidationError::InvalidCell { source })?;
+        .map_err(|source| DelaunayValidationError::InvalidCell { cell_key, source })?;
 
     // Get the cell's vertex set for exclusion
     let cell_vertex_keys: SmallVec<[VertexKey; 8]> = cell.vertices().iter().copied().collect();

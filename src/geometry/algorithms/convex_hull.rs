@@ -70,7 +70,7 @@ pub enum ConvexHullValidationError {
 /// Errors that can occur during convex hull construction.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum ConvexHullConstructionError {
-    /// Failed to extract boundary facets from the triangulation.
+    /// Failed to extract boundary facets from the triangulation due to a TDS validation failure.
     #[error("Failed to extract boundary facets from triangulation: {source}")]
     BoundaryFacetExtractionFailed {
         /// The underlying TDS validation error that caused the failure.
@@ -110,14 +110,14 @@ pub enum ConvexHullConstructionError {
     /// Coordinate conversion error occurred during geometric computations.
     #[error("Coordinate conversion error: {0}")]
     CoordinateConversion(#[from] CoordinateConversionError),
-    /// Failed to build facet cache during convex hull operations.
+    /// Failed to build facet cache due to a TDS validation failure.
     #[error("Failed to build facet cache: {source}")]
     FacetCacheBuildFailed {
         /// The underlying TDS validation error.
         #[source]
         source: TdsValidationError,
     },
-    /// Failed to resolve adjacent cell vertices for visibility testing.
+    /// Failed to resolve adjacent cell vertices for visibility testing due to a TDS validation failure.
     #[error("Failed to resolve adjacent cell: {source}")]
     AdjacentCellResolutionFailed {
         /// The underlying TDS validation error.
@@ -3674,7 +3674,7 @@ mod tests {
                 // degeneracy; later parts of this test still exercise max-scale
                 // behavior.
                 println!(
-                    "  \x1b[33mWarning:\x1b[0m skipping MIN_POSITIVE extreme simplex due to geometric degeneracy",
+                    "  \\x1b[33mWarning:\\x1b[0m skipping MIN_POSITIVE extreme simplex due to geometric degeneracy",
                 );
             }
             Err(other) => {

@@ -2655,7 +2655,6 @@ where
     ///
     /// Returns `TdsValidationError::InconsistentDataStructure` if any cell
     /// references a vertex key that doesn't exist in the vertices `storage map`.
-    #[allow(dead_code)]
     fn validate_cell_vertex_keys(&self) -> Result<(), TdsValidationError> {
         for (cell_key, cell) in &self.cells {
             let cell_uuid = cell.uuid();
@@ -2821,6 +2820,11 @@ where
         // For full diagnostics across all structural invariants, use `validation_report()`.
         self.validate_vertex_mappings()?;
         self.validate_cell_mappings()?;
+
+        // Defensive: ensure no cell references a stale/missing vertex key before
+        // higher-level structural checks that assume key validity.
+        self.validate_cell_vertex_keys()?;
+
         self.validate_no_duplicate_cells()?;
         self.validate_facet_sharing()?;
         self.validate_neighbors()?;
@@ -4145,6 +4149,15 @@ mod tests {
         assert!(matches!(
             err,
             TriangulationValidationError::InconsistentDataStructure { .. }
+        ));
+
+        // Now wired into structural validation: is_valid() should fail early with the
+        // more precise "missing vertex key" diagnostic.
+        let err = tds.is_valid().unwrap_err();
+        assert!(matches!(
+            err,
+            TriangulationValidationError::InconsistentDataStructure { message }
+                if message.contains("references non-existent vertex key")
         ));
     }
 }

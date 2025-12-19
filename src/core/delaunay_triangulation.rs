@@ -1017,9 +1017,16 @@ where
             DelaunayValidationError::TriangulationState { source } => {
                 TriangulationValidationError::from(source).into()
             }
-            DelaunayValidationError::InvalidCell { source } => {
+            DelaunayValidationError::InvalidCell { cell_key, source } => {
+                // Attach the best-available cell UUID (nil only if mapping is unavailable).
+                let cell_uuid = self
+                    .tri
+                    .tds
+                    .cell_uuid_from_key(cell_key)
+                    .unwrap_or_else(Uuid::nil);
+
                 TriangulationValidationError::from(TdsValidationError::InvalidCell {
-                    cell_id: Uuid::nil(),
+                    cell_id: cell_uuid,
                     source,
                 })
                 .into()

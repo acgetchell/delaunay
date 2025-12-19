@@ -1925,6 +1925,9 @@ where
     ///     .detect_local_facet_issues(&cell_keys)
     ///     .unwrap();
     /// assert!(issues.is_none());
+    ///
+    /// // Note: This method is most useful for checking newly created cells
+    /// // after insertion/removal operations (see usage in insert_transactional).
     /// ```
     pub fn detect_local_facet_issues(
         &self,
@@ -2033,6 +2036,10 @@ where
     ///     .unwrap();
     /// assert_eq!(removed, 0);
     /// ```
+    ///
+    /// In practice, this method is typically called with issues detected by
+    /// [`detect_local_facet_issues`](Self::detect_local_facet_issues) after insertion/removal
+    /// operations. See `insert_transactional` for a typical usage pattern.
     pub fn repair_local_facet_issues(
         &mut self,
         issues: &FacetIssuesMap,
