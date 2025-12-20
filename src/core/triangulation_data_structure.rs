@@ -1866,7 +1866,7 @@ where
 
     /// Removes a vertex and all cells containing it, maintaining data structure consistency.
     ///
-    /// This is an atomic operation that:
+    /// This is a composite operation that, on success:
     /// 1. Finds all cells containing the vertex
     /// 2. Removes all such cells
     /// 3. Rebuilds vertex-cell incidence to prevent dangling `incident_cell` pointers

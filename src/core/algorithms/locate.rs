@@ -17,9 +17,11 @@
 //!   International Journal of Foundations of Computer Science, 2001.
 //! - CGAL Triangulation_3 documentation
 
+use std::hash::{Hash, Hasher};
+
 use crate::core::collections::{
-    CellKeyBuffer, CellSecondaryMap, FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE,
-    SmallBuffer,
+    CavityBoundaryBuffer, CellKeyBuffer, CellSecondaryMap, FacetToCellsMap, FastHashMap,
+    FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
 };
 use crate::core::facet::FacetHandle;
 use crate::core::traits::data_type::DataType;
@@ -573,18 +575,15 @@ where
 pub fn extract_cavity_boundary<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     conflict_cells: &CellKeyBuffer,
-) -> Result<SmallBuffer<FacetHandle, 64>, ConflictError>
+) -> Result<CavityBoundaryBuffer, ConflictError>
 where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    use crate::core::collections::FastHasher;
-    use std::hash::{Hash, Hasher};
-
     // Empty conflict region => empty boundary
     if conflict_cells.is_empty() {
-        return Ok(SmallBuffer::new());
+        return Ok(CavityBoundaryBuffer::new());
     }
 
     // IMPORTANT:
@@ -600,8 +599,8 @@ where
     // - A facet is on the cavity boundary iff it is incident to exactly 1 conflict cell.
     let conflict_set: FastHashSet<CellKey> = conflict_cells.iter().copied().collect();
 
-    // facet_hash -> all (cell_key, facet_index) pairs in the conflict region that contain the facet
-    let mut facet_to_conflict: FastHashMap<u64, Vec<(CellKey, u8)>> = FastHashMap::default();
+    // facet_hash -> all facets in the conflict region that contain the facet
+    let mut facet_to_conflict: FacetToCellsMap = FacetToCellsMap::default();
 
     for &cell_key in &conflict_set {
         let cell = tds
@@ -634,11 +633,11 @@ where
             facet_to_conflict
                 .entry(facet_hash)
                 .or_default()
-                .push((cell_key, facet_idx_u8));
+                .push(FacetHandle::new(cell_key, facet_idx_u8));
         }
     }
 
-    let mut boundary_facets = SmallBuffer::new();
+    let mut boundary_facets = CavityBoundaryBuffer::new();
 
     // Track ridge incidence for detecting ridge fans
     // Map: ridge_hash -> (ridge_vertex_count, number_of_facets_sharing_this_ridge)
@@ -647,17 +646,17 @@ where
     for cell_facet_pairs in facet_to_conflict.values() {
         match cell_facet_pairs.as_slice() {
             // Exactly one conflict cell owns this facet => boundary facet
-            [(cell_key, facet_idx_u8)] => {
-                boundary_facets.push(FacetHandle::new(*cell_key, *facet_idx_u8));
+            [handle] => {
+                let cell_key = handle.cell_key();
+                let facet_idx_u8 = handle.facet_index();
+                boundary_facets.push(FacetHandle::new(cell_key, facet_idx_u8));
 
                 // Track ridge incidence for fan detection on boundary facets.
                 let cell = tds
-                    .get_cell(*cell_key)
-                    .ok_or(ConflictError::InvalidStartCell {
-                        cell_key: *cell_key,
-                    })?;
+                    .get_cell(cell_key)
+                    .ok_or(ConflictError::InvalidStartCell { cell_key })?;
 
-                let facet_idx = usize::from(*facet_idx_u8);
+                let facet_idx = usize::from(facet_idx_u8);
 
                 // Rebuild facet vertex keys (canonical) for ridge analysis.
                 let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();

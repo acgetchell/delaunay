@@ -250,7 +250,8 @@ macro_rules! prop_assert_levels_1_to_3_valid {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InsertionOrder3dRunStatus {
     Clean,
-    UsedRetryOrSkip,
+    UsedRetry,
+    UsedSkip,
     NonRetryableError,
 }
 
@@ -263,8 +264,12 @@ fn insert_vertices_3d_no_retry_or_skip(
             return InsertionOrder3dRunStatus::NonRetryableError;
         };
 
-        if stats.attempts > 1 || matches!(outcome, InsertionOutcome::Skipped { .. }) {
-            return InsertionOrder3dRunStatus::UsedRetryOrSkip;
+        if stats.attempts > 1 {
+            return InsertionOrder3dRunStatus::UsedRetry;
+        }
+
+        if matches!(outcome, InsertionOutcome::Skipped { .. }) {
+            return InsertionOrder3dRunStatus::UsedSkip;
         }
     }
     InsertionOrder3dRunStatus::Clean
@@ -558,44 +563,82 @@ gen_insertion_order_robustness_test!(2, 6, 10);
 // - If these filters start rejecting a large fraction of generated cases, that is a signal
 //   to improve the generator or to strengthen the underlying 3D robustness (rather than to
 //   further weaken the property).
-proptest! {
-    /// Property: Delaunay triangulations remain structurally valid across different insertion orders (3D).
-    ///
-    /// Scope/rationale (3D-specific):
-    /// - We restrict to “general position” point sets by rejecting:
-    ///   - nearly-coplanar tetrahedra (4-point subsets) and
-    ///   - co-spherical 5-tuples (non-unique Delaunay / non-manifold cavity boundaries).
-    /// - We additionally reject any run that required retry/perturbation during insertion.
-    ///
-    /// Interpretation:
-    /// - This property is intended to catch *order-dependent topology/structure bugs* in the
-    ///   standard incremental path, not to validate the perturbation machinery itself.
-    /// - When the insertion code reports "degenerate geometry requiring perturbation", we treat that
-    ///   run as “out of scope” for this test because the resulting behavior can legitimately depend
-    ///   on heuristic choices (and historically correlates with sporadic Level-3 Euler/topology failures).
-    ///
-    /// Limitation:
-    /// - Because we filter, this test does not measure robustness on degenerate inputs. Those cases
-    ///   should be covered by targeted tests that assert the expected perturbation/retry behavior and
-    ///   then validate the post-perturbation triangulation separately.
-    #[test]
-    fn prop_insertion_order_robustness_3d(
-        points in prop::collection::vec(
-            prop::array::uniform3(finite_coordinate()).prop_map(Point::new),
-            6..=10
-        ).prop_map(|pts| dedup_vertices_by_coords::<3>(Vertex::from_points(&pts)))
-    ) {
-        use rand::seq::SliceRandom;
-        use rand::SeedableRng;
+#[test]
+#[allow(clippy::too_many_lines)]
+fn prop_insertion_order_robustness_3d() {
+    use proptest::test_runner::{Config, TestCaseError, TestRunner};
+    use std::cell::RefCell;
 
-        // Require at least D+1 distinct vertices for valid simplices
-        prop_assume!(points.len() > 3);
+    /// Rejection-rate tracking for the specialized 3D insertion-order property.
+    ///
+    /// This is intentionally *metrics-only* (no hard thresholds) because:
+    /// - proptest seeds vary across runs, and
+    /// - this property is explicitly scoped via rejection filters.
+    ///
+    /// To print the summary (captured unless `cargo test -- --nocapture`):
+    ///   `DELAUNAY_PROPTEST_REJECT_STATS=1 cargo test prop_insertion_order_robustness_3d --test proptest_delaunay_triangulation -- --nocapture`
+    #[derive(Debug, Default)]
+    struct RejectStats {
+        generated: usize,
+        accepted: usize,
+
+        rejected_too_few_unique: usize,
+        rejected_nearly_coplanar: usize,
+        rejected_cospherical: usize,
+
+        rejected_run_a_used_retry: usize,
+        rejected_run_a_used_skip: usize,
+        rejected_run_a_non_retryable_error: usize,
+
+        rejected_run_b_used_retry: usize,
+        rejected_run_b_used_skip: usize,
+        rejected_run_b_non_retryable_error: usize,
+    }
+
+    let config = Config::default();
+    let target_cases = config.cases;
+    let mut runner = TestRunner::new(config);
+
+    let strategy = prop::collection::vec(
+        prop::array::uniform3(finite_coordinate()).prop_map(Point::new),
+        6..=10,
+    )
+    .prop_map(|pts| dedup_vertices_by_coords::<3>(Vertex::from_points(&pts)));
+
+    // `TestRunner::run` takes an `Fn` (not `FnMut`) closure, so use interior mutability to
+    // track rejection rates.
+    let stats = RefCell::new(RejectStats::default());
+
+    let run_result = runner.run(&strategy, |points| {
+        use rand::SeedableRng;
+        use rand::seq::SliceRandom;
+
+        let mut stats = stats.borrow_mut();
+        stats.generated += 1;
+
+        // Require at least D+1 distinct vertices for valid simplices.
+        if points.len() <= 3 {
+            stats.rejected_too_few_unique += 1;
+            return Err(TestCaseError::reject(
+                "3D: <4 unique points after dedup (out of scope)",
+            ));
+        }
 
         // Reject point sets that contain nearly-coplanar tetrahedra (4-point subsets).
-        prop_assume!(has_no_nearly_coplanar_tetrahedra_3d(&points));
+        if !has_no_nearly_coplanar_tetrahedra_3d(&points) {
+            stats.rejected_nearly_coplanar += 1;
+            return Err(TestCaseError::reject(
+                "3D: nearly-coplanar tetrahedron present (out of scope)",
+            ));
+        }
 
         // Reject point sets with co-spherical 5-tuples (degenerate Delaunay cases).
-        prop_assume!(has_no_cospherical_5_tuples_3d(&points));
+        if !has_no_cospherical_5_tuples_3d(&points) {
+            stats.rejected_cospherical += 1;
+            return Err(TestCaseError::reject(
+                "3D: co-spherical 5-tuple present (out of scope)",
+            ));
+        }
 
         // Build triangulation A via incremental insertion, requiring a "clean run":
         // - no retry/perturbation (stats.attempts == 1 for all insertions)
@@ -603,19 +646,59 @@ proptest! {
         let mut dt_a: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
             DelaunayTriangulation::empty();
         let run_a = insert_vertices_3d_no_retry_or_skip(&mut dt_a, &points);
-        prop_assume!(matches!(run_a, InsertionOrder3dRunStatus::Clean));
+        match run_a {
+            InsertionOrder3dRunStatus::Clean => {}
+            InsertionOrder3dRunStatus::UsedRetry => {
+                stats.rejected_run_a_used_retry += 1;
+                return Err(TestCaseError::reject(
+                    "3D: run A required retry/perturbation (out of scope)",
+                ));
+            }
+            InsertionOrder3dRunStatus::UsedSkip => {
+                stats.rejected_run_a_used_skip += 1;
+                return Err(TestCaseError::reject(
+                    "3D: run A skipped a vertex (out of scope)",
+                ));
+            }
+            InsertionOrder3dRunStatus::NonRetryableError => {
+                stats.rejected_run_a_non_retryable_error += 1;
+                return Err(TestCaseError::reject(
+                    "3D: run A hit non-retryable insertion error (out of scope)",
+                ));
+            }
+        }
 
         prop_assert_levels_1_to_3_valid!(3, &dt_a, "Triangulation A (clean insertion run)");
 
         // Build triangulation B with shuffled order, same retry/skip rejection.
         let mut rng = rand::rngs::StdRng::seed_from_u64(0x00DE_C0DE);
-        let mut points_shuffled = points;
+        let mut points_shuffled = points.clone();
         points_shuffled.shuffle(&mut rng);
 
         let mut dt_b: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
             DelaunayTriangulation::empty();
         let run_b = insert_vertices_3d_no_retry_or_skip(&mut dt_b, &points_shuffled);
-        prop_assume!(matches!(run_b, InsertionOrder3dRunStatus::Clean));
+        match run_b {
+            InsertionOrder3dRunStatus::Clean => {}
+            InsertionOrder3dRunStatus::UsedRetry => {
+                stats.rejected_run_b_used_retry += 1;
+                return Err(TestCaseError::reject(
+                    "3D: run B required retry/perturbation (out of scope)",
+                ));
+            }
+            InsertionOrder3dRunStatus::UsedSkip => {
+                stats.rejected_run_b_used_skip += 1;
+                return Err(TestCaseError::reject(
+                    "3D: run B skipped a vertex (out of scope)",
+                ));
+            }
+            InsertionOrder3dRunStatus::NonRetryableError => {
+                stats.rejected_run_b_non_retryable_error += 1;
+                return Err(TestCaseError::reject(
+                    "3D: run B hit non-retryable insertion error (out of scope)",
+                ));
+            }
+        }
 
         prop_assert_levels_1_to_3_valid!(3, &dt_b, "Triangulation B (clean insertion run)");
 
@@ -626,12 +709,66 @@ proptest! {
             "3D: both triangulations should insert the same number of vertices"
         );
 
-        // Both should have at least D+1 vertices (valid simplex)
+        // Both should have at least D+1 vertices (valid simplex).
         let verts_a = dt_a.number_of_vertices();
         let verts_b = dt_b.number_of_vertices();
-        prop_assert!(verts_a > 3, "3D: Triangulation A should have > {} vertices, got {}", 3, verts_a);
-        prop_assert!(verts_b > 3, "3D: Triangulation B should have > {} vertices, got {}", 3, verts_b);
+        prop_assert!(
+            verts_a > 3,
+            "3D: Triangulation A should have > {} vertices, got {}",
+            3,
+            verts_a
+        );
+        prop_assert!(
+            verts_b > 3,
+            "3D: Triangulation B should have > {} vertices, got {}",
+            3,
+            verts_b
+        );
+
+        stats.accepted += 1;
+        Ok(())
+    });
+
+    // Emit a one-line reject summary on demand (or automatically if the run aborted).
+    let print_stats =
+        std::env::var_os("DELAUNAY_PROPTEST_REJECT_STATS").is_some() || run_result.is_err();
+
+    let stats = stats.into_inner();
+
+    if print_stats {
+        let generated = stats.generated.max(1);
+
+        // Report acceptance rate as a percentage with 2 decimals using integer arithmetic
+        // (avoids `usize as f64` precision-loss lints under strict clippy settings).
+        //
+        // percent_x100: 100.00% => 10_000
+        let acceptance_rate_percent_x100: u128 =
+            (stats.accepted as u128 * 10_000u128) / (generated as u128);
+        let acceptance_rate_whole = acceptance_rate_percent_x100 / 100;
+        let acceptance_rate_frac = acceptance_rate_percent_x100 % 100;
+
+        let rejected_total = stats.generated.saturating_sub(stats.accepted);
+
+        eprintln!(
+            "prop_insertion_order_robustness_3d reject stats: target_cases={target_cases} generated={} accepted={} acceptance_rate={}.{:02}% rejected_total={} too_few_unique={} nearly_coplanar={} cospherical={} run_a(retry={}, skip={}, err={}) run_b(retry={}, skip={}, err={})",
+            stats.generated,
+            stats.accepted,
+            acceptance_rate_whole,
+            acceptance_rate_frac,
+            rejected_total,
+            stats.rejected_too_few_unique,
+            stats.rejected_nearly_coplanar,
+            stats.rejected_cospherical,
+            stats.rejected_run_a_used_retry,
+            stats.rejected_run_a_used_skip,
+            stats.rejected_run_a_non_retryable_error,
+            stats.rejected_run_b_used_retry,
+            stats.rejected_run_b_used_skip,
+            stats.rejected_run_b_non_retryable_error
+        );
     }
+
+    run_result.unwrap();
 }
 
 gen_insertion_order_robustness_test!(4, 6, 12);

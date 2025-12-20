@@ -78,37 +78,41 @@
 
 use core::iter::Sum;
 use core::ops::{AddAssign, Div, SubAssign};
+use std::borrow::Cow;
 use std::cmp::Ordering as CmpOrdering;
+use std::hash::{Hash, Hasher};
 
-use num_traits::{NumCast, Zero};
+use num_traits::{Float, NumCast, One, Zero};
+use thiserror::Error;
 use uuid::Uuid;
 
 use crate::core::algorithms::incremental_insertion::{
-    InsertionError, InsertionOutcome, InsertionResult, InsertionStatistics,
-    repair_neighbor_pointers,
+    InsertionError, InsertionOutcome, InsertionResult, InsertionStatistics, extend_hull,
+    fill_cavity, repair_neighbor_pointers, wire_cavity_neighbors,
+};
+use crate::core::algorithms::locate::{
+    LocateResult, extract_cavity_boundary, find_conflict_region, locate,
 };
 use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::{
-    CellKeyBuffer, CellKeySet, FacetIssuesMap, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE,
-    SmallBuffer, ValidCellsBuffer, VertexKeySet,
+    CavityBoundaryBuffer, CellKeyBuffer, CellKeySet, FacetIssuesMap, FacetToCellsMap, FastHasher,
+    MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, ValidCellsBuffer, VertexKeySet,
 };
-use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
+use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter, FacetHandle};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation_data_structure::{
     CellKey, InvariantError, InvariantKind, InvariantViolation, Tds, TdsConstructionError,
-    TdsValidationError, TriangulationValidationReport, VertexKey,
+    TdsMutationError, TdsValidationError, TriangulationValidationReport, VertexKey,
 };
-use crate::core::vertex::Vertex;
+use crate::core::vertex::{Vertex, VertexBuilder};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::quality::radius_ratio;
-use crate::geometry::traits::coordinate::CoordinateScalar;
+use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
 use crate::geometry::util::safe_scalar_to_f64;
 use crate::topology::characteristics::euler::TopologyClassification;
 use crate::topology::characteristics::validation::validate_triangulation_euler;
 use crate::topology::traits::topological_space::TopologyError;
-use std::hash::{Hash, Hasher};
-use thiserror::Error;
 
 /// Maximum number of repair iterations for fixing non-manifold topology after insertion.
 ///
@@ -702,8 +706,6 @@ where
     /// Validates that all facets in the triangulation satisfy the manifold property,
     /// and that boundary facets correspond to "outside" adjacency.
     fn validate_manifold_facets(&self) -> Result<(), TriangulationValidationError> {
-        use crate::core::collections::FacetToCellsMap;
-
         let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
 
         for (facet_key, cell_facet_pairs) in &facet_to_cells {
@@ -1115,11 +1117,6 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
-        use crate::core::vertex::VertexBuilder;
-        use crate::geometry::point::Point;
-        use crate::geometry::traits::coordinate::Coordinate;
-        use num_traits::{Float, NumCast, One, Zero};
-
         let mut stats = InsertionStatistics::default();
         let original_coords = *vertex.point().coords();
         let mut current_vertex = vertex;
@@ -1181,80 +1178,61 @@ where
 
             // Try insertion.
             //
-            // Debug-only safety net: ensure we don't commit an insertion that breaks Level 3 topology.
+            // Topology safety net: ensure we don't commit an insertion that breaks Level 3 topology.
             // If the cavity-based insertion produces an Euler/topology mismatch, roll back and retry a
             // conservative fallback (star-split of the containing cell) within the same transactional attempt.
             let result = match self.try_insert_impl(current_vertex, conflict_cells, hint) {
                 Ok(ok) => {
-                    #[cfg(debug_assertions)]
-                    {
-                        // Skip Level 3 validation during bootstrap (vertices but no cells yet).
-                        if self.tds.number_of_cells() > 0 {
-                            if let Err(validation_err) = self.is_valid() {
-                                // Roll back to snapshot and attempt a star-split fallback for interior points.
-                                self.tds = tds_snapshot.clone();
+                    // Skip Level 3 validation during bootstrap (vertices but no cells yet).
+                    if self.tds.number_of_cells() > 0 {
+                        if let Err(validation_err) = self.is_valid() {
+                            // Roll back to snapshot and attempt a star-split fallback for interior points.
+                            self.tds = tds_snapshot.clone();
 
-                                let point = *current_vertex.point();
-                                let location = crate::core::algorithms::locate::locate(
-                                    &self.tds,
-                                    &self.kernel,
-                                    &point,
+                            let point = *current_vertex.point();
+                            let location = locate(&self.tds, &self.kernel, &point, hint);
+
+                            if let Ok(LocateResult::InsideCell(start_cell)) = location {
+                                let mut star_conflict = CellKeyBuffer::new();
+                                star_conflict.push(start_cell);
+
+                                match self.try_insert_impl(
+                                    current_vertex,
+                                    Some(&star_conflict),
                                     hint,
-                                );
-
-                                if let Ok(
-                                    crate::core::algorithms::locate::LocateResult::InsideCell(
-                                        start_cell,
-                                    ),
-                                ) = location
-                                {
-                                    let mut star_conflict = CellKeyBuffer::new();
-                                    star_conflict.push(start_cell);
-
-                                    match self.try_insert_impl(
-                                        current_vertex,
-                                        Some(&star_conflict),
-                                        hint,
-                                    ) {
-                                        Ok(fallback_ok) => {
-                                            if self.tds.number_of_cells() > 0 {
-                                                if let Err(fallback_validation_err) =
-                                                    self.is_valid()
-                                                {
-                                                    Err(InsertionError::TopologyValidation(
-                                                        TdsValidationError::InconsistentDataStructure {
-                                                            message: format!(
-                                                                "Topology invalid after star-split fallback: {fallback_validation_err}"
-                                                            ),
-                                                        },
-                                                    ))
-                                                } else {
-                                                    Ok(fallback_ok)
-                                                }
+                                ) {
+                                    Ok(fallback_ok) => {
+                                        if self.tds.number_of_cells() > 0 {
+                                            if let Err(fallback_validation_err) = self.is_valid() {
+                                                Err(InsertionError::TopologyValidation(
+                                                    TdsValidationError::InconsistentDataStructure {
+                                                        message: format!(
+                                                            "Topology invalid after star-split fallback: {fallback_validation_err}"
+                                                        ),
+                                                    },
+                                                ))
                                             } else {
                                                 Ok(fallback_ok)
                                             }
+                                        } else {
+                                            Ok(fallback_ok)
                                         }
-                                        Err(fallback_err) => Err(fallback_err),
                                     }
-                                } else {
-                                    Err(InsertionError::TopologyValidation(
-                                        TdsValidationError::InconsistentDataStructure {
-                                            message: format!(
-                                                "Topology invalid after insertion: {validation_err}"
-                                            ),
-                                        },
-                                    ))
+                                    Err(fallback_err) => Err(fallback_err),
                                 }
                             } else {
-                                Ok(ok)
+                                Err(InsertionError::TopologyValidation(
+                                    TdsValidationError::InconsistentDataStructure {
+                                        message: format!(
+                                            "Topology invalid after insertion: {validation_err}"
+                                        ),
+                                    },
+                                ))
                             }
                         } else {
                             Ok(ok)
                         }
-                    }
-                    #[cfg(not(debug_assertions))]
-                    {
+                    } else {
                         Ok(ok)
                     }
                 }
@@ -1324,6 +1302,95 @@ where
         unreachable!("Loop should have returned in all cases");
     }
 
+    /// Ensure an interior insertion never proceeds with an empty conflict region.
+    ///
+    /// An empty conflict region would produce an empty cavity boundary, create no new cells, and
+    /// leave the inserted vertex isolated (not incident to any cell), which breaks Level 3 topology
+    /// validation via Euler characteristic.
+    fn ensure_non_empty_conflict_cells(
+        conflict_cells: Cow<'_, CellKeyBuffer>,
+        fallback_cell: CellKey,
+    ) -> Cow<'_, CellKeyBuffer> {
+        if !conflict_cells.is_empty() {
+            return conflict_cells;
+        }
+
+        if let Cow::Owned(mut owned) = conflict_cells {
+            owned.push(fallback_cell);
+            Cow::Owned(owned)
+        } else {
+            let mut owned = CellKeyBuffer::new();
+            owned.push(fallback_cell);
+            Cow::Owned(owned)
+        }
+    }
+
+    /// Build the boundary facets for a "star-split" of the containing cell.
+    fn star_split_boundary_facets(start_cell: CellKey) -> CavityBoundaryBuffer {
+        (0..=D)
+            .map(|i| {
+                FacetHandle::new(
+                    start_cell,
+                    u8::try_from(i).expect("facet index must fit in u8"),
+                )
+            })
+            .collect()
+    }
+
+    /// Connectedness guard: a valid Ball(D) triangulation should be a single connected component.
+    ///
+    /// This validates that all cells are reachable via neighbor pointers from an arbitrary start cell.
+    fn validate_connectedness(&self) -> Result<(), InsertionError> {
+        let total_cells = self.tds.number_of_cells();
+        if total_cells == 0 {
+            return Ok(());
+        }
+
+        let start = self
+            .tds
+            .cell_keys()
+            .next()
+            .expect("number_of_cells() > 0 implies at least one cell key");
+
+        let mut visited: CellKeySet = CellKeySet::default();
+        visited.reserve(total_cells);
+
+        let mut stack: CellKeyBuffer = CellKeyBuffer::new();
+        stack.push(start);
+
+        while let Some(ck) = stack.pop() {
+            if !visited.insert(ck) {
+                continue;
+            }
+            if let Some(cell) = self.tds.get_cell(ck)
+                && let Some(neighbors) = cell.neighbors()
+            {
+                for &n_opt in neighbors {
+                    if let Some(nk) = n_opt
+                        && self.tds.contains_cell(nk)
+                        && !visited.contains(&nk)
+                    {
+                        stack.push(nk);
+                    }
+                }
+            }
+        }
+
+        if visited.len() != total_cells {
+            return Err(InsertionError::TopologyValidation(
+                TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Disconnected triangulation detected after insertion: visited {} of {} cells",
+                        visited.len(),
+                        total_cells
+                    ),
+                },
+            ));
+        }
+
+        Ok(())
+    }
+
     /// Internal implementation of insert without retry logic.
     /// Returns the result and the number of cells removed during repair.
     ///
@@ -1339,13 +1406,6 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
-        use crate::core::algorithms::incremental_insertion::{
-            extend_hull, fill_cavity, wire_cavity_neighbors,
-        };
-        use crate::core::algorithms::locate::{
-            LocateResult, extract_cavity_boundary, find_conflict_region, locate,
-        };
-
         // CRITICAL: Capture UUID and point BEFORE inserting into TDS
         // Rationale:
         // - inserted_uuid: Needed to remap v_key after TDS rebuild (lines 736-744)
@@ -1431,8 +1491,7 @@ where
         // 3. Locate containing cell (for vertex D+2 and beyond)
         let location = locate(&self.tds, &self.kernel, &point, hint)?;
 
-        // 4. Compute conflict cells if not provided (for interior points)
-        let mut conflict_cells_owned: CellKeyBuffer;
+        // 4. Determine conflict cells (for interior points)
         let conflict_cells = match (location, conflict_cells) {
             (LocateResult::InsideCell(start_cell), None) => {
                 // Interior point: compute conflict region automatically.
@@ -1449,25 +1508,21 @@ where
                 //
                 // Fallback: treat the containing cell as the conflict region, effectively performing
                 // a star-split of that cell to keep the simplicial complex connected.
-                conflict_cells_owned =
-                    find_conflict_region(&self.tds, &self.kernel, &point, start_cell)?;
-                if conflict_cells_owned.is_empty() {
-                    conflict_cells_owned.push(start_cell);
-                }
-                Some(&conflict_cells_owned)
+                let computed = find_conflict_region(&self.tds, &self.kernel, &point, start_cell)?;
+                Some(Self::ensure_non_empty_conflict_cells(
+                    Cow::Owned(computed),
+                    start_cell,
+                ))
             }
             (LocateResult::InsideCell(start_cell), Some(cells)) => {
                 // If the caller provided an empty conflict region (can happen if the Delaunay layer
                 // computes conflicts using a strict in-sphere test), we must still replace at least
                 // one cell; otherwise we'd create no cavity, no new cells, and leave a dangling
                 // vertex (χ increases by 1, typically showing up as χ=2 for Ball(3)).
-                if cells.is_empty() {
-                    conflict_cells_owned = CellKeyBuffer::new();
-                    conflict_cells_owned.push(start_cell);
-                    Some(&conflict_cells_owned)
-                } else {
-                    Some(cells)
-                }
+                Some(Self::ensure_non_empty_conflict_cells(
+                    Cow::Borrowed(cells),
+                    start_cell,
+                ))
             }
             (LocateResult::Outside, _) => None, // Hull extension doesn't need conflict region
             (location, _) => {
@@ -1484,12 +1539,12 @@ where
         match location {
             LocateResult::InsideCell(start_cell) => {
                 // Interior vertex: use computed or provided conflict_cells
-                let conflict_cells =
+                let mut conflict_cells =
                     conflict_cells.expect("conflict_cells should be computed above");
-                let mut conflict_cells = conflict_cells;
 
                 // 5. Extract cavity boundary
-                let mut boundary_facets = extract_cavity_boundary(&self.tds, conflict_cells)?;
+                let mut boundary_facets =
+                    extract_cavity_boundary(&self.tds, conflict_cells.as_ref())?;
 
                 // Fallback: never allow an interior insertion to create a dangling vertex.
                 //
@@ -1502,28 +1557,23 @@ where
                         "WARNING: empty cavity boundary for interior insertion; falling back to splitting containing cell {start_cell:?}"
                     );
 
-                    conflict_cells_owned = CellKeyBuffer::new();
-                    conflict_cells_owned.push(start_cell);
-                    conflict_cells = &conflict_cells_owned;
+                    conflict_cells = Cow::Owned({
+                        let mut owned = CellKeyBuffer::new();
+                        owned.push(start_cell);
+                        owned
+                    });
 
-                    boundary_facets = (0..=D)
-                        .map(|i| {
-                            crate::core::facet::FacetHandle::new(
-                                start_cell,
-                                u8::try_from(i).expect("facet index must fit in u8"),
-                            )
-                        })
-                        .collect();
+                    boundary_facets = Self::star_split_boundary_facets(start_cell);
                 }
 
                 // 6. Fill cavity BEFORE removing old cells
                 let new_cells = fill_cavity(&mut self.tds, v_key, &boundary_facets)?;
 
                 // 7. Wire neighbors (while both old and new cells exist)
-                wire_cavity_neighbors(&mut self.tds, &new_cells, Some(conflict_cells))?;
+                wire_cavity_neighbors(&mut self.tds, &new_cells, Some(conflict_cells.as_ref()))?;
 
                 // 8. Remove conflict cells (now that new cells are wired up)
-                let _removed_count = self.tds.remove_cells_by_keys(conflict_cells);
+                let _removed_count = self.tds.remove_cells_by_keys(conflict_cells.as_ref());
 
                 // 9. Iteratively repair non-manifold topology until facet sharing is valid
                 let mut total_removed = 0;
@@ -1631,49 +1681,9 @@ where
                     ));
                 }
 
-                // Connectedness guard: a valid Ball(3) triangulation should be a single connected component.
+                // Connectedness guard: a valid Ball(D) triangulation should be a single connected component.
                 // If the neighbor graph splits into multiple components, χ becomes additive (often χ=2).
-                let total_cells = self.tds.number_of_cells();
-                if total_cells > 0 {
-                    let start = self
-                        .tds
-                        .cell_keys()
-                        .next()
-                        .expect("number_of_cells() > 0 implies at least one cell key");
-                    let mut visited: std::collections::HashSet<CellKey> =
-                        std::collections::HashSet::with_capacity(total_cells);
-                    let mut stack: Vec<CellKey> = vec![start];
-
-                    while let Some(ck) = stack.pop() {
-                        if !visited.insert(ck) {
-                            continue;
-                        }
-                        if let Some(cell) = self.tds.get_cell(ck)
-                            && let Some(neighbors) = cell.neighbors()
-                        {
-                            for &n_opt in neighbors {
-                                if let Some(nk) = n_opt
-                                    && self.tds.contains_cell(nk)
-                                    && !visited.contains(&nk)
-                                {
-                                    stack.push(nk);
-                                }
-                            }
-                        }
-                    }
-
-                    if visited.len() != total_cells {
-                        return Err(InsertionError::TopologyValidation(
-                            TdsValidationError::InconsistentDataStructure {
-                                message: format!(
-                                    "Disconnected triangulation detected after insertion: visited {} of {} cells",
-                                    visited.len(),
-                                    total_cells
-                                ),
-                            },
-                        ));
-                    }
-                }
+                self.validate_connectedness()?;
 
                 // Return vertex key and hint for next insertion
                 let hint = new_cells
@@ -1783,48 +1793,8 @@ where
                     ));
                 }
 
-                // Connectedness guard: a valid Ball(3) triangulation should be a single connected component.
-                let total_cells = self.tds.number_of_cells();
-                if total_cells > 0 {
-                    let start = self
-                        .tds
-                        .cell_keys()
-                        .next()
-                        .expect("number_of_cells() > 0 implies at least one cell key");
-                    let mut visited: std::collections::HashSet<CellKey> =
-                        std::collections::HashSet::with_capacity(total_cells);
-                    let mut stack: Vec<CellKey> = vec![start];
-
-                    while let Some(ck) = stack.pop() {
-                        if !visited.insert(ck) {
-                            continue;
-                        }
-                        if let Some(cell) = self.tds.get_cell(ck)
-                            && let Some(neighbors) = cell.neighbors()
-                        {
-                            for &n_opt in neighbors {
-                                if let Some(nk) = n_opt
-                                    && self.tds.contains_cell(nk)
-                                    && !visited.contains(&nk)
-                                {
-                                    stack.push(nk);
-                                }
-                            }
-                        }
-                    }
-
-                    if visited.len() != total_cells {
-                        return Err(InsertionError::TopologyValidation(
-                            TdsValidationError::InconsistentDataStructure {
-                                message: format!(
-                                    "Disconnected triangulation detected after insertion: visited {} of {} cells",
-                                    visited.len(),
-                                    total_cells
-                                ),
-                            },
-                        ));
-                    }
-                }
+                // Connectedness guard: a valid Ball(D) triangulation should be a single connected component.
+                self.validate_connectedness()?;
 
                 // Return vertex key and hint for next insertion
                 let hint = new_cells
@@ -1865,7 +1835,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`TdsMutationError`](crate::core::triangulation_data_structure::TdsMutationError)
+    /// Returns [`TdsMutationError`]
     /// if the removal cannot be completed while maintaining triangulation invariants.
     ///
     /// (Note: `TdsMutationError` is currently an alias of
@@ -1892,13 +1862,10 @@ where
     pub fn remove_vertex(
         &mut self,
         vertex: &Vertex<K::Scalar, U, D>,
-    ) -> Result<usize, crate::core::triangulation_data_structure::TdsMutationError>
+    ) -> Result<usize, TdsMutationError>
     where
         K::Scalar: CoordinateScalar,
     {
-        use crate::core::algorithms::incremental_insertion::wire_cavity_neighbors;
-        use crate::core::algorithms::locate::extract_cavity_boundary;
-
         // Find the vertex key
         let Some(vertex_key) = self.tds.vertex_key_from_uuid(&vertex.uuid()) else {
             return Ok(0); // Vertex not found, nothing to remove
@@ -1923,9 +1890,11 @@ where
         }
 
         // Extract cavity boundary BEFORE removing cells
-        let boundary_facets = extract_cavity_boundary(&self.tds, &cells_to_remove)
-            .map_err(|e| crate::core::triangulation_data_structure::TdsValidationError::InconsistentDataStructure {
-                message: format!("Failed to extract cavity boundary: {e}"),
+        let boundary_facets =
+            extract_cavity_boundary(&self.tds, &cells_to_remove).map_err(|e| {
+                TdsValidationError::InconsistentDataStructure {
+                    message: format!("Failed to extract cavity boundary: {e}"),
+                }
             })?;
 
         // If boundary is empty, we're removing the entire triangulation
@@ -1935,16 +1904,17 @@ where
         }
 
         // Pick apex vertex for fan triangulation (first vertex of first boundary facet)
-        let apex_vertex_key = self.pick_fan_apex(&boundary_facets)
-            .ok_or_else(|| crate::core::triangulation_data_structure::TdsValidationError::InconsistentDataStructure {
+        let apex_vertex_key = self.pick_fan_apex(&boundary_facets).ok_or_else(|| {
+            TdsValidationError::InconsistentDataStructure {
                 message: "Failed to find apex vertex for fan triangulation".to_string(),
-            })?;
+            }
+        })?;
 
         // Fill cavity with fan triangulation BEFORE removing old cells
         // Use fan triangulation that skips boundary facets which already include the apex
         let new_cells = self
             .fan_fill_cavity(apex_vertex_key, &boundary_facets)
-            .map_err(|e| crate::core::triangulation_data_structure::TdsValidationError::InconsistentDataStructure {
+            .map_err(|e| TdsValidationError::InconsistentDataStructure {
                 message: format!("Fan triangulation failed: {e}"),
             })?;
 
@@ -1975,7 +1945,6 @@ where
             // Repair neighbor pointers after removing additional cells
             // This ensures neighbor consistency after repair operations
             if removed > 0 {
-                use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
                 repair_neighbor_pointers(&mut self.tds).map_err(|e| {
                     TdsValidationError::InconsistentDataStructure {
                         message: format!("Neighbor repair after facet issue repair failed: {e}"),
@@ -2005,10 +1974,7 @@ where
     /// # Returns
     ///
     /// The vertex key to use as apex, or None if no suitable vertex found.
-    fn pick_fan_apex(
-        &self,
-        boundary_facets: &[crate::core::facet::FacetHandle],
-    ) -> Option<VertexKey>
+    fn pick_fan_apex(&self, boundary_facets: &[FacetHandle]) -> Option<VertexKey>
     where
         K::Scalar: CoordinateScalar,
     {
@@ -2031,7 +1997,7 @@ where
     fn fan_fill_cavity(
         &mut self,
         apex_vertex_key: VertexKey,
-        boundary_facets: &[crate::core::facet::FacetHandle],
+        boundary_facets: &[FacetHandle],
     ) -> Result<CellKeyBuffer, InsertionError>
     where
         K::Scalar: CoordinateScalar,
