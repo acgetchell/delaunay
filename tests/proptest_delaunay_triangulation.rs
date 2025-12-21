@@ -31,13 +31,28 @@ use proptest::prelude::*;
 // TEST CONFIGURATION
 // =============================================================================
 
-/// Strategy for generating finite f64 coordinates in a reasonable range
+const PROPTEST_COORD_NONZERO_EPS: f64 = 1e-6;
+
+/// Strategy for generating finite `f64` coordinates in a reasonable range.
+///
+/// ### Why filter out near-zero values?
+///
+/// Proptest shrinkers aggressively drive floating-point values toward `0.0`. In this crate, a
+/// large fraction of the `~0` input space corresponds to geometric degeneracies (many coordinates
+/// exactly `0`, many points on coordinate hyperplanes, coincident/near-coincident vertices, etc.).
+/// Those cases are useful to test, but they tend to dominate shrinking and can turn unrelated
+/// failures into “degenerate topology” noise.
+///
+/// We therefore exclude `|x| <= 1e-6` as a **shrink guard**. The value `1e-6` is intentionally tiny
+/// relative to the generated range `[-100, 100]` (1e-8 of the range), and is **not** intended to
+/// be a geometric tolerance.
+///
+/// Coverage note: small-coordinate edge cases are exercised via targeted deterministic tests (see
+/// [`tests/delaunay_edge_cases.rs`](tests/delaunay_edge_cases.rs:1)), which can be expanded if we
+/// need stronger coverage of coordinate-scaling issues.
 fn finite_coordinate() -> impl Strategy<Value = f64> {
-    // Avoid exact/near-zero values because proptest shrinkers aggressively push toward 0.0,
-    // which creates many degenerate/coplanar configurations that are not representative of
-    // typical randomized inputs and can trigger topology/Euler edge cases.
     (-100.0..100.0).prop_filter("must be finite and away from zero", |x: &f64| {
-        x.is_finite() && x.abs() > 1e-6
+        x.is_finite() && x.abs() > PROPTEST_COORD_NONZERO_EPS
     })
 }
 
@@ -176,6 +191,16 @@ fn has_no_cospherical_5_tuples_3d(vertices: &[Vertex<f64, (), 3>]) -> bool {
         return true;
     }
 
+    // Performance note: this is O(n^5) in the number of input vertices due to iterating all
+    // 5-point subsets.
+    //
+    // With the current generator bounds used by the specialized 3D property (n <= 10), that's
+    // at most C(10, 5) = 252 5-tuples. We do up to 5 `in_sphere` predicate calls per tuple (one
+    // per "test point") for robustness, so the worst case is 252 * 5 = 1260 `in_sphere`
+    // evaluations per generated case.
+    //
+    // If you expand the proptest ranges, consider benchmarking this filter or reducing the
+    // number of predicate calls.
     let kernel = RobustKernel::<f64>::new();
 
     for i in 0..n {
@@ -571,9 +596,12 @@ fn prop_insertion_order_robustness_3d() {
 
     /// Rejection-rate tracking for the specialized 3D insertion-order property.
     ///
-    /// This is intentionally *metrics-only* (no hard thresholds) because:
+    /// By default this is *metrics-only* (no hard thresholds) because:
     /// - proptest seeds vary across runs, and
     /// - this property is explicitly scoped via rejection filters.
+    ///
+    /// CI can optionally enforce a minimum acceptance rate by setting:
+    /// - `DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT` (integer percentage, e.g. `10`)
     ///
     /// To print the summary (captured unless `cargo test -- --nocapture`):
     ///   `DELAUNAY_PROPTEST_REJECT_STATS=1 cargo test prop_insertion_order_robustness_3d --test proptest_delaunay_triangulation -- --nocapture`
@@ -725,6 +753,36 @@ fn prop_insertion_order_robustness_3d() {
             verts_b
         );
 
+        // Parity check: the high-level constructor path (`DelaunayTriangulation::new`) should also
+        // succeed for the same in-scope inputs. This helps prevent maintenance drift vs the
+        // 2D/4D/5D insertion-order tests which use `new()` directly.
+        let dt_new_a =
+            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new(&points).map_err(|e| {
+                TestCaseError::fail(format!(
+                    "3D: DelaunayTriangulation::new() failed for in-scope inputs (order A): {e}"
+                ))
+            })?;
+        let dt_new_b = DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new(&points_shuffled)
+            .map_err(|e| {
+            TestCaseError::fail(format!(
+                "3D: DelaunayTriangulation::new() failed for in-scope inputs (order B): {e}"
+            ))
+        })?;
+
+        prop_assert_eq!(
+            dt_new_a.number_of_vertices(),
+            points.len(),
+            "3D: new() should not skip vertices for in-scope inputs (order A)"
+        );
+        prop_assert_eq!(
+            dt_new_b.number_of_vertices(),
+            points.len(),
+            "3D: new() should not skip vertices for in-scope inputs (order B)"
+        );
+
+        prop_assert_levels_1_to_3_valid!(3, &dt_new_a, "Triangulation A (new())");
+        prop_assert_levels_1_to_3_valid!(3, &dt_new_b, "Triangulation B (new())");
+
         stats.accepted += 1;
         Ok(())
     });
@@ -735,18 +793,35 @@ fn prop_insertion_order_robustness_3d() {
 
     let stats = stats.into_inner();
 
+    // Report acceptance rate as a percentage with 2 decimals using integer arithmetic
+    // (avoids `usize as f64` precision-loss lints under strict clippy settings).
+    //
+    // percent_x100: 100.00% => 10_000
+    let generated = stats.generated.max(1);
+    let acceptance_rate_percent_x100: u128 =
+        (stats.accepted as u128 * 10_000u128) / (generated as u128);
+    let acceptance_rate_whole = acceptance_rate_percent_x100 / 100;
+    let acceptance_rate_frac = acceptance_rate_percent_x100 % 100;
+
+    if let Ok(min_acceptance_pct_str) = std::env::var("DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT") {
+        if let Ok(min_acceptance_pct) = min_acceptance_pct_str.parse::<u128>() {
+            let min_acceptance_pct_x100 = min_acceptance_pct * 100;
+            assert!(
+                acceptance_rate_percent_x100 >= min_acceptance_pct_x100,
+                "prop_insertion_order_robustness_3d acceptance rate {}.{:02}% below required {min_acceptance_pct}% (generated={}, accepted={})",
+                acceptance_rate_whole,
+                acceptance_rate_frac,
+                stats.generated,
+                stats.accepted
+            );
+        } else {
+            eprintln!(
+                "prop_insertion_order_robustness_3d: invalid DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT={min_acceptance_pct_str:?} (expected integer percent, e.g. 10)"
+            );
+        }
+    }
+
     if print_stats {
-        let generated = stats.generated.max(1);
-
-        // Report acceptance rate as a percentage with 2 decimals using integer arithmetic
-        // (avoids `usize as f64` precision-loss lints under strict clippy settings).
-        //
-        // percent_x100: 100.00% => 10_000
-        let acceptance_rate_percent_x100: u128 =
-            (stats.accepted as u128 * 10_000u128) / (generated as u128);
-        let acceptance_rate_whole = acceptance_rate_percent_x100 / 100;
-        let acceptance_rate_frac = acceptance_rate_percent_x100 % 100;
-
         let rejected_total = stats.generated.saturating_sub(stats.accepted);
 
         eprintln!(

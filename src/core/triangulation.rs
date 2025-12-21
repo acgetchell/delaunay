@@ -245,6 +245,12 @@ pub enum TriangulationValidationError {
     Topology(#[from] TopologyError),
 }
 
+impl From<TdsMutationError> for TriangulationValidationError {
+    fn from(err: TdsMutationError) -> Self {
+        Self::Tds(err.into())
+    }
+}
+
 /// Generic triangulation combining kernel and data structure.
 ///
 /// # Type Parameters
@@ -933,7 +939,7 @@ where
         // Assign incident cells to vertices (each vertex points to this one cell)
         // This is required for proper Tds structure
         tds.assign_incident_cells()
-            .map_err(TdsConstructionError::ValidationError)?;
+            .map_err(|e| TdsConstructionError::ValidationError(e.into()))?;
 
         Ok(tds)
     }
@@ -1199,7 +1205,7 @@ where
                                 match self.try_insert_impl(
                                     current_vertex,
                                     Some(&star_conflict),
-                                    hint,
+                                    Some(start_cell),
                                 ) {
                                     Ok(fallback_ok) => {
                                         if self.tds.number_of_cells() > 0 {
@@ -1218,7 +1224,13 @@ where
                                             Ok(fallback_ok)
                                         }
                                     }
-                                    Err(fallback_err) => Err(fallback_err),
+                                    Err(fallback_err) => Err(InsertionError::TopologyValidation(
+                                        TdsValidationError::InconsistentDataStructure {
+                                            message: format!(
+                                                "Topology invalid after insertion: {validation_err}; star-split fallback failed: {fallback_err}"
+                                            ),
+                                        },
+                                    )),
                                 }
                             } else {
                                 Err(InsertionError::TopologyValidation(
@@ -1838,8 +1850,8 @@ where
     /// Returns [`TdsMutationError`]
     /// if the removal cannot be completed while maintaining triangulation invariants.
     ///
-    /// (Note: `TdsMutationError` is currently an alias of
-    /// [`TdsValidationError`]; the alias exists to make mutation call sites/docs more semantically explicit.)
+    /// (Note: `TdsMutationError` is currently a thin wrapper around
+    /// [`TdsValidationError`]; the wrapper exists to make mutation call sites/docs more semantically explicit.)
     ///
     /// # Examples
     ///

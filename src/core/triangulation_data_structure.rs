@@ -416,13 +416,28 @@ pub enum TdsValidationError {
 
 /// Errors that can occur during TDS mutation operations.
 ///
-/// This is currently an alias of [`TdsValidationError`]. Mutation operations can fail
-/// for the same reasons as validation (i.e., because an invariant would be violated or
-/// a consistency check fails while attempting to perform the mutation).
+/// This error is a thin wrapper around [`TdsValidationError`]. Mutation operations can fail
+/// for the same reasons as validation (i.e., because an invariant would be violated or a
+/// consistency check fails while attempting to perform the mutation).
 ///
-/// This alias exists to make call sites and API docs more semantically explicit, and
-/// may become a dedicated error type in a future release.
-pub type TdsMutationError = TdsValidationError;
+/// The wrapper exists to make call sites and API docs semantically explicit, while also
+/// allowing this error to evolve into a richer, dedicated type in a future release without
+/// breaking the public API surface.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[error(transparent)]
+pub struct TdsMutationError(pub TdsValidationError);
+
+impl From<TdsValidationError> for TdsMutationError {
+    fn from(err: TdsValidationError) -> Self {
+        Self(err)
+    }
+}
+
+impl From<TdsMutationError> for TdsValidationError {
+    fn from(err: TdsMutationError) -> Self {
+        err.0
+    }
+}
 
 // Temporary internal alias to ease refactors within this module.
 // This does not affect the public API.
@@ -1882,11 +1897,11 @@ where
     /// # Returns
     ///
     /// `Ok(usize)` with the number of cells that were removed along with the vertex,
-    /// or `Err(TdsValidationError)` if incident cell assignment fails.
+    /// or `Err(TdsMutationError)` if incident cell assignment fails.
     ///
     /// # Errors
     ///
-    /// Returns `TdsValidationError` if the vertex-cell incidence cannot be rebuilt
+    /// Returns `TdsMutationError` if the vertex-cell incidence cannot be rebuilt
     /// after removing cells. This indicates a corrupted data structure.
     ///
     /// # Examples
@@ -1912,7 +1927,7 @@ where
     ///
     /// assert!(dt.tds().validate().is_ok());
     /// ```
-    pub fn remove_vertex(&mut self, vertex: &Vertex<T, U, D>) -> Result<usize, TdsValidationError> {
+    pub fn remove_vertex(&mut self, vertex: &Vertex<T, U, D>) -> Result<usize, TdsMutationError> {
         // Find the vertex key
         let Some(vertex_key) = self.vertex_key_from_uuid(&vertex.uuid()) else {
             return Ok(0); // Vertex not found, nothing to remove
@@ -2131,7 +2146,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a `TdsValidationError` if:
+    /// Returns a `TdsMutationError` if:
     /// - The cell with the given key doesn't exist
     /// - The neighbor vector length is not D+1
     /// - Any neighbor key references a non-existent cell
@@ -2140,7 +2155,7 @@ where
         &mut self,
         cell_key: CellKey,
         neighbors: &[Option<CellKey>],
-    ) -> Result<(), TdsValidationError> {
+    ) -> Result<(), TdsMutationError> {
         // Validate the topological invariant before applying changes
         // (includes length check: neighbors.len() == D+1)
         self.validate_neighbor_topology(cell_key, neighbors)?;
@@ -2243,11 +2258,11 @@ where
     /// # Returns
     ///
     /// `Ok(())` if incident cells were successfully assigned to all vertices,
-    /// otherwise a `TdsValidationError`.
+    /// otherwise a `TdsMutationError`.
     ///
     /// # Errors
     ///
-    /// Returns a `TdsValidationError` if:
+    /// Returns a `TdsMutationError` if:
     /// - A cell references a non-existent vertex key (`InconsistentDataStructure`)
     /// - A cell key cannot be found in the cells storage map (`InconsistentDataStructure`)
     /// - A vertex key cannot be found in the vertices storage map (`InconsistentDataStructure`)
@@ -2258,7 +2273,7 @@ where
     /// 2. For each vertex that appears in at least one cell, assign the first cell as its incident cell
     /// 3. Update the vertex's `incident_cell` field with the `CellKey` of the selected cell (Phase 3)
     ///
-    pub fn assign_incident_cells(&mut self) -> Result<(), TdsValidationError> {
+    pub fn assign_incident_cells(&mut self) -> Result<(), TdsMutationError> {
         if self.cells.is_empty() {
             // No cells remain; all vertices must have incident_cell cleared to avoid
             // dangling pointers to previously removed cells.
@@ -2290,7 +2305,8 @@ where
                         message: format!(
                             "Cell key {cell_key:?} not found in cells storage map during incident cell assignment"
                         ),
-                    });
+                    }
+                    .into());
                 }
 
                 // Update the vertex's incident cell with the key
@@ -2465,11 +2481,11 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a `TdsValidationError` if:
+    /// Returns a `TdsMutationError` if:
     /// - Vertex keys cannot be retrieved for any cell (data structure corruption)
     /// - Neighbor assignment fails after cell removal
     /// - Incident cell assignment fails after cell removal
-    pub fn remove_duplicate_cells(&mut self) -> Result<usize, TdsValidationError> {
+    pub fn remove_duplicate_cells(&mut self) -> Result<usize, TdsMutationError> {
         let mut unique_cells = FastHashMap::default();
         let mut cells_to_remove = CellRemovalBuffer::new();
 
@@ -4043,7 +4059,8 @@ mod tests {
             .unwrap();
         let err = tds
             .set_neighbors_by_key(cell1, &[Some(cell_far), None, None])
-            .unwrap_err();
+            .unwrap_err()
+            .0;
         assert!(matches!(err, TdsError::InvalidNeighbors { .. }));
 
         // A true facet-neighbor (shares {v_a,v_b}) placed at the wrong facet index.
@@ -4052,7 +4069,8 @@ mod tests {
             .unwrap();
         let err = tds
             .set_neighbors_by_key(cell1, &[Some(cell2), None, None])
-            .unwrap_err();
+            .unwrap_err()
+            .0;
         assert!(matches!(err, TdsError::InvalidNeighbors { .. }));
     }
 
@@ -4081,6 +4099,15 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
             .unwrap();
 
+        // NOTE: This scenario is not realistic for valid triangulations:
+        // - Valid D-cells always contain exactly D+1 vertices (and `D <= MAX_PRACTICAL_DIMENSION_SIZE`).
+        // - Therefore facet indices are always within `0..=D` and trivially fit in `u8`.
+        //
+        // We intentionally *corrupt* the cell here by inflating its vertex buffer (still using valid
+        // vertex keys) so facet indices exceed `u8::MAX`. This is a robustness test to ensure
+        // `build_facet_to_cells_map()` fails fast on corrupted/invalid TDS state (e.g., unsafe internal
+        // mutation or malformed serialized data).
+        //
         // Inflate the vertex buffer (still using valid vertex keys) so facet indices exceed u8.
         {
             let cell = tds.get_cell_by_key_mut(cell_key).unwrap();

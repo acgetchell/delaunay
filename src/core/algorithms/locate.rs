@@ -93,8 +93,8 @@ pub enum ConflictError {
         source: CoordinateConversionError,
     },
 
-    /// Failed to retrieve cell vertices
-    #[error("Failed to get vertices for cell {cell_key:?}: {message}")]
+    /// Failed to retrieve required cell data (e.g., vertices) or build facet identifiers
+    #[error("Failed to access required data for cell {cell_key:?}: {message}")]
     VertexRetrievalFailed {
         /// The cell key that failed
         cell_key: CellKey,
@@ -602,6 +602,13 @@ where
     // facet_hash -> all facets in the conflict region that contain the facet
     let mut facet_to_conflict: FacetToCellsMap = FacetToCellsMap::default();
 
+    // facet_hash -> canonical vertex keys (sorted, excluding the opposite vertex)
+    // Cached so ridge analysis doesn't have to rebuild facet vertex sets from cells.
+    let mut facet_hash_to_vkeys: FastHashMap<
+        u64,
+        SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+    > = FastHashMap::default();
+
     for &cell_key in &conflict_set {
         let cell = tds
             .get_cell(cell_key)
@@ -624,6 +631,9 @@ where
             }
             let facet_hash = hasher.finish();
 
+            // Stash canonical vertex keys so we can reuse them for ridge analysis later.
+            facet_hash_to_vkeys.entry(facet_hash).or_insert(facet_vkeys);
+
             let facet_idx_u8 =
                 u8::try_from(facet_idx).map_err(|_| ConflictError::VertexRetrievalFailed {
                     cell_key,
@@ -643,7 +653,7 @@ where
     // Map: ridge_hash -> (ridge_vertex_count, number_of_facets_sharing_this_ridge)
     let mut ridge_map: FastHashMap<u64, (usize, usize)> = FastHashMap::default();
 
-    for cell_facet_pairs in facet_to_conflict.values() {
+    for (facet_hash, cell_facet_pairs) in &facet_to_conflict {
         match cell_facet_pairs.as_slice() {
             // Exactly one conflict cell owns this facet => boundary facet
             [handle] => {
@@ -651,44 +661,34 @@ where
                 let facet_idx_u8 = handle.facet_index();
                 boundary_facets.push(FacetHandle::new(cell_key, facet_idx_u8));
 
-                // Track ridge incidence for fan detection on boundary facets.
-                let cell = tds
-                    .get_cell(cell_key)
-                    .ok_or(ConflictError::InvalidStartCell { cell_key })?;
-
-                let facet_idx = usize::from(facet_idx_u8);
-
-                // Rebuild facet vertex keys (canonical) for ridge analysis.
-                let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-                for (i, &vkey) in cell.vertices().iter().enumerate() {
-                    if i != facet_idx {
-                        facet_vkeys.push(vkey);
+                // Use the cached canonical facet vertex keys for ridge analysis.
+                let facet_vkeys = facet_hash_to_vkeys.get(facet_hash).ok_or_else(|| {
+                    ConflictError::VertexRetrievalFailed {
+                        cell_key,
+                        message: format!(
+                            "Missing canonical vertex keys for facet hash {:#x}",
+                            *facet_hash
+                        ),
                     }
-                }
-                facet_vkeys.sort_unstable();
+                })?;
 
                 // A ridge is a (D-2)-simplex: remove one more vertex from this (D-1)-facet.
                 if facet_vkeys.len() >= 2 {
+                    let ridge_vertex_count = facet_vkeys.len() - 1;
+
                     for ridge_idx in 0..facet_vkeys.len() {
-                        let mut ridge_vkeys =
-                            SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+                        let mut ridge_hasher = FastHasher::default();
                         for (i, &vkey) in facet_vkeys.iter().enumerate() {
                             if i != ridge_idx {
-                                ridge_vkeys.push(vkey);
+                                vkey.hash(&mut ridge_hasher);
                             }
-                        }
-                        ridge_vkeys.sort_unstable();
-
-                        let mut ridge_hasher = FastHasher::default();
-                        for &vkey in &ridge_vkeys {
-                            vkey.hash(&mut ridge_hasher);
                         }
                         let ridge_hash = ridge_hasher.finish();
 
                         ridge_map
                             .entry(ridge_hash)
                             .and_modify(|(_, count)| *count += 1)
-                            .or_insert((ridge_vkeys.len(), 1));
+                            .or_insert((ridge_vertex_count, 1));
                     }
                 }
             }
