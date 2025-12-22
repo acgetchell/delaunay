@@ -423,6 +423,17 @@ pub enum TdsValidationError {
 /// The wrapper exists to make call sites and API docs semantically explicit, while also
 /// allowing this error to evolve into a richer, dedicated type in a future release without
 /// breaking the public API surface.
+///
+/// # Stability / conversion contract
+///
+/// `TdsMutationError` currently supports lossless conversion to and from [`TdsValidationError`]
+/// via the provided `From`/`Into` impls. If this wrapper evolves to include mutation-specific
+/// context (additional fields/variants), converting `TdsMutationError` into [`TdsValidationError`]
+/// may become lossy.
+///
+/// Callers that want to preserve potential future mutation-specific details should avoid
+/// converting back to [`TdsValidationError`] and instead propagate/handle `TdsMutationError`
+/// directly.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[error(transparent)]
 pub struct TdsMutationError(pub TdsValidationError);
@@ -3026,6 +3037,7 @@ where
     /// [`DelaunayTriangulation::validation_report()`].
     ///
     /// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
+    #[allow(clippy::too_many_lines)]
     fn validate_neighbors(&self) -> Result<(), TdsValidationError> {
         // Pre-compute vertex keys for all cells to avoid repeated computation
         let mut cell_vertices: CellVerticesMap = fast_hash_map_with_capacity(self.cells.len());
@@ -3080,6 +3092,11 @@ where
                 }
 
                 // Mutual neighbor check at the correct (mirror) facet index.
+                //
+                // NOTE: We compute the mirror index using `Cell::mirror_facet_index()` but also
+                // defensively verify it against an independent shared-vertex analysis. This guards
+                // against false negatives if `mirror_facet_index()` were ever to return an in-range
+                // but incorrect facet index.
                 let mirror_idx = cell
                     .mirror_facet_index(facet_idx, neighbor_cell)
                     .ok_or_else(|| TdsError::InvalidNeighbors {
@@ -3089,6 +3106,74 @@ where
                             neighbor_cell.uuid()
                         ),
                     })?;
+
+                // Defensive cross-check: determine the neighbor's unique (non-shared) vertex index.
+                // For true facet neighbors, there must be exactly one vertex in `neighbor_cell` that is
+                // not present in `cell` (and that index is the mirror facet index).
+                let mut expected_mirror_idx: Option<usize> = None;
+                for (idx, &neighbor_vkey) in neighbor_cell.vertices().iter().enumerate() {
+                    if !this_vertices.contains(&neighbor_vkey) {
+                        if expected_mirror_idx.is_some() {
+                            return Err(TdsError::InvalidNeighbors {
+                                message: format!(
+                                    "Mirror facet is ambiguous: cell {:?} and neighbor {:?} differ by more than one vertex",
+                                    cell.uuid(),
+                                    neighbor_cell.uuid()
+                                ),
+                            });
+                        }
+                        expected_mirror_idx = Some(idx);
+                    }
+                }
+                let expected_mirror_idx = expected_mirror_idx.ok_or_else(|| TdsError::InvalidNeighbors {
+                    message: format!(
+                        "Mirror facet could not be determined: cell {:?} and neighbor {:?} appear to share all vertices (duplicate cells?)",
+                        cell.uuid(),
+                        neighbor_cell.uuid()
+                    ),
+                })?;
+
+                if mirror_idx != expected_mirror_idx {
+                    return Err(TdsError::InvalidNeighbors {
+                        message: format!(
+                            "Mirror facet index mismatch: cell {:?}[{facet_idx}] -> neighbor {:?}; mirror_facet_index returned {mirror_idx} but shared-vertex analysis implies {expected_mirror_idx}",
+                            cell.uuid(),
+                            neighbor_cell.uuid()
+                        ),
+                    });
+                }
+
+                // Defensive check: verify the shared facet vertices match on both sides.
+                // If `cell[facet_idx]` points at `neighbor_cell[mirror_idx]`, then the facet vertices
+                // (all vertices except the opposite one) must be identical.
+                for (idx, &vkey) in cell.vertices().iter().enumerate() {
+                    if idx == facet_idx {
+                        continue;
+                    }
+                    if !neighbor_vertices.contains(&vkey) {
+                        return Err(TdsError::InvalidNeighbors {
+                            message: format!(
+                                "Shared facet mismatch: cell {:?}[{facet_idx}] -> neighbor {:?}[{mirror_idx}] is missing vertex {vkey:?} from the shared facet",
+                                cell.uuid(),
+                                neighbor_cell.uuid(),
+                            ),
+                        });
+                    }
+                }
+                for (idx, &vkey) in neighbor_cell.vertices().iter().enumerate() {
+                    if idx == mirror_idx {
+                        continue;
+                    }
+                    if !this_vertices.contains(&vkey) {
+                        return Err(TdsError::InvalidNeighbors {
+                            message: format!(
+                                "Shared facet mismatch: neighbor {:?}[{mirror_idx}] -> cell {:?}[{facet_idx}] is missing vertex {vkey:?} from the shared facet",
+                                neighbor_cell.uuid(),
+                                cell.uuid(),
+                            ),
+                        });
+                    }
+                }
 
                 let Some(neighbor_neighbors) = &neighbor_cell.neighbors else {
                     return Err(TdsError::InvalidNeighbors {

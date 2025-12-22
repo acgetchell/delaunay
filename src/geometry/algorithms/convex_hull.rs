@@ -3192,9 +3192,10 @@ mod tests {
         let mut tds = crate::core::triangulation_data_structure::Tds::<f64, (), (), 3>::empty();
         let vertex = vertex!([0.0, 0.0, 0.0]);
         let _ = tds.insert_vertex_with_mapping(vertex);
-        let tri = crate::core::triangulation::Triangulation {
+        let tri = Triangulation {
             kernel: FastKernel::new(),
             tds,
+            validation_policy: crate::core::triangulation::ValidationPolicy::default(),
         };
 
         let result = ConvexHull::from_triangulation(&tri);

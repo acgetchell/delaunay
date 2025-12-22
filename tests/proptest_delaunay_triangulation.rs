@@ -186,10 +186,38 @@ fn has_no_nearly_coplanar_tetrahedra_3d(vertices: &[Vertex<f64, (), 3>]) -> bool
 /// - This property is intentionally scoped to a slice of 3D space where we expect insertion-order
 ///   invariance for **validation Levels 1–3** without depending on perturbation heuristics.
 fn has_no_cospherical_5_tuples_3d(vertices: &[Vertex<f64, (), 3>]) -> bool {
+    const MAX_N: usize = 15;
+
     let n = vertices.len();
     if n < 5 {
         return true;
     }
+
+    // Guardrail: this filter is O(n^5) due to iterating all 5-point subsets, and it performs up to
+    // 5 `in_sphere` predicate evaluations per 5-tuple for robustness.
+    //
+    // With n=15: C(15, 5) = 3003 5-tuples => ~15k `in_sphere` calls per generated case.
+    //
+    // If you intentionally want to run this filter with larger inputs, set:
+    //   DELAUNAY_ALLOW_SLOW_COSPHERICAL_FILTER=1
+    let allow_slow = std::env::var_os("DELAUNAY_ALLOW_SLOW_COSPHERICAL_FILTER").is_some();
+
+    // C(n, 5) using integer arithmetic: n*(n-1)*(n-2)*(n-3)*(n-4) / 5!
+    let tuples: u128 =
+        (n as u128) * ((n - 1) as u128) * ((n - 2) as u128) * ((n - 3) as u128) * ((n - 4) as u128)
+            / 120u128;
+    let in_sphere_calls: u128 = tuples * 5u128;
+
+    if n > MAX_N && allow_slow {
+        eprintln!(
+            "has_no_cospherical_5_tuples_3d warning: n={n} > {MAX_N}; checking {tuples} 5-tuples (~{in_sphere_calls} in_sphere predicate calls)"
+        );
+    }
+
+    assert!(
+        n <= MAX_N || allow_slow,
+        "has_no_cospherical_5_tuples_3d: n={n} exceeds MAX_N={MAX_N}; would check {tuples} 5-tuples (~{in_sphere_calls} in_sphere predicate calls). If intentional, set DELAUNAY_ALLOW_SLOW_COSPHERICAL_FILTER=1"
+    );
 
     // Performance note: this is O(n^5) in the number of input vertices due to iterating all
     // 5-point subsets.

@@ -202,7 +202,7 @@ impl InsertionError {
     /// Retryable errors are geometric degeneracies that may be resolved by
     /// slightly perturbing the vertex coordinates:
     /// - Locate cycles (numerical degeneracy during point location)
-    /// - Non-manifold topology (duplicate boundary facets, ridge fans)
+    /// - Non-manifold topology (facets shared by >2 cells, ridge fans)
     /// - Topology validation failures during repair
     ///
     /// Non-retryable errors are structural failures that won't be fixed by perturbation:
@@ -220,11 +220,11 @@ impl InsertionError {
             Self::NonManifoldTopology { .. } | Self::TopologyValidation(_) => true,
             // Legacy neighbor wiring errors: check message for non-manifold (backwards compatibility)
             Self::NeighborWiring { message } => message.contains("Non-manifold"),
-            // Conflict region errors: duplicate facets or ridge fans indicate degeneracy
+            // Conflict region errors: non-manifold facets or ridge fans indicate degeneracy
             Self::ConflictRegion(ce) => {
                 matches!(
                     ce,
-                    ConflictError::DuplicateBoundaryFacets { .. } | ConflictError::RidgeFan { .. }
+                    ConflictError::NonManifoldFacet { .. } | ConflictError::RidgeFan { .. }
                 )
             }
             // All other errors are not retryable
@@ -1378,8 +1378,11 @@ mod tests {
 
         // Conflict-region errors
         assert!(
-            InsertionError::ConflictRegion(ConflictError::DuplicateBoundaryFacets { count: 1 })
-                .is_retryable()
+            InsertionError::ConflictRegion(ConflictError::NonManifoldFacet {
+                facet_hash: 0x12345_u64,
+                cell_count: 3,
+            })
+            .is_retryable()
         );
         assert!(
             InsertionError::ConflictRegion(ConflictError::RidgeFan {

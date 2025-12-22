@@ -157,7 +157,7 @@ match insertion_result {
         // Retryable via perturbation
     }
     Err(InsertionError::ConflictRegion(e)) => {
-        // Duplicate boundary facets or ridge fans - also retryable
+        // Non-manifold facets or ridge fans - also retryable
     }
     Err(e) if e.is_retryable() => {
         // Automatic retry with perturbation
@@ -229,8 +229,8 @@ The `is_retryable()` method classifies errors:
 // Retryable errors (geometric degeneracies)
 - InsertionError::NonManifoldTopology { .. }        // Facet sharing violation
 - InsertionError::Location(CycleDetected { .. })    // Point location cycle
-- InsertionError::ConflictRegion(DuplicateBoundaryFacets { .. })
-- InsertionError::ConflictRegion(RidgeFan { .. })
+- InsertionError::ConflictRegion(NonManifoldFacet { .. })     // Facet shared by >2 conflict cells
+- InsertionError::ConflictRegion(RidgeFan { .. })             // Ridge fan degeneracy
 - InsertionError::TopologyValidation(_)             // Repair failure
 
 // Non-retryable errors (structural failures)

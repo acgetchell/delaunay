@@ -93,22 +93,24 @@ pub enum ConflictError {
         source: CoordinateConversionError,
     },
 
-    /// Failed to retrieve required cell data (e.g., vertices) or build facet identifiers
+    /// Failed to access required cell data (e.g., vertices) or build facet identifiers.
     #[error("Failed to access required data for cell {cell_key:?}: {message}")]
-    VertexRetrievalFailed {
-        /// The cell key that failed
+    CellDataAccessFailed {
+        /// The cell key for which required data could not be accessed.
         cell_key: CellKey,
-        /// Error message
+        /// Human-readable details about what data could not be accessed.
         message: String,
     },
 
-    /// Duplicate boundary facets detected (geometric degeneracy)
+    /// Non-manifold facet detected (facet shared by more than 2 conflict cells).
     #[error(
-        "Duplicate boundary facets detected: {count} duplicates found (indicates degenerate geometry requiring perturbation)"
+        "Non-manifold facet detected: facet {facet_hash:#x} shared by {cell_count} conflict cells (expected ≤2)"
     )]
-    DuplicateBoundaryFacets {
-        /// Number of duplicate facets found
-        count: usize,
+    NonManifoldFacet {
+        /// Hash of the facet's canonical vertex keys (sorted).
+        facet_hash: u64,
+        /// Number of conflict cells incident to this facet.
+        cell_count: usize,
     },
 
     /// Ridge fan detected (many facets sharing same (D-2)-simplex)
@@ -477,7 +479,7 @@ where
             .collect();
 
         if simplex_points.len() != D + 1 {
-            return Err(ConflictError::VertexRetrievalFailed {
+            return Err(ConflictError::CellDataAccessFailed {
                 cell_key,
                 message: format!("Expected {} vertices, got {}", D + 1, simplex_points.len()),
             });
@@ -635,7 +637,7 @@ where
             facet_hash_to_vkeys.entry(facet_hash).or_insert(facet_vkeys);
 
             let facet_idx_u8 =
-                u8::try_from(facet_idx).map_err(|_| ConflictError::VertexRetrievalFailed {
+                u8::try_from(facet_idx).map_err(|_| ConflictError::CellDataAccessFailed {
                     cell_key,
                     message: format!("Facet index {facet_idx} exceeds u8::MAX"),
                 })?;
@@ -663,7 +665,7 @@ where
 
                 // Use the cached canonical facet vertex keys for ridge analysis.
                 let facet_vkeys = facet_hash_to_vkeys.get(facet_hash).ok_or_else(|| {
-                    ConflictError::VertexRetrievalFailed {
+                    ConflictError::CellDataAccessFailed {
                         cell_key,
                         message: format!(
                             "Missing canonical vertex keys for facet hash {:#x}",
@@ -699,18 +701,20 @@ where
             // >2 conflict cells share this facet => non-manifold (should be impossible in valid TDS)
             // Treat as a retryable degeneracy.
             many => {
-                return Err(ConflictError::DuplicateBoundaryFacets {
-                    count: many.len().saturating_sub(2),
+                return Err(ConflictError::NonManifoldFacet {
+                    facet_hash: *facet_hash,
+                    cell_count: many.len(),
                 });
             }
         }
     }
 
-    // Check for ridge fans (many boundary facets sharing same ridge)
-    // In a manifold boundary, a ridge should be shared by at most 2 facets
-    // More than 2 indicates a degenerate fan configuration
+    // Check for ridge fans (many boundary facets sharing the same ridge).
     for (ridge_vertex_count, facet_count) in ridge_map.values() {
+        // In a manifold boundary, each (D-2)-ridge is shared by at most 2 facets.
+        // Three or more indicates a degenerate fan requiring perturbation.
         const RIDGE_FAN_THRESHOLD: usize = 3;
+
         if *facet_count >= RIDGE_FAN_THRESHOLD {
             return Err(ConflictError::RidgeFan {
                 facet_count: *facet_count,

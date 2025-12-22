@@ -81,6 +81,7 @@ use core::ops::{AddAssign, Div, SubAssign};
 use std::borrow::Cow;
 use std::cmp::Ordering as CmpOrdering;
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use num_traits::{Float, NumCast, One, Zero};
 use thiserror::Error;
@@ -119,6 +120,15 @@ use crate::topology::traits::topological_space::TopologyError;
 /// This limit prevents infinite loops in the rare case where repair cannot make progress.
 /// In practice, most insertions require 0-2 iterations to restore manifold topology.
 const MAX_REPAIR_ITERATIONS: usize = 10;
+
+/// Telemetry: counts how often the topology safety-net recovered from a Level 3 validation
+/// failure by retrying insertion with a star-split of the containing cell.
+///
+/// This is a process-wide counter across all triangulation instances.
+///
+/// This counter is intentionally lightweight and can be polled by production workloads
+/// to see whether this recovery path is frequently used.
+static TOPOLOGY_SAFETY_NET_STAR_SPLIT_FALLBACK_SUCCESSES: AtomicU64 = AtomicU64::new(0);
 
 /// Errors that can occur during triangulation construction.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -251,6 +261,86 @@ impl From<TdsMutationError> for TriangulationValidationError {
     }
 }
 
+/// Adaptive error-checking on suspicious operations.
+#[derive(Clone, Copy, Debug, Default)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct SuspicionFlags {
+    /// A perturbation retry was required to resolve a geometric degeneracy.
+    pub perturbation_used: bool,
+
+    /// A conflict-region computation returned an empty set for an interior point.
+    pub empty_conflict_region: bool,
+
+    /// The insertion fell back to splitting the containing cell (star-split) to avoid
+    /// creating a dangling vertex.
+    pub fallback_star_split: bool,
+
+    /// The non-manifold repair loop was entered after insertion/hull extension.
+    pub repair_loop_entered: bool,
+
+    /// One or more cells were removed during non-manifold repair.
+    pub cells_removed: bool,
+
+    /// Neighbor pointers were rebuilt (facet-matched) after topology repair.
+    pub neighbor_pointers_rebuilt: bool,
+}
+
+impl SuspicionFlags {
+    /// Returns `true` if any suspicious condition was observed.
+    #[inline]
+    #[must_use]
+    pub const fn is_suspicious(&self) -> bool {
+        self.perturbation_used
+            || self.empty_conflict_region
+            || self.fallback_star_split
+            || self.repair_loop_entered
+            || self.cells_removed
+            || self.neighbor_pointers_rebuilt
+    }
+}
+
+type TryInsertImplOk = ((VertexKey, Option<CellKey>), usize, SuspicionFlags);
+
+/// Policy controlling when the triangulation runs global validation passes.
+///
+/// Validation can be expensive (O(N×D²) or worse), so this allows callers to trade
+/// performance for stricter correctness checks during incremental operations.
+#[derive(Clone, Copy, Debug)]
+pub enum ValidationPolicy {
+    /// Never run global validation.
+    Never,
+
+    /// Validate only if the operation is suspicious (e.g. degeneracy).
+    OnSuspicion,
+
+    /// Always validate after insertion.
+    Always,
+
+    /// Debug builds: always validate; release builds: [`ValidationPolicy::OnSuspicion`].
+    DebugOnly,
+}
+
+impl ValidationPolicy {
+    /// Returns `true` if a global validation pass should be run given the observed [`SuspicionFlags`].
+    #[inline]
+    #[must_use]
+    pub const fn should_validate(&self, suspicion: SuspicionFlags) -> bool {
+        match self {
+            Self::Never => false,
+            Self::Always => true,
+            Self::OnSuspicion => suspicion.is_suspicious(),
+            Self::DebugOnly => cfg!(debug_assertions) || suspicion.is_suspicious(),
+        }
+    }
+}
+
+impl Default for ValidationPolicy {
+    #[inline]
+    fn default() -> Self {
+        Self::DebugOnly
+    }
+}
+
 /// Generic triangulation combining kernel and data structure.
 ///
 /// # Type Parameters
@@ -275,6 +365,7 @@ where
     // TODO: Add after bistellar flips + robust insertion (v0.7.0+)
     // /// The topological space this triangulation lives in.
     // pub(crate) topology: Box<dyn TopologicalSpace>,
+    pub(crate) validation_policy: ValidationPolicy,
 }
 
 // =============================================================================
@@ -306,6 +397,28 @@ where
         Self {
             kernel,
             tds: Tds::empty(),
+            validation_policy: ValidationPolicy::default(),
+        }
+    }
+
+    /// Returns the number of times the topology safety-net recovered from a Level 3
+    /// validation failure by retrying insertion with a star-split of the containing cell.
+    ///
+    /// This is a process-wide counter (across all triangulation instances) intended for
+    /// production telemetry. A high value suggests the cavity-based insertion frequently
+    /// creates transient invalid topology that is being masked by the fallback.
+    #[must_use]
+    pub fn topology_safety_net_star_split_fallback_successes() -> u64 {
+        TOPOLOGY_SAFETY_NET_STAR_SPLIT_FALLBACK_SUCCESSES.load(Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn new_with_tds(kernel: K, tds: Tds<K::Scalar, U, V, D>) -> Self {
+        Self {
+            kernel,
+            tds,
+            validation_policy: ValidationPolicy::default(),
         }
     }
 
@@ -1187,72 +1300,16 @@ where
             // Topology safety net: ensure we don't commit an insertion that breaks Level 3 topology.
             // If the cavity-based insertion produces an Euler/topology mismatch, roll back and retry a
             // conservative fallback (star-split of the containing cell) within the same transactional attempt.
-            let result = match self.try_insert_impl(current_vertex, conflict_cells, hint) {
-                Ok(ok) => {
-                    // Skip Level 3 validation during bootstrap (vertices but no cells yet).
-                    if self.tds.number_of_cells() > 0 {
-                        if let Err(validation_err) = self.is_valid() {
-                            // Roll back to snapshot and attempt a star-split fallback for interior points.
-                            self.tds = tds_snapshot.clone();
-
-                            let point = *current_vertex.point();
-                            let location = locate(&self.tds, &self.kernel, &point, hint);
-
-                            if let Ok(LocateResult::InsideCell(start_cell)) = location {
-                                let mut star_conflict = CellKeyBuffer::new();
-                                star_conflict.push(start_cell);
-
-                                match self.try_insert_impl(
-                                    current_vertex,
-                                    Some(&star_conflict),
-                                    Some(start_cell),
-                                ) {
-                                    Ok(fallback_ok) => {
-                                        if self.tds.number_of_cells() > 0 {
-                                            if let Err(fallback_validation_err) = self.is_valid() {
-                                                Err(InsertionError::TopologyValidation(
-                                                    TdsValidationError::InconsistentDataStructure {
-                                                        message: format!(
-                                                            "Topology invalid after star-split fallback: {fallback_validation_err}"
-                                                        ),
-                                                    },
-                                                ))
-                                            } else {
-                                                Ok(fallback_ok)
-                                            }
-                                        } else {
-                                            Ok(fallback_ok)
-                                        }
-                                    }
-                                    Err(fallback_err) => Err(InsertionError::TopologyValidation(
-                                        TdsValidationError::InconsistentDataStructure {
-                                            message: format!(
-                                                "Topology invalid after insertion: {validation_err}; star-split fallback failed: {fallback_err}"
-                                            ),
-                                        },
-                                    )),
-                                }
-                            } else {
-                                Err(InsertionError::TopologyValidation(
-                                    TdsValidationError::InconsistentDataStructure {
-                                        message: format!(
-                                            "Topology invalid after insertion: {validation_err}"
-                                        ),
-                                    },
-                                ))
-                            }
-                        } else {
-                            Ok(ok)
-                        }
-                    } else {
-                        Ok(ok)
-                    }
-                }
-                Err(e) => Err(e),
-            };
+            let result = self.try_insert_with_topology_safety_net(
+                current_vertex,
+                conflict_cells,
+                hint,
+                attempt,
+                &tds_snapshot,
+            );
 
             match result {
-                Ok((result, cells_removed)) => {
+                Ok((result, cells_removed, _suspicion)) => {
                     stats.cells_removed_during_repair = cells_removed;
                     stats.result = InsertionResult::Inserted;
                     #[cfg(debug_assertions)]
@@ -1312,6 +1369,135 @@ where
         }
 
         unreachable!("Loop should have returned in all cases");
+    }
+
+    // -------------------------------------------------------------------------
+    // Topology safety net helpers
+    // -------------------------------------------------------------------------
+
+    /// Logs when Level 3 validation is triggered (debug builds only).
+    #[inline]
+    fn log_validation_trigger_if_enabled(&self, suspicion: SuspicionFlags) {
+        #[cfg(debug_assertions)]
+        if self.validation_policy.should_validate(suspicion) {
+            eprintln!("Validation triggered by {suspicion:?}");
+        }
+    }
+
+    /// Attempt an insertion, and if Level 3 validation fails, roll back and try a
+    /// conservative star-split fallback of the containing cell.
+    fn try_insert_with_topology_safety_net(
+        &mut self,
+        vertex: Vertex<K::Scalar, U, D>,
+        conflict_cells: Option<&CellKeyBuffer>,
+        hint: Option<CellKey>,
+        attempt: usize,
+        tds_snapshot: &Tds<K::Scalar, U, V, D>,
+    ) -> Result<TryInsertImplOk, InsertionError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        let (ok, cells_removed, mut suspicion) =
+            self.try_insert_impl(vertex, conflict_cells, hint)?;
+
+        if attempt > 0 {
+            suspicion.perturbation_used = true;
+        }
+
+        // Skip Level 3 validation during bootstrap (vertices but no cells yet), and
+        // respect the user-configured validation policy.
+        if self.tds.number_of_cells() == 0 || !self.validation_policy.should_validate(suspicion) {
+            return Ok((ok, cells_removed, suspicion));
+        }
+
+        self.log_validation_trigger_if_enabled(suspicion);
+
+        if let Err(validation_err) = self.is_valid() {
+            // Roll back to snapshot and attempt a star-split fallback for interior points.
+            self.tds = tds_snapshot.clone();
+            return self.try_star_split_fallback_after_topology_failure(
+                vertex,
+                hint,
+                attempt,
+                &validation_err,
+            );
+        }
+
+        Ok((ok, cells_removed, suspicion))
+    }
+
+    /// After a Level 3 topology validation failure, try to recover by performing a star-split
+    /// of the containing cell (if the point can be re-located inside a cell).
+    ///
+    /// Notes:
+    /// - This fallback is only applicable when the point re-locates to [`LocateResult::InsideCell`].
+    /// - We re-run Level 3 validation after the fallback to avoid "recovering" into an invalid state.
+    fn try_star_split_fallback_after_topology_failure(
+        &mut self,
+        vertex: Vertex<K::Scalar, U, D>,
+        hint: Option<CellKey>,
+        attempt: usize,
+        validation_err: &TriangulationValidationError,
+    ) -> Result<TryInsertImplOk, InsertionError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        let point = *vertex.point();
+        let location = locate(&self.tds, &self.kernel, &point, hint);
+
+        let Ok(LocateResult::InsideCell(start_cell)) = location else {
+            return Err(InsertionError::TopologyValidation(
+                TdsValidationError::InconsistentDataStructure {
+                    message: format!("Topology invalid after insertion: {validation_err}"),
+                },
+            ));
+        };
+
+        let mut star_conflict = CellKeyBuffer::new();
+        star_conflict.push(start_cell);
+
+        match self.try_insert_impl(vertex, Some(&star_conflict), Some(start_cell)) {
+            Ok((fallback_ok, fallback_removed, mut fallback_suspicion)) => {
+                fallback_suspicion.fallback_star_split = true;
+                if attempt > 0 {
+                    fallback_suspicion.perturbation_used = true;
+                }
+
+                if self.tds.number_of_cells() > 0 {
+                    self.log_validation_trigger_if_enabled(fallback_suspicion);
+
+                    if self.validation_policy.should_validate(fallback_suspicion)
+                        && let Err(fallback_validation_err) = self.is_valid()
+                    {
+                        return Err(InsertionError::TopologyValidation(
+                            TdsValidationError::InconsistentDataStructure {
+                                message: format!(
+                                    "Topology invalid after star-split fallback: {fallback_validation_err}"
+                                ),
+                            },
+                        ));
+                    }
+                }
+
+                // Telemetry: the fallback succeeded, meaning we recovered from a topology
+                // validation failure without surfacing an insertion error to the caller.
+                TOPOLOGY_SAFETY_NET_STAR_SPLIT_FALLBACK_SUCCESSES.fetch_add(1, Ordering::Relaxed);
+
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "Topology safety-net: star-split fallback succeeded (start_cell={start_cell:?})"
+                );
+
+                Ok((fallback_ok, fallback_removed, fallback_suspicion))
+            }
+            Err(fallback_err) => Err(InsertionError::TopologyValidation(
+                TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Topology invalid after insertion: {validation_err}; star-split fallback failed: {fallback_err}"
+                    ),
+                },
+            )),
+        }
     }
 
     /// Ensure an interior insertion never proceeds with an empty conflict region.
@@ -1414,10 +1600,12 @@ where
         vertex: Vertex<K::Scalar, U, D>,
         conflict_cells: Option<&CellKeyBuffer>,
         hint: Option<CellKey>,
-    ) -> Result<((VertexKey, Option<CellKey>), usize), InsertionError>
+    ) -> Result<TryInsertImplOk, InsertionError>
     where
         K::Scalar: CoordinateScalar,
     {
+        let mut suspicion = SuspicionFlags::default();
+
         // CRITICAL: Capture UUID and point BEFORE inserting into TDS
         // Rationale:
         // - inserted_uuid: Needed to remap v_key after TDS rebuild (lines 736-744)
@@ -1474,7 +1662,7 @@ where
 
         if num_vertices < D + 1 {
             // Bootstrap phase: just accumulate vertices, no cells yet
-            return Ok(((v_key, None), 0));
+            return Ok(((v_key, None), 0, suspicion));
         } else if num_vertices == D + 1 {
             // Build initial simplex from all D+1 vertices
             let all_vertices: Vec<_> = self.tds.vertices().map(|(_, v)| *v).collect();
@@ -1497,7 +1685,7 @@ where
 
             // Return first cell key for hint caching
             let first_cell = self.tds.cell_keys().next();
-            return Ok(((v_key, first_cell), 0));
+            return Ok(((v_key, first_cell), 0, suspicion));
         }
 
         // 3. Locate containing cell (for vertex D+2 and beyond)
@@ -1521,6 +1709,10 @@ where
                 // Fallback: treat the containing cell as the conflict region, effectively performing
                 // a star-split of that cell to keep the simplicial complex connected.
                 let computed = find_conflict_region(&self.tds, &self.kernel, &point, start_cell)?;
+                if computed.is_empty() {
+                    suspicion.empty_conflict_region = true;
+                    suspicion.fallback_star_split = true;
+                }
                 Some(Self::ensure_non_empty_conflict_cells(
                     Cow::Owned(computed),
                     start_cell,
@@ -1531,6 +1723,10 @@ where
                 // computes conflicts using a strict in-sphere test), we must still replace at least
                 // one cell; otherwise we'd create no cavity, no new cells, and leave a dangling
                 // vertex (χ increases by 1, typically showing up as χ=2 for Ball(3)).
+                if cells.is_empty() {
+                    suspicion.empty_conflict_region = true;
+                    suspicion.fallback_star_split = true;
+                }
                 Some(Self::ensure_non_empty_conflict_cells(
                     Cow::Borrowed(cells),
                     start_cell,
@@ -1564,6 +1760,9 @@ where
                 // inserted vertex isolated (increases χ by 1; observed as χ=2 for Ball(3)).
                 // In that case, force a star-split of the containing cell.
                 if boundary_facets.is_empty() {
+                    suspicion.empty_conflict_region = true;
+                    suspicion.fallback_star_split = true;
+
                     #[cfg(debug_assertions)]
                     eprintln!(
                         "WARNING: empty cavity boundary for interior insertion; falling back to splitting containing cell {start_cell:?}"
@@ -1588,6 +1787,8 @@ where
                 let _removed_count = self.tds.remove_cells_by_keys(conflict_cells.as_ref());
 
                 // 9. Iteratively repair non-manifold topology until facet sharing is valid
+                suspicion.repair_loop_entered = true;
+
                 let mut total_removed = 0;
                 #[allow(unused_variables)]
                 for iteration in 0..MAX_REPAIR_ITERATIONS {
@@ -1627,6 +1828,10 @@ where
                         }
 
                         total_removed += removed;
+
+                        if removed > 0 {
+                            suspicion.cells_removed = true;
+                        }
 
                         #[cfg(debug_assertions)]
                         eprintln!("Removed {removed} cells (total: {total_removed})");
@@ -1670,6 +1875,7 @@ where
                         message: format!("Failed to repair neighbor pointers after insertion: {e}"),
                     }
                 })?;
+                suspicion.neighbor_pointers_rebuilt = true;
 
                 // Validate neighbor pointers by forcing a full facet walk (no hint).
                 let _ = locate(&self.tds, &self.kernel, &point, None)?;
@@ -1693,8 +1899,19 @@ where
                     ));
                 }
 
-                // Connectedness guard: a valid Ball(D) triangulation should be a single connected component.
-                // If the neighbor graph splits into multiple components, χ becomes additive (often χ=2).
+                // Connectedness guard (STRUCTURAL SAFETY, NOT Level‑3 validation):
+                //
+                // This check is intentionally unconditional.
+                // It ensures the neighbor graph of cells is a single connected component
+                // before we commit the insertion.
+                //
+                // - This is NOT `Triangulation::is_valid()`
+                // - It does NOT compute Euler characteristic
+                // - It does NOT perform global facet manifold checks
+                //
+                // Cost: O(N + E) over cells, much cheaper than Level‑3 validation.
+                //
+                // If this fails, the triangulation is already corrupted and must be rolled back.
                 self.validate_connectedness()?;
 
                 // Return vertex key and hint for next insertion
@@ -1702,13 +1919,14 @@ where
                     .iter()
                     .copied()
                     .find(|ck| self.tds.contains_cell(*ck));
-                Ok(((v_key, hint), total_removed))
+                Ok(((v_key, hint), total_removed, suspicion))
             }
             LocateResult::Outside => {
                 // Exterior vertex: extend convex hull
                 let new_cells = extend_hull(&mut self.tds, &self.kernel, v_key, &point)?;
 
                 // Iteratively repair non-manifold topology until facet sharing is valid
+                suspicion.repair_loop_entered = true;
                 let mut total_removed = 0;
                 #[allow(unused_variables)]
                 for iteration in 0..MAX_REPAIR_ITERATIONS {
@@ -1748,6 +1966,9 @@ where
                         }
 
                         total_removed += removed;
+                        if removed > 0 {
+                            suspicion.cells_removed = true;
+                        }
 
                         #[cfg(debug_assertions)]
                         eprintln!("Removed {removed} cells (total: {total_removed})");
@@ -1785,6 +2006,7 @@ where
                             message: format!("Failed to rebuild neighbors after repairs: {e}"),
                         }
                     })?;
+                    suspicion.neighbor_pointers_rebuilt = true;
                 }
 
                 // Always rebuild vertex→cell incidence after insertion.
@@ -1813,7 +2035,7 @@ where
                     .iter()
                     .copied()
                     .find(|ck| self.tds.contains_cell(*ck));
-                Ok(((v_key, hint), total_removed))
+                Ok(((v_key, hint), total_removed, suspicion))
             }
             LocateResult::OnFacet(_, _) | LocateResult::OnEdge(_) | LocateResult::OnVertex(_) => {
                 // These degenerate cases are already handled at lines 772-779 above,
@@ -2834,10 +3056,7 @@ mod tests {
         neighbors[0] = Some(second_cell_key);
         first_cell.neighbors = Some(neighbors);
 
-        let tri = Triangulation::<FastKernel<f64>, (), (), 3> {
-            kernel: FastKernel::new(),
-            tds,
-        };
+        let tri = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
 
         match tri.is_valid() {
             Err(TriangulationValidationError::BoundaryFacetHasNeighbor {
@@ -2876,10 +3095,7 @@ mod tests {
         let _c1 = tds.insert_cell_with_mapping(cell_1).unwrap();
         let _c2 = tds.insert_cell_with_mapping(cell_2).unwrap();
 
-        let tri = Triangulation::<FastKernel<f64>, (), (), 3> {
-            kernel: FastKernel::new(),
-            tds,
-        };
+        let tri = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
 
         assert!(matches!(
             tri.is_valid(),
@@ -2919,10 +3135,7 @@ mod tests {
         let _ = tds.insert_cell_with_mapping(cell_2).unwrap();
         let _ = tds.insert_cell_with_mapping(cell_3).unwrap();
 
-        let tri = Triangulation::<FastKernel<f64>, (), (), 3> {
-            kernel: FastKernel::new(),
-            tds,
-        };
+        let tri = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
 
         match tri.is_valid() {
             Err(TriangulationValidationError::ManifoldFacetMultiplicity { cell_count, .. }) => {
@@ -2943,10 +3156,7 @@ mod tests {
 
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
-        let tri = Triangulation::<FastKernel<f64>, (), (), 3> {
-            kernel: FastKernel::new(),
-            tds,
-        };
+        let tri = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
 
         assert!(tri.validation_report().is_ok());
     }
@@ -2962,10 +3172,8 @@ mod tests {
 
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
-        let mut tri = Triangulation::<FastKernel<f64>, (), (), 3> {
-            kernel: FastKernel::new(),
-            tds,
-        };
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
 
         // Break UUID↔key mappings: remove one vertex UUID entry.
         let uuid = tri.tds.vertices().next().unwrap().1.uuid();
@@ -2992,10 +3200,8 @@ mod tests {
 
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
-        let mut tri = Triangulation::<FastKernel<f64>, (), (), 3> {
-            kernel: FastKernel::new(),
-            tds,
-        };
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
 
         // Insert an invalid vertex (nil UUID) to exercise VertexValidity reporting.
         let invalid_vertex: Vertex<f64, (), 3> = Vertex::empty();
@@ -3215,7 +3421,7 @@ mod tests {
 
                     let tds = Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices)
                         .unwrap();
-                    let tri = Triangulation::<FastKernel<f64>, (), (), $dim> { kernel: FastKernel::new(), tds };
+                    let tri = Triangulation::<FastKernel<f64>, (), (), $dim>::new_with_tds(FastKernel::new(), tds);
 
                     // Valid simplex: should have no issues
                     let cell_keys: Vec<_> = tri.tds.cell_keys().collect();
@@ -3248,7 +3454,7 @@ mod tests {
 
                     let tds = Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices)
                         .unwrap();
-                    let mut tri = Triangulation::<FastKernel<f64>, (), (), $dim> { kernel: FastKernel::new(), tds };
+                    let mut tri = Triangulation::<FastKernel<f64>, (), (), $dim>::new_with_tds(FastKernel::new(), tds);
 
                     // Empty issues map: should remove nothing
                     let empty_issues = FacetIssuesMap::default();
@@ -3373,7 +3579,10 @@ mod tests {
 
                     let tds = Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices)
                         .unwrap();
-                    let tri = Triangulation::<FastKernel<f64>, (), (), $dim> { kernel: FastKernel::new(), tds };
+                    let tri = Triangulation::<FastKernel<f64>, (), (), $dim>::new_with_tds(
+                        FastKernel::new(),
+                        tds,
+                    );
 
                     assert_eq!(tri.number_of_vertices(), expected_vertex_count);
                     assert_eq!(tri.number_of_cells(), 1);

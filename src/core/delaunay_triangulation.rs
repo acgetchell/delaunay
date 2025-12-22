@@ -16,7 +16,7 @@ use crate::core::cell::Cell;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{
-    Triangulation, TriangulationConstructionError, TriangulationValidationError,
+    Triangulation, TriangulationConstructionError, TriangulationValidationError, ValidationPolicy,
 };
 use crate::core::triangulation_data_structure::{
     CellKey, InvariantKind, InvariantViolation, Tds, TdsConstructionError, TdsValidationError,
@@ -307,7 +307,11 @@ where
         let tds = Triangulation::<K, U, V, D>::build_initial_simplex(initial_vertices)?;
 
         let mut dt = Self {
-            tri: Triangulation { kernel, tds },
+            tri: Triangulation {
+                kernel,
+                tds,
+                validation_policy: ValidationPolicy::DebugOnly,
+            },
             last_inserted_cell: None,
         };
 
@@ -1130,7 +1134,11 @@ where
     #[must_use]
     pub const fn from_tds(tds: Tds<K::Scalar, U, V, D>, kernel: K) -> Self {
         Self {
-            tri: Triangulation { kernel, tds },
+            tri: Triangulation {
+                kernel,
+                tds,
+                validation_policy: ValidationPolicy::DebugOnly,
+            },
             last_inserted_cell: None,
         }
     }
