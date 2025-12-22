@@ -349,6 +349,11 @@ where
                 }
                 Err(e) => {
                     // Non-retryable failure: abort construction with a structured error.
+                    //
+                    // NOTE: This match is intentionally exhaustive over `InsertionError`.
+                    // When adding new insertion failure modes in the future, revisit whether they
+                    // deserve a dedicated `TriangulationConstructionError` variant instead of being
+                    // collapsed into `GeometricDegeneracy`.
                     return Err(match e {
                         // Preserve underlying construction errors (e.g. duplicate UUID).
                         InsertionError::Construction(source) => source,
@@ -375,9 +380,30 @@ where
                         InsertionError::DuplicateCoordinates { coordinates } => {
                             TriangulationConstructionError::DuplicateCoordinates { coordinates }
                         }
-                        other => TriangulationConstructionError::GeometricDegeneracy {
-                            message: other.to_string(),
+
+                        // Insertion-layer failures that are best surfaced during construction as a
+                        // geometric degeneracy (e.g. numerical instability, hull visibility issues).
+                        InsertionError::ConflictRegion(source) => {
+                            TriangulationConstructionError::GeometricDegeneracy {
+                                message: source.to_string(),
+                            }
+                        }
+                        InsertionError::Location(source) => {
+                            TriangulationConstructionError::GeometricDegeneracy {
+                                message: source.to_string(),
+                            }
+                        }
+                        InsertionError::NonManifoldTopology {
+                            facet_hash,
+                            cell_count,
+                        } => TriangulationConstructionError::GeometricDegeneracy {
+                            message: format!(
+                                "Non-manifold topology: facet {facet_hash:#x} shared by {cell_count} cells (expected ≤2)"
+                            ),
                         },
+                        InsertionError::HullExtension { message } => {
+                            TriangulationConstructionError::GeometricDegeneracy { message }
+                        }
                     }
                     .into());
                 }

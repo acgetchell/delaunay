@@ -96,6 +96,7 @@
     "RLENGTH",
     "RSTART",
     "RUSTDOCFLAGS",
+    "RUSTFLAGS",
     "Roundtable",
     "Ryzen",
     "SBATCH",

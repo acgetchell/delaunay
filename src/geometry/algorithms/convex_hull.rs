@@ -2699,7 +2699,7 @@ mod tests {
                     // This is acceptable as long as it is surfaced as a clear
                     // GeometricDegeneracy error.
                     println!(
-                        "  [33mWarning:[0m skipping {desc} extreme coordinate hull validation \
+                        "  \x1b[33mWarning:\x1b[0m skipping {desc} extreme coordinate hull validation \
                          due to geometric degeneracy in Tds::new",
                     );
                 }
@@ -3191,12 +3191,10 @@ mod tests {
         // Note: We need to use the underlying TDS directly for this edge case test
         let mut tds = crate::core::triangulation_data_structure::Tds::<f64, (), (), 3>::empty();
         let vertex = vertex!([0.0, 0.0, 0.0]);
-        let _ = tds.insert_vertex_with_mapping(vertex);
-        let tri = Triangulation {
-            kernel: FastKernel::new(),
-            tds,
-            validation_policy: crate::core::triangulation::ValidationPolicy::default(),
-        };
+        tds.insert_vertex_with_mapping(vertex).unwrap();
+
+        // Use the test-only constructor to avoid brittle struct literals.
+        let tri = Triangulation::new_with_tds(FastKernel::new(), tds);
 
         let result = ConvexHull::from_triangulation(&tri);
         assert!(result.is_err());
@@ -3675,7 +3673,7 @@ mod tests {
                 // degeneracy; later parts of this test still exercise max-scale
                 // behavior.
                 println!(
-                    "  \\x1b[33mWarning:\\x1b[0m skipping MIN_POSITIVE extreme simplex due to geometric degeneracy",
+                    "  \x1b[33mWarning:\x1b[0m skipping MIN_POSITIVE extreme simplex due to geometric degeneracy",
                 );
             }
             Err(other) => {

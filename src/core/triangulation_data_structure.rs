@@ -395,6 +395,26 @@ pub enum TdsValidationError {
         /// Description of the inconsistency.
         message: String,
     },
+
+    /// Level 3 topology validation failed (manifold / Euler characteristic, etc.).
+    ///
+    /// This preserves the structured Level‑3 validation error when topology checks
+    /// need to be surfaced through APIs that currently return [`TdsValidationError`]
+    /// (notably the incremental insertion rollback path).
+    ///
+    /// Note: This uses `Box` indirection to avoid creating an infinitely-sized type, since
+    /// [`TriangulationValidationError`](crate::core::triangulation::TriangulationValidationError)
+    /// itself can wrap [`TdsValidationError`].
+    #[error("{message}: {source}")]
+    TopologyValidationFailed {
+        /// High-level context for when the topology validation failed.
+        message: String,
+
+        /// The underlying Level 3 validation error.
+        #[source]
+        source: Box<crate::core::triangulation::TriangulationValidationError>,
+    },
+
     /// Insufficient vertices to create a triangulation.
     #[error("Insufficient vertices for {dimension}D triangulation: {source}")]
     InsufficientVertices {

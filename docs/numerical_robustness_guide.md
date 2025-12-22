@@ -551,14 +551,14 @@ pub fn create_triangulation_with_fallback(
 
 ```rust
 fn remove_duplicate_and_near_duplicate_points(
-    vertices: &[Vertex<f64, Option<()>, 3>]
-) -> Vec<Vertex<f64, Option<()>, 3>> {
+    vertices: &[Vertex<f64, (), 3>]
+) -> Vec<Vertex<f64, (), 3>> {
     // Simple deduplication based on coordinate proximity
     let mut filtered = Vec::new();
     let tolerance = 1e-10;
     
     for vertex in vertices {
-        let is_duplicate = filtered.iter().any(|existing: &Vertex<f64, Option<()>, 3>| {
+        let is_duplicate = filtered.iter().any(|existing: &Vertex<f64, (), 3>| {
             let existing_coords: [f64; 3] = existing.point().into();
             let vertex_coords: [f64; 3] = vertex.point().into();
             

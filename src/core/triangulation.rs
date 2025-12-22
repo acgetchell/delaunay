@@ -1382,6 +1382,13 @@ where
         if self.validation_policy.should_validate(suspicion) {
             eprintln!("Validation triggered by {suspicion:?}");
         }
+
+        // Keep the parameter "used" in release builds where the debug-only logging
+        // is compiled out, so `cargo clippy -D warnings` stays clean across profiles.
+        #[cfg(not(debug_assertions))]
+        {
+            let _ = suspicion;
+        }
     }
 
     /// Attempt an insertion, and if Level 3 validation fails, roll back and try a
@@ -1447,8 +1454,10 @@ where
 
         let Ok(LocateResult::InsideCell(start_cell)) = location else {
             return Err(InsertionError::TopologyValidation(
-                TdsValidationError::InconsistentDataStructure {
-                    message: format!("Topology invalid after insertion: {validation_err}"),
+                TdsValidationError::TopologyValidationFailed {
+                    message: "Topology invalid after insertion; star-split fallback requires point to re-locate inside a cell"
+                        .to_string(),
+                    source: Box::new(validation_err.clone()),
                 },
             ));
         };
@@ -1470,10 +1479,9 @@ where
                         && let Err(fallback_validation_err) = self.is_valid()
                     {
                         return Err(InsertionError::TopologyValidation(
-                            TdsValidationError::InconsistentDataStructure {
-                                message: format!(
-                                    "Topology invalid after star-split fallback: {fallback_validation_err}"
-                                ),
+                            TdsValidationError::TopologyValidationFailed {
+                                message: "Topology invalid after star-split fallback".to_string(),
+                                source: Box::new(fallback_validation_err),
                             },
                         ));
                     }
@@ -1491,10 +1499,11 @@ where
                 Ok((fallback_ok, fallback_removed, fallback_suspicion))
             }
             Err(fallback_err) => Err(InsertionError::TopologyValidation(
-                TdsValidationError::InconsistentDataStructure {
+                TdsValidationError::TopologyValidationFailed {
                     message: format!(
-                        "Topology invalid after insertion: {validation_err}; star-split fallback failed: {fallback_err}"
+                        "Topology invalid after insertion; star-split fallback failed: {fallback_err}"
                     ),
+                    source: Box::new(validation_err.clone()),
                 },
             )),
         }
