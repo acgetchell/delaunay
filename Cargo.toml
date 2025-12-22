@@ -37,7 +37,7 @@ uuid = { version = "1.19.0", features = ["v4", "serde"] }
 
 [dev-dependencies]
 criterion = { version = "0.8.1", features = ["html_reports"] }
-pastey = "0.2.0"
+pastey = "0.2.1"
 proptest = "1.9.0"
 sysinfo = "0.37.2"  # Process memory monitoring for benchmarks
 
