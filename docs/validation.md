@@ -25,6 +25,68 @@ Level 4: Delaunay Property
 
 ---
 
+## Automatic validation during incremental insertion (`ValidationPolicy`)
+
+The library always provides **explicit** validation APIs (Levels 1–4) that you can call when you need them.
+
+Separately, incremental construction (`new()` / `insert*()`) can run an **automatic**
+*Level 3* topology validation pass after an insertion attempt, controlled by a
+`ValidationPolicy` on the triangulation.
+
+This is a performance vs certainty knob: Level 3 (`Triangulation::is_valid()`) is
+relatively expensive, so the default behavior is to validate only when something
+looks “off”.
+
+### What is validated automatically?
+
+Only **Level 3** (`Triangulation::is_valid()`): manifold-with-boundary facet checks, connectedness (single component), and Euler characteristic.
+
+Automatic validation does **not** run Level 4 (the Delaunay empty-circumsphere property).
+If you need geometric verification, call `dt.is_valid()` or `dt.validate()` explicitly.
+
+### Default: `OnSuspicion`
+
+The default policy is `ValidationPolicy::OnSuspicion`: we validate Level 3 only when the
+insertion deviates from the happy-path and trips internal **suspicion flags**, e.g.:
+
+- A perturbation retry was required (geometric degeneracy).
+- The insertion fell back to a conservative “star-split” of the containing cell.
+- Non-manifold facet issues were detected and repaired (cells removed).
+- Neighbor pointers had to be repaired **and at least one pointer actually changed** (running the repair routine is not, by itself, considered suspicious).
+
+### Available policies
+
+- `ValidationPolicy::Never`: never run Level 3 automatically (fastest, least guarded).
+- `ValidationPolicy::OnSuspicion` *(default)*: run Level 3 only when insertion is suspicious.
+- `ValidationPolicy::Always`: run Level 3 after every insertion attempt (slowest, best for tests).
+- `ValidationPolicy::DebugOnly`: always run Level 3 in debug builds; in release behaves like `OnSuspicion`.
+
+### Example: configuring validation policy
+
+```rust
+use delaunay::prelude::*;
+
+let vertices = vec![
+    vertex!([0.0, 0.0, 0.0]),
+    vertex!([1.0, 0.0, 0.0]),
+    vertex!([0.0, 1.0, 0.0]),
+    vertex!([0.0, 0.0, 1.0]),
+];
+
+let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+
+// Default: validate topology only when insertion is suspicious.
+assert_eq!(dt.validation_policy(), ValidationPolicy::OnSuspicion);
+
+// For test/debug: validate topology after every insertion.
+dt.set_validation_policy(ValidationPolicy::Always);
+
+// For maximum performance (you can still validate explicitly when you choose).
+dt.set_validation_policy(ValidationPolicy::Never);
+```
+
+---
+
 ## Error Types by Layer
 
 The library separates **construction-time** failures from **validation-time** invariant violations, and also separates errors by layer.
@@ -43,7 +105,7 @@ The library separates **construction-time** failures from **validation-time** in
 
 - `TdsValidationError` (Levels 1–2): element + structural invariants.
 - `TriangulationValidationError` (Level 3): wraps `TdsValidationError` and adds
-  manifold-with-boundary + Euler characteristic checks.
+  manifold-with-boundary + connectedness + Euler characteristic checks.
 - `DelaunayTriangulationValidationError` (Level 4): wraps `TriangulationValidationError` and adds
   the empty-circumsphere (Delaunay) checks.
 
@@ -180,18 +242,19 @@ Validates that the triangulation forms a valid topological manifold.
 
 1. **Manifold Facet Property**: Each facet belongs to exactly 1 cell (boundary) or exactly 2 cells (interior)
    - Stronger than Level 2's "≤2 cells per facet"
-2. **Euler Characteristic**: χ matches expected topology
-   - 0D: χ = 1 (single vertex)
-   - 1D: χ = V - E = 1 (path with boundary)
-   - 2D: χ = V - E + F ∈ {1, 2} (disk or sphere)
-   - 3D: χ = V - E + F - C ∈ {0, 1} (ball or sphere)
-   - 4D+: Currently allows all values (TODO: full k-simplex counting)
+2. **Connectedness**: All cells form a single connected component in the cell neighbor graph
+   - Detected via a graph traversal over neighbor pointers (O(N·D))
+3. **Euler Characteristic**: χ matches expected topology (when an expectation is defined)
+   - Empty: χ = 0
+   - Single simplex / Ball(D): χ = 1
+   - Closed sphere S^D: χ = 1 + (-1)^D
+   - Unknown: χ is computed but not enforced
 
 `Triangulation::validate()` (Levels 1–3) additionally runs `Tds::validate()` first.
 
 ### Complexity
 
-- **Time**: O(N×D²) for edge/facet extraction and Euler calculation
+- **Time**: O(N×D²) dominated by simplex counting (connectedness adds O(N·D))
 - **Space**: O(N×D) for edge/facet sets
 
 ### When to Use
@@ -313,7 +376,7 @@ For a 3D triangulation with 1000 vertices (~5000-6000 cells):
 |-------|------|--------------|
 | 1 | ~1μs | Single element check |
 | 2 | ~10-50ms | Full structural validation |
-| 3 | ~50-100ms | Structural + topological (Euler) |
+| 3 | ~50-100ms | Structural + topological (connectedness + Euler) |
 | 4 | ~100-500ms | Empty circumsphere for all cells |
 
 **Recommendation**: Use Level 2 in production, reserve Level 3+ for tests/debug.
@@ -383,9 +446,9 @@ pub fn validate_with_level(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3
 
 ### Validation Passes Level 2, Fails at Level 3
 
-**Problem**: Manifold property violated (facet has 0 or >2 cells) or Euler characteristic wrong
-**Likely Cause**: Non-manifold topology or disconnected components
-**Fix**: Check facet-to-cells mapping, ensure no isolated cells
+**Problem**: Manifold property violated (facet has 0 or >2 cells), triangulation disconnected, or Euler characteristic wrong
+**Likely Cause**: Non-manifold topology, missing/broken neighbor wiring, or disconnected components
+**Fix**: Check facet-to-cells mapping, ensure no isolated cells, and verify the cell neighbor graph is connected
 
 ### Validation Passes Level 3, Fails at Level 4
 

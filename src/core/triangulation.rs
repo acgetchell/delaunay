@@ -30,8 +30,9 @@
 //! - **Method**: [`Triangulation::is_valid()`](crate::core::triangulation::Triangulation::is_valid)
 //! - **Checks**:
 //!   - Manifold-with-boundary facet property (exactly 1 boundary cell or 2 interior cells per facet)
+//!   - Connectedness (single connected component in the cell neighbor graph)
 //!   - Euler characteristic (χ = V - E + F - C matches expected topology)
-//! - **Cost**: O(N×D²) for simplex counting
+//! - **Cost**: O(N×D²) dominated by simplex counting
 //!
 //! Use [`Triangulation::validate()`](crate::core::triangulation::Triangulation::validate) for cumulative Levels 1–3.
 //!
@@ -305,7 +306,7 @@ type TryInsertImplOk = ((VertexKey, Option<CellKey>), usize, SuspicionFlags);
 ///
 /// Validation can be expensive (O(N×D²) or worse), so this allows callers to trade
 /// performance for stricter correctness checks during incremental operations.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ValidationPolicy {
     /// Never run global validation.
     Never,
@@ -337,7 +338,7 @@ impl ValidationPolicy {
 impl Default for ValidationPolicy {
     #[inline]
     fn default() -> Self {
-        Self::DebugOnly
+        Self::OnSuspicion
     }
 }
 
@@ -366,6 +367,74 @@ where
     // /// The topological space this triangulation lives in.
     // pub(crate) topology: Box<dyn TopologicalSpace>,
     pub(crate) validation_policy: ValidationPolicy,
+}
+
+// =============================================================================
+// Internal Helpers (Structural / Graph Traversals)
+// =============================================================================
+
+impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
+where
+    K: Kernel<D>,
+    U: DataType,
+    V: DataType,
+{
+    /// Traverses the cell neighbor graph starting at `start` and returns the set of visited cells.
+    ///
+    /// If `allowed` is `Some`, traversal is restricted to that set. Neighbors outside the allowed
+    /// set are reported via `on_external_neighbor`.
+    #[must_use]
+    fn traverse_cell_neighbor_graph<F>(
+        &self,
+        start: CellKey,
+        reserve: usize,
+        allowed: Option<&CellKeySet>,
+        mut on_external_neighbor: F,
+    ) -> CellKeySet
+    where
+        F: FnMut(CellKey, CellKey),
+    {
+        let mut visited: CellKeySet = CellKeySet::default();
+        visited.reserve(reserve);
+
+        let mut stack: CellKeyBuffer = CellKeyBuffer::new();
+        stack.push(start);
+
+        while let Some(ck) = stack.pop() {
+            if !visited.insert(ck) {
+                continue;
+            }
+
+            let Some(cell) = self.tds.get_cell(ck) else {
+                continue;
+            };
+
+            let Some(neighbors) = cell.neighbors() else {
+                continue;
+            };
+
+            for &n_opt in neighbors {
+                let Some(nk) = n_opt else {
+                    continue;
+                };
+
+                if !self.tds.contains_cell(nk) {
+                    continue;
+                }
+
+                if allowed.is_some_and(|allowed| !allowed.contains(&nk)) {
+                    on_external_neighbor(ck, nk);
+                    continue;
+                }
+
+                if !visited.contains(&nk) {
+                    stack.push(nk);
+                }
+            }
+        }
+
+        visited
+    }
 }
 
 // =============================================================================
@@ -663,6 +732,7 @@ where
     /// This checks the triangulation/topology layer **only**:
     /// - Manifold facet property allowing a boundary
     /// - Boundary consistency with neighbor pointers (boundary facets must have no neighbor)
+    /// - Connectedness (single component in the cell neighbor graph)
     /// - Euler characteristic
     ///
     /// It intentionally does **not** validate lower layers (vertices/cells or TDS structure).
@@ -672,6 +742,7 @@ where
     ///
     /// Returns a [`TriangulationValidationError`] if:
     /// - The manifold-with-boundary facet property is violated.
+    /// - The triangulation is disconnected (multiple cell components).
     /// - Euler characteristic validation fails.
     /// - The topology module reports an error (treated as inconsistent data structure).
     ///
@@ -697,7 +768,13 @@ where
         // 1. Manifold facet property (with boundary-aware neighbor consistency)
         self.validate_manifold_facets()?;
 
-        // 2. Euler characteristic using the topology module
+        // 2. Connectedness (single component in the cell neighbor graph).
+        //
+        // This is cheaper than Euler characteristic validation and catches cases where χ can
+        // still match even though the triangulation is disconnected.
+        self.validate_global_connectedness()?;
+
+        // 3. Euler characteristic using the topology module
         let topology_result = validate_triangulation_euler(&self.tds)?;
 
         if let Some(expected) = topology_result.expected
@@ -911,6 +988,38 @@ where
                     });
                 }
             }
+        }
+
+        Ok(())
+    }
+
+    /// Validates that the triangulation's cell neighbor graph is a single connected component.
+    ///
+    /// This is an O(N·D) traversal (equivalently O(N+E) with bounded degree), where N is the
+    /// number of cells and each cell has at most D+1 neighbors.
+    fn validate_global_connectedness(&self) -> Result<(), TriangulationValidationError> {
+        let total_cells = self.tds.number_of_cells();
+        if total_cells == 0 {
+            return Ok(());
+        }
+
+        let start = self.tds.cell_keys().next().ok_or_else(|| {
+            TdsValidationError::InconsistentDataStructure {
+                message: "Triangulation has non-zero cell count but no cell keys".to_string(),
+            }
+        })?;
+
+        let visited = self.traverse_cell_neighbor_graph(start, total_cells, None, |_from, _to| {});
+
+        if visited.len() != total_cells {
+            return Err(TdsValidationError::InconsistentDataStructure {
+                message: format!(
+                    "Disconnected triangulation: visited {} of {} cells in the cell neighbor graph",
+                    visited.len(),
+                    total_cells
+                ),
+            }
+            .into());
         }
 
         Ok(())
@@ -1544,52 +1653,90 @@ where
             .collect()
     }
 
-    /// Connectedness guard: a valid Ball(D) triangulation should be a single connected component.
+    /// Connectedness guard (localized).
     ///
-    /// This validates that all cells are reachable via neighbor pointers from an arbitrary start cell.
-    fn validate_connectedness(&self) -> Result<(), InsertionError> {
+    /// This check is designed to be **O(k·D)**, where `k` is the number of newly created cells and
+    /// `D` is the triangulation dimension (each cell has at most `D+1` neighbors).
+    ///
+    /// It validates two properties that are sufficient to catch the common “disconnected neighbor
+    /// graph after insertion” failure modes without walking the entire triangulation:
+    ///
+    /// 1. The surviving subset of `new_cells` forms a single connected component (via neighbor pointers).
+    /// 2. If there are cells outside that component, the new component is attached to at least one
+    ///    existing cell (via a *mutual* neighbor relationship).
+    fn validate_connectedness(&self, new_cells: &CellKeyBuffer) -> Result<(), InsertionError> {
         let total_cells = self.tds.number_of_cells();
         if total_cells == 0 {
             return Ok(());
         }
 
-        let start = self
-            .tds
-            .cell_keys()
-            .next()
-            .expect("number_of_cells() > 0 implies at least one cell key");
-
-        let mut visited: CellKeySet = CellKeySet::default();
-        visited.reserve(total_cells);
-
-        let mut stack: CellKeyBuffer = CellKeyBuffer::new();
-        stack.push(start);
-
-        while let Some(ck) = stack.pop() {
-            if !visited.insert(ck) {
-                continue;
-            }
-            if let Some(cell) = self.tds.get_cell(ck)
-                && let Some(neighbors) = cell.neighbors()
-            {
-                for &n_opt in neighbors {
-                    if let Some(nk) = n_opt
-                        && self.tds.contains_cell(nk)
-                        && !visited.contains(&nk)
-                    {
-                        stack.push(nk);
-                    }
-                }
+        // Build a set of the *surviving* new cells (some may have been removed during repair).
+        let mut new_set: CellKeySet = CellKeySet::default();
+        new_set.reserve(new_cells.len());
+        for &ck in new_cells {
+            if self.tds.contains_cell(ck) {
+                new_set.insert(ck);
             }
         }
 
-        if visited.len() != total_cells {
+        if new_set.is_empty() {
+            return Err(InsertionError::TopologyValidation(
+                TdsValidationError::InconsistentDataStructure {
+                    message: "Disconnected triangulation detected after insertion: no surviving new cells"
+                        .to_string(),
+                },
+            ));
+        }
+
+        let expected_new_cells = new_set.len();
+
+        let start = *new_set
+            .iter()
+            .next()
+            .expect("new_set is non-empty by construction");
+
+        let mut touches_existing_cells = false;
+
+        let visited = self.traverse_cell_neighbor_graph(
+            start,
+            expected_new_cells,
+            Some(&new_set),
+            |ck, nk| {
+                if touches_existing_cells {
+                    return;
+                }
+
+                // For connectivity between new cells and existing cells, require *mutual* adjacency.
+                // This avoids treating one-way neighbor pointers as “connected”.
+                if let Some(neighbor_cell) = self.tds.get_cell(nk)
+                    && neighbor_cell
+                        .neighbors()
+                        .is_some_and(|ns| ns.contains(&Some(ck)))
+                {
+                    touches_existing_cells = true;
+                }
+            },
+        );
+
+        if visited.len() != expected_new_cells {
             return Err(InsertionError::TopologyValidation(
                 TdsValidationError::InconsistentDataStructure {
                     message: format!(
-                        "Disconnected triangulation detected after insertion: visited {} of {} cells",
+                        "Disconnected triangulation detected after insertion: new-cell subgraph visited {} of {} cells",
                         visited.len(),
-                        total_cells
+                        expected_new_cells
+                    ),
+                },
+            ));
+        }
+
+        // If there are cells outside `new_set`, ensure the new component is attached to at least one
+        // of them (otherwise we'd be creating a disconnected component).
+        if total_cells > expected_new_cells && !touches_existing_cells {
+            return Err(InsertionError::TopologyValidation(
+                TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Disconnected triangulation detected after insertion: new-cell component ({expected_new_cells} cells) is not connected to existing cells (total_cells={total_cells})"
                     ),
                 },
             ));
@@ -1796,8 +1943,6 @@ where
                 let _removed_count = self.tds.remove_cells_by_keys(conflict_cells.as_ref());
 
                 // 9. Iteratively repair non-manifold topology until facet sharing is valid
-                suspicion.repair_loop_entered = true;
-
                 let mut total_removed = 0;
                 #[allow(unused_variables)]
                 for iteration in 0..MAX_REPAIR_ITERATIONS {
@@ -1810,6 +1955,10 @@ where
                         .collect();
 
                     if let Some(issues) = self.detect_local_facet_issues(&cells_to_check)? {
+                        // Only mark this as "suspicious" if we *actually* detected local facet issues
+                        // and entered the repair path.
+                        suspicion.repair_loop_entered = true;
+
                         #[cfg(debug_assertions)]
                         eprintln!(
                             "Repair iteration {}: {} over-shared facets detected, removing cells...",
@@ -1879,12 +2028,12 @@ where
                 }
 
                 // Surgical reconstruction: fix broken/None pointers by facet matching.
-                repair_neighbor_pointers(&mut self.tds).map_err(|e| {
+                let repaired = repair_neighbor_pointers(&mut self.tds).map_err(|e| {
                     InsertionError::CavityFilling {
                         message: format!("Failed to repair neighbor pointers after insertion: {e}"),
                     }
                 })?;
-                suspicion.neighbor_pointers_rebuilt = true;
+                suspicion.neighbor_pointers_rebuilt = repaired > 0;
 
                 // Validate neighbor pointers by forcing a full facet walk (no hint).
                 let _ = locate(&self.tds, &self.kernel, &point, None)?;
@@ -1908,20 +2057,20 @@ where
                     ));
                 }
 
-                // Connectedness guard (STRUCTURAL SAFETY, NOT Level‑3 validation):
+                // Connectedness guard (STRUCTURAL SAFETY, NOT Level 3 validation):
                 //
                 // This check is intentionally unconditional.
-                // It ensures the neighbor graph of cells is a single connected component
-                // before we commit the insertion.
+                // It ensures the newly created cells form a single connected component and that
+                // component is attached to the existing triangulation before we commit.
                 //
                 // - This is NOT `Triangulation::is_valid()`
                 // - It does NOT compute Euler characteristic
                 // - It does NOT perform global facet manifold checks
                 //
-                // Cost: O(N + E) over cells, much cheaper than Level‑3 validation.
+                // Cost: O(k·D) where k is the number of newly created cells.
                 //
                 // If this fails, the triangulation is already corrupted and must be rolled back.
-                self.validate_connectedness()?;
+                self.validate_connectedness(&new_cells)?;
 
                 // Return vertex key and hint for next insertion
                 let hint = new_cells
@@ -1935,7 +2084,6 @@ where
                 let new_cells = extend_hull(&mut self.tds, &self.kernel, v_key, &point)?;
 
                 // Iteratively repair non-manifold topology until facet sharing is valid
-                suspicion.repair_loop_entered = true;
                 let mut total_removed = 0;
                 #[allow(unused_variables)]
                 for iteration in 0..MAX_REPAIR_ITERATIONS {
@@ -1948,6 +2096,10 @@ where
                         .collect();
 
                     if let Some(issues) = self.detect_local_facet_issues(&cells_to_check)? {
+                        // Only mark this as "suspicious" if we *actually* detected local facet issues
+                        // and entered the repair path.
+                        suspicion.repair_loop_entered = true;
+
                         #[cfg(debug_assertions)]
                         eprintln!(
                             "Hull extension repair iteration {}: {} over-shared facets detected, removing cells...",
@@ -2010,12 +2162,12 @@ where
 
                     // Use repair_neighbor_pointers for surgical reconstruction
                     // This preserves existing correct pointers and only fixes broken ones
-                    repair_neighbor_pointers(&mut self.tds).map_err(|e| {
+                    let repaired = repair_neighbor_pointers(&mut self.tds).map_err(|e| {
                         InsertionError::CavityFilling {
                             message: format!("Failed to rebuild neighbors after repairs: {e}"),
                         }
                     })?;
-                    suspicion.neighbor_pointers_rebuilt = true;
+                    suspicion.neighbor_pointers_rebuilt = repaired > 0;
                 }
 
                 // Always rebuild vertex→cell incidence after insertion.
@@ -2036,8 +2188,9 @@ where
                     ));
                 }
 
-                // Connectedness guard: a valid Ball(D) triangulation should be a single connected component.
-                self.validate_connectedness()?;
+                // Connectedness guard (localized): ensure the newly created cell set is internally
+                // connected and attached to the existing triangulation.
+                self.validate_connectedness(&new_cells)?;
 
                 // Return vertex key and hint for next insertion
                 let hint = new_cells
@@ -2771,6 +2924,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::collections::NeighborBuffer;
     use crate::core::vertex::VertexBuilder;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::point::Point;
@@ -3022,6 +3176,123 @@ mod tests {
                 assert_eq!(computed, 1);
             }
             other => panic!("Expected EulerCharacteristicMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_is_valid_rejects_disconnected_even_when_euler_matches() {
+        // Construct a disconnected 1D triangulation made of:
+        // - A path (Ball(1)) with χ = 1
+        // - A cycle (ClosedSphere(1)) with χ = 0
+        //
+        // The overall complex has boundary, so it is classified as Ball(1) with expected χ = 1.
+        // Euler characteristic alone therefore cannot detect disconnectedness here.
+        let mut tds: Tds<f64, (), (), 1> = Tds::empty();
+
+        // Path component: v0 - v1 - v2 (2 edges)
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([2.0])).unwrap();
+
+        let e0 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1], None).unwrap())
+            .unwrap();
+        let e1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v1, v2], None).unwrap())
+            .unwrap();
+
+        // Cycle component: v3 - v4 - v5 - v3 (3 edges)
+        let v3 = tds.insert_vertex_with_mapping(vertex!([10.0])).unwrap();
+        let v4 = tds.insert_vertex_with_mapping(vertex!([11.0])).unwrap();
+        let v5 = tds.insert_vertex_with_mapping(vertex!([12.0])).unwrap();
+
+        let c0 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v3, v4], None).unwrap())
+            .unwrap();
+        let c1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v4, v5], None).unwrap())
+            .unwrap();
+        let c2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v5, v3], None).unwrap())
+            .unwrap();
+
+        // Set neighbor pointers (1D: each cell has 2 "facets" => 2 neighbor slots).
+
+        // Path neighbors:
+        {
+            let cell = tds.get_cell_by_key_mut(e0).unwrap();
+            let mut neighbors = NeighborBuffer::<Option<CellKey>>::new();
+            neighbors.resize(2, None);
+            // e0 = [v0, v1]; across v1 is facet_index=0
+            neighbors[0] = Some(e1);
+            cell.neighbors = Some(neighbors);
+        }
+        {
+            let cell = tds.get_cell_by_key_mut(e1).unwrap();
+            let mut neighbors = NeighborBuffer::<Option<CellKey>>::new();
+            neighbors.resize(2, None);
+            // e1 = [v1, v2]; across v1 is facet_index=1
+            neighbors[1] = Some(e0);
+            cell.neighbors = Some(neighbors);
+        }
+
+        // Cycle neighbors:
+        {
+            let cell = tds.get_cell_by_key_mut(c0).unwrap();
+            let mut neighbors = NeighborBuffer::<Option<CellKey>>::new();
+            neighbors.resize(2, None);
+            // c0 = [v3, v4]; across v4 is facet_index=0, across v3 is facet_index=1
+            neighbors[0] = Some(c1); // at v4
+            neighbors[1] = Some(c2); // at v3
+            cell.neighbors = Some(neighbors);
+        }
+        {
+            let cell = tds.get_cell_by_key_mut(c1).unwrap();
+            let mut neighbors = NeighborBuffer::<Option<CellKey>>::new();
+            neighbors.resize(2, None);
+            // c1 = [v4, v5]; across v5 is facet_index=0, across v4 is facet_index=1
+            neighbors[0] = Some(c2); // at v5
+            neighbors[1] = Some(c0); // at v4
+            cell.neighbors = Some(neighbors);
+        }
+        {
+            let cell = tds.get_cell_by_key_mut(c2).unwrap();
+            let mut neighbors = NeighborBuffer::<Option<CellKey>>::new();
+            neighbors.resize(2, None);
+            // c2 = [v5, v3]; across v3 is facet_index=0, across v5 is facet_index=1
+            neighbors[0] = Some(c0); // at v3
+            neighbors[1] = Some(c1); // at v5
+            cell.neighbors = Some(neighbors);
+        }
+
+        tds.assign_incident_cells().unwrap();
+
+        let tri = Triangulation::<FastKernel<f64>, (), (), 1>::new_with_tds(FastKernel::new(), tds);
+
+        // Sanity: manifold check passes.
+        tri.validate_manifold_facets().unwrap();
+
+        // Sanity: Euler characteristic check would pass for this disconnected complex.
+        let topology = validate_triangulation_euler(&tri.tds).unwrap();
+        assert_eq!(
+            topology.classification,
+            TopologyClassification::Ball(1),
+            "Classification should be Ball(1) because the complex has boundary"
+        );
+        assert_eq!(topology.expected, Some(1));
+        assert_eq!(topology.chi, 1);
+
+        // Level 3 should still fail due to disconnectedness.
+        match tri.is_valid() {
+            Err(TriangulationValidationError::Tds(
+                TdsValidationError::InconsistentDataStructure { message },
+            )) => {
+                assert!(
+                    message.contains("Disconnected triangulation"),
+                    "Expected disconnectedness error, got message: {message}"
+                );
+            }
+            other => panic!("Expected disconnectedness error, got {other:?}"),
         }
     }
 

@@ -2700,7 +2700,7 @@ mod tests {
                     // GeometricDegeneracy error.
                     println!(
                         "  \x1b[33mWarning:\x1b[0m skipping {desc} extreme coordinate hull validation \
-                         due to geometric degeneracy in Tds::new",
+                         due to geometric degeneracy in DelaunayTriangulation::new",
                     );
                 }
                 Err(other) => {

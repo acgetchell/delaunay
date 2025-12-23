@@ -310,7 +310,7 @@ where
             tri: Triangulation {
                 kernel,
                 tds,
-                validation_policy: ValidationPolicy::DebugOnly,
+                validation_policy: ValidationPolicy::default(),
             },
             last_inserted_cell: None,
         };
@@ -354,6 +354,13 @@ where
                     // When adding new insertion failure modes in the future, revisit whether they
                     // deserve a dedicated `TriangulationConstructionError` variant instead of being
                     // collapsed into `GeometricDegeneracy`.
+                    //
+                    // We intentionally preserve the high-level insertion failure *bucket* in the
+                    // degeneracy message by capturing `e.to_string()` up front (rather than only
+                    // `source.to_string()`), so callers/telemetry can distinguish e.g.
+                    // "Conflict region error" vs "Location error" vs "Hull extension failed".
+                    let insertion_error_string = e.to_string();
+
                     return Err(match e {
                         // Preserve underlying construction errors (e.g. duplicate UUID).
                         InsertionError::Construction(source) => source,
@@ -383,26 +390,13 @@ where
 
                         // Insertion-layer failures that are best surfaced during construction as a
                         // geometric degeneracy (e.g. numerical instability, hull visibility issues).
-                        InsertionError::ConflictRegion(source) => {
+                        InsertionError::ConflictRegion(_)
+                        | InsertionError::Location(_)
+                        | InsertionError::NonManifoldTopology { .. }
+                        | InsertionError::HullExtension { .. } => {
                             TriangulationConstructionError::GeometricDegeneracy {
-                                message: source.to_string(),
+                                message: insertion_error_string,
                             }
-                        }
-                        InsertionError::Location(source) => {
-                            TriangulationConstructionError::GeometricDegeneracy {
-                                message: source.to_string(),
-                            }
-                        }
-                        InsertionError::NonManifoldTopology {
-                            facet_hash,
-                            cell_count,
-                        } => TriangulationConstructionError::GeometricDegeneracy {
-                            message: format!(
-                                "Non-manifold topology: facet {facet_hash:#x} shared by {cell_count} cells (expected ≤2)"
-                            ),
-                        },
-                        InsertionError::HullExtension { message } => {
-                            TriangulationConstructionError::GeometricDegeneracy { message }
                         }
                     }
                     .into());
@@ -724,6 +718,68 @@ where
     #[allow(clippy::missing_const_for_fn)] // mutable refs from const fn not widely supported
     pub fn triangulation_mut(&mut self) -> &mut Triangulation<K, U, V, D> {
         &mut self.tri
+    }
+
+    /// Returns the insertion-time global topology validation policy used by the underlying
+    /// triangulation.
+    ///
+    /// This policy controls when Level 3 (`Triangulation::is_valid()`) is run automatically
+    /// during incremental insertion (as part of the topology safety net).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    ///
+    /// let dt: DelaunayTriangulation<_, (), (), 2> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// assert_eq!(
+    ///     dt.validation_policy(),
+    ///     delaunay::core::triangulation::ValidationPolicy::OnSuspicion
+    /// );
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn validation_policy(&self) -> ValidationPolicy {
+        self.tri.validation_policy
+    }
+
+    /// Sets the insertion-time global topology validation policy used by the underlying
+    /// triangulation.
+    ///
+    /// This affects subsequent incremental insertions. (Construction-time behavior is determined
+    /// by the policy active during `new()` / `with_kernel()`.)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    ///
+    /// let mut dt: DelaunayTriangulation<_, (), (), 2> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// dt.set_validation_policy(delaunay::core::triangulation::ValidationPolicy::Always);
+    /// assert_eq!(
+    ///     dt.validation_policy(),
+    ///     delaunay::core::triangulation::ValidationPolicy::Always
+    /// );
+    /// ```
+    #[inline]
+    pub const fn set_validation_policy(&mut self, policy: ValidationPolicy) {
+        self.tri.validation_policy = policy;
     }
 
     /// Returns an iterator over all facets in the triangulation.
@@ -1163,7 +1219,7 @@ where
             tri: Triangulation {
                 kernel,
                 tds,
-                validation_policy: ValidationPolicy::DebugOnly,
+                validation_policy: ValidationPolicy::OnSuspicion,
             },
             last_inserted_cell: None,
         }
@@ -1589,6 +1645,71 @@ mod tests {
 
         dt.insert(vertex!([0.0, 1.0])).unwrap();
         assert_eq!(dt.number_of_cells(), 1); // Initial simplex created
+    }
+
+    #[test]
+    fn test_validation_policy_defaults_to_on_suspicion() {
+        // empty() -> Triangulation::new_empty() -> ValidationPolicy::default()
+        let dt_empty: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
+        assert_eq!(dt_empty.validation_policy(), ValidationPolicy::OnSuspicion);
+
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+
+        // new() -> with_kernel() -> explicit validation_policy initialization
+        let dt_new: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        assert_eq!(dt_new.validation_policy(), ValidationPolicy::OnSuspicion);
+
+        // with_kernel() constructor path should also use the default policy
+        let dt_with_kernel: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+        assert_eq!(
+            dt_with_kernel.validation_policy(),
+            ValidationPolicy::OnSuspicion
+        );
+
+        // from_tds() is a separate constructor path (const-friendly), and should also
+        // default to OnSuspicion.
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let dt_from_tds: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::from_tds(tds, FastKernel::new());
+        assert_eq!(
+            dt_from_tds.validation_policy(),
+            ValidationPolicy::OnSuspicion
+        );
+    }
+
+    #[test]
+    fn test_validation_policy_setter_and_getter_roundtrip() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        // Getter reflects the underlying Triangulation policy.
+        assert_eq!(dt.validation_policy(), ValidationPolicy::OnSuspicion);
+        assert_eq!(dt.tri.validation_policy, ValidationPolicy::OnSuspicion);
+
+        dt.set_validation_policy(ValidationPolicy::Always);
+        assert_eq!(dt.validation_policy(), ValidationPolicy::Always);
+        assert_eq!(dt.tri.validation_policy, ValidationPolicy::Always);
+
+        dt.set_validation_policy(ValidationPolicy::Never);
+        assert_eq!(dt.validation_policy(), ValidationPolicy::Never);
+        assert_eq!(dt.tri.validation_policy, ValidationPolicy::Never);
+
+        dt.set_validation_policy(ValidationPolicy::OnSuspicion);
+        assert_eq!(dt.validation_policy(), ValidationPolicy::OnSuspicion);
+        assert_eq!(dt.tri.validation_policy, ValidationPolicy::OnSuspicion);
     }
 
     // =========================================================================

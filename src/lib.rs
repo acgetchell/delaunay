@@ -146,6 +146,38 @@
 //!   `dt.validate()` for Levels 1–4.
 //! - Full diagnostics: `dt.validation_report()` returns all violated invariants across Levels 1–4.
 //!
+//! ### Automatic topology validation during insertion (`ValidationPolicy`)
+//!
+//! In addition to explicit validation calls, incremental construction (`new()` / `insert*()`) can run an
+//! automatic **Level 3** topology validation pass after insertion, controlled by
+//! [`ValidationPolicy`](crate::core::triangulation::ValidationPolicy).
+//!
+//! The default is [`ValidationPolicy::OnSuspicion`](crate::core::triangulation::ValidationPolicy::OnSuspicion):
+//! Level 3 validation runs only when insertion takes a suspicious path (e.g. perturbation retries,
+//! repair loops, or neighbor-pointer repairs that actually changed pointers).
+//!
+//! This automatic pass only runs Level 3 (`Triangulation::is_valid()`). It does **not** run Level 4.
+//!
+//! ```rust
+//! use delaunay::prelude::*;
+//! # let vertices = vec![
+//! #     vertex!([0.0, 0.0, 0.0]),
+//! #     vertex!([1.0, 0.0, 0.0]),
+//! #     vertex!([0.0, 1.0, 0.0]),
+//! #     vertex!([0.0, 0.0, 1.0]),
+//! # ];
+//! let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+//!
+//! // Default:
+//! assert_eq!(dt.validation_policy(), ValidationPolicy::OnSuspicion);
+//!
+//! // Tests/debugging:
+//! dt.set_validation_policy(ValidationPolicy::Always);
+//!
+//! // Max performance (you can still validate explicitly when desired):
+//! dt.set_validation_policy(ValidationPolicy::Never);
+//! ```
+//!
 //! ```rust
 //! use delaunay::prelude::*;
 //!

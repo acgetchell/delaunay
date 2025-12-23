@@ -1935,6 +1935,21 @@ where
     /// Returns `TdsMutationError` if the vertex-cell incidence cannot be rebuilt
     /// after removing cells. This indicates a corrupted data structure.
     ///
+    /// # Performance
+    ///
+    /// Vertex removal is a **local** topological change (deleting the vertex star), but the current
+    /// implementation performs two global repair passes to prevent stale references:
+    ///
+    /// - [`Tds::remove_cells_by_keys`](Self::remove_cells_by_keys) scans remaining cells to clear
+    ///   neighbor pointers that would otherwise dangle.
+    /// - [`Tds::assign_incident_cells`](Self::assign_incident_cells) rebuilds vertex→cell incidence
+    ///   by scanning all remaining cells.
+    ///
+    /// In total, this makes `remove_vertex` **O(#cells)** (plus O(D) per cell) per removal.
+    /// This is intentional for correctness and robustness. If vertex removal becomes a hot path on
+    /// very large meshes, a future optimization could update incidence only for the affected star
+    /// instead of recomputing globally.
+    ///
     /// # Examples
     ///
     /// ```rust
@@ -1975,6 +1990,9 @@ where
         // no longer point at the deleted cells. This prevents dangling incident_cell references.
         // Any vertex whose incident_cell previously referenced one of the removed cells will
         // have its pointer updated to a valid remaining cell (or None if isolated).
+        //
+        // NOTE: This is a global rebuild (scans all remaining cells). If vertex removal ever
+        // becomes a hot path, consider an incremental update limited to the affected star.
         self.assign_incident_cells()?;
 
         // Remove the vertex itself (inline instead of using deprecated method)
@@ -2304,6 +2322,16 @@ where
     /// 2. For each vertex that appears in at least one cell, assign the first cell as its incident cell
     /// 3. Update the vertex's `incident_cell` field with the `CellKey` of the selected cell (Phase 3)
     ///
+    /// # Performance
+    ///
+    /// This method rebuilds incidence **globally** by scanning all cells to build a temporary
+    /// vertex→cells mapping.
+    ///
+    /// - Time: O(#cells × (D+1))
+    /// - Space: O(#cells × (D+1)) in the worst case (temporary mapping)
+    ///
+    /// It is intended for repair/validation paths after bulk topology changes (cell removal,
+    /// duplicate removal, deserialization, etc.), not as a per-step hot-path update.
     pub fn assign_incident_cells(&mut self) -> Result<(), TdsMutationError> {
         if self.cells.is_empty() {
             // No cells remain; all vertices must have incident_cell cleared to avoid
@@ -2553,9 +2581,13 @@ where
         }
 
         if duplicate_count > 0 {
-            // Rebuild topology to avoid stale references after cell removal
+            // Rebuild topology to avoid stale references after cell removal.
             // This ensures vertices don't point to removed cells via incident_cell,
-            // and neighbor arrays don't reference removed keys
+            // and neighbor arrays don't reference removed keys.
+            //
+            // NOTE: Both `assign_neighbors()` and `assign_incident_cells()` are full rebuilds
+            // across all cells/vertices (O(#cells)). This is intentionally conservative and is
+            // expected to be used in repair/cleanup paths rather than per-step hot loops.
             self.assign_neighbors()?;
             self.assign_incident_cells()?;
 
@@ -3042,10 +3074,19 @@ where
     /// - Mutual neighbor relationships (if A neighbors B, then B neighbors A)
     /// - Shared facet correctness (neighbors share exactly D vertices)
     ///
-    /// This method is optimized for performance using:
+    /// # Performance / intended use
+    ///
+    /// This routine is intentionally thorough and defensive. It precomputes per-cell vertex sets
+    /// and performs per-neighbor set-intersection + mirror-facet cross-checks, which can be
+    /// relatively expensive for large triangulations.
+    ///
+    /// It is only invoked from explicit validation APIs (`is_valid()`, `validate()`,
+    /// `validation_report()`) and is not intended for per-step hot paths.
+    ///
+    /// Some small optimizations keep the cost reasonable:
     /// - Early termination on validation failures
-    /// - `HashSet` reuse to avoid repeated allocations
-    /// - Efficient intersection counting without creating intermediate collections
+    /// - Precomputing per-cell vertex sets once
+    /// - Counting intersections without allocating intermediate collections
     ///
     /// # Errors
     ///

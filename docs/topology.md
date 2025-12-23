@@ -2,7 +2,8 @@
 
 This document outlines the design and implementation strategy for introducing topology analysis and validation into the delaunay triangulation library.
 
-> Note: Euler characteristic validation is implemented in `Triangulation::is_valid()` (Level 3) as of v0.6.x.
+> Note: Level 3 topology validation (manifold-with-boundary, connectedness, and Euler characteristic)
+> is implemented in `Triangulation::is_valid()` as of v0.6.x.
 > Some sections below describe earlier plans and are marked as historical/superseded.
 
 ## Table of Contents
@@ -1383,10 +1384,10 @@ pub struct TopologyConfig {
 
 ### Current Integration (implemented)
 
-As of v0.6.x, Euler characteristic validation is integrated at the **Triangulation** layer (Level 3):
+As of v0.6.x, Level 3 topology validation is integrated at the **Triangulation** layer:
 
 - `Tds::is_valid()` / `Tds::validate()` cover element + structural invariants (Levels 1–2).
-- `Triangulation::is_valid()` adds topology checks (manifold-with-boundary + Euler characteristic).
+- `Triangulation::is_valid()` adds topology checks (manifold-with-boundary + connectedness + Euler characteristic).
 - `Triangulation::validate()` runs `Tds::validate()` first, then `Triangulation::is_valid()`.
 
 The implementation uses the topology module's helper:
@@ -1917,7 +1918,7 @@ After validation in production, consider making it default.
 
 - **Classification heuristic** assumes simple topologies (ball or sphere)
 - **No detection** of non-manifold boundaries
-- **No handling** of disconnected components
+- **Disconnectedness**: classification does not detect disconnected components (Level 3 validation enforces a single connected component)
 - **Performance** not optimized for very large triangulations (>100K cells)
 
 #### Future Enhancements

@@ -624,7 +624,7 @@ fn compute_facet_hash(sorted_vkeys: &[VertexKey]) -> u64 {
 /// - `tds` - Mutable triangulation data structure
 ///
 /// # Returns
-/// `Ok(())` if repair succeeds
+/// `Ok(n)` where `n` is the number of neighbor pointer slots that were updated.
 ///
 /// # Errors
 /// Returns error if facet indexing, neighbor setting, or cell retrieval fails.
@@ -643,7 +643,7 @@ fn compute_facet_hash(sorted_vkeys: &[VertexKey]) -> u64 {
 #[allow(clippy::too_many_lines)]
 pub fn repair_neighbor_pointers<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
-) -> Result<(), InsertionError>
+) -> Result<usize, InsertionError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -662,9 +662,10 @@ where
     // Key: (min_cell, max_cell, facet_hash) to ensure unique facet pairs
     let mut wired_pairs: FastHashSet<(CellKey, CellKey, u64)> = FastHashSet::default();
 
-    #[allow(unused_variables)]
+    let mut total_neighbor_slots_fixed: usize = 0;
+
     #[cfg(debug_assertions)]
-    let mut total_repaired = 0;
+    let mut total_pairs_repaired: usize = 0;
 
     // For each cell, find facets that need repair (None or invalid neighbors)
     for &cell_key in &all_cell_keys {
@@ -801,12 +802,33 @@ where
                         message: format!("Mirror facet index {mirror_idx} exceeds u8::MAX"),
                     })?;
 
-                set_neighbor(tds, cell_key, facet_idx_u8, Some(other_key))?;
-                set_neighbor(tds, other_key, mirror_idx_u8, Some(cell_key))?;
+                let desired_for_cell = Some(other_key);
+                let desired_for_other = Some(cell_key);
+
+                let before_cell = tds.get_cell(cell_key).and_then(|c| {
+                    c.neighbors()
+                        .and_then(|ns| ns.get(facet_idx).copied().flatten())
+                });
+                let before_other = tds.get_cell(other_key).and_then(|c| {
+                    c.neighbors()
+                        .and_then(|ns| ns.get(mirror_idx).copied().flatten())
+                });
+
+                if before_cell != desired_for_cell {
+                    set_neighbor(tds, cell_key, facet_idx_u8, desired_for_cell)?;
+                    total_neighbor_slots_fixed += 1;
+                }
+
+                if before_other != desired_for_other {
+                    set_neighbor(tds, other_key, mirror_idx_u8, desired_for_other)?;
+                    total_neighbor_slots_fixed += 1;
+                }
+
                 wired_pairs.insert(pair_key);
+
                 #[cfg(debug_assertions)]
-                {
-                    total_repaired += 1;
+                if before_cell != desired_for_cell || before_other != desired_for_other {
+                    total_pairs_repaired += 1;
                 }
             }
             // If no match found, leave as None (boundary facet)
@@ -814,13 +836,15 @@ where
     }
 
     #[cfg(debug_assertions)]
-    eprintln!("repair_neighbor_pointers: repaired {total_repaired} facet pairs");
+    eprintln!(
+        "repair_neighbor_pointers: repaired {total_pairs_repaired} facet pairs ({total_neighbor_slots_fixed} neighbor pointers updated)"
+    );
 
     // Validate no cycles were introduced (debug mode only)
     #[cfg(debug_assertions)]
     validate_no_neighbor_cycles(tds)?;
 
-    Ok(())
+    Ok(total_neighbor_slots_fixed)
 }
 
 /// Validate that the neighbor graph has no cycles using BFS.
@@ -1453,7 +1477,8 @@ mod tests {
                     }
 
                     // Repair should succeed (no-op since pointers are valid)
-                    assert!(repair_neighbor_pointers(tds).is_ok());
+                    let fixed = repair_neighbor_pointers(tds).unwrap();
+                    assert_eq!(fixed, 0);
 
                     // Verify all pointers still valid after repair
                     for (_, cell) in tds.cells() {
@@ -1533,7 +1558,11 @@ mod tests {
         assert!(tds.cells().all(|(_, c)| c.neighbors().is_none()));
 
         // Repair should rebuild internal adjacencies.
-        repair_neighbor_pointers(tds).unwrap();
+        let fixed = repair_neighbor_pointers(tds).unwrap();
+        assert!(
+            fixed > 0,
+            "Expected at least one neighbor pointer to be repaired"
+        );
 
         let any_internal_neighbor = tds
             .cells()
