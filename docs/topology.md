@@ -351,7 +351,30 @@ impl PlanarTopology {
 
 ## Integration Points
 
-### 1. Extended Triangulation Data Structure
+### Current Integration (implemented)
+
+As of v0.6.x, Level 3 topology validation is integrated at the **Triangulation** layer:
+
+- `Tds::is_valid()` / `Tds::validate()` cover element + structural invariants (Levels 1–2).
+- `Triangulation::is_valid()` adds topology checks (manifold-with-boundary + connectedness + Euler characteristic).
+- `Triangulation::validate()` runs `Tds::validate()` first, then `Triangulation::is_valid()`.
+
+The implementation uses the topology module's helper:
+
+```rust
+// Simplified from src/core/triangulation.rs
+let topology = validate_triangulation_euler(&self.tds)?;
+```
+
+For the current user-facing behavior and error-type layering, see `docs/validation.md`.
+
+### Detailed Design: Extended Structures (historical / for reference)
+
+The following subsections document the architectural patterns and data structures that
+support the above integration. Most of this design is already implemented; these
+sections serve as architectural reference.
+
+#### 1. Extended Triangulation Data Structure
 
 Integration with the existing `Tds` struct:
 
@@ -426,7 +449,7 @@ pub struct TopologySummary {
 }
 ```
 
-### 2. Library Module Exports
+#### 2. Library Module Exports
 
 Update to `src/lib.rs`:
 
@@ -474,7 +497,7 @@ pub mod topology {
 }
 ```
 
-### 3. Prelude Integration
+#### 3. Prelude Integration
 
 Update to the prelude for convenience:
 
@@ -1382,22 +1405,8 @@ pub struct TopologyConfig {
 }
 ```
 
-### Current Integration (implemented)
-
-As of v0.6.x, Level 3 topology validation is integrated at the **Triangulation** layer:
-
-- `Tds::is_valid()` / `Tds::validate()` cover element + structural invariants (Levels 1–2).
-- `Triangulation::is_valid()` adds topology checks (manifold-with-boundary + connectedness + Euler characteristic).
-- `Triangulation::validate()` runs `Tds::validate()` first, then `Triangulation::is_valid()`.
-
-The implementation uses the topology module's helper:
-
-```rust
-// Simplified from src/core/triangulation.rs
-let topology = validate_triangulation_euler(&self.tds)?;
-```
-
-For the current user-facing behavior and error-type layering, see `docs/validation.md`.
+> Note: The implemented integration is described in the main [Integration Points](#integration-points) section above (kept there to front-load the current guidance).
+> For the current user-facing behavior and error-type layering, see `docs/validation.md`.
 
 ### Integration Points (historical / superseded)
 

@@ -1562,13 +1562,11 @@ where
         let location = locate(&self.tds, &self.kernel, &point, hint);
 
         let Ok(LocateResult::InsideCell(start_cell)) = location else {
-            return Err(InsertionError::TopologyValidation(
-                TdsValidationError::TopologyValidationFailed {
-                    message: "Topology invalid after insertion; star-split fallback requires point to re-locate inside a cell"
-                        .to_string(),
-                    source: Box::new(validation_err.clone()),
-                },
-            ));
+            return Err(InsertionError::TopologyValidationFailed {
+                message: "Topology invalid after insertion; star-split fallback requires point to re-locate inside a cell"
+                    .to_string(),
+                source: validation_err.clone(),
+            });
         };
 
         let mut star_conflict = CellKeyBuffer::new();
@@ -1587,12 +1585,10 @@ where
                     if self.validation_policy.should_validate(fallback_suspicion)
                         && let Err(fallback_validation_err) = self.is_valid()
                     {
-                        return Err(InsertionError::TopologyValidation(
-                            TdsValidationError::TopologyValidationFailed {
-                                message: "Topology invalid after star-split fallback".to_string(),
-                                source: Box::new(fallback_validation_err),
-                            },
-                        ));
+                        return Err(InsertionError::TopologyValidationFailed {
+                            message: "Topology invalid after star-split fallback".to_string(),
+                            source: fallback_validation_err,
+                        });
                     }
                 }
 
@@ -1607,14 +1603,12 @@ where
 
                 Ok((fallback_ok, fallback_removed, fallback_suspicion))
             }
-            Err(fallback_err) => Err(InsertionError::TopologyValidation(
-                TdsValidationError::TopologyValidationFailed {
-                    message: format!(
-                        "Topology invalid after insertion; star-split fallback failed: {fallback_err}"
-                    ),
-                    source: Box::new(validation_err.clone()),
-                },
-            )),
+            Err(fallback_err) => Err(InsertionError::TopologyValidationFailed {
+                message: format!(
+                    "Topology invalid after insertion; star-split fallback failed: {fallback_err}"
+                ),
+                source: validation_err.clone(),
+            }),
         }
     }
 

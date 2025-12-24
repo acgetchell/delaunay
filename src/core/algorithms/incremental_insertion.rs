@@ -29,6 +29,7 @@ use crate::core::facet::FacetHandle;
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::TriangulationConstructionError;
+use crate::core::triangulation::TriangulationValidationError;
 use crate::core::triangulation_data_structure::{CellKey, Tds, VertexKey};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
@@ -194,6 +195,21 @@ pub enum InsertionError {
     /// Topology validation or repair failed.
     #[error("Topology validation error: {0}")]
     TopologyValidation(#[from] crate::core::triangulation_data_structure::TdsValidationError),
+
+    /// Level 3 topology validation failed (Triangulation layer).
+    ///
+    /// This preserves the structured [`TriangulationValidationError`] without wrapping it into a
+    /// [`TdsValidationError`](crate::core::triangulation_data_structure::TdsValidationError),
+    /// avoiding lower-layer (`Tds`) errors depending on higher-layer (`Triangulation`) errors.
+    #[error("{message}: {source}")]
+    TopologyValidationFailed {
+        /// High-level context for when the topology validation failed.
+        message: String,
+
+        /// The underlying Level 3 validation error.
+        #[source]
+        source: TriangulationValidationError,
+    },
 }
 
 impl InsertionError {
@@ -217,7 +233,9 @@ impl InsertionError {
                 matches!(le, LocateError::CycleDetected { .. })
             }
             // Non-manifold topology and topology validation errors are retryable via perturbation
-            Self::NonManifoldTopology { .. } | Self::TopologyValidation(_) => true,
+            Self::NonManifoldTopology { .. }
+            | Self::TopologyValidation(_)
+            | Self::TopologyValidationFailed { .. } => true,
             // Legacy neighbor wiring errors: check message for non-manifold (backwards compatibility)
             Self::NeighborWiring { message } => message.contains("Non-manifold"),
             // Conflict region errors: non-manifold facets or ridge fans indicate degeneracy
@@ -1390,6 +1408,18 @@ mod tests {
             InsertionError::TopologyValidation(TdsValidationError::InconsistentDataStructure {
                 message: "test".to_string()
             })
+            .is_retryable()
+        );
+
+        let level3_err =
+            TriangulationValidationError::from(TdsValidationError::InconsistentDataStructure {
+                message: "test".to_string(),
+            });
+        assert!(
+            InsertionError::TopologyValidationFailed {
+                message: "test".to_string(),
+                source: level3_err,
+            }
             .is_retryable()
         );
 

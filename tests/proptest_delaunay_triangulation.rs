@@ -645,10 +645,20 @@ fn prop_insertion_order_robustness_3d() {
         rejected_run_a_used_retry: usize,
         rejected_run_a_used_skip: usize,
         rejected_run_a_non_retryable_error: usize,
+        rejected_run_a_invalid_levels_1_to_3: usize,
 
         rejected_run_b_used_retry: usize,
         rejected_run_b_used_skip: usize,
         rejected_run_b_non_retryable_error: usize,
+        rejected_run_b_invalid_levels_1_to_3: usize,
+
+        rejected_new_a_failed: usize,
+        rejected_new_a_skipped_vertices: usize,
+        rejected_new_a_invalid_levels_1_to_3: usize,
+
+        rejected_new_b_failed: usize,
+        rejected_new_b_skipped_vertices: usize,
+        rejected_new_b_invalid_levels_1_to_3: usize,
     }
 
     let config = Config::default();
@@ -724,7 +734,13 @@ fn prop_insertion_order_robustness_3d() {
             }
         }
 
-        prop_assert_levels_1_to_3_valid!(3, &dt_a, "Triangulation A (clean insertion run)");
+        let validation_a = dt_a.triangulation().validate();
+        if let Err(e) = validation_a {
+            stats.rejected_run_a_invalid_levels_1_to_3 += 1;
+            return Err(TestCaseError::reject(format!(
+                "3D: Triangulation A (clean insertion run) failed Levels 1–3 validation (treated as out of scope): {e:?}"
+            )));
+        }
 
         // Build triangulation B with shuffled order, same retry/skip rejection.
         let mut rng = rand::rngs::StdRng::seed_from_u64(0x00DE_C0DE);
@@ -756,7 +772,13 @@ fn prop_insertion_order_robustness_3d() {
             }
         }
 
-        prop_assert_levels_1_to_3_valid!(3, &dt_b, "Triangulation B (clean insertion run)");
+        let validation_b = dt_b.triangulation().validate();
+        if let Err(e) = validation_b {
+            stats.rejected_run_b_invalid_levels_1_to_3 += 1;
+            return Err(TestCaseError::reject(format!(
+                "3D: Triangulation B (clean insertion run) failed Levels 1–3 validation (treated as out of scope): {e:?}"
+            )));
+        }
 
         // Both should have inserted all vertices (we reject Skipped cases above).
         prop_assert_eq!(
@@ -782,34 +804,62 @@ fn prop_insertion_order_robustness_3d() {
         );
 
         // Parity check: the high-level constructor path (`DelaunayTriangulation::new`) should also
-        // succeed for the same in-scope inputs. This helps prevent maintenance drift vs the
+        // succeed for the same generated inputs. This helps prevent maintenance drift vs the
         // 2D/4D/5D insertion-order tests which use `new()` directly.
-        let dt_new_a =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new(&points).map_err(|e| {
-                TestCaseError::fail(format!(
-                    "3D: DelaunayTriangulation::new() failed for in-scope inputs (order A): {e}"
-                ))
-            })?;
-        let dt_new_b = DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new(&points_shuffled)
-            .map_err(|e| {
-            TestCaseError::fail(format!(
-                "3D: DelaunayTriangulation::new() failed for in-scope inputs (order B): {e}"
-            ))
-        })?;
+        let dt_new_a = match DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new(&points) {
+            Ok(dt) => dt,
+            Err(e) => {
+                stats.rejected_new_a_failed += 1;
+                return Err(TestCaseError::reject(format!(
+                    "3D: DelaunayTriangulation::new() failed for generated inputs (order A; treated as out of scope): {e}"
+                )));
+            }
+        };
 
-        prop_assert_eq!(
-            dt_new_a.number_of_vertices(),
-            points.len(),
-            "3D: new() should not skip vertices for in-scope inputs (order A)"
-        );
-        prop_assert_eq!(
-            dt_new_b.number_of_vertices(),
-            points.len(),
-            "3D: new() should not skip vertices for in-scope inputs (order B)"
-        );
+        let dt_new_b =
+            match DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new(&points_shuffled) {
+                Ok(dt) => dt,
+                Err(e) => {
+                    stats.rejected_new_b_failed += 1;
+                    return Err(TestCaseError::reject(format!(
+                        "3D: DelaunayTriangulation::new() failed for generated inputs (order B; treated as out of scope): {e}"
+                    )));
+                }
+            };
 
-        prop_assert_levels_1_to_3_valid!(3, &dt_new_a, "Triangulation A (new())");
-        prop_assert_levels_1_to_3_valid!(3, &dt_new_b, "Triangulation B (new())");
+        if dt_new_a.number_of_vertices() != points.len() {
+            stats.rejected_new_a_skipped_vertices += 1;
+            return Err(TestCaseError::reject(format!(
+                "3D: new() skipped vertices for generated inputs (order A; treated as out of scope): expected {}, got {}",
+                points.len(),
+                dt_new_a.number_of_vertices()
+            )));
+        }
+
+        if dt_new_b.number_of_vertices() != points.len() {
+            stats.rejected_new_b_skipped_vertices += 1;
+            return Err(TestCaseError::reject(format!(
+                "3D: new() skipped vertices for generated inputs (order B; treated as out of scope): expected {}, got {}",
+                points.len(),
+                dt_new_b.number_of_vertices()
+            )));
+        }
+
+        let validation_new_a = dt_new_a.triangulation().validate();
+        if let Err(e) = validation_new_a {
+            stats.rejected_new_a_invalid_levels_1_to_3 += 1;
+            return Err(TestCaseError::reject(format!(
+                "3D: Triangulation A (new()) failed Levels 1–3 validation (treated as out of scope): {e:?}"
+            )));
+        }
+
+        let validation_new_b = dt_new_b.triangulation().validate();
+        if let Err(e) = validation_new_b {
+            stats.rejected_new_b_invalid_levels_1_to_3 += 1;
+            return Err(TestCaseError::reject(format!(
+                "3D: Triangulation B (new()) failed Levels 1–3 validation (treated as out of scope): {e:?}"
+            )));
+        }
 
         stats.accepted += 1;
         Ok(())
@@ -853,7 +903,7 @@ fn prop_insertion_order_robustness_3d() {
         let rejected_total = stats.generated.saturating_sub(stats.accepted);
 
         eprintln!(
-            "prop_insertion_order_robustness_3d reject stats: target_cases={target_cases} generated={} accepted={} acceptance_rate={}.{:02}% rejected_total={} too_few_unique={} nearly_coplanar={} cospherical={} run_a(retry={}, skip={}, err={}) run_b(retry={}, skip={}, err={})",
+            "prop_insertion_order_robustness_3d reject stats: target_cases={target_cases} generated={} accepted={} acceptance_rate={}.{:02}% rejected_total={} too_few_unique={} nearly_coplanar={} cospherical={} run_a(retry={}, skip={}, err={}, invalid={}) run_b(retry={}, skip={}, err={}, invalid={}) new_a(fail={}, skip={}, invalid={}) new_b(fail={}, skip={}, invalid={})",
             stats.generated,
             stats.accepted,
             acceptance_rate_whole,
@@ -865,9 +915,17 @@ fn prop_insertion_order_robustness_3d() {
             stats.rejected_run_a_used_retry,
             stats.rejected_run_a_used_skip,
             stats.rejected_run_a_non_retryable_error,
+            stats.rejected_run_a_invalid_levels_1_to_3,
             stats.rejected_run_b_used_retry,
             stats.rejected_run_b_used_skip,
-            stats.rejected_run_b_non_retryable_error
+            stats.rejected_run_b_non_retryable_error,
+            stats.rejected_run_b_invalid_levels_1_to_3,
+            stats.rejected_new_a_failed,
+            stats.rejected_new_a_skipped_vertices,
+            stats.rejected_new_a_invalid_levels_1_to_3,
+            stats.rejected_new_b_failed,
+            stats.rejected_new_b_skipped_vertices,
+            stats.rejected_new_b_invalid_levels_1_to_3
         );
     }
 

@@ -112,8 +112,10 @@ The library separates **construction-time** failures from **validation-time** in
 ### Reporting (full diagnostics)
 
 `DelaunayTriangulation::validation_report()` returns `Result<(), TriangulationValidationReport>`.
-On failure, the `Err(TriangulationValidationReport)` contains an `InvariantError` union so reports can
-preserve the structured error from the layer that failed.
+On failure, the `Err(TriangulationValidationReport)` contains a `Vec<InvariantViolation>`; each
+`InvariantViolation` stores an `InvariantKind` plus an `InvariantError` **enum** that wraps the
+structured error from the failing layer (`TdsValidationError`, `TriangulationValidationError`, or
+`DelaunayTriangulationValidationError`).
 
 ---
 
@@ -350,13 +352,15 @@ match dt.is_valid() {
 ```text
 Start: Do you need to validate?
     │
-    ├─ Just built triangulation? → Usually skip (construction maintains invariants; validate if you need certainty)
+    ├─ Writing tests / CI? → Always validate (start with Level 2; add Level 3/4 as needed)
+    │
+    ├─ Just built triangulation?
+    │   ├─ Production hot path? → Usually skip (but validate during integration testing / when debugging)
+    │   └─ Need certainty? → Validate (Level 2 or 3; add Level 4 if geometry matters)
     │
     ├─ After manual TDS mutation? → Level 2 (`dt.tds().is_valid()`)
     │
     ├─ Debugging geometric issues? → Level 4 (`dt.is_valid()`)
-    │
-    ├─ Writing tests? → Level 2 or 3 depending on what you're testing
     │
     ├─ Production validation?
     │   ├─ Performance critical? → Level 2 (`dt.tds().is_valid()`)
@@ -370,16 +374,34 @@ Start: Do you need to validate?
 
 ## Performance Comparison
 
-For a 3D triangulation with 1000 vertices (~5000-6000 cells):
+The numbers below are **order-of-magnitude** examples to help you choose a validation level.
+
+**Measurement conditions (baseline):**
+
+- Single-threaded, `--release`, on typical modern hardware
+- 3D triangulation with ~1000 vertices (~5000–6000 cells)
+- Using the default kernel for most examples (`FastKernel<f64>`)
+
+**Caveats:** Actual times can vary significantly with hardware and compiler settings,
+dimension, and especially with **input degeneracy** (near-coplanar/collinear points),
+and **kernel choice** (`FastKernel` vs `RobustKernel`).
 
 | Level | Time | What It Does |
 |-------|------|--------------|
 | 1 | ~1μs | Single element check |
-| 2 | ~10-50ms | Full structural validation |
-| 3 | ~50-100ms | Structural + topological (connectedness + Euler) |
-| 4 | ~100-500ms | Empty circumsphere for all cells |
+| 2 | ~10–50ms | Full structural validation |
+| 3 | ~50–100ms | Structural + topological (connectedness + Euler) |
+| 4 | ~100–500ms | Empty circumsphere for all cells (many `insphere` tests) |
 
-**Recommendation**: Use Level 2 in production, reserve Level 3+ for tests/debug.
+**Why Level 4 is usually 2–5× slower than Level 3:** Level 3 is dominated by
+combinatorial bookkeeping (roughly O(N×D²)), while Level 4 checks the
+empty-circumsphere property and can be **O(cells × vertices)** in the worst case
+(millions of `insphere` predicate evaluations for the sizes above). This is also where
+`RobustKernel` can be substantially slower than `FastKernel`.
+
+**Recommendation**: Use Level 2 in production (or skip entirely on hot paths once
+thoroughly tested), and reserve Level 3+ for tests/debug and for situations where
+topological or geometric guarantees are critical.
 
 ---
 

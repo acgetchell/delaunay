@@ -393,7 +393,8 @@ where
                         InsertionError::ConflictRegion(_)
                         | InsertionError::Location(_)
                         | InsertionError::NonManifoldTopology { .. }
-                        | InsertionError::HullExtension { .. } => {
+                        | InsertionError::HullExtension { .. }
+                        | InsertionError::TopologyValidationFailed { .. } => {
                             TriangulationConstructionError::GeometricDegeneracy {
                                 message: insertion_error_string,
                             }
