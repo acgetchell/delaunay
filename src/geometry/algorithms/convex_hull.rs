@@ -6,7 +6,7 @@ use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
 use crate::core::traits::facet_cache::FacetCacheProvider;
 use crate::core::triangulation::Triangulation;
-use crate::core::triangulation_data_structure::TriangulationValidationError;
+use crate::core::triangulation_data_structure::TdsValidationError;
 use crate::core::util::derive_facet_key_from_vertex_keys;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
@@ -70,11 +70,12 @@ pub enum ConvexHullValidationError {
 /// Errors that can occur during convex hull construction.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum ConvexHullConstructionError {
-    /// Failed to extract boundary facets from the triangulation.
+    /// Failed to extract boundary facets from the triangulation due to a TDS validation failure.
     #[error("Failed to extract boundary facets from triangulation: {source}")]
     BoundaryFacetExtractionFailed {
-        /// The underlying validation error that caused the failure.
-        source: TriangulationValidationError,
+        /// The underlying TDS validation error that caused the failure.
+        #[source]
+        source: TdsValidationError,
     },
     /// Failed to check facet visibility from a point.
     #[error("Failed to check facet visibility from point: {source}")]
@@ -109,19 +110,19 @@ pub enum ConvexHullConstructionError {
     /// Coordinate conversion error occurred during geometric computations.
     #[error("Coordinate conversion error: {0}")]
     CoordinateConversion(#[from] CoordinateConversionError),
-    /// Failed to build facet cache during convex hull operations.
+    /// Failed to build facet cache due to a TDS validation failure.
     #[error("Failed to build facet cache: {source}")]
     FacetCacheBuildFailed {
-        /// The underlying triangulation validation error.
+        /// The underlying TDS validation error.
         #[source]
-        source: TriangulationValidationError,
+        source: TdsValidationError,
     },
-    /// Failed to resolve adjacent cell vertices for visibility testing.
+    /// Failed to resolve adjacent cell vertices for visibility testing due to a TDS validation failure.
     #[error("Failed to resolve adjacent cell: {source}")]
     AdjacentCellResolutionFailed {
-        /// The underlying triangulation validation error.
+        /// The underlying TDS validation error.
         #[source]
-        source: TriangulationValidationError,
+        source: TdsValidationError,
     },
     /// Failed to access facet data during convex hull construction.
     #[error("Failed to access facet data during convex hull construction: {source}")]
@@ -1557,11 +1558,12 @@ pub type ConvexHull4D<K, U, V> = ConvexHull<K, U, V, 4>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::delaunay_triangulation::DelaunayTriangulation;
-    use crate::core::traits::facet_cache::FacetCacheProvider;
-    use crate::core::triangulation_data_structure::{
-        TriangulationConstructionError, TriangulationValidationError,
+    use crate::core::delaunay_triangulation::{
+        DelaunayTriangulation, DelaunayTriangulationConstructionError,
     };
+    use crate::core::traits::facet_cache::FacetCacheProvider;
+    use crate::core::triangulation::TriangulationConstructionError;
+    use crate::core::triangulation_data_structure::TdsValidationError;
     use crate::core::util::{derive_facet_key_from_vertex_keys, facet_view_to_vertices};
     use crate::geometry::kernel::FastKernel;
     use crate::vertex;
@@ -2689,14 +2691,16 @@ mod tests {
                         "Hull with {desc} coordinates should validate successfully"
                     );
                 }
-                Err(TriangulationConstructionError::GeometricDegeneracy { .. }) => {
+                Err(DelaunayTriangulationConstructionError::Triangulation(
+                    TriangulationConstructionError::GeometricDegeneracy { .. },
+                )) => {
                     // Extremely large/small/mixed coordinate sets may be rejected as
                     // numerically unstable by the robust initial simplex search.
                     // This is acceptable as long as it is surfaced as a clear
                     // GeometricDegeneracy error.
                     println!(
-                        "  [33mWarning:[0m skipping {desc} extreme coordinate hull validation \
-                         due to geometric degeneracy in Tds::new",
+                        "  \x1b[33mWarning:\x1b[0m skipping {desc} extreme coordinate hull validation \
+                         due to geometric degeneracy in DelaunayTriangulation::new",
                     );
                 }
                 Err(other) => {
@@ -3187,11 +3191,10 @@ mod tests {
         // Note: We need to use the underlying TDS directly for this edge case test
         let mut tds = crate::core::triangulation_data_structure::Tds::<f64, (), (), 3>::empty();
         let vertex = vertex!([0.0, 0.0, 0.0]);
-        let _ = tds.insert_vertex_with_mapping(vertex);
-        let tri = crate::core::triangulation::Triangulation {
-            kernel: FastKernel::new(),
-            tds,
-        };
+        tds.insert_vertex_with_mapping(vertex).unwrap();
+
+        // Use the test-only constructor to avoid brittle struct literals.
+        let tri = Triangulation::new_with_tds(FastKernel::new(), tds);
 
         let result = ConvexHull::from_triangulation(&tri);
         assert!(result.is_err());
@@ -3661,7 +3664,9 @@ mod tests {
                     );
                 println!("  Extreme precision fallback result: {fallback_result:?}");
             }
-            Err(TriangulationConstructionError::GeometricDegeneracy { .. }) => {
+            Err(DelaunayTriangulationConstructionError::Triangulation(
+                TriangulationConstructionError::GeometricDegeneracy { .. },
+            )) => {
                 // On some platforms, these extreme coordinates may be judged too
                 // numerically unstable to form a reliable 3D simplex. In that
                 // case, it's acceptable for DelaunayTriangulation::new to fail with geometric
@@ -4182,7 +4187,7 @@ mod tests {
     fn test_facet_cache_build_failed_error() {
         println!("Testing FacetCacheBuildFailed error path");
 
-        // This test is challenging because we need to trigger a TriangulationValidationError
+        // This test is challenging because we need to trigger a TdsValidationError
         // during facet cache building. In practice, this is rare with valid TDS objects.
         // We'll test the error propagation pattern by verifying the error types are properly
         // connected and that the method signature returns the right error type.
@@ -4200,7 +4205,7 @@ mod tests {
         let test_facet = hull.get_facet(0).unwrap();
         let test_point = Point::new([2.0, 2.0, 2.0]);
 
-        // Call the method that should propagate TriangulationValidationError as FacetCacheBuildFailed
+        // Call the method that should propagate TdsValidationError as FacetCacheBuildFailed
         let result = hull.is_facet_visible_from_point(test_facet, &test_point, dt.triangulation());
 
         // In the normal case, this should succeed
@@ -4633,7 +4638,7 @@ mod tests {
         // by creating a synthetic error (we can't easily trigger the actual error path
         // with a valid TDS, but we can verify the error type is properly defined)
         let synthetic_error = ConvexHullConstructionError::AdjacentCellResolutionFailed {
-            source: TriangulationValidationError::InconsistentDataStructure {
+            source: TdsValidationError::InconsistentDataStructure {
                 message: "Test error for adjacent cell resolution".to_string(),
             },
         };
@@ -4653,7 +4658,7 @@ mod tests {
         );
 
         println!("  ✓ AdjacentCellResolutionFailed error variant properly implemented");
-        println!("  ✓ Error preserves underlying TriangulationValidationError as source");
+        println!("  ✓ Error preserves underlying TdsValidationError as source");
         println!("  ✓ Error display format correct: {error_message}");
     }
 
@@ -4843,7 +4848,7 @@ mod tests {
         println!("  Testing ConvexHullConstructionError variants...");
 
         let boundary_error = ConvexHullConstructionError::BoundaryFacetExtractionFailed {
-            source: TriangulationValidationError::InconsistentDataStructure {
+            source: TdsValidationError::InconsistentDataStructure {
                 message: "Test boundary extraction failure".to_string(),
             },
         };

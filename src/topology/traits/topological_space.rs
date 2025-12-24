@@ -20,7 +20,7 @@ use thiserror::Error;
 /// let error = TopologyError::Counting("Failed to enumerate edges".to_string());
 /// assert_eq!(error.to_string(), "Failed to count simplices: Failed to enumerate edges");
 /// ```
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TopologyError {
     /// Failed to count simplices during topology analysis.

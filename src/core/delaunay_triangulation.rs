@@ -15,17 +15,66 @@ use crate::core::algorithms::incremental_insertion::{
 use crate::core::cell::Cell;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation::Triangulation;
+use crate::core::triangulation::{
+    Triangulation, TriangulationConstructionError, TriangulationValidationError, ValidationPolicy,
+};
 use crate::core::triangulation_data_structure::{
-    CellKey, Tds, TriangulationConstructionError, TriangulationValidationError,
+    CellKey, InvariantKind, InvariantViolation, Tds, TdsConstructionError, TdsValidationError,
     TriangulationValidationReport, VertexKey,
 };
 use crate::core::util::DelaunayValidationError;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{FastKernel, Kernel};
-use crate::geometry::traits::coordinate::CoordinateScalar;
+use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use thiserror::Error;
+use uuid::Uuid;
+
+/// Errors that can occur during Delaunay triangulation construction.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DelaunayTriangulationConstructionError {
+    /// Lower-layer construction error (Triangulation / TDS).
+    #[error(transparent)]
+    Triangulation(#[from] TriangulationConstructionError),
+}
+
+/// Errors that can occur during Delaunay triangulation validation (Level 4).
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DelaunayTriangulationValidationError {
+    /// Lower-layer validation error (Levels 1–3).
+    #[error(transparent)]
+    Triangulation(#[from] TriangulationValidationError),
+
+    /// A cell violates the empty circumsphere property.
+    #[error(
+        "Delaunay property violated: Cell {cell_uuid} (key: {cell_key:?}) violates empty circumsphere invariant"
+    )]
+    DelaunayViolation {
+        /// Key of the violating cell.
+        cell_key: CellKey,
+        /// UUID of the violating cell (or nil if the UUID mapping is unavailable).
+        cell_uuid: Uuid,
+    },
+
+    /// Numeric predicate failure during Delaunay validation.
+    #[error(
+        "Numeric predicate failure while validating Delaunay property for cell {cell_uuid} (key: {cell_key:?}), vertex {vertex_key:?}: {source}"
+    )]
+    NumericPredicateError {
+        /// The key of the cell whose circumsphere was being tested.
+        cell_key: CellKey,
+        /// UUID of the cell whose predicate evaluation failed (or nil if unavailable).
+        cell_uuid: Uuid,
+        /// The key of the vertex being classified relative to the circumsphere.
+        vertex_key: VertexKey,
+        /// Underlying robust predicate error (e.g., conversion failure).
+        #[source]
+        source: CoordinateConversionError,
+    },
+}
 
 /// Delaunay triangulation with incremental insertion support.
 ///
@@ -47,7 +96,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// - Specific geometric arrangements
 ///
 /// For applications requiring strict Delaunay guarantees:
-/// - Run [`validate_delaunay`](Self::validate_delaunay) in tests or debug builds
+/// - Run [`is_valid`](Self::is_valid) (Level 4) in tests or debug builds
 /// - Use smaller point sets (violations are rarer)
 /// - Filter degenerate configurations when possible
 /// - Monitor for bistellar flip implementation (planned for v0.7.0+)
@@ -114,7 +163,9 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     /// assert_eq!(dt.number_of_vertices(), 4);
     /// ```
-    pub fn new(vertices: &[Vertex<f64, (), D>]) -> Result<Self, TriangulationConstructionError> {
+    pub fn new(
+        vertices: &[Vertex<f64, (), D>],
+    ) -> Result<Self, DelaunayTriangulationConstructionError> {
         Self::with_kernel(FastKernel::<f64>::new(), vertices)
     }
 
@@ -235,7 +286,7 @@ where
     pub fn with_kernel(
         kernel: K,
         vertices: &[Vertex<K::Scalar, U, D>],
-    ) -> Result<Self, TriangulationConstructionError>
+    ) -> Result<Self, DelaunayTriangulationConstructionError>
     where
         K::Scalar: CoordinateScalar,
     {
@@ -247,7 +298,8 @@ where
                     expected: D + 1,
                     dimension: D,
                 },
-            });
+            }
+            .into());
         }
 
         // Build initial simplex directly (no Bowyer-Watson)
@@ -255,7 +307,11 @@ where
         let tds = Triangulation::<K, U, V, D>::build_initial_simplex(initial_vertices)?;
 
         let mut dt = Self {
-            tri: Triangulation { kernel, tds },
+            tri: Triangulation {
+                kernel,
+                tds,
+                validation_policy: ValidationPolicy::default(),
+            },
             last_inserted_cell: None,
         };
 
@@ -300,23 +356,49 @@ where
                             TriangulationConstructionError::FailedToCreateCell { message }
                         }
                         InsertionError::NeighborWiring { message } => {
-                            TriangulationConstructionError::ValidationError(
-                                TriangulationValidationError::InvalidNeighbors { message },
+                            TriangulationConstructionError::from(
+                                TdsConstructionError::ValidationError(
+                                    TdsValidationError::InvalidNeighbors { message },
+                                ),
                             )
                         }
                         InsertionError::TopologyValidation(source) => {
-                            TriangulationConstructionError::ValidationError(source)
+                            TriangulationConstructionError::from(
+                                TdsConstructionError::ValidationError(source),
+                            )
                         }
                         InsertionError::DuplicateUuid { entity, uuid } => {
-                            TriangulationConstructionError::DuplicateUuid { entity, uuid }
+                            TriangulationConstructionError::from(
+                                TdsConstructionError::DuplicateUuid { entity, uuid },
+                            )
                         }
                         InsertionError::DuplicateCoordinates { coordinates } => {
                             TriangulationConstructionError::DuplicateCoordinates { coordinates }
                         }
-                        other => TriangulationConstructionError::GeometricDegeneracy {
-                            message: other.to_string(),
-                        },
-                    });
+
+                        // Insertion-layer failures that are best surfaced during construction as a
+                        // geometric degeneracy (e.g. numerical instability, hull visibility issues).
+                        //
+                        // NOTE: This match is intentionally exhaustive over `InsertionError`.
+                        // When adding new insertion failure modes in the future, revisit whether they
+                        // deserve a dedicated `TriangulationConstructionError` variant instead of being
+                        // collapsed into `GeometricDegeneracy`.
+                        //
+                        // We intentionally preserve the high-level insertion failure *bucket* in the
+                        // degeneracy message by capturing `e.to_string()` (rather than only
+                        // `source.to_string()`), so callers/telemetry can distinguish e.g.
+                        // "Conflict region error" vs "Location error" vs "Hull extension failed".
+                        insertion_error @ (InsertionError::ConflictRegion(_)
+                        | InsertionError::Location(_)
+                        | InsertionError::NonManifoldTopology { .. }
+                        | InsertionError::HullExtension { .. }
+                        | InsertionError::TopologyValidationFailed { .. }) => {
+                            TriangulationConstructionError::GeometricDegeneracy {
+                                message: insertion_error.to_string(),
+                            }
+                        }
+                    }
+                    .into());
                 }
             }
         }
@@ -601,8 +683,8 @@ where
     ///
     /// After direct modification, you should:
     /// 1. Call `detect_local_facet_issues()` and `repair_local_facet_issues()` if you modified topology
-    /// 2. Call `is_valid()` to verify structural consistency
-    /// 3. Verify Delaunay property manually (if needed)
+    /// 2. Run `dt.triangulation().validate()` (Levels 1–3) or `dt.validate()` (Levels 1–4) to verify structural/topological consistency
+    /// 3. Reserve `dt.is_valid()` for Delaunay-only (Level 4) checks
     ///
     /// ## Safe Alternatives
     ///
@@ -629,12 +711,74 @@ where
     /// // ... perform internal algorithm testing ...
     ///
     /// // Always validate after direct modifications
-    /// assert!(dt.is_valid().is_ok());
+    /// assert!(dt.validate().is_ok());
     /// ```
     #[must_use]
     #[allow(clippy::missing_const_for_fn)] // mutable refs from const fn not widely supported
     pub fn triangulation_mut(&mut self) -> &mut Triangulation<K, U, V, D> {
         &mut self.tri
+    }
+
+    /// Returns the insertion-time global topology validation policy used by the underlying
+    /// triangulation.
+    ///
+    /// This policy controls when Level 3 (`Triangulation::is_valid()`) is run automatically
+    /// during incremental insertion (as part of the topology safety net).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    ///
+    /// let dt: DelaunayTriangulation<_, (), (), 2> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// assert_eq!(
+    ///     dt.validation_policy(),
+    ///     delaunay::core::triangulation::ValidationPolicy::OnSuspicion
+    /// );
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn validation_policy(&self) -> ValidationPolicy {
+        self.tri.validation_policy
+    }
+
+    /// Sets the insertion-time global topology validation policy used by the underlying
+    /// triangulation.
+    ///
+    /// This affects subsequent incremental insertions. (Construction-time behavior is determined
+    /// by the policy active during `new()` / `with_kernel()`.)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    ///
+    /// let mut dt: DelaunayTriangulation<_, (), (), 2> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// dt.set_validation_policy(delaunay::core::triangulation::ValidationPolicy::Always);
+    /// assert_eq!(
+    ///     dt.validation_policy(),
+    ///     delaunay::core::triangulation::ValidationPolicy::Always
+    /// );
+    /// ```
+    #[inline]
+    pub const fn set_validation_policy(&mut self, policy: ValidationPolicy) {
+        self.tri.validation_policy = policy;
     }
 
     /// Returns an iterator over all facets in the triangulation.
@@ -893,7 +1037,8 @@ where
     /// let cells_removed = dt.remove_vertex(&vertex_to_remove).unwrap();
     /// println!("Removed {} cells along with the vertex", cells_removed);
     ///
-    /// assert!(dt.is_valid().is_ok());
+    /// // Vertex removal preserves Levels 1–3 but may not preserve the Delaunay property.
+    /// assert!(dt.triangulation().validate().is_ok());
     /// ```
     pub fn remove_vertex(
         &mut self,
@@ -904,28 +1049,28 @@ where
     {
         // Delegate to Triangulation layer
         // Future: Could add Delaunay property restoration after removal
-        self.tri.remove_vertex(vertex)
+        self.tri.remove_vertex(vertex).map_err(Into::into)
     }
 
-    /// Validate the combinatorial structure of the triangulation.
+    /// Validates the Delaunay empty-circumsphere property (Level 4).
     ///
-    /// This validates the underlying Tds topology including:
-    /// - Vertex and cell mapping consistency
-    /// - Neighbor relationships
-    /// - Facet sharing
-    /// - No duplicate cells
+    /// This is the Delaunay layer's `is_valid`: it checks **only** the Delaunay property
+    /// and intentionally does **not** run lower-layer validation.
+    ///
+    /// For cumulative validation across the whole hierarchy, use [`validate`](Self::validate).
     ///
     /// # Errors
     ///
-    /// Returns error if any structural invariant is violated.
+    /// Returns a [`DelaunayTriangulationValidationError`] if the empty-circumsphere test fails, or if
+    /// the underlying triangulation state is inconsistent and prevents geometric predicates
+    /// from being evaluated.
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::*;
     ///
-    /// let vertices = vec![
+    /// let vertices_4d = [
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0, 0.0]),
@@ -933,34 +1078,104 @@ where
     ///     vertex!([0.0, 0.0, 0.0, 1.0]),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 4> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    ///     DelaunayTriangulation::new(&vertices_4d).unwrap();
     ///
-    /// // Verify triangulation structure is valid
+    /// // Level 4: Delaunay property only
     /// assert!(dt.is_valid().is_ok());
     /// ```
-    pub fn is_valid(&self) -> Result<(), TriangulationValidationError>
+    pub fn is_valid(&self) -> Result<(), DelaunayTriangulationValidationError>
     where
         K::Scalar: CoordinateScalar,
     {
-        self.tri.tds.is_valid()
+        let cell_uuid_or_nil = |key: CellKey| -> Uuid {
+            self.tri
+                .tds
+                .cell_uuid_from_key(key)
+                .unwrap_or_else(Uuid::nil)
+        };
+
+        crate::core::util::is_delaunay_property_only(&self.tri.tds).map_err(|err| match err {
+            DelaunayValidationError::DelaunayViolation { cell_key } => {
+                DelaunayTriangulationValidationError::DelaunayViolation {
+                    cell_key,
+                    cell_uuid: cell_uuid_or_nil(cell_key),
+                }
+            }
+            DelaunayValidationError::TriangulationState { source } => {
+                TriangulationValidationError::from(source).into()
+            }
+            DelaunayValidationError::InvalidCell { cell_key, source } => {
+                // Attach the best-available cell UUID (nil only if mapping is unavailable).
+                TriangulationValidationError::from(TdsValidationError::InvalidCell {
+                    cell_id: cell_uuid_or_nil(cell_key),
+                    source,
+                })
+                .into()
+            }
+            DelaunayValidationError::NumericPredicateError {
+                cell_key,
+                vertex_key,
+                source,
+            } => {
+                // Include cell UUID for better debugging and log correlation
+                DelaunayTriangulationValidationError::NumericPredicateError {
+                    cell_key,
+                    cell_uuid: cell_uuid_or_nil(cell_key),
+                    vertex_key,
+                    source,
+                }
+            }
+        })
     }
 
-    /// Validate vertex mapping consistency.
+    /// Performs cumulative validation for Levels 1–4.
     ///
-    /// Checks that all vertex keys in cells correspond to valid vertices
-    /// and that the incident cell pointers are correct.
+    /// This validates:
+    /// - **Levels 1–3** via [`Triangulation::validate`](crate::core::triangulation::Triangulation::validate)
+    /// - **Level 4** via [`DelaunayTriangulation::is_valid`](Self::is_valid)
     ///
     /// # Errors
     ///
-    /// Returns error if vertex mappings are inconsistent.
-    pub fn validate_vertex_mappings(&self) -> Result<(), TriangulationValidationError> {
-        self.tri.tds.validate_vertex_mappings()
+    /// Returns a [`DelaunayTriangulationValidationError`] if Levels 1–3 validation fails or if the
+    /// Delaunay property check (Level 4) fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices_4d = [
+    ///     vertex!([0.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 4> =
+    ///     DelaunayTriangulation::new(&vertices_4d).unwrap();
+    ///
+    /// // Levels 1–4: elements + structure + topology + Delaunay property
+    /// assert!(dt.validate().is_ok());
+    /// ```
+    pub fn validate(&self) -> Result<(), DelaunayTriangulationValidationError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        self.tri.validate()?;
+        self.is_valid()
     }
 
     /// Create a `DelaunayTriangulation` from a deserialized `Tds` with a default kernel.
     ///
     /// This is useful when you've serialized just the `Tds` and want to reconstruct
     /// the `DelaunayTriangulation` with default kernel settings.
+    ///
+    /// # Notes
+    ///
+    /// - The internal `last_inserted_cell` "locate hint" is intentionally **not** persisted
+    ///   across serialization boundaries. Constructing via `from_tds` (including the serde
+    ///   `Deserialize` impl below) always resets it to `None`. This can make the first few
+    ///   insertions after loading slightly slower, but is otherwise behaviorally irrelevant.
     ///
     /// # Examples
     ///
@@ -991,197 +1206,89 @@ where
     #[must_use]
     pub const fn from_tds(tds: Tds<K::Scalar, U, V, D>, kernel: K) -> Self {
         Self {
-            tri: Triangulation { kernel, tds },
+            tri: Triangulation {
+                kernel,
+                tds,
+                validation_policy: ValidationPolicy::OnSuspicion,
+            },
             last_inserted_cell: None,
         }
     }
 
-    /// Validate cell mapping consistency.
+    /// Generate a comprehensive validation report for the full validation hierarchy.
     ///
-    /// Checks that all cell neighbor pointers are valid and correspond
-    /// to existing cells.
+    /// This is intended for debugging/telemetry (e.g. `insert_with_statistics`) where
+    /// you want to see *all* violated invariants, not just the first one.
     ///
-    /// # Errors
-    ///
-    /// Returns error if cell mappings are inconsistent.
-    pub fn validate_cell_mappings(&self) -> Result<(), TriangulationValidationError> {
-        self.tri.tds.validate_cell_mappings()
-    }
-
-    /// Validate that there are no duplicate cells.
-    ///
-    /// Checks that no two cells share the exact same set of vertices.
+    /// # Notes
+    /// - If UUID↔key mappings are inconsistent, this returns only mapping failures (other
+    ///   checks may produce misleading secondary errors).
+    /// - This report is **cumulative** across Levels 1–4.
     ///
     /// # Errors
     ///
-    /// Returns error if duplicate cells are found.
-    pub fn validate_no_duplicate_cells(&self) -> Result<(), TriangulationValidationError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
-        self.tri.tds.validate_no_duplicate_cells()
-    }
-
-    /// Validate facet sharing invariants.
-    ///
-    /// Checks that each facet is shared by at most 2 cells (1 for boundary facets,
-    /// 2 for interior facets).
-    ///
-    /// # Errors
-    ///
-    /// Returns error if facet sharing invariants are violated.
-    pub fn validate_facet_sharing(&self) -> Result<(), TriangulationValidationError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
-        self.tri.tds.validate_facet_sharing()
-    }
-
-    /// Validate neighbor consistency.
-    ///
-    /// Checks that neighbor relationships are mutual and reference shared facets.
-    ///
-    /// # Errors
-    ///
-    /// Returns error if neighbor relationships are inconsistent.
-    pub fn validate_neighbors(&self) -> Result<(), TriangulationValidationError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
-        self.tri.tds.validate_neighbors()
-    }
-
-    /// Generate a comprehensive validation report for structural invariants.
-    ///
-    /// This runs all structural validation checks (mappings, duplicate cells,
-    /// facet sharing, neighbor consistency) and returns detailed diagnostics.
-    ///
-    /// **Note**: This does NOT check the Delaunay property. Use
-    /// [`validate_delaunay()`](Self::validate_delaunay) separately for geometric validation.
-    ///
-    /// # Errors
-    ///
-    /// Returns error if any structural validation check fails.
-    pub fn validation_report(&self) -> Result<(), TriangulationValidationReport>
-    where
-        K::Scalar: CoordinateScalar,
-    {
-        self.tri.tds.validation_report()
-    }
-
-    /// Validate that the triangulation satisfies the Delaunay property.
-    ///
-    /// This checks that no vertex is inside the circumsphere of any cell,
-    /// which is the defining property of a Delaunay triangulation.
-    ///
-    /// # Performance Warning
-    ///
-    /// This is an **O(N×V)** operation where N is the number of cells and V is the
-    /// number of vertices. Use primarily for testing and validation, not in hot paths.
-    ///
-    /// # Errors
-    ///
-    /// Returns error if:
-    /// - A cell violates the Delaunay property
-    /// - The triangulation has structural issues
-    /// - Geometric predicates fail
+    /// Returns `Err(TriangulationValidationReport)` containing all violated invariants.
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::*;
     ///
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 0.0, 1.0]),
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 4> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
     ///
-    /// // Verify Delaunay property holds
-    /// assert!(dt.validate_delaunay().is_ok());
+    /// // Returns Ok(()) on success; otherwise returns a report listing all violations.
+    /// let report = dt.validation_report();
+    /// assert!(report.is_ok());
     /// ```
-    pub fn validate_delaunay(&self) -> Result<(), TriangulationValidationError>
+    pub fn validation_report(&self) -> Result<(), TriangulationValidationReport>
     where
         K::Scalar: CoordinateScalar,
     {
-        crate::core::util::is_delaunay(&self.tri.tds).map_err(|err| match err {
-            DelaunayValidationError::DelaunayViolation { cell_key } => {
-                let cell_uuid = self
-                    .tri
-                    .tds
-                    .cell_uuid_from_key(cell_key)
-                    .unwrap_or_else(uuid::Uuid::nil);
-                TriangulationValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Delaunay property violated: Cell {cell_uuid} (key: {cell_key:?}) violates empty circumsphere invariant"
-                    ),
+        // Levels 1–3: reuse the Triangulation layer report.
+        match self.tri.validation_report() {
+            Ok(()) => {
+                // Level 4 (Delaunay property)
+                if let Err(e) = self.is_valid() {
+                    return Err(TriangulationValidationReport {
+                        violations: vec![InvariantViolation {
+                            kind: InvariantKind::DelaunayProperty,
+                            error: e.into(),
+                        }],
+                    });
                 }
+                Ok(())
             }
-            DelaunayValidationError::TriangulationState { source } => source,
-            DelaunayValidationError::InvalidCell { source } => {
-                // CellValidationError variants don't contain cell UUID context,
-                // so we use nil() for the cell_id field
-                TriangulationValidationError::InvalidCell {
-                    cell_id: uuid::Uuid::nil(),
-                    source,
+            Err(mut report) => {
+                // If mappings are inconsistent, return the lower-layer report unchanged.
+                if report.violations.iter().any(|v| {
+                    matches!(
+                        v.kind,
+                        InvariantKind::VertexMappings | InvariantKind::CellMappings
+                    )
+                }) {
+                    return Err(report);
                 }
-            }
-            DelaunayValidationError::NumericPredicateError {
-                cell_key,
-                vertex_key,
-                source,
-            } => {
-                // Include cell UUID for better debugging and log correlation
-                let cell_uuid = self
-                    .tri
-                    .tds
-                    .cell_uuid_from_key(cell_key)
-                    .unwrap_or_else(uuid::Uuid::nil);
-                TriangulationValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Numeric predicate failure while validating Delaunay property for cell {cell_uuid} (key: {cell_key:?}), vertex {vertex_key:?}: {source}"
-                    ),
-                }
-            }
-        })
-    }
 
-    /// Fixes invalid facet sharing by removing problematic cells using geometric quality metrics.
-    ///
-    /// Deprecated: This performs an O(N·D) global scan. Prefer the localized O(k·D) flow:
-    /// ```ignore
-    /// let affected_cells: Vec<CellKey> = /* cells that were just modified */;
-    /// if let Some(issues) = triangulation.detect_local_facet_issues(&affected_cells) {
-    ///     triangulation.repair_local_facet_issues(&issues)?;
-    /// }
-    /// ```
-    ///
-    /// Delegates to the underlying Triangulation layer.
-    ///
-    /// # Returns
-    ///
-    /// Number of cells removed.
-    ///
-    /// # Errors
-    ///
-    /// Returns error if facet map cannot be built or topology repair fails.
-    #[deprecated(
-        since = "0.5.5",
-        note = "Use detect_local_facet_issues() + repair_local_facet_issues() for O(k·D) instead of global O(N·D)."
-    )]
-    pub fn fix_invalid_facet_sharing(&mut self) -> Result<usize, TriangulationValidationError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
-        // Delegate to Triangulation layer
-        #[allow(deprecated)]
-        {
-            self.tri.fix_invalid_facet_sharing()
+                // Level 4 (Delaunay property)
+                if let Err(e) = self.is_valid() {
+                    report.violations.push(InvariantViolation {
+                        kind: InvariantKind::DelaunayProperty,
+                        error: e.into(),
+                    });
+                }
+
+                if report.violations.is_empty() {
+                    Ok(())
+                } else {
+                    Err(report)
+                }
+            }
         }
     }
 }
@@ -1217,6 +1324,13 @@ where
 /// - It's the most common configuration (matches `DelaunayTriangulation::new()` default)
 /// - Rust doesn't allow overlapping `impl` blocks for generic types
 /// - Custom kernels are rare and can deserialize manually
+///
+/// # Note on Locate Hint Persistence
+///
+/// The internal `last_inserted_cell` "locate hint" is intentionally **not** serialized.
+/// Deserialization reconstructs a fresh triangulation via [`from_tds()`](Self::from_tds),
+/// which resets the hint to `None`. This only affects performance for the first few
+/// insertions after loading.
 ///
 /// # Usage with Custom Kernels
 ///
@@ -1265,9 +1379,10 @@ where
 /// Planned integration points include:
 /// - Configuration field on `DelaunayTriangulation` to control validation frequency
 /// - Argument to higher-level construction routines (e.g., `new_with_policy`)
-/// - Periodic `validate_delaunay()` calls during incremental insertion
+/// - Periodic `is_valid()` calls during incremental insertion
 ///
-/// Until wired in, users should call `validate_delaunay()` explicitly as needed.
+/// Until wired in, users should call `is_valid()` (Level 4 only) or `validate()` (Levels 1–4)
+/// explicitly as needed.
 ///
 /// # Examples (Future API)
 ///
@@ -1490,6 +1605,71 @@ mod tests {
         assert_eq!(dt.number_of_cells(), 1); // Initial simplex created
     }
 
+    #[test]
+    fn test_validation_policy_defaults_to_on_suspicion() {
+        // empty() -> Triangulation::new_empty() -> ValidationPolicy::default()
+        let dt_empty: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
+        assert_eq!(dt_empty.validation_policy(), ValidationPolicy::OnSuspicion);
+
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+
+        // new() -> with_kernel() -> explicit validation_policy initialization
+        let dt_new: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        assert_eq!(dt_new.validation_policy(), ValidationPolicy::OnSuspicion);
+
+        // with_kernel() constructor path should also use the default policy
+        let dt_with_kernel: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+        assert_eq!(
+            dt_with_kernel.validation_policy(),
+            ValidationPolicy::OnSuspicion
+        );
+
+        // from_tds() is a separate constructor path (const-friendly), and should also
+        // default to OnSuspicion.
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let dt_from_tds: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::from_tds(tds, FastKernel::new());
+        assert_eq!(
+            dt_from_tds.validation_policy(),
+            ValidationPolicy::OnSuspicion
+        );
+    }
+
+    #[test]
+    fn test_validation_policy_setter_and_getter_roundtrip() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        // Getter reflects the underlying Triangulation policy.
+        assert_eq!(dt.validation_policy(), ValidationPolicy::OnSuspicion);
+        assert_eq!(dt.tri.validation_policy, ValidationPolicy::OnSuspicion);
+
+        dt.set_validation_policy(ValidationPolicy::Always);
+        assert_eq!(dt.validation_policy(), ValidationPolicy::Always);
+        assert_eq!(dt.tri.validation_policy, ValidationPolicy::Always);
+
+        dt.set_validation_policy(ValidationPolicy::Never);
+        assert_eq!(dt.validation_policy(), ValidationPolicy::Never);
+        assert_eq!(dt.tri.validation_policy, ValidationPolicy::Never);
+
+        dt.set_validation_policy(ValidationPolicy::OnSuspicion);
+        assert_eq!(dt.validation_policy(), ValidationPolicy::OnSuspicion);
+        assert_eq!(dt.tri.validation_policy, ValidationPolicy::OnSuspicion);
+    }
+
     // =========================================================================
     // with_kernel() tests
     // =========================================================================
@@ -1533,7 +1713,9 @@ mod tests {
 
         assert!(result.is_err());
         match result {
-            Err(TriangulationConstructionError::InsufficientVertices { dimension, .. }) => {
+            Err(DelaunayTriangulationConstructionError::Triangulation(
+                TriangulationConstructionError::InsufficientVertices { dimension, .. },
+            )) => {
                 assert_eq!(dimension, 2);
             }
             _ => panic!("Expected InsufficientVertices error"),
@@ -1553,7 +1735,9 @@ mod tests {
 
         assert!(result.is_err());
         match result {
-            Err(TriangulationConstructionError::InsufficientVertices { dimension, .. }) => {
+            Err(DelaunayTriangulationConstructionError::Triangulation(
+                TriangulationConstructionError::InsufficientVertices { dimension, .. },
+            )) => {
                 assert_eq!(dimension, 3);
             }
             _ => panic!("Expected InsufficientVertices error"),
@@ -1868,8 +2052,7 @@ mod tests {
 
         // TDS should still be valid after mutation
         assert!(dt.tds().is_valid().is_ok());
-        assert!(dt.tds().validate_vertex_mappings().is_ok());
-        assert!(dt.tds().validate_cell_mappings().is_ok());
+        assert!(dt.tds().validate().is_ok());
     }
 
     #[test]
@@ -1890,5 +2073,235 @@ mod tests {
         assert_eq!(dt.number_of_cells(), 1); // Initial simplex created
 
         assert!(dt.is_valid().is_ok());
+    }
+
+    // =========================================================================
+    // Coverage-oriented tests (tarpaulin)
+    // =========================================================================
+
+    #[test]
+    fn test_with_kernel_aborts_on_duplicate_uuid_in_insertion_loop() {
+        let mut vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([2.0, 0.0]),
+            vertex!([0.0, 2.0]),
+            vertex!([0.25, 0.25]),
+        ];
+
+        // Ensure the duplicate UUID is introduced in the incremental insertion loop,
+        // not during initial simplex construction.
+        let dup_uuid = vertices[0].uuid();
+        vertices[3].set_uuid(dup_uuid).unwrap();
+
+        let result: Result<DelaunayTriangulation<FastKernel<f64>, (), (), 2>, _> =
+            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices);
+
+        match result.unwrap_err() {
+            DelaunayTriangulationConstructionError::Triangulation(
+                TriangulationConstructionError::Tds(TdsConstructionError::DuplicateUuid {
+                    entity: _,
+                    uuid,
+                }),
+            ) => {
+                assert_eq!(uuid, dup_uuid);
+            }
+            other => panic!("Expected DuplicateUuid error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_is_valid_reports_delaunay_violation_and_includes_cell_uuid() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([2.0, 0.0]),
+            vertex!([0.0, 2.0]),
+        ];
+
+        let mut tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+
+        // Add a vertex strictly inside the circumcircle of the triangle.
+        // This does *not* change topology (no new cells), but it *does* violate the
+        // Delaunay empty-circumsphere property.
+        tds.insert_vertex_with_mapping(vertex!([0.5, 0.5])).unwrap();
+
+        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::from_tds(tds, FastKernel::new());
+
+        match dt.is_valid().unwrap_err() {
+            DelaunayTriangulationValidationError::DelaunayViolation {
+                cell_key,
+                cell_uuid,
+            } => {
+                assert_ne!(cell_uuid, Uuid::nil());
+                assert_eq!(
+                    dt.tds()
+                        .cell_uuid_from_key(cell_key)
+                        .unwrap_or_else(Uuid::nil),
+                    cell_uuid
+                );
+            }
+            other => panic!("Expected DelaunayViolation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_is_valid_maps_triangulation_state_error_for_dangling_vertex_key() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+
+        let mut tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+
+        // Insert a structurally-valid cell that references a non-existent vertex key.
+        // This intentionally violates TDS invariants to exercise the validation error mapping.
+        let vertex_keys: Vec<_> = tds.vertices().map(|(k, _)| k).collect();
+        let v0 = vertex_keys[0];
+        let v1 = vertex_keys[1];
+        let dangling = VertexKey::default();
+
+        let cell = Cell::new(vec![v0, v1, dangling], None).unwrap();
+        let _ = tds.cells_mut().insert(cell);
+
+        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::from_tds(tds, FastKernel::new());
+
+        match dt.is_valid().unwrap_err() {
+            DelaunayTriangulationValidationError::Triangulation(
+                TriangulationValidationError::Tds(TdsValidationError::InconsistentDataStructure {
+                    ..
+                }),
+            ) => {}
+            other => panic!("Expected TriangulationState→Triangulation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_is_valid_maps_invalid_cell_to_triangulation_error() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+
+        let mut tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+
+        // Corrupt the (only) cell: neighbors buffer with the wrong length.
+        let cell_key = tds.cell_keys().next().unwrap();
+        let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+        let mut bad_neighbors = crate::core::collections::NeighborBuffer::<Option<CellKey>>::new();
+        bad_neighbors.resize(2, None); // expected D+1 = 3
+        cell.neighbors = Some(bad_neighbors);
+
+        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::from_tds(tds, FastKernel::new());
+
+        match dt.is_valid().unwrap_err() {
+            DelaunayTriangulationValidationError::Triangulation(
+                TriangulationValidationError::Tds(TdsValidationError::InvalidCell { .. }),
+            ) => {}
+            other => panic!("Expected InvalidCell→Triangulation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validation_report_ok_for_valid_triangulation() {
+        let vertices = [
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        assert!(dt.validation_report().is_ok());
+    }
+
+    #[test]
+    fn test_validation_report_returns_mapping_failures_only() {
+        let vertices = [
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let mut dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        // Break UUID↔key mappings: remove one vertex UUID entry.
+        let uuid = dt.tri.tds.vertices().next().unwrap().1.uuid();
+        dt.tri.tds.uuid_to_vertex_key.remove(&uuid);
+
+        let report = dt.validation_report().unwrap_err();
+        assert!(!report.violations.is_empty());
+        assert!(report.violations.iter().all(|v| {
+            matches!(
+                v.kind,
+                InvariantKind::VertexMappings | InvariantKind::CellMappings
+            )
+        }));
+
+        // Early-return on mapping failures: do not add derived invariants.
+        assert!(
+            report
+                .violations
+                .iter()
+                .all(|v| v.kind != InvariantKind::DelaunayProperty)
+        );
+    }
+
+    #[test]
+    fn test_validation_report_includes_delaunay_property_violation() {
+        // Construct a non-Delaunay configuration without introducing mapping errors.
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([2.0, 0.0]),
+            vertex!([0.0, 2.0]),
+        ];
+
+        let mut tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        tds.insert_vertex_with_mapping(vertex!([0.5, 0.5])).unwrap();
+
+        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::from_tds(tds, FastKernel::new());
+
+        let report = dt.validation_report().unwrap_err();
+        assert!(
+            report
+                .violations
+                .iter()
+                .any(|v| v.kind == InvariantKind::DelaunayProperty)
+        );
+    }
+
+    #[test]
+    fn test_serde_roundtrip_uses_custom_deserialize_impl() {
+        let vertices = [
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let json = serde_json::to_string(&dt).unwrap();
+        let roundtrip: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+            serde_json::from_str(&json).unwrap();
+
+        assert_eq!(roundtrip.number_of_vertices(), dt.number_of_vertices());
+        assert_eq!(roundtrip.number_of_cells(), dt.number_of_cells());
+
+        // `last_inserted_cell` is a performance-only locate hint and is intentionally not
+        // persisted across serde round-trips (it is reset to `None` in `from_tds`).
+        assert!(roundtrip.last_inserted_cell.is_none());
     }
 }

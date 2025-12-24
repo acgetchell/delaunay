@@ -399,8 +399,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::delaunay_triangulation::DelaunayTriangulation;
-    use crate::core::triangulation_data_structure::TriangulationConstructionError;
+    use crate::core::delaunay_triangulation::{
+        DelaunayTriangulation, DelaunayTriangulationConstructionError,
+    };
+    use crate::core::triangulation::TriangulationConstructionError;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::vertex;
@@ -716,8 +718,10 @@ let key_translated = dt_translated.cells().next().unwrap().0;
             vertex!([1.0, 0.0]),
             vertex!([2.0, 0.0]), // Collinear
         ];
-        let dt_result: Result<DelaunayTriangulation<_, (), (), 2>, TriangulationConstructionError> =
-            DelaunayTriangulation::new(&vertices);
+        let dt_result: Result<
+            DelaunayTriangulation<_, (), (), 2>,
+            DelaunayTriangulationConstructionError,
+        > = DelaunayTriangulation::new(&vertices);
 
         // Construction may succeed with collinear points, but quality metrics
         // should detect the degeneracy
@@ -1196,8 +1200,10 @@ let cell_key = dt.cells().next().unwrap().0;
             vertex!([1.0, 0.0]),
             vertex!([0.5, 1e-15]), // Very small but non-zero height
         ];
-        let dt_result: Result<DelaunayTriangulation<_, (), (), 2>, TriangulationConstructionError> =
-            DelaunayTriangulation::new(&vertices);
+        let dt_result: Result<
+            DelaunayTriangulation<_, (), (), 2>,
+            DelaunayTriangulationConstructionError,
+        > = DelaunayTriangulation::new(&vertices);
 
         match dt_result {
             Ok(dt) => {
@@ -1211,7 +1217,9 @@ let cell_key = dt.cells().next().unwrap().0;
                         || matches!(result, Err(QualityError::NumericalError { .. }))
                 );
             }
-            Err(TriangulationConstructionError::GeometricDegeneracy { .. }) => {
+            Err(DelaunayTriangulationConstructionError::Triangulation(
+                TriangulationConstructionError::GeometricDegeneracy { .. },
+            )) => {
                 // For sufficiently extreme configurations, the robust initial simplex
                 // search may reject the input up-front as geometrically degenerate.
                 // This is acceptable as long as it is reported cleanly.
@@ -1229,8 +1237,10 @@ let cell_key = dt.cells().next().unwrap().0;
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1e-14]), // Very small but non-zero
         ];
-        let dt_result: Result<DelaunayTriangulation<_, (), (), 3>, TriangulationConstructionError> =
-            DelaunayTriangulation::new(&vertices);
+        let dt_result: Result<
+            DelaunayTriangulation<_, (), (), 3>,
+            DelaunayTriangulationConstructionError,
+        > = DelaunayTriangulation::new(&vertices);
 
         match dt_result {
             Ok(dt) => {
@@ -1244,7 +1254,9 @@ let cell_key = dt.cells().next().unwrap().0;
                         || matches!(result, Err(QualityError::NumericalError { .. }))
                 );
             }
-            Err(TriangulationConstructionError::GeometricDegeneracy { .. }) => {
+            Err(DelaunayTriangulationConstructionError::Triangulation(
+                TriangulationConstructionError::GeometricDegeneracy { .. },
+            )) => {
                 // Extremely flat/near-degenerate configurations may now be rejected
                 // up-front by the initial simplex search. This is acceptable as
                 // long as the error is reported as geometric degeneracy.
@@ -1274,8 +1286,10 @@ let cell_key = dt.cells().next().unwrap().0;
             vertex!([1.0, 0.0]),
             vertex!([2.0, 1e-20]), // Nearly collinear
         ];
-        let dt_result: Result<DelaunayTriangulation<_, (), (), 2>, TriangulationConstructionError> =
-            DelaunayTriangulation::new(&vertices);
+        let dt_result: Result<
+            DelaunayTriangulation<_, (), (), 2>,
+            DelaunayTriangulationConstructionError,
+        > = DelaunayTriangulation::new(&vertices);
 
         match dt_result {
             Ok(dt) => {
@@ -1287,7 +1301,9 @@ let cell_key = dt.cells().next().unwrap().0;
                     assert!(detail.contains("inradius") || detail.contains("volume"));
                 }
             }
-            Err(TriangulationConstructionError::GeometricDegeneracy { .. }) => {
+            Err(DelaunayTriangulationConstructionError::Triangulation(
+                TriangulationConstructionError::GeometricDegeneracy { .. },
+            )) => {
                 // In some numeric regimes, degeneracy is now detected at construction
                 // time instead of by the quality metrics. That is still acceptable
                 // as long as it is reported via the dedicated GeometricDegeneracy

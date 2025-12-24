@@ -157,7 +157,7 @@ match insertion_result {
         // Retryable via perturbation
     }
     Err(InsertionError::ConflictRegion(e)) => {
-        // Duplicate boundary facets or ridge fans - also retryable
+        // Non-manifold facets or ridge fans - also retryable
     }
     Err(e) if e.is_retryable() => {
         // Automatic retry with perturbation
@@ -229,8 +229,8 @@ The `is_retryable()` method classifies errors:
 // Retryable errors (geometric degeneracies)
 - InsertionError::NonManifoldTopology { .. }        // Facet sharing violation
 - InsertionError::Location(CycleDetected { .. })    // Point location cycle
-- InsertionError::ConflictRegion(DuplicateBoundaryFacets { .. })
-- InsertionError::ConflictRegion(RidgeFan { .. })
+- InsertionError::ConflictRegion(NonManifoldFacet { .. })     // Facet shared by >2 conflict cells
+- InsertionError::ConflictRegion(RidgeFan { .. })             // Ridge fan degeneracy
 - InsertionError::TopologyValidation(_)             // Repair failure
 
 // Non-retryable errors (structural failures)
@@ -511,15 +511,19 @@ let dt_robust: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
 ```rust
 use delaunay::prelude::*;
 use delaunay::geometry::kernel::{FastKernel, RobustKernel};
-use delaunay::core::triangulation_data_structure::TriangulationConstructionError;
 use delaunay::core::vertex::Vertex;
 
 pub fn create_triangulation_with_fallback(
-    vertices: &[Vertex<f64, (), 3>]
-) -> Result<DelaunayTriangulation<RobustKernel<f64>, (), (), 3>, TriangulationConstructionError> {
+    vertices: &[Vertex<f64, (), 3>],
+) -> Result<
+    DelaunayTriangulation<RobustKernel<f64>, (), (), 3>,
+    DelaunayTriangulationConstructionError,
+> {
     // Strategy 1: Try fast kernel first for performance
-    let fast_result: Result<DelaunayTriangulation<FastKernel<f64>, (), (), 3>, _> =
-        DelaunayTriangulation::new(vertices);
+    let fast_result: Result<
+        DelaunayTriangulation<FastKernel<f64>, (), (), 3>,
+        DelaunayTriangulationConstructionError,
+    > = DelaunayTriangulation::new(vertices);
     
     if fast_result.is_ok() {
         println!("Fast kernel succeeded");
@@ -547,14 +551,14 @@ pub fn create_triangulation_with_fallback(
 
 ```rust
 fn remove_duplicate_and_near_duplicate_points(
-    vertices: &[Vertex<f64, Option<()>, 3>]
-) -> Vec<Vertex<f64, Option<()>, 3>> {
+    vertices: &[Vertex<f64, (), 3>]
+) -> Vec<Vertex<f64, (), 3>> {
     // Simple deduplication based on coordinate proximity
     let mut filtered = Vec::new();
     let tolerance = 1e-10;
     
     for vertex in vertices {
-        let is_duplicate = filtered.iter().any(|existing: &Vertex<f64, Option<()>, 3>| {
+        let is_duplicate = filtered.iter().any(|existing: &Vertex<f64, (), 3>| {
             let existing_coords: [f64; 3] = existing.point().into();
             let vertex_coords: [f64; 3] = vertex.point().into();
             
@@ -681,8 +685,8 @@ The robust predicates system has comprehensive test coverage demonstrating real-
 - Demonstrates consistent results across dimensions (2D-5D)
 - Validates error recovery for "No cavity boundary facets found" scenarios
 - Confirms that structural invariants checked by `Tds::is_valid()` remain intact
-  and can be further inspected via `Tds::validation_report()` and
-  `Tds::validate_delaunay()` in targeted tests.
+  and can be further inspected via `DelaunayTriangulation::validation_report()` and
+  (when needed) `DelaunayTriangulation::is_valid()` / `DelaunayTriangulation::validate()` in targeted tests.
 
 ### Degenerate Case Tests
 

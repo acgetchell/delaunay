@@ -28,9 +28,9 @@ use crate::core::collections::{
 use crate::core::facet::FacetHandle;
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation_data_structure::{
-    CellKey, Tds, TriangulationConstructionError, VertexKey,
-};
+use crate::core::triangulation::TriangulationConstructionError;
+use crate::core::triangulation::TriangulationValidationError;
+use crate::core::triangulation_data_structure::{CellKey, Tds, VertexKey};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateScalar;
@@ -194,9 +194,22 @@ pub enum InsertionError {
 
     /// Topology validation or repair failed.
     #[error("Topology validation error: {0}")]
-    TopologyValidation(
-        #[from] crate::core::triangulation_data_structure::TriangulationValidationError,
-    ),
+    TopologyValidation(#[from] crate::core::triangulation_data_structure::TdsValidationError),
+
+    /// Level 3 topology validation failed (Triangulation layer).
+    ///
+    /// This preserves the structured [`TriangulationValidationError`] without wrapping it into a
+    /// [`TdsValidationError`](crate::core::triangulation_data_structure::TdsValidationError),
+    /// avoiding lower-layer (`Tds`) errors depending on higher-layer (`Triangulation`) errors.
+    #[error("{message}: {source}")]
+    TopologyValidationFailed {
+        /// High-level context for when the topology validation failed.
+        message: String,
+
+        /// The underlying Level 3 validation error.
+        #[source]
+        source: TriangulationValidationError,
+    },
 }
 
 impl InsertionError {
@@ -205,7 +218,7 @@ impl InsertionError {
     /// Retryable errors are geometric degeneracies that may be resolved by
     /// slightly perturbing the vertex coordinates:
     /// - Locate cycles (numerical degeneracy during point location)
-    /// - Non-manifold topology (duplicate boundary facets, ridge fans)
+    /// - Non-manifold topology (facets shared by >2 cells, ridge fans)
     /// - Topology validation failures during repair
     ///
     /// Non-retryable errors are structural failures that won't be fixed by perturbation:
@@ -220,14 +233,16 @@ impl InsertionError {
                 matches!(le, LocateError::CycleDetected { .. })
             }
             // Non-manifold topology and topology validation errors are retryable via perturbation
-            Self::NonManifoldTopology { .. } | Self::TopologyValidation(_) => true,
+            Self::NonManifoldTopology { .. }
+            | Self::TopologyValidation(_)
+            | Self::TopologyValidationFailed { .. } => true,
             // Legacy neighbor wiring errors: check message for non-manifold (backwards compatibility)
             Self::NeighborWiring { message } => message.contains("Non-manifold"),
-            // Conflict region errors: duplicate facets or ridge fans indicate degeneracy
+            // Conflict region errors: non-manifold facets or ridge fans indicate degeneracy
             Self::ConflictRegion(ce) => {
                 matches!(
                     ce,
-                    ConflictError::DuplicateBoundaryFacets { .. } | ConflictError::RidgeFan { .. }
+                    ConflictError::NonManifoldFacet { .. } | ConflictError::RidgeFan { .. }
                 )
             }
             // All other errors are not retryable
@@ -612,65 +627,6 @@ fn compute_facet_hash(sorted_vkeys: &[VertexKey]) -> u64 {
     hasher.finish()
 }
 
-/// Find the facet index in `neighbor_cell` that corresponds to the shared facet.
-///
-/// Given a cell and one of its facets (specified by the opposite vertex index),
-/// find the corresponding facet index in the neighboring cell that shares the same facet.
-///
-/// # Algorithm (CGAL-style mirror facet)
-///
-/// 1. Extract the facet vertices from `cell` (all except vertex at `facet_idx`)
-/// 2. For each vertex index in `neighbor_cell`, check if that vertex is NOT in the facet
-/// 3. The index of the vertex not in the facet is the mirror facet index
-///
-/// # Arguments
-///
-/// * `cell` - The source cell
-/// * `facet_idx` - Index of the vertex opposite the shared facet in `cell`
-/// * `neighbor_cell` - The neighboring cell
-///
-/// # Returns
-///
-/// The facet index in `neighbor_cell` (index of vertex opposite the shared facet),
-/// or None if no matching facet is found (shouldn't happen for valid neighbors).
-///
-/// # Example
-///
-/// ```text
-/// Cell A: [v0, v1, v2, v3], facet_idx=2 → facet=[v0,v1,v3]
-/// Cell B: [v3, v1, v0, v2] → opposite vertex is v2 at index 3
-/// Returns: Some(3)
-/// ```
-fn mirror_facet_index<T, U, V, const D: usize>(
-    cell: &Cell<T, U, V, D>,
-    facet_idx: usize,
-    neighbor_cell: &Cell<T, U, V, D>,
-) -> Option<usize>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
-    // Build the facet vertex set from the source cell (all except facet_idx)
-    let mut facet_vertices = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-    for (i, &vkey) in cell.vertices().iter().enumerate() {
-        if i != facet_idx {
-            facet_vertices.push(vkey);
-        }
-    }
-
-    // Find the vertex in neighbor_cell that is NOT in the facet
-    // That vertex's index is the mirror facet index
-    for (idx, &neighbor_vkey) in neighbor_cell.vertices().iter().enumerate() {
-        if !facet_vertices.contains(&neighbor_vkey) {
-            return Some(idx);
-        }
-    }
-
-    // Should never reach here for valid neighbors
-    None
-}
-
 /// Repair neighbor pointers by fixing only broken/None pointers.
 ///
 /// This function scans all cells and for each None or invalid neighbor pointer,
@@ -686,7 +642,7 @@ where
 /// - `tds` - Mutable triangulation data structure
 ///
 /// # Returns
-/// `Ok(())` if repair succeeds
+/// `Ok(n)` where `n` is the number of neighbor pointer slots that were updated.
 ///
 /// # Errors
 /// Returns error if facet indexing, neighbor setting, or cell retrieval fails.
@@ -705,7 +661,7 @@ where
 #[allow(clippy::too_many_lines)]
 pub fn repair_neighbor_pointers<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
-) -> Result<(), InsertionError>
+) -> Result<usize, InsertionError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -724,9 +680,10 @@ where
     // Key: (min_cell, max_cell, facet_hash) to ensure unique facet pairs
     let mut wired_pairs: FastHashSet<(CellKey, CellKey, u64)> = FastHashSet::default();
 
-    #[allow(unused_variables)]
+    let mut total_neighbor_slots_fixed: usize = 0;
+
     #[cfg(debug_assertions)]
-    let mut total_repaired = 0;
+    let mut total_pairs_repaired: usize = 0;
 
     // For each cell, find facets that need repair (None or invalid neighbors)
     for &cell_key in &all_cell_keys {
@@ -828,7 +785,7 @@ where
                     continue;
                 }
 
-                // Use mirror_facet_index to find the correct opposite vertex in neighbor
+                // Use Cell::mirror_facet_index to find the correct opposite vertex in neighbor
                 let cell =
                     tds.get_cell(cell_key)
                         .ok_or_else(|| InsertionError::NeighborWiring {
@@ -841,7 +798,7 @@ where
                         })?;
 
                 // Find the mirror facet index: which vertex in other_cell is opposite the shared facet?
-                let mirror_idx = mirror_facet_index(cell, facet_idx, other_cell).ok_or_else(
+                let mirror_idx = cell.mirror_facet_index(facet_idx, other_cell).ok_or_else(
                     || InsertionError::NeighborWiring {
                         message: format!(
                             "Could not find mirror facet: cell {cell_key:?} facet {facet_idx} -> other cell {other_key:?}"
@@ -863,12 +820,33 @@ where
                         message: format!("Mirror facet index {mirror_idx} exceeds u8::MAX"),
                     })?;
 
-                set_neighbor(tds, cell_key, facet_idx_u8, Some(other_key))?;
-                set_neighbor(tds, other_key, mirror_idx_u8, Some(cell_key))?;
+                let desired_for_cell = Some(other_key);
+                let desired_for_other = Some(cell_key);
+
+                let before_cell = tds.get_cell(cell_key).and_then(|c| {
+                    c.neighbors()
+                        .and_then(|ns| ns.get(facet_idx).copied().flatten())
+                });
+                let before_other = tds.get_cell(other_key).and_then(|c| {
+                    c.neighbors()
+                        .and_then(|ns| ns.get(mirror_idx).copied().flatten())
+                });
+
+                if before_cell != desired_for_cell {
+                    set_neighbor(tds, cell_key, facet_idx_u8, desired_for_cell)?;
+                    total_neighbor_slots_fixed += 1;
+                }
+
+                if before_other != desired_for_other {
+                    set_neighbor(tds, other_key, mirror_idx_u8, desired_for_other)?;
+                    total_neighbor_slots_fixed += 1;
+                }
+
                 wired_pairs.insert(pair_key);
+
                 #[cfg(debug_assertions)]
-                {
-                    total_repaired += 1;
+                if before_cell != desired_for_cell || before_other != desired_for_other {
+                    total_pairs_repaired += 1;
                 }
             }
             // If no match found, leave as None (boundary facet)
@@ -876,13 +854,15 @@ where
     }
 
     #[cfg(debug_assertions)]
-    eprintln!("repair_neighbor_pointers: repaired {total_repaired} facet pairs");
+    eprintln!(
+        "repair_neighbor_pointers: repaired {total_pairs_repaired} facet pairs ({total_neighbor_slots_fixed} neighbor pointers updated)"
+    );
 
     // Validate no cycles were introduced (debug mode only)
     #[cfg(debug_assertions)]
     validate_no_neighbor_cycles(tds)?;
 
-    Ok(())
+    Ok(total_neighbor_slots_fixed)
 }
 
 /// Validate that the neighbor graph has no cycles using BFS.
@@ -1115,6 +1095,9 @@ mod tests {
     use super::*;
     use crate::core::collections::CellKeyBuffer;
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
+    use crate::core::triangulation_data_structure::TdsValidationError;
+    use crate::geometry::kernel::FastKernel;
+    use crate::geometry::traits::coordinate::Coordinate;
     use crate::vertex;
     use slotmap::KeyData;
 
@@ -1312,13 +1295,102 @@ mod tests {
         assert_eq!(result.unwrap().len(), 0);
     }
 
+    #[test]
+    fn test_fill_cavity_errors_on_boundary_cell_wrong_vertex_count() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
+        let tds = dt.tds_mut();
+
+        // Insert a new vertex (apex)
+        let new_vkey = tds.insert_vertex_with_mapping(vertex!([0.5, 0.5])).unwrap();
+
+        // Corrupt the single boundary cell by adding one extra vertex key.
+        let cell_key = tds.cell_keys().next().unwrap();
+        let extra_vkey = tds.get_cell(cell_key).unwrap().vertices()[0];
+        tds.get_cell_by_key_mut(cell_key)
+            .unwrap()
+            .push_vertex_key(extra_vkey);
+
+        let boundary_facets = vec![FacetHandle::new(cell_key, 0)];
+        let err = fill_cavity(tds, new_vkey, &boundary_facets).unwrap_err();
+
+        assert!(matches!(err, InsertionError::CavityFilling { .. }));
+    }
+
+    #[test]
+    fn test_wire_cavity_neighbors_reports_non_manifold_topology() {
+        // Three triangles sharing the same edge (v_a,v_b) is non-manifold in 2D.
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0]))
+            .unwrap();
+        let v_e = tds.insert_vertex_with_mapping(vertex!([2.0, 0.0])).unwrap();
+
+        let c1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        let c2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
+            .unwrap();
+        let c3 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_e], None).unwrap())
+            .unwrap();
+
+        let mut new_cells = CellKeyBuffer::new();
+        new_cells.push(c1);
+        new_cells.push(c2);
+        new_cells.push(c3);
+
+        let err = wire_cavity_neighbors(&mut tds, &new_cells, None).unwrap_err();
+        assert!(matches!(
+            err,
+            InsertionError::NonManifoldTopology { cell_count: 3, .. }
+        ));
+    }
+
+    #[test]
+    fn test_wire_cavity_neighbors_errors_on_facet_index_overflow() {
+        // Force a cell to have > 255 vertices so facet_idx -> u8 conversion fails.
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
+        let tds = dt.tds_mut();
+
+        let cell_key = tds.cell_keys().next().unwrap();
+        let vkey0 = tds.get_cell(cell_key).unwrap().vertices()[0];
+
+        {
+            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            while cell.number_of_vertices() <= usize::from(u8::MAX) + 1 {
+                cell.push_vertex_key(vkey0);
+            }
+        }
+
+        let mut new_cells = CellKeyBuffer::new();
+        new_cells.push(cell_key);
+
+        let err = wire_cavity_neighbors(tds, &new_cells, None).unwrap_err();
+        assert!(matches!(
+            err,
+            InsertionError::NeighborWiring { message } if message.contains("Facet index")
+        ));
+    }
+
     // InsertionError::is_retryable() tests
 
     #[test]
     fn test_insertion_error_retryable() {
-        use crate::core::algorithms::locate::LocateError;
-        use crate::core::triangulation_data_structure::TriangulationValidationError;
-
         // Retryable errors
         assert!(
             InsertionError::Location(LocateError::CycleDetected { steps: 1000 }).is_retryable()
@@ -1333,11 +1405,21 @@ mod tests {
         );
 
         assert!(
-            InsertionError::TopologyValidation(
-                TriangulationValidationError::InconsistentDataStructure {
-                    message: "test".to_string()
-                }
-            )
+            InsertionError::TopologyValidation(TdsValidationError::InconsistentDataStructure {
+                message: "test".to_string()
+            })
+            .is_retryable()
+        );
+
+        let level3_err =
+            TriangulationValidationError::from(TdsValidationError::InconsistentDataStructure {
+                message: "test".to_string(),
+            });
+        assert!(
+            InsertionError::TopologyValidationFailed {
+                message: "test".to_string(),
+                source: level3_err,
+            }
             .is_retryable()
         );
 
@@ -1345,6 +1427,28 @@ mod tests {
             InsertionError::NeighborWiring {
                 message: "Non-manifold topology detected".to_string()
             }
+            .is_retryable()
+        );
+
+        // Conflict-region errors
+        assert!(
+            InsertionError::ConflictRegion(ConflictError::NonManifoldFacet {
+                facet_hash: 0x12345_u64,
+                cell_count: 3,
+            })
+            .is_retryable()
+        );
+        assert!(
+            InsertionError::ConflictRegion(ConflictError::RidgeFan {
+                facet_count: 3,
+                ridge_vertex_count: 2,
+            })
+            .is_retryable()
+        );
+        assert!(
+            !InsertionError::ConflictRegion(ConflictError::InvalidStartCell {
+                cell_key: CellKey::from(KeyData::from_ffi(u64::MAX)),
+            })
             .is_retryable()
         );
 
@@ -1403,7 +1507,8 @@ mod tests {
                     }
 
                     // Repair should succeed (no-op since pointers are valid)
-                    assert!(repair_neighbor_pointers(tds).is_ok());
+                    let fixed = repair_neighbor_pointers(tds).unwrap();
+                    assert_eq!(fixed, 0);
 
                     // Verify all pointers still valid after repair
                     for (_, cell) in tds.cells() {
@@ -1465,4 +1570,80 @@ mod tests {
             vertex!([0.15, 0.15, 0.15, 0.15, 0.15]),
         ]
     );
+
+    #[test]
+    fn test_repair_neighbor_pointers_reconstructs_missing_neighbors() {
+        // Create a simple 2D triangulation with two triangles.
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 1.1]), // break cocircular symmetry
+        ];
+        let mut dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
+        let tds = dt.tds_mut();
+
+        // Remove all neighbor pointers.
+        tds.clear_all_neighbors();
+        assert!(tds.cells().all(|(_, c)| c.neighbors().is_none()));
+
+        // Repair should rebuild internal adjacencies.
+        let fixed = repair_neighbor_pointers(tds).unwrap();
+        assert!(
+            fixed > 0,
+            "Expected at least one neighbor pointer to be repaired"
+        );
+
+        let any_internal_neighbor = tds
+            .cells()
+            .any(|(_, c)| c.neighbors().is_some_and(|n| n.iter().any(Option::is_some)));
+        assert!(
+            any_internal_neighbor,
+            "Expected at least one internal neighbor after repair"
+        );
+
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_extend_hull_adds_cells_for_exterior_vertex() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
+        let tds = dt.tds_mut();
+
+        let kernel = FastKernel::<f64>::new();
+        let p = Point::new([2.0, 2.0]);
+        let new_vkey = tds.insert_vertex_with_mapping(vertex!([2.0, 2.0])).unwrap();
+
+        let new_cells = extend_hull(tds, &kernel, new_vkey, &p).unwrap();
+        assert!(!new_cells.is_empty());
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_extend_hull_errors_when_no_visible_facets() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
+        let tds = dt.tds_mut();
+
+        let kernel = FastKernel::<f64>::new();
+        let p = Point::new([0.25, 0.25]); // inside
+        let new_vkey = tds
+            .insert_vertex_with_mapping(vertex!([0.25, 0.25]))
+            .unwrap();
+
+        let err = extend_hull(tds, &kernel, new_vkey, &p).unwrap_err();
+        assert!(matches!(
+            err,
+            InsertionError::HullExtension { message } if message.contains("No visible boundary facets")
+        ));
+    }
 }

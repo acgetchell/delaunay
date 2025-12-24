@@ -69,7 +69,7 @@ fn check_perturbation_effectiveness() {
         println!("Average attempts (per successful insertion): N/A (no successful insertions)");
     }
 
-    // Verify the triangulation is valid
-    assert!(dt.is_valid().is_ok());
+    // Verify the triangulation is valid (Levels 1–3: elements + structure + topology)
+    dt.triangulation().validate().unwrap();
     println!("Final vertex count:    {}", dt.number_of_vertices());
 }

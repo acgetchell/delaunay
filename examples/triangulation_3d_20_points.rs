@@ -25,6 +25,7 @@
 //! - Boundary analysis
 //! - Performance metrics
 
+use delaunay::geometry::traits::coordinate::CoordinateScalar;
 use delaunay::prelude::*;
 use num_traits::NumCast;
 use num_traits::cast::cast;
@@ -165,52 +166,68 @@ where
 fn validate_triangulation<K, U, V, const D: usize>(dt: &DelaunayTriangulation<K, U, V, D>)
 where
     K: Kernel<D>,
-    K::Scalar: AddAssign + SubAssign + Sum + NumCast,
+    K::Scalar: CoordinateScalar + AddAssign + SubAssign + Sum + NumCast,
     U: DataType,
     V: DataType,
 {
     println!("Triangulation Validation:");
     println!("========================");
 
+    // Levels 1–3: elements + structure + topology
     let start = Instant::now();
-    match dt.is_valid() {
-        Ok(()) => {
-            let validation_time = start.elapsed();
-            println!("✓ Triangulation is VALID");
-            println!("  Validation completed in {validation_time:?}");
+    let level_1_3_result = dt.triangulation().validate();
+    let level_1_3_time = start.elapsed();
 
-            // Additional validation details
-            println!("\n  Validation Details:");
-            println!("    • All cells have valid geometry");
-            println!("    • Neighbor relationships are consistent");
+    let level_1_3_ok = level_1_3_result.is_ok();
+    match level_1_3_result {
+        Ok(()) => {
+            println!("✓ Levels 1–3: VALID (elements + structure + topology)");
+            println!("  Completed in {level_1_3_time:?}");
+            println!("\n  Details:");
+            println!("    • All vertices and cells are individually valid");
+            println!("    • UUID↔key mappings are consistent");
             println!("    • No duplicate cells detected");
-            println!("    • Vertex mappings are consistent");
-            println!("    • Facet sharing is valid");
+            println!("    • Neighbor relationships and facet sharing are consistent");
+            println!("    • Manifold topology + Euler characteristic checks pass");
         }
         Err(e) => {
-            let validation_time = start.elapsed();
-            println!("✗ Triangulation is INVALID");
-            println!("  Validation failed in {validation_time:?}");
+            println!("✗ Levels 1–3: INVALID");
+            println!("  Failed in {level_1_3_time:?}");
             println!("  Error: {e}");
+        }
+    }
 
-            // Provide debugging information
-            match e {
-                TriangulationValidationError::InvalidCell { cell_id, source } => {
-                    println!("  Problem cell ID: {cell_id}");
-                    println!("  Cell error: {source}");
-                }
-                TriangulationValidationError::InvalidNeighbors { message } => {
-                    println!("  Neighbor problem: {message}");
-                }
-                TriangulationValidationError::DuplicateCells { message } => {
-                    println!("  Duplicate cells: {message}");
-                }
-                _ => {
-                    println!("  See error message above for details");
+    // Level 4: Delaunay property only
+    let start = Instant::now();
+    let level_4_result = dt.is_valid();
+    let level_4_time = start.elapsed();
+
+    let level_4_ok = level_4_result.is_ok();
+    match level_4_result {
+        Ok(()) => {
+            println!("\n✓ Level 4: VALID (Delaunay empty circumsphere property)");
+            println!("  Completed in {level_4_time:?}");
+        }
+        Err(e) => {
+            println!("\n✗ Level 4: INVALID (Delaunay property)");
+            println!("  Failed in {level_4_time:?}");
+            println!("  Error: {e}");
+        }
+    }
+
+    // If something failed, show the cumulative diagnostics report.
+    if !level_1_3_ok || !level_4_ok {
+        println!("\nValidation report (all violated invariants):");
+        match dt.validation_report() {
+            Ok(()) => println!("  ✓ No violations reported"),
+            Err(report) => {
+                for violation in report.violations {
+                    println!("  • {:?}: {}", violation.kind, violation.error);
                 }
             }
         }
     }
+
     println!();
 }
 
@@ -270,7 +287,7 @@ where
 fn performance_analysis<K, U, V, const D: usize>(dt: &DelaunayTriangulation<K, U, V, D>)
 where
     K: Kernel<D>,
-    K::Scalar: AddAssign + SubAssign + Sum + NumCast,
+    K::Scalar: CoordinateScalar + AddAssign + SubAssign + Sum + NumCast,
     U: DataType,
     V: DataType,
 {
@@ -280,11 +297,11 @@ where
     let vertex_count = dt.number_of_vertices();
     let cell_count = dt.number_of_cells();
 
-    // Benchmark validation performance
+    // Benchmark full validation performance (Levels 1–4)
     let validation_times: Vec<_> = (0..5)
         .map(|_| {
             let start = Instant::now();
-            let _ = dt.is_valid();
+            let _ = dt.validate();
             start.elapsed()
         })
         .collect();
@@ -295,7 +312,7 @@ where
     let min_validation_time = *validation_times.iter().min().unwrap();
     let max_validation_time = *validation_times.iter().max().unwrap();
 
-    println!("  Validation Performance (5 runs):");
+    println!("  Full Validation Performance (Levels 1–4, 5 runs):");
     println!("    • Average time: {avg_validation_time:?}");
     println!("    • Min time:     {min_validation_time:?}");
     println!("    • Max time:     {max_validation_time:?}");

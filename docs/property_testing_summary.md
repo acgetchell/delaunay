@@ -7,7 +7,7 @@ This document summarizes the property-based testing infrastructure added to the
 
 For the full set of structural and geometric invariants referenced here, see the
 "Triangulation Invariants" section in the crate-level docs (`src/lib.rs`) and
-`Tds::validation_report()` on `Tds`.
+`DelaunayTriangulation::validation_report()`.
 
 ## Implementation Date
 

@@ -94,24 +94,41 @@
 //! assert_eq!(hull_4d.dimension(), 4);     // 4D convex hull
 //! ```
 //!
-//! # Triangulation Invariants
+//! # Triangulation invariants and validation hierarchy
 //!
-//! The triangulation data structure maintains a set of **structural invariants** that are checked by
-//! [`DelaunayTriangulation::is_valid`](core::delaunay_triangulation::DelaunayTriangulation::is_valid) and
-//! [`DelaunayTriangulation::validation_report`](core::delaunay_triangulation::DelaunayTriangulation::validation_report):
+//! The crate is organized as a small **validation stack**, where each layer adds additional
+//! invariants on top of the preceding one:
 //!
-//! - **Vertex mappings** – every vertex UUID has a corresponding key and vice versa.
-//! - **Cell mappings** – every cell UUID has a corresponding key and vice versa.
-//! - **No duplicate cells** – no two maximal cells share the same vertex set.
-//! - **Cell validity** – each cell has the correct number of vertices and passes internal
-//!   consistency checks.
-//! - **Facet sharing** – each facet is shared by at most 2 cells (1 on the boundary, 2 in the interior).
-//! - **Neighbor consistency** – neighbor relationships are mutual and reference a shared facet.
+//! - [`Tds`](crate::core::triangulation_data_structure::Tds) (Triangulation Data Structure)
+//!   stores the **combinatorial / structural** representation.
+//!   Level 2 (structural) validation checks invariants such as:
+//!   - **Vertex mappings** – every vertex UUID has a corresponding key and vice versa.
+//!   - **Cell mappings** – every cell UUID has a corresponding key and vice versa.
+//!   - **No duplicate cells** – no two maximal cells share the same vertex set.
+//!   - **Facet sharing** – each facet is shared by at most 2 cells (1 on the boundary, 2 in the interior).
+//!   - **Neighbor consistency** – neighbor relationships are mutual and reference a shared facet.
 //!
-//! Separately, the **geometric** empty-circumsphere (Delaunay) property can be checked with
-//! [`DelaunayTriangulation::validate_delaunay`](core::delaunay_triangulation::DelaunayTriangulation::validate_delaunay).
-//! Construction is designed to satisfy this property, but in rare cases it may be violated for
-//! near-degenerate inputs (see [Issue #120](https://github.com/acgetchell/delaunay/issues/120)).
+//!   These checks are surfaced via [`Tds::is_valid`](crate::core::triangulation_data_structure::Tds::is_valid)
+//!   (structural only) and [`Tds::validate`](crate::core::triangulation_data_structure::Tds::validate)
+//!   (Levels 1–2, elements + structural). For cumulative diagnostics across the full stack,
+//!   use [`DelaunayTriangulation::validation_report`](core::delaunay_triangulation::DelaunayTriangulation::validation_report).
+//!
+//! - [`Triangulation`](crate::core::triangulation::Triangulation) builds on the TDS and validates
+//!   **manifold topology**.
+//!   Level 3 (topology) validation is performed by
+//!   [`Triangulation::is_valid`](crate::core::triangulation::Triangulation::is_valid) (Level 3 only) and
+//!   [`Triangulation::validate`](crate::core::triangulation::Triangulation::validate) (Levels 1–3), which:
+//!   - Strengthens facet sharing to the **manifold facet property**: each facet belongs to
+//!     exactly 1 cell (boundary) or exactly 2 cells (interior).
+//!   - Checks the **Euler characteristic** of the triangulation (using the topology module).
+//!
+//! - [`DelaunayTriangulation`](crate::core::delaunay_triangulation::DelaunayTriangulation) builds on
+//!   `Triangulation` and validates the **geometric** Delaunay condition.
+//!   Level 4 (Delaunay property) validation is performed by
+//!   [`DelaunayTriangulation::is_valid`](core::delaunay_triangulation::DelaunayTriangulation::is_valid) (Level 4 only) and
+//!   [`DelaunayTriangulation::validate`](core::delaunay_triangulation::DelaunayTriangulation::validate) (Levels 1–4).
+//!   Construction is designed to satisfy the Delaunay property, but in rare cases it may be violated for
+//!   near-degenerate inputs (see [Issue #120](https://github.com/acgetchell/delaunay/issues/120)).
 //!
 //! ## Validation
 //!
@@ -121,14 +138,45 @@
 //! <https://github.com/acgetchell/delaunay/blob/main/docs/validation.md>
 //!
 //! In brief:
-//! - Level 2 (structural): [`DelaunayTriangulation::is_valid`](core::delaunay_triangulation::DelaunayTriangulation::is_valid)
-//!   for a quick check, or [`DelaunayTriangulation::validation_report`](core::delaunay_triangulation::DelaunayTriangulation::validation_report)
-//!   for full diagnostics.
-//! - Level 3 (topology): [`Triangulation::validate_manifold`](crate::core::triangulation::Triangulation::validate_manifold)
-//!   for manifold + Euler checks.
-//! - Level 4 (Delaunay): [`DelaunayTriangulation::validate_delaunay`](core::delaunay_triangulation::DelaunayTriangulation::validate_delaunay)
-//!   for the empty-circumsphere property (expensive; see [Issue #120](https://github.com/acgetchell/delaunay/issues/120)
-//!   for rare failures on near-degenerate inputs).
+//! - Level 2 (structural / `Tds`): `dt.tds().is_valid()` for a quick check, or `dt.tds().validate()` for
+//!   Levels 1–2.
+//! - Level 3 (topology / `Triangulation`): `dt.triangulation().is_valid()` for topology-only checks, or
+//!   `dt.triangulation().validate()` for Levels 1–3.
+//! - Level 4 (Delaunay / `DelaunayTriangulation`): `dt.is_valid()` for the empty-circumsphere property, or
+//!   `dt.validate()` for Levels 1–4.
+//! - Full diagnostics: `dt.validation_report()` returns all violated invariants across Levels 1–4.
+//!
+//! ### Automatic topology validation during insertion (`ValidationPolicy`)
+//!
+//! In addition to explicit validation calls, incremental construction (`new()` / `insert*()`) can run an
+//! automatic **Level 3** topology validation pass after insertion, controlled by
+//! [`ValidationPolicy`](crate::core::triangulation::ValidationPolicy).
+//!
+//! The default is [`ValidationPolicy::OnSuspicion`](crate::core::triangulation::ValidationPolicy::OnSuspicion):
+//! Level 3 validation runs only when insertion takes a suspicious path (e.g. perturbation retries,
+//! repair loops, or neighbor-pointer repairs that actually changed pointers).
+//!
+//! This automatic pass only runs Level 3 (`Triangulation::is_valid()`). It does **not** run Level 4.
+//!
+//! ```rust
+//! use delaunay::prelude::*;
+//! # let vertices = vec![
+//! #     vertex!([0.0, 0.0, 0.0]),
+//! #     vertex!([1.0, 0.0, 0.0]),
+//! #     vertex!([0.0, 1.0, 0.0]),
+//! #     vertex!([0.0, 0.0, 1.0]),
+//! # ];
+//! let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+//!
+//! // Default:
+//! assert_eq!(dt.validation_policy(), ValidationPolicy::OnSuspicion);
+//!
+//! // Tests/debugging:
+//! dt.set_validation_policy(ValidationPolicy::Always);
+//!
+//! // Max performance (you can still validate explicitly when desired):
+//! dt.set_validation_policy(ValidationPolicy::Never);
+//! ```
 //!
 //! ```rust
 //! use delaunay::prelude::*;
@@ -140,7 +188,10 @@
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
 //! let dt = DelaunayTriangulation::new(&vertices).unwrap();
+//! assert!(dt.tds().is_valid().is_ok());
+//! assert!(dt.triangulation().is_valid().is_ok());
 //! assert!(dt.is_valid().is_ok());
+//! assert!(dt.validate().is_ok());
 //! ```
 //!
 //! For implementation details on invariant enforcement, see [`core::algorithms::incremental_insertion`].
@@ -157,8 +208,8 @@
 //! 1. **Successful insertions are designed to maintain all invariants** - If insertion succeeds
 //!    (`Ok(_)`), the triangulation is expected to satisfy all structural and topological invariants.
 //!    The incremental cavity-based insertion algorithm is designed to maintain these invariants.
-//!    For applications requiring strict guarantees, use `validate_delaunay()` (Level 4) to verify
-//!    the Delaunay property.
+//!    For applications requiring strict guarantees, use `DelaunayTriangulation::validate()` (Levels 1–4)
+//!    or `DelaunayTriangulation::is_valid()` (Level 4 only) to verify the Delaunay property.
 //!
 //! 2. **Failed insertions leave triangulation in valid state** - If insertion fails (`Err(_)`),
 //!    the triangulation remains in a valid state with all invariants maintained. No partial or
@@ -179,14 +230,14 @@
 //! When constructing a triangulation from a batch of vertices using
 //! [`DelaunayTriangulation::new`](core::delaunay_triangulation::DelaunayTriangulation::new):
 //!
-//! - Successful construction yields a triangulation that passes `dt.is_valid()` and is
-//!   designed to satisfy the Delaunay property. Use `dt.validate_delaunay()` for explicit verification.
+//! - Successful construction yields a triangulation that is designed to satisfy the Delaunay property.
+//!   Use `dt.validate()` (Levels 1–4) for cumulative verification.
 //! - Duplicate coordinates are automatically detected and rejected.
 //!
 //! Incremental construction via [`DelaunayTriangulation::insert`](core::delaunay_triangulation::DelaunayTriangulation::insert)
 //! follows the same invariant rules on each insertion: on success the triangulation remains
 //! structurally valid; on failure the data structure is rolled back to its previous state.
-//! Use `validate_delaunay()` (Level 4) if you need explicit verification of the Delaunay property.
+//! Use `DelaunayTriangulation::is_valid()` (Level 4) if you need explicit verification of the Delaunay property.
 //!
 //! ## Incremental insertion algorithm
 //!
@@ -195,7 +246,7 @@
 //! - **Initial simplex construction** - The first D+1 affinely independent vertices are used
 //!   to create an initial valid simplex using robust orientation predicates. If no
 //!   non-degenerate simplex can be formed, construction fails with
-//!   [`TriangulationConstructionError::GeometricDegeneracy`](core::triangulation_data_structure::TriangulationConstructionError::GeometricDegeneracy).
+//!   [`TriangulationConstructionError::GeometricDegeneracy`](core::triangulation::TriangulationConstructionError::GeometricDegeneracy).
 //!
 //! - **Incremental insertion** - Each subsequent vertex is inserted using a cavity-based
 //!   algorithm that:
@@ -215,14 +266,14 @@
 //! The incremental insertion algorithm is designed to maintain the Delaunay property,
 //! aiming to ensure that the empty circumsphere property holds after each insertion.
 //! Global Delaunay validation can be performed explicitly using
-//! [`DelaunayTriangulation::validate_delaunay`](core::delaunay_triangulation::DelaunayTriangulation::validate_delaunay)
+//! [`DelaunayTriangulation::is_valid`](core::delaunay_triangulation::DelaunayTriangulation::is_valid)
 //! when verification is needed (see [Issue #120](https://github.com/acgetchell/delaunay/issues/120)
 //! for rare edge cases where validation may be necessary).
 //!
 //! For construction from a batch of vertices using
 //! [`DelaunayTriangulation::new`](core::delaunay_triangulation::DelaunayTriangulation::new),
 //! the resulting triangulation is constructed to satisfy the Delaunay property. Call
-//! `validate_delaunay()` if you need explicit verification.
+//! `DelaunayTriangulation::is_valid()` if you need explicit verification.
 //!
 //! ## Error handling
 //!
@@ -251,15 +302,14 @@
 //!     DelaunayTriangulation::new(&vertices).unwrap();
 //!
 //! assert_eq!(dt.number_of_vertices(), 4);
-//! assert!(dt.is_valid().is_ok());
-//! assert!(dt.validate_delaunay().is_ok());
+//! assert!(dt.validate().is_ok());
 //! ```
 //!
 //! ### Degenerate input handling
 //!
 //! When the input vertices cannot form a non-degenerate simplex (for example, when all points
 //! are collinear in 2D), construction fails during initial simplex construction with
-//! [`TriangulationConstructionError::GeometricDegeneracy`](core::triangulation_data_structure::TriangulationConstructionError::GeometricDegeneracy).
+//! [`TriangulationConstructionError::GeometricDegeneracy`](core::triangulation::TriangulationConstructionError::GeometricDegeneracy).
 //! This occurs because degenerate simplices (collinear in 2D, coplanar in 3D, etc.) are detected
 //! early using robust orientation predicates before any topology is built.
 //!
@@ -280,7 +330,9 @@
 //! // Collinear points fail during initial simplex construction due to degeneracy
 //! assert!(matches!(
 //!     result,
-//!     Err(TriangulationConstructionError::GeometricDegeneracy { .. })
+//!     Err(DelaunayTriangulationConstructionError::Triangulation(
+//!         TriangulationConstructionError::GeometricDegeneracy { .. },
+//!     ))
 //! ));
 //! ```
 //!

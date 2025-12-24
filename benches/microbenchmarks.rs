@@ -4,10 +4,9 @@
 //! in the delaunay triangulation library, particularly those that are performance-critical:
 //!
 //! 1. **`DelaunayTriangulation::with_kernel`**: Complete triangulation creation
-//! 2. **`is_valid`**: Complete triangulation validation performance
-//! 3. **Individual validation components**: Mapping validation, duplicate detection, etc.
-//! 4. **Incremental construction**: Performance of `insert()` method for vertex insertion
-//! 5. **Memory usage patterns**: Allocation and deallocation patterns
+//! 2. **Layered validation**: `dt.tds().is_valid()/validate()`, `dt.triangulation().is_valid()/validate()`, `dt.is_valid()`, `dt.validate()`
+//! 3. **Incremental construction**: Performance of `insert()` method for vertex insertion
+//! 4. **Memory usage patterns**: Allocation and deallocation patterns
 //!
 //! These benchmarks measure the effectiveness of the optimization implementations
 //! completed as part of the Pure Incremental Delaunay Triangulation refactoring project.
@@ -143,7 +142,26 @@ macro_rules! generate_validation_benchmarks {
                     group.throughput(Throughput::Elements(throughput));
 
                     group.bench_with_input(
-                        BenchmarkId::new("is_valid", n_points),
+                        BenchmarkId::new("validate", n_points),
+                        &n_points,
+                        |b, &n_points| {
+                            b.iter_batched(
+                                || {
+                                    let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), seed).unwrap();
+                                    let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
+                                    DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(RobustKernel::new(), &vertices).unwrap()
+                                },
+                                |dt| {
+                                    dt.validate().unwrap();
+                                    black_box(dt);
+                                },
+                                BatchSize::LargeInput,
+                            );
+                        },
+                    );
+
+                    group.bench_with_input(
+                        BenchmarkId::new("is_valid_delaunay", n_points),
                         &n_points,
                         |b, &n_points| {
                             b.iter_batched(
@@ -175,24 +193,37 @@ macro_rules! generate_validation_benchmarks {
 
                 let mut group = c.benchmark_group(&format!("validation_components_{}d", $dim));
 
-                group.bench_function("validate_vertex_mappings", |b| {
+                group.bench_function("tds_is_valid", |b| {
                     b.iter(|| {
-                        dt.validate_vertex_mappings().unwrap();
+                        dt.tds().is_valid().unwrap();
                         // Black box to prevent dead code elimination
                         black_box(());
                     });
                 });
 
-                group.bench_function("validate_cell_mappings", |b| {
+                group.bench_function("tri_is_valid", |b| {
                     b.iter(|| {
-                        dt.validate_cell_mappings().unwrap();
+                        dt.triangulation().is_valid().unwrap();
                         // Black box to prevent dead code elimination
                         black_box(());
                     });
                 });
 
-                // Note: validate_no_duplicate_cells and validate_facet_sharing are private methods
-                // They are tested indirectly through the full is_valid() benchmark
+                group.bench_function("is_valid_delaunay", |b| {
+                    b.iter(|| {
+                        dt.is_valid().unwrap();
+                        // Black box to prevent dead code elimination
+                        black_box(());
+                    });
+                });
+
+                group.bench_function("validate", |b| {
+                    b.iter(|| {
+                        dt.validate().unwrap();
+                        // Black box to prevent dead code elimination
+                        black_box(());
+                    });
+                });
 
                 group.finish();
             }

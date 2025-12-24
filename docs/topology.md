@@ -2,6 +2,10 @@
 
 This document outlines the design and implementation strategy for introducing topology analysis and validation into the delaunay triangulation library.
 
+> Note: Level 3 topology validation (manifold-with-boundary, connectedness, and Euler characteristic)
+> is implemented in `Triangulation::is_valid()` as of v0.6.x.
+> Some sections below describe earlier plans and are marked as historical/superseded.
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -33,8 +37,8 @@ Delaunay triangulations possess well-defined topological properties that can be 
 2. **Euler Characteristic Validation**: Implement Euler characteristic calculation and validation
 3. **Extensible Architecture**: Design for future topology types (spherical, toroidal)
 4. **Dimensional Genericity**: Support topology validation across all dimensions D ≥ 2
-5. **Integration with Existing Validation**: Extend current
-   `Tds::is_valid()` / `Tds::validation_report()` framework
+5. **Integration with Existing Validation**: Build on
+   `Tds::is_valid()` / `Tds::validate()` (Levels 1–2) via the Triangulation layer (Level 3)
 6. **Comprehensive Testing**: Validate randomly generated triangulations
 
 ---
@@ -97,8 +101,8 @@ The topology module integrates with existing modules through:
 - **Testing Integration**: Extend existing validation and testing frameworks
 
 Topology validation is layered on top of the existing structural invariants
-validated by `Tds::validation_report()` / `Tds::is_valid()`, rather than
-duplicating those checks.
+validated by `Tds::is_valid()` / `Tds::validate()` (Levels 1–2) and exposed at the
+Triangulation layer (Level 3), rather than duplicating those checks.
 
 ---
 
@@ -347,7 +351,30 @@ impl PlanarTopology {
 
 ## Integration Points
 
-### 1. Extended Triangulation Data Structure
+### Current Integration (implemented)
+
+As of v0.6.x, Level 3 topology validation is integrated at the **Triangulation** layer:
+
+- `Tds::is_valid()` / `Tds::validate()` cover element + structural invariants (Levels 1–2).
+- `Triangulation::is_valid()` adds topology checks (manifold-with-boundary + connectedness + Euler characteristic).
+- `Triangulation::validate()` runs `Tds::validate()` first, then `Triangulation::is_valid()`.
+
+The implementation uses the topology module's helper:
+
+```rust
+// Simplified from src/core/triangulation.rs
+let topology = validate_triangulation_euler(&self.tds)?;
+```
+
+For the current user-facing behavior and error-type layering, see `docs/validation.md`.
+
+### Detailed Design: Extended Structures (historical / for reference)
+
+The following subsections document the architectural patterns and data structures that
+support the above integration. Most of this design is already implemented; these
+sections serve as architectural reference.
+
+#### 1. Extended Triangulation Data Structure
 
 Integration with the existing `Tds` struct:
 
@@ -422,7 +449,7 @@ pub struct TopologySummary {
 }
 ```
 
-### 2. Library Module Exports
+#### 2. Library Module Exports
 
 Update to `src/lib.rs`:
 
@@ -470,7 +497,7 @@ pub mod topology {
 }
 ```
 
-### 3. Prelude Integration
+#### 3. Prelude Integration
 
 Update to the prelude for convenience:
 
@@ -947,11 +974,16 @@ The result will be a more robust, validated, and theoretically sound triangulati
 
 ## Euler-Poincaré Validation: Detailed Implementation Plan
 
+> Note: The core Level 3 Euler characteristic check is implemented in `Triangulation::is_valid()` as of v0.6.x.
+> The remainder of this section is retained as historical design notes for future topology work.
+
 ### Status and Metadata
 
-**Status:** Design Phase - Implementation Deferred  
+**Status:** Partially implemented  
 **Created:** 2025-10-16  
-**Target Release:** v0.6.0  
+**Implemented:** v0.6.x (Level 3: `Triangulation::is_valid()`)  
+**Original Target Release:** v0.6.0 (historical)  
+**Target Release (remaining work):** TBD  
 **Priority:** High  
 **Complexity:** High  
 
@@ -1373,7 +1405,10 @@ pub struct TopologyConfig {
 }
 ```
 
-### Integration Points
+> Note: The implemented integration is described in the main [Integration Points](#integration-points) section above (kept there to front-load the current guidance).
+> For the current user-facing behavior and error-type layering, see `docs/validation.md`.
+
+### Integration Points (historical / superseded)
 
 #### 1. Tds Integration
 
@@ -1862,15 +1897,17 @@ fn test_boundary_report_includes_euler() {
 
 #### Feature Flag Strategy
 
-Initially implement behind feature flag:
+Currently, Euler characteristic validation runs as part of `Triangulation::is_valid()` (Level 3) and is not feature-gated.
+
+If we later decide to make it optional, a potential feature could look like:
 
 ```toml
 # Cargo.toml
 [features]
-default = ["dense-slotmap"]  # Current default; topology-validation could be added later
+default = ["dense-slotmap"]  # Current default
 
 # NOTE: `topology-validation` is proposed; only document it here once it exists in Cargo.toml.
-# topology-validation = []  # Enable Euler characteristic validation in is_valid()
+# topology-validation = []  # Gate Level 3 Euler characteristic validation
 ```
 
 Gate expensive checks:
@@ -1890,7 +1927,7 @@ After validation in production, consider making it default.
 
 - **Classification heuristic** assumes simple topologies (ball or sphere)
 - **No detection** of non-manifold boundaries
-- **No handling** of disconnected components
+- **Disconnectedness**: classification does not detect disconnected components (Level 3 validation enforces a single connected component)
 - **Performance** not optimized for very large triangulations (>100K cells)
 
 #### Future Enhancements

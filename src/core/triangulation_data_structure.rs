@@ -60,19 +60,21 @@
 //!
 //! | Invariant Type | Enforcement Location | Method |
 //! |---|---|---|
-//! | **Delaunay Property** | `bowyer_watson::find_bad_cells()` | Empty circumsphere test using `insphere()` |
-//! | **Facet Sharing** | `validate_facet_sharing()` | Each facet shared by ≤ 2 cells |
-//! | **No Duplicate Cells** | `validate_no_duplicate_cells()` | No cells with identical vertex sets |
-//! | **Neighbor Consistency** | `validate_neighbors()` | Mutual neighbor relationships |
+//! | **Delaunay Property** | incremental insertion (`core::algorithms::incremental_insertion`) | Empty circumsphere test via `insphere()` (best-effort) |
+//! | **Facet Sharing** | `Tds::is_valid()` / `Tds::validate()` | Each facet shared by ≤ 2 cells |
+//! | **No Duplicate Cells** | `Tds::is_valid()` / `Tds::validate()` | No cells with identical vertex sets |
+//! | **Neighbor Consistency** | `Tds::is_valid()` / `Tds::validate()` | Mutual neighbor relationships |
 //! | **Cell Validity** | `CellBuilder::validate()` (vertex count) + `cell.is_valid()` (comprehensive) | Construction + runtime validation |
 //! | **Vertex Validity** | `Point::from()` (coordinates) + UUID auto-gen + `vertex.is_valid()` | Construction + runtime validation |
 //!
-//! The Delaunay property is enforced **proactively** during construction, while structural
-//! invariants are enforced **reactively** through validation methods.
+//! The incremental insertion algorithm attempts to maintain the Delaunay property during
+//! construction, but rare violations can remain. Structural invariants are enforced
+//! **reactively** through validation methods. For a definitive Delaunay check, run
+//! Level 4 validation via `DelaunayTriangulation::is_valid()` / `DelaunayTriangulation::validate()`.
 //!
 //! # Validation
 //!
-//! The TDS provides **Level 2** validation in the library's validation hierarchy:
+//! The TDS participates in a layered validation hierarchy:
 //!
 //! ## Validation Hierarchy (TDS Role)
 //!
@@ -83,22 +85,20 @@
 //!    - No duplicate cells
 //!    - Facet sharing invariant (≤2 cells per facet)
 //!    - Neighbor consistency
-//! 3. **Level 3: Manifold Topology** - [`Triangulation::validate_manifold()`](crate::core::triangulation::Triangulation::validate_manifold)
-//!    - Builds on Level 2, adds Euler characteristic
-//! 4. **Level 4: Delaunay Property** - [`DelaunayTriangulation::validate_delaunay()`]
+//! 3. **Level 3: Manifold Topology** - [`Triangulation::is_valid()`]
+//!    - Builds on Level 2, adds manifold-with-boundary + Euler characteristic
+//! 4. **Level 4: Delaunay Property** - [`DelaunayTriangulation::is_valid()`]
 //!    - Empty circumsphere property
 //!
 //! ## TDS Validation Methods
 //!
-//! - [`is_valid()`](Tds::is_valid) - Returns first error, stops early
-//! - [`validation_report()`](Tds::validation_report) - Returns all violations
-//! - [`validate_vertex_mappings()`](Tds::validate_vertex_mappings) - Check vertex UUID↔Key consistency
-//! - [`validate_cell_mappings()`](Tds::validate_cell_mappings) - Check cell UUID↔Key consistency
-//! - [`validate_no_duplicate_cells()`](Tds::validate_no_duplicate_cells) - Check for duplicate cells
-//! - [`validate_facet_sharing()`](Tds::validate_facet_sharing) - Check facet sharing (≤2 cells)
-//! - [`validate_neighbors()`](Tds::validate_neighbors) - Check neighbor consistency
+//! - [`is_valid()`](Tds::is_valid) - Level 2 only (structural); returns first error, stops early
+//! - [`validate()`](Tds::validate) - Levels 1–2 (elements + structural); returns first error, stops early
 //!
-//! ## Example: Using TDS Validation
+//! For cumulative diagnostics across the full stack (Levels 1–4), use
+//! [`DelaunayTriangulation::validation_report()`].
+//!
+//! ## Example: Using Validation
 //!
 //! ```rust
 //! use delaunay::prelude::*;
@@ -111,12 +111,15 @@
 //! ];
 //! let dt = DelaunayTriangulation::new(&vertices).unwrap();
 //!
-//! // Level 2: TDS structural validation (quick)
-//! assert!(dt.is_valid().is_ok());
+//! // Level 2: structural only (fast)
+//! assert!(dt.tds().is_valid().is_ok());
 //!
-//! // Detailed report with all violations
-//! match dt.tds().validation_report() {
-//!     Ok(()) => println!("✓ All TDS invariants satisfied"),
+//! // Levels 1–2: elements + structural
+//! assert!(dt.tds().validate().is_ok());
+//!
+//! // Full report across Levels 1–4
+//! match dt.validation_report() {
+//!     Ok(()) => println!("✓ All invariants satisfied"),
 //!     Err(report) => {
 //!         for violation in report.violations {
 //!             eprintln!("Invariant: {:?}, Error: {}", violation.kind, violation.error);
@@ -126,12 +129,13 @@
 //! ```
 //!
 //! See [`docs/validation.md`](https://github.com/acgetchell/delaunay/blob/main/docs/validation.md)
-//! for comprehensive validation guide.
+//! for a comprehensive validation guide.
 //!
 //! [`Cell::is_valid()`]: crate::core::cell::Cell::is_valid
 //! [`Vertex::is_valid()`]: crate::core::vertex::Vertex::is_valid
-//! [`Triangulation::validate_manifold()`]: crate::core::triangulation::Triangulation::validate_manifold
-//! [`DelaunayTriangulation::validate_delaunay()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validate_delaunay
+//! [`Triangulation::is_valid()`]: crate::core::triangulation::Triangulation::is_valid
+//! [`DelaunayTriangulation::is_valid()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::is_valid
+//! [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
 //!
 //! # Examples
 //!
@@ -155,7 +159,7 @@
 //! assert_eq!(dt.number_of_vertices(), 4);
 //! assert_eq!(dt.number_of_cells(), 1);
 //! assert_eq!(dt.dim(), 3);
-//! assert!(dt.is_valid().is_ok());
+//! assert!(dt.validate().is_ok());
 //! ```
 //!
 //! ## Adding Vertices to Existing Triangulation
@@ -174,11 +178,11 @@
 //! let mut dt = DelaunayTriangulation::new(&initial_vertices).unwrap();
 //!
 //! // Add a new vertex
-//! let new_vertex = vertex!([0.5, 0.5, 0.5]);
+//! let new_vertex = vertex!([0.2, 0.2, 0.2]);
 //! dt.insert(new_vertex).unwrap();
 //!
 //! assert_eq!(dt.number_of_vertices(), 5);
-//! assert!(dt.is_valid().is_ok());
+//! assert!(dt.validate().is_ok());
 //! ```
 //!
 //! ## 4D Triangulation
@@ -199,7 +203,7 @@
 //! assert_eq!(dt_4d.dim(), 4);
 //! assert_eq!(dt_4d.number_of_vertices(), 5);
 //! assert_eq!(dt_4d.number_of_cells(), 1);
-//! assert!(dt_4d.is_valid().is_ok());
+//! assert!(dt_4d.validate().is_ok());
 //! ```
 //!
 //! # References
@@ -237,9 +241,10 @@ use uuid::Uuid;
 use crate::core::collections::{
     CellKeySet, CellRemovalBuffer, CellVertexUuidBuffer, CellVerticesMap, Entry, FacetToCellsMap,
     FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, SmallBuffer, StorageMap,
-    UuidToCellKeyMap, UuidToVertexKeyMap, VertexKeyBuffer, VertexKeySet, VertexToCellsMap,
+    UuidToCellKeyMap, UuidToVertexKeyMap, VertexKeyBuffer, VertexKeySet,
     fast_hash_map_with_capacity,
 };
+use crate::core::triangulation::TriangulationValidationError;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 
 // Parent module imports
@@ -248,7 +253,7 @@ use super::{
     facet::{FacetHandle, facet_key_from_vertices},
     traits::data_type::DataType,
     util::usize_to_u8,
-    vertex::Vertex,
+    vertex::{Vertex, VertexValidationError},
 };
 
 // =============================================================================
@@ -275,38 +280,13 @@ impl Default for TriangulationConstructionState {
 // ERROR TYPES
 // =============================================================================
 
-/// Errors that can occur during triangulation construction.
+/// Errors that can occur during TDS construction operations.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
-pub enum TriangulationConstructionError {
-    /// Failed to create a cell during triangulation construction.
-    #[error("Failed to create cell during construction: {message}")]
-    FailedToCreateCell {
-        /// Description of the cell creation failure.
-        message: String,
-    },
-    /// Insufficient vertices to create a triangulation.
-    #[error("Insufficient vertices for {dimension}D triangulation: {source}")]
-    InsufficientVertices {
-        /// The dimension that was attempted.
-        dimension: usize,
-        /// The underlying cell validation error.
-        source: CellValidationError,
-    },
-    /// Failed to add vertex during triangulation construction.
-    #[error("Failed to add vertex during construction: {message}")]
-    FailedToAddVertex {
-        /// Description of the vertex addition failure.
-        message: String,
-    },
-    /// Geometric degeneracy prevents triangulation construction.
-    #[error("Geometric degeneracy encountered during construction: {message}")]
-    GeometricDegeneracy {
-        /// Description of the degeneracy issue.
-        message: String,
-    },
+#[non_exhaustive]
+pub enum TdsConstructionError {
     /// Validation error during construction.
     #[error("Validation error during construction: {0}")]
-    ValidationError(#[from] TriangulationValidationError),
+    ValidationError(#[from] TdsValidationError),
     /// Attempted to insert an entity with a UUID that already exists.
     #[error("Duplicate UUID: {entity:?} with UUID {uuid} already exists")]
     DuplicateUuid {
@@ -314,14 +294,6 @@ pub enum TriangulationConstructionError {
         entity: EntityKind,
         /// The UUID that was duplicated.
         uuid: Uuid,
-    },
-    /// Attempted to insert a vertex with coordinates that already exist.
-    #[error(
-        "Duplicate coordinates: vertex with coordinates {coordinates} already exists in the triangulation"
-    )]
-    DuplicateCoordinates {
-        /// String representation of the duplicate coordinates.
-        coordinates: String,
     },
 }
 
@@ -358,7 +330,16 @@ pub enum EntityKind {
 ///
 /// Errors that can occur during triangulation validation (post-construction).
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
-pub enum TriangulationValidationError {
+#[non_exhaustive]
+pub enum TdsValidationError {
+    /// The triangulation contains an invalid vertex.
+    #[error("Invalid vertex {vertex_id}: {source}")]
+    InvalidVertex {
+        /// The UUID of the invalid vertex.
+        vertex_id: Uuid,
+        /// The underlying vertex validation error.
+        source: VertexValidationError,
+    },
     /// The triangulation contains an invalid cell.
     #[error("Invalid cell {cell_id}: {source}")]
     InvalidCell {
@@ -415,6 +396,14 @@ pub enum TriangulationValidationError {
         /// Description of the inconsistency.
         message: String,
     },
+
+    /// Level 3 topology validation failed (manifold / Euler characteristic, etc.).
+    ///
+    /// This preserves the structured Level‑3 validation error when topology checks
+    /// need to be surfaced through APIs that currently return [`TdsValidationError`]
+    /// (notably the incremental insertion rollback path).
+    ///
+
     /// Insufficient vertices to create a triangulation.
     #[error("Insufficient vertices for {dimension}D triangulation: {source}")]
     InsufficientVertices {
@@ -434,23 +423,90 @@ pub enum TriangulationValidationError {
     },
 }
 
+/// Errors that can occur during TDS mutation operations.
+///
+/// This error is a thin wrapper around [`TdsValidationError`]. Mutation operations can fail
+/// for the same reasons as validation (i.e., because an invariant would be violated or a
+/// consistency check fails while attempting to perform the mutation).
+///
+/// The wrapper exists to make call sites and API docs semantically explicit, while also
+/// allowing this error to evolve into a richer, dedicated type in a future release without
+/// breaking the public API surface.
+///
+/// # Stability / conversion contract
+///
+/// `TdsMutationError` currently supports lossless conversion to and from [`TdsValidationError`]
+/// via the provided `From`/`Into` impls. If this wrapper evolves to include mutation-specific
+/// context (additional fields/variants), converting `TdsMutationError` into [`TdsValidationError`]
+/// may become lossy.
+///
+/// Callers that want to preserve potential future mutation-specific details should avoid
+/// converting back to [`TdsValidationError`] and instead propagate/handle `TdsMutationError`
+/// directly.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[error(transparent)]
+pub struct TdsMutationError(pub TdsValidationError);
+
+impl From<TdsValidationError> for TdsMutationError {
+    fn from(err: TdsValidationError) -> Self {
+        Self(err)
+    }
+}
+
+impl From<TdsMutationError> for TdsValidationError {
+    fn from(err: TdsMutationError) -> Self {
+        err.0
+    }
+}
+
+// Temporary internal alias to ease refactors within this module.
+// This does not affect the public API.
+type TdsError = TdsValidationError;
+
 /// Classifies the kind of triangulation invariant that failed during validation.
 ///
 /// This is used by [`TriangulationValidationReport`] to group related errors.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InvariantKind {
+    /// Per-vertex validity (finite coordinates, non-nil UUID, etc.).
+    VertexValidity,
+    /// Per-cell validity (vertex count, duplicate vertices, nil UUID, etc.).
+    CellValidity,
     /// Vertex UUID↔key mapping invariants.
     VertexMappings,
     /// Cell UUID↔key mapping invariants.
     CellMappings,
     /// No duplicate maximal cells with identical vertex sets.
     DuplicateCells,
-    /// Per-cell validity (vertex count, duplicate vertices, nil UUID, etc.).
-    CellValidity,
     /// Facet sharing invariants (each facet shared by at most 2 cells).
     FacetSharing,
     /// Neighbor topology and mutual-consistency invariants.
     NeighborConsistency,
+    /// Triangulation/topology invariants (manifold-with-boundary, Euler characteristic).
+    Topology,
+    /// Delaunay empty-circumsphere property.
+    DelaunayProperty,
+}
+
+/// A union error type that can represent any layer's validation failure.
+///
+/// This is used by [`TriangulationValidationReport`] so that diagnostic reporting can
+/// preserve structured errors from each layer (TDS / topology / Delaunay) without
+/// stringification.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum InvariantError {
+    /// Level 1–2 (elements + TDS structure).
+    #[error(transparent)]
+    Tds(#[from] TdsValidationError),
+
+    /// Level 3 (topology).
+    #[error(transparent)]
+    Triangulation(#[from] TriangulationValidationError),
+
+    /// Level 4 (Delaunay property).
+    #[error(transparent)]
+    Delaunay(#[from] crate::core::delaunay_triangulation::DelaunayTriangulationValidationError),
 }
 
 /// A single invariant violation recorded during validation diagnostics.
@@ -459,13 +515,16 @@ pub struct InvariantViolation {
     /// The kind of invariant that failed.
     pub kind: InvariantKind,
     /// The detailed validation error explaining the failure.
-    pub error: TriangulationValidationError,
+    pub error: InvariantError,
 }
 
 /// Aggregate report of one or more validation failures.
 ///
-/// This is returned by [`Tds::validation_report`] to surface all failed
-/// invariants at once for debugging and test diagnostics.
+/// This is returned by
+/// [`DelaunayTriangulation::validation_report()`]
+/// to surface all failed invariants at once for debugging and test diagnostics.
+///
+/// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
 #[derive(Clone, Debug)]
 pub struct TriangulationValidationReport {
     /// The ordered list of invariant violations that occurred.
@@ -647,9 +706,9 @@ where
     ///
     /// # Errors
     ///
-    /// Returns `TriangulationValidationError` if neighbor assignment fails due to inconsistent
+    /// Returns `TdsValidationError` if neighbor assignment fails due to inconsistent
     /// data structures or invalid facet sharing patterns.
-    fn assign_neighbors(&mut self) -> Result<(), TriangulationValidationError> {
+    fn assign_neighbors(&mut self) -> Result<(), TdsValidationError> {
         use crate::core::facet::facet_key_from_vertices;
 
         // Build facet mapping with vertex index information using optimized collections
@@ -662,7 +721,7 @@ where
 
         for (cell_key, cell) in &self.cells {
             let vertices = self.get_cell_vertices(cell_key).map_err(|err| {
-                TriangulationValidationError::VertexKeyRetrievalFailed {
+                TdsError::VertexKeyRetrievalFailed {
                     cell_id: cell.uuid(),
                     message: format!(
                         "Failed to retrieve vertex keys for cell during neighbor assignment: {err}"
@@ -684,7 +743,7 @@ where
                 // Detect degenerate case early: more than 2 cells sharing a facet
                 // Note: Check happens before push, so len() reflects current sharing count
                 if facet_entry.len() >= 2 {
-                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                    return Err(TdsError::InconsistentDataStructure {
                         message: format!(
                             "Facet with key {} already shared by {} cells; cannot add cell {} (would violate 2-manifold property)",
                             facet_key,
@@ -707,7 +766,7 @@ where
         for (cell_key, cell) in &self.cells {
             let vertex_count = cell.number_of_vertices();
             if vertex_count > MAX_PRACTICAL_DIMENSION_SIZE {
-                return Err(TriangulationValidationError::InconsistentDataStructure {
+                return Err(TdsError::InconsistentDataStructure {
                     message: format!(
                         "Cell {} has {} vertices, which exceeds MAX_PRACTICAL_DIMENSION_SIZE={}. \
                          This would overflow the neighbors buffer.",
@@ -734,13 +793,13 @@ where
 
             // Set neighbors with semantic constraint: neighbors[i] is opposite vertices[i]
             cell_neighbors.get_mut(&cell_key1).ok_or_else(|| {
-                TriangulationValidationError::InconsistentDataStructure {
+                TdsError::InconsistentDataStructure {
                     message: format!("Cell key {cell_key1:?} not found in cell neighbors map"),
                 }
             })?[vertex_index1] = Some(cell_key2);
 
             cell_neighbors.get_mut(&cell_key2).ok_or_else(|| {
-                TriangulationValidationError::InconsistentDataStructure {
+                TdsError::InconsistentDataStructure {
                     message: format!("Cell key {cell_key2:?} not found in cell neighbors map"),
                 }
             })?[vertex_index2] = Some(cell_key1);
@@ -1177,7 +1236,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns `TriangulationConstructionError::DuplicateUuid` if a vertex with the
+    /// Returns [`TdsConstructionError::DuplicateUuid`] if a vertex with the
     /// same UUID already exists in the triangulation.
     ///
     /// # Examples
@@ -1187,12 +1246,12 @@ where
     pub(crate) fn insert_vertex_with_mapping(
         &mut self,
         vertex: Vertex<T, U, D>,
-    ) -> Result<VertexKey, TriangulationConstructionError> {
+    ) -> Result<VertexKey, TdsConstructionError> {
         let vertex_uuid = vertex.uuid();
 
         // Use Entry API for atomic check-and-insert
         match self.uuid_to_vertex_key.entry(vertex_uuid) {
-            Entry::Occupied(_) => Err(TriangulationConstructionError::DuplicateUuid {
+            Entry::Occupied(_) => Err(TdsConstructionError::DuplicateUuid {
                 entity: EntityKind::Vertex,
                 uuid: vertex_uuid,
             }),
@@ -1223,7 +1282,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns `TriangulationConstructionError::DuplicateUuid` if a cell with the
+    /// Returns [`TdsConstructionError::DuplicateUuid`] if a cell with the
     /// same UUID already exists in the triangulation.
     ///
     /// # Examples
@@ -1233,7 +1292,7 @@ where
     pub(crate) fn insert_cell_with_mapping(
         &mut self,
         cell: Cell<T, U, V, D>,
-    ) -> Result<CellKey, TriangulationConstructionError> {
+    ) -> Result<CellKey, TdsConstructionError> {
         // Phase 3A: Validate structural invariants using vertices
         debug_assert_eq!(
             cell.number_of_vertices(),
@@ -1241,8 +1300,8 @@ where
             "Cell should have exactly D+1 vertices for quick failure in dev"
         );
         if cell.number_of_vertices() != D + 1 {
-            return Err(TriangulationConstructionError::ValidationError(
-                TriangulationValidationError::InconsistentDataStructure {
+            return Err(TdsConstructionError::ValidationError(
+                TdsError::InconsistentDataStructure {
                     message: format!(
                         "Cell must have exactly {} vertices for {}-dimensional simplex, but has {}",
                         D + 1,
@@ -1256,8 +1315,8 @@ where
         // Phase 3A: Verify all vertex keys exist in the triangulation
         for &vkey in cell.vertices() {
             if !self.vertices.contains_key(vkey) {
-                return Err(TriangulationConstructionError::ValidationError(
-                    TriangulationValidationError::InconsistentDataStructure {
+                return Err(TdsConstructionError::ValidationError(
+                    TdsError::InconsistentDataStructure {
                         message: format!(
                             "Cell references vertex key {vkey:?} that does not exist in the triangulation"
                         ),
@@ -1270,7 +1329,7 @@ where
 
         // Use Entry API for atomic check-and-insert
         match self.uuid_to_cell_key.entry(cell_uuid) {
-            Entry::Occupied(_) => Err(TriangulationConstructionError::DuplicateUuid {
+            Entry::Occupied(_) => Err(TdsConstructionError::DuplicateUuid {
                 entity: EntityKind::Cell,
                 uuid: cell_uuid,
             }),
@@ -1302,11 +1361,11 @@ where
     /// # Returns
     ///
     /// A `Result` containing a `VertexKeyBuffer` if the cell exists and all vertices are valid,
-    /// or a `TriangulationValidationError` if the cell doesn't exist or vertices are missing.
+    /// or a `TdsValidationError` if the cell doesn't exist or vertices are missing.
     ///
     /// # Errors
     ///
-    /// Returns a `TriangulationValidationError` if:
+    /// Returns a `TdsValidationError` if:
     /// - The cell with the given key doesn't exist
     /// - A vertex key from the cell doesn't exist in the vertex storage (TDS corruption)
     ///
@@ -1319,12 +1378,13 @@ where
     pub fn get_cell_vertices(
         &self,
         cell_key: CellKey,
-    ) -> Result<VertexKeyBuffer, TriangulationValidationError> {
-        let cell = self.cells.get(cell_key).ok_or_else(|| {
-            TriangulationValidationError::InconsistentDataStructure {
+    ) -> Result<VertexKeyBuffer, TdsValidationError> {
+        let cell = self
+            .cells
+            .get(cell_key)
+            .ok_or_else(|| TdsError::InconsistentDataStructure {
                 message: format!("Cell key {cell_key:?} not found in cells storage map"),
-            }
-        })?;
+            })?;
 
         // Phase 3A: Cell now stores vertex keys directly
         // Validate and collect keys in one pass to avoid redundant iteration
@@ -1332,7 +1392,7 @@ where
         let mut keys = VertexKeyBuffer::with_capacity(cell_vertices.len());
         for (idx, &vertex_key) in cell_vertices.iter().enumerate() {
             if !self.vertices.contains_key(vertex_key) {
-                return Err(TriangulationValidationError::InconsistentDataStructure {
+                return Err(TdsError::InconsistentDataStructure {
                     message: format!(
                         "Cell {} (key {cell_key:?}) references non-existent vertex key {vertex_key:?} at position {idx}",
                         cell.uuid()
@@ -1733,17 +1793,22 @@ where
 
     /// Removes multiple cells by their keys in a batch operation.
     ///
-    /// This method is optimized for removing multiple cells at once,
-    /// updating the generation counter only once.
+    /// This method performs a **local** topology update:
+    /// - Removes the requested cells (and their UUID→Key mappings)
+    /// - Clears neighbor back-references in adjacent surviving cells so no neighbor points at a removed key
+    /// - Repairs `Vertex::incident_cell` for vertices that previously pointed at a removed cell
     ///
-    /// # Safety Warning
+    /// It does **not** attempt to retriangulate the cavity created by the removals.
     ///
-    /// This method only removes the cells and updates the UUID→Key mappings.
-    /// It does NOT maintain topology consistency. The caller MUST:
-    /// 1. Call `assign_neighbors()` to rebuild neighbor relationships
-    /// 2. Call `assign_incident_cells()` to update vertex-cell associations
+    /// # Performance
     ///
-    /// Failure to do so will leave the triangulation in an inconsistent state.
+    /// When neighbor pointers are present and mutually consistent, this touches only the
+    /// boundary of the removed region:
+    /// - Time: typically `O(#removed_cells × (D+1)^2)`
+    /// - Space: `O(#removed_cells × (D+1))` for temporary removal metadata
+    ///
+    /// In degraded states (e.g., after unsafe mutation where neighbor pointers are missing),
+    /// it may fall back to a conservative scan to find replacement incident cells.
     ///
     /// # Arguments
     ///
@@ -1757,51 +1822,182 @@ where
             return 0;
         }
 
-        // Build a set for O(1) lookup when clearing neighbor references.
+        // Build a set for O(1) membership tests.
         let cells_to_remove: CellKeySet = cell_keys.iter().copied().collect();
 
-        // Clear neighbor references in remaining cells that point to cells being removed.
-        // This prevents dangling neighbor pointers to non-existent cells.
-        for (cell_key, cell) in &mut self.cells {
-            // Skip cells that will be removed
-            if cells_to_remove.contains(&cell_key) {
+        // 1) Clear neighbor back-references in surviving cells and collect candidate incidence.
+        let (affected_vertices, candidate_incident) = self
+            .collect_removal_frontier_and_clear_neighbor_back_references(
+                cell_keys,
+                &cells_to_remove,
+            );
+
+        // 2) Remove the cells and update UUID mappings.
+        let removed_count = self.remove_cells_and_update_uuid_mappings(cell_keys);
+        if removed_count == 0 {
+            return 0;
+        }
+
+        // 3) Repair `incident_cell` pointers for vertices that referenced removed cells.
+        self.repair_incident_cells_after_cell_removal(
+            &affected_vertices,
+            &cells_to_remove,
+            &candidate_incident,
+        );
+
+        // Bump generation once for all removals (neighbors + incidence + cell storage).
+        self.bump_generation();
+
+        removed_count
+    }
+
+    fn collect_removal_frontier_and_clear_neighbor_back_references(
+        &mut self,
+        cell_keys: &[CellKey],
+        cells_to_remove: &CellKeySet,
+    ) -> (VertexKeySet, FastHashMap<VertexKey, CellKey>) {
+        let mut affected_vertices: VertexKeySet = VertexKeySet::default();
+        let mut candidate_incident: FastHashMap<VertexKey, CellKey> =
+            fast_hash_map_with_capacity(cell_keys.len().saturating_mul(D.saturating_add(1)));
+
+        for &cell_key in cell_keys {
+            let Some((vertices, neighbors)) = self.cells.get(cell_key).map(|cell| {
+                let mut vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                    SmallBuffer::with_capacity(cell.number_of_vertices());
+                vertices.extend(cell.vertices().iter().copied());
+
+                let mut neighbors: SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE> =
+                    SmallBuffer::with_capacity(vertices.len());
+                neighbors.resize(vertices.len(), None);
+
+                if let Some(cell_neighbors) = cell.neighbors() {
+                    for (slot, neighbor_opt) in neighbors.iter_mut().zip(cell_neighbors.iter()) {
+                        *slot = *neighbor_opt;
+                    }
+                }
+
+                (vertices, neighbors)
+            }) else {
                 continue;
+            };
+
+            for &vk in &vertices {
+                affected_vertices.insert(vk);
             }
 
-            if let Some(neighbors) = &mut cell.neighbors {
-                for neighbor_slot in neighbors.iter_mut() {
-                    if neighbor_slot
-                        .as_ref()
-                        .is_some_and(|neighbor_key| cells_to_remove.contains(neighbor_key))
-                    {
-                        *neighbor_slot = None; // Clear dangling reference (becomes boundary)
+            for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
+                let Some(neighbor_key) = neighbor_key_opt else {
+                    continue;
+                };
+
+                if cells_to_remove.contains(neighbor_key) {
+                    continue; // neighbor is also being removed
+                }
+
+                // The neighbor across facet_idx shares the facet consisting of all vertices
+                // except vertices[facet_idx].
+                for (vertex_index, &vkey) in vertices.iter().enumerate() {
+                    if vertex_index == facet_idx {
+                        continue;
                     }
+                    candidate_incident.entry(vkey).or_insert(*neighbor_key);
+                }
+
+                let Some(neighbor_cell) = self.cells.get_mut(*neighbor_key) else {
+                    continue;
+                };
+                let Some(neighbors_buf) = neighbor_cell.neighbors.as_mut() else {
+                    continue;
+                };
+
+                // Clear the back-reference in the neighbor cell's neighbor buffer.
+                for slot in neighbors_buf.iter_mut() {
+                    if *slot == Some(cell_key) {
+                        *slot = None;
+                    }
+                }
+
+                // Normalize: if all neighbor slots are None, store `None`.
+                if neighbors_buf.iter().all(Option::is_none) {
+                    neighbor_cell.neighbors = None;
                 }
             }
         }
 
+        (affected_vertices, candidate_incident)
+    }
+
+    fn remove_cells_and_update_uuid_mappings(&mut self, cell_keys: &[CellKey]) -> usize {
         let mut removed_count = 0;
 
         for &cell_key in cell_keys {
             if let Some(removed_cell) = self.cells.remove(cell_key) {
-                // Also remove from UUID mapping
                 self.uuid_to_cell_key.remove(&removed_cell.uuid());
                 removed_count += 1;
             }
         }
 
-        // Bump generation once for all removals
-        if removed_count > 0 {
-            self.bump_generation();
+        removed_count
+    }
+
+    fn repair_incident_cells_after_cell_removal(
+        &mut self,
+        affected_vertices: &VertexKeySet,
+        cells_to_remove: &CellKeySet,
+        candidate_incident: &FastHashMap<VertexKey, CellKey>,
+    ) {
+        // We only need to consider vertices that appeared in removed cells.
+        let vertices_to_repair: Vec<VertexKey> = affected_vertices
+            .iter()
+            .copied()
+            .filter(|&vk| {
+                let Some(v) = self.vertices.get(vk) else {
+                    return false;
+                };
+
+                match v.incident_cell {
+                    None => true,
+                    Some(cell_key) => {
+                        cells_to_remove.contains(&cell_key) || !self.cells.contains_key(cell_key)
+                    }
+                }
+            })
+            .collect();
+
+        let mut incident_updates: Vec<(VertexKey, Option<CellKey>)> =
+            Vec::with_capacity(vertices_to_repair.len());
+
+        for vk in vertices_to_repair {
+            // Prefer a candidate cell discovered on the boundary of the removed region.
+            let mut new_incident = candidate_incident.get(&vk).copied().filter(|&ck| {
+                self.cells
+                    .get(ck)
+                    .is_some_and(|cell| cell.contains_vertex(vk))
+            });
+
+            // Conservative fallback: pick the first remaining cell that contains this vertex.
+            // This is only hit if neighbor pointers were missing or the boundary had no surviving cell.
+            if new_incident.is_none() {
+                new_incident = self
+                    .cells
+                    .iter()
+                    .find_map(|(cell_key, cell)| cell.contains_vertex(vk).then_some(cell_key));
+            }
+
+            incident_updates.push((vk, new_incident));
         }
 
-        removed_count
+        for (vk, new_incident) in incident_updates {
+            if let Some(vertex) = self.vertices.get_mut(vk) {
+                vertex.incident_cell = new_incident;
+            }
+        }
     }
 
     /// Finds all cells containing a specific vertex.
     ///
-    /// This is an internal helper used by `remove_vertex` and `rollback_vertex_insertion`
-    /// to efficiently collect cells that need to be removed when a vertex is deleted.
+    /// This is an internal helper used by [`Tds::remove_vertex`](Self::remove_vertex) to efficiently
+    /// collect the vertex star that needs to be removed.
     ///
     /// # Arguments
     ///
@@ -1814,38 +2010,100 @@ where
     ///
     /// # Performance
     ///
-    /// - Time complexity: O(n) where n is the number of cells
-    /// - Space: Stack-allocated for ≤16 results, heap fallback for larger vertex stars
+    /// Fast path (typical, valid triangulations):
+    /// - Uses the vertex's `incident_cell` pointer as a seed and walks the neighbor graph across
+    ///   facets that still contain the vertex.
+    /// - Time: O(|star(v)| × (D+1))
+    /// - Space: O(|star(v)|)
     ///
-    /// # Related
-    ///
-    /// This method is optimized for **removal/rollback operations** where the result
-    /// is consumed once for batch removal. For **set operations** (intersection, union,
-    /// membership testing), use `find_cells_containing_vertex_by_key` which returns a
-    /// `CellKeySet` (hash set) optimized for O(1) lookups and set operations.
-    ///
-    /// The two methods serve different use cases:
-    /// - This method: Stack-allocated buffer → optimized for sequential removal
-    /// - `find_cells_containing_vertex_by_key`: Hash set → optimized for set operations
+    /// Conservative fallback:
+    /// - If `incident_cell` is missing/stale or neighbor pointers are unavailable, falls back to
+    ///   scanning all cells.
+    /// - Time: O(#cells)
     fn find_cells_containing_vertex(&self, vertex_key: VertexKey) -> CellRemovalBuffer {
-        self.cells()
-            .filter_map(|(cell_key, cell)| {
-                if cell.contains_vertex(vertex_key) {
-                    Some(cell_key)
-                } else {
-                    None
+        let fallback_scan = || {
+            self.cells()
+                .filter_map(|(cell_key, cell)| cell.contains_vertex(vertex_key).then_some(cell_key))
+                .collect()
+        };
+
+        // Fast path: walk the star from the vertex's incident cell using neighbor pointers.
+        let Some(vertex) = self.vertices.get(vertex_key) else {
+            return fallback_scan();
+        };
+
+        let Some(start_cell_key) = vertex.incident_cell else {
+            return fallback_scan();
+        };
+
+        let Some(start_cell) = self.cells.get(start_cell_key) else {
+            return fallback_scan();
+        };
+
+        if !start_cell.contains_vertex(vertex_key) || start_cell.neighbors().is_none() {
+            return fallback_scan();
+        }
+
+        let mut visited: CellKeySet = CellKeySet::default();
+        let mut stack: CellRemovalBuffer = CellRemovalBuffer::new();
+        let mut result: CellRemovalBuffer = CellRemovalBuffer::new();
+
+        visited.insert(start_cell_key);
+        stack.push(start_cell_key);
+
+        while let Some(cell_key) = stack.pop() {
+            result.push(cell_key);
+
+            let Some(cell) = self.cells.get(cell_key) else {
+                continue;
+            };
+
+            let Some(neighbors) = cell.neighbors() else {
+                continue;
+            };
+
+            // Traverse only across facets that still contain the target vertex.
+            for (facet_idx, neighbor_opt) in neighbors.iter().enumerate() {
+                if cell
+                    .vertices()
+                    .get(facet_idx)
+                    .is_some_and(|&vkey| vkey == vertex_key)
+                {
+                    // This facet excludes `vertex_key`, so crossing it would
+                    // leave the vertex star.
+                    continue;
                 }
-            })
-            .collect()
+
+                let Some(neighbor_key) = neighbor_opt else {
+                    continue;
+                };
+
+                if visited.contains(neighbor_key) {
+                    continue;
+                }
+
+                let Some(neighbor_cell) = self.cells.get(*neighbor_key) else {
+                    continue;
+                };
+
+                if !neighbor_cell.contains_vertex(vertex_key) {
+                    continue;
+                }
+
+                visited.insert(*neighbor_key);
+                stack.push(*neighbor_key);
+            }
+        }
+
+        result
     }
 
     /// Removes a vertex and all cells containing it, maintaining data structure consistency.
     ///
-    /// This is an atomic operation that:
-    /// 1. Finds all cells containing the vertex
-    /// 2. Removes all such cells
-    /// 3. Rebuilds vertex-cell incidence to prevent dangling `incident_cell` pointers
-    /// 4. Removes the vertex itself
+    /// This is a composite operation that, on success:
+    /// 1. Finds all cells containing the vertex (using `incident_cell` + neighbor-walk when available)
+    /// 2. Removes all such cells (clearing neighbor back-references + repairing affected incidence pointers)
+    /// 3. Removes the vertex itself
     ///
     /// This operation leaves the triangulation in a valid state (though potentially incomplete).
     /// This is the recommended way to remove a vertex from the triangulation.
@@ -1856,13 +2114,26 @@ where
     ///
     /// # Returns
     ///
-    /// `Ok(usize)` with the number of cells that were removed along with the vertex,
-    /// or `Err(TriangulationValidationError)` if incident cell assignment fails.
+    /// `Ok(usize)` with the number of cells that were removed along with the vertex.
     ///
     /// # Errors
     ///
-    /// Returns `TriangulationValidationError` if the vertex-cell incidence cannot be rebuilt
-    /// after removing cells. This indicates a corrupted data structure.
+    /// Currently this operation is infallible and always returns `Ok(_)`. The `Result` is retained
+    /// for API consistency with other mutation operations and to allow future checks to surface as
+    /// [`TdsMutationError`].
+    ///
+    /// # Performance
+    ///
+    /// Vertex removal is a **local** topological change (deleting the vertex star).
+    ///
+    /// Typical case (valid triangulations with neighbors/`incident_cell` assigned):
+    /// - Star discovery: O(|star(v)| × (D+1)) via neighbor-walk (no global scan)
+    /// - Removal + repair: typically O(|star(v)| × (D+1)²) touching only the boundary of the star
+    ///
+    /// Conservative fallbacks:
+    /// - If `incident_cell`/neighbor pointers are unavailable (e.g., after unsafe mutation), the
+    ///   implementation falls back to a global cell scan to find the star and/or a replacement
+    ///   incident cell for affected vertices.
     ///
     /// # Examples
     ///
@@ -1885,12 +2156,9 @@ where
     /// let cells_removed = dt.remove_vertex(&vertex_to_remove).unwrap();
     /// println!("Removed {} cells along with the vertex", cells_removed);
     ///
-    /// assert!(dt.is_valid().is_ok());
+    /// assert!(dt.tds().validate().is_ok());
     /// ```
-    pub fn remove_vertex(
-        &mut self,
-        vertex: &Vertex<T, U, D>,
-    ) -> Result<usize, TriangulationValidationError> {
+    pub fn remove_vertex(&mut self, vertex: &Vertex<T, U, D>) -> Result<usize, TdsMutationError> {
         // Find the vertex key
         let Some(vertex_key) = self.vertex_key_from_uuid(&vertex.uuid()) else {
             return Ok(0); // Vertex not found, nothing to remove
@@ -1899,15 +2167,11 @@ where
         // Find all cells containing this vertex
         let cells_to_remove = self.find_cells_containing_vertex(vertex_key);
 
-        // Remove all cells containing the vertex. Neighbor references in surviving
-        // cells that pointed to these cells are cleared by `remove_cells_by_keys`.
+        // Remove all cells containing the vertex.
+        //
+        // `remove_cells_by_keys()` clears neighbor back-references that would otherwise dangle and
+        // incrementally repairs `incident_cell` pointers for vertices that referenced removed cells.
         let cells_removed = self.remove_cells_by_keys(&cells_to_remove);
-
-        // Rebuild vertex incidence before removing the vertex to ensure surviving vertices
-        // no longer point at the deleted cells. This prevents dangling incident_cell references.
-        // Any vertex whose incident_cell previously referenced one of the removed cells will
-        // have its pointer updated to a valid remaining cell (or None if isolated).
-        self.assign_incident_cells()?;
 
         // Remove the vertex itself (inline instead of using deprecated method)
         self.vertices.remove(vertex_key);
@@ -1992,7 +2256,7 @@ where
     /// # Returns
     ///
     /// * `Ok(())` if the topology is valid
-    /// * `Err(TriangulationValidationError)` with details about which neighbors violate the invariant
+    /// * `Err(TdsValidationError)` with details about which neighbors violate the invariant
     ///
     /// # Use Cases
     ///
@@ -2000,37 +2264,16 @@ where
     /// - Can be called by `is_valid()` to check entire triangulation
     /// - Useful during incremental construction to identify cells needing repair
     ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::*;
-    ///
-    /// let vertices = [
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
-    /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let tds = dt.tds();
-    /// let (cell_key, cell) = tds.cells().next().unwrap();
-    /// let neighbors = tds.find_neighbors_by_key(cell_key);
-    ///
-    /// // Validate specific cell's neighbors
-    /// if let Err(e) = tds.validate_neighbor_topology(cell_key, &neighbors) {
-    ///     eprintln!("Cell {:?} has invalid neighbors: {}", cell_key, e);
-    ///     // Fix the neighbors...
-    /// }
-    /// ```
     /// # Errors
     ///
-    /// Returns `TriangulationValidationError` if topology validation fails.
-    pub fn validate_neighbor_topology(
+    /// Returns `TdsValidationError` if topology validation fails.
+    fn validate_neighbor_topology(
         &self,
         cell_key: CellKey,
         neighbors: &[Option<CellKey>],
-    ) -> Result<(), TriangulationValidationError> {
+    ) -> Result<(), TdsValidationError> {
         if neighbors.len() != D + 1 {
-            return Err(TriangulationValidationError::InvalidNeighbors {
+            return Err(TdsError::InvalidNeighbors {
                 message: format!(
                     "Neighbor vector length {} != D+1 ({})",
                     neighbors.len(),
@@ -2039,18 +2282,19 @@ where
             });
         }
 
-        let cell = self.cells.get(cell_key).ok_or_else(|| {
-            TriangulationValidationError::InconsistentDataStructure {
+        let cell = self
+            .cells
+            .get(cell_key)
+            .ok_or_else(|| TdsError::InconsistentDataStructure {
                 message: format!("Cell key {cell_key:?} not found"),
-            }
-        })?;
+            })?;
 
         let cell_vertices = cell.vertices();
 
         for (i, neighbor_key_opt) in neighbors.iter().enumerate() {
             if let Some(neighbor_key) = neighbor_key_opt {
                 let neighbor = self.cells.get(*neighbor_key).ok_or_else(|| {
-                    TriangulationValidationError::InvalidNeighbors {
+                    TdsError::InvalidNeighbors {
                         message: format!(
                             "Neighbor at position {i} references non-existent cell {neighbor_key:?}"
                         ),
@@ -2073,7 +2317,7 @@ where
 
                 // Validate the topological invariant
                 if shared_count != D {
-                    return Err(TriangulationValidationError::InvalidNeighbors {
+                    return Err(TdsError::InvalidNeighbors {
                         message: format!(
                             "Cell {:?} neighbor at position {i} shares {shared_count} vertices, expected {D}. \
                             Invariant: neighbor[{i}] must share facet opposite vertex[{i}] (all vertices except vertex {i})",
@@ -2083,7 +2327,7 @@ where
                 }
 
                 if missing_vertex_idx != Some(i) {
-                    return Err(TriangulationValidationError::InvalidNeighbors {
+                    return Err(TdsError::InvalidNeighbors {
                         message: format!(
                             "Cell {:?} neighbor at position {i} is opposite vertex {:?}, expected {i}. \
                             Invariant: neighbor[{i}] must be opposite vertex[{i}]",
@@ -2129,7 +2373,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a `TriangulationValidationError` if:
+    /// Returns a `TdsMutationError` if:
     /// - The cell with the given key doesn't exist
     /// - The neighbor vector length is not D+1
     /// - Any neighbor key references a non-existent cell
@@ -2138,7 +2382,7 @@ where
         &mut self,
         cell_key: CellKey,
         neighbors: &[Option<CellKey>],
-    ) -> Result<(), TriangulationValidationError> {
+    ) -> Result<(), TdsMutationError> {
         // Validate the topological invariant before applying changes
         // (includes length check: neighbors.len() == D+1)
         self.validate_neighbor_topology(cell_key, neighbors)?;
@@ -2148,7 +2392,7 @@ where
 
         // Get mutable reference and update, or return error if not found
         let cell = self.get_cell_by_key_mut(cell_key).ok_or_else(|| {
-            TriangulationValidationError::InconsistentDataStructure {
+            TdsError::InconsistentDataStructure {
                 message: format!("Cell with key {cell_key:?} not found"),
             }
         })?;
@@ -2168,40 +2412,6 @@ where
         Ok(())
     }
 
-    /// Builds a complete vertex→cells mapping for all vertices in the triangulation.
-    ///
-    /// This is a helper method that constructs a mapping from each vertex key to the
-    /// set of cells containing that vertex. This map is reused by multiple operations
-    /// including `assign_incident_cells` and optimized cell-finding operations.
-    ///
-    /// # Returns
-    ///
-    /// A `VertexToCellsMap` containing the mapping from vertex keys to cell keys.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `TriangulationValidationError` if a cell references a non-existent vertex key.
-    fn build_vertex_to_cells_map(&self) -> Result<VertexToCellsMap, TriangulationValidationError> {
-        let mut vertex_to_cells: VertexToCellsMap =
-            fast_hash_map_with_capacity(self.vertices.len());
-
-        for (cell_key, cell) in &self.cells {
-            let vertices = self.get_cell_vertices(cell_key).map_err(|e| {
-                TriangulationValidationError::InconsistentDataStructure {
-                    message: format!("Failed to get vertex keys for cell {}: {}", cell.uuid(), e),
-                }
-            })?;
-            for &vertex_key in &vertices {
-                vertex_to_cells
-                    .entry(vertex_key)
-                    .or_default()
-                    .push(cell_key);
-            }
-        }
-
-        Ok(vertex_to_cells)
-    }
-
     /// Finds cells containing a vertex using its key directly.
     ///
     /// This method avoids UUID lookups when searching for cells that
@@ -2216,20 +2426,12 @@ where
     /// A set of cell keys that contain the given vertex.
     #[must_use]
     pub fn find_cells_containing_vertex_by_key(&self, vertex_key: VertexKey) -> CellKeySet {
-        let mut containing_cells = CellKeySet::default();
-
-        let Some(_target_vertex) = self.get_vertex_by_key(vertex_key) else {
-            return containing_cells;
-        };
-
-        for (cell_key, cell) in &self.cells {
-            // Phase 3A: Check if cell contains the vertex using vertices
-            if cell.vertices().contains(&vertex_key) {
-                containing_cells.insert(cell_key);
-            }
+        if self.get_vertex_by_key(vertex_key).is_none() {
+            return CellKeySet::default();
         }
 
-        containing_cells
+        let cells = self.find_cells_containing_vertex(vertex_key);
+        cells.iter().copied().collect()
     }
 
     /// Assigns incident cells to vertices in the triangulation.
@@ -2238,25 +2440,35 @@ where
     /// which is useful for various geometric queries and traversals. For each vertex, an arbitrary
     /// incident cell is selected from the cells that contain that vertex.
     ///
+    /// Note: Many topology-mutating operations (like [`Tds::remove_cells_by_keys`](Self::remove_cells_by_keys))
+    /// attempt to repair `incident_cell` incrementally for affected vertices. This method exists as a
+    /// conservative **full rebuild** after bulk changes (deserialization, large repairs, etc.).
+    ///
     /// # Returns
     ///
     /// `Ok(())` if incident cells were successfully assigned to all vertices,
-    /// otherwise a `TriangulationValidationError`.
+    /// otherwise a `TdsMutationError`.
     ///
     /// # Errors
     ///
-    /// Returns a `TriangulationValidationError` if:
-    /// - A cell references a non-existent vertex key (`InconsistentDataStructure`)
-    /// - A cell key cannot be found in the cells storage map (`InconsistentDataStructure`)
-    /// - A vertex key cannot be found in the vertices storage map (`InconsistentDataStructure`)
+    /// Returns a `TdsMutationError` if a cell references a non-existent vertex key
+    /// (`InconsistentDataStructure`).
     ///
     /// # Algorithm
     ///
-    /// 1. Build a mapping from vertex keys to lists of cell keys that contain each vertex
-    /// 2. For each vertex that appears in at least one cell, assign the first cell as its incident cell
-    /// 3. Update the vertex's `incident_cell` field with the `CellKey` of the selected cell (Phase 3)
+    /// 1. Clear `incident_cell` for all vertices
+    /// 2. Scan all cells; for each vertex encountered, assign the current cell as its incident cell
+    ///    if it does not already have one
     ///
-    pub fn assign_incident_cells(&mut self) -> Result<(), TriangulationValidationError> {
+    /// # Performance
+    ///
+    /// This method rebuilds incidence **globally** by scanning all cells:
+    /// - Time: O(#cells × (D+1))
+    /// - Space: O(1) extra (no temporary vertex→cells map)
+    ///
+    /// It is intended for repair/validation paths after bulk topology changes, not as a per-step
+    /// hot-path update.
+    pub fn assign_incident_cells(&mut self) -> Result<(), TdsMutationError> {
         if self.cells.is_empty() {
             // No cells remain; all vertices must have incident_cell cleared to avoid
             // dangling pointers to previously removed cells.
@@ -2273,32 +2485,20 @@ where
             vertex.incident_cell = None;
         }
 
-        // Build vertex_to_cells mapping using the reusable helper
-        let vertex_to_cells = self.build_vertex_to_cells_map()?;
-
-        // Iterate over for (vertex_key, cell_keys) in vertex_to_cells
-        for (vertex_key, cell_keys) in vertex_to_cells {
-            if !cell_keys.is_empty() {
-                // Phase 3: Use CellKey directly instead of converting to UUID
-                let cell_key = cell_keys[0];
-
-                // Verify the cell key is still valid
-                if !self.cells.contains_key(cell_key) {
-                    return Err(TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Cell key {cell_key:?} not found in cells storage map during incident cell assignment"
-                        ),
-                    });
-                }
-
-                // Update the vertex's incident cell with the key
-                let vertex = self.vertices.get_mut(vertex_key)
-                    .ok_or_else(|| TriangulationValidationError::InconsistentDataStructure {
+        // Single-pass rebuild: assign the first cell encountered for each vertex.
+        for (cell_key, cell) in &self.cells {
+            for &vertex_key in cell.vertices() {
+                let vertex = self.vertices.get_mut(vertex_key).ok_or_else(|| {
+                    TdsError::InconsistentDataStructure {
                         message: format!(
                             "Vertex key {vertex_key:?} not found in vertices storage map during incident cell assignment"
                         ),
-                    })?;
-                vertex.incident_cell = Some(cell_key);
+                    }
+                })?;
+
+                if vertex.incident_cell.is_none() {
+                    vertex.incident_cell = Some(cell_key);
+                }
             }
         }
 
@@ -2397,20 +2597,18 @@ where
     ///
     /// A `Result` containing:
     /// - `Ok(FacetToCellsMap)`: A complete mapping of facet keys to cells
-    /// - `Err(TriangulationValidationError)`: If any cell has missing vertex keys
+    /// - `Err(TdsValidationError)`: If any cell has missing vertex keys
     ///
     /// # Errors
     ///
-    /// Returns a `TriangulationValidationError::InconsistentDataStructure` if any cell
+    /// Returns a `TdsValidationError::InconsistentDataStructure` if any cell
     /// cannot resolve its vertex keys, which would indicate a corrupted triangulation state.
     ///
     /// # Performance
     ///
     /// O(N×F) time complexity where N is the number of cells and F is the
     /// number of facets per cell (typically D+1 for D-dimensional cells).
-    pub fn build_facet_to_cells_map(
-        &self,
-    ) -> Result<FacetToCellsMap, TriangulationValidationError> {
+    pub fn build_facet_to_cells_map(&self) -> Result<FacetToCellsMap, TdsValidationError> {
         // Ensure facet indices fit in u8 range
         debug_assert!(
             D <= 255,
@@ -2426,7 +2624,7 @@ where
         // Iterate over all cells and their facets
         for (cell_id, _cell) in &self.cells {
             // Use direct key-based method to avoid UUID→Key lookups
-            // The error from get_cell_vertices is already TriangulationValidationError
+            // The error from get_cell_vertices is already TdsValidationError
             let vertices = self.get_cell_vertices(cell_id)?;
 
             for i in 0..vertices.len() {
@@ -2440,7 +2638,7 @@ where
 
                 let facet_key = facet_key_from_vertices(&facet_vertices);
                 let Ok(facet_index_u8) = usize_to_u8(i, facet_vertices.len()) else {
-                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                    return Err(TdsError::InconsistentDataStructure {
                         message: format!("Facet index {i} exceeds u8 range for dimension {D}"),
                     });
                 };
@@ -2465,11 +2663,11 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a `TriangulationValidationError` if:
+    /// Returns a `TdsMutationError` if:
     /// - Vertex keys cannot be retrieved for any cell (data structure corruption)
     /// - Neighbor assignment fails after cell removal
     /// - Incident cell assignment fails after cell removal
-    pub fn remove_duplicate_cells(&mut self) -> Result<usize, TriangulationValidationError> {
+    pub fn remove_duplicate_cells(&mut self) -> Result<usize, TdsMutationError> {
         let mut unique_cells = FastHashMap::default();
         let mut cells_to_remove = CellRemovalBuffer::new();
 
@@ -2506,9 +2704,13 @@ where
         }
 
         if duplicate_count > 0 {
-            // Rebuild topology to avoid stale references after cell removal
+            // Rebuild topology to avoid stale references after cell removal.
             // This ensures vertices don't point to removed cells via incident_cell,
-            // and neighbor arrays don't reference removed keys
+            // and neighbor arrays don't reference removed keys.
+            //
+            // NOTE: Both `assign_neighbors()` and `assign_incident_cells()` are full rebuilds
+            // across all cells/vertices (O(#cells)). This is intentionally conservative and is
+            // expected to be used in repair/cleanup paths rather than per-step hot loops.
             self.assign_neighbors()?;
             self.assign_incident_cells()?;
 
@@ -2534,40 +2736,26 @@ where
     ///
     /// # Returns
     ///
-    /// `Ok(())` if all vertex mappings are consistent, otherwise a `TriangulationValidationError`.
+    /// `Ok(())` if all vertex mappings are consistent, otherwise a `TdsValidationError`.
     ///
-    /// This corresponds to [`InvariantKind::VertexMappings`], which is reported by
-    /// [`Tds::validation_report`](Self::validation_report) and is included in
-    /// [`Tds::is_valid`](Self::is_valid).
+    /// This corresponds to [`InvariantKind::VertexMappings`], which is included in
+    /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
+    /// [`DelaunayTriangulation::validation_report()`].
+    ///
+    /// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
     ///
     /// # Errors
     ///
-    /// Returns a `TriangulationValidationError::MappingInconsistency` with a descriptive message if:
+    /// Returns a `TdsValidationError::MappingInconsistency` with a descriptive message if:
     /// - The number of UUID-to-key mappings doesn't match the number of vertices
     /// - The number of key-to-UUID mappings doesn't match the number of vertices
     /// - A vertex exists without a corresponding UUID-to-key mapping
     /// - A vertex exists without a corresponding key-to-UUID mapping
     /// - The bidirectional mappings are inconsistent (UUID maps to key A, but key A maps to different UUID)
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// use delaunay::prelude::*;
-    ///
-    /// let vertices = [
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
-    /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    ///
-    /// // Validation should pass for a properly constructed triangulation
-    /// assert!(dt.validate_vertex_mappings().is_ok());
-    /// ```
-    pub fn validate_vertex_mappings(&self) -> Result<(), TriangulationValidationError> {
+    fn validate_vertex_mappings(&self) -> Result<(), TdsValidationError> {
         if self.uuid_to_vertex_key.len() != self.vertices.len() {
-            return Err(TriangulationValidationError::MappingInconsistency {
+            return Err(TdsError::MappingInconsistency {
                 entity: EntityKind::Vertex,
                 message: format!(
                     "Number of mapping entries ({}) doesn't match number of vertices ({})",
@@ -2584,7 +2772,7 @@ where
 
             // Check key-to-UUID direction first (direct storage map access - no hash lookup)
             if self.vertex_uuid_from_key(vertex_key) != Some(vertex_uuid) {
-                return Err(TriangulationValidationError::MappingInconsistency {
+                return Err(TdsError::MappingInconsistency {
                     entity: EntityKind::Vertex,
                     message: format!(
                         "Inconsistent or missing key-to-UUID mapping for key {vertex_key:?}"
@@ -2594,7 +2782,7 @@ where
 
             // Now verify UUID-to-key direction (requires hash lookup but we know it should exist)
             if self.uuid_to_vertex_key.get(&vertex_uuid) != Some(&vertex_key) {
-                return Err(TriangulationValidationError::MappingInconsistency {
+                return Err(TdsError::MappingInconsistency {
                     entity: EntityKind::Vertex,
                     message: format!(
                         "Inconsistent or missing UUID-to-key mapping for UUID {vertex_uuid:?}"
@@ -2616,40 +2804,26 @@ where
     ///
     /// # Returns
     ///
-    /// `Ok(())` if all cell mappings are consistent, otherwise a `TriangulationValidationError`.
+    /// `Ok(())` if all cell mappings are consistent, otherwise a `TdsValidationError`.
     ///
-    /// This corresponds to [`InvariantKind::CellMappings`], which is reported by
-    /// [`Tds::validation_report`](Self::validation_report) and is included in
-    /// [`Tds::is_valid`](Self::is_valid).
+    /// This corresponds to [`InvariantKind::CellMappings`], which is included in
+    /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
+    /// [`DelaunayTriangulation::validation_report()`].
+    ///
+    /// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
     ///
     /// # Errors
     ///
-    /// Returns a `TriangulationValidationError::MappingInconsistency` with a descriptive message if:
+    /// Returns a `TdsValidationError::MappingInconsistency` with a descriptive message if:
     /// - The number of UUID-to-key mappings doesn't match the number of cells
     /// - The number of key-to-UUID mappings doesn't match the number of cells
     /// - A cell exists without a corresponding UUID-to-key mapping
     /// - A cell exists without a corresponding key-to-UUID mapping
     /// - The bidirectional mappings are inconsistent (UUID maps to key A, but key A maps to different UUID)
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// use delaunay::prelude::*;
-    ///
-    /// let vertices = [
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
-    /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    ///
-    /// // Validation should pass for a properly constructed triangulation
-    /// assert!(dt.validate_cell_mappings().is_ok());
-    /// ```
-    pub fn validate_cell_mappings(&self) -> Result<(), TriangulationValidationError> {
+    fn validate_cell_mappings(&self) -> Result<(), TdsValidationError> {
         if self.uuid_to_cell_key.len() != self.cells.len() {
-            return Err(TriangulationValidationError::MappingInconsistency {
+            return Err(TdsError::MappingInconsistency {
                 entity: EntityKind::Cell,
                 message: format!(
                     "Number of mapping entries ({}) doesn't match number of cells ({})",
@@ -2666,7 +2840,7 @@ where
 
             // Check key-to-UUID direction first (direct storage map access - no hash lookup)
             if self.cell_uuid_from_key(cell_key) != Some(cell_uuid) {
-                return Err(TriangulationValidationError::MappingInconsistency {
+                return Err(TdsError::MappingInconsistency {
                     entity: EntityKind::Cell,
                     message: format!(
                         "Inconsistent or missing key-to-UUID mapping for key {cell_key:?}"
@@ -2676,7 +2850,7 @@ where
 
             // Now verify UUID-to-key direction (requires hash lookup but we know it should exist)
             if self.uuid_to_cell_key.get(&cell_uuid) != Some(&cell_key) {
-                return Err(TriangulationValidationError::MappingInconsistency {
+                return Err(TdsError::MappingInconsistency {
                     entity: EntityKind::Cell,
                     message: format!(
                         "Inconsistent or missing UUID-to-key mapping for UUID {cell_uuid:?}"
@@ -2698,19 +2872,18 @@ where
     ///
     /// # Returns
     ///
-    /// `Ok(())` if all vertex keys in all cells are valid, otherwise a `TriangulationValidationError`.
+    /// `Ok(())` if all vertex keys in all cells are valid, otherwise a `TdsValidationError`.
     ///
     /// # Errors
     ///
-    /// Returns `TriangulationValidationError::InconsistentDataStructure` if any cell
+    /// Returns `TdsValidationError::InconsistentDataStructure` if any cell
     /// references a vertex key that doesn't exist in the vertices `storage map`.
-    #[allow(dead_code)]
-    fn validate_cell_vertex_keys(&self) -> Result<(), TriangulationValidationError> {
+    fn validate_cell_vertex_keys(&self) -> Result<(), TdsValidationError> {
         for (cell_key, cell) in &self.cells {
             let cell_uuid = cell.uuid();
             for (vertex_idx, &vertex_key) in cell.vertices().iter().enumerate() {
                 if !self.vertices.contains_key(vertex_key) {
-                    return Err(TriangulationValidationError::InconsistentDataStructure {
+                    return Err(TdsError::InconsistentDataStructure {
                         message: format!(
                             "Cell {cell_uuid} (key {cell_key:?}) references non-existent vertex key {vertex_key:?} at position {vertex_idx}"
                         ),
@@ -2731,13 +2904,15 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`TriangulationValidationError`] if cell vertex retrieval fails
+    /// Returns a [`TdsValidationError`] if cell vertex retrieval fails
     /// or if any duplicate cells are detected.
     ///
-    /// This corresponds to [`InvariantKind::DuplicateCells`], which is reported by
-    /// [`Tds::validation_report`](Self::validation_report) and is included in
-    /// [`Tds::is_valid`](Self::is_valid).
-    pub fn validate_no_duplicate_cells(&self) -> Result<(), TriangulationValidationError> {
+    /// This corresponds to [`InvariantKind::DuplicateCells`], which is included in
+    /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
+    /// [`DelaunayTriangulation::validation_report()`].
+    ///
+    /// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
+    fn validate_no_duplicate_cells(&self) -> Result<(), TdsValidationError> {
         // Use CellVertexUuidBuffer as HashMap key directly to avoid extra Vec allocation
         // Pre-size to avoid rehashing during insertion (minor optimization for hot path)
         let mut unique_cells: FastHashMap<CellVertexUuidBuffer, CellKey> =
@@ -2746,12 +2921,12 @@ where
 
         for (cell_key, cell) in &self.cells {
             // Use Cell::vertex_uuids() helper to avoid duplicating VertexKey→UUID mapping logic
-            // Convert CellValidationError to TriangulationValidationError for propagation
-            let mut vertex_uuids = cell.vertex_uuids(self).map_err(|e| {
-                TriangulationValidationError::InconsistentDataStructure {
-                    message: format!("Failed to get vertex UUIDs for cell {cell_key:?}: {e}"),
-                }
-            })?;
+            // Convert CellValidationError to TdsValidationError for propagation
+            let mut vertex_uuids =
+                cell.vertex_uuids(self)
+                    .map_err(|e| TdsError::InconsistentDataStructure {
+                        message: format!("Failed to get vertex UUIDs for cell {cell_key:?}: {e}"),
+                    })?;
 
             // Canonicalize by sorting UUIDs for backend-agnostic equality
             // Note: Don't sort by VertexKey as slotmap::Key's Ord is implementation-defined
@@ -2774,7 +2949,7 @@ where
                 })
                 .collect();
 
-            return Err(TriangulationValidationError::DuplicateCells {
+            return Err(TdsError::DuplicateCells {
                 message: format!(
                     "Found {} duplicate cell(s): {}",
                     duplicates.len(),
@@ -2794,13 +2969,15 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`TriangulationValidationError`] if building the facet map fails
+    /// Returns a [`TdsValidationError`] if building the facet map fails
     /// or if any facet is shared by more than two cells.
     ///
-    /// This corresponds to [`InvariantKind::FacetSharing`], which is reported by
-    /// [`Tds::validation_report`](Self::validation_report) and is included in
-    /// [`Tds::is_valid`](Self::is_valid).
-    pub fn validate_facet_sharing(&self) -> Result<(), TriangulationValidationError> {
+    /// This corresponds to [`InvariantKind::FacetSharing`], which is included in
+    /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
+    /// [`DelaunayTriangulation::validation_report()`].
+    ///
+    /// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
+    pub(crate) fn validate_facet_sharing(&self) -> Result<(), TdsValidationError> {
         // Build a map from facet keys to the cells that contain them
         // Use the strict version to ensure we catch any missing vertex keys
         let facet_to_cells = self.build_facet_to_cells_map()?;
@@ -2808,7 +2985,7 @@ where
         // Check for facets shared by more than 2 cells
         for (facet_key, cell_facet_pairs) in facet_to_cells {
             if cell_facet_pairs.len() > 2 {
-                return Err(TriangulationValidationError::InconsistentDataStructure {
+                return Err(TdsError::InconsistentDataStructure {
                     message: format!(
                         "Facet with key {} is shared by {} cells, but should be shared by at most 2 cells in a valid triangulation",
                         facet_key,
@@ -2821,130 +2998,157 @@ where
         Ok(())
     }
 
-    /// Checks whether the triangulation data structure is valid.
+    /// Checks whether the triangulation data structure is structurally valid.
+    ///
+    /// This is a **Level 2 (TDS structural)** check in the validation hierarchy.
+    /// It intentionally does **not** validate individual vertices/cells (Level 1),
+    /// nor triangulation topology (Level 3), nor the Delaunay property (Level 4).
+    ///
+    /// # Structural invariants checked
+    /// - Vertex UUID↔key mapping consistency
+    /// - Cell UUID↔key mapping consistency
+    /// - No duplicate cells (same vertex set)
+    /// - Facet sharing invariant (each facet is shared by at most 2 cells)
+    /// - Neighbor consistency (topology + mutual neighbors)
     ///
     /// # ⚠️ Performance Warning
     ///
-    /// **This method is computationally expensive** and should be used judiciously:
-    /// - **Time Complexity**: O(N×F + N×D²) where N is the number of cells, F is facets per cell (D+1),
-    ///   and D is the spatial dimension
-    /// - **Space Complexity**: O(N×F) for building facet-to-cell mappings
-    /// - For large triangulations (>10K cells), this can take significant time
-    /// - Consider using this primarily for debugging, testing, or after major structural changes
+    /// **This method can be expensive** for large triangulations:
+    /// - **Time Complexity**: O(N×F + N×D²) where N is the number of cells and F = D+1 facets per cell
+    /// - **Space Complexity**: O(N×F) for facet-to-cell mappings
     ///
-    /// For production code, prefer individual validation methods like [`validate_cell_mappings()`](Self::validate_cell_mappings)
-    /// when only specific checks are needed.
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` if the triangulation is valid, otherwise a [`TriangulationValidationError`].
+    /// For a cumulative validator that also checks vertices/cells (Level 1), use
+    /// [`Tds::validate`](Self::validate).
     ///
     /// # Errors
     ///
-    /// Returns a [`TriangulationValidationError`] if:
-    /// - Vertex or cell UUID-to-key mappings are inconsistent
-    /// - Any cell is invalid (contains invalid vertices, has nil UUID, or contains duplicate vertices)
-    /// - Duplicate cells exist (cells with identical vertex sets)
-    /// - Any facet is shared by more than 2 cells
-    /// - Neighbor relationships are not mutual between cells
-    /// - Cells have too many neighbors for their dimension
-    ///
-    /// # Panics
-    ///
-    /// Panics if an internal invariant is violated such that
-    /// `validation_report` returns an error with an empty violations list.
-    /// This should never occur in a correctly implemented validator.
-    ///
-    /// # Validation Checks
-    ///
-    /// This function performs comprehensive validation including:
-    /// 1. **Mapping consistency**: Validates vertex and cell UUID-to-key mappings
-    /// 2. **Cell uniqueness**: Checks for duplicate cells with identical vertex sets
-    /// 3. **Individual cell validation**: Calls [`is_valid()`](crate::core::cell::Cell::is_valid) on each cell
-    /// 4. **Facet sharing validation**: Ensures no facet is shared by >2 cells
-    /// 5. **Neighbor relationship validation**: Validates mutual neighbor relationships
+    /// Returns a [`TdsValidationError`] if any structural invariant fails.
     ///
     /// # Examples
     ///
-    /// Basic usage with a 3D triangulation:
-    ///
-    /// ```
+    /// ```rust
     /// use delaunay::prelude::*;
     ///
-    /// let points = [
-    ///     Point::new([0.0, 0.0, 0.0]),
-    ///     Point::new([1.0, 0.0, 0.0]),
-    ///     Point::new([0.0, 1.0, 0.0]),
-    ///     Point::new([0.0, 0.0, 1.0]),
+    /// let vertices_4d = [
+    ///     vertex!([0.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 0.0, 1.0]),
     /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 4> =
+    ///     DelaunayTriangulation::new(&vertices_4d).unwrap();
     ///
-    /// let vertices = Vertex::from_points(&points);
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// assert!(dt.is_valid().is_ok());
+    /// // Level 2: TDS structural validation
+    /// assert!(dt.tds().is_valid().is_ok());
     /// ```
-    ///
-    /// Empty triangulations are valid:
-    ///
-    /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    ///
-    /// let tds = Tds::<f64, (), (), 3>::empty();
-    /// assert!(tds.is_valid().is_ok());
-    /// ```
-    ///
-    /// This convenience method runs all **structural invariants** (vertex and cell
-    /// mappings, duplicate cells, per-cell validity, facet sharing, and neighbor
-    /// consistency) and returns only the first failure.
-    ///
-    /// **Note**: This does NOT check the Delaunay property. Use
-    /// `DelaunayTriangulation::validate_delaunay()` for geometric validation.
-    pub fn is_valid(&self) -> Result<(), TriangulationValidationError> {
-        // Delegate to the multi-invariant report API and return only the first
-        // error for backward compatibility.
-        match self.validation_report() {
-            Ok(()) => Ok(()),
-            Err(report) => {
-                let first = report
-                    .violations
-                    .into_iter()
-                    .next()
-                    .expect("validation_report returned an error with no violations");
-                Err(first.error)
-            }
-        }
+    pub fn is_valid(&self) -> Result<(), TdsValidationError> {
+        // Fast-fail: return the first violated invariant.
+        // For full diagnostics across all structural invariants, use `validation_report()`.
+        self.validate_vertex_mappings()?;
+        self.validate_cell_mappings()?;
+
+        // Defensive: ensure no cell references a stale/missing vertex key before
+        // higher-level structural checks that assume key validity.
+        self.validate_cell_vertex_keys()?;
+
+        self.validate_no_duplicate_cells()?;
+        self.validate_facet_sharing()?;
+        self.validate_neighbors()?;
+        Ok(())
     }
 
-    /// Runs all structural validation checks and returns a report containing **all** failed invariants.
+    /// Performs cumulative validation for Levels 1–2.
+    ///
+    /// This validates:
+    /// - **Level 1**: all vertices (`Vertex::is_valid`) and all cells (`Cell::is_valid`)
+    /// - **Level 2**: structural invariants (`Tds::is_valid`)
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`TdsValidationError`] if any vertex/cell is invalid or if any
+    /// structural invariant fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices_4d = [
+    ///     vertex!([0.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 4> =
+    ///     DelaunayTriangulation::new(&vertices_4d).unwrap();
+    ///
+    /// // Levels 1–2: elements + TDS structure
+    /// assert!(dt.tds().validate().is_ok());
+    /// ```
+    pub fn validate(&self) -> Result<(), TdsValidationError> {
+        for (_vertex_key, vertex) in &self.vertices {
+            if let Err(source) = (*vertex).is_valid() {
+                return Err(TdsError::InvalidVertex {
+                    vertex_id: vertex.uuid(),
+                    source,
+                });
+            }
+        }
+
+        for (cell_key, cell) in &self.cells {
+            if let Err(source) = cell.is_valid() {
+                let Some(cell_id) = self.cell_uuid_from_key(cell_key) else {
+                    return Err(TdsError::InconsistentDataStructure {
+                        message: format!(
+                            "Cell key {cell_key:?} has no UUID mapping during validation",
+                        ),
+                    });
+                };
+
+                return Err(TdsError::InvalidCell { cell_id, source });
+            }
+        }
+
+        self.is_valid()
+    }
+
+    /// Runs structural validation checks and returns a report containing **all** failed invariants.
     ///
     /// Unlike [`is_valid()`](Self::is_valid), this method does **not** stop at the
-    /// first error. Instead it records a [`TriangulationValidationError`] for each
+    /// first error. Instead it records a [`TdsValidationError`] for each
     /// invariant group that fails and returns them as a
     /// [`TriangulationValidationReport`].
+    ///
+    /// **Note**: If UUID↔key mappings are inconsistent, this returns only mapping-related
+    /// failures. Additional checks may produce misleading secondary errors or panic.
     ///
     /// This is primarily intended for debugging, diagnostics, and tests that
     /// want to surface every violated invariant at once.
     ///
     /// **Note**: This does NOT check the Delaunay property. Use
-    /// `DelaunayTriangulation::validate_delaunay()` for geometric validation.
+    /// `DelaunayTriangulation::is_valid()` (Level 4) or `DelaunayTriangulation::validate()` (Levels 1–4)
+    /// for geometric validation.
     ///
     /// # Errors
     ///
     /// Returns a [`TriangulationValidationReport`] containing all invariant
     /// violations if any validation step fails.
-    pub fn validation_report(&self) -> Result<(), TriangulationValidationReport> {
+    pub(crate) fn validation_report(&self) -> Result<(), TriangulationValidationReport> {
         let mut violations = Vec::new();
 
         // 1. Mapping consistency (vertex + cell UUID↔key mappings)
         if let Err(e) = self.validate_vertex_mappings() {
             violations.push(InvariantViolation {
                 kind: InvariantKind::VertexMappings,
-                error: e,
+                error: e.into(),
             });
         }
         if let Err(e) = self.validate_cell_mappings() {
             violations.push(InvariantViolation {
                 kind: InvariantKind::CellMappings,
-                error: e,
+                error: e.into(),
             });
         }
 
@@ -2959,44 +3163,23 @@ where
         if let Err(e) = self.validate_no_duplicate_cells() {
             violations.push(InvariantViolation {
                 kind: InvariantKind::DuplicateCells,
-                error: e,
+                error: e.into(),
             });
         }
 
-        // 3. Individual cell validation
-        for (cell_id, cell) in &self.cells {
-            if let Err(source) = cell.is_valid() {
-                let error = self.cell_uuid_from_key(cell_id).map_or_else(
-                    || TriangulationValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Cell key {cell_id:?} has no UUID mapping during validation",
-                        ),
-                    },
-                    |cell_uuid| TriangulationValidationError::InvalidCell {
-                        cell_id: cell_uuid,
-                        source,
-                    },
-                );
-                violations.push(InvariantViolation {
-                    kind: InvariantKind::CellValidity,
-                    error,
-                });
-            }
-        }
-
-        // 4. Facet sharing (no facet shared by more than 2 cells)
+        // 3. Facet sharing (no facet shared by more than 2 cells)
         if let Err(e) = self.validate_facet_sharing() {
             violations.push(InvariantViolation {
                 kind: InvariantKind::FacetSharing,
-                error: e,
+                error: e.into(),
             });
         }
 
-        // 5. Neighbor relationships (mutual neighbors, correct shared facets)
+        // 4. Neighbor relationships (mutual neighbors, correct shared facets)
         if let Err(e) = self.validate_neighbors() {
             violations.push(InvariantViolation {
                 kind: InvariantKind::NeighborConsistency,
-                error: e,
+                error: e.into(),
             });
         }
 
@@ -3014,33 +3197,39 @@ where
     /// - Mutual neighbor relationships (if A neighbors B, then B neighbors A)
     /// - Shared facet correctness (neighbors share exactly D vertices)
     ///
-    /// This method is optimized for performance using:
+    /// # Performance / intended use
+    ///
+    /// This routine is intentionally thorough and defensive. It precomputes per-cell vertex sets
+    /// and performs per-neighbor set-intersection + mirror-facet cross-checks, which can be
+    /// relatively expensive for large triangulations.
+    ///
+    /// It is only invoked from explicit validation APIs (`is_valid()`, `validate()`,
+    /// `validation_report()`) and is not intended for per-step hot paths.
+    ///
+    /// Some small optimizations keep the cost reasonable:
     /// - Early termination on validation failures
-    /// - `HashSet` reuse to avoid repeated allocations
-    /// - Efficient intersection counting without creating intermediate collections
+    /// - Precomputing per-cell vertex sets once
+    /// - Counting intersections without allocating intermediate collections
     ///
     /// # Errors
     ///
-    /// Returns a [`TriangulationValidationError`] if any neighbor relationship
+    /// Returns a [`TdsValidationError`] if any neighbor relationship
     /// violates topological or consistency invariants.
     ///
-    /// This corresponds to [`InvariantKind::NeighborConsistency`], which is reported by
-    /// [`Tds::validation_report`](Self::validation_report) and is included in
-    /// [`Tds::is_valid`](Self::is_valid).
-    pub fn validate_neighbors(&self) -> Result<(), TriangulationValidationError> {
-        // Pre-compute vertex keys for all cells to avoid repeated computation
-        let mut cell_vertices: CellVerticesMap = fast_hash_map_with_capacity(self.cells.len());
+    /// This corresponds to [`InvariantKind::NeighborConsistency`], which is included in
+    /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
+    /// [`DelaunayTriangulation::validation_report()`].
+    ///
+    /// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
+    fn validate_neighbors(&self) -> Result<(), TdsValidationError> {
+        let cell_vertices = self.build_cell_vertex_sets()?;
+        self.validate_neighbors_with_precomputed_vertex_sets(&cell_vertices)
+    }
 
-        for cell_key in self.cells.keys() {
-            // Use get_cell_vertices to ensure all vertex keys are present
-            // The error is already TriangulationValidationError, so just propagate it
-            let vertices = self.get_cell_vertices(cell_key)?;
-
-            // Store the HashSet for containment checks
-            let vertex_set: VertexKeySet = vertices.iter().copied().collect();
-            cell_vertices.insert(cell_key, vertex_set);
-        }
-
+    fn validate_neighbors_with_precomputed_vertex_sets(
+        &self,
+        cell_vertices: &CellVerticesMap,
+    ) -> Result<(), TdsValidationError> {
         for (cell_key, cell) in &self.cells {
             // Phase 3A: Use neighbors (CellKey-based) instead of neighbor UUIDs
             let Some(neighbors_buf) = &cell.neighbors else {
@@ -3053,10 +3242,16 @@ where
             // Validate topological invariant (neighbor[i] opposite vertex[i])
             self.validate_neighbor_topology(cell_key, &neighbors)?;
 
-            // Get this cell's vertices from pre-computed maps
-            let this_vertices = &cell_vertices[&cell_key];
+            let this_vertices = cell_vertices.get(&cell_key).ok_or_else(|| {
+                TdsError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell {} (key {cell_key:?}) missing from precomputed vertex set map during neighbor validation",
+                        cell.uuid()
+                    ),
+                }
+            })?;
 
-            for neighbor_key_opt in &neighbors {
+            for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
                 // Skip None neighbors (missing neighbors)
                 let Some(neighbor_key) = neighbor_key_opt else {
                     continue;
@@ -3064,47 +3259,228 @@ where
 
                 // Early termination: check if neighbor exists
                 let Some(neighbor_cell) = self.cells.get(*neighbor_key) else {
-                    return Err(TriangulationValidationError::InvalidNeighbors {
+                    return Err(TdsError::InvalidNeighbors {
                         message: format!("Neighbor cell {neighbor_key:?} not found"),
                     });
                 };
 
-                // Early termination: mutual neighbor check using linear search (faster for small neighbor lists)
-                // Phase 3A: Check neighbors (CellKey-based) instead of neighbor UUIDs
-                if let Some(neighbor_neighbors) = &neighbor_cell.neighbors {
-                    if !neighbor_neighbors.contains(&Some(cell_key)) {
-                        return Err(TriangulationValidationError::InvalidNeighbors {
-                            message: format!(
-                                "Neighbor relationship not mutual: {:?} → {:?}",
-                                cell.uuid(),
-                                neighbor_cell.uuid()
-                            ),
-                        });
-                    }
-                } else {
-                    // Neighbor has no neighbors, so relationship cannot be mutual
-                    return Err(TriangulationValidationError::InvalidNeighbors {
+                let neighbor_vertices = cell_vertices.get(neighbor_key).ok_or_else(|| {
+                    TdsError::InconsistentDataStructure {
                         message: format!(
-                            "Neighbor relationship not mutual: {:?} → {:?}",
+                            "Neighbor cell {} (key {neighbor_key:?}) missing from precomputed vertex set map during neighbor validation",
+                            neighbor_cell.uuid()
+                        ),
+                    }
+                })?;
+
+                Self::validate_shared_facet_count(
+                    cell,
+                    neighbor_cell,
+                    this_vertices,
+                    neighbor_vertices,
+                )?;
+
+                let mirror_idx = Self::compute_and_verify_mirror_facet(
+                    cell,
+                    facet_idx,
+                    neighbor_cell,
+                    this_vertices,
+                )?;
+
+                Self::validate_shared_facet_vertices(
+                    cell,
+                    facet_idx,
+                    neighbor_cell,
+                    mirror_idx,
+                    this_vertices,
+                    neighbor_vertices,
+                )?;
+
+                Self::validate_mutual_neighbor_back_reference(
+                    cell_key,
+                    cell,
+                    facet_idx,
+                    neighbor_cell,
+                    mirror_idx,
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn build_cell_vertex_sets(&self) -> Result<CellVerticesMap, TdsValidationError> {
+        // Pre-compute vertex keys for all cells to avoid repeated computation
+        let mut cell_vertices: CellVerticesMap = fast_hash_map_with_capacity(self.cells.len());
+
+        for cell_key in self.cells.keys() {
+            // Use get_cell_vertices to ensure all vertex keys are present
+            // The error is already TdsValidationError, so just propagate it
+            let vertices = self.get_cell_vertices(cell_key)?;
+
+            // Store the HashSet for containment checks
+            let vertex_set: VertexKeySet = vertices.iter().copied().collect();
+            cell_vertices.insert(cell_key, vertex_set);
+        }
+
+        Ok(cell_vertices)
+    }
+
+    fn validate_shared_facet_count(
+        cell: &Cell<T, U, V, D>,
+        neighbor_cell: &Cell<T, U, V, D>,
+        this_vertices: &VertexKeySet,
+        neighbor_vertices: &VertexKeySet,
+    ) -> Result<(), TdsValidationError> {
+        let shared_count = this_vertices.intersection(neighbor_vertices).count();
+
+        if shared_count != D {
+            return Err(TdsError::NotNeighbors {
+                cell1: cell.uuid(),
+                cell2: neighbor_cell.uuid(),
+            });
+        }
+
+        Ok(())
+    }
+
+    fn compute_and_verify_mirror_facet(
+        cell: &Cell<T, U, V, D>,
+        facet_idx: usize,
+        neighbor_cell: &Cell<T, U, V, D>,
+        this_vertices: &VertexKeySet,
+    ) -> Result<usize, TdsValidationError> {
+        let mirror_idx = cell
+            .mirror_facet_index(facet_idx, neighbor_cell)
+            .ok_or_else(|| TdsError::InvalidNeighbors {
+                message: format!(
+                    "Could not find mirror facet: cell {:?}[{facet_idx}] -> neighbor {:?}",
+                    cell.uuid(),
+                    neighbor_cell.uuid()
+                ),
+            })?;
+
+        // Defensive cross-check: verify the mirror index against shared-vertex analysis.
+        // This adds overhead but guards against subtle logic bugs in `mirror_facet_index()`.
+        //
+        // If validation ever becomes performance-sensitive, this is a good candidate to
+        // gate behind a "strict validation" option/flag.
+        let expected_mirror_idx =
+            Self::compute_expected_mirror_facet_index(cell, neighbor_cell, this_vertices)?;
+
+        if mirror_idx != expected_mirror_idx {
+            return Err(TdsError::InvalidNeighbors {
+                message: format!(
+                    "Mirror facet index mismatch: cell {:?}[{facet_idx}] -> neighbor {:?}; mirror_facet_index returned {mirror_idx} but shared-vertex analysis implies {expected_mirror_idx}",
+                    cell.uuid(),
+                    neighbor_cell.uuid()
+                ),
+            });
+        }
+
+        Ok(mirror_idx)
+    }
+
+    fn compute_expected_mirror_facet_index(
+        cell: &Cell<T, U, V, D>,
+        neighbor_cell: &Cell<T, U, V, D>,
+        this_vertices: &VertexKeySet,
+    ) -> Result<usize, TdsValidationError> {
+        let mut expected_mirror_idx: Option<usize> = None;
+
+        for (idx, &neighbor_vkey) in neighbor_cell.vertices().iter().enumerate() {
+            if !this_vertices.contains(&neighbor_vkey) {
+                if expected_mirror_idx.is_some() {
+                    return Err(TdsError::InvalidNeighbors {
+                        message: format!(
+                            "Mirror facet is ambiguous: cell {:?} and neighbor {:?} differ by more than one vertex",
                             cell.uuid(),
                             neighbor_cell.uuid()
                         ),
                     });
                 }
-
-                // Optimized shared facet check: count intersections without creating intermediate collections
-                let neighbor_vertices = &cell_vertices[neighbor_key];
-                let shared_count = this_vertices.intersection(neighbor_vertices).count();
-
-                // Early termination: check shared vertex count
-                if shared_count != D {
-                    return Err(TriangulationValidationError::NotNeighbors {
-                        cell1: cell.uuid(),
-                        cell2: neighbor_cell.uuid(),
-                    });
-                }
+                expected_mirror_idx = Some(idx);
             }
         }
+
+        expected_mirror_idx.ok_or_else(|| TdsError::InvalidNeighbors {
+            message: format!(
+                "Mirror facet could not be determined: cell {:?} and neighbor {:?} appear to share all vertices (duplicate cells?)",
+                cell.uuid(),
+                neighbor_cell.uuid()
+            ),
+        })
+    }
+
+    fn validate_shared_facet_vertices(
+        cell: &Cell<T, U, V, D>,
+        facet_idx: usize,
+        neighbor_cell: &Cell<T, U, V, D>,
+        mirror_idx: usize,
+        this_vertices: &VertexKeySet,
+        neighbor_vertices: &VertexKeySet,
+    ) -> Result<(), TdsValidationError> {
+        for (idx, &vkey) in cell.vertices().iter().enumerate() {
+            if idx == facet_idx {
+                continue;
+            }
+            if !neighbor_vertices.contains(&vkey) {
+                return Err(TdsError::InvalidNeighbors {
+                    message: format!(
+                        "Shared facet mismatch: cell {:?}[{facet_idx}] -> neighbor {:?}[{mirror_idx}] is missing vertex {vkey:?} from the shared facet",
+                        cell.uuid(),
+                        neighbor_cell.uuid(),
+                    ),
+                });
+            }
+        }
+
+        for (idx, &vkey) in neighbor_cell.vertices().iter().enumerate() {
+            if idx == mirror_idx {
+                continue;
+            }
+            if !this_vertices.contains(&vkey) {
+                return Err(TdsError::InvalidNeighbors {
+                    message: format!(
+                        "Shared facet mismatch: neighbor {:?}[{mirror_idx}] -> cell {:?}[{facet_idx}] is missing vertex {vkey:?} from the shared facet",
+                        neighbor_cell.uuid(),
+                        cell.uuid(),
+                    ),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_mutual_neighbor_back_reference(
+        cell_key: CellKey,
+        cell: &Cell<T, U, V, D>,
+        facet_idx: usize,
+        neighbor_cell: &Cell<T, U, V, D>,
+        mirror_idx: usize,
+    ) -> Result<(), TdsValidationError> {
+        let Some(neighbor_neighbors) = &neighbor_cell.neighbors else {
+            return Err(TdsError::InvalidNeighbors {
+                message: format!(
+                    "Neighbor relationship not mutual: {:?}[{facet_idx}] -> {:?} (neighbor has no neighbors)",
+                    cell.uuid(),
+                    neighbor_cell.uuid()
+                ),
+            });
+        };
+
+        let back_ref = neighbor_neighbors.get(mirror_idx).copied().flatten();
+        if back_ref != Some(cell_key) {
+            return Err(TdsError::InvalidNeighbors {
+                message: format!(
+                    "Neighbor relationship not mutual: {:?}[{facet_idx}] -> {:?}[{mirror_idx}] (expected back-reference)",
+                    cell.uuid(),
+                    neighbor_cell.uuid()
+                ),
+            });
+        }
+
         Ok(())
     }
 }
@@ -3426,6 +3802,7 @@ mod tests {
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::vertex;
+    use slotmap::KeyData;
 
     // =============================================================================
     // TEST HELPER FUNCTIONS
@@ -3524,10 +3901,12 @@ mod tests {
                 matches!(
                     result,
                     Err(InsertionError::Construction(
-                        TriangulationConstructionError::DuplicateUuid {
-                            entity: EntityKind::Vertex,
-                            ..
-                        }
+                        crate::core::triangulation::TriangulationConstructionError::Tds(
+                            TdsConstructionError::DuplicateUuid {
+                                entity: EntityKind::Vertex,
+                                ..
+                            },
+                        ),
                     ))
                 ),
                 "Same UUID with different coordinates should fail with DuplicateUuid"
@@ -3918,5 +4297,917 @@ mod tests {
         println!(
             "✓ find_cells_containing_vertex correctly identifies all cells containing a vertex"
         );
+    }
+
+    #[test]
+    fn test_assign_neighbors_errors_on_missing_vertex_key() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+            .unwrap();
+
+        // Corrupt the cell by inserting a vertex key that doesn't exist in the TDS.
+        let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
+        tds.get_cell_by_key_mut(cell_key)
+            .unwrap()
+            .push_vertex_key(invalid_vkey);
+
+        let err = tds.assign_neighbors().unwrap_err();
+        assert!(matches!(err, TdsError::VertexKeyRetrievalFailed { .. }));
+    }
+
+    #[test]
+    fn test_assign_neighbors_errors_on_non_manifold_facet_sharing() {
+        // Three triangles sharing the same edge (v_a,v_b) is non-manifold in 2D.
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0]))
+            .unwrap();
+        let v_e = tds.insert_vertex_with_mapping(vertex!([2.0, 0.0])).unwrap();
+
+        tds.insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        tds.insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
+            .unwrap();
+        tds.insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_e], None).unwrap())
+            .unwrap();
+
+        let err = tds.assign_neighbors().unwrap_err();
+        assert!(matches!(err, TdsError::InconsistentDataStructure { .. }));
+    }
+
+    #[test]
+    fn test_remove_cells_by_keys_empty_is_noop() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let gen_before = tds.generation();
+        assert_eq!(tds.remove_cells_by_keys(&[]), 0);
+        assert_eq!(tds.generation(), gen_before);
+    }
+
+    #[test]
+    fn test_remove_cells_by_keys_clears_neighbor_pointers() {
+        // Two triangles sharing an edge.
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let cell1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+            .unwrap();
+        let cell2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![b, d, c], None).unwrap())
+            .unwrap();
+
+        // Build neighbor pointers based on facet sharing.
+        tds.assign_neighbors().unwrap();
+
+        // Sanity: at least one neighbor pointer should exist before removal.
+        assert!(
+            tds.get_cell(cell1)
+                .unwrap()
+                .neighbors()
+                .is_some_and(|n| n.iter().any(Option::is_some))
+        );
+
+        let gen_before = tds.generation();
+        assert_eq!(tds.remove_cells_by_keys(&[cell2]), 1);
+        assert_eq!(tds.generation(), gen_before + 1);
+
+        // All remaining neighbor pointers must not reference the removed cell.
+        for (_, cell) in tds.cells() {
+            if let Some(neighbors) = cell.neighbors() {
+                for neighbor_opt in neighbors {
+                    assert_ne!(*neighbor_opt, Some(cell2));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_remove_cells_by_keys_repairs_incident_cells_for_affected_vertices() {
+        // Two triangles sharing an edge (B,C). Remove one and ensure incident_cell pointers are
+        // updated without requiring a full assign_incident_cells() rebuild.
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let cell1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+            .unwrap();
+        let cell2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![b, d, c], None).unwrap())
+            .unwrap();
+
+        tds.assign_neighbors().unwrap();
+
+        // Force deterministic incident_cell pointers that require repair.
+        tds.get_vertex_by_key_mut(a).unwrap().incident_cell = Some(cell1);
+        tds.get_vertex_by_key_mut(b).unwrap().incident_cell = Some(cell1);
+        tds.get_vertex_by_key_mut(c).unwrap().incident_cell = Some(cell1);
+        tds.get_vertex_by_key_mut(d).unwrap().incident_cell = Some(cell2);
+
+        assert_eq!(tds.remove_cells_by_keys(&[cell1]), 1);
+
+        // A is now isolated (no remaining cells contain it) => incident_cell must be None.
+        assert!(tds.get_vertex_by_key(a).unwrap().incident_cell.is_none());
+
+        // B, C, D are still in cell2 => their incident_cell must be valid and contain them.
+        for vk in [b, c, d] {
+            let incident = tds
+                .get_vertex_by_key(vk)
+                .unwrap()
+                .incident_cell
+                .expect("vertex should have an incident cell after repair");
+            assert!(tds.cells.contains_key(incident));
+            let cell = tds.get_cell(incident).unwrap();
+            assert!(cell.contains_vertex(vk));
+        }
+
+        // Neighbor pointers in the surviving cell must not reference the removed cell.
+        let cell2_ref = tds.get_cell(cell2).unwrap();
+        if let Some(neighbors) = cell2_ref.neighbors() {
+            assert!(neighbors.iter().all(|n| *n != Some(cell1)));
+        }
+    }
+
+    #[test]
+    fn test_tds_remove_vertex_returns_zero_when_vertex_not_in_mapping() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v = vertex!([0.0, 0.0]);
+        assert_eq!(tds.remove_vertex(&v).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_tds_remove_vertex_repairs_neighbors_and_incident_cells_incrementally() {
+        // Two triangles sharing an edge (east,north). Remove the origin (only in cell1) and ensure:
+        // - cell1 is removed
+        // - neighbor back-references in cell2 are cleared
+        // - incident_cell pointers remain valid for remaining vertices without a full rebuild
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let origin_key = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let east_key = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let north_key = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let diagonal_key = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let cell1 = tds
+            .insert_cell_with_mapping(
+                Cell::new(vec![origin_key, east_key, north_key], None).unwrap(),
+            )
+            .unwrap();
+        let cell2 = tds
+            .insert_cell_with_mapping(
+                Cell::new(vec![east_key, diagonal_key, north_key], None).unwrap(),
+            )
+            .unwrap();
+
+        tds.assign_neighbors().unwrap();
+
+        // Seed incident_cell pointers:
+        // - ORIGIN points at cell1 so star discovery can use the neighbor-walk fast path.
+        // - EAST/NORTH point at cell1 so removal must repair them to cell2.
+        // - DIAGONAL points at cell2 and should remain valid.
+        tds.get_vertex_by_key_mut(origin_key).unwrap().incident_cell = Some(cell1);
+        tds.get_vertex_by_key_mut(east_key).unwrap().incident_cell = Some(cell1);
+        tds.get_vertex_by_key_mut(north_key).unwrap().incident_cell = Some(cell1);
+        tds.get_vertex_by_key_mut(diagonal_key)
+            .unwrap()
+            .incident_cell = Some(cell2);
+
+        let vertex_to_remove = *tds.get_vertex_by_key(origin_key).unwrap();
+        let removed = tds.remove_vertex(&vertex_to_remove).unwrap();
+        assert_eq!(removed, 1);
+
+        // The removed vertex should be gone.
+        assert!(tds.vertex_key_from_uuid(&vertex_to_remove.uuid()).is_none());
+        assert!(tds.get_vertex_by_key(origin_key).is_none());
+
+        // cell2 should remain and must not reference cell1 as a neighbor.
+        assert!(tds.cells.contains_key(cell2));
+        let cell2_ref = tds.get_cell(cell2).unwrap();
+        if let Some(neighbors) = cell2_ref.neighbors() {
+            assert!(neighbors.iter().all(|n| *n != Some(cell1)));
+        }
+
+        // Remaining vertices must have valid incident_cell pointers (if present).
+        for vertex_key in [east_key, north_key, diagonal_key] {
+            let v = tds.get_vertex_by_key(vertex_key).unwrap();
+            let Some(incident) = v.incident_cell else {
+                panic!("vertex {vertex_key:?} should have an incident cell after removal");
+            };
+            assert!(tds.cells.contains_key(incident));
+            assert!(tds.get_cell(incident).unwrap().contains_vertex(vertex_key));
+        }
+    }
+
+    #[test]
+    fn test_find_neighbors_by_key_returns_none_buffer_for_missing_cell() {
+        let tds: Tds<f64, (), (), 2> = Tds::empty();
+        let missing = CellKey::from(KeyData::from_ffi(u64::MAX));
+        let neighbors = tds.find_neighbors_by_key(missing);
+        assert_eq!(neighbors.len(), 3);
+        assert!(neighbors.iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn test_set_neighbors_by_key_rejects_non_neighbor_and_wrong_slot() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+        let v_e = tds.insert_vertex_with_mapping(vertex!([2.0, 2.0])).unwrap();
+
+        let cell1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+
+        // A cell that shares only one vertex with cell1 => not a neighbor in 2D.
+        let cell_far = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_d, v_e], None).unwrap())
+            .unwrap();
+        let err = tds
+            .set_neighbors_by_key(cell1, &[Some(cell_far), None, None])
+            .unwrap_err()
+            .0;
+        assert!(matches!(err, TdsError::InvalidNeighbors { .. }));
+
+        // A true facet-neighbor (shares {v_a,v_b}) placed at the wrong facet index.
+        let cell2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
+            .unwrap();
+        let err = tds
+            .set_neighbors_by_key(cell1, &[Some(cell2), None, None])
+            .unwrap_err()
+            .0;
+        assert!(matches!(err, TdsError::InvalidNeighbors { .. }));
+    }
+
+    // =============================================================================
+    // NEIGHBOR VALIDATION HELPER TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_build_cell_vertex_sets_success() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let cell1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        let cell2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_c, v_d], None).unwrap())
+            .unwrap();
+
+        let map = tds.build_cell_vertex_sets().unwrap();
+        assert_eq!(map.len(), 2);
+
+        let expected1: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
+        let expected2: VertexKeySet = [v_a, v_c, v_d].into_iter().collect();
+
+        assert_eq!(map.get(&cell1), Some(&expected1));
+        assert_eq!(map.get(&cell2), Some(&expected2));
+    }
+
+    #[test]
+    fn test_build_cell_vertex_sets_errors_on_missing_vertex_key() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+
+        // Corrupt the cell by inserting a vertex key that doesn't exist in the TDS.
+        let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
+        tds.get_cell_by_key_mut(cell)
+            .unwrap()
+            .push_vertex_key(invalid_vkey);
+
+        let err = tds.build_cell_vertex_sets().unwrap_err();
+        assert!(matches!(
+            err,
+            TdsError::InconsistentDataStructure { message }
+                if message.contains("references non-existent vertex key")
+        ));
+    }
+
+    #[test]
+    fn test_validate_shared_facet_count_ok_for_true_neighbors() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let cell1_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        let cell2_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
+            .unwrap();
+
+        let cell1 = tds.get_cell(cell1_key).unwrap();
+        let cell2 = tds.get_cell(cell2_key).unwrap();
+
+        let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
+        let neighbor_vertices: VertexKeySet = [v_a, v_b, v_d].into_iter().collect();
+
+        assert!(
+            Tds::validate_shared_facet_count(cell1, cell2, &this_vertices, &neighbor_vertices)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_validate_shared_facet_count_errors_for_non_neighbors() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+        let v_e = tds.insert_vertex_with_mapping(vertex!([2.0, 2.0])).unwrap();
+
+        let cell1_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        let cell_far_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_d, v_e], None).unwrap())
+            .unwrap();
+
+        let cell1 = tds.get_cell(cell1_key).unwrap();
+        let cell_far = tds.get_cell(cell_far_key).unwrap();
+
+        let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
+        let far_vertices: VertexKeySet = [v_a, v_d, v_e].into_iter().collect();
+
+        let cell1_uuid = cell1.uuid();
+        let cell_far_uuid = cell_far.uuid();
+
+        let err = Tds::validate_shared_facet_count(cell1, cell_far, &this_vertices, &far_vertices)
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            TdsError::NotNeighbors { cell1: c1, cell2: c2 }
+                if c1 == cell1_uuid && c2 == cell_far_uuid
+        ));
+    }
+
+    #[test]
+    fn test_compute_expected_mirror_facet_index_returns_unique_vertex_index() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let cell1_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        // Put the unique vertex at index 0 to ensure we test the returned index.
+        let cell2_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_d, v_a, v_b], None).unwrap())
+            .unwrap();
+
+        let cell1 = tds.get_cell(cell1_key).unwrap();
+        let cell2 = tds.get_cell(cell2_key).unwrap();
+
+        let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
+
+        let idx = Tds::compute_expected_mirror_facet_index(cell1, cell2, &this_vertices).unwrap();
+        assert_eq!(idx, 0);
+    }
+
+    #[test]
+    fn test_compute_expected_mirror_facet_index_errors_when_ambiguous() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+        let v_e = tds.insert_vertex_with_mapping(vertex!([2.0, 2.0])).unwrap();
+
+        let cell1_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        // Shares only v_a -> differs by 2 vertices -> ambiguous mirror facet.
+        let cell2_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_d, v_e], None).unwrap())
+            .unwrap();
+
+        let cell1 = tds.get_cell(cell1_key).unwrap();
+        let cell2 = tds.get_cell(cell2_key).unwrap();
+
+        let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
+
+        let err =
+            Tds::compute_expected_mirror_facet_index(cell1, cell2, &this_vertices).unwrap_err();
+
+        assert!(matches!(
+            err,
+            TdsError::InvalidNeighbors { message }
+                if message.contains("Mirror facet is ambiguous")
+        ));
+    }
+
+    #[test]
+    fn test_compute_expected_mirror_facet_index_errors_when_duplicate_cells() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell1_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        // Duplicate by vertices (different UUID) -> no unique vertex to identify mirror facet.
+        let cell2_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+
+        let cell1 = tds.get_cell(cell1_key).unwrap();
+        let cell2 = tds.get_cell(cell2_key).unwrap();
+
+        let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
+
+        let err =
+            Tds::compute_expected_mirror_facet_index(cell1, cell2, &this_vertices).unwrap_err();
+
+        assert!(matches!(
+            err,
+            TdsError::InvalidNeighbors { message }
+                if message.contains("appear to share all vertices")
+        ));
+    }
+
+    #[test]
+    fn test_compute_and_verify_mirror_facet_ok() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let cell1_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        let cell2_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
+            .unwrap();
+
+        let cell1 = tds.get_cell(cell1_key).unwrap();
+        let cell2 = tds.get_cell(cell2_key).unwrap();
+
+        let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
+
+        // Shared edge is (v_a, v_b). In cell1, that's opposite vertex index 2 (v_c).
+        let mirror_idx =
+            Tds::compute_and_verify_mirror_facet(cell1, 2, cell2, &this_vertices).unwrap();
+        assert_eq!(mirror_idx, 2);
+    }
+
+    #[test]
+    fn test_compute_and_verify_mirror_facet_errors_when_no_shared_facet() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let cell1_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        let cell2_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
+            .unwrap();
+
+        let cell1 = tds.get_cell(cell1_key).unwrap();
+        let cell2 = tds.get_cell(cell2_key).unwrap();
+
+        let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
+
+        // facet_idx=0 corresponds to edge (v_b, v_c) in cell1, which is not shared with cell2.
+        let err =
+            Tds::compute_and_verify_mirror_facet(cell1, 0, cell2, &this_vertices).unwrap_err();
+
+        assert!(matches!(
+            err,
+            TdsError::InvalidNeighbors { message }
+                if message.contains("Could not find mirror facet")
+        ));
+    }
+
+    #[test]
+    fn test_compute_and_verify_mirror_facet_errors_on_mismatch_with_cross_check() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let cell1_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        let cell2_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
+            .unwrap();
+
+        let cell1 = tds.get_cell(cell1_key).unwrap();
+        let cell2 = tds.get_cell(cell2_key).unwrap();
+
+        // Intentionally WRONG vertex set (includes v_d, excludes v_b) to force the mismatch branch.
+        // This is a unit-level test of the helper's defensive cross-check behavior.
+        let this_vertices_wrong: VertexKeySet = [v_a, v_c, v_d].into_iter().collect();
+
+        let err = Tds::compute_and_verify_mirror_facet(cell1, 2, cell2, &this_vertices_wrong)
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            TdsError::InvalidNeighbors { message }
+                if message.contains("Mirror facet index mismatch")
+        ));
+    }
+
+    #[test]
+    fn test_validate_neighbors_errors_on_mirror_facet_index_mismatch() {
+        // This test exercises the same "mirror facet index mismatch" defensive branch, but via the
+        // neighbor-validation loop used by `validate_neighbors()`.
+        //
+        // The mismatch is only reachable if the precomputed per-cell vertex-set map is inconsistent
+        // with the cell's actual vertex buffer (e.g., a bug/corruption in the precompute step). To
+        // simulate that scenario deterministically, we build the map normally and then corrupt the
+        // entry for one cell before running the validation loop.
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let origin_key = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let east_key = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let north_key = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let diagonal_key = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let cell1_key = tds
+            .insert_cell_with_mapping(
+                Cell::new(vec![origin_key, east_key, north_key], None).unwrap(),
+            )
+            .unwrap();
+        let _cell2_key = tds
+            .insert_cell_with_mapping(
+                Cell::new(vec![origin_key, east_key, diagonal_key], None).unwrap(),
+            )
+            .unwrap();
+
+        tds.assign_neighbors().unwrap();
+
+        let mut cell_vertices = tds.build_cell_vertex_sets().unwrap();
+
+        // Corrupt the vertex-set entry for cell1 so it no longer matches the actual cell's vertices.
+        // (Drop `east_key`, add `diagonal_key`.)
+        let corrupted_cell1_vertices: VertexKeySet =
+            [origin_key, north_key, diagonal_key].into_iter().collect();
+        cell_vertices.insert(cell1_key, corrupted_cell1_vertices);
+
+        let err = tds
+            .validate_neighbors_with_precomputed_vertex_sets(&cell_vertices)
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            TdsError::InvalidNeighbors { message }
+                if message.contains("Mirror facet index mismatch")
+        ));
+    }
+
+    #[test]
+    fn test_validate_shared_facet_vertices_ok() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let cell1_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        let cell2_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
+            .unwrap();
+
+        let cell1 = tds.get_cell(cell1_key).unwrap();
+        let cell2 = tds.get_cell(cell2_key).unwrap();
+
+        let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
+        let neighbor_vertices: VertexKeySet = [v_a, v_b, v_d].into_iter().collect();
+
+        assert!(
+            Tds::validate_shared_facet_vertices(
+                cell1,
+                2, // opposite v_c => shared edge {v_a,v_b}
+                cell2,
+                2, // opposite v_d => shared edge {v_a,v_b}
+                &this_vertices,
+                &neighbor_vertices,
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_validate_shared_facet_vertices_errors_when_mirror_index_wrong() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let cell1_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        let cell2_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
+            .unwrap();
+
+        let cell1 = tds.get_cell(cell1_key).unwrap();
+        let cell2 = tds.get_cell(cell2_key).unwrap();
+
+        let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
+        let neighbor_vertices: VertexKeySet = [v_a, v_b, v_d].into_iter().collect();
+
+        // mirror_idx=0 is intentionally wrong here; it treats vertex v_a as the "opposite"
+        // vertex, which makes v_d incorrectly part of the "shared facet".
+        let err = Tds::validate_shared_facet_vertices(
+            cell1,
+            2, // correct for cell1
+            cell2,
+            0, // intentionally wrong for cell2
+            &this_vertices,
+            &neighbor_vertices,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            TdsError::InvalidNeighbors { message }
+                if message.contains("Shared facet mismatch: neighbor")
+        ));
+    }
+
+    #[test]
+    fn test_validate_mutual_neighbor_back_reference_ok() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let cell1_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        let cell2_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
+            .unwrap();
+
+        // Build neighbor pointers so mutual back-references exist.
+        tds.assign_neighbors().unwrap();
+
+        let cell1 = tds.get_cell(cell1_key).unwrap();
+        let cell2 = tds.get_cell(cell2_key).unwrap();
+
+        assert!(
+            Tds::validate_mutual_neighbor_back_reference(
+                cell1_key, cell1, 2, // opposite v_c => shared edge {v_a,v_b}
+                cell2, 2, // opposite v_d => shared edge {v_a,v_b}
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_validate_mutual_neighbor_back_reference_errors_when_neighbor_has_no_neighbors() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let cell1_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        let cell2_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
+            .unwrap();
+
+        // NOTE: We intentionally do NOT call assign_neighbors(), so neighbor_cell.neighbors is None.
+        let cell1 = tds.get_cell(cell1_key).unwrap();
+        let cell2 = tds.get_cell(cell2_key).unwrap();
+
+        let err = Tds::validate_mutual_neighbor_back_reference(cell1_key, cell1, 2, cell2, 2)
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            TdsError::InvalidNeighbors { message }
+                if message.contains("neighbor has no neighbors")
+        ));
+    }
+
+    #[test]
+    fn test_validate_mutual_neighbor_back_reference_errors_when_back_reference_missing() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let cell1_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        let cell2_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
+            .unwrap();
+
+        // Build neighbor pointers first, then deliberately corrupt the back-reference.
+        tds.assign_neighbors().unwrap();
+
+        {
+            let cell2_mut = tds.get_cell_by_key_mut(cell2_key).unwrap();
+            let neighbors = cell2_mut
+                .neighbors
+                .as_mut()
+                .expect("cell2 should have neighbors after assign_neighbors()");
+            // For (v_a, v_b, v_d), the shared edge with cell1 is opposite v_d => index 2.
+            neighbors[2] = None;
+        }
+
+        let cell1 = tds.get_cell(cell1_key).unwrap();
+        let cell2 = tds.get_cell(cell2_key).unwrap();
+
+        let err = Tds::validate_mutual_neighbor_back_reference(cell1_key, cell1, 2, cell2, 2)
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            TdsError::InvalidNeighbors { message }
+                if message.contains("expected back-reference")
+        ));
+    }
+
+    #[test]
+    fn test_assign_incident_cells_clears_incident_cell_when_no_cells() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let vkey = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+
+        // Corrupt incident_cell and ensure it gets cleared.
+        tds.get_vertex_by_key_mut(vkey).unwrap().incident_cell =
+            Some(CellKey::from(KeyData::from_ffi(u64::MAX)));
+        assert!(tds.get_vertex_by_key(vkey).unwrap().incident_cell.is_some());
+
+        tds.assign_incident_cells().unwrap();
+        assert!(tds.get_vertex_by_key(vkey).unwrap().incident_cell.is_none());
+    }
+
+    #[test]
+    fn test_build_facet_to_cells_map_errors_on_u8_facet_index_overflow() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+            .unwrap();
+
+        // NOTE: This scenario is not realistic for valid triangulations:
+        // - Valid D-cells always contain exactly D+1 vertices (and `D <= MAX_PRACTICAL_DIMENSION_SIZE`).
+        // - Therefore facet indices are always within `0..=D` and trivially fit in `u8`.
+        //
+        // We intentionally *corrupt* the cell here by inflating its vertex buffer (still using valid
+        // vertex keys) so facet indices exceed `u8::MAX`. This is a robustness test to ensure
+        // `build_facet_to_cells_map()` fails fast on corrupted/invalid TDS state (e.g., unsafe internal
+        // mutation or malformed serialized data).
+        //
+        // Inflate the vertex buffer (still using valid vertex keys) so facet indices exceed u8.
+        {
+            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            while cell.number_of_vertices() <= usize::from(u8::MAX) + 1 {
+                cell.push_vertex_key(a);
+            }
+        }
+
+        let err = tds.build_facet_to_cells_map().unwrap_err();
+        assert!(matches!(
+            err,
+            TdsError::InconsistentDataStructure { message }
+                if message.contains("Facet index")
+        ));
+    }
+
+    #[test]
+    fn test_validate_vertex_and_cell_mappings_detect_inconsistencies() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+            .unwrap();
+
+        // Start from a consistent state.
+        assert!(tds.validate_vertex_mappings().is_ok());
+        assert!(tds.validate_cell_mappings().is_ok());
+
+        // Break vertex mapping: remove one uuid entry (len mismatch).
+        let uuid_a = tds.get_vertex_by_key(a).unwrap().uuid();
+        tds.uuid_to_vertex_key.remove(&uuid_a);
+        assert!(matches!(
+            tds.validate_vertex_mappings(),
+            Err(TdsError::MappingInconsistency {
+                entity: EntityKind::Vertex,
+                ..
+            })
+        ));
+
+        // Restore length but make the UUID map point at the wrong key.
+        tds.uuid_to_vertex_key.insert(uuid_a, b);
+        assert!(matches!(
+            tds.validate_vertex_mappings(),
+            Err(TdsError::MappingInconsistency {
+                entity: EntityKind::Vertex,
+                ..
+            })
+        ));
+
+        // Break cell mapping similarly.
+        let uuid_cell = tds.get_cell(cell_key).unwrap().uuid();
+        tds.uuid_to_cell_key.remove(&uuid_cell);
+        assert!(matches!(
+            tds.validate_cell_mappings(),
+            Err(TdsError::MappingInconsistency {
+                entity: EntityKind::Cell,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn test_validate_cell_vertex_keys_detects_missing_vertices() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+            .unwrap();
+
+        let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
+        tds.get_cell_by_key_mut(cell_key)
+            .unwrap()
+            .push_vertex_key(invalid_vkey);
+
+        let err = tds.validate_cell_vertex_keys().unwrap_err();
+        assert!(matches!(err, TdsError::InconsistentDataStructure { .. }));
+
+        // Now wired into structural validation: is_valid() should fail early with the
+        // more precise "missing vertex key" diagnostic.
+        let err = tds.is_valid().unwrap_err();
+        assert!(matches!(
+            err,
+            TdsError::InconsistentDataStructure { message }
+                if message.contains("references non-existent vertex key")
+        ));
     }
 }

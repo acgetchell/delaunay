@@ -3,7 +3,7 @@
 use crate::core::{
     facet::{BoundaryFacetsIter, FacetView},
     traits::data_type::DataType,
-    triangulation_data_structure::TriangulationValidationError,
+    triangulation_data_structure::TdsValidationError,
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use num_traits::NumCast;
@@ -51,12 +51,12 @@ where
     ///
     /// # Returns
     ///
-    /// A `Result<BoundaryFacetsIter<'_, T, U, V, D>, TriangulationValidationError>` containing an iterator over boundary facets.
+    /// A `Result<BoundaryFacetsIter<'_, T, U, V, D>, TdsValidationError>` containing an iterator over boundary facets.
     /// The iterator yields facets lazily without pre-allocating a vector, providing better performance.
     ///
     /// # Errors
     ///
-    /// Returns a [`TriangulationValidationError`] if any boundary facet cannot be created from the cells.
+    /// Returns a [`TdsValidationError`] if any boundary facet cannot be created from the cells.
     ///
     /// # Examples
     ///
@@ -76,9 +76,7 @@ where
     /// let boundary_facets_iter = tds.boundary_facets().expect("Failed to get boundary facets iterator");
     /// assert_eq!(boundary_facets_iter.count(), 4);
     /// ```
-    fn boundary_facets(
-        &self,
-    ) -> Result<BoundaryFacetsIter<'_, T, U, V, D>, TriangulationValidationError>;
+    fn boundary_facets(&self) -> Result<BoundaryFacetsIter<'_, T, U, V, D>, TdsValidationError>;
 
     /// Checks if a specific facet is a boundary facet.
     ///
@@ -95,7 +93,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns `Err(TriangulationValidationError)` if:
+    /// Returns `Err(TdsValidationError)` if:
     /// - Building the facet-to-cells mapping fails due to data structure inconsistencies
     /// - The triangulation contains invalid cells or corrupted vertex mappings
     ///
@@ -122,7 +120,7 @@ where
     fn is_boundary_facet(
         &self,
         facet: &FacetView<'_, T, U, V, D>,
-    ) -> Result<bool, TriangulationValidationError>;
+    ) -> Result<bool, TdsValidationError>;
 
     /// Checks if a specific facet is a boundary facet using a precomputed facet map.
     ///
@@ -142,7 +140,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns `Err(TriangulationValidationError)` if:
+    /// Returns `Err(TdsValidationError)` if:
     /// - The facet's vertices cannot be found in the triangulation (e.g., facet from different TDS)
     /// - The facet key cannot be derived from its vertices
     ///
@@ -178,7 +176,7 @@ where
         &self,
         facet: &FacetView<'_, T, U, V, D>,
         facet_to_cells: &crate::core::collections::FacetToCellsMap,
-    ) -> Result<bool, TriangulationValidationError>;
+    ) -> Result<bool, TdsValidationError>;
 
     /// Returns the number of boundary facets in the triangulation.
     ///
@@ -187,11 +185,11 @@ where
     /// # Returns
     ///
     /// A `Result` containing the number of boundary facets in the triangulation,
-    /// or a `TriangulationValidationError` if the facet map cannot be built.
+    /// or a `TdsValidationError` if the facet map cannot be built.
     ///
     /// # Errors
     ///
-    /// Returns a [`TriangulationValidationError`] if the facet-to-cells map cannot be built.
+    /// Returns a [`TdsValidationError`] if the facet-to-cells map cannot be built.
     ///
     /// # Examples
     ///
@@ -214,5 +212,5 @@ where
     /// let count_via_iter = dt.boundary_facets().count();
     /// assert_eq!(count_via_iter, 4);
     /// ```
-    fn number_of_boundary_facets(&self) -> Result<usize, TriangulationValidationError>;
+    fn number_of_boundary_facets(&self) -> Result<usize, TdsValidationError>;
 }
