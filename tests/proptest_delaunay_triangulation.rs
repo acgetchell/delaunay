@@ -99,6 +99,30 @@ fn dedup_vertices_by_coords<const D: usize>(
     unique
 }
 
+/// Guardrail filter: reject pathological shrink targets with too many points lying exactly on any
+/// coordinate hyperplane (`x_i == 0.0`).
+///
+/// This is currently redundant with `finite_coordinate()` (we filter out `|x| <= 1e-6`), but we
+/// keep it as defense-in-depth in case the generators change.
+///
+/// Returns `true` iff **no** coordinate hyperplane contains `>= D` input vertices.
+fn has_no_coordinate_hyperplane_degeneracy<const D: usize>(
+    vertices: &[Vertex<f64, (), D>],
+) -> bool {
+    let mut axis_counts = [0usize; D];
+
+    for v in vertices {
+        let coords: [f64; D] = v.into();
+        for a in 0..D {
+            if coords[a] == 0.0 {
+                axis_counts[a] += 1;
+            }
+        }
+    }
+
+    axis_counts.iter().all(|&count| count < D)
+}
+
 /// Conservative “general position” filter for the specialized 3D insertion-order property.
 ///
 /// This rejects point sets that contain *any* nearly-coplanar tetrahedron (4-point subset).
@@ -351,23 +375,7 @@ macro_rules! gen_incremental_insertion_validity {
                     // Reject pathological shrink targets with too many points on a coordinate hyperplane (x_i == 0).
                     // This is redundant with `finite_coordinate()` today (|x| > 1e-6), but kept as a guardrail if the
                     // generator changes.
-                    let mut axis_counts = [0usize; $dim];
-                    for v in &initial_vertices {
-                        let coords: [f64; $dim] = (*v).into();
-                        for a in 0..$dim {
-                            if coords[a] == 0.0 {
-                                axis_counts[a] += 1;
-                            }
-                        }
-                    }
-                    let mut reject = false;
-                    for &count in &axis_counts {
-                        if count >= $dim {
-                            reject = true;
-                            break;
-                        }
-                    }
-                    prop_assume!(!reject);
+                    prop_assume!(has_no_coordinate_hyperplane_degeneracy(&initial_vertices));
 
                     let additional_vertex = vertex!(additional_point);
 
@@ -485,25 +493,9 @@ proptest! {
                     // Require at least D+1 distinct vertices to form valid D-simplices
                     prop_assume!(vertices.len() > $dim);
 
-                    // General position filter: reject cases with >= D+1 points lying exactly on any coordinate axis
-                    // (common degeneracy due to many zeros). This reduces collinear/co-planar pathologies.
-                    let mut axis_counts = [0usize; $dim];
-                    for v in &vertices {
-                        let coords: [f64; $dim] = (*v).into();
-                        for a in 0..$dim {
-                            if coords[a] == 0.0 { axis_counts[a] += 1; }
-                        }
-                    }
-                    let mut reject = false;
-                    // Reject if >= D points lie exactly on any coordinate hyperplane (x_i == 0).
-                    // This is a common shrink target and tends to produce degenerate/coplanar inputs.
-                    for &count in &axis_counts {
-                        if count >= $dim {
-                            reject = true;
-                            break;
-                        }
-                    }
-                    prop_assume!(!reject);
+                    // General position filter: reject pathological shrink targets with too many points lying exactly on a
+                    // coordinate hyperplane (x_i == 0.0).
+                    prop_assume!(has_no_coordinate_hyperplane_degeneracy(&vertices));
 
                     // Use DelaunayTriangulation::new() to triangulate ALL vertices together
                     let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) else {
@@ -571,25 +563,9 @@ macro_rules! gen_insertion_order_robustness_test {
                     // Require at least D+1 distinct vertices for valid simplices
                     prop_assume!(points.len() > $dim);
 
-                    // General position filter: reject cases with > D points on any coordinate axis
-                    // (reduces collinear/coplanar pathologies)
-                    let mut axis_counts = [0usize; $dim];
-                    for v in &points {
-                        let coords: [f64; $dim] = (*v).into();
-                        for a in 0..$dim {
-                            if coords[a] == 0.0 { axis_counts[a] += 1; }
-                        }
-                    }
-                    let mut reject = false;
-                    // Reject if >= D points lie exactly on any coordinate hyperplane (x_i == 0).
-                    // This prevents pathological shrink cases that can break topology validation.
-                    for &count in &axis_counts {
-                        if count >= $dim {
-                            reject = true;
-                            break;
-                        }
-                    }
-                    prop_assume!(!reject);
+                    // General position filter: reject pathological shrink targets with too many points lying exactly on a
+                    // coordinate hyperplane (x_i == 0.0).
+                    prop_assume!(has_no_coordinate_hyperplane_degeneracy(&points));
 
                     // Build first triangulation with natural order
                     let dt_a = DelaunayTriangulation::<_, (), (), $dim>::new(&points);

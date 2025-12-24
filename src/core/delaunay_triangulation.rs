@@ -1302,38 +1302,6 @@ where
             }
         }
     }
-
-    /// Fixes invalid facet sharing by removing problematic cells using geometric quality metrics.
-    ///
-    /// Deprecated: This performs an O(N·D) global scan. Prefer the localized O(k·D) flow:
-    /// ```ignore
-    /// let affected_cells: Vec<CellKey> = /* cells that were just modified */;
-    /// if let Some(issues) = triangulation.detect_local_facet_issues(&affected_cells) {
-    ///     triangulation.repair_local_facet_issues(&issues)?;
-    /// }
-    /// ```
-    ///
-    /// Delegates to the underlying Triangulation layer.
-    ///
-    /// # Returns
-    ///
-    /// Number of cells removed.
-    ///
-    /// # Errors
-    ///
-    /// Returns error if facet map cannot be built or topology repair fails.
-    #[deprecated(
-        since = "0.5.5",
-        note = "Use detect_local_facet_issues() + repair_local_facet_issues() for O(k·D) instead of global O(N·D)."
-    )]
-    pub fn fix_invalid_facet_sharing(&mut self) -> Result<usize, TriangulationValidationError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
-        // Delegate to Triangulation layer
-        #[allow(deprecated)]
-        Ok(self.tri.fix_invalid_facet_sharing()?)
-    }
 }
 
 // Custom Serialize implementation that only serializes the Tds
@@ -2346,21 +2314,5 @@ mod tests {
         // `last_inserted_cell` is a performance-only locate hint and is intentionally not
         // persisted across serde round-trips (it is reset to `None` in `from_tds`).
         assert!(roundtrip.last_inserted_cell.is_none());
-    }
-
-    #[test]
-    fn test_fix_invalid_facet_sharing_delegates_to_triangulation() {
-        let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-        ];
-
-        let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
-
-        #[allow(deprecated)]
-        let removed = dt.fix_invalid_facet_sharing().unwrap();
-        assert_eq!(removed, 0);
     }
 }
