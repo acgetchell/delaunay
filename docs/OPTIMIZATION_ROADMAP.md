@@ -86,8 +86,8 @@ Eliminate UUID→Key lookups in hot paths by implementing direct key-based opera
 
 ```rust
 // New key-based helper method
-fn get_cell_vertex_keys(&self, cell_key: CellKey) 
-    -> Result<VertexKeyBuffer, TriangulationValidationError>
+fn get_cell_vertices(&self, cell_key: CellKey)
+    -> Result<VertexKeyBuffer, TdsValidationError>
 ```
 
 #### Key-Based Methods Added
@@ -106,7 +106,7 @@ contains_vertex_key() / vertex_keys()
 find_neighbors_by_key()      // #[must_use]
 set_neighbors_by_key()       // No panics, proper error handling
 find_cells_containing_vertex_by_key()  // #[must_use]
-get_cell_vertex_keys()
+get_cell_vertices()
 ```
 
 #### Zero-Allocation Iterator Optimization
@@ -120,7 +120,7 @@ vertex_uuid_iter() -> impl ExactSizeIterator<Item = Uuid>
 
 #### Algorithms Optimized
 
-- `assign_neighbors()` - Uses `get_cell_vertex_keys()`
+- `assign_neighbors()` - Uses `get_cell_vertices()`
 - `assign_incident_cells()` - Direct key operations
 - `remove_duplicate_cells()` - Key-based duplicate detection
 - `build_facet_to_cells_map_lenient()` - Optimized with keys (deprecated lenient version)

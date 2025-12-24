@@ -105,7 +105,7 @@ macro_rules! test_cell_properties {
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new(&vertices) {
-                        if dt.is_valid().is_ok() {
+                        if dt.tds().validate().is_ok() {
                             for (_cell_key, cell) in dt.cells() {
                                 prop_assert_eq!(cell.vertices().len(), $expected_vertices);
                                 prop_assert!(cell.uuid().as_u128() != 0);

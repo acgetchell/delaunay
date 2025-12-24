@@ -158,8 +158,8 @@ fn delaunay_insert_with_statistics_duplicate_coordinates_2d() {
         other => panic!("expected Ok(Skipped) with DuplicateCoordinates, got: {other:?}"),
     }
 
-    // Triangulation should still be valid
-    assert!(dt.is_valid().is_ok());
+    // Still in bootstrap (no cells yet), so validate only Levels 1–2 (elements + structure).
+    assert!(dt.tds().validate().is_ok());
     assert_eq!(dt.number_of_vertices(), 1);
 }
 

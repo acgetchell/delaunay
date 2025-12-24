@@ -19,8 +19,7 @@
 //! - **Vertex count consistency** - Vertex key count matches reported vertex count
 //! - **Dimension consistency** - Reported dimension matches actual structure
 //!
-//! All tests use `DelaunayTriangulation::is_valid()` which validates the complete
-//! Tds structure through the underlying `Tds::validation_report()`.
+//! All tests use `dt.tds().is_valid()` (Level 2 structural validation).
 
 use delaunay::prelude::*;
 use proptest::prelude::*;
@@ -87,9 +86,9 @@ macro_rules! gen_tds_validity {
                 #[test]
                 fn [<prop_tds_from_vertices_is_valid_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
-                        prop_assert!(dt.is_valid().is_ok(),
+                        prop_assert!(dt.tds().is_valid().is_ok(),
                             "{}D Tds should be valid: {:?}",
-                            $dim, dt.is_valid().err());
+                            $dim, dt.tds().is_valid().err());
                     }
                 }
             }
@@ -169,7 +168,7 @@ macro_rules! gen_neighbor_index_semantics {
                     // Use stack-allocated buffer for D facet vertices (D ≤ 7 typical)
                     use delaunay::core::collections::SimplexVertexBuffer;
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
-                        prop_assume!(dt.is_valid().is_ok());
+                        prop_assume!(dt.tds().is_valid().is_ok());
                         let tds = dt.tds();
                         for (cell_key, cell) in dt.cells() {
                             if let Some(neighbors) = cell.neighbors() {

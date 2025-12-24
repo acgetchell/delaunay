@@ -533,6 +533,12 @@ pub type ValidCellsBuffer = SmallBuffer<CellKey, SMALL_CELL_OPERATION_BUFFER_SIZ
 /// - Enable future extensions without breaking changes
 pub type FacetInfoBuffer = SmallBuffer<FacetHandle, MAX_PRACTICAL_DIMENSION_SIZE>;
 
+/// Buffer for storing cavity boundary facets during insertion/removal operations.
+///
+/// This is used by cavity extraction and filling routines. Inline capacity 64 avoids heap
+/// allocation for typical cavities while still allowing growth for large conflict regions.
+pub type CavityBoundaryBuffer = SmallBuffer<FacetHandle, 64>;
+
 /// Buffer for storing cells that share a facet.
 /// Facets are shared by at most 2 cells (boundary=1, interior=2).
 ///

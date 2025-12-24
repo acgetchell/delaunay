@@ -54,13 +54,14 @@ For details, see: [Issue #120 Investigation](docs/issue_120_investigation.md)
 **Validation**: You can verify your triangulation meets your requirements using the library's
 [4-level validation hierarchy](docs/validation.md):
 
-- **Level 2** (`dt.is_valid()`) - Structural correctness (expected to pass when using public APIs; not affected by Issue #120)
-- **Level 3** (`dt.triangulation().validate_manifold()`) - Manifold topology + Euler characteristic
-- **Level 4** (`dt.validate_delaunay()`) - Delaunay property (may fail in rare cases per Issue #120)
+- **Level 2** (`dt.tds().is_valid()`) - Structural correctness (expected to pass when using public APIs; not affected by Issue #120)
+- **Level 3** (`dt.triangulation().is_valid()`) - Manifold topology + Euler characteristic
+- **Level 4** (`dt.is_valid()`) - Delaunay property only (may fail in rare cases per Issue #120)
+- **All levels (1–4)** (`dt.validate()`) - Elements + structure + topology + Delaunay property
 
 For applications requiring strict Delaunay guarantees:
 
-- Use `validate_delaunay()` to check your specific triangulation
+- Use `dt.is_valid()` (Level 4 only) or `dt.validate()` (Levels 1–4) to check your specific triangulation
 - Use smaller point sets (violations are rarer)
 - Filter degenerate configurations when possible
 - Monitor for updates in future releases

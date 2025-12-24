@@ -246,26 +246,16 @@ fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_p
         .expect("Failed to generate points");
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
     let dt = DelaunayTriangulation::new(&vertices).expect("Failed to create triangulation");
-    let tds = dt.tds();
+    let tri = dt.triangulation();
 
     // Throughput in terms of cells we actually validate
-    group.throughput(Throughput::Elements(tds.number_of_cells() as u64));
-
-    // Collect cell keys once to avoid re-enumeration overhead in the hot loop
-    let cell_keys: Vec<_> = tds.cell_keys().collect();
+    group.throughput(Throughput::Elements(tri.number_of_cells() as u64));
 
     group.bench_function("validate_topology", |b| {
         b.iter(|| {
-            // Measure validation time for all cells
-            let mut all_valid = true;
-            for &cell_key in &cell_keys {
-                let neighbors = tds.find_neighbors_by_key(cell_key);
-                if let Err(e) = tds.validate_neighbor_topology(cell_key, &neighbors) {
-                    all_valid = false;
-                    black_box(e);
-                }
-            }
-            black_box(all_valid)
+            // Level 3 topology check (manifold-with-boundary + Euler characteristic)
+            tri.is_valid()
+                .expect("triangulation should be structurally valid during validation benchmark");
         });
     });
 

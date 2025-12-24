@@ -86,7 +86,7 @@ macro_rules! test_serialization_properties {
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
-                        if dt.is_valid().is_ok() {
+                        if dt.tds().validate().is_ok() {
                             // Serialize and deserialize
                             let json = serde_json::to_string(&dt).expect("Serialization failed");
                             let deserialized: DelaunayTriangulation<_, (), (), $dim> =
@@ -94,10 +94,10 @@ macro_rules! test_serialization_properties {
 
                             // Deserialized triangulation should also be valid
                             prop_assert!(
-                                deserialized.is_valid().is_ok(),
+                                deserialized.tds().validate().is_ok(),
                                 "{}D deserialized triangulation should be valid: {:?}",
                                 $dim,
-                                deserialized.is_valid().err()
+                                deserialized.tds().validate().err()
                             );
                         }
                     }
@@ -116,7 +116,7 @@ macro_rules! test_serialization_properties {
                         // Need more than minimal simplex (D+1) to have meaningful serialization test
                         prop_assume!(dt.number_of_vertices() > $dim + 1);
                         // Also skip invalid TDS (can happen with nearly-degenerate geometries)
-                        prop_assume!(dt.is_valid().is_ok());
+                        prop_assume!(dt.tds().validate().is_ok());
 
                         // Collect original vertex points
                         let original_points: Vec<_> = dt.vertices()

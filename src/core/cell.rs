@@ -600,6 +600,55 @@ where
         &self.vertices[..]
     }
 
+    /// Find the facet index in `neighbor_cell` that corresponds to the shared facet.
+    ///
+    /// `facet_idx` is interpreted as the index of the vertex opposite the facet in `self`.
+    /// If `neighbor_cell` shares exactly that facet, this returns the index of the vertex
+    /// opposite the same facet in `neighbor_cell` (CGAL-style "mirror facet").
+    ///
+    /// Returns `None` if `facet_idx` is out of range, or if the cells do not appear to share
+    /// a single facet.
+    #[inline]
+    pub(crate) fn mirror_facet_index(
+        &self,
+        facet_idx: usize,
+        neighbor_cell: &Self,
+    ) -> Option<usize> {
+        if facet_idx >= self.vertices.len() {
+            return None;
+        }
+
+        // Mirror facet semantics are defined for same-dimensional simplices.
+        debug_assert_eq!(
+            self.vertices().len(),
+            neighbor_cell.vertices().len(),
+            "mirror_facet_index requires cells with matching vertex counts",
+        );
+
+        // Build the facet vertex set from the source cell (all except facet_idx)
+        let mut facet_vertices: CellVertexBuffer = CellVertexBuffer::new();
+        for (i, &vkey) in self.vertices().iter().enumerate() {
+            if i != facet_idx {
+                facet_vertices.push(vkey);
+            }
+        }
+
+        // Find the vertex in neighbor_cell that is NOT in the facet.
+        // That vertex's index is the mirror facet index.
+        let mut mirror_idx: Option<usize> = None;
+        for (idx, &neighbor_vkey) in neighbor_cell.vertices().iter().enumerate() {
+            if !facet_vertices.contains(&neighbor_vkey) {
+                if mirror_idx.is_some() {
+                    // More than one vertex is not in the facet -> not a valid facet neighbor relation.
+                    return None;
+                }
+                mirror_idx = Some(idx);
+            }
+        }
+
+        mirror_idx
+    }
+
     /// Adds a vertex key to this cell.
     ///
     /// # Phase 3A: Internal Use Only
@@ -1941,6 +1990,126 @@ mod tests {
     }
 
     #[test]
+    fn cell_mirror_facet_index_shared_facet_2d() {
+        // Four points in convex position should yield two triangles that share an edge.
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 1.1]), // break cocircular symmetry
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+
+        let cells: Vec<_> = dt.cells().map(|(_, cell)| cell).collect();
+        assert!(
+            cells.len() >= 2,
+            "Expected at least 2 cells, got {}",
+            cells.len()
+        );
+
+        // Find two distinct cells that share exactly D vertices (i.e., a facet).
+        // For 2D, D = 2, so the shared facet is an edge.
+        let mut found = None;
+        for i in 0..cells.len() {
+            for j in (i + 1)..cells.len() {
+                let cell_a = cells[i];
+                let cell_b = cells[j];
+
+                let shared: FastHashSet<VertexKey> = cell_a
+                    .vertices()
+                    .iter()
+                    .copied()
+                    .filter(|v| cell_b.vertices().contains(v))
+                    .collect();
+
+                if shared.len() == 2 {
+                    let facet_idx_a = cell_a
+                        .vertices()
+                        .iter()
+                        .position(|v| !shared.contains(v))
+                        .expect("cell_a should have one vertex not in the shared facet");
+
+                    let facet_idx_b = cell_b
+                        .vertices()
+                        .iter()
+                        .position(|v| !shared.contains(v))
+                        .expect("cell_b should have one vertex not in the shared facet");
+
+                    found = Some((cell_a, cell_b, facet_idx_a, facet_idx_b));
+                    break;
+                }
+            }
+            if found.is_some() {
+                break;
+            }
+        }
+
+        let Some((cell_a, cell_b, facet_idx_a, facet_idx_b)) = found else {
+            panic!("Expected to find a pair of neighboring cells that share an edge");
+        };
+
+        assert_eq!(
+            cell_a.mirror_facet_index(facet_idx_a, cell_b),
+            Some(facet_idx_b)
+        );
+        assert_eq!(
+            cell_b.mirror_facet_index(facet_idx_b, cell_a),
+            Some(facet_idx_a)
+        );
+
+        // Out-of-range facet index
+        assert_eq!(
+            cell_a.mirror_facet_index(cell_a.number_of_vertices(), cell_b),
+            None
+        );
+    }
+
+    #[test]
+    fn cell_mirror_facet_index_returns_none_when_cells_do_not_share_facet_2d() {
+        // Add a point strictly inside the convex hull to yield multiple triangles.
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 1.0]),
+            vertex!([0.5, 0.5]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+
+        let cells: Vec<_> = dt.cells().map(|(_, cell)| cell).collect();
+        assert!(
+            cells.len() >= 3,
+            "Expected at least 3 cells, got {}",
+            cells.len()
+        );
+
+        // Find two cells that share fewer than D vertices (D=2 in 2D).
+        let mut non_adjacent = None;
+        'outer: for i in 0..cells.len() {
+            for j in (i + 1)..cells.len() {
+                let cell_a = cells[i];
+                let cell_b = cells[j];
+                let shared_count = cell_a
+                    .vertices()
+                    .iter()
+                    .filter(|v| cell_b.vertices().contains(v))
+                    .count();
+
+                if shared_count < 2 {
+                    non_adjacent = Some((cell_a, cell_b));
+                    break 'outer;
+                }
+            }
+        }
+
+        let Some((cell_a, cell_b)) = non_adjacent else {
+            panic!("Expected to find a pair of non-adjacent cells");
+        };
+
+        assert_eq!(cell_a.mirror_facet_index(0, cell_b), None);
+    }
+
+    #[test]
     fn cell_dim() {
         let vertices_2d = create_test_vertices_2d();
         let dt_2d = DelaunayTriangulation::new(&vertices_2d).unwrap();
@@ -3009,6 +3178,192 @@ mod tests {
             ),
             "Wrong neighbors count should fail validation"
         );
+    }
+
+    #[test]
+    fn cell_new_rejects_insufficient_and_duplicate_vertices() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let vkeys: Vec<_> = dt.tds().vertices().map(|(k, _)| k).collect();
+
+        // Too few vertices for a 3D cell (D+1 = 4)
+        let err =
+            Cell::<f64, (), (), 3>::new(vec![vkeys[0], vkeys[1], vkeys[2]], None).unwrap_err();
+        assert!(matches!(
+            err,
+            CellValidationError::InsufficientVertices {
+                actual: 3,
+                expected: 4,
+                dimension: 3,
+            }
+        ));
+
+        // Duplicate vertex keys are rejected
+        let err = Cell::<f64, (), (), 3>::new(vec![vkeys[0], vkeys[1], vkeys[2], vkeys[0]], None)
+            .unwrap_err();
+        assert!(matches!(err, CellValidationError::DuplicateVertices));
+    }
+
+    #[test]
+    fn cell_is_valid_rejects_insufficient_and_duplicate_vertices() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let (_, cell_ref) = dt.cells().next().unwrap();
+
+        // Insufficient vertices (wrong vertex buffer length)
+        let mut wrong_len = cell_ref.clone();
+        wrong_len.vertices.pop();
+        assert!(matches!(
+            wrong_len.is_valid(),
+            Err(CellValidationError::InsufficientVertices { .. })
+        ));
+
+        // Duplicate vertices
+        let mut dup = cell_ref.clone();
+        dup.vertices[1] = dup.vertices[0];
+        assert!(matches!(
+            dup.is_valid(),
+            Err(CellValidationError::DuplicateVertices)
+        ));
+    }
+
+    #[test]
+    fn cell_ensure_neighbors_buffer_mut_initializes_and_reuses() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let (cell_key, cell_ref) = dt.cells().next().unwrap();
+
+        let mut cell = cell_ref.clone();
+        assert!(cell.neighbors.is_none());
+
+        let buf = cell.ensure_neighbors_buffer_mut();
+        assert_eq!(buf.len(), 3);
+        assert!(buf.iter().all(Option::is_none));
+
+        // Mutate through the returned buffer and ensure it's preserved
+        buf[0] = Some(cell_key);
+        let buf2 = cell.ensure_neighbors_buffer_mut();
+        assert_eq!(buf2[0], Some(cell_key));
+    }
+
+    #[test]
+    fn cell_facet_view_helpers_reject_excessive_vertex_count() {
+        use crate::core::facet::FacetError;
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let cell_key = dt.tds().cell_keys().next().unwrap();
+
+        // Grab a stable key we can duplicate to inflate the vertex buffer.
+        let vkey0 = {
+            let cell = dt.tds().get_cell(cell_key).unwrap();
+            cell.vertices()[0]
+        };
+
+        {
+            let cell = dt
+                .tri
+                .tds
+                .cells_mut()
+                .get_mut(cell_key)
+                .expect("cell key should be valid in test");
+            while u8::try_from(cell.number_of_vertices()).is_ok() {
+                cell.push_vertex_key(vkey0);
+            }
+            assert!(u8::try_from(cell.number_of_vertices()).is_err());
+        }
+
+        // Both helpers should fail early (before attempting to build individual FacetViews).
+        let err = Cell::facet_views_from_tds(dt.tds(), cell_key).unwrap_err();
+        assert!(matches!(
+            err,
+            FacetError::InvalidFacetIndex {
+                index: u8::MAX,
+                facet_count,
+            } if u8::try_from(facet_count).is_err()
+        ));
+
+        let err = Cell::facet_view_iter(dt.tds(), cell_key)
+            .err()
+            .expect("Expected facet_view_iter to fail on vertex_count overflow");
+        assert!(matches!(
+            err,
+            FacetError::InvalidFacetIndex {
+                index: u8::MAX,
+                facet_count,
+            } if u8::try_from(facet_count).is_err()
+        ));
+    }
+
+    #[test]
+    fn cell_deserialize_rejects_missing_uuid_and_duplicate_fields_and_invalid_uuid() {
+        // Expecting() should surface for non-map inputs.
+        let err = serde_json::from_str::<Cell<f64, (), i32, 3>>("null").unwrap_err();
+        assert!(err.to_string().contains("a Cell struct"));
+
+        // Missing required field.
+        let err = serde_json::from_str::<Cell<f64, (), i32, 3>>("{\"data\":1}").unwrap_err();
+        assert!(err.to_string().contains("missing field `uuid`"));
+
+        // Duplicate uuid.
+        let uuid = uuid::Uuid::new_v4();
+        let json = format!("{{\"uuid\":\"{uuid}\",\"uuid\":\"{uuid}\"}}");
+        let err = serde_json::from_str::<Cell<f64, (), i32, 3>>(&json).unwrap_err();
+        assert!(err.to_string().contains("duplicate field `uuid`"));
+
+        // Duplicate data.
+        let uuid = uuid::Uuid::new_v4();
+        let json = format!("{{\"uuid\":\"{uuid}\",\"data\":1,\"data\":2}}");
+        let err = serde_json::from_str::<Cell<f64, (), i32, 3>>(&json).unwrap_err();
+        assert!(err.to_string().contains("duplicate field `data`"));
+
+        // Invalid uuid (nil) should be rejected by validate_uuid.
+        let json = "{\"uuid\":\"00000000-0000-0000-0000-000000000000\"}";
+        let err = serde_json::from_str::<Cell<f64, (), i32, 3>>(json).unwrap_err();
+        assert!(err.to_string().contains("invalid uuid"));
+
+        // Unknown fields are ignored.
+        let uuid = uuid::Uuid::new_v4();
+        let json = format!("{{\"uuid\":\"{uuid}\",\"data\":5,\"neighbors\":[1,2,3]}}");
+        let cell = serde_json::from_str::<Cell<f64, (), i32, 3>>(&json).unwrap();
+        assert_eq!(cell.data, Some(5));
+        assert!(cell.neighbors.is_none());
+        assert_eq!(cell.number_of_vertices(), 0, "vertices are not serialized");
+    }
+
+    #[test]
+    fn cell_validation_error_from_stack_matrix_dispatch_error_maps_to_coordinate_conversion() {
+        use crate::geometry::matrix::{MAX_STACK_MATRIX_DIM, StackMatrixDispatchError};
+
+        let err = StackMatrixDispatchError::UnsupportedDim {
+            k: MAX_STACK_MATRIX_DIM + 1,
+            max: MAX_STACK_MATRIX_DIM,
+        };
+        let cell_err: CellValidationError = err.into();
+
+        assert!(matches!(
+            cell_err,
+            CellValidationError::CoordinateConversion { .. }
+        ));
     }
 
     // =============================================================================

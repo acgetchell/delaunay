@@ -13,7 +13,8 @@
 //!
 //! Some tests are currently disabled due to a known issue with topology classification.
 //! Certain triangulations are misclassified as Ball when they are actually `ClosedSphere`,
-//! causing `validate_manifold()` to reject triangulations that are topologically valid.
+//! causing Level 3 topology validation (`Triangulation::is_valid`) to reject triangulations
+//! that are topologically valid.
 //!
 //! For deterministic tests with known configurations, see `euler_characteristic.rs`.
 

@@ -62,7 +62,7 @@ use super::traits::data_type::DataType;
 use super::util::{stable_hash_u64_slice, usize_to_u8};
 use super::{
     cell::Cell,
-    triangulation_data_structure::{CellKey, Tds, TriangulationValidationError, VertexKey},
+    triangulation_data_structure::{CellKey, Tds, TdsValidationError, VertexKey},
     vertex::Vertex,
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
@@ -173,16 +173,16 @@ pub enum FacetError {
     /// Failed to retrieve boundary facets from triangulation.
     #[error("Failed to retrieve boundary facets: {source}")]
     BoundaryFacetRetrievalFailed {
-        /// The underlying triangulation validation error.
+        /// The underlying TDS validation error.
         #[source]
-        source: Arc<TriangulationValidationError>,
+        source: Arc<TdsValidationError>,
     },
     /// Cell operation failed due to validation error.
     #[error("Cell operation failed: {source}")]
     CellOperationFailed {
-        /// The underlying triangulation validation error.
+        /// The underlying TDS validation error.
         #[source]
-        source: Arc<TriangulationValidationError>,
+        source: Arc<TdsValidationError>,
     },
 }
 

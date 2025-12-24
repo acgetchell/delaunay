@@ -44,8 +44,11 @@ bench-ci:
 bench-compare: _ensure-uv
     uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
 
+# Compile benchmarks without running them, treating warnings as errors.
+# This catches bench/release-profile-only warnings (e.g. debug_assertions-gated unused vars)
+# that won't show up in normal debug-profile `cargo test` / `cargo clippy` runs.
 bench-compile:
-    cargo bench --workspace --no-run
+    RUSTFLAGS='-D warnings' cargo bench --workspace --no-run
 
 # Development mode benchmarks: fast iteration with reduced sample sizes
 bench-dev: _ensure-uv
@@ -107,8 +110,8 @@ clippy:
     cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
 # Pre-commit workflow: comprehensive validation before committing
-# Runs: linting + all tests (lib + doc + integration + proptests + Python) + examples
-commit-check: lint test-all examples
+# Runs: linting + all tests (lib + doc + integration + proptests + Python) + examples + bench compile
+commit-check: lint bench-compile test-all examples
     @echo "🚀 Ready to commit! All checks passed!"
 
 # Compare SlotMap vs DenseSlotMap storage backends
@@ -154,7 +157,7 @@ fmt:
 help-workflows:
     @echo "Common Just workflows:"
     @echo "  just ci                # CI simulation (linting + all Rust tests + bench compile)"
-    @echo "  just commit-check      # Pre-commit validation (linting + all tests + examples)"
+    @echo "  just commit-check      # Pre-commit validation (linting + all tests + examples + bench compile)"
     @echo "  just commit-check-slow # Comprehensive with slow tests (100+ vertices)"
     @echo "  just ci-baseline       # CI + save performance baseline"
     @echo ""
