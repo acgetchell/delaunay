@@ -1089,16 +1089,15 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
+        let cell_uuid_or_nil = |key: CellKey| -> Uuid {
+            self.tri.tds.cell_uuid_from_key(key).unwrap_or_else(Uuid::nil)
+        };
+
         crate::core::util::is_delaunay_property_only(&self.tri.tds).map_err(|err| match err {
             DelaunayValidationError::DelaunayViolation { cell_key } => {
-                let cell_uuid = self
-                    .tri
-                    .tds
-                    .cell_uuid_from_key(cell_key)
-                    .unwrap_or_else(Uuid::nil);
                 DelaunayTriangulationValidationError::DelaunayViolation {
                     cell_key,
-                    cell_uuid,
+                    cell_uuid: cell_uuid_or_nil(cell_key),
                 }
             }
             DelaunayValidationError::TriangulationState { source } => {
@@ -1106,14 +1105,8 @@ where
             }
             DelaunayValidationError::InvalidCell { cell_key, source } => {
                 // Attach the best-available cell UUID (nil only if mapping is unavailable).
-                let cell_uuid = self
-                    .tri
-                    .tds
-                    .cell_uuid_from_key(cell_key)
-                    .unwrap_or_else(Uuid::nil);
-
                 TriangulationValidationError::from(TdsValidationError::InvalidCell {
-                    cell_id: cell_uuid,
+                    cell_id: cell_uuid_or_nil(cell_key),
                     source,
                 })
                 .into()
@@ -1124,14 +1117,9 @@ where
                 source,
             } => {
                 // Include cell UUID for better debugging and log correlation
-                let cell_uuid = self
-                    .tri
-                    .tds
-                    .cell_uuid_from_key(cell_key)
-                    .unwrap_or_else(Uuid::nil);
                 DelaunayTriangulationValidationError::NumericPredicateError {
                     cell_key,
-                    cell_uuid,
+                    cell_uuid: cell_uuid_or_nil(cell_key),
                     vertex_key,
                     source,
                 }
