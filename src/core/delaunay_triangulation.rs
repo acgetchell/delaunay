@@ -685,8 +685,8 @@ where
     ///
     /// After direct modification, you should:
     /// 1. Call `detect_local_facet_issues()` and `repair_local_facet_issues()` if you modified topology
-    /// 2. Call `is_valid()` to verify structural consistency
-    /// 3. Verify Delaunay property manually (if needed)
+    /// 2. Run `dt.triangulation().validate()` (Levels 1–3) or `dt.validate()` (Levels 1–4) to verify structural/topological consistency
+    /// 3. Reserve `dt.is_valid()` for Delaunay-only (Level 4) checks
     ///
     /// ## Safe Alternatives
     ///
@@ -713,7 +713,7 @@ where
     /// // ... perform internal algorithm testing ...
     ///
     /// // Always validate after direct modifications
-    /// assert!(dt.is_valid().is_ok());
+    /// assert!(dt.validate().is_ok());
     /// ```
     #[must_use]
     #[allow(clippy::missing_const_for_fn)] // mutable refs from const fn not widely supported

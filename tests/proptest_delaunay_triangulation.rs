@@ -341,11 +341,52 @@ macro_rules! gen_incremental_insertion_validity {
                     initial_points in prop::collection::vec([<vertex_ $dim d>](), $min..=$max),
                     additional_point in [<vertex_ $dim d>](),
                 ) {
-                    let initial_vertices = Vertex::from_points(&initial_points);
-                    if let Ok(mut dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&initial_vertices) {
+                    // Dedup exact duplicates to avoid pathological degeneracies during shrinking.
+                    let initial_vertices =
+                        dedup_vertices_by_coords::<$dim>(Vertex::from_points(&initial_points));
+
+                    // Require at least D+1 distinct vertices for valid simplices.
+                    prop_assume!(initial_vertices.len() > $dim);
+
+                    // Reject pathological shrink targets with too many points on a coordinate hyperplane (x_i == 0).
+                    // This is redundant with `finite_coordinate()` today (|x| > 1e-6), but kept as a guardrail if the
+                    // generator changes.
+                    let mut axis_counts = [0usize; $dim];
+                    for v in &initial_vertices {
+                        let coords: [f64; $dim] = (*v).into();
+                        for a in 0..$dim {
+                            if coords[a] == 0.0 {
+                                axis_counts[a] += 1;
+                            }
+                        }
+                    }
+                    let mut reject = false;
+                    for &count in &axis_counts {
+                        if count >= $dim {
+                            reject = true;
+                            break;
+                        }
+                    }
+                    prop_assume!(!reject);
+
+                    let additional_vertex = vertex!(additional_point);
+
+                    // Avoid duplicate insertion cases here; duplicate-handling is tested in dedicated suites.
+                    let add_coords: [f64; $dim] = (&additional_vertex).into();
+                    let is_dup = initial_vertices.iter().any(|u| {
+                        let uc: [f64; $dim] = u.into();
+                        add_coords
+                            .iter()
+                            .zip(uc.iter())
+                            .all(|(a, b)| a.to_bits() == b.to_bits())
+                    });
+                    prop_assume!(!is_dup);
+
+                    if let Ok(mut dt) =
+                        DelaunayTriangulation::<_, (), (), $dim>::new(&initial_vertices)
+                    {
                         prop_assert_levels_1_to_3_valid!($dim, &dt, "initial triangulation");
 
-                        let additional_vertex = vertex!(additional_point);
                         if dt.insert(additional_vertex).is_ok() {
                             prop_assert_levels_1_to_3_valid!($dim, &dt, "after insertion");
                         }
