@@ -349,18 +349,6 @@ where
                 }
                 Err(e) => {
                     // Non-retryable failure: abort construction with a structured error.
-                    //
-                    // NOTE: This match is intentionally exhaustive over `InsertionError`.
-                    // When adding new insertion failure modes in the future, revisit whether they
-                    // deserve a dedicated `TriangulationConstructionError` variant instead of being
-                    // collapsed into `GeometricDegeneracy`.
-                    //
-                    // We intentionally preserve the high-level insertion failure *bucket* in the
-                    // degeneracy message by capturing `e.to_string()` up front (rather than only
-                    // `source.to_string()`), so callers/telemetry can distinguish e.g.
-                    // "Conflict region error" vs "Location error" vs "Hull extension failed".
-                    let insertion_error_string = e.to_string();
-
                     return Err(match e {
                         // Preserve underlying construction errors (e.g. duplicate UUID).
                         InsertionError::Construction(source) => source,
@@ -390,13 +378,23 @@ where
 
                         // Insertion-layer failures that are best surfaced during construction as a
                         // geometric degeneracy (e.g. numerical instability, hull visibility issues).
-                        InsertionError::ConflictRegion(_)
+                        //
+                        // NOTE: This match is intentionally exhaustive over `InsertionError`.
+                        // When adding new insertion failure modes in the future, revisit whether they
+                        // deserve a dedicated `TriangulationConstructionError` variant instead of being
+                        // collapsed into `GeometricDegeneracy`.
+                        //
+                        // We intentionally preserve the high-level insertion failure *bucket* in the
+                        // degeneracy message by capturing `e.to_string()` (rather than only
+                        // `source.to_string()`), so callers/telemetry can distinguish e.g.
+                        // "Conflict region error" vs "Location error" vs "Hull extension failed".
+                        insertion_error @ (InsertionError::ConflictRegion(_)
                         | InsertionError::Location(_)
                         | InsertionError::NonManifoldTopology { .. }
                         | InsertionError::HullExtension { .. }
-                        | InsertionError::TopologyValidationFailed { .. } => {
+                        | InsertionError::TopologyValidationFailed { .. }) => {
                             TriangulationConstructionError::GeometricDegeneracy {
-                                message: insertion_error_string,
+                                message: insertion_error.to_string(),
                             }
                         }
                     }
@@ -1090,7 +1088,10 @@ where
         K::Scalar: CoordinateScalar,
     {
         let cell_uuid_or_nil = |key: CellKey| -> Uuid {
-            self.tri.tds.cell_uuid_from_key(key).unwrap_or_else(Uuid::nil)
+            self.tri
+                .tds
+                .cell_uuid_from_key(key)
+                .unwrap_or_else(Uuid::nil)
         };
 
         crate::core::util::is_delaunay_property_only(&self.tri.tds).map_err(|err| match err {

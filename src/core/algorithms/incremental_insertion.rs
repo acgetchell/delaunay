@@ -1095,6 +1095,9 @@ mod tests {
     use super::*;
     use crate::core::collections::CellKeyBuffer;
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
+    use crate::core::triangulation_data_structure::TdsValidationError;
+    use crate::geometry::kernel::FastKernel;
+    use crate::geometry::traits::coordinate::Coordinate;
     use crate::vertex;
     use slotmap::KeyData;
 
@@ -1388,9 +1391,6 @@ mod tests {
 
     #[test]
     fn test_insertion_error_retryable() {
-        use crate::core::algorithms::locate::LocateError;
-        use crate::core::triangulation_data_structure::TdsValidationError;
-
         // Retryable errors
         assert!(
             InsertionError::Location(LocateError::CycleDetected { steps: 1000 }).is_retryable()
@@ -1607,10 +1607,6 @@ mod tests {
 
     #[test]
     fn test_extend_hull_adds_cells_for_exterior_vertex() {
-        use crate::geometry::kernel::FastKernel;
-        use crate::geometry::point::Point;
-        use crate::geometry::traits::coordinate::Coordinate;
-
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -1630,10 +1626,6 @@ mod tests {
 
     #[test]
     fn test_extend_hull_errors_when_no_visible_facets() {
-        use crate::geometry::kernel::FastKernel;
-        use crate::geometry::point::Point;
-        use crate::geometry::traits::coordinate::Coordinate;
-
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),

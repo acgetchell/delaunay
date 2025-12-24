@@ -228,6 +228,13 @@ mod tests {
     use crate::core::vertex::Vertex;
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};
 
+    #[cfg(feature = "bench")]
+    use num_traits::cast::cast;
+    #[cfg(feature = "bench")]
+    use rand::Rng;
+    #[cfg(feature = "bench")]
+    use std::time::Instant;
+
     // =============================================================================
     // SINGLE SIMPLEX TESTS
     // =============================================================================
@@ -428,7 +435,6 @@ mod tests {
     #[cfg(feature = "bench")]
     fn test_boundary_analysis_performance_characteristics() {
         // Test that boundary analysis methods have reasonable performance characteristics
-        use std::time::Instant;
 
         // Create a moderately complex triangulation
         let points: Vec<Point<f64, 3>> = vec![
@@ -504,11 +510,6 @@ mod tests {
     #[test]
     #[cfg(feature = "bench")]
     fn benchmark_boundary_facets_performance() {
-        use crate::core::delaunay_triangulation::DelaunayTriangulation;
-        use num_traits::cast::cast;
-        use rand::Rng;
-        use std::time::Instant;
-
         // Smaller point counts for reasonable test time
         let point_counts = [20, 40, 60, 80];
 

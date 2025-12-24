@@ -2685,6 +2685,7 @@ where
 mod tests {
     use super::*;
     use crate::core::collections::NeighborBuffer;
+    use crate::core::delaunay_triangulation::DelaunayTriangulation;
     use crate::core::vertex::VertexBuilder;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::point::Point;
@@ -2808,8 +2809,6 @@ mod tests {
             pastey::paste! {
                 #[test]
                 fn [<test_is_valid_topology_ $dim d>]() {
-                    use crate::core::delaunay_triangulation::DelaunayTriangulation;
-
                     // Build triangulation from D+1 vertices (initial simplex)
                     let vertices: Vec<Vertex<f64, (), $dim>> = vec![
                         $(vertex!($simplex_coords)),+
@@ -2895,8 +2894,6 @@ mod tests {
 
     #[test]
     fn test_validate_includes_tds_validation() {
-        use crate::core::delaunay_triangulation::DelaunayTriangulation;
-
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -3515,8 +3512,6 @@ mod tests {
             pastey::paste! {
                 #[test]
                 fn [<test_remove_vertex_neighbor_pointers_ $dim d>]() {
-                    use crate::core::delaunay_triangulation::DelaunayTriangulation;
-
                     // Build triangulation with D+1 simplex vertices + 1 interior point
                     let vertices: Vec<Vertex<f64, (), $dim>> = {
                         let mut v = vec![$(vertex!($simplex_coords)),+];
