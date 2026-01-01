@@ -635,8 +635,11 @@ pub const fn is_normal<T: Sized + Send + Sync + Unpin>() -> bool {
 #[cfg(test)]
 mod tests {
     use crate::{
-        core::{cell::Cell, triangulation_data_structure::Tds, vertex::Vertex},
-        geometry::Point,
+        core::{
+            cell::Cell, delaunay_triangulation::DelaunayTriangulation,
+            triangulation::Triangulation, triangulation_data_structure::Tds, vertex::Vertex,
+        },
+        geometry::{Point, algorithms::convex_hull::ConvexHull, kernel::FastKernel},
         is_normal,
     };
 
@@ -651,6 +654,9 @@ mod tests {
         assert!(is_normal::<Vertex<f64, (), 3>>());
         assert!(is_normal::<Cell<f64, (), (), 4>>());
         assert!(is_normal::<Tds<f64, (), (), 4>>());
+        assert!(is_normal::<Triangulation<FastKernel<f64>, (), (), 3>>());
+        assert!(is_normal::<DelaunayTriangulation<FastKernel<f64>, (), (), 3>>());
+        assert!(is_normal::<ConvexHull<FastKernel<f64>, (), (), 3>>());
     }
 
     #[test]

@@ -133,9 +133,9 @@ This includes information about:
 
 ## 📖 Documentation
 
-- **[Validation Guide](docs/validation.md)** - Comprehensive 4-level validation hierarchy guide (element → structural → manifold → Delaunay)
 - **[Code Organization](docs/code_organization.md)** - Project structure and module patterns
 - **[Topology Guide](docs/topology.md)** - Topological concepts and Euler characteristic
+- **[Validation Guide](docs/validation.md)** - Comprehensive 4-level validation hierarchy guide (element → structural → manifold → Delaunay)
 - **[Issue #120 Investigation](docs/issue_120_investigation.md)** - Known Delaunay property limitations
 
 ## 📚 References
