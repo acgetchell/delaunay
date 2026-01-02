@@ -40,7 +40,7 @@ class TestTagSizeLimitHandling:
 
         # Patch extraction so _get_changelog_content sees our oversized payload.
         with patch.object(ChangelogUtils, "extract_changelog_section", return_value=oversized_content):
-            tag_message, is_truncated = ChangelogUtils._get_changelog_content("v0.5.4")  # noqa: SLF001
+            tag_message, is_truncated = ChangelogUtils._get_changelog_content("v0.5.4")
 
         assert is_truncated is True, "Large changelog should be truncated"
         assert "See full changelog" in tag_message, "Should contain CHANGELOG.md reference"
@@ -56,7 +56,7 @@ class TestTagSizeLimitHandling:
         content_size = len(content.encode("utf-8"))
 
         # If this is also large, just verify the function works correctly
-        tag_message, is_truncated = ChangelogUtils._get_changelog_content("v0.5.3")  # noqa: SLF001
+        tag_message, is_truncated = ChangelogUtils._get_changelog_content("v0.5.3")
 
         if content_size <= 125000:
             assert is_truncated is False, "Small changelog should not be truncated"
@@ -70,7 +70,7 @@ class TestTagSizeLimitHandling:
     def test_create_tag_with_message_truncated(self, mock_run_git_with_input):
         """Test annotated tag with reference message for oversized changelogs."""
         ref_message = "Version 0.5.4\n\nSee full changelog in CHANGELOG.md"
-        ChangelogUtils._create_tag_with_message("v0.5.4", ref_message, is_truncated=True)  # noqa: SLF001
+        ChangelogUtils._create_tag_with_message("v0.5.4", ref_message, is_truncated=True)
 
         # Should still create annotated tag with reference message
         mock_run_git_with_input.assert_called_once_with(["tag", "-a", "v0.5.4", "-F", "-"], input_data=ref_message)
@@ -80,7 +80,7 @@ class TestTagSizeLimitHandling:
         """Test annotated tag creation with full message for normal-sized changelogs."""
         tag_message = "Version 1.0.0\n\n- Feature 1\n- Feature 2"
 
-        ChangelogUtils._create_tag_with_message("v1.0.0", tag_message, is_truncated=False)  # noqa: SLF001
+        ChangelogUtils._create_tag_with_message("v1.0.0", tag_message, is_truncated=False)
 
         # Should call git tag with -a flag and full message from stdin
         mock_run_git_with_input.assert_called_once_with(["tag", "-a", "v1.0.0", "-F", "-"], input_data=tag_message)
@@ -88,7 +88,7 @@ class TestTagSizeLimitHandling:
     @patch("builtins.print")
     def test_show_success_message_truncated_still_uses_notes_from_tag(self, mock_print):
         """Test success message for truncated changelog still uses --notes-from-tag."""
-        ChangelogUtils._show_success_message("v0.5.4", is_truncated=True)  # noqa: SLF001
+        ChangelogUtils._show_success_message("v0.5.4", is_truncated=True)
 
         # Collect all print calls
         print_calls = [str(call_args[0][0]) if call_args[0] else "" for call_args in mock_print.call_args_list]
@@ -106,7 +106,7 @@ class TestTagSizeLimitHandling:
     @patch("builtins.print")
     def test_show_success_message_normal_uses_notes_from_tag(self, mock_print):
         """Test success message for normal changelog uses --notes-from-tag flag."""
-        ChangelogUtils._show_success_message("v1.0.0", is_truncated=False)  # noqa: SLF001
+        ChangelogUtils._show_success_message("v1.0.0", is_truncated=False)
 
         # Collect all print calls
         print_calls = [str(call_args[0][0]) if call_args[0] else "" for call_args in mock_print.call_args_list]

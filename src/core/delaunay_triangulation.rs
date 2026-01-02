@@ -13,6 +13,7 @@ use crate::core::algorithms::incremental_insertion::{
     InsertionError, InsertionOutcome, InsertionStatistics,
 };
 use crate::core::cell::Cell;
+use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{
@@ -839,6 +840,90 @@ where
     /// ```
     pub fn boundary_facets(&self) -> BoundaryFacetsIter<'_, K::Scalar, U, V, D> {
         self.tri.boundary_facets()
+    }
+
+    /// Returns an iterator over all unique edges in the triangulation.
+    ///
+    /// This is a convenience wrapper around
+    /// [`Triangulation::edges`](crate::core::triangulation::Triangulation::edges).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::io::*;
+    ///
+    /// // A single 3D tetrahedron has 6 unique edges.
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let edges: std::collections::HashSet<_> = dt.edges().collect();
+    /// assert_eq!(edges.len(), 6);
+    /// ```
+    pub fn edges(&self) -> impl Iterator<Item = EdgeKey> + '_ {
+        self.triangulation().edges()
+    }
+
+    /// Returns an iterator over all unique edges incident to a vertex.
+    ///
+    /// This is a convenience wrapper around
+    /// [`Triangulation::incident_edges`](crate::core::triangulation::Triangulation::incident_edges).
+    ///
+    /// If `v` is not present in this triangulation, the iterator is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::io::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let v0 = dt.vertices().next().unwrap().0;
+    ///
+    /// // In a tetrahedron, each vertex has degree 3.
+    /// assert_eq!(dt.incident_edges(v0).count(), 3);
+    /// ```
+    pub fn incident_edges(&self, v: VertexKey) -> impl Iterator<Item = EdgeKey> + '_ {
+        self.triangulation().incident_edges(v)
+    }
+
+    /// Returns an iterator over all neighbors of a cell.
+    ///
+    /// Boundary facets are omitted (only existing neighbors are yielded). If `c` is not
+    /// present, the iterator is empty.
+    ///
+    /// This is a convenience wrapper around
+    /// [`Triangulation::cell_neighbors`](crate::core::triangulation::Triangulation::cell_neighbors).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::io::*;
+    ///
+    /// // A single tetrahedron has no cell neighbors.
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let cell_key = dt.cells().next().unwrap().0;
+    /// assert_eq!(dt.cell_neighbors(cell_key).count(), 0);
+    /// ```
+    pub fn cell_neighbors(&self, c: CellKey) -> impl Iterator<Item = CellKey> + '_ {
+        self.triangulation().cell_neighbors(c)
     }
 
     /// Insert a vertex into the Delaunay triangulation using incremental cavity-based algorithm.
@@ -2303,5 +2388,41 @@ mod tests {
         // `last_inserted_cell` is a performance-only locate hint and is intentionally not
         // persisted across serde round-trips (it is reset to `None` in `from_tds`).
         assert!(roundtrip.last_inserted_cell.is_none());
+    }
+
+    // =========================================================================
+    // Topology traversal forwarding tests (DelaunayTriangulation → Triangulation)
+    // =========================================================================
+
+    #[test]
+    fn test_topology_traversal_methods_are_forwarded() {
+        // Single tetrahedron: 4 vertices, 1 cell, 6 unique edges.
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let edges_dt: std::collections::HashSet<_> = dt.edges().collect();
+        let edges_tri: std::collections::HashSet<_> = dt.triangulation().edges().collect();
+        assert_eq!(edges_dt, edges_tri);
+        assert_eq!(edges_dt.len(), 6);
+
+        let v0 = dt.vertices().next().unwrap().0;
+        let incident_dt: std::collections::HashSet<_> = dt.incident_edges(v0).collect();
+        let incident_tri: std::collections::HashSet<_> =
+            dt.triangulation().incident_edges(v0).collect();
+        assert_eq!(incident_dt, incident_tri);
+        assert_eq!(incident_dt.len(), 3);
+
+        let cell_key = dt.cells().next().unwrap().0;
+        let neighbors_dt: Vec<_> = dt.cell_neighbors(cell_key).collect();
+        let neighbors_tri: Vec<_> = dt.triangulation().cell_neighbors(cell_key).collect();
+        assert_eq!(neighbors_dt, neighbors_tri);
+        assert!(neighbors_dt.is_empty());
     }
 }

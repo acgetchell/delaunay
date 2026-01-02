@@ -28,7 +28,7 @@
 //! - Validation results
 //! - Performance metrics
 
-use delaunay::prelude::*;
+use delaunay::prelude::io::*;
 use num_traits::cast::cast;
 use std::time::Instant;
 

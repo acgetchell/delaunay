@@ -39,7 +39,7 @@ class TestHardwareInfo:
     def test_run_command_empty_cmd(self, hardware):
         """Test _run_command with empty command list."""
         with pytest.raises(ValueError, match="Command list cannot be empty"):
-            hardware._run_command([])  # noqa: SLF001
+            hardware._run_command([])
 
     @patch("hardware_utils.run_safe_command")
     def test_run_command_success(self, mock_run_safe, hardware):
@@ -48,7 +48,7 @@ class TestHardwareInfo:
         mock_result.stdout = "test output\n"
         mock_run_safe.return_value = mock_result
 
-        result = hardware._run_command(["echo", "test"])  # noqa: SLF001
+        result = hardware._run_command(["echo", "test"])
 
         assert result == "test output"
         mock_run_safe.assert_called_once_with("echo", ["test"], capture_output=True, text=True, check=True)
@@ -59,7 +59,7 @@ class TestHardwareInfo:
         mock_run_safe.side_effect = subprocess.CalledProcessError(1, "cmd")
 
         with pytest.raises(subprocess.CalledProcessError):
-            hardware._run_command(["false"])  # noqa: SLF001
+            hardware._run_command(["false"])
 
     @patch("hardware_utils.platform.system")
     @patch.object(HardwareInfo, "_run_command")
@@ -538,7 +538,7 @@ Other content here...
     )
     def test_extract_memory_value(self, memory_str, expected):
         """Test memory value extraction from strings."""
-        result = HardwareComparator._extract_memory_value(memory_str)  # noqa: SLF001
+        result = HardwareComparator._extract_memory_value(memory_str)
         if expected is None:
             assert result is None
         else:

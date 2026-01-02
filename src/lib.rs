@@ -626,6 +626,52 @@ pub mod prelude {
         robust_predicates::*, traits::coordinate::*, util::*,
     };
 
+    /// Convenience re-exports for common **read-only** workflows (topology traversal, adjacency,
+    /// convex-hull extraction, and common input types).
+    ///
+    /// This is useful if you want a smaller import surface than `delaunay::prelude::*`,
+    /// while still having access to the key public APIs typically used in docs/tests/examples/benches.
+    ///
+    /// Includes:
+    /// - Topology traversal: [`DelaunayTriangulation::edges`], [`DelaunayTriangulation::incident_edges`],
+    ///   [`DelaunayTriangulation::cell_neighbors`]
+    /// - Convex hull extraction: [`ConvexHull::from_triangulation`]
+    /// - Test/example helpers: [`generate_random_triangulation`], [`generate_random_points_seeded`]
+    pub mod io {
+        // Core read-only traversal / adjacency
+        pub use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
+        pub use crate::core::delaunay_triangulation::DelaunayTriangulation;
+        pub use crate::core::edge::EdgeKey;
+        pub use crate::core::triangulation::Triangulation;
+        pub use crate::core::triangulation_data_structure::{CellKey, VertexKey};
+
+        // Common input/output types (kept intentionally small)
+        pub use crate::core::facet::FacetView;
+        pub use crate::core::traits::boundary_analysis::BoundaryAnalysis;
+        pub use crate::core::traits::data_type::DataType;
+        pub use crate::core::{Cell, Vertex};
+        pub use crate::geometry::Point;
+        pub use crate::geometry::kernel::{FastKernel, Kernel};
+        pub use crate::geometry::traits::coordinate::Coordinate;
+
+        // Read-only predicates (useful in benchmarks / lightweight geometry checks)
+        pub use crate::geometry::{insphere, insphere_distance, insphere_lifted};
+
+        // Read-only algorithms
+        pub use crate::geometry::algorithms::convex_hull::ConvexHull;
+
+        // Convenience generators (commonly used in docs/tests/examples/benches)
+        pub use crate::geometry::util::{
+            generate_random_points_seeded, generate_random_triangulation,
+        };
+
+        // Instrumentation helpers (no-op unless features enable extra tracking)
+        pub use crate::core::util::measure_with_result;
+
+        // Convenience macro (commonly used in docs/tests/examples) without importing full `prelude::*`.
+        pub use crate::vertex;
+    }
+
     // Convenience macros
     pub use crate::vertex;
 }

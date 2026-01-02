@@ -17,7 +17,7 @@ use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, 
 use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 use delaunay::geometry::kernel::RobustKernel;
 use delaunay::geometry::util::generate_random_points_seeded;
-use delaunay::prelude::*;
+use delaunay::prelude::io::*;
 use delaunay::vertex;
 use std::hint::black_box;
 use std::sync::OnceLock;

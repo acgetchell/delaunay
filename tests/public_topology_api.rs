@@ -1,12 +1,12 @@
 //! Integration tests for the public topology traversal and adjacency APIs.
 //!
 //! These tests cover:
-//! - Global edge enumeration via [`Triangulation::edges`]
-//! - Vertex incident edges via [`Triangulation::incident_edges`]
-//! - Cell neighborhood traversal via [`Triangulation::cell_neighbors`]
+//! - Global edge enumeration via [`DelaunayTriangulation::edges`]
+//! - Vertex incident edges via [`DelaunayTriangulation::incident_edges`]
+//! - Cell neighborhood traversal via [`DelaunayTriangulation::cell_neighbors`]
 //! - Building and validating the opt-in [`AdjacencyIndex`]
 
-use delaunay::prelude::*;
+use delaunay::prelude::io::*;
 
 #[test]
 fn edges_and_incident_edges_on_single_tetrahedron() {
@@ -21,25 +21,25 @@ fn edges_and_incident_edges_on_single_tetrahedron() {
     let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
     let tri = dt.triangulation();
 
-    assert_eq!(tri.number_of_vertices(), 4);
-    assert_eq!(tri.number_of_cells(), 1);
+    assert_eq!(dt.number_of_vertices(), 4);
+    assert_eq!(dt.number_of_cells(), 1);
 
-    let edge_count = tri.number_of_edges();
+    let edge_count = dt.edges().count();
     assert_eq!(edge_count, 6);
 
-    let edges: std::collections::HashSet<_> = tri.edges().collect();
+    let edges: std::collections::HashSet<_> = dt.edges().collect();
     assert_eq!(edges.len(), 6);
 
     // Pick an arbitrary vertex; in a tetrahedron its degree is 3.
-    let v0 = tri.vertices().next().unwrap().0;
-    assert_eq!(tri.number_of_incident_edges(v0), 3);
+    let v0 = dt.vertices().next().unwrap().0;
+    assert_eq!(dt.incident_edges(v0).count(), 3);
 
-    let incident: std::collections::HashSet<_> = tri.incident_edges(v0).collect();
+    let incident: std::collections::HashSet<_> = dt.incident_edges(v0).collect();
     assert_eq!(incident.len(), 3);
 
     // A single tetrahedron has no cell neighbors.
-    let cell_key = tri.cells().next().unwrap().0;
-    assert_eq!(tri.cell_neighbors(cell_key).count(), 0);
+    let cell_key = dt.cells().next().unwrap().0;
+    assert_eq!(dt.cell_neighbors(cell_key).count(), 0);
 
     // Geometry accessors are zero-allocation and should succeed for keys from this triangulation.
     assert!(tri.vertex_coords(v0).is_some());
@@ -82,7 +82,7 @@ fn adjacency_index_on_double_tetrahedron() {
     assert_eq!(cell_keys.len(), 2);
 
     for &ck in &cell_keys {
-        let neighbors: Vec<_> = tri.cell_neighbors(ck).collect();
+        let neighbors: Vec<_> = dt.cell_neighbors(ck).collect();
         assert_eq!(neighbors.len(), 1);
         assert!(cell_keys.contains(&neighbors[0]));
         assert_ne!(neighbors[0], ck);

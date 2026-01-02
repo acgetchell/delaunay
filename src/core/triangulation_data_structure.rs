@@ -2894,6 +2894,38 @@ where
         Ok(())
     }
 
+    /// Validates that `Vertex::incident_cell` pointers are non-dangling and internally consistent.
+    ///
+    /// Note: isolated vertices (vertices not referenced by any cell) are allowed at the TDS level,
+    /// but any `incident_cell` pointer that *is* present must:
+    /// - point to an existing cell key, and
+    /// - reference a cell that actually contains the vertex.
+    fn validate_vertex_incidence(&self) -> Result<(), TdsValidationError> {
+        for (vertex_key, vertex) in &self.vertices {
+            let Some(incident_cell_key) = vertex.incident_cell else {
+                continue;
+            };
+
+            let Some(incident_cell) = self.cells.get(incident_cell_key) else {
+                return Err(TdsError::InconsistentDataStructure {
+                    message: format!(
+                        "Vertex {vertex_key:?} has dangling incident_cell pointer to missing cell {incident_cell_key:?}"
+                    ),
+                });
+            };
+
+            if !incident_cell.contains_vertex(vertex_key) {
+                return Err(TdsError::InconsistentDataStructure {
+                    message: format!(
+                        "Vertex {vertex_key:?} incident_cell {incident_cell_key:?} does not contain the vertex"
+                    ),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     /// Check for duplicate cells and return an error if any are found
     ///
     /// This is useful for validation where you want to detect duplicates
@@ -3007,6 +3039,8 @@ where
     /// # Structural invariants checked
     /// - Vertex UUID↔key mapping consistency
     /// - Cell UUID↔key mapping consistency
+    /// - Cells reference only valid vertex keys (no stale/missing vertex keys)
+    /// - `Vertex::incident_cell`, when present, must point at an existing cell that contains the vertex.
     /// - No duplicate cells (same vertex set)
     /// - Facet sharing invariant (each facet is shared by at most 2 cells)
     /// - Neighbor consistency (topology + mutual neighbors)
@@ -3051,6 +3085,9 @@ where
         // Defensive: ensure no cell references a stale/missing vertex key before
         // higher-level structural checks that assume key validity.
         self.validate_cell_vertex_keys()?;
+
+        // Structural: ensure `incident_cell` pointers, when present, are non-dangling + consistent.
+        self.validate_vertex_incidence()?;
 
         self.validate_no_duplicate_cells()?;
         self.validate_facet_sharing()?;
@@ -4434,6 +4471,9 @@ mod tests {
             let cell = tds.get_cell(incident).unwrap();
             assert!(cell.contains_vertex(vk));
         }
+
+        // With remaining cells, isolated vertices are allowed at the TDS structural level.
+        assert!(tds.is_valid().is_ok());
 
         // Neighbor pointers in the surviving cell must not reference the removed cell.
         let cell2_ref = tds.get_cell(cell2).unwrap();

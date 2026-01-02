@@ -148,7 +148,7 @@ All tests pass: 123 passed
     monkeypatch.setattr(changelog_utils, "_show_success_message", lambda _file_paths: None)
 
     # Act
-    changelog_utils._execute_changelog_generation(debug_mode=False)  # noqa: SLF001
+    changelog_utils._execute_changelog_generation(debug_mode=False)
 
     # Assert: working directory is restored.
     assert Path.cwd() == workdir
@@ -198,7 +198,7 @@ def test_execute_changelog_generation_restores_backup_on_failure(tmp_path: Path,
     monkeypatch.setattr(changelog_utils, "_cleanup_final_output", fail_cleanup_final_output)
 
     with pytest.raises(SystemExit) as excinfo:
-        changelog_utils._execute_changelog_generation(debug_mode=False)  # noqa: SLF001
+        changelog_utils._execute_changelog_generation(debug_mode=False)
 
     assert excinfo.value.code == 1
 

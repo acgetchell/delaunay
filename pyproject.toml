@@ -137,7 +137,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"**/tests/test_*.py" = [ "S101" ] # Allow assert statements in test files
+"**/tests/test_*.py" = [ "S101", "SLF001" ] # Allow assert statements and private member access in test files
 
 # Import sorting and organization configuration
 [tool.ruff.lint.isort]

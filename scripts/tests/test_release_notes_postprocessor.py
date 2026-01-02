@@ -68,6 +68,29 @@ class TestReleaseNotesPostProcessor:
             "Expected verbose breaking-change body details to be trimmed"
         )
 
+    def test_breaking_changes_promoted_from_changes_section_and_empty_section_removed(self):
+        content = """# Changelog
+
+## v1.0.0
+
+### Changes
+
+- **Bump MSRV to 1.92.0** [`abcdef123`](https://github.com/acgetchell/delaunay/commit/abcdef123)
+  Details that should not appear in the breaking-changes summary.
+"""
+
+        processed = _ReleaseNotesPostProcessor.process(content)
+        lines = processed.splitlines()
+
+        assert "### ⚠️ Breaking Changes" in processed, "Expected breaking changes section to be present"
+        assert "### Changes" not in processed, "Expected empty Changes section to be removed after promotion"
+
+        breaking_body = _section_body(lines, "### ⚠️ Breaking Changes")
+        assert any("MSRV" in line for line in breaking_body), "Expected MSRV entry to be present in breaking changes section"
+        assert not any("Details that should not appear" in line for line in breaking_body), (
+            "Expected verbose breaking-change body details to be trimmed"
+        )
+
     def test_breaking_changes_detects_escaped_markdown_identifiers(self):
         content = """# Changelog
 

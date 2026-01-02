@@ -31,6 +31,7 @@
 //! - **Checks**:
 //!   - Manifold-with-boundary facet property (exactly 1 boundary cell or 2 interior cells per facet)
 //!   - Connectedness (single connected component in the cell neighbor graph)
+//!   - No isolated vertices (every vertex must be incident to at least one cell)
 //!   - Euler characteristic (χ = V - E + F - C matches expected topology)
 //! - **Cost**: O(N×D²) dominated by simplex counting
 //!
@@ -1006,6 +1007,12 @@ where
     ///
     /// - No sorted-order guarantees are provided for the values.
     /// - The returned collections are optimized for performance.
+    /// - The maps include an entry for every vertex currently stored in the triangulation.
+    ///   Vertices with no incident cells/edges (e.g., during bootstrap when `number_of_cells() == 0`)
+    ///   have empty adjacency lists.
+    /// - Isolated vertices (present in the vertex store but not referenced by any cell) are allowed at
+    ///   the TDS structural layer, but violate the Level 3 manifold invariants checked by
+    ///   [`Triangulation::is_valid`](Self::is_valid). When present, their adjacency lists are empty.
     ///
     /// # Errors
     ///
@@ -1113,6 +1120,16 @@ where
             }
         }
 
+        // Ensure every vertex in the triangulation has an entry, even if it is currently
+        // not incident to any cell (e.g., bootstrap phase with < D+1 vertices, or TDS-level
+        // states with isolated vertices). Level 3 topology validation (`Triangulation::is_valid`)
+        // rejects isolated vertices, but this indexing helper remains usable for debugging and
+        // intermediate construction states.
+        for (vk, _) in self.tds.vertices() {
+            vertex_to_cells.entry(vk).or_default();
+            vertex_to_edges.entry(vk).or_default();
+        }
+
         Ok(AdjacencyIndex {
             vertex_to_edges,
             vertex_to_cells,
@@ -1166,6 +1183,7 @@ where
     /// - Manifold facet property allowing a boundary
     /// - Boundary consistency with neighbor pointers (boundary facets must have no neighbor)
     /// - Connectedness (single component in the cell neighbor graph)
+    /// - No isolated vertices (every vertex must be incident to at least one cell)
     /// - Euler characteristic
     ///
     /// It intentionally does **not** validate lower layers (vertices/cells or TDS structure).
@@ -1207,7 +1225,10 @@ where
         // still match even though the triangulation is disconnected.
         self.validate_global_connectedness()?;
 
-        // 3. Euler characteristic using the topology module
+        // 3. Vertex incidence (manifold invariant): every vertex must be incident to at least one cell.
+        self.validate_no_isolated_vertices()?;
+
+        // 4. Euler characteristic using the topology module
         let topology_result = validate_triangulation_euler(&self.tds)?;
 
         if let Some(expected) = topology_result.expected
@@ -1453,6 +1474,39 @@ where
                 ),
             }
             .into());
+        }
+
+        Ok(())
+    }
+
+    /// Validates that every vertex is incident to at least one cell.
+    ///
+    /// Isolated vertices are allowed at the TDS (structural) layer, but they violate the
+    /// manifold invariants checked at the topology (Level 3) layer.
+    fn validate_no_isolated_vertices(&self) -> Result<(), TriangulationValidationError> {
+        if self.tds.number_of_vertices() == 0 {
+            return Ok(());
+        }
+
+        let mut vertices_in_cells: FastHashSet<VertexKey> =
+            fast_hash_set_with_capacity(self.tds.number_of_vertices());
+
+        for (_cell_key, cell) in self.tds.cells() {
+            for &vk in cell.vertices() {
+                vertices_in_cells.insert(vk);
+            }
+        }
+
+        for (vk, vertex) in self.tds.vertices() {
+            if !vertices_in_cells.contains(&vk) {
+                return Err(TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Isolated vertex detected during topology validation: vertex {} (key {vk:?}) is not incident to any cell",
+                        vertex.uuid()
+                    ),
+                }
+                .into());
+            }
         }
 
         Ok(())
@@ -3345,9 +3399,9 @@ mod tests {
     }
 
     #[test]
-    fn test_is_valid_euler_mismatch_in_bootstrap_phase() {
+    fn test_is_valid_rejects_bootstrap_phase_with_isolated_vertex() {
         // A triangulation with vertices but no cells is not a valid manifold (Level 3).
-        // This exercises the Euler characteristic mismatch path.
+        // Level 3 requires every vertex to be incident to at least one cell.
         let mut tri: Triangulation<FastKernel<f64>, (), (), 3> =
             Triangulation::new_empty(FastKernel::new());
 
@@ -3356,16 +3410,49 @@ mod tests {
             .expect("bootstrap insertion should succeed");
 
         match tri.is_valid() {
-            Err(TriangulationValidationError::EulerCharacteristicMismatch {
-                computed,
-                expected,
-                classification,
-            }) => {
-                assert_eq!(classification, TopologyClassification::Empty);
-                assert_eq!(expected, 0);
-                assert_eq!(computed, 1);
+            Err(TriangulationValidationError::Tds(
+                TdsValidationError::InconsistentDataStructure { message },
+            )) => {
+                assert!(
+                    message.contains("Isolated vertex detected"),
+                    "Expected isolated-vertex diagnostic, got message: {message}"
+                );
             }
-            other => panic!("Expected EulerCharacteristicMismatch, got {other:?}"),
+            other => panic!("Expected isolated-vertex error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_is_valid_rejects_isolated_vertex_even_when_cells_exist() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
+
+        // Insert a vertex into the TDS without adding any cells that reference it.
+        // This creates an isolated vertex, which violates the Level 3 manifold invariant.
+        let _isolated_vk = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([10.0, 10.0, 10.0]))
+            .unwrap();
+
+        match tri.is_valid() {
+            Err(TriangulationValidationError::Tds(
+                TdsValidationError::InconsistentDataStructure { message },
+            )) => {
+                assert!(
+                    message.contains("Isolated vertex detected"),
+                    "Expected isolated-vertex diagnostic, got message: {message}"
+                );
+            }
+            other => panic!("Expected isolated-vertex error, got {other:?}"),
         }
     }
 

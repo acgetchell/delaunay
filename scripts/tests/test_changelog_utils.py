@@ -408,7 +408,7 @@ class TestURLWrapping:
         """Test that indented code blocks are handled properly in _process_body_line."""
         # Indented code blocks (4+ spaces) should not have URLs wrapped
         code_line = "    curl https://example.com/api"
-        result = ChangelogUtils._process_body_line(code_line)  # noqa: SLF001
+        result = ChangelogUtils._process_body_line(code_line)
         # Should preserve the line without wrapping the URL
         assert "https://example.com/api" in result
         assert "<https://example.com/api>" not in result
@@ -521,7 +521,7 @@ Older release.
 """
         changelog_path.write_text(changelog_content, encoding="utf-8")
 
-        result = ChangelogUtils._extract_github_anchor(str(changelog_path), version)  # noqa: SLF001
+        result = ChangelogUtils._extract_github_anchor(str(changelog_path), version)
         assert result == expected_anchor
 
     def test_extract_github_anchor_fallback(self, tmp_path):
@@ -537,7 +537,7 @@ Older release.
         changelog_path.write_text(changelog_content, encoding="utf-8")
 
         # Request a version that doesn't exist
-        result = ChangelogUtils._extract_github_anchor(str(changelog_path), "0.6.0")  # noqa: SLF001
+        result = ChangelogUtils._extract_github_anchor(str(changelog_path), "0.6.0")
         # Should fall back to version without dots
         assert result == "v060"
 
@@ -545,7 +545,7 @@ Older release.
         """Test fallback behavior when changelog file doesn't exist."""
         nonexistent_path = tmp_path / "NONEXISTENT.md"
 
-        result = ChangelogUtils._extract_github_anchor(str(nonexistent_path), "1.2.3")  # noqa: SLF001
+        result = ChangelogUtils._extract_github_anchor(str(nonexistent_path), "1.2.3")
         # Should fall back to version without dots
         assert result == "v123"
 
@@ -568,11 +568,11 @@ Older release.
 
         # Should find the heading for 0.5.0, not match body text
         # Since 0.5.0 is only in body text, it should fall back
-        result = ChangelogUtils._extract_github_anchor(str(changelog_path), "0.5.0")  # noqa: SLF001
+        result = ChangelogUtils._extract_github_anchor(str(changelog_path), "0.5.0")
         assert result == "v050"  # Fallback behavior
 
         # Should find 0.6.0 heading correctly
-        result = ChangelogUtils._extract_github_anchor(str(changelog_path), "0.6.0")  # noqa: SLF001
+        result = ChangelogUtils._extract_github_anchor(str(changelog_path), "0.6.0")
         assert result == "v060---2025-11-25"
 
 
@@ -586,7 +586,7 @@ class TestChangelogTitleFormatting:
         repo_url = "https://github.com/owner/repo"
         max_line_length = 160
 
-        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_line_length)  # noqa: SLF001
+        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_line_length)
 
         # Should return a single line
         assert len(result) == 1
@@ -602,7 +602,7 @@ class TestChangelogTitleFormatting:
         repo_url = "https://github.com/owner/repo"
         max_line_length = 50
 
-        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_line_length)  # noqa: SLF001
+        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_line_length)
 
         # Should wrap the title into multiple lines
         assert len(result) > 1
@@ -639,7 +639,7 @@ class TestChangelogTitleFormatting:
         repo_url = "https://github.com/owner/repo"
         max_line_length = 60
 
-        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_line_length)  # noqa: SLF001
+        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_line_length)
 
         # Should wrap the title
         assert len(result) > 1
@@ -665,7 +665,7 @@ class TestChangelogTitleFormatting:
 
         # Test reasonably short line limit (shorter than normal but not extreme)
         title = "Short title"
-        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, 60)  # noqa: SLF001
+        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, 60)
 
         # Should still produce valid output
         assert len(result) >= 1
@@ -674,7 +674,7 @@ class TestChangelogTitleFormatting:
 
         # Test empty title
         title = ""
-        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, 160)  # noqa: SLF001
+        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, 160)
         assert len(result) >= 1
         assert result[0].startswith("- ")
         # Commit SHA should appear somewhere in the output (either same line or separate line)
@@ -682,7 +682,7 @@ class TestChangelogTitleFormatting:
 
         # Test title with only spaces
         title = "   "
-        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, 160)  # noqa: SLF001
+        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, 160)
         assert len(result) >= 1
         assert result[0].startswith("- ")
         # Commit SHA should appear somewhere in the output (either same line or separate line)
@@ -695,7 +695,7 @@ class TestChangelogTitleFormatting:
         repo_url = "https://github.com/owner/repo"
         max_line_length = 12  # tiny; exercises no-bold path and link split
 
-        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_line_length)  # noqa: SLF001
+        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_line_length)
 
         # First line should start with "- " (no bold) when width is too small
         assert result[0].startswith("- ")
@@ -719,7 +719,7 @@ class TestChangelogTitleFormatting:
         repo_url = "https://github.com/owner/repo"
         max_line_length = 30  # fits "- **Compact title**", not the full line with link
 
-        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_line_length)  # noqa: SLF001
+        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_line_length)
 
         assert result[0] == f"- **{title}**"
         # Commit link appears on following line(s)
@@ -739,7 +739,7 @@ class TestChangelogTitleFormatting:
         repo_url = "https://github.com/acgetchell/delaunay"
         max_line_length = 160  # From .markdownlint.json
 
-        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_line_length)  # noqa: SLF001
+        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_line_length)
 
         # Should produce multiple lines due to length
         assert len(result) > 1
@@ -792,6 +792,6 @@ class TestChangelogTitleFormatting:
         """Test with typical GitHub commit title lengths."""
         commit_sha = "abc123"
         repo_url = "https://github.com/test/repo"
-        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_length)  # noqa: SLF001
+        result = ChangelogUtils._format_entry_title(title, commit_sha, repo_url, max_length)
         assert len(result) >= expected_min_lines
         assert all(len(line) <= max_length for line in result)

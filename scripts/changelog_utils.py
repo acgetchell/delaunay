@@ -1254,7 +1254,7 @@ def _execute_changelog_generation(debug_mode: bool) -> None:
         if file_paths is None:
             raise SystemExit(1) from None
         _restore_backup_and_exit(file_paths)
-    except Exception:
+    except Exception:  # restore backup and exit on any unexpected error
         if file_paths is None:
             raise SystemExit(1) from None
         _restore_backup_and_exit(file_paths)
@@ -1512,12 +1512,14 @@ def _rn_extract_commit_url(entry: list[str]) -> str | None:
     return None
 
 
-def _rn_remove_empty_section(lines: list[str], section_header: str) -> list[str]:
+def _rn_remove_empty_section(lines: list[str], section_headers: str | tuple[str, ...]) -> list[str]:
+    headers = {section_headers} if isinstance(section_headers, str) else set(section_headers)
+
     out: list[str] = []
     i = 0
     while i < len(lines):
         line = lines[i]
-        if line.strip() != section_header:
+        if line.strip() not in headers:
             out.append(line)
             i += 1
             continue
@@ -1600,13 +1602,14 @@ class _BreakingChangeDetector:
         breaking_entries: list[list[str]] = []
         i = 0
         in_changed = False
+        changed_headers = {"### Changed", "### Changes"}
 
         while i < len(lines):
             line = lines[i]
 
             # Track section boundaries
             if line.startswith("### "):
-                in_changed = line.strip() == "### Changed"
+                in_changed = line.strip() in changed_headers
                 out.append(line)
                 i += 1
                 continue
@@ -1625,7 +1628,7 @@ class _BreakingChangeDetector:
             out.append(line)
             i += 1
 
-        out = _rn_remove_empty_section(out, "### Changed")
+        out = _rn_remove_empty_section(out, ("### Changed", "### Changes"))
         # Trim trailing separator blanks added by entry writes
         while out and out[-1] == "":
             out.pop()
