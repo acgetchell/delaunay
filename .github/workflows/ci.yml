@@ -1,4 +1,5 @@
 name: CI
+# cspell:ignore rhysd binstall mktemp sha256sum sha256sums shasum
 permissions:
   contents: read
 concurrency:
@@ -21,12 +22,17 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  ACTIONLINT_VERSION: "1.7.10"
+  MARKDOWNLINT_VERSION: "0.47.0"
+  CSPELL_VERSION: "9.4.0"
+  SHFMT_VERSION: "3.12.0"
+  UV_VERSION: "0.9.21"
 
 jobs:
   build:
     runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false  # Continue other jobs if one fails
+      fail-fast: false # Continue other jobs if one fails
       matrix:
         os:
           - ubuntu-latest
@@ -41,58 +47,174 @@ jobs:
             target: x86_64-pc-windows-msvc
 
     steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6.0.1
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c  # v1.15.2
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
         with:
           target: ${{ matrix.target }}
-          cache: true  # Built-in caching
+          cache: true # Built-in caching
           # toolchain, components, etc. are specified in rust-toolchain.toml
 
       - name: Install just
         if: matrix.os != 'windows-latest'
-        uses: taiki-e/install-action@4c6723ec9c638cccae824b8957c5085b695c8085  # v2.65.7
+        uses: taiki-e/install-action@4c6723ec9c638cccae824b8957c5085b695c8085 # v2.65.7
         with:
           tool: just
 
       - name: Install uv (for Python scripts and pytest)
         if: matrix.os != 'windows-latest'
-        uses: astral-sh/setup-uv@681c641aba71e4a1c380be3ab5e12ad51f415867  # v7.1.6
+        uses: astral-sh/setup-uv@681c641aba71e4a1c380be3ab5e12ad51f415867 # v7.1.6
         with:
-          version: "latest"
+          version: ${{ env.UV_VERSION }}
 
       - name: Install Node.js (for markdownlint and cspell)
         if: matrix.os != 'windows-latest'
         uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Install Node.js packages
         if: matrix.os != 'windows-latest'
         run: |
-          npm install -g markdownlint-cli cspell
+          npm install -g markdownlint-cli@${{ env.MARKDOWNLINT_VERSION }} cspell@${{ env.CSPELL_VERSION }}
+
+      - name: Install taplo (for TOML formatting and linting)
+        if: matrix.os != 'windows-latest'
+        uses: taiki-e/install-action@4c6723ec9c638cccae824b8957c5085b695c8085 # v2.65.7
+        with:
+          tool: taplo-cli
+
+      - name: Install actionlint (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        run: |
+          set -euo pipefail
+
+          # actionlint is published as prebuilt binaries (Go), not a Rust crate.
+          # Install directly from rhysd/actionlint releases to avoid cargo-binstall fallback failures.
+          # Verify SHA256 checksums from the upstream release for supply-chain hardening.
+          OS="$(uname -s)"
+          ARCH="$(uname -m)"
+
+          case "$OS" in
+            Linux) ACTIONLINT_OS="linux" ;;
+            Darwin) ACTIONLINT_OS="darwin" ;;
+            *)
+              echo "Unsupported OS for actionlint: $OS" >&2
+              exit 1
+              ;;
+          esac
+
+          case "$ARCH" in
+            x86_64|amd64) ACTIONLINT_ARCH="amd64" ;;
+            arm64|aarch64) ACTIONLINT_ARCH="arm64" ;;
+            *)
+              echo "Unsupported architecture for actionlint: $ARCH" >&2
+              exit 1
+              ;;
+          esac
+
+          verify_sha256() {
+            local checksum_file="$1"
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum -c "$checksum_file"
+            else
+              shasum -a 256 -c "$checksum_file"
+            fi
+          }
+
+          VERSION="${ACTIONLINT_VERSION}"
+          TARBALL="actionlint_${VERSION}_${ACTIONLINT_OS}_${ACTIONLINT_ARCH}.tar.gz"
+          CHECKSUMS_FILE="actionlint_${VERSION}_checksums.txt"
+          BASE_URL="https://github.com/rhysd/actionlint/releases/download/v${VERSION}"
+
+          tmpdir="$(mktemp -d)"
+          trap 'rm -rf "$tmpdir"' EXIT
+
+          curl -fsSL "${BASE_URL}/${TARBALL}" -o "$tmpdir/$TARBALL"
+          curl -fsSL "${BASE_URL}/${CHECKSUMS_FILE}" -o "$tmpdir/$CHECKSUMS_FILE"
+
+          orig_dir="$PWD"
+          cd "$tmpdir"
+          grep -F "  $TARBALL" "$CHECKSUMS_FILE" > checksum.txt
+          verify_sha256 checksum.txt
+          cd "$orig_dir"
+
+          tar -xzf "$tmpdir/$TARBALL" -C "$tmpdir"
+
+          actionlint_path="$(find "$tmpdir" -type f -name actionlint | head -n 1)"
+          if [[ -z "$actionlint_path" ]]; then
+            echo "actionlint binary not found in $TARBALL" >&2
+            exit 1
+          fi
+
+          sudo install -m 0755 "$actionlint_path" /usr/local/bin/actionlint
+
+      - name: actionlint -version
+        if: matrix.os != 'windows-latest'
+        run: actionlint -version
 
       - name: Install additional tools (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          # Install shellcheck, shfmt, and jq
+          # Install shellcheck, jq, and yamllint
           sudo apt-get update
-          sudo apt-get install -y shellcheck jq
+          sudo apt-get install -y shellcheck jq yamllint
 
-          # Install shfmt
-          SHFMT_VERSION="3.7.0"
+          # Install shfmt (pinned for CI consistency)
+          SHFMT_ASSET="shfmt_v${SHFMT_VERSION}_linux_amd64"
+          SHFMT_BASE_URL="https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}"
+
+          tmpdir="$(mktemp -d)"
+          trap 'rm -rf "$tmpdir"' EXIT
+
           curl -fsSL \
-            "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64" \
-            -o shfmt
-          chmod +x shfmt
-          sudo mv shfmt /usr/local/bin/
+            "${SHFMT_BASE_URL}/${SHFMT_ASSET}" \
+            -o "$tmpdir/${SHFMT_ASSET}"
+          curl -fsSL \
+            "${SHFMT_BASE_URL}/sha256sums.txt" \
+            -o "$tmpdir/sha256sums.txt"
+
+          (
+            cd "$tmpdir"
+            grep -F "  ${SHFMT_ASSET}" sha256sums.txt > checksum.txt
+            sha256sum -c checksum.txt
+          )
+
+          sudo install -m 0755 "$tmpdir/${SHFMT_ASSET}" /usr/local/bin/shfmt
 
       - name: Install additional tools (macOS)
         if: matrix.os == 'macos-latest'
         run: |
-          # Install shellcheck, shfmt, and jq via Homebrew
-          brew install shellcheck shfmt jq
+          # Install shellcheck, jq, and yamllint via Homebrew
+          brew install shellcheck jq yamllint
+
+          # Install shfmt (pinned for CI consistency with Linux)
+          SHFMT_ARCH="amd64"
+          if [[ "$(uname -m)" == "arm64" ]]; then
+            SHFMT_ARCH="arm64"
+          fi
+
+          SHFMT_ASSET="shfmt_v${SHFMT_VERSION}_darwin_${SHFMT_ARCH}"
+          SHFMT_BASE_URL="https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}"
+
+          tmpdir="$(mktemp -d)"
+          trap 'rm -rf "$tmpdir"' EXIT
+
+          curl -fsSL \
+            "${SHFMT_BASE_URL}/${SHFMT_ASSET}" \
+            -o "$tmpdir/${SHFMT_ASSET}"
+          curl -fsSL \
+            "${SHFMT_BASE_URL}/sha256sums.txt" \
+            -o "$tmpdir/sha256sums.txt"
+
+          (
+            cd "$tmpdir"
+            grep -F "  ${SHFMT_ASSET}" sha256sums.txt > checksum.txt
+            shasum -a 256 -c checksum.txt
+          )
+
+          sudo install -m 0755 "$tmpdir/${SHFMT_ASSET}" /usr/local/bin/shfmt
 
       - name: Run CI checks (Linux/macOS)
         if: matrix.os != 'windows-latest'

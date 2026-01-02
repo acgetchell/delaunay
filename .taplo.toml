@@ -1,0 +1,20 @@
+# Taplo configuration mirroring Rust-lang / Cargo TOML philosophy
+# Goal: correctness + stability, NOT opinionated formatting
+
+[formatting]
+# Match Cargo-style conservative formatting
+align_entries = false
+align_comments = false
+reorder_keys = false
+reorder_arrays = false
+array_auto_expand = false
+array_auto_collapse = false
+compact_arrays = false
+compact_inline_tables = false
+column_width = 0 # unlimited, like rustfmt defaults
+indent_string = "    " # 4 spaces (Cargo standard)
+trailing_newline = true
+crlf = false
+
+# Note: Taplo's config schema currently supports formatting/schema options only.
+# Linting behavior is configured via `taplo lint` defaults and CLI flags.

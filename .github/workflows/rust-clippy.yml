@@ -6,7 +6,7 @@ name: "Clippy Security Analysis"
 on:
   # Only run on schedule and manual trigger to avoid duplication with CI
   schedule:
-    - cron: '17 22 * * 0'  # Weekly on Sunday
+    - cron: "17 22 * * 0" # Weekly on Sunday
   workflow_dispatch:
   # Run on main branch pushes for security scanning
   push:
@@ -24,16 +24,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6.0.1
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c  # v1.15.2
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
         with:
           cache: true
           # toolchain, components, etc. are specified in rust-toolchain.toml
 
       - name: Cache clippy tools
-        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb  # v5.0.1
+        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb # v5.0.1
         with:
           path: ~/.cargo/bin/clippy-sarif
           key: clippy-sarif-${{ runner.os }}
@@ -58,7 +58,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload SARIF results
-        uses: github/codeql-action/upload-sarif@b36bf259c813715f76eafece573914b94412cd13  # v3
+        uses: github/codeql-action/upload-sarif@b36bf259c813715f76eafece573914b94412cd13 # v3
         with:
           sarif_file: rust-clippy-results.sarif
           category: "clippy"

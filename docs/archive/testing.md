@@ -764,7 +764,7 @@ algorithms.
   for algorithm support code
 - **Using approx crate**: The `assert_relative_eq!` macro cleanly handles floating-point comparisons and satisfies clippy requirements
 - **Comprehensive test documentation**: Documenting tests in `tests/README.md` immediately after creation helps maintain test organization
-- **Quality checks first**: Running `just commit-check` and `just quality` before committing ensures all standards are met
+- **Quality checks first**: Running `just ci` and `just check` before committing ensures all standards are met
 - **Codecov as source of truth**: Relying on Codecov's measurements rather than local tarpaulin avoids confusion from version/configuration differences
 
 ### What Could Be Improved
@@ -780,7 +780,7 @@ algorithms.
 - **Use Codecov as the primary metric**: Trust Codecov's numbers and commit frequently to get real feedback
 - **Target utility and helper types**: Testing support infrastructure (buffers, statistics, error types) often provides good coverage ROI
 - **Maintain test documentation**: Keep `tests/README.md` updated as new test files are added
-- **Run full quality gates**: Always use `just commit-check` before committing to catch all issues
+- **Run full quality gates**: Always use `just ci` before committing to catch all issues
 - **Consider upgrading CI tarpaulin**: Matching local version (0.33.0) to CI version (0.32.8) might reduce discrepancies
 - **Focus on public APIs and error paths**: These provide the most value for users and have the highest coverage impact
 

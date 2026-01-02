@@ -91,9 +91,10 @@ cargo install just
 just setup            # Installs all development tools and dependencies
 
 # Development workflow
-just ci               # Fast iteration (linting + lib/doc tests + bench compile)
-just commit-check     # Pre-commit validation (linting + all tests + examples)
-just commit-check-slow # Comprehensive with slow tests (100+ vertices)
+just fix              # Apply formatters/auto-fixes (mutating)
+just check            # Lint/validators (non-mutating)
+just ci               # Full CI run (checks + all tests + examples + bench compile)
+just ci-slow          # CI + slow tests (100+ vertices)
 just --list           # See all available commands
 just help-workflows   # Show common workflow patterns
 ```
@@ -156,12 +157,12 @@ For a comprehensive list of academic references and bibliographic citations used
 [Rust]: https://rust-lang.org
 [CGAL]: https://www.cgal.org/
 [C++]: https://isocpp.org
-[Spade]: https://github.com/Stoeoef/spade
+[Spade]: https://crates.io/crates/spade
 [JSON]: https://www.json.org/json-en.html
-[Delaunay triangulations]: https://en.wikipedia.org/wiki/Delaunay_triangulation
-[Constrained Delaunay triangulations]: https://en.wikipedia.org/wiki/Constrained_Delaunay_triangulation
-[Voronoi diagrams]: https://en.wikipedia.org/wiki/Voronoi_diagram
-[Convex hulls]: https://en.wikipedia.org/wiki/Convex_hull
+[Delaunay triangulations]: https://grokipedia.com/page/Delaunay_triangulation
+[Constrained Delaunay triangulations]: https://grokipedia.com/page/Constrained_Delaunay_triangulation
+[Voronoi diagrams]: https://grokipedia.com/page/Voronoi_diagram
+[Convex hulls]: https://grokipedia.com/page/Convex_hull
 [ChatGPT]: https://openai.com/chatgpt
 [Claude]: https://www.anthropic.com/claude
 [CodeRabbit]: https://coderabbit.ai/

@@ -88,6 +88,7 @@ use num_traits::{Float, NumCast, One, Zero};
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
 use crate::core::algorithms::incremental_insertion::{
     InsertionError, InsertionOutcome, InsertionResult, InsertionStatistics, extend_hull,
     fill_cavity, repair_neighbor_pointers, wire_cavity_neighbors,
@@ -97,9 +98,11 @@ use crate::core::algorithms::locate::{
 };
 use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::{
-    CavityBoundaryBuffer, CellKeyBuffer, CellKeySet, FacetIssuesMap, FacetToCellsMap, FastHasher,
-    MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
+    CavityBoundaryBuffer, CellKeyBuffer, CellKeySet, FacetIssuesMap, FacetToCellsMap, FastHashMap,
+    FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, VertexToCellsMap,
+    fast_hash_map_with_capacity, fast_hash_set_with_capacity,
 };
+use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter, FacetHandle};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation_data_structure::{
@@ -725,6 +728,436 @@ where
             .build_facet_to_cells_map()
             .expect("Failed to build facet map - triangulation structure is corrupted");
         BoundaryFacetsIter::new(&self.tds, facet_map)
+    }
+
+    // =============================================================================
+    // Public Topology Traversal & Adjacency API (Read-only)
+    // =============================================================================
+
+    /// Returns an iterator over all unique edges in the triangulation.
+    ///
+    /// Edges are inferred from the vertex lists of each cell; they are not stored explicitly.
+    ///
+    /// ## Allocation and iteration order
+    ///
+    /// This method allocates an internal set to deduplicate edges. The iteration order is
+    /// not specified.
+    ///
+    /// If you need fast repeated topology queries, consider building an
+    /// [`AdjacencyIndex`] once via [`Triangulation::build_adjacency_index`](Self::build_adjacency_index).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// // A single 3D tetrahedron has 6 unique edges.
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tri = dt.triangulation();
+    ///
+    /// let edges: std::collections::HashSet<_> = tri.edges().collect();
+    /// assert_eq!(edges.len(), 6);
+    /// ```
+    pub fn edges(&self) -> impl Iterator<Item = EdgeKey> + '_ {
+        self.collect_edges().into_iter()
+    }
+
+    /// Returns the number of unique edges in the triangulation.
+    ///
+    /// This is equivalent to `self.edges().count()`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// // A single 2D triangle has 3 unique edges.
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tri = dt.triangulation();
+    ///
+    /// assert_eq!(tri.number_of_edges(), 3);
+    /// ```
+    #[must_use]
+    pub fn number_of_edges(&self) -> usize {
+        self.collect_edges().len()
+    }
+
+    /// Returns an iterator over all cells adjacent (incident) to a vertex.
+    ///
+    /// If `v` is not present in this triangulation, the iterator is empty.
+    ///
+    /// Iteration order is not specified.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// // Two tetrahedra sharing a triangular facet.
+    /// let vertices: Vec<_> = vec![
+    ///     // Shared triangle
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([2.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 2.0, 0.0]),
+    ///     // Two apices
+    ///     vertex!([1.0, 0.7, 1.5]),
+    ///     vertex!([1.0, 0.7, -1.5]),
+    /// ];
+    ///
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tri = dt.triangulation();
+    ///
+    /// // Find a vertex on the shared triangle by coordinates.
+    /// let shared_vertex_key = tri
+    ///     .vertices()
+    ///     .find_map(|(vk, _)| {
+    ///         let coords = tri.vertex_coords(vk)?;
+    ///         (coords == [0.0, 0.0, 0.0]).then_some(vk)
+    ///     })
+    ///     .unwrap();
+    ///
+    /// // The shared vertex is incident to both cells.
+    /// assert_eq!(tri.adjacent_cells(shared_vertex_key).count(), 2);
+    /// ```
+    pub fn adjacent_cells(&self, v: VertexKey) -> impl Iterator<Item = CellKey> + '_ {
+        self.tds.find_cells_containing_vertex_by_key(v).into_iter()
+    }
+
+    /// Returns an iterator over all neighbors of a cell.
+    ///
+    /// Boundary facets are omitted (only existing neighbors are yielded). If `c` is not
+    /// present, the iterator is empty.
+    ///
+    /// Iteration order is not specified.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// // Two tetrahedra sharing a triangular facet => each tetra has exactly one neighbor.
+    /// let vertices: Vec<_> = vec![
+    ///     // Shared triangle
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([2.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 2.0, 0.0]),
+    ///     // Two apices
+    ///     vertex!([1.0, 0.7, 1.5]),
+    ///     vertex!([1.0, 0.7, -1.5]),
+    /// ];
+    ///
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tri = dt.triangulation();
+    ///
+    /// let cell_keys: Vec<_> = tri.cells().map(|(ck, _)| ck).collect();
+    /// assert_eq!(cell_keys.len(), 2);
+    ///
+    /// for &ck in &cell_keys {
+    ///     let neighbors: Vec<_> = tri.cell_neighbors(ck).collect();
+    ///     assert_eq!(neighbors.len(), 1);
+    ///     assert!(cell_keys.contains(&neighbors[0]));
+    ///     assert_ne!(neighbors[0], ck);
+    /// }
+    /// ```
+    pub fn cell_neighbors(&self, c: CellKey) -> impl Iterator<Item = CellKey> + '_ {
+        self.tds
+            .get_cell(c)
+            .and_then(|cell| cell.neighbors())
+            .into_iter()
+            .flat_map(|neighbors| neighbors.iter().copied().flatten())
+    }
+
+    /// Returns an iterator over all unique edges incident to a vertex.
+    ///
+    /// If `v` is not present in this triangulation, the iterator is empty.
+    ///
+    /// ## Allocation and iteration order
+    ///
+    /// This method allocates an internal set to deduplicate edges. The iteration order is
+    /// not specified.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// // In a single tetrahedron, each vertex has degree 3.
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tri = dt.triangulation();
+    ///
+    /// let v0 = tri.vertices().next().unwrap().0;
+    /// let incident: Vec<_> = tri.incident_edges(v0).collect();
+    /// assert_eq!(incident.len(), 3);
+    /// assert!(incident
+    ///     .iter()
+    ///     .all(|e| matches!(e.endpoints(), (a, b) if a == v0 || b == v0)));
+    /// ```
+    pub fn incident_edges(&self, v: VertexKey) -> impl Iterator<Item = EdgeKey> + '_ {
+        self.collect_incident_edges(v).into_iter()
+    }
+
+    /// Returns the number of unique edges incident to a vertex.
+    ///
+    /// If `v` is not present in this triangulation, returns 0.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// // In a single tetrahedron, each vertex has degree 3.
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tri = dt.triangulation();
+    ///
+    /// let v0 = tri.vertices().next().unwrap().0;
+    /// assert_eq!(tri.number_of_incident_edges(v0), 3);
+    /// ```
+    #[must_use]
+    pub fn number_of_incident_edges(&self, v: VertexKey) -> usize {
+        self.collect_incident_edges(v).len()
+    }
+
+    /// Returns a slice view of a cell's vertex keys.
+    ///
+    /// This is a zero-allocation accessor. If `c` is not present, returns `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tri = dt.triangulation();
+    ///
+    /// let cell_key = tri.cells().next().unwrap().0;
+    /// let cell_vertices = tri.cell_vertices(cell_key).unwrap();
+    /// assert_eq!(cell_vertices.len(), 3); // D+1 for a 2D simplex
+    /// ```
+    #[must_use]
+    pub fn cell_vertices(&self, c: CellKey) -> Option<&[VertexKey]> {
+        self.tds.get_cell(c).map(Cell::vertices)
+    }
+
+    /// Returns a slice view of a vertex's coordinates.
+    ///
+    /// This is a zero-allocation accessor. If `v` is not present, returns `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tri = dt.triangulation();
+    ///
+    /// // Find the key for a known vertex by matching coordinates.
+    /// let v_key = tri
+    ///     .vertices()
+    ///     .find_map(|(vk, _)| (tri.vertex_coords(vk)? == [1.0, 0.0]).then_some(vk))
+    ///     .unwrap();
+    ///
+    /// assert_eq!(tri.vertex_coords(v_key).unwrap(), [1.0, 0.0]);
+    /// ```
+    #[must_use]
+    pub fn vertex_coords(&self, v: VertexKey) -> Option<&[K::Scalar]> {
+        self.tds
+            .get_vertex_by_key(v)
+            .map(|vertex| &vertex.point().coords()[..])
+    }
+
+    /// Builds an immutable adjacency index for fast repeated topology queries.
+    ///
+    /// This never stores any cache internally and does not mutate the triangulation.
+    ///
+    /// ## Notes
+    ///
+    /// - No sorted-order guarantees are provided for the values.
+    /// - The returned collections are optimized for performance.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the triangulation data structure is internally inconsistent
+    /// (e.g., a cell references a missing vertex key or a missing neighbor cell key).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// // Two tetrahedra sharing a triangular facet.
+    /// let vertices: Vec<_> = vec![
+    ///     // Shared triangle
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([2.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 2.0, 0.0]),
+    ///     // Two apices
+    ///     vertex!([1.0, 0.7, 1.5]),
+    ///     vertex!([1.0, 0.7, -1.5]),
+    /// ];
+    ///
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tri = dt.triangulation();
+    ///
+    /// let index = tri.build_adjacency_index().unwrap();
+    ///
+    /// // The index exposes adjacency maps keyed by VertexKey / CellKey.
+    /// let cell_keys: Vec<_> = tri.cells().map(|(ck, _)| ck).collect();
+    /// for &ck in &cell_keys {
+    ///     let neighbors = index.cell_to_neighbors.get(&ck).unwrap();
+    ///     assert_eq!(neighbors.len(), 1);
+    /// }
+    /// ```
+    pub fn build_adjacency_index(&self) -> Result<AdjacencyIndex, AdjacencyIndexBuildError> {
+        let vertex_cap = self.tds.number_of_vertices();
+        let cell_cap = self.tds.number_of_cells();
+
+        let mut vertex_to_cells: VertexToCellsMap = fast_hash_map_with_capacity(vertex_cap);
+        let mut cell_to_neighbors: FastHashMap<
+            CellKey,
+            SmallBuffer<CellKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+        > = fast_hash_map_with_capacity(cell_cap);
+        let mut vertex_to_edges: FastHashMap<
+            VertexKey,
+            SmallBuffer<EdgeKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+        > = fast_hash_map_with_capacity(vertex_cap);
+
+        // Deduplicate edges globally while building the index.
+        let edges_per_cell = (D + 1).saturating_mul(D) / 2;
+        let mut seen_edges: FastHashSet<EdgeKey> =
+            fast_hash_set_with_capacity(cell_cap.saturating_mul(edges_per_cell));
+
+        for (cell_key, cell) in self.tds.cells() {
+            let vertices = cell.vertices();
+
+            // Vertex → cells
+            for &vk in vertices {
+                if !self.tds.contains_vertex_key(vk) {
+                    return Err(AdjacencyIndexBuildError::MissingVertexKey {
+                        cell_key,
+                        vertex_key: vk,
+                    });
+                }
+                vertex_to_cells.entry(vk).or_default().push(cell_key);
+            }
+
+            // Cell → neighbors
+            if let Some(neighbors) = cell.neighbors() {
+                let mut neighs: SmallBuffer<CellKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                    SmallBuffer::new();
+
+                for &n_opt in neighbors {
+                    let Some(nk) = n_opt else {
+                        continue;
+                    };
+
+                    if !self.tds.contains_cell(nk) {
+                        return Err(AdjacencyIndexBuildError::MissingNeighborCell {
+                            cell_key,
+                            neighbor_key: nk,
+                        });
+                    }
+
+                    neighs.push(nk);
+                }
+
+                if !neighs.is_empty() {
+                    cell_to_neighbors.insert(cell_key, neighs);
+                }
+            }
+
+            // Vertex → edges (deduped)
+            for i in 0..vertices.len() {
+                for j in (i + 1)..vertices.len() {
+                    let edge = EdgeKey::new(vertices[i], vertices[j]);
+                    if !seen_edges.insert(edge) {
+                        continue;
+                    }
+
+                    let (a, b) = edge.endpoints();
+                    vertex_to_edges.entry(a).or_default().push(edge);
+                    vertex_to_edges.entry(b).or_default().push(edge);
+                }
+            }
+        }
+
+        Ok(AdjacencyIndex {
+            vertex_to_edges,
+            vertex_to_cells,
+            cell_to_neighbors,
+        })
+    }
+
+    #[must_use]
+    fn collect_edges(&self) -> FastHashSet<EdgeKey> {
+        let cell_cap = self.tds.number_of_cells();
+        let edges_per_cell = (D + 1).saturating_mul(D) / 2;
+
+        let mut edges: FastHashSet<EdgeKey> =
+            fast_hash_set_with_capacity(cell_cap.saturating_mul(edges_per_cell));
+
+        for (_cell_key, cell) in self.tds.cells() {
+            let vertices = cell.vertices();
+            for i in 0..vertices.len() {
+                for j in (i + 1)..vertices.len() {
+                    edges.insert(EdgeKey::new(vertices[i], vertices[j]));
+                }
+            }
+        }
+
+        edges
+    }
+
+    #[must_use]
+    fn collect_incident_edges(&self, v: VertexKey) -> FastHashSet<EdgeKey> {
+        let mut edges: FastHashSet<EdgeKey> = FastHashSet::default();
+
+        for cell_key in self.adjacent_cells(v) {
+            let Some(cell) = self.tds.get_cell(cell_key) else {
+                continue;
+            };
+
+            for &other in cell.vertices() {
+                if other == v {
+                    continue;
+                }
+                edges.insert(EdgeKey::new(v, other));
+            }
+        }
+
+        edges
     }
 
     /// Validates topological invariants of the triangulation (Level 3).
@@ -3736,4 +4169,174 @@ mod tests {
         ],
         [0.16, 0.16, 0.16, 0.16, 0.16]
     );
+
+    // =============================================================================
+    // Public Topology Traversal & Adjacency API (Read-only)
+    // =============================================================================
+
+    #[test]
+    fn test_topology_edges_triangle_2d() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+
+        let dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let tri = dt.triangulation();
+
+        assert_eq!(tri.number_of_cells(), 1);
+        assert_eq!(tri.number_of_vertices(), 3);
+        assert_eq!(tri.number_of_edges(), 3);
+
+        let edges: std::collections::HashSet<_> = tri.edges().collect();
+        assert_eq!(edges.len(), 3);
+
+        // Edge endpoints should always be vertex keys from this triangulation.
+        assert!(edges.iter().all(|e| {
+            let (a, b) = e.endpoints();
+            a != b && tri.vertex_coords(a).is_some() && tri.vertex_coords(b).is_some()
+        }));
+    }
+
+    #[test]
+    fn test_topology_edges_and_incident_edges_double_tetrahedron_3d() {
+        // Two tetrahedra sharing a triangular facet.
+        let vertices: Vec<_> = vec![
+            // Shared triangle
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([2.0, 0.0, 0.0]),
+            vertex!([1.0, 2.0, 0.0]),
+            // Two apices
+            vertex!([1.0, 0.7, 1.5]),
+            vertex!([1.0, 0.7, -1.5]),
+        ];
+
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let tri = dt.triangulation();
+
+        assert_eq!(tri.number_of_cells(), 2);
+        assert_eq!(tri.number_of_vertices(), 5);
+
+        // This configuration has 9 unique edges (3 base + 6 apex-to-base).
+        assert_eq!(tri.number_of_edges(), 9);
+
+        // A base vertex has degree 4: two base edges + two apex edges.
+        let base_vertex_key = tri
+            .vertices()
+            .find_map(|(vk, _)| (tri.vertex_coords(vk)? == [0.0, 0.0, 0.0]).then_some(vk))
+            .unwrap();
+        assert_eq!(tri.number_of_incident_edges(base_vertex_key), 4);
+
+        // An apex has degree 3: connected to all three base vertices.
+        let apex_vertex_key = tri
+            .vertices()
+            .find_map(|(vk, _)| (tri.vertex_coords(vk)? == [1.0, 0.7, 1.5]).then_some(vk))
+            .unwrap();
+        assert_eq!(tri.number_of_incident_edges(apex_vertex_key), 3);
+    }
+
+    #[test]
+    fn test_topology_queries_missing_keys_are_empty_or_none() {
+        // Use a "null" SlotMap key, which should never be present in a valid triangulation.
+        let vertices_a = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt_a: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices_a).unwrap();
+        let tri_a = dt_a.triangulation();
+
+        let missing_vertex_key = VertexKey::default();
+        assert_eq!(tri_a.adjacent_cells(missing_vertex_key).count(), 0);
+        assert_eq!(tri_a.incident_edges(missing_vertex_key).count(), 0);
+        assert_eq!(tri_a.number_of_incident_edges(missing_vertex_key), 0);
+        assert!(tri_a.vertex_coords(missing_vertex_key).is_none());
+
+        let missing_cell_key = CellKey::default();
+        assert_eq!(tri_a.cell_neighbors(missing_cell_key).count(), 0);
+        assert!(tri_a.cell_vertices(missing_cell_key).is_none());
+    }
+
+    #[test]
+    fn test_topology_geometry_accessors_roundtrip() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+
+        let dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let tri = dt.triangulation();
+
+        let v_key = tri
+            .vertices()
+            .find_map(|(vk, _)| (tri.vertex_coords(vk)? == [1.0, 0.0]).then_some(vk))
+            .unwrap();
+        assert_eq!(tri.vertex_coords(v_key).unwrap(), [1.0, 0.0]);
+
+        let cell_key = tri.cells().next().unwrap().0;
+        let cell_vertices = tri.cell_vertices(cell_key).unwrap();
+        assert_eq!(cell_vertices.len(), 3);
+        assert!(cell_vertices.contains(&v_key));
+    }
+
+    #[test]
+    fn test_build_adjacency_index_basic_invariants() {
+        // Two tetrahedra sharing a triangular facet.
+        let vertices: Vec<_> = vec![
+            // Shared triangle
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([2.0, 0.0, 0.0]),
+            vertex!([1.0, 2.0, 0.0]),
+            // Two apices
+            vertex!([1.0, 0.7, 1.5]),
+            vertex!([1.0, 0.7, -1.5]),
+        ];
+
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let tri = dt.triangulation();
+
+        let index = tri.build_adjacency_index().unwrap();
+
+        // Each cell has exactly one neighbor.
+        let cell_keys: Vec<_> = tri.cells().map(|(ck, _)| ck).collect();
+        assert_eq!(cell_keys.len(), 2);
+        for &ck in &cell_keys {
+            let neighbors = index.cell_to_neighbors.get(&ck).unwrap();
+            assert_eq!(neighbors.len(), 1);
+            assert!(cell_keys.contains(&neighbors[0]));
+            assert_ne!(neighbors[0], ck);
+        }
+
+        // For every vertex, edges/cells lists exist and are consistent.
+        for (vk, _) in tri.vertices() {
+            let cells = index.vertex_to_cells.get(&vk).unwrap();
+            assert!(!cells.is_empty());
+
+            let edges = index.vertex_to_edges.get(&vk).unwrap();
+            assert!(!edges.is_empty());
+            assert!(
+                edges
+                    .iter()
+                    .all(|e| matches!(e.endpoints(), (a, b) if a == vk || b == vk))
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_adjacency_index_empty_triangulation_is_empty() {
+        let tri: Triangulation<FastKernel<f64>, (), (), 3> =
+            Triangulation::new_empty(FastKernel::new());
+
+        let index = tri.build_adjacency_index().unwrap();
+        assert!(index.vertex_to_cells.is_empty());
+        assert!(index.cell_to_neighbors.is_empty());
+        assert!(index.vertex_to_edges.is_empty());
+    }
 }

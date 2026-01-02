@@ -24,33 +24,44 @@ When user requests commit message generation:
 
 ### Code Quality
 
-- **ALLOWED**: Run formatters/linters: `cargo fmt`, `cargo clippy`, `uvx ruff format/check --fix`, `shfmt -w`, `markdownlint --fix`
+- **ALLOWED**: Run formatters/linters: `cargo fmt`, `cargo clippy`, `cargo doc`, `taplo fmt`, `taplo lint`,
+  `uv run ruff check --fix`, `uv run ruff format`, `shfmt -w`, `shellcheck -x`, `npx markdownlint --fix`,
+  `npx cspell lint`, `actionlint`
 - **NEVER**: Use `sed`, `awk`, `perl` for code edits
 - **ALWAYS**: Use `apply_patch` for edits (and `create_file` for new files)
 - **EXCEPTION**: Shell text tools OK for read-only analysis only
 
 ### Validation
 
-- **JSON**: Validate with `jq empty <file>.json` after editing
-- **TOML**: Validate with `uv run python -c "import tomllib; tomllib.load(open('<file>.toml', 'rb'))"` after editing
-- **Spell check**: Run after editing any files; add legitimate technical terms to `cspell.json` `words` array (don't spell-check `cspell.json` itself)
+- **JSON**: Validate with `jq empty <file>.json` after editing (or `just validate-json`)
+- **TOML**: Lint/format with taplo: `just toml-lint`, `just toml-fmt-check`, `just toml-fmt` (or validate parsing with `just validate-toml`)
+- **GitHub Actions**: Validate workflows with `just action-lint` (uses `actionlint`)
+- **Spell check**: Run `just spell-check` (or `just lint-docs`) after editing; add legitimate technical terms to
+  `cspell.json` `words` array (don't spell-check `cspell.json` itself)
 - **Shell scripts**: Run `shfmt -w scripts/*.sh` and `shellcheck -x scripts/*.sh` after editing
+
+### Rust
+
+- Integration tests in `tests/*.rs` are separate crates; add a crate-level doc comment (`//! ...`) at the top to satisfy clippy `missing_docs` (CI uses `-D warnings`).
 
 ### Python
 
 - Use `uv run` for all Python scripts (never `python3` or `python` directly)
 - Use pytest for tests (not unittest)
-- **Type checking**: `just python-lint` includes mypy (blocking - all code must pass type checks)
+- **Type checking**: `just python-lint` includes ty + mypy (blocking - all code must pass type checks)
 - Add type hints to new code
 
 ## Common Commands
 
 ```bash
-just commit-check     # Pre-commit validation (use before pushing)
-just ci               # Fast iteration (linting + tests + bench compile)
+just fix              # Apply formatters/auto-fixes (mutating)
+just check            # Lint/validators (non-mutating)
+just ci               # Full CI run (checks + all tests + examples + bench compile)
+just ci-slow          # CI + slow tests (100+ vertices)
 just lint             # All linting
 just test             # Lib and doc tests
-just test-all         # All tests
+just test-integration # Integration tests (includes proptests)
+just test-all         # All tests (Rust + Python)
 just examples         # Run all examples
 ```
 
@@ -69,7 +80,7 @@ just examples         # Run all examples
 
 ## Test Execution
 
-- **tests/ changes**: Run `just test-release` or `just test-debug`
+- **tests/ changes**: Run `just test-integration` (or `just ci`)
 - **examples/ changes**: Run `just examples`
 - **benches/ changes**: Run `just bench-compile`
 - **src/ changes**: Run `just test`

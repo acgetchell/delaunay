@@ -736,7 +736,7 @@ just test-release
 just test-allocation
 
 # Comprehensive pre-release checks
-just commit-check
+just ci
 ```
 
 ## Contributing

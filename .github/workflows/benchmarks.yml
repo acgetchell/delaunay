@@ -13,10 +13,10 @@ on:
       - main
     # Only run on changes that could affect performance
     paths:
-      - 'src/**'
-      - 'benches/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
+      - "src/**"
+      - "benches/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
 
   # On pushes to main branch
   push:
@@ -24,10 +24,10 @@ on:
       - main
     # Only run on changes that could affect performance
     paths:
-      - 'src/**'
-      - 'benches/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
+      - "src/**"
+      - "benches/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
 
 # Security: Define minimal required permissions
 permissions:
@@ -42,36 +42,35 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  BENCHMARK_TIMEOUT: 5400  # 90 minutes for CI benchmarks (4D/5D triangulations are expensive)
+  BENCHMARK_TIMEOUT: 5400 # 90 minutes for CI benchmarks (4D/5D triangulations are expensive)
 
 jobs:
   performance-regression:
     runs-on: macos-15
-    timeout-minutes: 105  # Allow 90min benchmark timeout + 15min for setup/teardown
+    timeout-minutes: 105 # Allow 90min benchmark timeout + 15min for setup/teardown
 
     steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6.0.1
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
-          fetch-depth: 0  # required to diff against BASELINE_COMMIT
+          fetch-depth: 0 # required to diff against BASELINE_COMMIT
 
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c  # v1.15.2
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
         with:
           cache: true
           # Toolchain from rust-toolchain.toml; no extra target needed on macOS-ARM
 
       - name: Install uv (Python package manager)
-        uses: astral-sh/setup-uv@681c641aba71e4a1c380be3ab5e12ad51f415867  # v7.1.6
+        uses: astral-sh/setup-uv@681c641aba71e4a1c380be3ab5e12ad51f415867 # v7.1.6
         with:
           version: "latest"
 
       - name: Verify uv installation
         run: uv --version
 
-
       - name: Find baseline artifact
         id: find_baseline
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd  # v8.0.0
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
           script: |
             try {
@@ -222,7 +221,7 @@ jobs:
 
       - name: Download latest baseline artifact
         if: steps.find_baseline.outputs.found == 'true'
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         continue-on-error: true
         with:
           name: ${{ steps.find_baseline.outputs.artifact_name }}
@@ -330,7 +329,7 @@ jobs:
 
       - name: Upload regression test results
         if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false' && always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6.0.0
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: performance-regression-results-${{ github.run_number }}
           path: |

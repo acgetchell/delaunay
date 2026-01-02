@@ -125,9 +125,10 @@ Before you begin, ensure you have:
    just help-workflows   # Show common workflow patterns
    
    # Common workflows (from quick to comprehensive)
-   just ci              # Fast iteration (linting + lib/doc tests + bench compile)
-   just commit-check    # Pre-commit validation (linting + all tests + examples)
-   just commit-check-slow # Comprehensive with slow tests (100+ vertices)
+   just fix             # Apply formatters/auto-fixes (mutating)
+   just check           # Lint/validators (non-mutating)
+   just ci              # Full CI run (checks + all tests + examples + bench compile)
+   just ci-slow         # CI + slow tests (100+ vertices)
    just ci-baseline     # CI + save performance baseline
    
    # Granular quality checks
@@ -348,11 +349,12 @@ just --list
 just help-workflows   # Show common workflow patterns
 
 # Quick iteration cycle
-just ci               # Fast iteration (linting + lib/doc tests + bench compile)
+just fix              # Apply formatters/auto-fixes (mutating)
+just check            # Lint/validators (non-mutating)
 
-# Pre-commit validation
-just commit-check     # Pre-commit validation (linting + all tests + examples)
-just commit-check-slow # Comprehensive with slow tests (100+ vertices)
+# Full CI / pre-push validation
+just ci               # Full CI run (checks + all tests + examples + bench compile)
+just ci-slow          # CI + slow tests (100+ vertices)
 just ci-baseline      # CI + save performance baseline
 
 # Testing workflows
@@ -386,10 +388,13 @@ just bench-quick      # Quick validation (minimal samples, ~30 sec)
 - `just lint-code` - Code linting (Rust, Python, Shell)
 - `just lint-docs` - Documentation linting (Markdown, Spelling)
 - `just lint-config` - Configuration validation (JSON, TOML, Actions)
-- `just python-lint` - Format and lint Python scripts
+- `just python-fix` - Auto-format / auto-fix Python scripts
+- `just python-lint` - Lint + typecheck Python scripts (non-mutating)
 - `just spell-check` - Check spelling across project files
-- `just shell-lint` - Format and lint shell scripts
-- `just markdown-lint` - Lint markdown files
+- `just shell-fmt` - Format shell scripts
+- `just shell-lint` - Lint/check shell scripts (non-mutating)
+- `just markdown-fix` - Auto-fix markdown formatting
+- `just markdown-lint` - Lint/check markdown (non-mutating)
 - `just action-lint` - GitHub Actions workflow validation
 
 #### Testing
@@ -429,14 +434,15 @@ just bench-quick      # Quick validation (minimal samples, ~30 sec)
 **During active development:**
 
 ```bash
-just ci               # Fast iteration: format, lint, test (matches CI)
+just fix              # Apply formatters/auto-fixes (mutating)
+just check            # Lint/validators (non-mutating)
 ```
 
-**Before committing:**
+**Before committing/pushing:**
 
 ```bash
-just commit-check     # Pre-commit validation: lint + all tests + examples
-just commit-check-slow # Also includes slow/stress tests (100+ vertices)
+just ci               # Full CI run (checks + all tests + examples + bench compile)
+just ci-slow          # Optional: also includes slow/stress tests (100+ vertices)
 ```
 
 **When working on performance:**
@@ -451,7 +457,7 @@ just bench-dev        # Quick development iteration (10x faster)
 **Testing CI locally:**
 
 ```bash
-just ci               # Fast iteration (linting + lib/doc tests + bench compile)
+just ci               # Full CI run (matches .github/workflows/ci.yml)
 ```
 
 **See all available commands:**

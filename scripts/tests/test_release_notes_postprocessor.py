@@ -68,6 +68,81 @@ class TestReleaseNotesPostProcessor:
             "Expected verbose breaking-change body details to be trimmed"
         )
 
+    def test_breaking_changes_detects_escaped_markdown_identifiers(self):
+        content = """# Changelog
+
+## v1.0.0
+
+### Changed
+
+- **Switch to insert\\_transactional** [`abcdef123`](https://github.com/acgetchell/delaunay/commit/abcdef123)
+  Extra details that should not appear in the breaking-changes summary.
+
+- **Regular change** [`123456789`](https://github.com/acgetchell/delaunay/commit/123456789)
+"""
+
+        processed = _ReleaseNotesPostProcessor.process(content)
+        lines = processed.splitlines()
+
+        assert "### ⚠️ Breaking Changes" in processed, "Expected breaking changes section to be present"
+
+        breaking_body = _section_body(lines, "### ⚠️ Breaking Changes")
+        assert any("insert\\_transactional" in line for line in breaking_body), "Expected escaped identifier entry to be recognized as breaking"
+        assert not any("Extra details that should not appear" in line for line in breaking_body), (
+            "Expected verbose breaking-change body details to be trimmed"
+        )
+
+        changed_body = _section_body(lines, "### Changed")
+        assert not any("insert\\_transactional" in line for line in changed_body), "Expected breaking-change entry to be removed from Changed section"
+
+    def test_breaking_changes_detects_removed_public_api(self):
+        content = """# Changelog
+
+## v1.0.0
+
+### Changed
+
+- **Removed public API: Foo::bar()** [`abcdef123`](https://github.com/acgetchell/delaunay/commit/abcdef123)
+
+- **Regular change** [`123456789`](https://github.com/acgetchell/delaunay/commit/123456789)
+"""
+
+        processed = _ReleaseNotesPostProcessor.process(content)
+        lines = processed.splitlines()
+
+        breaking_body = _section_body(lines, "### ⚠️ Breaking Changes")
+        assert any("Removed public API" in line for line in breaking_body), (
+            "Expected removed-public-API entry to be present in breaking changes section"
+        )
+
+        changed_body = _section_body(lines, "### Changed")
+        assert not any("Removed public API" in line for line in changed_body), "Expected removed-public-API entry to be removed from Changed section"
+
+    def test_breaking_changes_detects_incompatible_language(self):
+        content = """# Changelog
+
+## v1.0.0
+
+### Changed
+
+- **Incompatible change: Foo now requires Bar** [`abcdef123`](https://github.com/acgetchell/delaunay/commit/abcdef123)
+
+- **Regular change** [`123456789`](https://github.com/acgetchell/delaunay/commit/123456789)
+"""
+
+        processed = _ReleaseNotesPostProcessor.process(content)
+        lines = processed.splitlines()
+
+        breaking_body = _section_body(lines, "### ⚠️ Breaking Changes")
+        assert any("Incompatible change" in line for line in breaking_body), (
+            "Expected incompatible-change entry to be present in breaking changes section"
+        )
+
+        changed_body = _section_body(lines, "### Changed")
+        assert not any("Incompatible change" in line for line in changed_body), (
+            "Expected incompatible-change entry to be removed from Changed section"
+        )
+
     def test_commit_links_attached_to_top_level_only(self):
         top_sha = "1234567890123456789012345678901234567890"  # 40 chars
         nested_sha = "9876543210987654321098765432109876543210"  # 40 chars

@@ -11,7 +11,7 @@ rules:
   - p/security-audit
 
   # Generic security patterns that apply across languages
-  - p/secrets  # Detect hardcoded secrets
+  - p/secrets # Detect hardcoded secrets
   - p/command-injection
   - p/sql-injection
 

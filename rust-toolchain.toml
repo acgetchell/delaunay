@@ -4,21 +4,21 @@ channel = "1.92.0"
 
 # Essential components for development
 components = [
-    "cargo",           # Package manager
-    "clippy",          # Linting (you use strict pedantic mode)
-    "rustfmt",         # Code formatting (you use cargo fmt --all)
-    "rust-docs",       # Local documentation
-    "rust-std",        # Standard library
-    "rust-src",        # Source code (helpful for IDEs)
-    "rust-analyzer",   # Language server for IDE support
+    "cargo", # Package manager
+    "clippy", # Linting (you use strict pedantic mode)
+    "rustfmt", # Code formatting (you use cargo fmt --all)
+    "rust-docs", # Local documentation
+    "rust-std", # Standard library
+    "rust-src", # Source code (helpful for IDEs)
+    "rust-analyzer", # Language server for IDE support
 ]
 
 # Target the platforms you support (adjust as needed)
 targets = [
-    "x86_64-apple-darwin",      # macOS Intel
-    "aarch64-apple-darwin",     # macOS Apple Silicon
+    "x86_64-apple-darwin", # macOS Intel
+    "aarch64-apple-darwin", # macOS Apple Silicon
     "x86_64-unknown-linux-gnu", # Linux
-    "x86_64-pc-windows-msvc",   # Windows
+    "x86_64-pc-windows-msvc", # Windows
 ]
 
 # Set this toolchain as the profile default

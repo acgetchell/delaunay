@@ -1,7 +1,7 @@
 //! # delaunay
 //!
 //! This is a library for computing the Delaunay triangulation of a set of n-dimensional points
-//! in a [simplicial complex](https://en.wikipedia.org/wiki/Simplicial_complex)
+//! in a [simplicial complex](https://grokipedia.com/page/Simplicial_complex)
 //! inspired by [CGAL](https://www.cgal.org).
 //!
 //! # Features
@@ -430,18 +430,22 @@ pub mod core {
         /// Point location algorithms (facet walking)
         pub mod locate;
     }
+
+    pub mod adjacency;
     pub mod boundary;
     pub mod cell;
     /// High-performance collection types optimized for computational geometry
     pub mod collections;
     /// Delaunay triangulation layer with incremental insertion - Phase 3 TODO
     pub mod delaunay_triangulation;
+    pub mod edge;
     pub mod facet;
     /// Generic triangulation combining kernel + Tds - Phase 2 TODO
     pub mod triangulation;
     pub mod triangulation_data_structure;
     pub mod util;
     pub mod vertex;
+
     /// Traits for Delaunay triangulation data structures.
     pub mod traits {
         pub mod boundary_analysis;
@@ -451,14 +455,18 @@ pub mod core {
         pub use data_type::*;
         pub use facet_cache::*;
     }
+
     // Re-export the `core` modules.
+    pub use adjacency::*;
     pub use cell::*;
     pub use delaunay_triangulation::*;
+    pub use edge::*;
     pub use facet::*;
     pub use traits::*;
     pub use triangulation_data_structure::*;
     pub use util::*;
     pub use vertex::*;
+
     // Note: collections module not re-exported here to avoid namespace pollution
     // Import specific types via prelude or use crate::core::collections::
 }
@@ -585,8 +593,10 @@ pub mod topology {
 pub mod prelude {
     // Re-export from core
     pub use crate::core::{
+        adjacency::*,
         cell::*,
         delaunay_triangulation::*,
+        edge::*,
         facet::*,
         traits::{boundary_analysis::*, data_type::*},
         triangulation::*,
@@ -636,8 +646,9 @@ pub const fn is_normal<T: Sized + Send + Sync + Unpin>() -> bool {
 mod tests {
     use crate::{
         core::{
-            cell::Cell, delaunay_triangulation::DelaunayTriangulation,
-            triangulation::Triangulation, triangulation_data_structure::Tds, vertex::Vertex,
+            adjacency::AdjacencyIndex, cell::Cell, delaunay_triangulation::DelaunayTriangulation,
+            edge::EdgeKey, triangulation::Triangulation, triangulation_data_structure::Tds,
+            vertex::Vertex,
         },
         geometry::{Point, algorithms::convex_hull::ConvexHull, kernel::FastKernel},
         is_normal,
@@ -657,6 +668,8 @@ mod tests {
         assert!(is_normal::<Triangulation<FastKernel<f64>, (), (), 3>>());
         assert!(is_normal::<DelaunayTriangulation<FastKernel<f64>, (), (), 3>>());
         assert!(is_normal::<ConvexHull<FastKernel<f64>, (), (), 3>>());
+        assert!(is_normal::<EdgeKey>());
+        assert!(is_normal::<AdjacencyIndex>());
     }
 
     #[test]

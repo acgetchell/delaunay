@@ -15,9 +15,9 @@ useDefault = true
 [allowlist]
 description = "Benign hex literals used for facet key formatting validation in tests"
 regexes = [
-    '''(?i)0x1234_5678_9abc_def0''',  # Test constant for facet key formatting in boundary tests
-    '''(?i)0x1234_5678_90ab_cdef''',  # Test constant for facet key formatting in convex hull tests
-    '''(?i)0xdead_beef_cafe_babe''',  # Additional test constant used for comparison tests
+    '''(?i)0x1234_5678_9abc_def0''', # Test constant for facet key formatting in boundary tests
+    '''(?i)0x1234_5678_90ab_cdef''', # Test constant for facet key formatting in convex hull tests
+    '''(?i)0xdead_beef_cafe_babe''', # Additional test constant used for comparison tests
 ]
 
 # Additional allowlist entries can be added here for other false positives

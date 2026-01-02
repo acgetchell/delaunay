@@ -12,14 +12,47 @@ _ensure-uv:
     set -euo pipefail
     command -v uv >/dev/null || { echo "❌ 'uv' not found. See 'just setup' or https://github.com/astral-sh/uv"; exit 1; }
 
-# GitHub Actions workflow validation
-action-lint:
+# Internal helper: ensure taplo is installed
+_ensure-taplo:
     #!/usr/bin/env bash
     set -euo pipefail
-    if ! command -v actionlint >/dev/null; then
-        echo "⚠️ 'actionlint' not found. See 'just setup' or https://github.com/rhysd/actionlint"
-        exit 0
-    fi
+    command -v taplo >/dev/null || { echo "❌ 'taplo' not found. See 'just setup' or install: brew install taplo (or: cargo install taplo-cli)"; exit 1; }
+
+# Internal helpers: ensure external tooling is installed
+_ensure-jq:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v jq >/dev/null || { echo "❌ 'jq' not found. See 'just setup' or install: brew install jq"; exit 1; }
+
+_ensure-npx:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v npx >/dev/null || { echo "❌ 'npx' not found. See 'just setup' or install Node.js (for npx tools): https://nodejs.org"; exit 1; }
+
+_ensure-shfmt:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v shfmt >/dev/null || { echo "❌ 'shfmt' not found. See 'just setup' or install: brew install shfmt"; exit 1; }
+
+_ensure-shellcheck:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v shellcheck >/dev/null || { echo "❌ 'shellcheck' not found. See 'just setup' or https://www.shellcheck.net"; exit 1; }
+
+_ensure-actionlint:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v actionlint >/dev/null || { echo "❌ 'actionlint' not found. See 'just setup' or https://github.com/rhysd/actionlint"; exit 1; }
+
+_ensure-yamllint:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v yamllint >/dev/null || { echo "❌ 'yamllint' not found. See 'just setup' or install: brew install yamllint"; exit 1; }
+
+# GitHub Actions workflow validation
+action-lint: _ensure-actionlint
+    #!/usr/bin/env bash
+    set -euo pipefail
     files=()
     while IFS= read -r -d '' file; do
         files+=("$file")
@@ -81,15 +114,23 @@ changelog-update: changelog
     @echo "To create a git tag with changelog content for a specific version, run:"
     @echo "  just changelog-tag <version>  # e.g., just changelog-tag v0.4.2"
 
+# Fix (mutating): apply formatters/auto-fixes
+fix: toml-fmt fmt python-fix shell-fmt markdown-fix yaml-fix
+    @echo "✅ Fixes applied!"
+
+# Check (non-mutating): run all linters/validators
+check: lint
+    @echo "✅ Checks complete!"
+
 # CI with performance baseline
 ci-baseline tag="ci":
     just ci
     just perf-baseline {{tag}}
 
-# CI simulation: quality checks with comprehensive testing (matches .github/workflows/ci.yml)
-# Runs: linting + all Rust tests (lib + doc + integration with proptests) + benchmark compilation
-ci: lint test test-integration bench-compile
-    @echo "🎯 CI simulation complete!"
+# CI simulation: comprehensive validation (matches .github/workflows/ci.yml)
+# Runs: checks + all tests (Rust + Python) + examples + bench compile
+ci: check bench-compile test-all examples
+    @echo "🎯 CI checks complete!"
 
 # Clean build artifacts
 clean:
@@ -108,11 +149,6 @@ clippy:
 
     # All features
     cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
-
-# Pre-commit workflow: comprehensive validation before committing
-# Runs: linting + all tests (lib + doc + integration + proptests + Python) + examples + bench compile
-commit-check: lint bench-compile test-all examples
-    @echo "🚀 Ready to commit! All checks passed!"
 
 # Compare SlotMap vs DenseSlotMap storage backends
 compare-storage: _ensure-uv
@@ -154,11 +190,15 @@ examples:
 fmt:
     cargo fmt --all
 
+fmt-check:
+    cargo fmt --all -- --check
+
 help-workflows:
     @echo "Common Just workflows:"
-    @echo "  just ci                # CI simulation (linting + all Rust tests + bench compile)"
-    @echo "  just commit-check      # Pre-commit validation (linting + all tests + examples + bench compile)"
-    @echo "  just commit-check-slow # Comprehensive with slow tests (100+ vertices)"
+    @echo "  just fix               # Apply formatters/auto-fixes (mutating)"
+    @echo "  just check             # Run lint/validators (non-mutating)"
+    @echo "  just ci                # Full CI run (checks + all tests + examples + bench compile)"
+    @echo "  just ci-slow           # CI + slow tests (100+ vertices)"
     @echo "  just ci-baseline       # CI + save performance baseline"
     @echo ""
     @echo "Testing:"
@@ -204,17 +244,17 @@ help-workflows:
 # All linting: code + documentation + configuration
 lint: lint-code lint-docs lint-config
 
-# Code linting: Rust (fmt, clippy, docs) + Python (ruff) + Shell scripts
-lint-code: fmt clippy doc-check python-lint shell-lint
+# Code linting: Rust (fmt-check, clippy, docs) + Python (ruff, ty, mypy) + Shell scripts
+lint-code: fmt-check clippy doc-check python-lint shell-lint
 
-# Configuration validation: JSON, TOML, GitHub Actions workflows
-lint-config: validate-json validate-toml action-lint
+# Configuration validation: JSON, TOML, YAML, GitHub Actions workflows
+lint-config: validate-json toml-lint toml-fmt-check yaml-lint action-lint
 
 # Documentation linting: Markdown + spell checking
-lint-docs: markdown-lint spell-check
+lint-docs: markdown-check spell-check
 
-# Shell and markdown quality
-markdown-lint:
+# Shell, markdown, and YAML quality
+markdown-fix: _ensure-npx
     #!/usr/bin/env bash
     set -euo pipefail
     files=()
@@ -222,9 +262,54 @@ markdown-lint:
         files+=("$file")
     done < <(git ls-files -z '*.md')
     if [ "${#files[@]}" -gt 0 ]; then
+        echo "📝 markdownlint --fix (${#files[@]} files)"
         printf '%s\0' "${files[@]}" | xargs -0 -n100 npx markdownlint --config .markdownlint.json --fix
     else
-        echo "No markdown files found to lint."
+        echo "No markdown files found to format."
+    fi
+
+markdown-check: _ensure-npx
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '*.md')
+    if [ "${#files[@]}" -gt 0 ]; then
+        printf '%s\0' "${files[@]}" | xargs -0 -n100 npx markdownlint --config .markdownlint.json
+    else
+        echo "No markdown files found to check."
+    fi
+
+markdown-lint: markdown-check
+
+yaml-fix: _ensure-npx
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '*.yml' '*.yaml')
+    if [ "${#files[@]}" -gt 0 ]; then
+        echo "📝 prettier --write (YAML, ${#files[@]} files)"
+        # Use CLI flags instead of a repo-wide prettier config: keeps the scope to YAML only.
+        printf '%s\0' "${files[@]}" | xargs -0 -n100 npx prettier --write --print-width 120
+    else
+        echo "No YAML files found to format."
+    fi
+
+yaml-lint: _ensure-yamllint
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '*.yml' '*.yaml')
+    if [ "${#files[@]}" -gt 0 ]; then
+        echo "🔍 yamllint (${#files[@]} files)"
+        yamllint --strict -c .yamllint "${files[@]}"
+    else
+        echo "No YAML files found to lint."
     fi
 
 # Performance analysis framework
@@ -293,15 +378,24 @@ profile-mem:
     samply record cargo bench --bench profiling_suite --features count-allocations -- memory_profiling
 
 # Python code quality
-python-lint: _ensure-uv
+python-fix: _ensure-uv
     uv run ruff check scripts/ --fix
     uv run ruff format scripts/
+
+python-typecheck: _ensure-uv
+    uv run ty check scripts/
     cd scripts && uv run mypy . --exclude tests
 
-# Comprehensive validation including slow/stress tests
-# Runs: commit-check + slow-tests feature (100+ vertices, stress tests)
-commit-check-slow: commit-check test-slow
-    @echo "✅ All checks including slow tests passed!"
+python-check: _ensure-uv
+    uv run ruff format --check scripts/
+    uv run ruff check scripts/
+    just python-typecheck
+
+python-lint: python-check
+
+# CI + slow/stress tests (100+ vertices, stress tests)
+ci-slow: ci test-slow
+    @echo "✅ CI + slow tests passed!"
 
 # Development setup
 setup:
@@ -330,7 +424,7 @@ setup:
     echo ""
     echo "Additional tools (will check if installed):"
     # Check for system tools
-    for tool in uv actionlint shfmt shellcheck jq node; do
+    for tool in uv actionlint shfmt shellcheck jq node npx taplo yamllint; do
         if command -v "$tool" &> /dev/null; then
             echo "  ✓ $tool installed"
         else
@@ -344,7 +438,15 @@ setup:
                 actionlint) echo "    Install: https://github.com/rhysd/actionlint" ;;
                 shfmt|shellcheck) echo "    Install: brew install $tool" ;;
                 jq) echo "    Install: brew install jq" ;;
-                node) echo "    Install: https://nodejs.org" ;;
+                node|npx) echo "    Install Node.js (for npx/cspell): https://nodejs.org" ;;
+                taplo)
+                    echo "    Install: brew install taplo"
+                    echo "    Or: cargo install taplo-cli"
+                    ;;
+                yamllint)
+                    echo "    Install: brew install yamllint"
+                    echo "    Or: python -m pip install yamllint"
+                    ;;
             esac
         fi
     done
@@ -362,7 +464,8 @@ setup:
     cargo build
     echo "✅ Setup complete! Run 'just help-workflows' to see available commands."
 
-shell-lint:
+# Shell scripts: format (mutating)
+shell-fmt: _ensure-shfmt
     #!/usr/bin/env bash
     set -euo pipefail
     files=()
@@ -370,20 +473,32 @@ shell-lint:
         files+=("$file")
     done < <(git ls-files -z '*.sh')
     if [ "${#files[@]}" -gt 0 ]; then
+        echo "🧹 shfmt -w (${#files[@]} files)"
         printf '%s\0' "${files[@]}" | xargs -0 -n1 shfmt -w
-        # Only run shellcheck if available (may not be on Windows)
-        if command -v shellcheck &> /dev/null; then
-            printf '%s\0' "${files[@]}" | xargs -0 -n4 shellcheck -x
-        else
-            echo "⚠️ shellcheck not found, skipping shell script linting (formatting still applied)"
-        fi
     else
-        echo "No shell files found to lint."
+        echo "No shell files found to format."
     fi
     # Note: justfiles are not shell scripts and are excluded from shellcheck
 
+# Shell scripts: lint/check (non-mutating)
+shell-check: _ensure-shellcheck _ensure-shfmt
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '*.sh')
+    if [ "${#files[@]}" -gt 0 ]; then
+        printf '%s\0' "${files[@]}" | xargs -0 -n4 shellcheck -x
+        printf '%s\0' "${files[@]}" | xargs -0 shfmt -d
+    else
+        echo "No shell files found to check."
+    fi
+
+shell-lint: shell-check
+
 # Spell checking with robust bash implementation
-spell-check:
+spell-check: _ensure-npx
     #!/usr/bin/env bash
     set -euo pipefail
     files=()
@@ -441,7 +556,7 @@ test-slow-release:
     cargo test --release --features slow-tests
 
 # File validation
-validate-json:
+validate-json: _ensure-jq
     #!/usr/bin/env bash
     set -euo pipefail
     files=()
@@ -452,6 +567,45 @@ validate-json:
         printf '%s\0' "${files[@]}" | xargs -0 -n1 jq empty
     else
         echo "No JSON files found to validate."
+    fi
+
+toml-fmt: _ensure-taplo
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '*.toml')
+    if [ "${#files[@]}" -gt 0 ]; then
+        taplo fmt "${files[@]}"
+    else
+        echo "No TOML files found to format."
+    fi
+
+toml-fmt-check: _ensure-taplo
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '*.toml')
+    if [ "${#files[@]}" -gt 0 ]; then
+        taplo fmt --check "${files[@]}"
+    else
+        echo "No TOML files found to check."
+    fi
+
+toml-lint: _ensure-taplo
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '*.toml')
+    if [ "${#files[@]}" -gt 0 ]; then
+        taplo lint "${files[@]}"
+    else
+        echo "No TOML files found to lint."
     fi
 
 validate-toml: _ensure-uv

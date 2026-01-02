@@ -19,11 +19,11 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-
-# NOTE: Use copy2 (metadata-preserving) under the 'copyfile' alias for tests/patching convenience.
-from shutil import copy2 as copyfile
+from shutil import copy2 as copyfile  # NOTE: Use copy2 (metadata-preserving) under the 'copyfile' alias for tests/patching convenience.
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from packaging.version import Version
@@ -32,40 +32,57 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_REGRESSION_THRESHOLD = 7.5
 
-try:
-    # When executed as a script from scripts/
-    from benchmark_models import (  # type: ignore[no-redef,import-not-found]
+if TYPE_CHECKING:
+    from benchmark_models import (
         BenchmarkData,
         CircumspherePerformanceData,
         CircumsphereTestCase,
         extract_benchmark_data,
         format_benchmark_tables,
     )
-    from hardware_utils import HardwareComparator, HardwareInfo  # type: ignore[no-redef,import-not-found]
-    from subprocess_utils import (  # type: ignore[no-redef,import-not-found]
+    from hardware_utils import HardwareComparator, HardwareInfo
+    from subprocess_utils import (
         ProjectRootNotFoundError,
         find_project_root,
         get_git_commit_hash,
         run_cargo_command,
         run_git_command,
     )
-except ModuleNotFoundError:
-    # When imported as a module (e.g., scripts.benchmark_utils)
-    from scripts.benchmark_models import (  # type: ignore[no-redef,import-not-found]
-        BenchmarkData,
-        CircumspherePerformanceData,
-        CircumsphereTestCase,
-        extract_benchmark_data,
-        format_benchmark_tables,
-    )
-    from scripts.hardware_utils import HardwareComparator, HardwareInfo  # type: ignore[no-redef,import-not-found]
-    from scripts.subprocess_utils import (  # type: ignore[no-redef,import-not-found]
-        ProjectRootNotFoundError,
-        find_project_root,
-        get_git_commit_hash,
-        run_cargo_command,
-        run_git_command,
-    )
+else:
+    try:
+        # When executed as a script from scripts/
+        from benchmark_models import (
+            BenchmarkData,
+            CircumspherePerformanceData,
+            CircumsphereTestCase,
+            extract_benchmark_data,
+            format_benchmark_tables,
+        )
+        from hardware_utils import HardwareComparator, HardwareInfo
+        from subprocess_utils import (
+            ProjectRootNotFoundError,
+            find_project_root,
+            get_git_commit_hash,
+            run_cargo_command,
+            run_git_command,
+        )
+    except ModuleNotFoundError:
+        # When imported as a module (e.g., scripts.benchmark_utils)
+        from scripts.benchmark_models import (
+            BenchmarkData,
+            CircumspherePerformanceData,
+            CircumsphereTestCase,
+            extract_benchmark_data,
+            format_benchmark_tables,
+        )
+        from scripts.hardware_utils import HardwareComparator, HardwareInfo
+        from scripts.subprocess_utils import (
+            ProjectRootNotFoundError,
+            find_project_root,
+            get_git_commit_hash,
+            run_cargo_command,
+            run_git_command,
+        )
 
 # Development mode arguments - centralized to keep baseline generation and comparison in sync
 # Reduces samples for faster iteration during development (10x faster than full benchmarks)
@@ -2041,7 +2058,7 @@ class BenchmarkRegressionHelper:
     """Helper functions for performance regression testing workflow."""
 
     @staticmethod
-    def write_github_env_vars(env_vars: dict[str, str]) -> None:
+    def write_github_env_vars(env_vars: Mapping[str, str | None]) -> None:
         """Helper to write multiple environment variables to GITHUB_ENV.
         Args:
             env_vars: Dictionary of environment variable names and values
@@ -2077,9 +2094,19 @@ class BenchmarkRegressionHelper:
         """
         # Look for baseline files using shared logic
         baseline_file = BenchmarkRegressionHelper._find_baseline_file(baseline_dir)
+        if baseline_file is None:
+            print("❌ Downloaded artifact but no baseline*.txt files found", file=sys.stderr)
+            BenchmarkRegressionHelper.write_github_env_vars(
+                {
+                    "BASELINE_EXISTS": "false",
+                    "BASELINE_SOURCE": "missing",
+                    "BASELINE_ORIGIN": "unknown",
+                }
+            )
+            return False
 
         # If a baseline file was found, copy it to baseline_results.txt for consistency
-        if baseline_file and baseline_file.name != "baseline_results.txt":
+        if baseline_file.name != "baseline_results.txt":
             target_file = baseline_dir / "baseline_results.txt"
             try:
                 copyfile(baseline_file, target_file)
@@ -2087,19 +2114,24 @@ class BenchmarkRegressionHelper:
             except OSError as e:
                 print(f"❌ Failed to prepare baseline: {e}", file=sys.stderr)
                 BenchmarkRegressionHelper.write_github_env_vars(
-                    {"BASELINE_EXISTS": "false", "BASELINE_SOURCE": "artifact", "BASELINE_ORIGIN": "artifact"}
+                    {
+                        "BASELINE_EXISTS": "false",
+                        "BASELINE_SOURCE": "artifact",
+                        "BASELINE_ORIGIN": "artifact",
+                    }
                 )
                 return False
-        elif baseline_file:
-            print("📦 Prepared baseline from artifact")
         else:
-            print("❌ Downloaded artifact but no baseline*.txt files found", file=sys.stderr)
-            BenchmarkRegressionHelper.write_github_env_vars({"BASELINE_EXISTS": "false", "BASELINE_SOURCE": "missing", "BASELINE_ORIGIN": "unknown"})
-            return False
+            print("📦 Prepared baseline from artifact")
 
         # Set GitHub Actions environment variables
         BenchmarkRegressionHelper.write_github_env_vars(
-            {"BASELINE_EXISTS": "true", "BASELINE_SOURCE": "artifact", "BASELINE_ORIGIN": "artifact", "BASELINE_SOURCE_FILE": baseline_file.name}
+            {
+                "BASELINE_EXISTS": "true",
+                "BASELINE_SOURCE": "artifact",
+                "BASELINE_ORIGIN": "artifact",
+                "BASELINE_SOURCE_FILE": baseline_file.name,
+            }
         )
 
         # Show baseline metadata
@@ -2193,10 +2225,14 @@ class BenchmarkRegressionHelper:
         """Extract commit SHA from metadata.json file."""
         try:
             with metadata_file.open("r", encoding="utf-8") as f:
-                metadata = json.load(f)
-                potential_sha = metadata.get("commit", "")
-                if re.match(r"^[0-9A-Fa-f]{7,40}$", potential_sha):
-                    return potential_sha
+                data: object = json.load(f)
+
+            if not isinstance(data, dict):
+                return None
+
+            potential_sha = data.get("commit")
+            if isinstance(potential_sha, str) and re.match(r"^[0-9A-Fa-f]{7,40}$", potential_sha):
+                return potential_sha
         except (OSError, json.JSONDecodeError, KeyError) as e:
             logging.debug("Could not extract commit from metadata.json: %s", e)
         return None

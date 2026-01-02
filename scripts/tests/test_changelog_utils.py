@@ -6,16 +6,19 @@ error handling, and changelog generation workflows.
 """
 
 import json
-
-# Import the module under test
-import sys
 from pathlib import Path
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import mock_open, patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 import pytest
 
-from changelog_utils import ChangelogError, ChangelogNotFoundError, ChangelogProcessor, ChangelogUtils, GitRepoError, VersionError
+from changelog_utils import (
+    ChangelogError,
+    ChangelogNotFoundError,
+    ChangelogProcessor,
+    ChangelogUtils,
+    GitRepoError,
+    VersionError,
+)
 from subprocess_utils import run_git_command
 
 
@@ -127,18 +130,16 @@ class TestChangelogUtils:
 
         assert "no git history" in str(cm.value).lower()
 
-    def test_get_markdown_line_limit_with_config(self):
+    def test_get_markdown_line_limit_with_config(self, tmp_path: Path, monkeypatch):
         """Test markdown line limit extraction from config file."""
-        config_content = json.dumps({"MD013": {"line_length": 120}})
+        config_file = tmp_path / ".markdownlint.json"
+        config_file.write_text(json.dumps({"MD013": {"line_length": 120}}), encoding="utf-8")
 
-        # Mock the Path class and its methods
-        mock_path = MagicMock()
-        mock_path.exists.return_value = True
-        mock_path.open.return_value.__enter__.return_value.read.return_value = config_content
+        # Ensure ChangelogUtils reads the config from our isolated temp directory
+        monkeypatch.chdir(tmp_path)
 
-        with patch("changelog_utils.Path", return_value=mock_path), patch("json.load", return_value={"MD013": {"line_length": 120}}):
-            limit = ChangelogUtils.get_markdown_line_limit()
-            assert limit == 120
+        limit = ChangelogUtils.get_markdown_line_limit()
+        assert limit == 120
 
     @patch("pathlib.Path.exists", return_value=False)
     def test_get_markdown_line_limit_no_config(self, mock_exists):  # noqa: ARG002
