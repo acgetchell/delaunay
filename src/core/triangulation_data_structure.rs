@@ -86,11 +86,13 @@
 //!    - UUID ↔ Key mapping consistency
 //!    - Cells reference only valid vertex keys (no stale/missing vertex keys)
 //!    - `Vertex::incident_cell`, when present, must point at an existing cell that contains the vertex
+//!    - Isolated vertices (not referenced by any cell) are allowed at this layer (`incident_cell` may be `None`)
 //!    - No duplicate cells
 //!    - Facet sharing invariant (≤2 cells per facet)
 //!    - Neighbor consistency
 //! 3. **Level 3: Manifold Topology** - [`Triangulation::is_valid()`]
-//!    - Builds on Level 2, adds manifold-with-boundary + Euler characteristic
+//!    - Builds on Level 2, and rejects isolated vertices (every vertex must be incident to ≥ 1 cell)
+//!    - Adds manifold-with-boundary + Euler characteristic
 //! 4. **Level 4: Delaunay Property** - [`DelaunayTriangulation::is_valid()`]
 //!    - Empty circumsphere property
 //!
@@ -2904,8 +2906,12 @@ where
 
     /// Validates that `Vertex::incident_cell` pointers are non-dangling and internally consistent.
     ///
-    /// Note: isolated vertices (vertices not referenced by any cell) are allowed at the TDS level,
-    /// but any `incident_cell` pointer that *is* present must:
+    /// Note: at the TDS structural layer (Level 2), isolated vertices (vertices not referenced by
+    /// any cell) are allowed, so `Vertex::incident_cell` may be `None`.
+    ///
+    /// Level 3 topology validation (`Triangulation::is_valid`) rejects isolated vertices.
+    ///
+    /// However, any `incident_cell` pointer that *is* present must:
     /// - point to an existing cell key, and
     /// - reference a cell that actually contains the vertex.
     fn validate_vertex_incidence(&self) -> Result<(), TdsValidationError> {

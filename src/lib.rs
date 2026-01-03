@@ -632,6 +632,10 @@ pub mod prelude {
     /// This is useful if you want a smaller import surface than `delaunay::prelude::*`,
     /// while still having access to the key public APIs typically used in docs/tests/examples/benches.
     ///
+    /// Note: `query` currently also re-exports a few helpers commonly used in
+    /// docs/tests/examples/benches (e.g., random generators). If this grows over time, it may be
+    /// split into more focused modules (e.g., `prelude::generators`).
+    ///
     /// Includes:
     /// - Topology traversal: [`DelaunayTriangulation::edges`], [`DelaunayTriangulation::incident_edges`],
     ///   [`DelaunayTriangulation::cell_neighbors`]
