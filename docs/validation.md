@@ -281,7 +281,7 @@ let vertices = vec![
 let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
 // Thorough topology validation (includes Levels 1–2 TDS checks)
-match dt.triangulation().validate() {
+match dt.as_triangulation().validate() {
     Ok(()) => println!("✓ Valid manifold with correct Euler characteristic"),
     Err(e) => eprintln!("✗ Topology validation failed: {}", e),
 }
@@ -364,7 +364,7 @@ Start: Do you need to validate?
     │
     ├─ Production validation?
     │   ├─ Performance critical? → Level 2 (`dt.tds().is_valid()`)
-    │   ├─ Topological correctness critical? → Level 3 (`dt.triangulation().is_valid()`)
+    │   ├─ Topological correctness critical? → Level 3 (`dt.as_triangulation().is_valid()`)
     │   └─ Geometric correctness critical? → Level 4 (`dt.is_valid()`)
     │
     └─ Paranoid mode? → All levels (`dt.validate()`)
@@ -419,7 +419,7 @@ fn test_my_triangulation_operation() {
     
     // Validate at appropriate level
     assert!(dt.tds().is_valid().is_ok());        // Level 2: Structural
-    assert!(dt.triangulation().is_valid().is_ok()); // Level 3: Topology
+    assert!(dt.as_triangulation().is_valid().is_ok()); // Level 3: Topology
     assert!(dt.is_valid().is_ok());                 // Level 4: Delaunay property
     assert!(dt.validate().is_ok());                 // Levels 1–4: Full validation
 }
@@ -436,7 +436,7 @@ pub fn my_algorithm(dt: &mut DelaunayTriangulation<FastKernel<f64>, (), (), 3>) 
     #[cfg(debug_assertions)]
     {
         dt.tds().is_valid().expect("TDS structure violated");
-        dt.triangulation().is_valid().expect("Topology invariant violated");
+        dt.as_triangulation().is_valid().expect("Topology invariant violated");
     }
 }
 ```
@@ -449,7 +449,7 @@ use delaunay::prelude::*;
 pub fn validate_with_level(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>, level: u8) -> Result<(), String> {
     match level {
         2 => dt.tds().is_valid().map_err(|e| e.to_string()),
-        3 => dt.triangulation().is_valid().map_err(|e| e.to_string()),
+        3 => dt.as_triangulation().is_valid().map_err(|e| e.to_string()),
         4 => dt.is_valid().map_err(|e| e.to_string()),
         _ => Err("Invalid validation level".to_string()),
     }

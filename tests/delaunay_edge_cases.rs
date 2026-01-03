@@ -221,7 +221,7 @@ fn test_regression_non_manifold_3d_seed123_50pts() {
     assert!(dt.number_of_cells() > 0);
 
     // Most importantly: validate topology (Levels 1–3: elements + structure + manifold)
-    let validation = dt.triangulation().validate();
+    let validation = dt.as_triangulation().validate();
     assert!(
         validation.is_ok(),
         "Triangulation has topology violations: {:?}",
@@ -258,7 +258,7 @@ fn test_regression_non_manifold_nearby_seeds() {
             num_vertices >= 20,
             "Seed {seed}: too few vertices ({num_vertices}), degenerate cases can skip 60%+"
         );
-        let validation = dt.triangulation().validate();
+        let validation = dt.as_triangulation().validate();
         assert!(
             validation.is_ok(),
             "Seed {}: topology violations: {:?}",

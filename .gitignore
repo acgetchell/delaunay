@@ -24,7 +24,6 @@
 # Python packaging artifacts
 *.egg-info/
 .ruff_cache/
-uv.lock
 .pytest_cache/
 .venv/
 .mypy_cache/

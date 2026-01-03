@@ -4,7 +4,7 @@
 //! in the delaunay triangulation library, particularly those that are performance-critical:
 //!
 //! 1. **`DelaunayTriangulation::with_kernel`**: Complete triangulation creation
-//! 2. **Layered validation**: `dt.tds().is_valid()/validate()`, `dt.triangulation().is_valid()/validate()`, `dt.is_valid()`, `dt.validate()`
+//! 2. **Layered validation**: `dt.tds().is_valid()/validate()`, `dt.as_triangulation().is_valid()/validate()`, `dt.is_valid()`, `dt.validate()`
 //! 3. **Incremental construction**: Performance of `insert()` method for vertex insertion
 //! 4. **Memory usage patterns**: Allocation and deallocation patterns
 //!
@@ -17,7 +17,7 @@ use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, 
 use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 use delaunay::geometry::kernel::RobustKernel;
 use delaunay::geometry::util::generate_random_points_seeded;
-use delaunay::prelude::*;
+use delaunay::prelude::query::*;
 use delaunay::vertex;
 use std::hint::black_box;
 use std::sync::OnceLock;
@@ -203,7 +203,7 @@ macro_rules! generate_validation_benchmarks {
 
                 group.bench_function("tri_is_valid", |b| {
                     b.iter(|| {
-                        dt.triangulation().is_valid().unwrap();
+                        dt.as_triangulation().is_valid().unwrap();
                         // Black box to prevent dead code elimination
                         black_box(());
                     });

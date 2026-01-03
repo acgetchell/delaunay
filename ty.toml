@@ -1,0 +1,15 @@
+# ty.toml
+# Astral ty configuration for delaunay
+# Python is auxiliary tooling only (scripts/), Rust is primary
+
+[src]
+# Restrict analysis strictly to Python tooling.
+include = [ "scripts" ]
+
+[environment]
+# Match the project's minimum supported Python version.
+python-version = "3.11"
+
+[terminal]
+# Keep output concise by default.
+output-format = "concise"

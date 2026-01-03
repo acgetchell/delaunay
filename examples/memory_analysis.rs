@@ -3,7 +3,7 @@
 //! This example demonstrates basic memory usage analysis for Delaunay triangulations
 //! using the existing allocation counter infrastructure from the tests.
 
-use delaunay::prelude::*;
+use delaunay::prelude::query::*;
 use std::time::Instant;
 
 /// Bounds for random triangulation (min, max) - consistent with benchmarks
@@ -41,7 +41,7 @@ macro_rules! generate_memory_analysis {
             // Measure convex hull extraction
             let start = Instant::now();
             let (hull_res, hull_info) = measure_with_result(|| {
-                ConvexHull::from_triangulation(dt.triangulation())
+                ConvexHull::from_triangulation(dt.as_triangulation())
             });
             let hull = match hull_res {
                 Ok(h) => h,

@@ -943,7 +943,7 @@ class TestImprovements:
             "remove deprecated functionality",
         ]
 
-        for entry, expected in zip(indented_entries, expected_titles, strict=False):
+        for entry, expected in zip(indented_entries, expected_titles, strict=True):
             result = _extract_title_text(entry)
             assert result == expected, f"Should extract '{expected}' from '{entry}', got '{result}'"
 

@@ -124,10 +124,12 @@ delaunay/
 │   │   │   ├── boundary_analysis.rs
 │   │   │   ├── data_type.rs
 │   │   │   └── facet_cache.rs
+│   │   ├── adjacency.rs
 │   │   ├── boundary.rs
 │   │   ├── cell.rs
 │   │   ├── collections.rs
 │   │   ├── delaunay_triangulation.rs
+│   │   ├── edge.rs
 │   │   ├── facet.rs
 │   │   ├── triangulation_data_structure.rs
 │   │   ├── triangulation.rs
@@ -293,6 +295,8 @@ with convenient `just` shortcuts for common workflows.
 - `delaunay_triangulation.rs` - DelaunayTriangulation implementation (top layer)
 - `triangulation.rs` - Generic Triangulation layer with kernel
 - `vertex.rs`, `cell.rs`, `facet.rs` - Core geometric primitives
+- `edge.rs` - Canonical `EdgeKey` for topology traversal
+- `adjacency.rs` - Optional `AdjacencyIndex` builder outputs (opt-in)
 - `collections.rs` - Optimized collection types and utilities
 - `boundary.rs` - Boundary detection and analysis
 - `algorithms/` - Core algorithms (incremental insertion, flips, point location)
@@ -394,17 +398,18 @@ Version 0.4.4+ completes Phase 1-2 of the comprehensive optimization roadmap:
 
 The project uses [`just`](https://github.com/casey/just) as a command runner to simplify common development tasks. Key workflows include:
 
-**Quick Development Cycle:**
+**Fast Iteration:**
 
 ```bash
-just ci            # Fast iteration (linting + lib/doc tests + bench compile)
+just fix           # Apply formatters/auto-fixes (mutating)
+just check         # Lint/validators (non-mutating)
 ```
 
-**Pre-Commit Checks:**
+**Full CI / Pre-Push Validation:**
 
 ```bash
-just commit-check  # Pre-commit validation (linting + all tests + examples)
-just commit-check-slow # Comprehensive with slow tests (100+ vertices)
+just ci            # Full CI run (checks + all tests + examples + bench compile)
+just ci-slow       # CI + slow tests (100+ vertices)
 ```
 
 **Testing Workflows:**
@@ -478,7 +483,7 @@ just profile-mem   # Profile memory allocations
 **CI Simulation:**
 
 ```bash
-just ci            # Fast iteration (linting + lib/doc tests + bench compile)
+just ci            # Full CI run (matches .github/workflows/ci.yml)
 just ci-baseline   # CI + save performance baseline
 ```
 

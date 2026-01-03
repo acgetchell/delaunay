@@ -17,7 +17,7 @@
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use delaunay::geometry::util::generate_random_points_seeded;
-use delaunay::prelude::*;
+use delaunay::prelude::query::*;
 use std::hint::black_box;
 
 /// Generate a standard D-dimensional simplex (D+1 vertices)

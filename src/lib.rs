@@ -1,7 +1,7 @@
 //! # delaunay
 //!
 //! This is a library for computing the Delaunay triangulation of a set of n-dimensional points
-//! in a [simplicial complex](https://en.wikipedia.org/wiki/Simplicial_complex)
+//! in a [simplicial complex](https://grokipedia.com/page/Simplicial_complex)
 //! inspired by [CGAL](https://www.cgal.org).
 //!
 //! # Features
@@ -63,7 +63,7 @@
 //!     DelaunayTriangulation::new(&vertices).unwrap();
 //!
 //! // Extract the convex hull (boundary facets of the triangulation)
-//! let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
+//! let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 //!
 //! println!("Convex hull has {} facets in {}D", hull.number_of_facets(), hull.dimension());
 //!
@@ -71,11 +71,11 @@
 //! let inside_point = Point::new([1.0, 0.5, 0.5]);
 //! let outside_point = Point::new([3.0, 3.0, 3.0]);
 //!
-//! assert!(!hull.is_point_outside(&inside_point, dt.triangulation()).unwrap());  // Inside the hull
-//! assert!(hull.is_point_outside(&outside_point, dt.triangulation()).unwrap());   // Outside the hull
+//! assert!(!hull.is_point_outside(&inside_point, dt.as_triangulation()).unwrap());  // Inside the hull
+//! assert!(hull.is_point_outside(&outside_point, dt.as_triangulation()).unwrap());   // Outside the hull
 //!
 //! // Find visible facets from an external point (useful for incremental construction)
-//! let visible_facets = hull.find_visible_facets(&outside_point, dt.triangulation()).unwrap();
+//! let visible_facets = hull.find_visible_facets(&outside_point, dt.as_triangulation()).unwrap();
 //! println!("Point sees {} out of {} facets", visible_facets.len(), hull.number_of_facets());
 //!
 //! // Works in any dimension!
@@ -88,7 +88,7 @@
 //! ];
 //! let dt_4d: DelaunayTriangulation<_, (), (), 4> =
 //!     DelaunayTriangulation::new(&vertices_4d).unwrap();
-//! let hull_4d = ConvexHull::from_triangulation(dt_4d.triangulation()).unwrap();
+//! let hull_4d = ConvexHull::from_triangulation(dt_4d.as_triangulation()).unwrap();
 //!
 //! assert_eq!(hull_4d.number_of_facets(), 5);  // 4-simplex has 5 boundary facets
 //! assert_eq!(hull_4d.dimension(), 4);     // 4D convex hull
@@ -140,8 +140,8 @@
 //! In brief:
 //! - Level 2 (structural / `Tds`): `dt.tds().is_valid()` for a quick check, or `dt.tds().validate()` for
 //!   Levels 1–2.
-//! - Level 3 (topology / `Triangulation`): `dt.triangulation().is_valid()` for topology-only checks, or
-//!   `dt.triangulation().validate()` for Levels 1–3.
+//! - Level 3 (topology / `Triangulation`): `dt.as_triangulation().is_valid()` for topology-only checks, or
+//!   `dt.as_triangulation().validate()` for Levels 1–3.
 //! - Level 4 (Delaunay / `DelaunayTriangulation`): `dt.is_valid()` for the empty-circumsphere property, or
 //!   `dt.validate()` for Levels 1–4.
 //! - Full diagnostics: `dt.validation_report()` returns all violated invariants across Levels 1–4.
@@ -189,7 +189,7 @@
 //! ];
 //! let dt = DelaunayTriangulation::new(&vertices).unwrap();
 //! assert!(dt.tds().is_valid().is_ok());
-//! assert!(dt.triangulation().is_valid().is_ok());
+//! assert!(dt.as_triangulation().is_valid().is_ok());
 //! assert!(dt.is_valid().is_ok());
 //! assert!(dt.validate().is_ok());
 //! ```
@@ -430,18 +430,22 @@ pub mod core {
         /// Point location algorithms (facet walking)
         pub mod locate;
     }
+
+    pub mod adjacency;
     pub mod boundary;
     pub mod cell;
     /// High-performance collection types optimized for computational geometry
     pub mod collections;
     /// Delaunay triangulation layer with incremental insertion - Phase 3 TODO
     pub mod delaunay_triangulation;
+    pub mod edge;
     pub mod facet;
     /// Generic triangulation combining kernel + Tds - Phase 2 TODO
     pub mod triangulation;
     pub mod triangulation_data_structure;
     pub mod util;
     pub mod vertex;
+
     /// Traits for Delaunay triangulation data structures.
     pub mod traits {
         pub mod boundary_analysis;
@@ -451,14 +455,18 @@ pub mod core {
         pub use data_type::*;
         pub use facet_cache::*;
     }
+
     // Re-export the `core` modules.
+    pub use adjacency::*;
     pub use cell::*;
     pub use delaunay_triangulation::*;
+    pub use edge::*;
     pub use facet::*;
     pub use traits::*;
     pub use triangulation_data_structure::*;
     pub use util::*;
     pub use vertex::*;
+
     // Note: collections module not re-exported here to avoid namespace pollution
     // Import specific types via prelude or use crate::core::collections::
 }
@@ -585,8 +593,10 @@ pub mod topology {
 pub mod prelude {
     // Re-export from core
     pub use crate::core::{
+        adjacency::*,
         cell::*,
         delaunay_triangulation::*,
+        edge::*,
         facet::*,
         traits::{boundary_analysis::*, data_type::*},
         triangulation::*,
@@ -616,6 +626,59 @@ pub mod prelude {
         robust_predicates::*, traits::coordinate::*, util::*,
     };
 
+    /// Convenience re-exports for common **read-only** workflows (topology traversal, adjacency,
+    /// convex-hull extraction, and common input types).
+    ///
+    /// This is useful if you want a smaller import surface than `delaunay::prelude::*`,
+    /// while still having access to the key public APIs typically used in docs/tests/examples/benches.
+    ///
+    /// Note: `query` currently also re-exports a few helpers commonly used in
+    /// docs/tests/examples/benches (e.g., random generators). If this grows over time, it may be
+    /// split into more focused modules (e.g., `prelude::generators`).
+    ///
+    /// Includes:
+    /// - Topology traversal: [`DelaunayTriangulation::edges`], [`DelaunayTriangulation::incident_edges`],
+    ///   [`DelaunayTriangulation::cell_neighbors`]
+    /// - Fast repeated queries: [`DelaunayTriangulation::build_adjacency_index`] and [`AdjacencyIndex`]
+    /// - Zero-allocation geometry accessors: [`DelaunayTriangulation::vertex_coords`],
+    ///   [`DelaunayTriangulation::cell_vertices`]
+    /// - Convex hull extraction: [`ConvexHull::from_triangulation`]
+    /// - Test/example helpers: [`generate_random_triangulation`], [`generate_random_points_seeded`]
+    pub mod query {
+        // Core read-only traversal / adjacency
+        pub use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
+        pub use crate::core::delaunay_triangulation::DelaunayTriangulation;
+        pub use crate::core::edge::EdgeKey;
+        pub use crate::core::triangulation::Triangulation;
+        pub use crate::core::triangulation_data_structure::{CellKey, VertexKey};
+
+        // Common input/output types (kept intentionally small)
+        pub use crate::core::facet::FacetView;
+        pub use crate::core::traits::boundary_analysis::BoundaryAnalysis;
+        pub use crate::core::traits::data_type::DataType;
+        pub use crate::core::{Cell, Vertex};
+        pub use crate::geometry::Point;
+        pub use crate::geometry::kernel::{FastKernel, Kernel};
+        pub use crate::geometry::traits::coordinate::Coordinate;
+
+        // Read-only predicates (useful in benchmarks / lightweight geometry checks)
+        pub use crate::geometry::{insphere, insphere_distance, insphere_lifted};
+
+        // Read-only algorithms
+        pub use crate::geometry::algorithms::convex_hull::ConvexHull;
+
+        // Convenience generators (commonly used in docs/tests/examples/benches)
+        pub use crate::geometry::util::{
+            generate_random_points_seeded, generate_random_triangulation,
+        };
+
+        // Instrumentation helpers (no-op unless features enable extra tracking)
+        pub use crate::core::util::measure_with_result;
+
+        // Convenience macro (commonly used in docs/tests/examples) without importing full `prelude::*`.
+        pub use crate::vertex;
+    }
+
     // Convenience macros
     pub use crate::vertex;
 }
@@ -636,8 +699,9 @@ pub const fn is_normal<T: Sized + Send + Sync + Unpin>() -> bool {
 mod tests {
     use crate::{
         core::{
-            cell::Cell, delaunay_triangulation::DelaunayTriangulation,
-            triangulation::Triangulation, triangulation_data_structure::Tds, vertex::Vertex,
+            adjacency::AdjacencyIndex, cell::Cell, delaunay_triangulation::DelaunayTriangulation,
+            edge::EdgeKey, triangulation::Triangulation, triangulation_data_structure::Tds,
+            vertex::Vertex,
         },
         geometry::{Point, algorithms::convex_hull::ConvexHull, kernel::FastKernel},
         is_normal,
@@ -657,6 +721,8 @@ mod tests {
         assert!(is_normal::<Triangulation<FastKernel<f64>, (), (), 3>>());
         assert!(is_normal::<DelaunayTriangulation<FastKernel<f64>, (), (), 3>>());
         assert!(is_normal::<ConvexHull<FastKernel<f64>, (), (), 3>>());
+        assert!(is_normal::<EdgeKey>());
+        assert!(is_normal::<AdjacencyIndex>());
     }
 
     #[test]
@@ -706,10 +772,10 @@ mod tests {
         let (cell_key, _) = dt.cells().next().unwrap();
 
         // Test that quality functions are accessible
-        let ratio = radius_ratio(dt.triangulation(), cell_key).unwrap();
+        let ratio = radius_ratio(dt.as_triangulation(), cell_key).unwrap();
         assert!(ratio > 0.0);
 
-        let norm_vol = normalized_volume(dt.triangulation(), cell_key).unwrap();
+        let norm_vol = normalized_volume(dt.as_triangulation(), cell_key).unwrap();
         assert!(norm_vol > 0.0);
     }
 
@@ -787,7 +853,7 @@ mod tests {
         assert_eq!(dt.number_of_cells(), 1);
 
         // Access Triangulation, Tds, Cell types
-        let tri = dt.triangulation();
+        let tri = dt.as_triangulation();
         assert_eq!(tri.number_of_vertices(), 4);
 
         let tds = &tri.tds;
@@ -875,19 +941,19 @@ mod tests {
             DelaunayTriangulation::new(&vertices).unwrap();
 
         // ConvexHull type should be accessible
-        let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
+        let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
         assert_eq!(hull.number_of_facets(), 4); // Tetrahedron has 4 faces
 
         // Test point visibility
         let outside_point = Point::new([2.0, 2.0, 2.0]);
         let is_outside = hull
-            .is_point_outside(&outside_point, dt.triangulation())
+            .is_point_outside(&outside_point, dt.as_triangulation())
             .unwrap();
         assert!(is_outside);
 
         let inside_point = Point::new([0.25, 0.25, 0.25]);
         let is_outside = hull
-            .is_point_outside(&inside_point, dt.triangulation())
+            .is_point_outside(&inside_point, dt.as_triangulation())
             .unwrap();
         assert!(!is_outside);
     }

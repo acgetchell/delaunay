@@ -28,7 +28,7 @@
 //! - Validation results
 //! - Performance metrics
 
-use delaunay::prelude::*;
+use delaunay::prelude::query::*;
 use num_traits::cast::cast;
 use std::time::Instant;
 
@@ -132,7 +132,7 @@ fn extract_and_analyze_convex_hull(dt: &DelaunayTriangulation<FastKernel<f64>, (
     println!("=======================");
 
     let start = Instant::now();
-    let hull = match ConvexHull::from_triangulation(dt.triangulation()) {
+    let hull = match ConvexHull::from_triangulation(dt.as_triangulation()) {
         Ok(convex_hull) => {
             let extraction_time = start.elapsed();
             println!("✓ Convex hull extracted successfully in {extraction_time:?}");
@@ -153,7 +153,7 @@ fn extract_and_analyze_convex_hull(dt: &DelaunayTriangulation<FastKernel<f64>, (
 
     // Validate the convex hull
     let start = Instant::now();
-    match hull.validate(dt.triangulation()) {
+    match hull.validate(dt.as_triangulation()) {
         Ok(()) => {
             let validation_time = start.elapsed();
             println!("  Validation:         ✓ VALID ({validation_time:?})");
@@ -203,7 +203,7 @@ fn test_point_containment(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>
     println!("=======================");
 
     // Extract convex hull for containment tests
-    let hull = match ConvexHull::from_triangulation(dt.triangulation()) {
+    let hull = match ConvexHull::from_triangulation(dt.as_triangulation()) {
         Ok(h) => h,
         Err(e) => {
             println!("✗ Failed to extract convex hull for containment tests: {e}");
@@ -273,7 +273,7 @@ fn test_point_containment_single(
     let coords = point.coords();
 
     let start = Instant::now();
-    match hull.is_point_outside(point, dt.triangulation()) {
+    match hull.is_point_outside(point, dt.as_triangulation()) {
         Ok(is_outside) => {
             let test_time = start.elapsed();
             let status = if is_outside {
@@ -301,7 +301,7 @@ fn analyze_visible_facets(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>
     println!("======================");
 
     // Extract convex hull for visible facet analysis
-    let hull = match ConvexHull::from_triangulation(dt.triangulation()) {
+    let hull = match ConvexHull::from_triangulation(dt.as_triangulation()) {
         Ok(h) => h,
         Err(e) => {
             println!("✗ Failed to extract convex hull for visible facet analysis: {e}");
@@ -325,7 +325,7 @@ fn analyze_visible_facets(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>
         let coords = point.coords();
 
         let start = Instant::now();
-        match hull.find_visible_facets(&point, dt.triangulation()) {
+        match hull.find_visible_facets(&point, dt.as_triangulation()) {
             Ok(visible_facets) => {
                 let query_time = start.elapsed();
                 let visible_count = visible_facets.len();
@@ -362,7 +362,7 @@ fn analyze_visible_facets(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>
     let coords = test_point.coords();
 
     let start = Instant::now();
-    match hull.find_nearest_visible_facet(&test_point, dt.triangulation()) {
+    match hull.find_nearest_visible_facet(&test_point, dt.as_triangulation()) {
         Ok(Some(nearest_facet_index)) => {
             let query_time = start.elapsed();
             println!(
@@ -398,7 +398,7 @@ fn performance_analysis(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>) 
     let extraction_times: Vec<_> = (0..5)
         .map(|_| {
             let start = Instant::now();
-            let _ = ConvexHull::from_triangulation(dt.triangulation());
+            let _ = ConvexHull::from_triangulation(dt.as_triangulation());
             start.elapsed()
         })
         .collect();
@@ -415,13 +415,13 @@ fn performance_analysis(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>) 
     println!("    • Max time:     {max_extraction_time:?}");
 
     // Benchmark point containment queries
-    let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
+    let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
     let test_point = Point::new([5.0, 5.0, 5.0]);
 
     let containment_times: Vec<_> = (0..10)
         .map(|_| {
             let start = Instant::now();
-            let _ = hull.is_point_outside(&test_point, dt.triangulation());
+            let _ = hull.is_point_outside(&test_point, dt.as_triangulation());
             start.elapsed()
         })
         .collect();
@@ -439,7 +439,7 @@ fn performance_analysis(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>) 
     let visibility_times: Vec<_> = (0..5)
         .map(|_| {
             let start = Instant::now();
-            let _ = hull.find_visible_facets(&external_point, dt.triangulation());
+            let _ = hull.find_visible_facets(&external_point, dt.as_triangulation());
             start.elapsed()
         })
         .collect();

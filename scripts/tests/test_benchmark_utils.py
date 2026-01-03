@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# ruff: noqa: SLF001
 """
 Test suite for benchmark_utils.py module.
 

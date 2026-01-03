@@ -39,7 +39,7 @@ class TestHardwareInfo:
     def test_run_command_empty_cmd(self, hardware):
         """Test _run_command with empty command list."""
         with pytest.raises(ValueError, match="Command list cannot be empty"):
-            hardware._run_command([])  # noqa: SLF001
+            hardware._run_command([])
 
     @patch("hardware_utils.run_safe_command")
     def test_run_command_success(self, mock_run_safe, hardware):
@@ -48,10 +48,10 @@ class TestHardwareInfo:
         mock_result.stdout = "test output\n"
         mock_run_safe.return_value = mock_result
 
-        result = hardware._run_command(["echo", "test"])  # noqa: SLF001
+        result = hardware._run_command(["echo", "test"])
 
         assert result == "test output"
-        mock_run_safe.assert_called_once_with("echo", ["test"], check=True)
+        mock_run_safe.assert_called_once_with("echo", ["test"], capture_output=True, text=True, check=True)
 
     @patch("hardware_utils.run_safe_command")
     def test_run_command_failure(self, mock_run_safe, hardware):
@@ -59,7 +59,7 @@ class TestHardwareInfo:
         mock_run_safe.side_effect = subprocess.CalledProcessError(1, "cmd")
 
         with pytest.raises(subprocess.CalledProcessError):
-            hardware._run_command(["false"])  # noqa: SLF001
+            hardware._run_command(["false"])
 
     @patch("hardware_utils.platform.system")
     @patch.object(HardwareInfo, "_run_command")
@@ -469,7 +469,7 @@ Other content here...
         assert "CPU core count differs: 8 vs 6 cores" in report
 
     def test_compare_hardware_memory_tolerance(self):
-        """Test memory comparison with numeric tolerance."""
+        """Test memory comparison with numeric (percentage-based) tolerance."""
         current_info = {
             "OS": "Linux",
             "CPU": "Intel i7",
@@ -480,15 +480,15 @@ Other content here...
             "TARGET": "x86_64-unknown-linux-gnu",
         }
 
-        # Test within tolerance (0.05 GB difference)
+        # Test within tolerance (~0.3% difference)
         baseline_info = current_info.copy()
         baseline_info["MEMORY"] = "15.95 GB"
 
         report, has_warnings = HardwareComparator.compare_hardware(current_info, baseline_info)
         assert not has_warnings
 
-        # Test outside tolerance (0.2 GB difference)
-        baseline_info["MEMORY"] = "15.8 GB"
+        # Test outside tolerance (>2% difference)
+        baseline_info["MEMORY"] = "15.6 GB"
 
         report, has_warnings = HardwareComparator.compare_hardware(current_info, baseline_info)
         assert has_warnings
@@ -538,7 +538,7 @@ Other content here...
     )
     def test_extract_memory_value(self, memory_str, expected):
         """Test memory value extraction from strings."""
-        result = HardwareComparator._extract_memory_value(memory_str)  # noqa: SLF001
+        result = HardwareComparator._extract_memory_value(memory_str)
         if expected is None:
             assert result is None
         else:

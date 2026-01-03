@@ -23,7 +23,7 @@
 //! ```
 
 use crate::core::{
-    collections::{FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer},
+    collections::{FacetToCellsMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer},
     traits::{BoundaryAnalysis, DataType},
     triangulation_data_structure::{Tds, VertexKey},
 };
@@ -202,6 +202,34 @@ where
     U: DataType,
     V: DataType,
 {
+    // Handle empty triangulation without building any facet map.
+    let mut by_dim = vec![0usize; D + 1];
+    by_dim[0] = tds.number_of_vertices();
+    by_dim[D] = tds.number_of_cells();
+    if by_dim[D] == 0 {
+        return Ok(SimplexCounts { by_dim });
+    }
+
+    // Build the facet map once, then compute counts from it.
+    let facet_to_cells = tds
+        .build_facet_to_cells_map()
+        .map_err(|e| TopologyError::Counting(format!("Failed to build facet map: {e}")))?;
+
+    Ok(count_simplices_with_facet_to_cells_map(
+        tds,
+        &facet_to_cells,
+    ))
+}
+
+pub(crate) fn count_simplices_with_facet_to_cells_map<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    facet_to_cells: &FacetToCellsMap,
+) -> SimplexCounts
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
     let mut by_dim = vec![0usize; D + 1];
 
     // f₀: vertices (O(1))
@@ -212,14 +240,11 @@ where
 
     // Handle empty triangulation
     if by_dim[D] == 0 {
-        return Ok(SimplexCounts { by_dim });
+        return SimplexCounts { by_dim };
     }
 
-    // f_{D-1}: (D-1)-facets using existing infrastructure
-    by_dim[D - 1] = tds
-        .build_facet_to_cells_map()
-        .map_err(|e| TopologyError::Counting(format!("Failed to build facet map: {e}")))?
-        .len();
+    // f_{D-1}: (D-1)-facets from precomputed map
+    by_dim[D - 1] = facet_to_cells.len();
 
     // Intermediate dimensions: enumerate combinations
     // Skip if D <= 2 (no intermediate dimensions)
@@ -229,7 +254,7 @@ where
         }
     }
 
-    Ok(SimplexCounts { by_dim })
+    SimplexCounts { by_dim }
 }
 
 /// Count k-dimensional simplices by enumerating combinations.

@@ -19,7 +19,7 @@
 //!
 //! Run this example with: `cargo run --example into_from_conversions`
 
-use delaunay::prelude::*;
+use delaunay::prelude::query::*;
 
 /// Demonstrates Into/From trait conversions from vertices and points to coordinate arrays.
 ///

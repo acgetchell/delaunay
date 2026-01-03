@@ -72,8 +72,8 @@ engines:
         - performance
       # Skip style/formatting checks already handled by Ruff
       ignore_patterns:
-        - "^E\\d+$"  # Skip PEP8 errors
-        - "^W\\d+$"  # Skip style warnings
+        - "^E\\d+$" # Skip PEP8 errors
+        - "^W\\d+$" # Skip style warnings
       # Read from pyproject.toml
       profile: "pyproject.toml"
 
@@ -85,9 +85,9 @@ engines:
       - "scripts/**/*.sh"
       - "**/*.sh"
     config:
-      shell: bash  # Default shell dialect
-      severity: warning  # Reduce noise
-      include_code: true  # Include code in findings
+      shell: bash # Default shell dialect
+      severity: warning # Reduce noise
+      include_code: true # Include code in findings
 
   # Markdown linting for documentation
   markdownlint:
@@ -144,7 +144,7 @@ engines:
         - spectral:oas
         - spectral:asyncapi
       rules:
-        no-$ref-siblings: off  # Common exception needed in many schemas
+        no-$ref-siblings: off # Common exception needed in many schemas
 
   # Trivy (security vulnerability scanner)
   trivy:
@@ -169,9 +169,9 @@ engines:
       minimum_tokens: 80
     exclude_paths:
       - "target/**"
-      - "benches/**"     # Benchmarks may have similar setup patterns
-      - "examples/**"    # Examples may demonstrate similar concepts
-      - "tests/**"       # Test patterns may be repetitive by design
+      - "benches/**" # Benchmarks may have similar setup patterns
+      - "examples/**" # Examples may demonstrate similar concepts
+      - "tests/**" # Test patterns may be repetitive by design
 
 # === GLOBAL EXCLUSION PATTERNS ===
 exclude_paths:
@@ -220,7 +220,6 @@ include_paths:
   - "*.json"
   - "*.sh"
   - ".github/**"
-
 
 # === ADDITIONAL SETTINGS ===
 # Custom file extensions per language (Codacy schema compliant)

@@ -61,7 +61,7 @@ use delaunay::geometry::util::{
     generate_grid_points, generate_poisson_points, generate_random_points_seeded,
     safe_usize_to_scalar,
 };
-use delaunay::prelude::*;
+use delaunay::prelude::query::*;
 use delaunay::vertex;
 use num_traits::cast;
 use serde::{Serialize, de::DeserializeOwned};
@@ -786,7 +786,7 @@ fn benchmark_algorithmic_bottlenecks(c: &mut Criterion) {
                         DelaunayTriangulation::<_, (), (), 3>::new(&vertices).unwrap()
                     },
                     |dt| {
-                        let hull = delaunay::geometry::algorithms::convex_hull::ConvexHull::from_triangulation(dt.triangulation()).unwrap();
+                        let hull = delaunay::geometry::algorithms::convex_hull::ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
                         black_box(hull);
                     },
                     BatchSize::LargeInput,

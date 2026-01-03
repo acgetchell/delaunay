@@ -3,54 +3,57 @@ name = "delaunay"
 version = "0.6.2"
 edition = "2024"
 rust-version = "1.92.0"
-authors = ["Adam Getchell <adam@adamgetchell.org>"]
+authors = [ "Adam Getchell <adam@adamgetchell.org>" ]
 homepage = "https://github.com/acgetchell/delaunay"
 documentation = "https://docs.rs/delaunay"
 repository = "https://github.com/acgetchell/delaunay"
 description = "A d-dimensional Delaunay triangulation library with float coordinate support"
 license = "BSD-3-Clause"
-keywords = ["delaunay", "triangulation", "comp-geometry", "mesh"]
-categories = ["algorithms", "mathematics", "science"]
+keywords = [ "delaunay", "triangulation", "comp-geometry", "mesh" ]
+categories = [ "algorithms", "mathematics", "science" ]
 readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-allocation-counter = { version = "0.8.1", optional = true }  # for memory profiling
+allocation-counter = { version = "0.8.1", optional = true } # for memory profiling
 anyhow = "1.0.100"
 arc-swap = "1.8.0"
 approx = "0.5.1"
-clap = { version = "4.5.53", features = ["derive"] }
+clap = { version = "4.5.53", features = [ "derive" ] }
 derive_builder = "0.20.2"
 la-stack = "0.1.1"
-rustc-hash = "2.1.1"  # Fast non-cryptographic hashing for performance
-smallvec = { version = "1.15.1", features = ["serde"] }  # Stack allocation for small collections
+rustc-hash = "2.1.1" # Fast non-cryptographic hashing for performance
+smallvec = { version = "1.15.1", features = [
+    "serde",
+] } # Stack allocation for small collections
 num-traits = "0.2.19"
-ordered-float = { version = "5.1.0", features = ["serde"] }
+ordered-float = { version = "5.1.0", features = [ "serde" ] }
 rand = "0.9.2"
-serde = { version = "1.0.228", features = ["derive"] }
+serde = { version = "1.0.228", features = [ "derive" ] }
 serde_json = "1.0.148"
 serde_test = "1.0.177"
-slotmap = { version = "1.1.1", features = ["serde"] }
+slotmap = { version = "1.1.1", features = [ "serde" ] }
 thiserror = "2.0.17"
-uuid = { version = "1.19.0", features = ["v4", "serde"] }
+uuid = { version = "1.19.0", features = [ "v4", "serde" ] }
 
 [dev-dependencies]
-criterion = { version = "0.8.1", features = ["html_reports"] }
+criterion = { version = "0.8.1", features = [ "html_reports" ] }
 pastey = "0.2.1"
 proptest = "1.9.0"
-sysinfo = "0.37.2"  # Process memory monitoring for benchmarks
+sysinfo = "0.37.2" # Process memory monitoring for benchmarks
 
 [features]
 # Default feature set: prefer DenseSlotMap for better construction + iteration performance.
 # Use `--no-default-features` to benchmark or run with SlotMap.
-default = ["dense-slotmap"]
+default = [ "dense-slotmap" ]
 
-count-allocations = ["allocation-counter"]
-bench = []  # Enable benchmark-style tests and performance analysis
-test-debug = []  # Enable verbose debug output in tests for development
-dense-slotmap = []  # Use DenseSlotMap-backed internal storage (default)
-slow-tests = []  # Enable slow-running integration tests (100+ vertices, multiple dimensions)
+count-allocations = [ "allocation-counter" ]
+bench = [  ] # Enable benchmark-style tests and performance analysis
+test-debug = [  ] # Enable verbose debug output in tests for development
+dense-slotmap = [  ] # Use DenseSlotMap-backed internal storage (default)
+slow-tests = [
+] # Enable slow-running integration tests (100+ vertices, multiple dimensions)
 
 [[bench]]
 name = "circumsphere_containment"

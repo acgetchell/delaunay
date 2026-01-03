@@ -46,7 +46,7 @@ macro_rules! test_convex_hull_properties {
                         prop_assume!(boundary_count > 0);
 
                         // Should be able to construct hull from valid triangulation
-                        let hull_result = ConvexHull::from_triangulation(dt.triangulation());
+                        let hull_result = ConvexHull::from_triangulation(dt.as_triangulation());
                         prop_assert!(
                             hull_result.is_ok(),
                             "{}D convex hull construction should succeed for valid triangulation: {:?}",
@@ -57,7 +57,7 @@ macro_rules! test_convex_hull_properties {
                         if let Ok(hull) = hull_result {
                             // Hull should be valid for the TDS it was created from
                             prop_assert!(
-                                hull.is_valid_for_triangulation(dt.triangulation()),
+                                hull.is_valid_for_triangulation(dt.as_triangulation()),
                                 "{}D convex hull should be valid for its source triangulation",
                                 $dim
                             );
@@ -81,7 +81,7 @@ macro_rules! test_convex_hull_properties {
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
-                        if let Ok(hull) = ConvexHull::from_triangulation(dt.triangulation()) {
+                        if let Ok(hull) = ConvexHull::from_triangulation(dt.as_triangulation()) {
                             let facet_count = hull.number_of_facets();
                             let vertex_count = dt.tds().vertices().count();
 
@@ -132,10 +132,10 @@ macro_rules! test_convex_hull_properties {
                         let initial_boundary_count = dt.tds().number_of_boundary_facets().unwrap_or(0);
                         prop_assume!(initial_boundary_count > 0);
 
-                        if let Ok(hull) = ConvexHull::from_triangulation(dt.triangulation()) {
+                        if let Ok(hull) = ConvexHull::from_triangulation(dt.as_triangulation()) {
                             // Hull should be valid initially
                             prop_assert!(
-                                hull.is_valid_for_triangulation(dt.triangulation()),
+                                hull.is_valid_for_triangulation(dt.as_triangulation()),
                                 "{}D hull should be valid for its triangulation before modification",
                                 $dim
                             );
@@ -149,13 +149,13 @@ macro_rules! test_convex_hull_properties {
 
                                 // Hull should now be invalid (stale)
                                 prop_assert!(
-                                    !hull.is_valid_for_triangulation(dt.triangulation()),
+                                    !hull.is_valid_for_triangulation(dt.as_triangulation()),
                                     "{}D hull should be invalid after triangulation modification",
                                     $dim
                                 );
 
                                 // Creating a new hull should succeed for non-degenerate triangulation
-                                let new_hull_result = ConvexHull::from_triangulation(dt.triangulation());
+                                let new_hull_result = ConvexHull::from_triangulation(dt.as_triangulation());
                                 prop_assert!(
                                     new_hull_result.is_ok(),
                                     "{}D creating new hull after modification should succeed",
@@ -164,7 +164,7 @@ macro_rules! test_convex_hull_properties {
 
                                 if let Ok(new_hull) = new_hull_result {
                                     prop_assert!(
-                                        new_hull.is_valid_for_triangulation(dt.triangulation()),
+                                        new_hull.is_valid_for_triangulation(dt.as_triangulation()),
                                         "{}D new hull should be valid for modified triangulation",
                                         $dim
                                     );
@@ -183,7 +183,7 @@ macro_rules! test_convex_hull_properties {
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
-                        if let Ok(hull) = ConvexHull::from_triangulation(dt.triangulation()) {
+                        if let Ok(hull) = ConvexHull::from_triangulation(dt.as_triangulation()) {
                             let tds_vertex_count = dt.tds().vertices().count();
                             let facet_count = hull.number_of_facets();
 
@@ -233,7 +233,7 @@ macro_rules! test_convex_hull_properties {
                     let vertices = Vertex::from_points(&points);
 
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
-                        if let Ok(hull) = ConvexHull::from_triangulation(dt.triangulation()) {
+                        if let Ok(hull) = ConvexHull::from_triangulation(dt.as_triangulation()) {
                             // A minimal D-simplex should have exactly D+1 facets
                             prop_assert_eq!(
                                 hull.number_of_facets(),
@@ -255,8 +255,8 @@ macro_rules! test_convex_hull_properties {
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
-                        if let Ok(hull1) = ConvexHull::from_triangulation(dt.triangulation()) {
-                            if let Ok(hull2) = ConvexHull::from_triangulation(dt.triangulation()) {
+                        if let Ok(hull1) = ConvexHull::from_triangulation(dt.as_triangulation()) {
+                            if let Ok(hull2) = ConvexHull::from_triangulation(dt.as_triangulation()) {
                                 // Both hulls should have the same facet count
                                 prop_assert_eq!(
                                     hull1.number_of_facets(),
@@ -267,16 +267,19 @@ macro_rules! test_convex_hull_properties {
 
                                 // Both should be valid for the same triangulation
                                 prop_assert!(
-                                    hull1.is_valid_for_triangulation(dt.triangulation()) && hull2.is_valid_for_triangulation(dt.triangulation()),
+                                    hull1.is_valid_for_triangulation(dt.as_triangulation())
+                                        && hull2.is_valid_for_triangulation(dt.as_triangulation()),
                                     "{}D both reconstructed hulls should be valid for the same triangulation",
                                     $dim
                                 );
 
                                 // Extract facet sets and compare via Jaccard similarity
                                 // Should be exactly identical (Jaccard = 1.0) since same triangulation
-                                let facets1 = extract_hull_facet_set(&hull1, dt.triangulation())
+                                let facets1 =
+                                    extract_hull_facet_set(&hull1, dt.as_triangulation())
                                     .expect("facet extraction should not fail");
-                                let facets2 = extract_hull_facet_set(&hull2, dt.triangulation())
+                                let facets2 =
+                                    extract_hull_facet_set(&hull2, dt.as_triangulation())
                                     .expect("facet extraction should not fail");
                                 assert_jaccard_gte!(
                                     &facets1,

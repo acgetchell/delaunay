@@ -25,7 +25,7 @@ on:
     # The branches below must be a subset of the branches above
     branches: ["main"]
   schedule:
-    - cron: '42 0 * * 1'
+    - cron: "42 0 * * 1"
 
 permissions:
   contents: read
@@ -46,7 +46,7 @@ jobs:
     steps:
       # Checkout the repository to the GitHub Actions runner
       - name: Checkout code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6.0.1
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - name: Set Codacy paths
         run: |
@@ -130,7 +130,7 @@ jobs:
       # Upload the identified SARIF file
       - name: Upload identified SARIF file
         if: always() && env.SARIF_FILE != ''
-        uses: github/codeql-action/upload-sarif@b36bf259c813715f76eafece573914b94412cd13  # v3
+        uses: github/codeql-action/upload-sarif@b36bf259c813715f76eafece573914b94412cd13 # v3
         with:
           sarif_file: ${{ env.SARIF_FILE }}
         continue-on-error: true
