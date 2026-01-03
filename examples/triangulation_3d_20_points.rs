@@ -114,7 +114,7 @@ where
 
     // Demonstrate the public topology traversal API using an opt-in adjacency index.
     // This avoids per-call allocations in methods like edges()/incident_edges().
-    let tri = dt.triangulation();
+    let tri = dt.as_triangulation();
     let index = tri
         .build_adjacency_index()
         .expect("adjacency index should build for a valid triangulation");
@@ -190,7 +190,7 @@ where
 
     // Levels 1–3: elements + structure + topology
     let start = Instant::now();
-    let level_1_3_result = dt.triangulation().validate();
+    let level_1_3_result = dt.as_triangulation().validate();
     let level_1_3_time = start.elapsed();
 
     let level_1_3_ok = level_1_3_result.is_ok();

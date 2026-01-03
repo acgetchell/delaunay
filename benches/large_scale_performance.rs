@@ -246,7 +246,7 @@ fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_p
         .expect("Failed to generate points");
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
     let dt = DelaunayTriangulation::new(&vertices).expect("Failed to create triangulation");
-    let tri = dt.triangulation();
+    let tri = dt.as_triangulation();
 
     // Throughput in terms of cells we actually validate
     group.throughput(Throughput::Elements(tri.number_of_cells() as u64));

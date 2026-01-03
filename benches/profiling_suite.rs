@@ -786,7 +786,7 @@ fn benchmark_algorithmic_bottlenecks(c: &mut Criterion) {
                         DelaunayTriangulation::<_, (), (), 3>::new(&vertices).unwrap()
                     },
                     |dt| {
-                        let hull = delaunay::geometry::algorithms::convex_hull::ConvexHull::from_triangulation(dt.triangulation()).unwrap();
+                        let hull = delaunay::geometry::algorithms::convex_hull::ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
                         black_box(hull);
                     },
                     BatchSize::LargeInput,

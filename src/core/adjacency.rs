@@ -65,7 +65,7 @@ pub enum AdjacencyIndexBuildError {
 /// ];
 ///
 /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-/// let tri = dt.triangulation();
+/// let tri = dt.as_triangulation();
 ///
 /// let index = tri.build_adjacency_index().unwrap();
 ///
@@ -108,7 +108,7 @@ impl AdjacencyIndex {
     ///     vertex!([1.0, 0.7, -1.5]),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let tri = dt.triangulation();
+    /// let tri = dt.as_triangulation();
     ///
     /// let shared_vertex_key = tri
     ///     .vertices()
@@ -145,7 +145,7 @@ impl AdjacencyIndex {
     /// #     vertex!([1.0, 0.7, -1.5]),
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// # let tri = dt.triangulation();
+    /// # let tri = dt.as_triangulation();
     /// # let shared_vertex_key = tri
     /// #     .vertices()
     /// #     .find_map(|(vk, _)| (tri.vertex_coords(vk)? == [0.0, 0.0, 0.0]).then_some(vk))
@@ -174,7 +174,7 @@ impl AdjacencyIndex {
     /// #     vertex!([0.0, 0.0, 1.0]),
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// # let tri = dt.triangulation();
+    /// # let tri = dt.as_triangulation();
     /// # let index = tri.build_adjacency_index().unwrap();
     /// let v0 = tri.vertices().next().unwrap().0;
     /// assert_eq!(index.incident_edges(v0).count(), 3);
@@ -203,7 +203,7 @@ impl AdjacencyIndex {
     /// #     vertex!([0.0, 0.0, 1.0]),
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// # let tri = dt.triangulation();
+    /// # let tri = dt.as_triangulation();
     /// # let index = tri.build_adjacency_index().unwrap();
     /// let v0 = tri.vertices().next().unwrap().0;
     /// assert_eq!(index.number_of_incident_edges(v0), 3);
@@ -232,7 +232,7 @@ impl AdjacencyIndex {
     /// #     vertex!([1.0, 0.7, -1.5]),
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// # let tri = dt.triangulation();
+    /// # let tri = dt.as_triangulation();
     /// # let index = tri.build_adjacency_index().unwrap();
     /// let cell_key = tri.cells().next().unwrap().0;
     /// assert_eq!(index.cell_neighbors(cell_key).count(), 1);
@@ -264,7 +264,7 @@ impl AdjacencyIndex {
     /// #     vertex!([1.0, 0.7, -1.5]),
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// # let tri = dt.triangulation();
+    /// # let tri = dt.as_triangulation();
     /// # let index = tri.build_adjacency_index().unwrap();
     /// let cell_key = tri.cells().next().unwrap().0;
     /// assert_eq!(index.number_of_cell_neighbors(cell_key), 1);
@@ -292,7 +292,7 @@ impl AdjacencyIndex {
     /// #     vertex!([0.0, 0.0, 1.0]),
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// # let tri = dt.triangulation();
+    /// # let tri = dt.as_triangulation();
     /// # let index = tri.build_adjacency_index().unwrap();
     /// let edges: std::collections::HashSet<_> = index.edges().collect();
     /// assert_eq!(edges.len(), 6);
@@ -320,7 +320,7 @@ impl AdjacencyIndex {
     /// #     vertex!([0.0, 0.0, 1.0]),
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// # let tri = dt.triangulation();
+    /// # let tri = dt.as_triangulation();
     /// # let index = tri.build_adjacency_index().unwrap();
     /// assert_eq!(index.number_of_edges(), 6);
     /// ```
@@ -383,7 +383,7 @@ mod tests {
 
         let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let tri = dt.triangulation();
+        let tri = dt.as_triangulation();
         let index = tri.build_adjacency_index().unwrap();
 
         // Shared vertex is incident to both cells.

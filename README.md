@@ -55,7 +55,7 @@ For details, see: [Issue #120 Investigation](docs/issue_120_investigation.md)
 [4-level validation hierarchy](docs/validation.md):
 
 - **Level 2** (`dt.tds().is_valid()`) - Structural correctness (expected to pass when using public APIs; not affected by Issue #120)
-- **Level 3** (`dt.triangulation().is_valid()`) - Manifold topology + Euler characteristic
+- **Level 3** (`dt.as_triangulation().is_valid()`) - Manifold topology + Euler characteristic
 - **Level 4** (`dt.is_valid()`) - Delaunay property only (may fail in rare cases per Issue #120)
 - **All levels (1–4)** (`dt.validate()`) - Elements + structure + topology + Delaunay property
 

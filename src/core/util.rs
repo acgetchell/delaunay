@@ -1051,9 +1051,9 @@ where
 /// ];
 /// let dt: DelaunayTriangulation<_, (), (), 3> =
 ///     DelaunayTriangulation::new(&vertices).unwrap();
-/// let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
+/// let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 ///
-/// let facet_set = extract_hull_facet_set(&hull, dt.triangulation()).unwrap();
+/// let facet_set = extract_hull_facet_set(&hull, dt.as_triangulation()).unwrap();
 /// assert_eq!(facet_set.len(), 4);
 /// ```
 pub fn extract_hull_facet_set<K, U, V, const D: usize>(
@@ -2687,7 +2687,7 @@ mod tests {
 
         let dt =
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
-        let tds = &dt.triangulation().tds;
+        let tds = &dt.as_triangulation().tds;
 
         // Basic Delaunay helpers should report no violations.
         assert!(
@@ -2720,7 +2720,7 @@ mod tests {
         ];
         let dt =
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
-        let tds = &dt.triangulation().tds;
+        let tds = &dt.as_triangulation().tds;
 
         // Test 1: Basic functionality - successful key derivation
         println!("  Testing basic functionality...");
@@ -2883,8 +2883,8 @@ mod tests {
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices1).unwrap();
         let dt2 =
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices2).unwrap();
-        let tds1 = &dt1.triangulation().tds;
-        let tds2 = &dt2.triangulation().tds;
+        let tds1 = &dt1.as_triangulation().tds;
+        let tds2 = &dt2.as_triangulation().tds;
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
@@ -2949,8 +2949,8 @@ mod tests {
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices1).unwrap();
         let dt2 =
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices2).unwrap();
-        let tds1 = &dt1.triangulation().tds;
-        let tds2 = &dt2.triangulation().tds;
+        let tds1 = &dt1.as_triangulation().tds;
+        let tds2 = &dt2.as_triangulation().tds;
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
@@ -2997,8 +2997,8 @@ mod tests {
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices1).unwrap();
         let dt2 =
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices2).unwrap();
-        let tds1 = &dt1.triangulation().tds;
-        let tds2 = &dt2.triangulation().tds;
+        let tds1 = &dt1.as_triangulation().tds;
+        let tds2 = &dt2.as_triangulation().tds;
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
@@ -3044,7 +3044,7 @@ mod tests {
 
         let dt =
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
-        let tds = &dt.triangulation().tds;
+        let tds = &dt.as_triangulation().tds;
         let cell_key = tds.cell_keys().next().unwrap();
 
         // All facets of the same tetrahedron should be different from each other
@@ -3085,7 +3085,7 @@ mod tests {
 
         let dt =
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
-        let tds = &dt.triangulation().tds;
+        let tds = &dt.as_triangulation().tds;
         let cell_key = tds.cell_keys().next().unwrap();
 
         let facet1 = FacetView::new(tds, cell_key, 0).unwrap();
@@ -3134,8 +3134,8 @@ mod tests {
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices1).unwrap();
         let dt2 =
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices2).unwrap();
-        let tds1 = &dt1.triangulation().tds;
-        let tds2 = &dt2.triangulation().tds;
+        let tds1 = &dt1.as_triangulation().tds;
+        let tds2 = &dt2.as_triangulation().tds;
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
@@ -3168,8 +3168,8 @@ mod tests {
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
         let dt2 =
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
-        let tds1 = &dt1.triangulation().tds;
-        let tds2 = &dt2.triangulation().tds;
+        let tds1 = &dt1.as_triangulation().tds;
+        let tds2 = &dt2.as_triangulation().tds;
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
@@ -3230,8 +3230,8 @@ mod tests {
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices1).unwrap();
         let dt2 =
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices2).unwrap();
-        let tds1 = &dt1.triangulation().tds;
-        let tds2 = &dt2.triangulation().tds;
+        let tds1 = &dt1.as_triangulation().tds;
+        let tds2 = &dt2.as_triangulation().tds;
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
@@ -3286,8 +3286,8 @@ mod tests {
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices1).unwrap();
         let dt2 =
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices2).unwrap();
-        let tds1 = &dt1.triangulation().tds;
-        let tds2 = &dt2.triangulation().tds;
+        let tds1 = &dt1.as_triangulation().tds;
+        let tds2 = &dt2.as_triangulation().tds;
 
         let cell1_key = tds1.cell_keys().next().unwrap();
         let cell2_key = tds2.cell_keys().next().unwrap();
@@ -3562,7 +3562,7 @@ mod tests {
         ];
         let dt =
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
-        let tds = &dt.triangulation().tds;
+        let tds = &dt.as_triangulation().tds;
 
         // Sub-test: Vertex coordinate extraction
         let coord_set = extract_vertex_coordinate_set(tds);
@@ -3583,7 +3583,7 @@ mod tests {
         // Sub-test: Hull facet extraction
         let dt_hull =
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
-        let tri = dt_hull.triangulation();
+        let tri = dt_hull.as_triangulation();
         let hull = ConvexHull::from_triangulation(tri).unwrap();
         let hull_facet_set = extract_hull_facet_set(&hull, tri).unwrap();
         assert_eq!(hull_facet_set.len(), 4, "Hull should have 4 facets");
@@ -3602,7 +3602,7 @@ mod tests {
         let mut dt =
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
 
-        let cell_key = dt.triangulation().tds.cell_keys().next().unwrap();
+        let cell_key = dt.as_triangulation().tds.cell_keys().next().unwrap();
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
         dt.tri
             .tds
@@ -3610,7 +3610,7 @@ mod tests {
             .unwrap()
             .push_vertex_key(invalid_vkey);
 
-        let err = extract_edge_set(&dt.triangulation().tds).unwrap_err();
+        let err = extract_edge_set(&dt.as_triangulation().tds).unwrap_err();
         assert!(matches!(
             err,
             FacetError::VertexKeyNotFoundInTriangulation { key } if key == invalid_vkey
@@ -3630,7 +3630,7 @@ mod tests {
         let mut dt =
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
 
-        let cell_key = dt.triangulation().tds.cell_keys().next().unwrap();
+        let cell_key = dt.as_triangulation().tds.cell_keys().next().unwrap();
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
         dt.tri
             .tds
@@ -3638,7 +3638,7 @@ mod tests {
             .unwrap()
             .push_vertex_key(invalid_vkey);
 
-        let err = extract_facet_identifier_set(&dt.triangulation().tds).unwrap_err();
+        let err = extract_facet_identifier_set(&dt.as_triangulation().tds).unwrap_err();
         assert!(matches!(
             err,
             FacetError::BoundaryFacetRetrievalFailed { .. }
@@ -3677,7 +3677,7 @@ mod tests {
         ];
         let dt =
             crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
-        let tds = &dt.triangulation().tds;
+        let tds = &dt.as_triangulation().tds;
         let cell_key = tds.cell_keys().next().unwrap();
         assert!(verify_facet_index_consistency(tds, cell_key, cell_key, 0).unwrap());
 

@@ -63,7 +63,7 @@
 //!     DelaunayTriangulation::new(&vertices).unwrap();
 //!
 //! // Extract the convex hull (boundary facets of the triangulation)
-//! let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
+//! let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 //!
 //! println!("Convex hull has {} facets in {}D", hull.number_of_facets(), hull.dimension());
 //!
@@ -71,11 +71,11 @@
 //! let inside_point = Point::new([1.0, 0.5, 0.5]);
 //! let outside_point = Point::new([3.0, 3.0, 3.0]);
 //!
-//! assert!(!hull.is_point_outside(&inside_point, dt.triangulation()).unwrap());  // Inside the hull
-//! assert!(hull.is_point_outside(&outside_point, dt.triangulation()).unwrap());   // Outside the hull
+//! assert!(!hull.is_point_outside(&inside_point, dt.as_triangulation()).unwrap());  // Inside the hull
+//! assert!(hull.is_point_outside(&outside_point, dt.as_triangulation()).unwrap());   // Outside the hull
 //!
 //! // Find visible facets from an external point (useful for incremental construction)
-//! let visible_facets = hull.find_visible_facets(&outside_point, dt.triangulation()).unwrap();
+//! let visible_facets = hull.find_visible_facets(&outside_point, dt.as_triangulation()).unwrap();
 //! println!("Point sees {} out of {} facets", visible_facets.len(), hull.number_of_facets());
 //!
 //! // Works in any dimension!
@@ -88,7 +88,7 @@
 //! ];
 //! let dt_4d: DelaunayTriangulation<_, (), (), 4> =
 //!     DelaunayTriangulation::new(&vertices_4d).unwrap();
-//! let hull_4d = ConvexHull::from_triangulation(dt_4d.triangulation()).unwrap();
+//! let hull_4d = ConvexHull::from_triangulation(dt_4d.as_triangulation()).unwrap();
 //!
 //! assert_eq!(hull_4d.number_of_facets(), 5);  // 4-simplex has 5 boundary facets
 //! assert_eq!(hull_4d.dimension(), 4);     // 4D convex hull
@@ -140,8 +140,8 @@
 //! In brief:
 //! - Level 2 (structural / `Tds`): `dt.tds().is_valid()` for a quick check, or `dt.tds().validate()` for
 //!   Levels 1–2.
-//! - Level 3 (topology / `Triangulation`): `dt.triangulation().is_valid()` for topology-only checks, or
-//!   `dt.triangulation().validate()` for Levels 1–3.
+//! - Level 3 (topology / `Triangulation`): `dt.as_triangulation().is_valid()` for topology-only checks, or
+//!   `dt.as_triangulation().validate()` for Levels 1–3.
 //! - Level 4 (Delaunay / `DelaunayTriangulation`): `dt.is_valid()` for the empty-circumsphere property, or
 //!   `dt.validate()` for Levels 1–4.
 //! - Full diagnostics: `dt.validation_report()` returns all violated invariants across Levels 1–4.
@@ -189,7 +189,7 @@
 //! ];
 //! let dt = DelaunayTriangulation::new(&vertices).unwrap();
 //! assert!(dt.tds().is_valid().is_ok());
-//! assert!(dt.triangulation().is_valid().is_ok());
+//! assert!(dt.as_triangulation().is_valid().is_ok());
 //! assert!(dt.is_valid().is_ok());
 //! assert!(dt.validate().is_ok());
 //! ```
@@ -768,10 +768,10 @@ mod tests {
         let (cell_key, _) = dt.cells().next().unwrap();
 
         // Test that quality functions are accessible
-        let ratio = radius_ratio(dt.triangulation(), cell_key).unwrap();
+        let ratio = radius_ratio(dt.as_triangulation(), cell_key).unwrap();
         assert!(ratio > 0.0);
 
-        let norm_vol = normalized_volume(dt.triangulation(), cell_key).unwrap();
+        let norm_vol = normalized_volume(dt.as_triangulation(), cell_key).unwrap();
         assert!(norm_vol > 0.0);
     }
 
@@ -849,7 +849,7 @@ mod tests {
         assert_eq!(dt.number_of_cells(), 1);
 
         // Access Triangulation, Tds, Cell types
-        let tri = dt.triangulation();
+        let tri = dt.as_triangulation();
         assert_eq!(tri.number_of_vertices(), 4);
 
         let tds = &tri.tds;
@@ -937,19 +937,19 @@ mod tests {
             DelaunayTriangulation::new(&vertices).unwrap();
 
         // ConvexHull type should be accessible
-        let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
+        let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
         assert_eq!(hull.number_of_facets(), 4); // Tetrahedron has 4 faces
 
         // Test point visibility
         let outside_point = Point::new([2.0, 2.0, 2.0]);
         let is_outside = hull
-            .is_point_outside(&outside_point, dt.triangulation())
+            .is_point_outside(&outside_point, dt.as_triangulation())
             .unwrap();
         assert!(is_outside);
 
         let inside_point = Point::new([0.25, 0.25, 0.25]);
         let is_outside = hull
-            .is_point_outside(&inside_point, dt.triangulation())
+            .is_point_outside(&inside_point, dt.as_triangulation())
             .unwrap();
         assert!(!is_outside);
     }

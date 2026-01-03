@@ -41,7 +41,7 @@ macro_rules! generate_memory_analysis {
             // Measure convex hull extraction
             let start = Instant::now();
             let (hull_res, hull_info) = measure_with_result(|| {
-                ConvexHull::from_triangulation(dt.triangulation())
+                ConvexHull::from_triangulation(dt.as_triangulation())
             });
             let hull = match hull_res {
                 Ok(h) => h,

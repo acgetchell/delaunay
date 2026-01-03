@@ -308,7 +308,7 @@ fn has_no_cospherical_5_tuples_3d(vertices: &[Vertex<f64, (), 3>]) -> bool {
 /// - Level 4 (Delaunay empty-circumsphere) is intentionally NOT asserted here
 macro_rules! prop_assert_levels_1_to_3_valid {
     ($dim:expr, $dt:expr, $context:expr) => {{
-        let validation = ($dt).triangulation().validate();
+        let validation = ($dt).as_triangulation().validate();
         prop_assert!(
             validation.is_ok(),
             "{}D: {} failed Levels 1–3 validation: {:?}",
@@ -751,7 +751,7 @@ fn prop_insertion_order_robustness_3d() {
             }
         }
 
-        let validation_a = dt_a.triangulation().validate();
+        let validation_a = dt_a.as_triangulation().validate();
         if let Err(e) = validation_a {
             stats.rejected_run_a_invalid_levels_1_to_3 += 1;
             return Err(TestCaseError::reject(format!(
@@ -789,7 +789,7 @@ fn prop_insertion_order_robustness_3d() {
             }
         }
 
-        let validation_b = dt_b.triangulation().validate();
+        let validation_b = dt_b.as_triangulation().validate();
         if let Err(e) = validation_b {
             stats.rejected_run_b_invalid_levels_1_to_3 += 1;
             return Err(TestCaseError::reject(format!(
@@ -862,7 +862,7 @@ fn prop_insertion_order_robustness_3d() {
             )));
         }
 
-        let validation_new_a = dt_new_a.triangulation().validate();
+        let validation_new_a = dt_new_a.as_triangulation().validate();
         if let Err(e) = validation_new_a {
             stats.rejected_new_a_invalid_levels_1_to_3 += 1;
             return Err(TestCaseError::reject(format!(
@@ -870,7 +870,7 @@ fn prop_insertion_order_robustness_3d() {
             )));
         }
 
-        let validation_new_b = dt_new_b.triangulation().validate();
+        let validation_new_b = dt_new_b.as_triangulation().validate();
         if let Err(e) = validation_new_b {
             stats.rejected_new_b_invalid_levels_1_to_3 += 1;
             return Err(TestCaseError::reject(format!(

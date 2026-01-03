@@ -19,7 +19,7 @@ fn edges_and_incident_edges_on_single_tetrahedron() {
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    let tri = dt.triangulation();
+    let tri = dt.as_triangulation();
 
     assert_eq!(dt.number_of_vertices(), 4);
     assert_eq!(dt.number_of_cells(), 1);
@@ -70,7 +70,7 @@ fn adjacency_index_on_double_tetrahedron() {
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    let tri = dt.triangulation();
+    let tri = dt.as_triangulation();
 
     assert_eq!(tri.number_of_vertices(), 5);
     assert_eq!(tri.number_of_cells(), 2);

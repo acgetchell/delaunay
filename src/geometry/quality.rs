@@ -216,7 +216,7 @@ where
 /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
 /// let cell_key = dt.cells().next().unwrap().0;
 ///
-/// let ratio = radius_ratio(dt.triangulation(), cell_key).unwrap();
+/// let ratio = radius_ratio(dt.as_triangulation(), cell_key).unwrap();
 /// // For an equilateral triangle, ratio ≈ 2.0
 /// assert!(ratio > 1.5 && ratio < 2.5);
 /// ```
@@ -318,7 +318,7 @@ where
 /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
 /// let cell_key = dt.cells().next().unwrap().0;
 ///
-/// let norm_vol = normalized_volume(dt.triangulation(), cell_key).unwrap();
+/// let norm_vol = normalized_volume(dt.as_triangulation(), cell_key).unwrap();
 /// assert!(norm_vol > 0.0);
 /// ```
 pub fn normalized_volume<K, U, V, const D: usize>(
@@ -432,7 +432,7 @@ mod tests {
 let cell_key = dt.cells().next().unwrap().0;
 
                     // Test radius_ratio
-                    let ratio = radius_ratio(dt.triangulation(), cell_key).unwrap();
+                    let ratio = radius_ratio(dt.as_triangulation(), cell_key).unwrap();
                     assert!(
                         ($expected_ratio_min..=$expected_ratio_max).contains(&ratio),
                         "{}D {}: radius_ratio={ratio}, expected range [{}, {}]",
@@ -440,7 +440,7 @@ let cell_key = dt.cells().next().unwrap().0;
                     );
 
                     // Test normalized_volume
-                    let norm_vol = normalized_volume(dt.triangulation(), cell_key).unwrap();
+                    let norm_vol = normalized_volume(dt.as_triangulation(), cell_key).unwrap();
                     assert!(norm_vol > 0.0, "{}D {}: normalized_volume should be positive", $dim, $desc);
                 }
 
@@ -460,12 +460,12 @@ let key_base = dt_base.cells().next().unwrap().0;
                         let dt_scaled: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::new(&vertices_scaled).unwrap();
 let key_scaled = dt_scaled.cells().next().unwrap().0;
 
-                        let ratio_base = radius_ratio(dt_base.triangulation(), key_base).unwrap();
-                        let ratio_scaled = radius_ratio(dt_scaled.triangulation(), key_scaled).unwrap();
+                        let ratio_base = radius_ratio(dt_base.as_triangulation(), key_base).unwrap();
+                        let ratio_scaled = radius_ratio(dt_scaled.as_triangulation(), key_scaled).unwrap();
                         assert_relative_eq!(ratio_base, ratio_scaled, epsilon = 1e-8);
 
-                        let vol_base = normalized_volume(dt_base.triangulation(), key_base).unwrap();
-                        let vol_scaled = normalized_volume(dt_scaled.triangulation(), key_scaled).unwrap();
+                        let vol_base = normalized_volume(dt_base.as_triangulation(), key_base).unwrap();
+                        let vol_scaled = normalized_volume(dt_scaled.as_triangulation(), key_scaled).unwrap();
                         assert_relative_eq!(vol_base, vol_scaled, epsilon = 1e-5);
                     }
 
@@ -484,12 +484,12 @@ let key_base = dt_base.cells().next().unwrap().0;
                         let dt_translated: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::new(&vertices_translated).unwrap();
 let key_translated = dt_translated.cells().next().unwrap().0;
 
-                        let ratio_base = radius_ratio(dt_base.triangulation(), key_base).unwrap();
-                        let ratio_translated = radius_ratio(dt_translated.triangulation(), key_translated).unwrap();
+                        let ratio_base = radius_ratio(dt_base.as_triangulation(), key_base).unwrap();
+                        let ratio_translated = radius_ratio(dt_translated.as_triangulation(), key_translated).unwrap();
                         assert_relative_eq!(ratio_base, ratio_translated, epsilon = 1e-10);
 
-                        let vol_base = normalized_volume(dt_base.triangulation(), key_base).unwrap();
-                        let vol_translated = normalized_volume(dt_translated.triangulation(), key_translated).unwrap();
+                        let vol_base = normalized_volume(dt_base.as_triangulation(), key_base).unwrap();
+                        let vol_translated = normalized_volume(dt_translated.as_triangulation(), key_translated).unwrap();
                         assert_relative_eq!(vol_base, vol_translated, epsilon = 1e-10);
                     }
                 }
@@ -590,7 +590,7 @@ let key_translated = dt_translated.cells().next().unwrap().0;
         let cell_key = dt.cells().next().unwrap().0;
 
         // Test radius_ratio
-        let ratio_result = radius_ratio(dt.triangulation(), cell_key);
+        let ratio_result = radius_ratio(dt.as_triangulation(), cell_key);
         if let Ok(ratio) = ratio_result {
             assert!(ratio > 10.0);
         } else {
@@ -601,7 +601,7 @@ let key_translated = dt_translated.cells().next().unwrap().0;
         }
 
         // Test normalized_volume
-        let vol_result = normalized_volume(dt.triangulation(), cell_key);
+        let vol_result = normalized_volume(dt.as_triangulation(), cell_key);
         if let Ok(norm_vol) = vol_result {
             assert!(norm_vol < 0.01);
         } else {
@@ -665,11 +665,11 @@ let key_translated = dt_translated.cells().next().unwrap().0;
             DelaunayTriangulation::new(&vertices_poor).unwrap();
         let cell_key_poor = dt_poor.cells().next().unwrap().0;
 
-        let ratio_good = radius_ratio(dt_good.triangulation(), cell_key_good).unwrap();
-        let ratio_poor = radius_ratio(dt_poor.triangulation(), cell_key_poor).unwrap();
+        let ratio_good = radius_ratio(dt_good.as_triangulation(), cell_key_good).unwrap();
+        let ratio_poor = radius_ratio(dt_poor.as_triangulation(), cell_key_poor).unwrap();
 
-        let norm_vol_good = normalized_volume(dt_good.triangulation(), cell_key_good).unwrap();
-        let norm_vol_poor = normalized_volume(dt_poor.triangulation(), cell_key_poor).unwrap();
+        let norm_vol_good = normalized_volume(dt_good.as_triangulation(), cell_key_good).unwrap();
+        let norm_vol_poor = normalized_volume(dt_poor.as_triangulation(), cell_key_poor).unwrap();
 
         // Good triangle: lower ratio, higher normalized volume
         assert!(ratio_good < ratio_poor);
@@ -694,12 +694,12 @@ let key_translated = dt_translated.cells().next().unwrap().0;
         let cell_key = dt.cells().next().unwrap().0;
 
         // Test radius_ratio
-        let ratio = radius_ratio(dt.triangulation(), cell_key).unwrap();
+        let ratio = radius_ratio(dt.as_triangulation(), cell_key).unwrap();
         // For equilateral triangle: R/r = 2
         assert!(ratio > 1.5 && ratio < 2.5, "ratio={ratio}");
 
         // Test normalized_volume
-        let norm_vol = normalized_volume(dt.triangulation(), cell_key).unwrap();
+        let norm_vol = normalized_volume(dt.as_triangulation(), cell_key).unwrap();
         // For 2D equilateral: sqrt(3)/4 ≈ 0.433
         assert!(norm_vol > 0.3 && norm_vol < 0.6, "norm_vol={norm_vol}");
     }
@@ -727,8 +727,8 @@ let key_translated = dt_translated.cells().next().unwrap().0;
         // should detect the degeneracy
         if let Ok(dt) = dt_result {
             let cell_key = dt.cells().next().unwrap().0;
-            let ratio_result = radius_ratio(dt.triangulation(), cell_key);
-            let vol_result = normalized_volume(dt.triangulation(), cell_key);
+            let ratio_result = radius_ratio(dt.as_triangulation(), cell_key);
+            let vol_result = normalized_volume(dt.as_triangulation(), cell_key);
 
             // At least one quality metric should detect the degeneracy
             assert!(
@@ -752,7 +752,7 @@ let key_translated = dt_translated.cells().next().unwrap().0;
         let cell_key = dt.cells().next().unwrap().0;
 
         // Either should error or produce very poor quality
-        if let Ok(ratio) = radius_ratio(dt.triangulation(), cell_key) {
+        if let Ok(ratio) = radius_ratio(dt.as_triangulation(), cell_key) {
             assert!(ratio > 100.0); // Very poor quality
         }
     }
@@ -770,8 +770,8 @@ let key_translated = dt_translated.cells().next().unwrap().0;
         let cell_key = dt.cells().next().unwrap().0;
 
         // Should compute without panicking
-        let ratio_result = radius_ratio(dt.triangulation(), cell_key);
-        let norm_vol_result = normalized_volume(dt.triangulation(), cell_key);
+        let ratio_result = radius_ratio(dt.as_triangulation(), cell_key);
+        let norm_vol_result = normalized_volume(dt.as_triangulation(), cell_key);
 
         // Either succeed or fail gracefully (no panic)
         assert!(ratio_result.is_ok() || ratio_result.is_err());
@@ -798,11 +798,11 @@ let key_translated = dt_translated.cells().next().unwrap().0;
             DelaunayTriangulation::new(&vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
 
-        let ratio = radius_ratio(dt.triangulation(), cell_key).unwrap();
+        let ratio = radius_ratio(dt.as_triangulation(), cell_key).unwrap();
         assert!(ratio > 6.0); // At least the dimension
         assert!(ratio < 20.0); // Not too degenerate
 
-        let norm_vol = normalized_volume(dt.triangulation(), cell_key).unwrap();
+        let norm_vol = normalized_volume(dt.as_triangulation(), cell_key).unwrap();
         assert!(norm_vol > 0.0);
     }
 
@@ -820,7 +820,7 @@ let key_translated = dt_translated.cells().next().unwrap().0;
                     let dt: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::new(&vertices).unwrap();
 let cell_key = dt.cells().next().unwrap().0;
 
-                    if let Ok(ratio) = radius_ratio(dt.triangulation(), cell_key) {
+                    if let Ok(ratio) = radius_ratio(dt.as_triangulation(), cell_key) {
                         assert!(ratio > $min_ratio, "{}: ratio={ratio}, expected > {}", $desc, $min_ratio);
                     }
                 }
@@ -901,10 +901,10 @@ let cell_key = dt.cells().next().unwrap().0;
         // Create an invalid key (not in the SlotMap)
         let invalid_key = CellKey::from(KeyData::from_ffi(u64::MAX));
 
-        let result = radius_ratio(dt.triangulation(), invalid_key);
+        let result = radius_ratio(dt.as_triangulation(), invalid_key);
         assert!(matches!(result, Err(QualityError::InvalidCell { .. })));
 
-        let result = normalized_volume(dt.triangulation(), invalid_key);
+        let result = normalized_volume(dt.as_triangulation(), invalid_key);
         assert!(matches!(result, Err(QualityError::InvalidCell { .. })));
     }
 
@@ -971,13 +971,13 @@ let cell_key = dt.cells().next().unwrap().0;
             DelaunayTriangulation::new(&vertices_worst).unwrap();
         let key_worst = dt_worst.cells().next().unwrap().0;
 
-        let ratio_best = radius_ratio(dt_best.triangulation(), key_best).unwrap();
-        let ratio_medium = radius_ratio(dt_medium.triangulation(), key_medium).unwrap();
-        let ratio_worst = radius_ratio(dt_worst.triangulation(), key_worst).unwrap();
+        let ratio_best = radius_ratio(dt_best.as_triangulation(), key_best).unwrap();
+        let ratio_medium = radius_ratio(dt_medium.as_triangulation(), key_medium).unwrap();
+        let ratio_worst = radius_ratio(dt_worst.as_triangulation(), key_worst).unwrap();
 
-        let vol_best = normalized_volume(dt_best.triangulation(), key_best).unwrap();
-        let vol_medium = normalized_volume(dt_medium.triangulation(), key_medium).unwrap();
-        let vol_worst = normalized_volume(dt_worst.triangulation(), key_worst).unwrap();
+        let vol_best = normalized_volume(dt_best.as_triangulation(), key_best).unwrap();
+        let vol_medium = normalized_volume(dt_medium.as_triangulation(), key_medium).unwrap();
+        let vol_worst = normalized_volume(dt_worst.as_triangulation(), key_worst).unwrap();
 
         // Verify consistent ranking
         assert!(ratio_best < ratio_medium);
@@ -1006,7 +1006,7 @@ let cell_key = dt.cells().next().unwrap().0;
         let dt_right: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices_right).unwrap();
         let key_right = dt_right.cells().next().unwrap().0;
-        let ratio_right = radius_ratio(dt_right.triangulation(), key_right).unwrap();
+        let ratio_right = radius_ratio(dt_right.as_triangulation(), key_right).unwrap();
         assert_relative_eq!(ratio_right, 1.0 + 2.0_f64.sqrt(), epsilon = 0.1);
 
         // Test isosceles triangle
@@ -1018,7 +1018,7 @@ let cell_key = dt.cells().next().unwrap().0;
         let dt_iso: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices_iso).unwrap();
         let key_iso = dt_iso.cells().next().unwrap().0;
-        let ratio_iso = radius_ratio(dt_iso.triangulation(), key_iso).unwrap();
+        let ratio_iso = radius_ratio(dt_iso.as_triangulation(), key_iso).unwrap();
         assert!(ratio_iso > 2.0 && ratio_iso < 5.0);
     }
 
@@ -1047,8 +1047,8 @@ let cell_key = dt.cells().next().unwrap().0;
             DelaunayTriangulation::new(&vertices_f64).unwrap();
         let key_f64 = dt_f64.cells().next().unwrap().0;
 
-        let ratio_f32 = radius_ratio(dt_f32.triangulation(), key_f32).unwrap();
-        let ratio_f64 = radius_ratio(dt_f64.triangulation(), key_f64).unwrap();
+        let ratio_f32 = radius_ratio(dt_f32.as_triangulation(), key_f32).unwrap();
+        let ratio_f64 = radius_ratio(dt_f64.as_triangulation(), key_f64).unwrap();
 
         // f32 and f64 should give similar results
         let ratio_diff = (<f64 as std::convert::From<f32>>::from(ratio_f32) - ratio_f64).abs();
@@ -1074,7 +1074,7 @@ let cell_key = dt.cells().next().unwrap().0;
             DelaunayTriangulation::new(&vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
 
-        let points = cell_points(dt.triangulation(), cell_key).unwrap();
+        let points = cell_points(dt.as_triangulation(), cell_key).unwrap();
         assert_eq!(points.len(), 3, "Should have 3 points for 2D cell");
     }
 
@@ -1090,7 +1090,7 @@ let cell_key = dt.cells().next().unwrap().0;
             DelaunayTriangulation::new(&vertices).unwrap();
         let invalid_key = CellKey::from(KeyData::from_ffi(u64::MAX));
 
-        let result = cell_points(dt.triangulation(), invalid_key);
+        let result = cell_points(dt.as_triangulation(), invalid_key);
         assert!(matches!(result, Err(QualityError::InvalidCell { .. })));
     }
 
@@ -1170,7 +1170,7 @@ let cell_key = dt.cells().next().unwrap().0;
         let cell_key = dt.cells().next().unwrap().0;
 
         // Normal case should succeed
-        let result = radius_ratio(dt.triangulation(), cell_key);
+        let result = radius_ratio(dt.as_triangulation(), cell_key);
         assert!(result.is_ok());
     }
 
@@ -1188,7 +1188,7 @@ let cell_key = dt.cells().next().unwrap().0;
         let cell_key = dt.cells().next().unwrap().0;
 
         // Should succeed with correct count
-        let result = normalized_volume(dt.triangulation(), cell_key);
+        let result = normalized_volume(dt.as_triangulation(), cell_key);
         assert!(result.is_ok());
     }
 
@@ -1210,7 +1210,7 @@ let cell_key = dt.cells().next().unwrap().0;
                 let cell_key = dt.cells().next().unwrap().0;
 
                 // Should either compute or return degenerate/numerical error (no panic)
-                let result = radius_ratio(dt.triangulation(), cell_key);
+                let result = radius_ratio(dt.as_triangulation(), cell_key);
                 assert!(
                     result.is_ok()
                         || matches!(result, Err(QualityError::DegenerateCell { .. }))
@@ -1247,7 +1247,7 @@ let cell_key = dt.cells().next().unwrap().0;
                 let cell_key = dt.cells().next().unwrap().0;
 
                 // Should either compute or return degenerate/numerical error (no panic)
-                let result = normalized_volume(dt.triangulation(), cell_key);
+                let result = normalized_volume(dt.as_triangulation(), cell_key);
                 assert!(
                     result.is_ok()
                         || matches!(result, Err(QualityError::DegenerateCell { .. }))
@@ -1295,7 +1295,7 @@ let cell_key = dt.cells().next().unwrap().0;
             Ok(dt) => {
                 let cell_key = dt.cells().next().unwrap().0;
 
-                let result = radius_ratio(dt.triangulation(), cell_key);
+                let result = radius_ratio(dt.as_triangulation(), cell_key);
                 if let Err(QualityError::DegenerateCell { detail }) = result {
                     // Should include numeric information when we surface a degenerate cell
                     assert!(detail.contains("inradius") || detail.contains("volume"));

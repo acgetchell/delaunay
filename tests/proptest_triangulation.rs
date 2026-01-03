@@ -220,7 +220,7 @@ macro_rules! test_quality_properties {
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &vertices) {
                         let tds = dt.tds();
-                        let tri = dt.triangulation();
+                        let tri = dt.as_triangulation();
                         for cell_key in tds.cell_keys() {
                             if let Ok(ratio) = radius_ratio(tri, cell_key) {
                                 prop_assert!(
@@ -332,8 +332,8 @@ macro_rules! test_quality_properties {
                                 "radius_ratio",
                                 $dim,
                                 |orig_key, trans_key| {
-                                    let tri = dt.triangulation();
-                                    let tri_translated = dt_translated.triangulation();
+                                    let tri = dt.as_triangulation();
+                                    let tri_translated = dt_translated.as_triangulation();
                                     if let (Ok(ratio_orig), Ok(ratio_trans)) = (
                                         radius_ratio(tri, orig_key),
                                         radius_ratio(tri_translated, trans_key),
@@ -400,8 +400,8 @@ macro_rules! test_quality_properties {
                                 "normalized_volume",
                                 $dim,
                                 |orig_key, trans_key| {
-                                    let tri = dt.triangulation();
-                                    let tri_translated = dt_translated.triangulation();
+                                    let tri = dt.as_triangulation();
+                                    let tri_translated = dt_translated.as_triangulation();
                                     if let (Ok(vol_orig), Ok(vol_trans)) = (
                                         normalized_volume(tri, orig_key),
                                         normalized_volume(tri_translated, trans_key),
@@ -468,8 +468,8 @@ macro_rules! test_quality_properties {
                                 "normalized_volume",
                                 $dim,
                                 |orig_key, scaled_key| {
-                                    let tri = dt.triangulation();
-                                    let tri_scaled = dt_scaled.triangulation();
+                                    let tri = dt.as_triangulation();
+                                    let tri_scaled = dt_scaled.as_triangulation();
                                     if let (Ok(vol_orig), Ok(vol_scaled)) = (
                                         normalized_volume(tri, orig_key),
                                         normalized_volume(tri_scaled, scaled_key),
@@ -506,7 +506,7 @@ macro_rules! test_quality_properties {
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &vertices) {
                         let tds = dt.tds();
-                        let tri = dt.triangulation();
+                        let tri = dt.as_triangulation();
                         for cell_key in tds.cell_keys() {
                             let rr_result = radius_ratio(tri, cell_key);
                             let nv_result = normalized_volume(tri, cell_key);
@@ -625,7 +625,7 @@ macro_rules! test_facet_topology_invariant {
 
                     // Build triangulation
                     if let Ok(dt) = DelaunayTriangulation::new(&vertices) {
-                        let tri = dt.triangulation();
+                        let tri = dt.as_triangulation();
 
                         // Get all cell keys
                         let cell_keys: Vec<_> = tri.cells().map(|(k, _)| k).collect();
@@ -652,7 +652,7 @@ macro_rules! test_facet_topology_invariant {
 
                     // Build triangulation
                     if let Ok(mut dt) = DelaunayTriangulation::new(&vertices) {
-                        let tri = dt.triangulation_mut();
+                        let tri = dt.as_triangulation_mut();
 
                         // Get all cell keys
                         let cell_keys: Vec<_> = tri.cells().map(|(k, _)| k).collect();
@@ -685,7 +685,7 @@ macro_rules! test_facet_topology_invariant {
 
                     // Build triangulation
                     if let Ok(dt) = DelaunayTriangulation::new(&vertices) {
-                        let tri = dt.triangulation();
+                        let tri = dt.as_triangulation();
 
                         // Empty cell list should always return None
                         let issues = tri.detect_local_facet_issues(&[])?;

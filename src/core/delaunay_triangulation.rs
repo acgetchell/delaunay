@@ -652,11 +652,11 @@ where
     /// ];
     ///
     /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let hull = ConvexHull::from_triangulation(dt.triangulation()).unwrap();
+    /// let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
     /// assert_eq!(hull.number_of_facets(), 4);
     /// ```
     #[must_use]
-    pub const fn triangulation(&self) -> &Triangulation<K, U, V, D> {
+    pub const fn as_triangulation(&self) -> &Triangulation<K, U, V, D> {
         &self.tri
     }
 
@@ -685,7 +685,7 @@ where
     ///
     /// After direct modification, you should:
     /// 1. Call `detect_local_facet_issues()` and `repair_local_facet_issues()` if you modified topology
-    /// 2. Run `dt.triangulation().validate()` (Levels 1–3) or `dt.validate()` (Levels 1–4) to verify structural/topological consistency
+    /// 2. Run `dt.as_triangulation().validate()` (Levels 1–3) or `dt.validate()` (Levels 1–4) to verify structural/topological consistency
     /// 3. Reserve `dt.is_valid()` for Delaunay-only (Level 4) checks
     ///
     /// ## Safe Alternatives
@@ -709,7 +709,7 @@ where
     /// let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
     ///
     /// // ⚠️ Advanced use: direct access for testing validation
-    /// let tri = dt.triangulation_mut();
+    /// let tri = dt.as_triangulation_mut();
     /// // ... perform internal algorithm testing ...
     ///
     /// // Always validate after direct modifications
@@ -717,7 +717,7 @@ where
     /// ```
     #[must_use]
     #[allow(clippy::missing_const_for_fn)] // mutable refs from const fn not widely supported
-    pub fn triangulation_mut(&mut self) -> &mut Triangulation<K, U, V, D> {
+    pub fn as_triangulation_mut(&mut self) -> &mut Triangulation<K, U, V, D> {
         &mut self.tri
     }
 
@@ -873,7 +873,7 @@ where
     /// ```
     #[inline]
     pub fn build_adjacency_index(&self) -> Result<AdjacencyIndex, AdjacencyIndexBuildError> {
-        self.triangulation().build_adjacency_index()
+        self.as_triangulation().build_adjacency_index()
     }
 
     /// Returns an iterator over all unique edges in the triangulation.
@@ -899,7 +899,7 @@ where
     /// assert_eq!(edges.len(), 6);
     /// ```
     pub fn edges(&self) -> impl Iterator<Item = EdgeKey> + '_ {
-        self.triangulation().edges()
+        self.as_triangulation().edges()
     }
 
     /// Returns an iterator over all unique edges using a precomputed [`AdjacencyIndex`].
@@ -922,7 +922,7 @@ where
     /// ];
     ///
     /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let index = dt.triangulation().build_adjacency_index().unwrap();
+    /// let index = dt.build_adjacency_index().unwrap();
     ///
     /// let edges: std::collections::HashSet<_> = dt.edges_with_index(&index).collect();
     /// assert_eq!(edges.len(), 6);
@@ -931,7 +931,7 @@ where
         &self,
         index: &'a AdjacencyIndex,
     ) -> impl Iterator<Item = EdgeKey> + 'a {
-        self.triangulation().edges_with_index(index)
+        self.as_triangulation().edges_with_index(index)
     }
 
     /// Returns an iterator over all unique edges incident to a vertex.
@@ -960,7 +960,7 @@ where
     /// assert_eq!(dt.incident_edges(v0).count(), 3);
     /// ```
     pub fn incident_edges(&self, v: VertexKey) -> impl Iterator<Item = EdgeKey> + '_ {
-        self.triangulation().incident_edges(v)
+        self.as_triangulation().incident_edges(v)
     }
 
     /// Returns an iterator over all unique edges incident to a vertex using a precomputed
@@ -984,7 +984,7 @@ where
     /// ];
     ///
     /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let index = dt.triangulation().build_adjacency_index().unwrap();
+    /// let index = dt.build_adjacency_index().unwrap();
     /// let v0 = dt.vertices().next().unwrap().0;
     ///
     /// assert_eq!(dt.incident_edges_with_index(&index, v0).count(), 3);
@@ -994,7 +994,7 @@ where
         index: &'a AdjacencyIndex,
         v: VertexKey,
     ) -> impl Iterator<Item = EdgeKey> + 'a {
-        self.triangulation().incident_edges_with_index(index, v)
+        self.as_triangulation().incident_edges_with_index(index, v)
     }
 
     /// Returns an iterator over all neighbors of a cell.
@@ -1023,7 +1023,7 @@ where
     /// assert_eq!(dt.cell_neighbors(cell_key).count(), 0);
     /// ```
     pub fn cell_neighbors(&self, c: CellKey) -> impl Iterator<Item = CellKey> + '_ {
-        self.triangulation().cell_neighbors(c)
+        self.as_triangulation().cell_neighbors(c)
     }
 
     /// Returns an iterator over all neighbors of a cell using a precomputed [`AdjacencyIndex`].
@@ -1050,7 +1050,7 @@ where
     /// ];
     ///
     /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let index = dt.triangulation().build_adjacency_index().unwrap();
+    /// let index = dt.build_adjacency_index().unwrap();
     ///
     /// let cell_key = dt.cells().next().unwrap().0;
     /// assert_eq!(dt.cell_neighbors_with_index(&index, cell_key).count(), 1);
@@ -1060,7 +1060,7 @@ where
         index: &'a AdjacencyIndex,
         c: CellKey,
     ) -> impl Iterator<Item = CellKey> + 'a {
-        self.triangulation().cell_neighbors_with_index(index, c)
+        self.as_triangulation().cell_neighbors_with_index(index, c)
     }
 
     /// Returns a slice view of a cell's vertex keys.
@@ -1091,7 +1091,7 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
-        self.triangulation().cell_vertices(c)
+        self.as_triangulation().cell_vertices(c)
     }
 
     /// Returns a slice view of a vertex's coordinates.
@@ -1126,7 +1126,7 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
-        self.triangulation().vertex_coords(v)
+        self.as_triangulation().vertex_coords(v)
     }
 
     /// Insert a vertex into the Delaunay triangulation using incremental cavity-based algorithm.
@@ -1326,7 +1326,7 @@ where
     /// println!("Removed {} cells along with the vertex", cells_removed);
     ///
     /// // Vertex removal preserves Levels 1–3 but may not preserve the Delaunay property.
-    /// assert!(dt.triangulation().validate().is_ok());
+    /// assert!(dt.as_triangulation().validate().is_ok());
     /// ```
     pub fn remove_vertex(
         &mut self,
@@ -2638,7 +2638,7 @@ mod tests {
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let tri = dt.triangulation();
+        let tri = dt.as_triangulation();
 
         let edges_dt: std::collections::HashSet<_> = dt.edges().collect();
         let edges_tri: std::collections::HashSet<_> = tri.edges().collect();

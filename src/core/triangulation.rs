@@ -61,7 +61,7 @@
 //! assert!(dt.tds().is_valid().is_ok());
 //!
 //! // Level 3: topology only (assumes structural validity)
-//! assert!(dt.triangulation().is_valid().is_ok());
+//! assert!(dt.as_triangulation().is_valid().is_ok());
 //!
 //! // Level 4: Delaunay property only (assumes Levels 1–3)
 //! assert!(dt.is_valid().is_ok());
@@ -551,7 +551,7 @@ where
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let tri = dt.triangulation();
+    /// let tri = dt.as_triangulation();
     ///
     /// // Iterate over cells
     /// for (_cell_key, cell) in tri.cells() {
@@ -578,7 +578,7 @@ where
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let tri = dt.triangulation();
+    /// let tri = dt.as_triangulation();
     ///
     /// // Iterate over vertices
     /// for (_vertex_key, vertex) in tri.vertices() {
@@ -604,7 +604,7 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// assert_eq!(dt.triangulation().number_of_vertices(), 4);
+    /// assert_eq!(dt.as_triangulation().number_of_vertices(), 4);
     /// ```
     #[must_use]
     pub fn number_of_vertices(&self) -> usize {
@@ -625,7 +625,7 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// assert_eq!(dt.triangulation().number_of_cells(), 1); // Single tetrahedron
+    /// assert_eq!(dt.as_triangulation().number_of_cells(), 1); // Single tetrahedron
     /// ```
     #[must_use]
     pub fn number_of_cells(&self) -> usize {
@@ -652,7 +652,7 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// assert_eq!(dt.triangulation().dim(), 3);
+    /// assert_eq!(dt.as_triangulation().dim(), 3);
     /// ```
     #[must_use]
     pub fn dim(&self) -> i32 {
@@ -683,7 +683,7 @@ where
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     ///
     /// // Iterate over all facets
-    /// let facet_count = dt.triangulation().facets().count();
+    /// let facet_count = dt.as_triangulation().facets().count();
     /// assert_eq!(facet_count, 4); // Tetrahedron has 4 facets
     /// ```
     pub fn facets(&self) -> AllFacetsIter<'_, K::Scalar, U, V, D> {
@@ -718,7 +718,7 @@ where
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     ///
-    /// let boundary_count = dt.triangulation().boundary_facets().count();
+    /// let boundary_count = dt.as_triangulation().boundary_facets().count();
     /// assert_eq!(boundary_count, 4); // All facets are on boundary
     /// ```
     pub fn boundary_facets(&self) -> BoundaryFacetsIter<'_, K::Scalar, U, V, D> {
@@ -777,7 +777,7 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let tri = dt.triangulation();
+    /// let tri = dt.as_triangulation();
     ///
     /// let edges: std::collections::HashSet<_> = tri.edges().collect();
     /// assert_eq!(edges.len(), 6);
@@ -803,7 +803,7 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let tri = dt.triangulation();
+    /// let tri = dt.as_triangulation();
     ///
     /// let index = tri.build_adjacency_index().unwrap();
     /// let edges: std::collections::HashSet<_> = tri.edges_with_index(&index).collect();
@@ -833,7 +833,7 @@ where
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let tri = dt.triangulation();
+    /// let tri = dt.as_triangulation();
     ///
     /// assert_eq!(tri.number_of_edges(), 3);
     /// ```
@@ -857,7 +857,7 @@ where
     /// #     vertex!([0.0, 0.0, 1.0]),
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// # let tri = dt.triangulation();
+    /// # let tri = dt.as_triangulation();
     /// # let index = tri.build_adjacency_index().unwrap();
     /// assert_eq!(tri.number_of_edges_with_index(&index), 6);
     /// ```
@@ -890,7 +890,7 @@ where
     /// ];
     ///
     /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let tri = dt.triangulation();
+    /// let tri = dt.as_triangulation();
     ///
     /// // Find a vertex on the shared triangle by coordinates.
     /// let shared_vertex_key = tri
@@ -929,7 +929,7 @@ where
     /// #     vertex!([1.0, 0.7, -1.5]),
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// # let tri = dt.triangulation();
+    /// # let tri = dt.as_triangulation();
     /// # let index = tri.build_adjacency_index().unwrap();
     /// let v = tri.vertices().next().unwrap().0;
     /// assert!(tri.adjacent_cells_with_index(&index, v).count() >= 1);
@@ -959,7 +959,7 @@ where
     /// #     vertex!([0.0, 0.0, 1.0]),
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// # let tri = dt.triangulation();
+    /// # let tri = dt.as_triangulation();
     /// # let index = tri.build_adjacency_index().unwrap();
     /// let v0 = tri.vertices().next().unwrap().0;
     /// assert_eq!(tri.number_of_adjacent_cells_with_index(&index, v0), 1);
@@ -998,7 +998,7 @@ where
     /// ];
     ///
     /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let tri = dt.triangulation();
+    /// let tri = dt.as_triangulation();
     ///
     /// let cell_keys: Vec<_> = tri.cells().map(|(ck, _)| ck).collect();
     /// assert_eq!(cell_keys.len(), 2);
@@ -1036,7 +1036,7 @@ where
     /// #     vertex!([1.0, 0.7, -1.5]),
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// # let tri = dt.triangulation();
+    /// # let tri = dt.as_triangulation();
     /// # let index = tri.build_adjacency_index().unwrap();
     /// let cell_key = tri.cells().next().unwrap().0;
     /// let neighbors: Vec<_> = tri.cell_neighbors_with_index(&index, cell_key).collect();
@@ -1069,7 +1069,7 @@ where
     /// #     vertex!([1.0, 0.7, -1.5]),
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// # let tri = dt.triangulation();
+    /// # let tri = dt.as_triangulation();
     /// # let index = tri.build_adjacency_index().unwrap();
     /// let cell_key = tri.cells().next().unwrap().0;
     /// assert_eq!(tri.number_of_cell_neighbors_with_index(&index, cell_key), 1);
@@ -1102,7 +1102,7 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let tri = dt.triangulation();
+    /// let tri = dt.as_triangulation();
     ///
     /// let v0 = tri.vertices().next().unwrap().0;
     /// let incident: Vec<_> = tri.incident_edges(v0).collect();
@@ -1131,7 +1131,7 @@ where
     /// #     vertex!([0.0, 0.0, 1.0]),
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// # let tri = dt.triangulation();
+    /// # let tri = dt.as_triangulation();
     /// # let index = tri.build_adjacency_index().unwrap();
     /// let v0 = tri.vertices().next().unwrap().0;
     /// assert_eq!(tri.incident_edges_with_index(&index, v0).count(), 3);
@@ -1161,7 +1161,7 @@ where
     /// #     vertex!([0.0, 0.0, 1.0]),
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// # let tri = dt.triangulation();
+    /// # let tri = dt.as_triangulation();
     /// # let index = tri.build_adjacency_index().unwrap();
     /// let v0 = tri.vertices().next().unwrap().0;
     /// assert_eq!(tri.number_of_incident_edges_with_index(&index, v0), 3);
@@ -1193,7 +1193,7 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let tri = dt.triangulation();
+    /// let tri = dt.as_triangulation();
     ///
     /// let v0 = tri.vertices().next().unwrap().0;
     /// assert_eq!(tri.number_of_incident_edges(v0), 3);
@@ -1218,7 +1218,7 @@ where
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let tri = dt.triangulation();
+    /// let tri = dt.as_triangulation();
     ///
     /// let cell_key = tri.cells().next().unwrap().0;
     /// let cell_vertices = tri.cell_vertices(cell_key).unwrap();
@@ -1244,7 +1244,7 @@ where
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let tri = dt.triangulation();
+    /// let tri = dt.as_triangulation();
     ///
     /// // Find the key for a known vertex by matching coordinates.
     /// let v_key = tri
@@ -1270,8 +1270,8 @@ where
     /// - No sorted-order guarantees are provided for the values.
     /// - The returned collections are optimized for performance.
     /// - The maps include an entry for every vertex currently stored in the triangulation.
-    ///   Vertices with no incident cells/edges (e.g., during bootstrap when `number_of_cells() == 0`)
-    ///   have empty adjacency lists.
+    ///   During the bootstrap phase (before the initial simplex is created), vertices have empty
+    ///   adjacency lists because no cells exist yet. This is expected and not an error condition.
     /// - Isolated vertices (present in the vertex store but not referenced by any cell) are allowed at
     ///   the TDS structural layer, but violate the Level 3 manifold invariants checked by
     ///   [`Triangulation::is_valid`](Self::is_valid). When present, their adjacency lists are empty.
@@ -1298,7 +1298,7 @@ where
     /// ];
     ///
     /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let tri = dt.triangulation();
+    /// let tri = dt.as_triangulation();
     ///
     /// let index = tri.build_adjacency_index().unwrap();
     ///
@@ -1476,7 +1476,7 @@ where
     ///     DelaunayTriangulation::new(&vertices_4d).unwrap();
     ///
     /// // Level 3: topology validation (manifold-with-boundary + Euler characteristic)
-    /// assert!(dt.triangulation().is_valid().is_ok());
+    /// assert!(dt.as_triangulation().is_valid().is_ok());
     /// ```
     pub fn is_valid(&self) -> Result<(), TriangulationValidationError> {
         // 1. Manifold facet property (with boundary-aware neighbor consistency)
@@ -1540,7 +1540,7 @@ where
     ///     DelaunayTriangulation::new(&vertices_4d).unwrap();
     ///
     /// // Levels 1–3: elements + TDS structure + topology
-    /// assert!(dt.triangulation().validate().is_ok());
+    /// assert!(dt.as_triangulation().validate().is_ok());
     /// ```
     pub fn validate(&self) -> Result<(), TriangulationValidationError> {
         self.tds.validate()?;
@@ -3009,7 +3009,7 @@ where
     /// // Remove a vertex - cavity is automatically retriangulated
     /// let vertex_to_remove = dt.vertices().next().unwrap().1.clone();
     /// let cells_removed = dt.remove_vertex(&vertex_to_remove).unwrap();
-    /// assert!(dt.triangulation().validate().is_ok());
+    /// assert!(dt.as_triangulation().validate().is_ok());
     /// ```
     pub fn remove_vertex(
         &mut self,
@@ -3252,7 +3252,7 @@ where
     ///
     /// let cell_keys: Vec<_> = dt.cells().map(|(ck, _)| ck).collect();
     /// let issues = dt
-    ///     .triangulation()
+    ///     .as_triangulation()
     ///     .detect_local_facet_issues(&cell_keys)
     ///     .unwrap();
     /// assert!(issues.is_none());
@@ -3362,7 +3362,7 @@ where
     ///
     /// // Empty issues map => nothing to remove.
     /// let removed = dt
-    ///     .triangulation_mut()
+    ///     .as_triangulation_mut()
     ///     .repair_local_facet_issues(&FacetIssuesMap::default())
     ///     .unwrap();
     /// assert_eq!(removed, 0);
@@ -3583,7 +3583,7 @@ mod tests {
 
                     let dt = DelaunayTriangulation::new(&vertices)
                         .expect(&format!("Failed to create {}D triangulation", $dim));
-                    let tri = dt.triangulation();
+                    let tri = dt.as_triangulation();
 
                     // Level 3: topology validation
                     let result = tri.is_valid();
@@ -3664,7 +3664,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let tri = dt.triangulation();
+        let tri = dt.as_triangulation();
 
         // Triangulation::validate should pass if the underlying TDS validates.
         assert!(tri.tds.validate().is_ok(), "TDS should validate");
@@ -4373,7 +4373,7 @@ mod tests {
                     }
 
                     // Verify triangulation is still valid (Levels 1–3; removal does not guarantee Delaunay)
-                    let validation = dt.triangulation().validate();
+                    let validation = dt.as_triangulation().validate();
                     assert!(
                         validation.is_ok(),
                         "{}D: Triangulation should be structurally valid after vertex removal: {:?}",
@@ -4547,7 +4547,7 @@ mod tests {
 
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let tri = dt.triangulation();
+        let tri = dt.as_triangulation();
 
         assert_eq!(tri.number_of_cells(), 1);
         assert_eq!(tri.number_of_vertices(), 3);
@@ -4583,7 +4583,7 @@ mod tests {
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let tri = dt.triangulation();
+        let tri = dt.as_triangulation();
 
         assert_eq!(tri.number_of_cells(), 2);
         assert_eq!(tri.number_of_vertices(), 5);
@@ -4659,7 +4659,7 @@ mod tests {
         ];
         let dt_a: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices_a).unwrap();
-        let tri_a = dt_a.triangulation();
+        let tri_a = dt_a.as_triangulation();
 
         let index = tri_a.build_adjacency_index().unwrap();
 
@@ -4715,7 +4715,7 @@ mod tests {
 
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let tri = dt.triangulation();
+        let tri = dt.as_triangulation();
 
         let v_key = tri
             .vertices()
@@ -4744,7 +4744,7 @@ mod tests {
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let tri = dt.triangulation();
+        let tri = dt.as_triangulation();
 
         let index = tri.build_adjacency_index().unwrap();
 

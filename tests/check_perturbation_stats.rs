@@ -22,7 +22,7 @@ fn check_perturbation_effectiveness() {
 
         // Access statistics via triangulation_mut()
         match dt
-            .triangulation_mut()
+            .as_triangulation_mut()
             .insert_with_statistics(vertex, None, None)
         {
             Ok((InsertionOutcome::Inserted { .. }, stats)) => {
@@ -70,6 +70,6 @@ fn check_perturbation_effectiveness() {
     }
 
     // Verify the triangulation is valid (Levels 1–3: elements + structure + topology)
-    dt.triangulation().validate().unwrap();
+    dt.as_triangulation().validate().unwrap();
     println!("Final vertex count:    {}", dt.number_of_vertices());
 }

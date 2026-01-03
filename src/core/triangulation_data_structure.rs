@@ -64,6 +64,8 @@
 //! | **Facet Sharing** | `Tds::is_valid()` / `Tds::validate()` | Each facet shared by ≤ 2 cells |
 //! | **No Duplicate Cells** | `Tds::is_valid()` / `Tds::validate()` | No cells with identical vertex sets |
 //! | **Neighbor Consistency** | `Tds::is_valid()` / `Tds::validate()` | Mutual neighbor relationships |
+//! | **Cell Vertex Keys** | `Tds::is_valid()` / `Tds::validate()` | Cells reference only valid vertex keys |
+//! | **Vertex Incidence** | `Tds::is_valid()` / `Tds::validate()` | `Vertex::incident_cell` is non-dangling and consistent (when present) |
 //! | **Cell Validity** | `CellBuilder::validate()` (vertex count) + `cell.is_valid()` (comprehensive) | Construction + runtime validation |
 //! | **Vertex Validity** | `Point::from()` (coordinates) + UUID auto-gen + `vertex.is_valid()` | Construction + runtime validation |
 //!
@@ -82,6 +84,8 @@
 //!    - Basic data integrity (coordinates, UUIDs, initialization)
 //! 2. **Level 2: TDS Structural Validity** - [`Tds::is_valid()`] ← **This module**
 //!    - UUID ↔ Key mapping consistency
+//!    - Cells reference only valid vertex keys (no stale/missing vertex keys)
+//!    - `Vertex::incident_cell`, when present, must point at an existing cell that contains the vertex
 //!    - No duplicate cells
 //!    - Facet sharing invariant (≤2 cells per facet)
 //!    - Neighbor consistency
@@ -4003,7 +4007,7 @@ mod tests {
                 "Cell count should not decrease"
             );
             assert!(
-                dt.triangulation().tds.is_valid().is_ok(),
+                dt.as_triangulation().tds.is_valid().is_ok(),
                 "TDS should remain valid"
             );
         }
@@ -4022,7 +4026,7 @@ mod tests {
             dt.insert(vertex).unwrap();
 
             // Vertex should be findable by UUID
-            let vertex_key = dt.triangulation().tds.vertex_key_from_uuid(&uuid);
+            let vertex_key = dt.as_triangulation().tds.vertex_key_from_uuid(&uuid);
             assert!(
                 vertex_key.is_some(),
                 "Added vertex should be findable by UUID"
@@ -4030,7 +4034,7 @@ mod tests {
 
             // Vertex should be in the vertices collection
             let stored_vertex = dt
-                .triangulation()
+                .as_triangulation()
                 .tds
                 .get_vertex_by_key(vertex_key.unwrap())
                 .unwrap();
@@ -4082,7 +4086,7 @@ mod tests {
 
         // Verify the vertex was removed
         assert!(
-            dt.triangulation()
+            dt.as_triangulation()
                 .tds
                 .vertex_key_from_uuid(&vertex_uuid)
                 .is_none(),
@@ -4109,7 +4113,7 @@ mod tests {
                 for (i, neighbor_opt) in neighbors.iter().enumerate() {
                     if let Some(neighbor_key) = neighbor_opt {
                         assert!(
-                            dt.triangulation().tds.cells.contains_key(*neighbor_key),
+                            dt.as_triangulation().tds.cells.contains_key(*neighbor_key),
                             "Cell {cell_key:?} has dangling neighbor reference at index {i}: {neighbor_key:?}"
                         );
                     }
@@ -4119,7 +4123,7 @@ mod tests {
 
         // Verify the TDS is valid (this should pass with the bug fix)
         assert!(
-            dt.triangulation().tds.is_valid().is_ok(),
+            dt.as_triangulation().tds.is_valid().is_ok(),
             "TDS should be valid after removing vertex"
         );
 
@@ -4177,7 +4181,7 @@ mod tests {
             let vertex = *dt_2d.vertices().next().unwrap().1;
             let cells_removed = dt_2d.remove_vertex(&vertex).unwrap();
             assert!(cells_removed > 0);
-            assert!(dt_2d.triangulation().tds.is_valid().is_ok());
+            assert!(dt_2d.as_triangulation().tds.is_valid().is_ok());
         }
 
         // 3D test
@@ -4194,7 +4198,7 @@ mod tests {
             let vertex = *dt_3d.vertices().next().unwrap().1;
             let cells_removed = dt_3d.remove_vertex(&vertex).unwrap();
             assert!(cells_removed > 0);
-            assert!(dt_3d.triangulation().tds.is_valid().is_ok());
+            assert!(dt_3d.as_triangulation().tds.is_valid().is_ok());
         }
 
         // 4D test
@@ -4212,7 +4216,7 @@ mod tests {
             let vertex = *dt_4d.vertices().next().unwrap().1;
             let cells_removed = dt_4d.remove_vertex(&vertex).unwrap();
             assert!(cells_removed > 0);
-            assert!(dt_4d.triangulation().tds.is_valid().is_ok());
+            assert!(dt_4d.as_triangulation().tds.is_valid().is_ok());
         }
 
         println!("✓ remove_vertex works correctly in multiple dimensions");
@@ -4239,7 +4243,7 @@ mod tests {
         // Get a vertex to remove and its key
         let vertex_to_remove = *dt.vertices().nth(4).unwrap().1; // Get the interior vertex
         let removed_vertex_key = dt
-            .triangulation()
+            .as_triangulation()
             .tds
             .vertex_key_from_uuid(&vertex_to_remove.uuid())
             .unwrap();
@@ -4261,14 +4265,14 @@ mod tests {
 
         // CRITICAL CHECK 2: The vertex should no longer exist in TDS
         assert!(
-            dt.triangulation()
+            dt.as_triangulation()
                 .tds
                 .vertex_key_from_uuid(&removed_vertex_uuid)
                 .is_none(),
             "Deleted vertex UUID should not be in mapping"
         );
         assert!(
-            dt.triangulation()
+            dt.as_triangulation()
                 .tds
                 .get_vertex_by_key(removed_vertex_key)
                 .is_none(),
@@ -4279,12 +4283,19 @@ mod tests {
         for (vertex_key, vertex) in dt.vertices() {
             if let Some(incident_cell_key) = vertex.incident_cell {
                 assert!(
-                    dt.triangulation().tds.cells.contains_key(incident_cell_key),
+                    dt.as_triangulation()
+                        .tds
+                        .cells
+                        .contains_key(incident_cell_key),
                     "Vertex {vertex_key:?} has dangling incident_cell pointer to {incident_cell_key:?}"
                 );
 
                 // Verify the incident cell actually contains this vertex
-                let incident_cell = dt.triangulation().tds.get_cell(incident_cell_key).unwrap();
+                let incident_cell = dt
+                    .as_triangulation()
+                    .tds
+                    .get_cell(incident_cell_key)
+                    .unwrap();
                 assert!(
                     incident_cell.contains_vertex(vertex_key),
                     "Vertex {vertex_key:?} incident_cell {incident_cell_key:?} does not contain the vertex"
@@ -4294,7 +4305,7 @@ mod tests {
 
         // CRITICAL CHECK 4: TDS should be valid
         assert!(
-            dt.triangulation().tds.is_valid().is_ok(),
+            dt.as_triangulation().tds.is_valid().is_ok(),
             "TDS should be valid after vertex removal"
         );
 
@@ -4317,12 +4328,12 @@ mod tests {
         // Pick a vertex known to belong to at least one cell (from an existing cell)
         let first_cell_key = dt.cells().next().unwrap().0;
         let some_vertex_key = dt
-            .triangulation()
+            .as_triangulation()
             .tds
             .get_cell_vertices(first_cell_key)
             .unwrap()[0];
         let cells_with_vertex = dt
-            .triangulation()
+            .as_triangulation()
             .tds
             .find_cells_containing_vertex(some_vertex_key);
 
@@ -4334,7 +4345,7 @@ mod tests {
 
         // Verify all returned cells actually contain the vertex
         for &cell_key in &cells_with_vertex {
-            let cell = dt.triangulation().tds.get_cell(cell_key).unwrap();
+            let cell = dt.as_triangulation().tds.get_cell(cell_key).unwrap();
             assert!(
                 cell.contains_vertex(some_vertex_key),
                 "Cell {cell_key:?} should contain vertex {some_vertex_key:?}"
@@ -4355,7 +4366,7 @@ mod tests {
         // Test finding cells for another vertex
         let another_vertex_key = dt.vertices().nth(1).map(|(k, _)| k).unwrap();
         let cells_with_another = dt
-            .triangulation()
+            .as_triangulation()
             .tds
             .find_cells_containing_vertex(another_vertex_key);
         assert!(

@@ -40,7 +40,7 @@ impl EdgeKey {
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let tri = dt.triangulation();
+    /// let tri = dt.as_triangulation();
     ///
     /// let mut it = tri.vertices();
     /// let a = it.next().unwrap().0;
@@ -78,7 +78,7 @@ impl EdgeKey {
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let tri = dt.triangulation();
+    /// let tri = dt.as_triangulation();
     ///
     /// let mut it = tri.vertices();
     /// let a = it.next().unwrap().0;
@@ -108,7 +108,7 @@ impl EdgeKey {
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let tri = dt.triangulation();
+    /// let tri = dt.as_triangulation();
     ///
     /// let mut it = tri.vertices();
     /// let a = it.next().unwrap().0;
@@ -138,7 +138,7 @@ impl EdgeKey {
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let tri = dt.triangulation();
+    /// let tri = dt.as_triangulation();
     ///
     /// let mut it = tri.vertices();
     /// let a = it.next().unwrap().0;
