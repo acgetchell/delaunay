@@ -635,6 +635,7 @@ pub mod prelude {
     /// Includes:
     /// - Topology traversal: [`DelaunayTriangulation::edges`], [`DelaunayTriangulation::incident_edges`],
     ///   [`DelaunayTriangulation::cell_neighbors`]
+    /// - Fast repeated queries: [`DelaunayTriangulation::build_adjacency_index`] and [`AdjacencyIndex`]
     /// - Zero-allocation geometry accessors: [`DelaunayTriangulation::vertex_coords`],
     ///   [`DelaunayTriangulation::cell_vertices`]
     /// - Convex hull extraction: [`ConvexHull::from_triangulation`]

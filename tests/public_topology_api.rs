@@ -30,9 +30,14 @@ fn edges_and_incident_edges_on_single_tetrahedron() {
     let edges: std::collections::HashSet<_> = dt.edges().collect();
     assert_eq!(edges.len(), 6);
 
+    let index = tri.build_adjacency_index().unwrap();
+    let edges_with_index: std::collections::HashSet<_> = dt.edges_with_index(&index).collect();
+    assert_eq!(edges_with_index, edges);
+
     // Pick an arbitrary vertex; in a tetrahedron its degree is 3.
     let v0 = dt.vertices().next().unwrap().0;
     assert_eq!(dt.incident_edges(v0).count(), 3);
+    assert_eq!(dt.incident_edges_with_index(&index, v0).count(), 3);
 
     let incident: std::collections::HashSet<_> = dt.incident_edges(v0).collect();
     assert_eq!(incident.len(), 3);
@@ -40,6 +45,7 @@ fn edges_and_incident_edges_on_single_tetrahedron() {
     // A single tetrahedron has no cell neighbors.
     let cell_key = dt.cells().next().unwrap().0;
     assert_eq!(dt.cell_neighbors(cell_key).count(), 0);
+    assert_eq!(dt.cell_neighbors_with_index(&index, cell_key).count(), 0);
 
     // Geometry accessors are zero-allocation and should succeed for keys from this triangulation.
     // They are also forwarded on `DelaunayTriangulation`.
@@ -95,19 +101,69 @@ fn adjacency_index_on_double_tetrahedron() {
     // Build opt-in adjacency index and validate key properties.
     let index = tri.build_adjacency_index().unwrap();
 
+    // Triangulation-level with_index helpers should match the index and the baseline APIs.
+    assert_eq!(
+        tri.adjacent_cells_with_index(&index, shared_vertex_key)
+            .count(),
+        2
+    );
+    assert_eq!(
+        tri.number_of_adjacent_cells_with_index(&index, shared_vertex_key),
+        2
+    );
+
+    for &ck in &cell_keys {
+        assert_eq!(dt.cell_neighbors_with_index(&index, ck).count(), 1);
+    }
+
     // Shared vertex should have 2 incident cells.
-    let incident_cells = index.vertex_to_cells.get(&shared_vertex_key).unwrap();
-    assert_eq!(incident_cells.len(), 2);
+    assert_eq!(index.number_of_adjacent_cells(shared_vertex_key), 2);
+    assert_eq!(index.adjacent_cells(shared_vertex_key).count(), 2);
 
     // Shared vertex should have at least 3 incident edges (degree depends on geometry);
     // ensure the list is non-empty and contains canonical edges.
-    let incident_edges = index.vertex_to_edges.get(&shared_vertex_key).unwrap();
+    let incident_edges: Vec<_> = index.incident_edges(shared_vertex_key).collect();
     assert!(!incident_edges.is_empty());
     assert!(incident_edges.iter().all(|e| e.v0() <= e.v1()));
 
+    // Triangulation-level with_index helper should match index-based incident edges.
+    let incident_edges_with_index: std::collections::HashSet<_> = dt
+        .incident_edges_with_index(&index, shared_vertex_key)
+        .collect();
+    assert_eq!(incident_edges_with_index.len(), incident_edges.len());
+
     // Each cell should appear with exactly one neighbor in the index.
     for &ck in &cell_keys {
-        let neighs = index.cell_to_neighbors.get(&ck).unwrap();
-        assert_eq!(neighs.len(), 1);
+        assert_eq!(index.number_of_cell_neighbors(ck), 1);
+        assert_eq!(index.cell_neighbors(ck).count(), 1);
     }
+
+    // Global edge iterator should yield each edge exactly once.
+    let edges: std::collections::HashSet<_> = index.edges().collect();
+    assert_eq!(edges.len(), tri.number_of_edges());
+
+    // Triangulation-level edges_with_index should match the index edges().
+    let edges_via_tri: std::collections::HashSet<_> = tri.edges_with_index(&index).collect();
+    assert_eq!(edges_via_tri, edges);
+
+    // Missing keys should yield empty iterators.
+    assert_eq!(index.adjacent_cells(VertexKey::default()).count(), 0);
+    assert_eq!(index.incident_edges(VertexKey::default()).count(), 0);
+    assert_eq!(index.cell_neighbors(CellKey::default()).count(), 0);
+
+    assert_eq!(
+        tri.adjacent_cells_with_index(&index, VertexKey::default())
+            .count(),
+        0
+    );
+    assert_eq!(
+        dt.incident_edges_with_index(&index, VertexKey::default())
+            .count(),
+        0
+    );
+    assert_eq!(
+        dt.cell_neighbors_with_index(&index, CellKey::default())
+            .count(),
+        0
+    );
 }

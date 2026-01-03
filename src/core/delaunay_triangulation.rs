@@ -9,6 +9,7 @@ use std::num::NonZeroUsize;
 
 use num_traits::NumCast;
 
+use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
 use crate::core::algorithms::incremental_insertion::{
     InsertionError, InsertionOutcome, InsertionStatistics,
 };
@@ -842,6 +843,39 @@ where
         self.tri.boundary_facets()
     }
 
+    /// Builds an immutable adjacency index for fast repeated topology queries.
+    ///
+    /// This is a convenience wrapper around
+    /// [`Triangulation::build_adjacency_index`](crate::core::triangulation::Triangulation::build_adjacency_index).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying triangulation data structure is internally inconsistent
+    /// (e.g., a cell references a missing vertex key or a missing neighbor cell key).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::query::*;
+    ///
+    /// // A single 3D tetrahedron has 6 unique edges.
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let index = dt.build_adjacency_index().unwrap();
+    ///
+    /// assert_eq!(index.number_of_edges(), 6);
+    /// ```
+    #[inline]
+    pub fn build_adjacency_index(&self) -> Result<AdjacencyIndex, AdjacencyIndexBuildError> {
+        self.triangulation().build_adjacency_index()
+    }
+
     /// Returns an iterator over all unique edges in the triangulation.
     ///
     /// This is a convenience wrapper around
@@ -866,6 +900,38 @@ where
     /// ```
     pub fn edges(&self) -> impl Iterator<Item = EdgeKey> + '_ {
         self.triangulation().edges()
+    }
+
+    /// Returns an iterator over all unique edges using a precomputed [`AdjacencyIndex`].
+    ///
+    /// This avoids per-call deduplication and allocations.
+    ///
+    /// This is a convenience wrapper around
+    /// [`Triangulation::edges_with_index`](crate::core::triangulation::Triangulation::edges_with_index).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::query::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let index = dt.triangulation().build_adjacency_index().unwrap();
+    ///
+    /// let edges: std::collections::HashSet<_> = dt.edges_with_index(&index).collect();
+    /// assert_eq!(edges.len(), 6);
+    /// ```
+    pub fn edges_with_index<'a>(
+        &self,
+        index: &'a AdjacencyIndex,
+    ) -> impl Iterator<Item = EdgeKey> + 'a {
+        self.triangulation().edges_with_index(index)
     }
 
     /// Returns an iterator over all unique edges incident to a vertex.
@@ -897,6 +963,40 @@ where
         self.triangulation().incident_edges(v)
     }
 
+    /// Returns an iterator over all unique edges incident to a vertex using a precomputed
+    /// [`AdjacencyIndex`].
+    ///
+    /// If `v` is not present in the index, the iterator is empty.
+    ///
+    /// This is a convenience wrapper around
+    /// [`Triangulation::incident_edges_with_index`](crate::core::triangulation::Triangulation::incident_edges_with_index).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::query::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let index = dt.triangulation().build_adjacency_index().unwrap();
+    /// let v0 = dt.vertices().next().unwrap().0;
+    ///
+    /// assert_eq!(dt.incident_edges_with_index(&index, v0).count(), 3);
+    /// ```
+    pub fn incident_edges_with_index<'a>(
+        &self,
+        index: &'a AdjacencyIndex,
+        v: VertexKey,
+    ) -> impl Iterator<Item = EdgeKey> + 'a {
+        self.triangulation().incident_edges_with_index(index, v)
+    }
+
     /// Returns an iterator over all neighbors of a cell.
     ///
     /// Boundary facets are omitted (only existing neighbors are yielded). If `c` is not
@@ -924,6 +1024,43 @@ where
     /// ```
     pub fn cell_neighbors(&self, c: CellKey) -> impl Iterator<Item = CellKey> + '_ {
         self.triangulation().cell_neighbors(c)
+    }
+
+    /// Returns an iterator over all neighbors of a cell using a precomputed [`AdjacencyIndex`].
+    ///
+    /// If `c` is not present in the index, the iterator is empty.
+    ///
+    /// This is a convenience wrapper around
+    /// [`Triangulation::cell_neighbors_with_index`](crate::core::triangulation::Triangulation::cell_neighbors_with_index).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::query::*;
+    ///
+    /// // Two tetrahedra sharing a triangular facet => each tetra has exactly one neighbor.
+    /// let vertices: Vec<_> = vec![
+    ///     // Shared triangle
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([2.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 2.0, 0.0]),
+    ///     // Two apices
+    ///     vertex!([1.0, 0.7, 1.5]),
+    ///     vertex!([1.0, 0.7, -1.5]),
+    /// ];
+    ///
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let index = dt.triangulation().build_adjacency_index().unwrap();
+    ///
+    /// let cell_key = dt.cells().next().unwrap().0;
+    /// assert_eq!(dt.cell_neighbors_with_index(&index, cell_key).count(), 1);
+    /// ```
+    pub fn cell_neighbors_with_index<'a>(
+        &self,
+        index: &'a AdjacencyIndex,
+        c: CellKey,
+    ) -> impl Iterator<Item = CellKey> + 'a {
+        self.triangulation().cell_neighbors_with_index(index, c)
     }
 
     /// Returns a slice view of a cell's vertex keys.
@@ -2508,17 +2645,35 @@ mod tests {
         assert_eq!(edges_dt, edges_tri);
         assert_eq!(edges_dt.len(), 6);
 
+        let index = dt.build_adjacency_index().unwrap();
+        let edges_dt_index: std::collections::HashSet<_> = dt.edges_with_index(&index).collect();
+        let edges_tri_index: std::collections::HashSet<_> = tri.edges_with_index(&index).collect();
+        assert_eq!(edges_dt_index, edges_tri_index);
+        assert_eq!(edges_dt_index, edges_dt);
+
         let v0 = dt.vertices().next().unwrap().0;
         let incident_dt: std::collections::HashSet<_> = dt.incident_edges(v0).collect();
         let incident_tri: std::collections::HashSet<_> = tri.incident_edges(v0).collect();
         assert_eq!(incident_dt, incident_tri);
         assert_eq!(incident_dt.len(), 3);
 
+        let incident_dt_index: std::collections::HashSet<_> =
+            dt.incident_edges_with_index(&index, v0).collect();
+        let incident_tri_index: std::collections::HashSet<_> =
+            tri.incident_edges_with_index(&index, v0).collect();
+        assert_eq!(incident_dt_index, incident_tri_index);
+        assert_eq!(incident_dt_index, incident_dt);
+
         let cell_key = dt.cells().next().unwrap().0;
         let neighbors_dt: Vec<_> = dt.cell_neighbors(cell_key).collect();
         let neighbors_tri: Vec<_> = tri.cell_neighbors(cell_key).collect();
         assert_eq!(neighbors_dt, neighbors_tri);
         assert!(neighbors_dt.is_empty());
+
+        let neighbors_dt_index: Vec<_> = dt.cell_neighbors_with_index(&index, cell_key).collect();
+        let neighbors_tri_index: Vec<_> = tri.cell_neighbors_with_index(&index, cell_key).collect();
+        assert_eq!(neighbors_dt_index, neighbors_tri_index);
+        assert_eq!(neighbors_dt_index, neighbors_dt);
 
         // Geometry/topology accessors should be forwarded as well.
         let cell_vertices_dt = dt.cell_vertices(cell_key).unwrap();

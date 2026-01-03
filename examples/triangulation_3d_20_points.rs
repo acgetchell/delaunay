@@ -102,7 +102,7 @@ fn main() {
 fn analyze_triangulation<K, U, V, const D: usize>(dt: &DelaunayTriangulation<K, U, V, D>)
 where
     K: Kernel<D>,
-    K::Scalar: AddAssign + SubAssign + Sum + NumCast,
+    K::Scalar: CoordinateScalar + AddAssign + SubAssign + Sum + NumCast,
     U: DataType,
     V: DataType,
 {
@@ -111,6 +111,21 @@ where
     println!("  Number of vertices: {}", dt.number_of_vertices());
     println!("  Number of cells:    {}", dt.number_of_cells());
     println!("  Dimension:          {}", dt.dim());
+
+    // Demonstrate the public topology traversal API using an opt-in adjacency index.
+    // This avoids per-call allocations in methods like edges()/incident_edges().
+    let tri = dt.triangulation();
+    let index = tri
+        .build_adjacency_index()
+        .expect("adjacency index should build for a valid triangulation");
+
+    let edge_count = tri.number_of_edges_with_index(&index);
+    println!("  Number of edges:    {edge_count}");
+
+    if let Some((v0, _)) = tri.vertices().next() {
+        let degree = tri.number_of_incident_edges_with_index(&index, v0);
+        println!("  Degree of first vertex: {degree}");
+    }
 
     // Calculate vertex-to-cell ratio
     let vertex_count = dt.number_of_vertices();
