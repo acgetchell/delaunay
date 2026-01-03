@@ -964,9 +964,9 @@ class ChangelogUtils:
             try:
                 repo_url = ChangelogUtils.get_repository_url()
             except GitRepoError:
-                # Fallback: keep a stable link for this repository even when running in a
-                # minimal test environment without a configured `origin` remote.
-                repo_url = "https://github.com/acgetchell/delaunay"
+                # Fallback: keep a stable link even when running in a minimal test environment
+                # without a configured `origin` remote. Override via CHANGELOG_FALLBACK_URL.
+                repo_url = os.environ.get("CHANGELOG_FALLBACK_URL", "https://github.com/acgetchell/delaunay")
 
             short_message = f"""Version {version}
 
@@ -1246,17 +1246,17 @@ def _execute_changelog_generation(debug_mode: bool) -> None:
         finally:
             os.chdir(original_cwd)
 
-    except (ChangelogError, GitRepoError, VersionError):
+    except (ChangelogError, GitRepoError, VersionError) as exc:
         if file_paths is None:
-            raise SystemExit(1) from None
+            raise SystemExit(1) from exc
         _restore_backup_and_exit(file_paths)
-    except KeyboardInterrupt:
+    except KeyboardInterrupt as exc:
         if file_paths is None:
-            raise SystemExit(1) from None
+            raise SystemExit(1) from exc
         _restore_backup_and_exit(file_paths)
-    except Exception:  # restore backup and exit on any unexpected error
+    except Exception as exc:  # restore backup and exit on any unexpected error
         if file_paths is None:
-            raise SystemExit(1) from None
+            raise SystemExit(1) from exc
         _restore_backup_and_exit(file_paths)
 
 
@@ -1320,9 +1320,10 @@ def _get_repository_url() -> str:
     try:
         return ChangelogUtils.get_repository_url()
     except GitRepoError:
-        fallback = "https://github.com/acgetchell/delaunay"  # Delaunay-specific fallback
+        default_fallback = "https://github.com/acgetchell/delaunay"
+        fallback = os.environ.get("CHANGELOG_FALLBACK_URL", default_fallback)
         print(
-            f"Warning: Could not detect repository URL, using fallback: {fallback}",
+            f"Warning: Could not detect repository URL, using fallback: {fallback} (set CHANGELOG_FALLBACK_URL to override)",
             file=sys.stderr,
         )
         return fallback

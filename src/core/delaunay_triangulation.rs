@@ -850,7 +850,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::io::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// // A single 3D tetrahedron has 6 unique edges.
     /// let vertices = vec![
@@ -878,7 +878,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::io::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -908,7 +908,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::io::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// // A single tetrahedron has no cell neighbors.
     /// let vertices = vec![
@@ -924,6 +924,72 @@ where
     /// ```
     pub fn cell_neighbors(&self, c: CellKey) -> impl Iterator<Item = CellKey> + '_ {
         self.triangulation().cell_neighbors(c)
+    }
+
+    /// Returns a slice view of a cell's vertex keys.
+    ///
+    /// This is a zero-allocation accessor. If `c` is not present, returns `None`.
+    ///
+    /// This is a convenience wrapper around
+    /// [`Triangulation::cell_vertices`](crate::core::triangulation::Triangulation::cell_vertices).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::query::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// let cell_key = dt.cells().next().unwrap().0;
+    /// let cell_vertices = dt.cell_vertices(cell_key).unwrap();
+    /// assert_eq!(cell_vertices.len(), 3); // D+1 for a 2D simplex
+    /// ```
+    #[must_use]
+    pub fn cell_vertices(&self, c: CellKey) -> Option<&[VertexKey]>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        self.triangulation().cell_vertices(c)
+    }
+
+    /// Returns a slice view of a vertex's coordinates.
+    ///
+    /// This is a zero-allocation accessor. If `v` is not present, returns `None`.
+    ///
+    /// This is a convenience wrapper around
+    /// [`Triangulation::vertex_coords`](crate::core::triangulation::Triangulation::vertex_coords).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::query::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// // Find the key for a known vertex by matching coordinates.
+    /// let v_key = dt
+    ///     .vertices()
+    ///     .find_map(|(vk, _)| (dt.vertex_coords(vk)? == [1.0, 0.0]).then_some(vk))
+    ///     .unwrap();
+    ///
+    /// assert_eq!(dt.vertex_coords(v_key).unwrap(), [1.0, 0.0]);
+    /// ```
+    #[must_use]
+    pub fn vertex_coords(&self, v: VertexKey) -> Option<&[K::Scalar]>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        self.triangulation().vertex_coords(v)
     }
 
     /// Insert a vertex into the Delaunay triangulation using incremental cavity-based algorithm.
@@ -2342,6 +2408,35 @@ mod tests {
     }
 
     #[test]
+    fn test_validation_report_includes_vertex_incidence_violation() {
+        let vertices = [
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let mut dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        // Corrupt a `Vertex::incident_cell` pointer.
+        let vertex_key = dt.tri.tds.vertices().next().unwrap().0;
+        dt.tri
+            .tds
+            .get_vertex_by_key_mut(vertex_key)
+            .unwrap()
+            .incident_cell = Some(CellKey::default());
+
+        let report = dt.validation_report().unwrap_err();
+        assert!(
+            report
+                .violations
+                .iter()
+                .any(|v| v.kind == InvariantKind::VertexIncidence)
+        );
+    }
+
+    #[test]
     fn test_validation_report_includes_delaunay_property_violation() {
         // Construct a non-Delaunay configuration without introducing mapping errors.
         let vertices = vec![
@@ -2406,23 +2501,37 @@ mod tests {
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
+        let tri = dt.triangulation();
 
         let edges_dt: std::collections::HashSet<_> = dt.edges().collect();
-        let edges_tri: std::collections::HashSet<_> = dt.triangulation().edges().collect();
+        let edges_tri: std::collections::HashSet<_> = tri.edges().collect();
         assert_eq!(edges_dt, edges_tri);
         assert_eq!(edges_dt.len(), 6);
 
         let v0 = dt.vertices().next().unwrap().0;
         let incident_dt: std::collections::HashSet<_> = dt.incident_edges(v0).collect();
-        let incident_tri: std::collections::HashSet<_> =
-            dt.triangulation().incident_edges(v0).collect();
+        let incident_tri: std::collections::HashSet<_> = tri.incident_edges(v0).collect();
         assert_eq!(incident_dt, incident_tri);
         assert_eq!(incident_dt.len(), 3);
 
         let cell_key = dt.cells().next().unwrap().0;
         let neighbors_dt: Vec<_> = dt.cell_neighbors(cell_key).collect();
-        let neighbors_tri: Vec<_> = dt.triangulation().cell_neighbors(cell_key).collect();
+        let neighbors_tri: Vec<_> = tri.cell_neighbors(cell_key).collect();
         assert_eq!(neighbors_dt, neighbors_tri);
         assert!(neighbors_dt.is_empty());
+
+        // Geometry/topology accessors should be forwarded as well.
+        let cell_vertices_dt = dt.cell_vertices(cell_key).unwrap();
+        let cell_vertices_tri = tri.cell_vertices(cell_key).unwrap();
+        assert_eq!(cell_vertices_dt, cell_vertices_tri);
+        assert_eq!(cell_vertices_dt.len(), 4);
+
+        let coords_dt = dt.vertex_coords(v0).unwrap();
+        let coords_tri = tri.vertex_coords(v0).unwrap();
+        assert_eq!(coords_dt, coords_tri);
+
+        // Missing keys should behave the same as on `Triangulation`.
+        assert!(dt.vertex_coords(VertexKey::default()).is_none());
+        assert!(dt.cell_vertices(CellKey::default()).is_none());
     }
 }

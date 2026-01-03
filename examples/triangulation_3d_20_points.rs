@@ -26,7 +26,7 @@
 //! - Performance metrics
 
 use delaunay::geometry::traits::coordinate::CoordinateScalar;
-use delaunay::prelude::io::*;
+use delaunay::prelude::query::*;
 use num_traits::NumCast;
 use num_traits::cast::cast;
 use std::iter::Sum;

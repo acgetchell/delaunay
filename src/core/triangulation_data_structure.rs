@@ -476,6 +476,10 @@ pub enum InvariantKind {
     VertexMappings,
     /// Cell UUID↔key mapping invariants.
     CellMappings,
+    /// Cells reference only valid vertex keys (no stale/missing vertex keys).
+    CellVertexKeys,
+    /// Vertex incidence invariants (`Vertex::incident_cell` pointers are non-dangling + consistent).
+    VertexIncidence,
     /// No duplicate maximal cells with identical vertex sets.
     DuplicateCells,
     /// Facet sharing invariants (each facet shared by at most 2 cells).
@@ -3161,6 +3165,10 @@ where
     /// **Note**: If UUID↔key mappings are inconsistent, this returns only mapping-related
     /// failures. Additional checks may produce misleading secondary errors or panic.
     ///
+    /// **Note**: If any cell references a stale/missing vertex key, this reports the
+    /// key-reference failure (and any vertex-incidence failures) and skips derived
+    /// invariants that assume key validity.
+    ///
     /// This is primarily intended for debugging, diagnostics, and tests that
     /// want to surface every violated invariant at once.
     ///
@@ -3196,7 +3204,31 @@ where
             return Err(TriangulationValidationReport { violations });
         }
 
-        // 2. Cell uniqueness (no duplicate cells with identical vertex sets)
+        // 2. Cell→vertex key references (no stale/missing vertex keys)
+        let mut cell_vertex_keys_ok = true;
+        if let Err(e) = self.validate_cell_vertex_keys() {
+            cell_vertex_keys_ok = false;
+            violations.push(InvariantViolation {
+                kind: InvariantKind::CellVertexKeys,
+                error: e.into(),
+            });
+        }
+
+        // 3. Vertex incidence (non-dangling `incident_cell` pointers, when present)
+        if let Err(e) = self.validate_vertex_incidence() {
+            violations.push(InvariantViolation {
+                kind: InvariantKind::VertexIncidence,
+                error: e.into(),
+            });
+        }
+
+        // If cell vertex keys are invalid, derived invariants may produce confusing secondary
+        // errors or panic (many routines assume key validity). Stop here.
+        if !cell_vertex_keys_ok {
+            return Err(TriangulationValidationReport { violations });
+        }
+
+        // 4. Cell uniqueness (no duplicate cells with identical vertex sets)
         if let Err(e) = self.validate_no_duplicate_cells() {
             violations.push(InvariantViolation {
                 kind: InvariantKind::DuplicateCells,
@@ -3204,7 +3236,7 @@ where
             });
         }
 
-        // 3. Facet sharing (no facet shared by more than 2 cells)
+        // 5. Facet sharing (no facet shared by more than 2 cells)
         if let Err(e) = self.validate_facet_sharing() {
             violations.push(InvariantViolation {
                 kind: InvariantKind::FacetSharing,
@@ -3212,7 +3244,7 @@ where
             });
         }
 
-        // 4. Neighbor relationships (mutual neighbors, correct shared facets)
+        // 6. Neighbor relationships (mutual neighbors, correct shared facets)
         if let Err(e) = self.validate_neighbors() {
             violations.push(InvariantViolation {
                 kind: InvariantKind::NeighborConsistency,

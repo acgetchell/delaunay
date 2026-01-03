@@ -1194,6 +1194,7 @@ where
     /// Returns a [`TriangulationValidationError`] if:
     /// - The manifold-with-boundary facet property is violated.
     /// - The triangulation is disconnected (multiple cell components).
+    /// - An isolated vertex is detected (no incident cell).
     /// - Euler characteristic validation fails.
     /// - The topology module reports an error (treated as inconsistent data structure).
     ///

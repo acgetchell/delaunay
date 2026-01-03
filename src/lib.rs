@@ -635,9 +635,11 @@ pub mod prelude {
     /// Includes:
     /// - Topology traversal: [`DelaunayTriangulation::edges`], [`DelaunayTriangulation::incident_edges`],
     ///   [`DelaunayTriangulation::cell_neighbors`]
+    /// - Zero-allocation geometry accessors: [`DelaunayTriangulation::vertex_coords`],
+    ///   [`DelaunayTriangulation::cell_vertices`]
     /// - Convex hull extraction: [`ConvexHull::from_triangulation`]
     /// - Test/example helpers: [`generate_random_triangulation`], [`generate_random_points_seeded`]
-    pub mod io {
+    pub mod query {
         // Core read-only traversal / adjacency
         pub use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
         pub use crate::core::delaunay_triangulation::DelaunayTriangulation;

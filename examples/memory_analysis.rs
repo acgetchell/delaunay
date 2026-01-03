@@ -3,7 +3,7 @@
 //! This example demonstrates basic memory usage analysis for Delaunay triangulations
 //! using the existing allocation counter infrastructure from the tests.
 
-use delaunay::prelude::io::*;
+use delaunay::prelude::query::*;
 use std::time::Instant;
 
 /// Bounds for random triangulation (min, max) - consistent with benchmarks

@@ -6,7 +6,7 @@
 //! - Cell neighborhood traversal via [`DelaunayTriangulation::cell_neighbors`]
 //! - Building and validating the opt-in [`AdjacencyIndex`]
 
-use delaunay::prelude::io::*;
+use delaunay::prelude::query::*;
 
 #[test]
 fn edges_and_incident_edges_on_single_tetrahedron() {
@@ -42,8 +42,12 @@ fn edges_and_incident_edges_on_single_tetrahedron() {
     assert_eq!(dt.cell_neighbors(cell_key).count(), 0);
 
     // Geometry accessors are zero-allocation and should succeed for keys from this triangulation.
-    assert!(tri.vertex_coords(v0).is_some());
-    assert_eq!(tri.cell_vertices(cell_key).unwrap().len(), 4);
+    // They are also forwarded on `DelaunayTriangulation`.
+    assert_eq!(dt.vertex_coords(v0), tri.vertex_coords(v0));
+    assert!(dt.vertex_coords(v0).is_some());
+
+    assert_eq!(dt.cell_vertices(cell_key), tri.cell_vertices(cell_key));
+    assert_eq!(dt.cell_vertices(cell_key).unwrap().len(), 4);
 }
 
 #[test]
@@ -66,10 +70,10 @@ fn adjacency_index_on_double_tetrahedron() {
     assert_eq!(tri.number_of_cells(), 2);
 
     // Find a vertex on the shared triangle by coordinates.
-    let shared_vertex_key = tri
+    let shared_vertex_key = dt
         .vertices()
         .find_map(|(vk, _)| {
-            let coords = tri.vertex_coords(vk)?;
+            let coords = dt.vertex_coords(vk)?;
             (coords == [0.0, 0.0, 0.0]).then_some(vk)
         })
         .unwrap();

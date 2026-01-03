@@ -16,7 +16,7 @@
 
 #![allow(clippy::similar_names)]
 
-use delaunay::prelude::io::*;
+use delaunay::prelude::query::*;
 use std::collections::{HashMap, HashSet};
 
 fn main() {
