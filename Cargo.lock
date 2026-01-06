@@ -496,9 +496,9 @@ dependencies = [
 
 [[package]]
 name = "la-stack"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f30bffe61a1e7376e01fb49d643d1606077d0b8c815d6b9e2b4efc346f8c3b6"
+checksum = "e99e9dd25b64d6f37e1acee2f8c08e71f3a76234e4cd69c3bb224fd06d9e471c"
 
 [[package]]
 name = "libc"

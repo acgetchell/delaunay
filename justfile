@@ -6,17 +6,18 @@
 # Use bash with strict error handling for all recipes
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-# Internal helper: ensure uv is installed
-_ensure-uv:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v uv >/dev/null || { echo "❌ 'uv' not found. See 'just setup' or https://github.com/astral-sh/uv"; exit 1; }
+# Common tarpaulin arguments for all coverage runs
+# Note: -t 300 sets per-test timeout to 5 minutes (needed for slow CI environments)
+# Excludes: storage_backend_compatibility (all tests ignored - Phase 4 evaluation tests)
+_coverage_base_args := '''--exclude-files 'benches/*' --exclude-files 'examples/*' \
+  --workspace --lib --tests \
+  --exclude storage_backend_compatibility \
+  -t 300 --verbose --implicit-test-threads'''
 
-# Internal helper: ensure taplo is installed
-_ensure-taplo:
+_ensure-actionlint:
     #!/usr/bin/env bash
     set -euo pipefail
-    command -v taplo >/dev/null || { echo "❌ 'taplo' not found. See 'just setup' or install: brew install taplo (or: cargo install taplo-cli)"; exit 1; }
+    command -v actionlint >/dev/null || { echo "❌ 'actionlint' not found. See 'just setup' or https://github.com/rhysd/actionlint"; exit 1; }
 
 # Internal helpers: ensure external tooling is installed
 _ensure-jq:
@@ -29,20 +30,39 @@ _ensure-npx:
     set -euo pipefail
     command -v npx >/dev/null || { echo "❌ 'npx' not found. See 'just setup' or install Node.js (for npx tools): https://nodejs.org"; exit 1; }
 
-_ensure-shfmt:
+_ensure-prettier-or-npx:
     #!/usr/bin/env bash
     set -euo pipefail
-    command -v shfmt >/dev/null || { echo "❌ 'shfmt' not found. See 'just setup' or install: brew install shfmt"; exit 1; }
+    if command -v prettier >/dev/null; then
+        exit 0
+    fi
+    command -v npx >/dev/null || {
+        echo "❌ Neither 'prettier' nor 'npx' found. Install via npm (recommended): npm i -g prettier"
+        echo "   Or install Node.js (for npx): https://nodejs.org"
+        exit 1
+    }
 
 _ensure-shellcheck:
     #!/usr/bin/env bash
     set -euo pipefail
     command -v shellcheck >/dev/null || { echo "❌ 'shellcheck' not found. See 'just setup' or https://www.shellcheck.net"; exit 1; }
 
-_ensure-actionlint:
+_ensure-shfmt:
     #!/usr/bin/env bash
     set -euo pipefail
-    command -v actionlint >/dev/null || { echo "❌ 'actionlint' not found. See 'just setup' or https://github.com/rhysd/actionlint"; exit 1; }
+    command -v shfmt >/dev/null || { echo "❌ 'shfmt' not found. See 'just setup' or install: brew install shfmt"; exit 1; }
+
+# Internal helper: ensure taplo is installed
+_ensure-taplo:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v taplo >/dev/null || { echo "❌ 'taplo' not found. See 'just setup' or install: brew install taplo (or: cargo install taplo-cli)"; exit 1; }
+
+# Internal helper: ensure uv is installed
+_ensure-uv:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v uv >/dev/null || { echo "❌ 'uv' not found. See 'just setup' or https://github.com/astral-sh/uv"; exit 1; }
 
 _ensure-yamllint:
     #!/usr/bin/env bash
@@ -114,23 +134,27 @@ changelog-update: changelog
     @echo "To create a git tag with changelog content for a specific version, run:"
     @echo "  just changelog-tag <version>  # e.g., just changelog-tag v0.4.2"
 
-# Fix (mutating): apply formatters/auto-fixes
-fix: toml-fmt fmt python-fix shell-fmt markdown-fix yaml-fix
-    @echo "✅ Fixes applied!"
-
 # Check (non-mutating): run all linters/validators
 check: lint
     @echo "✅ Checks complete!"
+
+# Fast compile check (no binary produced)
+check-fast:
+    cargo check
+
+# CI simulation: comprehensive validation (matches .github/workflows/ci.yml)
+# Runs: checks + all tests (Rust + Python) + examples + bench compile
+ci: check bench-compile test-all examples
+    @echo "🎯 CI checks complete!"
 
 # CI with performance baseline
 ci-baseline tag="ci":
     just ci
     just perf-baseline {{tag}}
 
-# CI simulation: comprehensive validation (matches .github/workflows/ci.yml)
-# Runs: checks + all tests (Rust + Python) + examples + bench compile
-ci: check bench-compile test-all examples
-    @echo "🎯 CI checks complete!"
+# CI + slow/stress tests (100+ vertices, stress tests)
+ci-slow: ci test-slow
+    @echo "✅ CI + slow tests passed!"
 
 # Clean build artifacts
 clean:
@@ -159,14 +183,6 @@ compare-storage-large: _ensure-uv
     @echo "📊 Comparing storage backends at large scale (~8-12 hours, use on compute cluster)"
     BENCH_LARGE_SCALE=1 uv run compare-storage-backends --bench large_scale_performance
 
-# Common tarpaulin arguments for all coverage runs
-# Note: -t 300 sets per-test timeout to 5 minutes (needed for slow CI environments)
-# Excludes: storage_backend_compatibility (all tests ignored - Phase 4 evaluation tests)
-_coverage_base_args := '''--exclude-files 'benches/*' --exclude-files 'examples/*' \
-  --workspace --lib --tests \
-  --exclude storage_backend_compatibility \
-  -t 300 --verbose --implicit-test-threads'''
-
 # Coverage analysis for local development (HTML output)
 coverage:
     cargo tarpaulin {{_coverage_base_args}} --out Html --output-dir target/tarpaulin
@@ -187,6 +203,10 @@ doc-check:
 examples:
     ./scripts/run_all_examples.sh
 
+# Fix (mutating): apply formatters/auto-fixes
+fix: toml-fmt fmt python-fix shell-fmt markdown-fix yaml-fix
+    @echo "✅ Fixes applied!"
+
 fmt:
     cargo fmt --all
 
@@ -197,6 +217,7 @@ help-workflows:
     @echo "Common Just workflows:"
     @echo "  just fix               # Apply formatters/auto-fixes (mutating)"
     @echo "  just check             # Run lint/validators (non-mutating)"
+    @echo "  just check-fast        # Fast compile check (cargo check)"
     @echo "  just ci                # Full CI run (checks + all tests + examples + bench compile)"
     @echo "  just ci-slow           # CI + slow tests (100+ vertices)"
     @echo "  just ci-baseline       # CI + save performance baseline"
@@ -239,7 +260,7 @@ help-workflows:
     @echo "  just perf-check    # Check for performance regressions"
     @echo "  just perf-baseline # Save current performance as baseline"
     @echo ""
-    @echo "Note: Some recipes require external tools. See 'just setup' output."
+    @echo "Note: Some recipes require external tools. Run 'just setup-tools' (tooling) or 'just setup' (full env) first."
 
 # All linting: code + documentation + configuration
 lint: lint-code lint-docs lint-config
@@ -252,6 +273,19 @@ lint-config: validate-json toml-lint toml-fmt-check yaml-lint action-lint
 
 # Documentation linting: Markdown + spell checking
 lint-docs: markdown-check spell-check
+
+markdown-check: _ensure-npx
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '*.md')
+    if [ "${#files[@]}" -gt 0 ]; then
+        printf '%s\0' "${files[@]}" | xargs -0 -n100 npx markdownlint --config .markdownlint.json
+    else
+        echo "No markdown files found to check."
+    fi
 
 # Shell, markdown, and YAML quality
 markdown-fix: _ensure-npx
@@ -268,49 +302,7 @@ markdown-fix: _ensure-npx
         echo "No markdown files found to format."
     fi
 
-markdown-check: _ensure-npx
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    while IFS= read -r -d '' file; do
-        files+=("$file")
-    done < <(git ls-files -z '*.md')
-    if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 -n100 npx markdownlint --config .markdownlint.json
-    else
-        echo "No markdown files found to check."
-    fi
-
 markdown-lint: markdown-check
-
-yaml-fix: _ensure-npx
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    while IFS= read -r -d '' file; do
-        files+=("$file")
-    done < <(git ls-files -z '*.yml' '*.yaml')
-    if [ "${#files[@]}" -gt 0 ]; then
-        echo "📝 prettier --write (YAML, ${#files[@]} files)"
-        # Use CLI flags instead of a repo-wide prettier config: keeps the scope to YAML only.
-        printf '%s\0' "${files[@]}" | xargs -0 -n100 npx prettier --write --print-width 120
-    else
-        echo "No YAML files found to format."
-    fi
-
-yaml-lint: _ensure-yamllint
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    while IFS= read -r -d '' file; do
-        files+=("$file")
-    done < <(git ls-files -z '*.yml' '*.yaml')
-    if [ "${#files[@]}" -gt 0 ]; then
-        echo "🔍 yamllint (${#files[@]} files)"
-        yamllint --strict -c .yamllint "${files[@]}"
-    else
-        echo "No YAML files found to lint."
-    fi
 
 # Performance analysis framework
 perf-baseline tag="": _ensure-uv
@@ -377,85 +369,28 @@ profile-dev:
 profile-mem:
     samply record cargo bench --bench profiling_suite --features count-allocations -- memory_profiling
 
-# Python code quality
-python-fix: _ensure-uv
-    uv run ruff check scripts/ --fix
-    uv run ruff format scripts/
-
-python-typecheck: _ensure-uv
-    uv run ty check scripts/
-    cd scripts && uv run mypy . --exclude tests
-
 python-check: _ensure-uv
     uv run ruff format --check scripts/
     uv run ruff check scripts/
     just python-typecheck
 
+# Python code quality
+python-fix: _ensure-uv
+    uv run ruff check scripts/ --fix
+    uv run ruff format scripts/
+
 python-lint: python-check
 
-# CI + slow/stress tests (100+ vertices, stress tests)
-ci-slow: ci test-slow
-    @echo "✅ CI + slow tests passed!"
+python-typecheck: _ensure-uv
+    uv run ty check scripts/
+    cd scripts && uv run mypy . --exclude tests
 
 # Development setup
-setup:
+setup: setup-tools
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Setting up delaunay development environment..."
     echo "Note: Rust toolchain and components managed by rust-toolchain.toml (if present)"
-    echo ""
-    echo "Installing Rust components..."
-    rustup component add clippy rustfmt rust-docs rust-src
-    echo ""
-    echo "Installing Rust tools..."
-    # Install cargo tools if not already installed
-    if ! command -v cargo-tarpaulin &> /dev/null; then
-        echo "Installing cargo-tarpaulin..."
-        cargo install cargo-tarpaulin
-    else
-        echo "cargo-tarpaulin already installed"
-    fi
-    if ! command -v samply &> /dev/null; then
-        echo "Installing samply..."
-        cargo install samply
-    else
-        echo "samply already installed"
-    fi
-    echo ""
-    echo "Additional tools (will check if installed):"
-    # Check for system tools
-    for tool in uv actionlint shfmt shellcheck jq node npx taplo yamllint; do
-        if command -v "$tool" &> /dev/null; then
-            echo "  ✓ $tool installed"
-        else
-            echo "  ✗ $tool NOT installed"
-            case "$tool" in
-                uv)
-                    echo "    Install: https://github.com/astral-sh/uv"
-                    echo "    macOS: brew install uv"
-                    echo "    Linux/WSL: curl -LsSf https://astral.sh/uv/install.sh | sh"
-                    ;;
-                actionlint) echo "    Install: https://github.com/rhysd/actionlint" ;;
-                shfmt|shellcheck) echo "    Install: brew install $tool" ;;
-                jq) echo "    Install: brew install jq" ;;
-                node|npx) echo "    Install Node.js (for npx/cspell): https://nodejs.org" ;;
-                taplo)
-                    echo "    Install: brew install taplo"
-                    echo "    Or: cargo install taplo-cli"
-                    ;;
-                yamllint)
-                    echo "    Install: brew install yamllint"
-                    echo "    Or: python -m pip install yamllint"
-                    ;;
-            esac
-        fi
-    done
-    echo ""
-    # Ensure uv is installed before proceeding
-    if ! command -v uv &> /dev/null; then
-        echo "❌ 'uv' is required but not installed. Please install it first (see instructions above)."
-        exit 1
-    fi
     echo ""
     echo "Installing Python tooling..."
     uv sync --group dev
@@ -463,6 +398,113 @@ setup:
     echo "Building project..."
     cargo build
     echo "✅ Setup complete! Run 'just help-workflows' to see available commands."
+
+# Development tooling installation (best-effort)
+setup-tools:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    echo "🔧 Ensuring tooling required by just recipes is installed..."
+    echo ""
+
+    os="$(uname -s || true)"
+
+    have() { command -v "$1" >/dev/null 2>&1; }
+
+    install_with_brew() {
+        local formula="$1"
+        if brew list --versions "$formula" >/dev/null 2>&1; then
+            echo "  ✓ $formula (brew)"
+        else
+            echo "  ⏳ Installing $formula (brew)..."
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install "$formula"
+        fi
+    }
+
+    if have brew; then
+        echo "Using Homebrew (brew) to install missing tools..."
+        install_with_brew uv
+        install_with_brew jq
+        install_with_brew taplo
+        install_with_brew yamllint
+        install_with_brew shfmt
+        install_with_brew shellcheck
+        install_with_brew actionlint
+        install_with_brew node
+        echo ""
+    else
+        echo "❌ 'brew' not found."
+        if [[ "$os" == "Darwin" ]]; then
+            echo "Install Homebrew from https://brew.sh and re-run: just setup-tools"
+            exit 1
+        fi
+        echo "Install the following tools via your system package manager, then re-run: just setup-tools"
+        echo "  uv, jq, taplo, yamllint, shfmt, shellcheck, actionlint, node+npx"
+        exit 1
+    fi
+
+    echo "Ensuring Rust toolchain + components..."
+    if ! have rustup; then
+        echo "❌ 'rustup' not found. Install Rust via https://rustup.rs and re-run: just setup-tools"
+        exit 1
+    fi
+    rustup component add clippy rustfmt rust-docs rust-src
+    echo ""
+
+    echo "Ensuring cargo tools..."
+    if ! have samply; then
+        echo "  ⏳ Installing samply (cargo)..."
+        cargo install --locked samply
+    else
+        echo "  ✓ samply"
+    fi
+
+    if ! have cargo-tarpaulin; then
+        if [[ "$os" == "Linux" ]]; then
+            echo "  ⏳ Installing cargo-tarpaulin (cargo)..."
+            cargo install --locked cargo-tarpaulin
+        else
+            echo "  ⚠️  Skipping cargo-tarpaulin install on $os (coverage is typically Linux-only)"
+        fi
+    else
+        echo "  ✓ cargo-tarpaulin"
+    fi
+
+    echo ""
+    echo "Verifying required commands are available..."
+    missing=0
+    for cmd in uv jq taplo yamllint shfmt shellcheck actionlint node npx; do
+        if have "$cmd"; then
+            echo "  ✓ $cmd"
+        else
+            echo "  ✗ $cmd"
+            missing=1
+        fi
+    done
+    if [ "$missing" -ne 0 ]; then
+        echo ""
+        echo "❌ Some required tools are still missing."
+        echo "Fix the installs above and re-run: just setup-tools"
+        exit 1
+    fi
+
+    echo ""
+    echo "✅ Tooling setup complete."
+
+# Shell scripts: lint/check (non-mutating)
+shell-check: _ensure-shellcheck _ensure-shfmt
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '*.sh')
+    if [ "${#files[@]}" -gt 0 ]; then
+        printf '%s\0' "${files[@]}" | xargs -0 -n4 shellcheck -x
+        printf '%s\0' "${files[@]}" | xargs -0 shfmt -d
+    else
+        echo "No shell files found to check."
+    fi
 
 # Shell scripts: format (mutating)
 shell-fmt: _ensure-shfmt
@@ -480,25 +522,14 @@ shell-fmt: _ensure-shfmt
     fi
     # Note: justfiles are not shell scripts and are excluded from shellcheck
 
-# Shell scripts: lint/check (non-mutating)
-shell-check: _ensure-shellcheck _ensure-shfmt
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    while IFS= read -r -d '' file; do
-        files+=("$file")
-    done < <(git ls-files -z '*.sh')
-    if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 -n4 shellcheck -x
-        printf '%s\0' "${files[@]}" | xargs -0 shfmt -d
-    else
-        echo "No shell files found to check."
-    fi
-
 shell-lint: shell-check
 
-# Spell checking with robust bash implementation
-spell-check: _ensure-npx
+# Spell check (cspell)
+#
+# Requires either:
+# - `cspell` on PATH (recommended: `npm i -g cspell`), or
+# - `npx` (will run cspell without a global install)
+spell-check:
     #!/usr/bin/env bash
     set -euo pipefail
     files=()
@@ -516,7 +547,15 @@ spell-check: _ensure-npx
         fi
     done < <(git status --porcelain -z --ignored=no)
     if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 npx cspell lint --config cspell.json --no-progress --gitignore --cache --exclude cspell.json
+        if command -v cspell >/dev/null; then
+            printf '%s\0' "${files[@]}" | xargs -0 cspell lint --config cspell.json --no-progress --gitignore --cache --exclude cspell.json
+        elif command -v npx >/dev/null; then
+            printf '%s\0' "${files[@]}" | xargs -0 npx cspell lint --config cspell.json --no-progress --gitignore --cache --exclude cspell.json
+        else
+            echo "❌ cspell not found. Install via npm (recommended): npm i -g cspell"
+            echo "   Or ensure npx is available (Node.js)."
+            exit 1
+        fi
     else
         echo "No modified files to spell-check."
     fi
@@ -527,10 +566,6 @@ test:
     cargo test --lib --verbose
     cargo test --doc --verbose
 
-# test-integration: runs all integration tests (includes proptests)
-test-integration:
-    cargo test --tests --verbose
-
 # test-all: runs lib, doc, integration, and Python tests (comprehensive)
 test-all: test test-integration test-python
     @echo "✅ All tests passed!"
@@ -540,6 +575,10 @@ test-allocation:
 
 test-debug:
     cargo test --test circumsphere_debug_tools -- --nocapture
+
+# test-integration: runs all integration tests (includes proptests)
+test-integration:
+    cargo test --tests --verbose
 
 test-python: _ensure-uv
     uv run pytest
@@ -554,20 +593,6 @@ test-slow:
 
 test-slow-release:
     cargo test --release --features slow-tests
-
-# File validation
-validate-json: _ensure-jq
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    while IFS= read -r -d '' file; do
-        files+=("$file")
-    done < <(git ls-files -z '*.json')
-    if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 -n1 jq empty
-    else
-        echo "No JSON files found to validate."
-    fi
 
 toml-fmt: _ensure-taplo
     #!/usr/bin/env bash
@@ -608,6 +633,20 @@ toml-lint: _ensure-taplo
         echo "No TOML files found to lint."
     fi
 
+# File validation
+validate-json: _ensure-jq
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '*.json')
+    if [ "${#files[@]}" -gt 0 ]; then
+        printf '%s\0' "${files[@]}" | xargs -0 -n1 jq empty
+    else
+        echo "No JSON files found to validate."
+    fi
+
 validate-toml: _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
@@ -619,4 +658,51 @@ validate-toml: _ensure-uv
         printf '%s\0' "${files[@]}" | xargs -0 -I {} uv run python -c "import tomllib; tomllib.load(open('{}', 'rb')); print('{} is valid TOML')"
     else
         echo "No TOML files found to validate."
+    fi
+
+yaml-fix: _ensure-prettier-or-npx
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '*.yml' '*.yaml')
+    if [ "${#files[@]}" -gt 0 ]; then
+        echo "📝 prettier --write (YAML, ${#files[@]} files)"
+
+        cmd=()
+        if command -v prettier >/dev/null; then
+            cmd=(prettier --write --print-width 120)
+        elif command -v npx >/dev/null; then
+            # Prefer non-interactive installs when supported (newer npm/npx).
+            # NOTE: With `set -u`, expanding an empty array like "${arr[@]}" can error on older bash.
+            cmd=(npx)
+            if npx --help 2>&1 | grep -q -- '--yes'; then
+                cmd+=(--yes)
+            fi
+            cmd+=(prettier --write --print-width 120)
+        else
+            echo "❌ 'prettier' not found. Install via npm (recommended): npm i -g prettier"
+            echo "   Or install Node.js (for npx): https://nodejs.org"
+            exit 1
+        fi
+
+        # Use CLI flags instead of a repo-wide prettier config: keeps the scope to YAML only.
+        printf '%s\0' "${files[@]}" | xargs -0 -n100 "${cmd[@]}"
+    else
+        echo "No YAML files found to format."
+    fi
+
+yaml-lint: _ensure-yamllint
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '*.yml' '*.yaml')
+    if [ "${#files[@]}" -gt 0 ]; then
+        echo "🔍 yamllint (${#files[@]} files)"
+        yamllint --strict -c .yamllint "${files[@]}"
+    else
+        echo "No YAML files found to lint."
     fi

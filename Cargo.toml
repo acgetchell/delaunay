@@ -22,7 +22,7 @@ arc-swap = "1.8.0"
 approx = "0.5.1"
 clap = { version = "4.5.54", features = [ "derive" ] }
 derive_builder = "0.20.2"
-la-stack = "0.1.1"
+la-stack = "0.1.2"
 rustc-hash = "2.1.1" # Fast non-cryptographic hashing for performance
 smallvec = { version = "1.15.1", features = [
     "serde",
