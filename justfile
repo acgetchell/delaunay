@@ -564,6 +564,7 @@ spell-check:
         filename="${status_line:3}"
 
         # For renames/copies, consume the destination path (the next NUL-delimited token).
+        # Git emits: "R  old_path\0new_path\0" (and similarly for "C  ...")
         if [[ "$status" == *"R"* || "$status" == *"C"* ]]; then
             if IFS= read -r -d '' rename_target; then
                 filename="$rename_target"

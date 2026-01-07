@@ -258,14 +258,21 @@ where
             FastHashSet<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
         > = (0..(D - 2)).map(|_| FastHashSet::default()).collect();
 
+        // Pre-sort each cell's vertex keys once so every generated combination is already
+        // in canonical (sorted) order, avoiding per-combination sorting.
+        let mut sorted_vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::new();
+
         for (_cell_key, cell) in tds.cells() {
-            let vertex_keys = cell.vertices();
+            sorted_vertex_keys.clear();
+            sorted_vertex_keys.extend(cell.vertices().iter().copied());
+            sorted_vertex_keys.sort();
 
             for simplex_dimension in 1..=D - 2 {
                 let simplex_set =
                     &mut intermediate_simplex_sets[simplex_dimension.saturating_sub(1)];
                 let simplex_size = simplex_dimension + 1; // k-simplex has k+1 vertices
-                insert_simplices_of_size(vertex_keys, simplex_size, simplex_set);
+                insert_simplices_of_size(&sorted_vertex_keys, simplex_size, simplex_set);
             }
         }
 
@@ -288,6 +295,12 @@ fn insert_simplices_of_size(
         return;
     }
 
+    // We expect `vertex_keys` to be in sorted (canonical) order.
+    //
+    // With sorted input, each combination produced by increasing indices is already sorted, so we
+    // can insert it directly without per-combination sorting.
+    debug_assert!(vertex_keys.windows(2).all(|w| w[0] <= w[1]));
+
     // Generate all C(n, simplex_size) combinations using the standard lexicographic algorithm.
     //
     // We maintain `indices[0..simplex_size]` as strictly increasing positions into `vertex_keys`.
@@ -298,13 +311,12 @@ fn insert_simplices_of_size(
     let mut indices: SmallBuffer<usize, MAX_PRACTICAL_DIMENSION_SIZE> = (0..simplex_size).collect();
 
     'outer: loop {
-        // Extract current combination
+        // Extract current combination (already sorted due to sorted input + increasing indices).
         let mut simplex_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
             SmallBuffer::new();
         for &vertex_index in &indices {
             simplex_vertices.push(vertex_keys[vertex_index]);
         }
-        simplex_vertices.sort();
         simplex_set.insert(simplex_vertices);
 
         // Generate next combination.
@@ -433,7 +445,10 @@ where
                 .map_err(|e| TopologyError::Counting(format!("Failed to get facet cell: {e}")))?;
             let facet_index = usize::from(facet.facet_index());
 
-            // Collect vertex keys for this facet (excluding opposite vertex)
+            // Collect vertex keys for this facet (excluding opposite vertex).
+            //
+            // We sort once so every generated combination is already in canonical order, avoiding
+            // per-combination sorting.
             let mut facet_vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
                 SmallBuffer::new();
             for (vertex_position, &v_key) in cell.vertices().iter().enumerate() {
@@ -441,6 +456,7 @@ where
                     facet_vertex_keys.push(v_key);
                 }
             }
+            facet_vertex_keys.sort();
 
             for simplex_dimension in 1..=D - 2 {
                 let simplex_set =
@@ -618,6 +634,66 @@ mod tests {
         assert_eq!(counts.count(2), 1);
         assert_eq!(counts.count(3), 0); // out of range
         assert_eq!(counts.dimension(), 2);
+    }
+
+    #[test]
+    fn test_insert_simplices_of_size() {
+        use slotmap::SlotMap;
+
+        let mut vertex_slots: SlotMap<VertexKey, ()> = SlotMap::default();
+        let v0 = vertex_slots.insert(());
+        let v1 = vertex_slots.insert(());
+        let v2 = vertex_slots.insert(());
+        let v3 = vertex_slots.insert(());
+
+        // n < simplex_size => no combinations.
+        let mut simplex_set = FastHashSet::default();
+        insert_simplices_of_size(&[v0, v1], 3, &mut simplex_set);
+        assert!(simplex_set.is_empty());
+
+        // simplex_size == n => exactly one combination.
+        let mut simplex_set = FastHashSet::default();
+        let mut keys = vec![v2, v0, v1]; // deliberately unsorted
+        keys.sort();
+        insert_simplices_of_size(&keys, 3, &mut simplex_set);
+        assert_eq!(simplex_set.len(), 1);
+
+        let mut expected: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> = SmallBuffer::new();
+        expected.push(v0);
+        expected.push(v1);
+        expected.push(v2);
+        expected.sort();
+        assert!(simplex_set.contains(&expected));
+
+        // simplex_size == 1 => n singleton combinations.
+        let mut simplex_set = FastHashSet::default();
+        let mut keys = vec![v3, v1, v0]; // deliberately unsorted
+        keys.sort();
+        insert_simplices_of_size(&keys, 1, &mut simplex_set);
+        assert_eq!(simplex_set.len(), keys.len());
+
+        for &vk in &keys {
+            let mut singleton: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                SmallBuffer::new();
+            singleton.push(vk);
+            assert!(simplex_set.contains(&singleton));
+        }
+
+        // C(3, 2) = 3 combinations.
+        let mut simplex_set = FastHashSet::default();
+        let mut keys = vec![v0, v2, v1]; // deliberately unsorted
+        keys.sort();
+        insert_simplices_of_size(&keys, 2, &mut simplex_set);
+        assert_eq!(simplex_set.len(), 3);
+
+        let expected_pairs = [(v0, v1), (v0, v2), (v1, v2)];
+        for (a, b) in expected_pairs {
+            let mut pair: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> = SmallBuffer::new();
+            pair.push(a);
+            pair.push(b);
+            pair.sort();
+            assert!(simplex_set.contains(&pair));
+        }
     }
 
     #[test]
