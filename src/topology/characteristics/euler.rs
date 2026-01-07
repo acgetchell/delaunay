@@ -321,14 +321,16 @@ fn insert_simplices_of_size(
 
         // Generate next combination.
         // The maximum valid value at position `i` is `i + n - simplex_size`.
+        //
+        // Find the rightmost index that can be incremented.
         let mut pivot = simplex_size;
-        while pivot > 0 {
-            pivot -= 1;
-            if indices[pivot] != pivot + n - simplex_size {
-                break;
-            }
+        loop {
             if pivot == 0 {
                 break 'outer;
+            }
+            pivot -= 1;
+            if indices[pivot] < pivot + n - simplex_size {
+                break;
             }
         }
 
@@ -731,5 +733,57 @@ mod tests {
             Some(0)
         );
         assert_eq!(expected_chi_for(&TopologyClassification::Unknown), None);
+    }
+
+    fn build_closed_2d_surface_tds() -> Tds<f64, (), (), 2> {
+        use crate::core::cell::Cell;
+        use crate::vertex;
+
+        // Build the boundary of a tetrahedron as a 2D simplicial complex (a closed S^2):
+        // 4 triangles on 4 vertices, with every edge shared by exactly 2 triangles.
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v3], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v2, v3], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v1, v2, v3], None).unwrap())
+            .unwrap();
+
+        tds
+    }
+
+    #[test]
+    fn test_classify_triangulation_closed_sphere_2d_surface() {
+        let tds = build_closed_2d_surface_tds();
+
+        assert_eq!(tds.number_of_boundary_facets().unwrap(), 0);
+
+        let classification = classify_triangulation(&tds).unwrap();
+        assert_eq!(classification, TopologyClassification::ClosedSphere(2));
+
+        let counts = count_simplices(&tds).unwrap();
+        assert_eq!(counts.by_dim, vec![4, 6, 4]);
+        assert_eq!(euler_characteristic(&counts), 2);
+    }
+
+    #[test]
+    fn test_count_boundary_simplices_no_boundary_is_zero() {
+        let tds = build_closed_2d_surface_tds();
+
+        let boundary_counts = count_boundary_simplices(&tds).unwrap();
+        assert_eq!(boundary_counts.by_dim, vec![0, 0]);
+        assert_eq!(euler_characteristic(&boundary_counts), 0);
     }
 }
