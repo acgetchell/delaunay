@@ -1079,12 +1079,12 @@ use thiserror::Error;
 
 /// Counts of k-simplices for all dimensions 0 ≤ k ≤ D
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SimplexCounts {
+pub struct FVector {
     /// by_dim[k] = f_k = number of k-simplices
     pub by_dim: Vec<usize>,
 }
 
-impl SimplexCounts {
+impl FVector {
     /// Get the number of k-simplices
     #[inline]
     pub fn count(&self, k: usize) -> usize {
@@ -1129,7 +1129,7 @@ pub struct TopologyCheckResult {
     pub classification: TopologyClassification,
     
     /// Full simplex counts
-    pub counts: SimplexCounts,
+    pub counts: FVector,
     
     /// Diagnostic notes or warnings
     pub notes: Vec<String>,
@@ -1167,7 +1167,7 @@ pub enum TopologyError {
 /// Count all k-simplices in the triangulation
 pub fn count_simplices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-) -> Result<SimplexCounts, TopologyError>
+) -> Result<FVector, TopologyError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -1178,7 +1178,7 @@ where
 }
 
 /// Compute Euler characteristic from simplex counts
-pub fn euler_characteristic(counts: &SimplexCounts) -> isize {
+pub fn euler_characteristic(counts: &FVector) -> isize {
     counts
         .by_dim
         .iter()
@@ -1285,7 +1285,7 @@ where
 ```rust
 fn count_simplices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-) -> Result<SimplexCounts, TopologyError> {
+) -> Result<FVector, TopologyError> {
     let mut by_dim = vec![0usize; D + 1];
     
     // f₀: vertices
@@ -1296,7 +1296,7 @@ fn count_simplices<T, U, V, const D: usize>(
     
     // Handle empty triangulation
     if by_dim[D] == 0 {
-        return Ok(SimplexCounts { by_dim });
+        return Ok(FVector { by_dim });
     }
     
     // f_{D-1}: (D-1)-facets
@@ -1310,7 +1310,7 @@ fn count_simplices<T, U, V, const D: usize>(
         by_dim[k] = count_k_simplices(tds, k)?;
     }
     
-    Ok(SimplexCounts { by_dim })
+    Ok(FVector { by_dim })
 }
 
 fn count_k_simplices<T, U, V, const D: usize>(
@@ -1847,7 +1847,7 @@ fn test_boundary_report_includes_euler() {
    # Update src/core/mod.rs to include pub mod topology;
    ```
 
-2. **Implement core types** (SimplexCounts, TopologyClassification, etc.)
+2. **Implement core types** (FVector, TopologyClassification, etc.)
    - No dependencies yet
    - Focus on data structures
 

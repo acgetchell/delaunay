@@ -475,7 +475,13 @@ setup-tools:
     echo ""
     echo "Verifying required commands are available..."
     missing=0
-    for cmd in uv jq taplo yamllint shfmt shellcheck actionlint node npx; do
+
+    cmds=(uv jq taplo yamllint shfmt shellcheck actionlint node npx)
+    if [[ "$os" == "Linux" ]]; then
+        cmds+=(cargo-tarpaulin)
+    fi
+
+    for cmd in "${cmds[@]}"; do
         if have "$cmd"; then
             echo "  ✓ $cmd"
         else
@@ -526,7 +532,7 @@ shell-fmt: _ensure-shfmt
     done < <(git ls-files -z '*.sh')
     if [ "${#files[@]}" -gt 0 ]; then
         echo "🧹 shfmt -w (${#files[@]} files)"
-        printf '%s\0' "${files[@]}" | xargs -0 -n1 shfmt -w
+        printf '%s\0' "${files[@]}" | xargs -0 shfmt -w
     else
         echo "No shell files found to format."
     fi

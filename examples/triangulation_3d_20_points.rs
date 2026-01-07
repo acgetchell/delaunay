@@ -27,6 +27,7 @@
 
 use delaunay::geometry::traits::coordinate::CoordinateScalar;
 use delaunay::prelude::query::*;
+use delaunay::topology::characteristics::validation as topology_validation;
 use num_traits::NumCast;
 use num_traits::cast::cast;
 use std::iter::Sum;
@@ -204,6 +205,29 @@ where
             println!("    • No duplicate cells detected");
             println!("    • Neighbor relationships and facet sharing are consistent");
             println!("    • Manifold topology + Euler characteristic checks pass");
+
+            // Surface the topology module's computed f-vector.
+            match topology_validation::validate_triangulation_euler(dt.tds()) {
+                Ok(topology) => {
+                    println!("\n  Topology (Euler characteristic):");
+                    println!("    • Classification: {:?}", topology.classification);
+                    match topology.expected {
+                        Some(expected) => println!(
+                            "    • Euler characteristic: χ = {} (expected {expected})",
+                            topology.chi
+                        ),
+                        None => println!(
+                            "    • Euler characteristic: χ = {} (expected unknown)",
+                            topology.chi
+                        ),
+                    }
+                    println!("    • f-vector (f0..f{D}): {:?}", topology.counts.by_dim);
+                }
+                Err(e) => {
+                    println!("\n  Topology (Euler characteristic):");
+                    println!("    • Failed to compute topology summary: {e}");
+                }
+            }
         }
         Err(e) => {
             println!("✗ Levels 1–3: INVALID");

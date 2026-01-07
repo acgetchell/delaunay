@@ -40,13 +40,15 @@ use crate::topology::traits::topological_space::TopologyError;
 /// - `f₃` = tetrahedral cells (`3`-simplices)
 /// - `f_D` = `D`-dimensional cells
 ///
+/// In the topology literature this is commonly called the **f-vector**.
+///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::topology::characteristics::euler::SimplexCounts;
+/// use delaunay::topology::characteristics::euler::FVector;
 ///
 /// // 2D triangle: 3 vertices, 3 edges, 1 face
-/// let counts = SimplexCounts {
+/// let counts = FVector {
 ///     by_dim: vec![3, 3, 1],
 /// };
 ///
@@ -56,12 +58,12 @@ use crate::topology::traits::topological_space::TopologyError;
 /// assert_eq!(counts.dimension(), 2);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SimplexCounts {
+pub struct FVector {
     /// `by_dim[k]` = `f_k` = number of `k`-simplices
     pub by_dim: Vec<usize>,
 }
 
-impl SimplexCounts {
+impl FVector {
     /// Get the number of `k`-simplices.
     ///
     /// Returns 0 if `k` is out of range.
@@ -69,9 +71,9 @@ impl SimplexCounts {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::topology::characteristics::euler::SimplexCounts;
+    /// use delaunay::topology::characteristics::euler::FVector;
     ///
-    /// let counts = SimplexCounts {
+    /// let counts = FVector {
     ///     by_dim: vec![4, 6, 4, 1],  // 3D tetrahedron
     /// };
     ///
@@ -92,14 +94,14 @@ impl SimplexCounts {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::topology::characteristics::euler::SimplexCounts;
+    /// use delaunay::topology::characteristics::euler::FVector;
     ///
-    /// let counts_3d = SimplexCounts {
+    /// let counts_3d = FVector {
     ///     by_dim: vec![4, 6, 4, 1],
     /// };
     /// assert_eq!(counts_3d.dimension(), 3);
     ///
-    /// let counts_2d = SimplexCounts {
+    /// let counts_2d = FVector {
     ///     by_dim: vec![3, 3, 1],
     /// };
     /// assert_eq!(counts_2d.dimension(), 2);
@@ -196,7 +198,7 @@ pub enum TopologyClassification {
 /// Returns `TopologyError::Counting` if simplex enumeration fails.
 pub fn count_simplices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-) -> Result<SimplexCounts, TopologyError>
+) -> Result<FVector, TopologyError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -207,7 +209,7 @@ where
     by_dim[0] = tds.number_of_vertices();
     by_dim[D] = tds.number_of_cells();
     if by_dim[D] == 0 {
-        return Ok(SimplexCounts { by_dim });
+        return Ok(FVector { by_dim });
     }
 
     // Build the facet map once, then compute counts from it.
@@ -224,7 +226,7 @@ where
 pub(crate) fn count_simplices_with_facet_to_cells_map<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     facet_to_cells: &FacetToCellsMap,
-) -> SimplexCounts
+) -> FVector
 where
     T: CoordinateScalar,
     U: DataType,
@@ -240,87 +242,82 @@ where
 
     // Handle empty triangulation
     if by_dim[D] == 0 {
-        return SimplexCounts { by_dim };
+        return FVector { by_dim };
     }
 
     // f_{D-1}: (D-1)-facets from precomputed map
     by_dim[D - 1] = facet_to_cells.len();
 
-    // Intermediate dimensions: enumerate combinations
+    // Intermediate dimensions (1 ≤ k ≤ D-2): enumerate combinations.
+    //
+    // We keep a set per k and fill them in a single pass over cells, which is faster than
+    // re-iterating all cells once per k.
     // Skip if D <= 2 (no intermediate dimensions)
     if D > 2 {
-        for (k, item) in by_dim.iter_mut().enumerate().take(D - 1).skip(1) {
-            *item = count_k_simplices(tds, k);
+        let mut intermediate_simplex_sets: Vec<
+            FastHashSet<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
+        > = (0..(D - 2)).map(|_| FastHashSet::default()).collect();
+
+        for (_cell_key, cell) in tds.cells() {
+            let vertex_keys = cell.vertices();
+
+            for simplex_dimension in 1..=D - 2 {
+                let simplex_set =
+                    &mut intermediate_simplex_sets[simplex_dimension.saturating_sub(1)];
+                let simplex_size = simplex_dimension + 1; // k-simplex has k+1 vertices
+                insert_simplices_of_size(vertex_keys, simplex_size, simplex_set);
+            }
+        }
+
+        for simplex_dimension in 1..=D - 2 {
+            by_dim[simplex_dimension] =
+                intermediate_simplex_sets[simplex_dimension.saturating_sub(1)].len();
         }
     }
 
-    SimplexCounts { by_dim }
+    FVector { by_dim }
 }
 
-/// Count k-dimensional simplices by enumerating combinations.
-///
-/// For each D-cell, generates all C(D+1, k+1) vertex combinations of size k+1,
-/// then deduplicates using a hash set with canonical ordering.
-///
-/// # Arguments
-///
-/// * `tds` - The triangulation data structure
-/// * `k` - Dimension of simplices to count (0 < k < D-1)
-///
-/// # Returns
-///
-/// The number of unique k-simplices.
-///
-/// # Complexity
-///
-/// O(N · C(D+1, k+1)) where N is the number of cells.
-fn count_k_simplices<T, U, V, const D: usize>(tds: &Tds<T, U, V, D>, k: usize) -> usize
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
-    let mut k_simplex_set = FastHashSet::default();
-    let simplex_size = k + 1; // k-simplex has k+1 vertices
-
-    for (_cell_key, cell) in tds.cells() {
-        let vertex_keys = cell.vertices();
-
-        // Generate all C(D+1, k+1) combinations of vertex keys using indices
-        let n = vertex_keys.len();
-        let mut indices: SmallBuffer<usize, MAX_PRACTICAL_DIMENSION_SIZE> =
-            (0..simplex_size).collect();
-
-        'outer: loop {
-            // Extract current combination
-            let mut k_simplex: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-                SmallBuffer::new();
-            for &i in &indices {
-                k_simplex.push(vertex_keys[i]);
-            }
-            k_simplex.sort();
-            k_simplex_set.insert(k_simplex);
-
-            // Generate next combination using standard algorithm
-            let mut i = simplex_size;
-            while i > 0 {
-                i -= 1;
-                if indices[i] != i + n - simplex_size {
-                    break;
-                }
-                if i == 0 {
-                    break 'outer;
-                }
-            }
-
-            indices[i] += 1;
-            for j in (i + 1)..simplex_size {
-                indices[j] = indices[j - 1] + 1;
-            }
-        }
+fn insert_simplices_of_size(
+    vertex_keys: &[VertexKey],
+    simplex_size: usize,
+    simplex_set: &mut FastHashSet<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
+) {
+    let n = vertex_keys.len();
+    if n < simplex_size {
+        return;
     }
 
-    k_simplex_set.len()
+    // Generate all C(n, simplex_size) combinations of vertex keys using indices.
+    let mut indices: SmallBuffer<usize, MAX_PRACTICAL_DIMENSION_SIZE> = (0..simplex_size).collect();
+
+    'outer: loop {
+        // Extract current combination
+        let mut simplex_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::new();
+        for &vertex_index in &indices {
+            simplex_vertices.push(vertex_keys[vertex_index]);
+        }
+        simplex_vertices.sort();
+        simplex_set.insert(simplex_vertices);
+
+        // Generate next combination using standard algorithm
+        let mut pivot = simplex_size;
+        while pivot > 0 {
+            pivot -= 1;
+            if indices[pivot] != pivot + n - simplex_size {
+                break;
+            }
+            if pivot == 0 {
+                break 'outer;
+            }
+        }
+
+        indices[pivot] += 1;
+        for position in (pivot + 1)..simplex_size {
+            indices[position] = indices[position - 1] + 1;
+        }
+    }
 }
 
 /// Count simplices on the boundary (convex hull) only.
@@ -370,7 +367,7 @@ where
 /// Returns `TopologyError::Counting` if boundary enumeration fails.
 pub fn count_boundary_simplices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-) -> Result<SimplexCounts, TopologyError>
+) -> Result<FVector, TopologyError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -384,7 +381,7 @@ where
 
     if boundary_facets.is_empty() {
         // No boundary - return zero counts for (D-1)-dimensional complex
-        return Ok(SimplexCounts { by_dim: vec![0; D] });
+        return Ok(FVector { by_dim: vec![0; D] });
     }
 
     // Collect unique vertices on the boundary
@@ -413,90 +410,46 @@ where
     by_dim[D - 1] = num_boundary_facets;
 
     // Count intermediate k-simplices (1 ≤ k < D-1) by enumerating combinations
-    // from boundary facets
+    // from boundary facets.
+    //
+    // We keep a set per k and fill them in a single pass over boundary facets, which is faster than
+    // re-iterating all facets once per k.
     // Skip if D <= 2 (no intermediate dimensions in boundary)
     if D > 2 {
-        for (k, item) in by_dim.iter_mut().enumerate().take(D - 1).skip(1) {
-            *item = count_k_simplices_on_boundary::<T, U, V, D>(k, &boundary_facets)?;
-        }
-    }
+        let mut intermediate_simplex_sets: Vec<
+            FastHashSet<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
+        > = (0..(D - 2)).map(|_| FastHashSet::default()).collect();
 
-    Ok(SimplexCounts { by_dim })
-}
+        for facet in &boundary_facets {
+            let cell = facet
+                .cell()
+                .map_err(|e| TopologyError::Counting(format!("Failed to get facet cell: {e}")))?;
+            let facet_index = usize::from(facet.facet_index());
 
-/// Helper: Count k-simplices on the boundary.
-///
-/// Enumerates all k-simplices (k+1 vertices) from boundary facets.
-fn count_k_simplices_on_boundary<T, U, V, const D: usize>(
-    k: usize,
-    boundary_facets: &[crate::core::facet::FacetView<'_, T, U, V, D>],
-) -> Result<usize, TopologyError>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
-    let mut k_simplex_set: FastHashSet<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>> =
-        FastHashSet::default();
-
-    // Each boundary facet is a (D-1)-simplex with D vertices
-    // Extract all k-simplices (k+1 vertices) from each facet
-    let simplex_size = k + 1;
-
-    for facet in boundary_facets {
-        let cell = facet
-            .cell()
-            .map_err(|e| TopologyError::Counting(format!("Failed to get facet cell: {e}")))?;
-        let facet_index = usize::from(facet.facet_index());
-
-        // Collect vertex keys for this facet (excluding opposite vertex)
-        let mut facet_vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-            SmallBuffer::new();
-        for (i, &v_key) in cell.vertices().iter().enumerate() {
-            if i != facet_index {
-                facet_vertex_keys.push(v_key);
-            }
-        }
-
-        let n = facet_vertex_keys.len();
-        if n < simplex_size {
-            continue;
-        }
-
-        // Generate all C(n, simplex_size) combinations
-        let mut indices: SmallBuffer<usize, MAX_PRACTICAL_DIMENSION_SIZE> =
-            (0..simplex_size).collect();
-
-        'outer: loop {
-            // Extract k-simplex
-            let mut k_simplex: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            // Collect vertex keys for this facet (excluding opposite vertex)
+            let mut facet_vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
                 SmallBuffer::new();
-            for &i in &indices {
-                k_simplex.push(facet_vertex_keys[i]);
-            }
-            k_simplex.sort();
-            k_simplex_set.insert(k_simplex);
-
-            // Generate next combination
-            let mut i = simplex_size;
-            while i > 0 {
-                i -= 1;
-                if indices[i] != i + n - simplex_size {
-                    break;
-                }
-                if i == 0 {
-                    break 'outer;
+            for (vertex_position, &v_key) in cell.vertices().iter().enumerate() {
+                if vertex_position != facet_index {
+                    facet_vertex_keys.push(v_key);
                 }
             }
 
-            indices[i] += 1;
-            for j in (i + 1)..simplex_size {
-                indices[j] = indices[j - 1] + 1;
+            for simplex_dimension in 1..=D - 2 {
+                let simplex_set =
+                    &mut intermediate_simplex_sets[simplex_dimension.saturating_sub(1)];
+                let simplex_size = simplex_dimension + 1; // k-simplex has k+1 vertices
+                insert_simplices_of_size(&facet_vertex_keys, simplex_size, simplex_set);
             }
+        }
+
+        for simplex_dimension in 1..=D - 2 {
+            by_dim[simplex_dimension] =
+                intermediate_simplex_sets[simplex_dimension.saturating_sub(1)].len();
         }
     }
 
-    Ok(k_simplex_set.len())
+    Ok(FVector { by_dim })
 }
 
 /// Compute Euler characteristic from simplex counts.
@@ -513,23 +466,23 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::topology::characteristics::euler::{SimplexCounts, euler_characteristic};
+/// use delaunay::topology::characteristics::euler::{FVector, euler_characteristic};
 ///
 /// // 2D triangle: V=3, E=3, F=1 → χ = 3-3+1 = 1
-/// let counts = SimplexCounts {
+/// let counts = FVector {
 ///     by_dim: vec![3, 3, 1],
 /// };
 /// assert_eq!(euler_characteristic(&counts), 1);
 ///
 /// // 3D tetrahedron: V=4, E=6, F=4, C=1 → χ = 4-6+4-1 = 1
-/// let counts_3d = SimplexCounts {
+/// let counts_3d = FVector {
 ///     by_dim: vec![4, 6, 4, 1],
 /// };
 /// assert_eq!(euler_characteristic(&counts_3d), 1);
 /// ```
 #[must_use]
 #[allow(clippy::cast_possible_wrap)] // Simplex counts won't exceed isize::MAX in practice
-pub fn euler_characteristic(counts: &SimplexCounts) -> isize {
+pub fn euler_characteristic(counts: &FVector) -> isize {
     counts
         .by_dim
         .iter()
@@ -649,7 +602,7 @@ mod tests {
 
     #[test]
     fn test_simplex_counts() {
-        let counts = SimplexCounts {
+        let counts = FVector {
             by_dim: vec![3, 3, 1],
         };
 
@@ -663,7 +616,7 @@ mod tests {
     #[test]
     fn test_euler_characteristic_2d() {
         // 2D triangle: V=3, E=3, F=1 → χ = 3-3+1 = 1
-        let counts = SimplexCounts {
+        let counts = FVector {
             by_dim: vec![3, 3, 1],
         };
         assert_eq!(euler_characteristic(&counts), 1);
@@ -672,7 +625,7 @@ mod tests {
     #[test]
     fn test_euler_characteristic_3d() {
         // 3D tetrahedron: V=4, E=6, F=4, C=1 → χ = 4-6+4-1 = 1
-        let counts = SimplexCounts {
+        let counts = FVector {
             by_dim: vec![4, 6, 4, 1],
         };
         assert_eq!(euler_characteristic(&counts), 1);
