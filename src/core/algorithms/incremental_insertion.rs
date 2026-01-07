@@ -238,11 +238,15 @@ impl InsertionError {
             | Self::TopologyValidationFailed { .. } => true,
             // Legacy neighbor wiring errors: check message for non-manifold (backwards compatibility)
             Self::NeighborWiring { message } => message.contains("Non-manifold"),
-            // Conflict region errors: non-manifold facets or ridge fans indicate degeneracy
+            // Conflict region errors: non-manifold facets, ridge fans, or disconnected/open cavity
+            // boundaries indicate degeneracy.
             Self::ConflictRegion(ce) => {
                 matches!(
                     ce,
-                    ConflictError::NonManifoldFacet { .. } | ConflictError::RidgeFan { .. }
+                    ConflictError::NonManifoldFacet { .. }
+                        | ConflictError::RidgeFan { .. }
+                        | ConflictError::DisconnectedBoundary { .. }
+                        | ConflictError::OpenBoundary { .. }
                 )
             }
             // All other errors are not retryable

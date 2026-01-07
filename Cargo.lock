@@ -496,9 +496,9 @@ dependencies = [
 
 [[package]]
 name = "la-stack"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f30bffe61a1e7376e01fb49d643d1606077d0b8c815d6b9e2b4efc346f8c3b6"
+checksum = "e99e9dd25b64d6f37e1acee2f8c08e71f3a76234e4cd69c3bb224fd06d9e471c"
 
 [[package]]
 name = "libc"
@@ -870,9 +870,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.148"
+version = "1.0.149"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3084b546a1dd6289475996f182a22aba973866ea8e8b02c51d9f46b1336a22da"
+checksum = "83fc039473c5595ace860d8c4fafa220ff474b3fc6bfdb4293327f1a37e94d86"
 dependencies = [
  "itoa",
  "memchr",

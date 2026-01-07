@@ -10,7 +10,7 @@ use rand::distr::uniform::SampleUniform;
 use std::iter::Sum;
 use std::ops::{AddAssign, SubAssign};
 
-use la_stack::{DEFAULT_PIVOT_TOL, LaError, Vector as LaVector};
+use la_stack::{DEFAULT_PIVOT_TOL, DEFAULT_SINGULAR_TOL, LaError, Vector as LaVector};
 
 use crate::core::delaunay_triangulation::{
     DelaunayTriangulation, DelaunayTriangulationConstructionError,
@@ -20,7 +20,9 @@ use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::TriangulationConstructionError;
 use crate::core::vertex::{Vertex, VertexBuilder};
 use crate::geometry::kernel::FastKernel;
-use crate::geometry::matrix::{MatrixError, StackMatrixDispatchError, matrix_get, matrix_set};
+use crate::geometry::matrix::{
+    Matrix, MatrixError, StackMatrixDispatchError, matrix_get, matrix_set,
+};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar,
@@ -1119,9 +1121,12 @@ where
 
 /// Clamp and validate a Gram determinant.
 ///
-/// For valid inputs, Gram determinants should be non-negative. Small negative values can
-/// arise from floating-point rounding error; we clamp those close to zero **only** as numerical
-/// hygiene before applying degeneracy checks.
+/// For valid inputs, Gram determinants should be non-negative.
+///
+/// In this crate we compute Gram determinants via a symmetry-exploiting LDLT factorization
+/// (see [`gram_determinant_ldlt`]), so **negative** determinants should not occur for PSD Gram
+/// matrices. We still keep a small negative clamp as a defensive check, since other callers may
+/// pass in raw determinants.
 ///
 /// This function treats any non-positive determinant as a degenerate simplex:
 /// - non-finite determinants error
@@ -1157,6 +1162,20 @@ fn clamp_gram_determinant(mut det: f64) -> Result<f64, CircumcenterError> {
     }
 
     Ok(det)
+}
+
+/// Compute a Gram determinant using la-stack's stack-allocated LDLT factorization.
+///
+/// This mirrors the existing `crate::geometry::matrix::determinant` behavior:
+/// - singular/degenerate => 0.0
+/// - non-finite => NaN
+#[inline]
+fn gram_determinant_ldlt<const D: usize>(gram_matrix: Matrix<D>) -> f64 {
+    match gram_matrix.ldlt(DEFAULT_SINGULAR_TOL) {
+        Ok(ldlt) => ldlt.det(),
+        Err(LaError::Singular { .. }) => 0.0,
+        Err(LaError::NonFinite { .. }) => f64::NAN,
+    }
 }
 
 /// Calculate the volume of a D-dimensional simplex using the Gram matrix method.
@@ -1202,8 +1221,8 @@ where
         }
     }
 
-    // Compute Gram determinant with clamping
-    let det = clamp_gram_determinant(crate::geometry::matrix::determinant(gram_matrix))?;
+    // Compute Gram determinant with clamping (LDLT exploits symmetry / PSD structure).
+    let det = clamp_gram_determinant(gram_determinant_ldlt(gram_matrix))?;
 
     let volume_f64 = {
         let sqrt_det = det.sqrt();
@@ -1556,7 +1575,7 @@ where
             }
         }
 
-        clamp_gram_determinant(crate::geometry::matrix::determinant(gram_matrix))
+        clamp_gram_determinant(gram_determinant_ldlt(gram_matrix))
     })?;
 
     let volume_f64 = {
@@ -3172,8 +3191,16 @@ mod tests {
                 }
             }
 
-            clamp_gram_determinant(crate::geometry::matrix::determinant(gram_matrix))
+            clamp_gram_determinant(gram_determinant_ldlt(gram_matrix))
         })
+    }
+
+    #[test]
+    fn test_gram_determinant_ldlt_known_spd() {
+        // Symmetric positive-definite matrix with known determinant.
+        let gram = Matrix::<2>::from_rows([[4.0, 2.0], [2.0, 3.0]]);
+        let det = gram_determinant_ldlt(gram);
+        assert_relative_eq!(det, 8.0, epsilon = 1e-12);
     }
 
     #[test]

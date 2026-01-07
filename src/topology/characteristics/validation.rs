@@ -9,7 +9,7 @@ use crate::core::{
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::topology::{
     characteristics::euler::{
-        SimplexCounts, TopologyClassification, count_simplices_with_facet_to_cells_map,
+        FVector, TopologyClassification, count_simplices_with_facet_to_cells_map,
         euler_characteristic, expected_chi_for,
     },
     traits::topological_space::TopologyError,
@@ -50,7 +50,7 @@ pub struct TopologyCheckResult {
     pub classification: TopologyClassification,
 
     /// Full simplex counts (f-vector).
-    pub counts: SimplexCounts,
+    pub counts: FVector,
 
     /// Diagnostic notes or warnings.
     pub notes: Vec<String>,
@@ -71,7 +71,7 @@ impl TopologyCheckResult {
     ///     chi: 1,
     ///     expected: Some(1),
     ///     classification: TopologyClassification::Ball(3),
-    ///     counts: SimplexCounts { by_dim: vec![4, 6, 4, 1] },
+    ///     counts: FVector { by_dim: vec![4, 6, 4, 1] },
     ///     notes: vec![],
     /// };
     /// assert!(valid_result.is_valid());
@@ -80,7 +80,7 @@ impl TopologyCheckResult {
     ///     chi: 0,
     ///     expected: Some(1),
     ///     classification: TopologyClassification::Ball(3),
-    ///     counts: SimplexCounts { by_dim: vec![4, 6, 4, 1] },
+    ///     counts: FVector { by_dim: vec![4, 6, 4, 1] },
     ///     notes: vec!["Mismatch".to_string()],
     /// };
     /// assert!(!invalid_result.is_valid());
@@ -208,7 +208,7 @@ mod tests {
             chi: 1,
             expected: Some(1),
             classification: TopologyClassification::Ball(3),
-            counts: SimplexCounts {
+            counts: FVector {
                 by_dim: vec![4, 6, 4, 1],
             },
             notes: vec![],
@@ -219,7 +219,7 @@ mod tests {
             chi: 0,
             expected: Some(1),
             classification: TopologyClassification::Ball(3),
-            counts: SimplexCounts {
+            counts: FVector {
                 by_dim: vec![4, 6, 4, 1],
             },
             notes: vec!["Mismatch".to_string()],
@@ -230,7 +230,7 @@ mod tests {
             chi: 42,
             expected: None,
             classification: TopologyClassification::Unknown,
-            counts: SimplexCounts { by_dim: vec![1] },
+            counts: FVector { by_dim: vec![1] },
             notes: vec![],
         };
         assert!(unknown_result.is_valid()); // Unknown classification is considered valid

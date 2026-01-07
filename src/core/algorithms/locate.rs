@@ -123,6 +123,45 @@ pub enum ConflictError {
         /// Number of vertices in the shared ridge
         ridge_vertex_count: usize,
     },
+
+    /// Cavity boundary is disconnected (multiple components).
+    ///
+    /// This indicates the conflict region is not a topological ball, which can happen
+    /// in degenerate/co-spherical configurations when strict in-sphere classification
+    /// produces a non-simply-connected conflict set. Treat as retryable degeneracy.
+    #[error(
+        "Disconnected cavity boundary: visited {visited} of {total} boundary facets (indicates degenerate geometry requiring perturbation)"
+    )]
+    DisconnectedBoundary {
+        /// Number of boundary facets reachable from an arbitrary start facet.
+        visited: usize,
+        /// Total number of boundary facets.
+        total: usize,
+    },
+
+    /// Cavity boundary is not closed (a ridge is incident to only one boundary facet).
+    ///
+    /// For a valid cavity boundary (a closed (D-1)-manifold), each (D-2)-ridge must be
+    /// shared by exactly 2 boundary facets. An incidence of 1 indicates an "open" boundary
+    /// surface and is treated as retryable degeneracy.
+    #[error(
+        "Open cavity boundary: ridge with {ridge_vertex_count} vertices is incident to {facet_count} boundary facets (expected 2; indicates degenerate geometry requiring perturbation)"
+    )]
+    OpenBoundary {
+        /// Number of boundary facets incident to the ridge.
+        facet_count: usize,
+        /// Number of vertices in the ridge.
+        ridge_vertex_count: usize,
+    },
+}
+
+/// Ridge incidence information used for cavity-boundary validation.
+#[derive(Debug, Clone, Copy)]
+struct RidgeInfo {
+    ridge_vertex_count: usize,
+    facet_count: usize,
+    first_facet: usize,
+    second_facet: Option<usize>,
 }
 
 /// Locate a point in the triangulation using facet walking.
@@ -574,6 +613,7 @@ where
 ///     assert_eq!(boundary_facets.len(), 5);
 /// }
 /// ```
+#[allow(clippy::too_many_lines)]
 pub fn extract_cavity_boundary<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     conflict_cells: &CellKeyBuffer,
@@ -651,9 +691,13 @@ where
 
     let mut boundary_facets = CavityBoundaryBuffer::new();
 
-    // Track ridge incidence for detecting ridge fans
-    // Map: ridge_hash -> (ridge_vertex_count, number_of_facets_sharing_this_ridge)
-    let mut ridge_map: FastHashMap<u64, (usize, usize)> = FastHashMap::default();
+    // Track ridge incidence for detecting ridge fans and validating boundary connectivity.
+    //
+    // A ridge is a (D-2)-simplex. For a valid *closed* cavity boundary (a (D-1)-manifold), each
+    // ridge must be incident to exactly 2 boundary facets.
+
+    // Map: ridge_hash -> RidgeInfo
+    let mut ridge_map: FastHashMap<u64, RidgeInfo> = FastHashMap::default();
 
     for (facet_hash, cell_facet_pairs) in &facet_to_conflict {
         match cell_facet_pairs.as_slice() {
@@ -661,6 +705,8 @@ where
             [handle] => {
                 let cell_key = handle.cell_key();
                 let facet_idx_u8 = handle.facet_index();
+
+                let boundary_facet_idx = boundary_facets.len();
                 boundary_facets.push(FacetHandle::new(cell_key, facet_idx_u8));
 
                 // Use the cached canonical facet vertex keys for ridge analysis.
@@ -689,8 +735,18 @@ where
 
                         ridge_map
                             .entry(ridge_hash)
-                            .and_modify(|(_, count)| *count += 1)
-                            .or_insert((ridge_vertex_count, 1));
+                            .and_modify(|info| {
+                                info.facet_count += 1;
+                                if info.second_facet.is_none() {
+                                    info.second_facet = Some(boundary_facet_idx);
+                                }
+                            })
+                            .or_insert(RidgeInfo {
+                                ridge_vertex_count,
+                                facet_count: 1,
+                                first_facet: boundary_facet_idx,
+                                second_facet: None,
+                            });
                     }
                 }
             }
@@ -709,16 +765,74 @@ where
         }
     }
 
-    // Check for ridge fans (many boundary facets sharing the same ridge).
-    for (ridge_vertex_count, facet_count) in ridge_map.values() {
-        // In a manifold boundary, each (D-2)-ridge is shared by at most 2 facets.
-        // Three or more indicates a degenerate fan requiring perturbation.
-        const RIDGE_FAN_THRESHOLD: usize = 3;
+    // Build boundary facet adjacency via ridges and validate manifold properties of the boundary.
+    if !boundary_facets.is_empty() {
+        let boundary_len = boundary_facets.len();
+        let mut adjacency: Vec<Vec<usize>> = vec![Vec::new(); boundary_len];
 
-        if *facet_count >= RIDGE_FAN_THRESHOLD {
-            return Err(ConflictError::RidgeFan {
-                facet_count: *facet_count,
-                ridge_vertex_count: *ridge_vertex_count,
+        for info in ridge_map.values() {
+            // Closed manifold boundary requires exactly 2 incident facets per ridge.
+            if info.facet_count == 1 {
+                return Err(ConflictError::OpenBoundary {
+                    facet_count: info.facet_count,
+                    ridge_vertex_count: info.ridge_vertex_count,
+                });
+            }
+
+            if info.facet_count >= 3 {
+                return Err(ConflictError::RidgeFan {
+                    facet_count: info.facet_count,
+                    ridge_vertex_count: info.ridge_vertex_count,
+                });
+            }
+
+            // facet_count == 2
+            let a = info.first_facet;
+            let b = info.second_facet.ok_or_else(|| {
+                // This should be impossible by construction; treat as an internal consistency error.
+                let fallback_cell_key = boundary_facets.first().map_or_else(
+                    || {
+                        // boundary_facets is non-empty by the enclosing `if`, but keep this
+                        // branch to avoid panics and satisfy strict clippy.
+                        CellKey::default()
+                    },
+                    FacetHandle::cell_key,
+                );
+                let cell_key = boundary_facets
+                    .get(a)
+                    .map_or(fallback_cell_key, FacetHandle::cell_key);
+
+                ConflictError::CellDataAccessFailed {
+                    cell_key,
+                    message: "RidgeInfo missing second_facet when facet_count == 2".to_string(),
+                }
+            })?;
+            adjacency[a].push(b);
+            adjacency[b].push(a);
+        }
+
+        // Connectedness: the cavity boundary must be a single component.
+        // A disconnected boundary indicates a non-ball conflict region (e.g., shell), which
+        // can lead to Euler characteristic violations if we proceed.
+        let mut visited = vec![false; boundary_len];
+        let mut stack = vec![0usize];
+        visited[0] = true;
+        let mut visited_count = 1usize;
+
+        while let Some(cur) = stack.pop() {
+            for &n in &adjacency[cur] {
+                if !visited[n] {
+                    visited[n] = true;
+                    visited_count += 1;
+                    stack.push(n);
+                }
+            }
+        }
+
+        if visited_count != boundary_len {
+            return Err(ConflictError::DisconnectedBoundary {
+                visited: visited_count,
+                total: boundary_len,
             });
         }
     }
