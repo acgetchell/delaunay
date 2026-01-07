@@ -317,6 +317,12 @@ where
             last_inserted_cell: None,
         };
 
+        // During batch construction, enable strict Level 3 validation in debug builds so the
+        // topology safety-net can rollback/skip rare cases that would otherwise leave the final
+        // triangulation topologically invalid.
+        let original_validation_policy = dt.tri.validation_policy;
+        dt.tri.validation_policy = ValidationPolicy::DebugOnly;
+
         // Insert remaining vertices incrementally.
         // Retryable geometric degeneracies are retried with perturbation and ultimately skipped
         // (transactional rollback) to keep the triangulation manifold. Duplicate/near-duplicate
@@ -404,6 +410,9 @@ where
                 }
             }
         }
+
+        // Restore the default validation policy after batch construction.
+        dt.tri.validation_policy = original_validation_policy;
 
         Ok(dt)
     }

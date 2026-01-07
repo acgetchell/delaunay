@@ -421,7 +421,9 @@ setup-tools:
         fi
     }
 
+    brew_available=0
     if have brew; then
+        brew_available=1
         echo "Using Homebrew (brew) to install missing tools..."
         install_with_brew uv
         install_with_brew jq
@@ -433,14 +435,14 @@ setup-tools:
         install_with_brew node
         echo ""
     else
-        echo "❌ 'brew' not found."
+        echo "⚠️  'brew' not found. Skipping Homebrew installs."
         if [[ "$os" == "Darwin" ]]; then
-            echo "Install Homebrew from https://brew.sh and re-run: just setup-tools"
-            exit 1
+            echo "Install Homebrew from https://brew.sh, or ensure required tools are on PATH."
+        else
+            echo "Install required tools via your system package manager, or ensure they are on PATH."
         fi
-        echo "Install the following tools via your system package manager, then re-run: just setup-tools"
-        echo "  uv, jq, taplo, yamllint, shfmt, shellcheck, actionlint, node+npx"
-        exit 1
+        echo "Required tools: uv, jq, taplo, yamllint, shfmt, shellcheck, actionlint, node+npx"
+        echo ""
     fi
 
     echo "Ensuring Rust toolchain + components..."
@@ -484,7 +486,15 @@ setup-tools:
     if [ "$missing" -ne 0 ]; then
         echo ""
         echo "❌ Some required tools are still missing."
-        echo "Fix the installs above and re-run: just setup-tools"
+        if [ "$brew_available" -ne 0 ]; then
+            echo "Fix the installs above (brew) and re-run: just setup-tools"
+        else
+            if [[ "$os" == "Darwin" ]]; then
+                echo "Install Homebrew (https://brew.sh) or install the missing tools manually, then re-run: just setup-tools"
+            else
+                echo "Install the missing tools via your system package manager, then re-run: just setup-tools"
+            fi
+        fi
         exit 1
     fi
 
@@ -533,18 +543,27 @@ spell-check:
     #!/usr/bin/env bash
     set -euo pipefail
     files=()
-    # Use -z for NUL-delimited output to handle filenames with spaces
+    # Use -z for NUL-delimited output to handle filenames with spaces.
+    #
+    # Note: For renames/copies, `git status --porcelain -z` emits two NUL-separated paths:
+    #   XY old_path\0new_path\0
     while IFS= read -r -d '' status_line; do
-        # Extract filename from git status --porcelain -z format
-        # Format: XY filename or XY oldname -> newname (for renames)
-        if [[ "$status_line" =~ ^..[[:space:]](.*)$ ]]; then
-            filename="${BASH_REMATCH[1]}"
-            # For renames (format: "old -> new"), take the new filename
-            if [[ "$filename" == *" -> "* ]]; then
-                filename="${filename#* -> }"
+        status="${status_line:0:2}"
+        filename="${status_line:3}"
+
+        # For renames/copies, consume the destination path (the next NUL-delimited token).
+        if [[ "$status" == *"R"* || "$status" == *"C"* ]]; then
+            if IFS= read -r -d '' rename_target; then
+                filename="$rename_target"
             fi
-            files+=("$filename")
         fi
+
+        # Skip deletions (file may no longer exist).
+        if [[ "$status" == *"D"* ]]; then
+            continue
+        fi
+
+        files+=("$filename")
     done < <(git status --porcelain -z --ignored=no)
     if [ "${#files[@]}" -gt 0 ]; then
         if command -v cspell >/dev/null; then

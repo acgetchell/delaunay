@@ -39,7 +39,13 @@ looks “off”.
 
 ### What is validated automatically?
 
-Only **Level 3** (`Triangulation::is_valid()`): manifold-with-boundary facet checks, connectedness (single component), and Euler characteristic.
+Only **Level 3** (`Triangulation::is_valid()`):
+
+- Codimension-1 manifoldness (facet multiplicity 1 or 2 + boundary neighbor consistency)
+- Codimension-2 boundary manifoldness (the boundary is closed; "no boundary of boundary")
+- Connectedness (single component)
+- No isolated vertices
+- Euler characteristic
 
 Automatic validation does **not** run Level 4 (the Delaunay empty-circumsphere property).
 If you need geometric verification, call `dt.is_valid()` or `dt.validate()` explicitly.
@@ -105,7 +111,7 @@ The library separates **construction-time** failures from **validation-time** in
 
 - `TdsValidationError` (Levels 1–2): element + structural invariants.
 - `TriangulationValidationError` (Level 3): wraps `TdsValidationError` and adds
-  manifold-with-boundary + connectedness + Euler characteristic checks.
+  codimension-1 manifoldness + codimension-2 boundary manifoldness (closed boundary) + connectedness + isolated-vertex + Euler characteristic checks.
 - `DelaunayTriangulationValidationError` (Level 4): wraps `TriangulationValidationError` and adds
   the empty-circumsphere (Delaunay) checks.
 
@@ -242,11 +248,16 @@ Validates that the triangulation forms a valid topological manifold.
 
 `Triangulation::is_valid()` (Level 3) checks:
 
-1. **Manifold Facet Property**: Each facet belongs to exactly 1 cell (boundary) or exactly 2 cells (interior)
+1. **Codimension-1 manifoldness (facet degree)**: Each facet belongs to exactly 1 cell (boundary) or exactly 2 cells (interior)
    - Stronger than Level 2's "≤2 cells per facet"
-2. **Connectedness**: All cells form a single connected component in the cell neighbor graph
+2. **Codimension-1 boundary consistency (neighbor pointers)**: Boundary facets must have no neighbor pointer across them
+3. **Codimension-2 boundary manifoldness (closed boundary)**: Each (d−2)-ridge on the boundary must be incident to exactly 2 boundary facets
+   - This is the "no boundary of boundary" condition
+   - Interior ridges can have higher degree; only boundary ridges are constrained
+4. **Connectedness**: All cells form a single connected component in the cell neighbor graph
    - Detected via a graph traversal over neighbor pointers (O(N·D))
-3. **Euler Characteristic**: χ matches expected topology (when an expectation is defined)
+5. **No isolated vertices**: Every vertex must be incident to at least one cell
+6. **Euler Characteristic**: χ matches expected topology (when an expectation is defined)
    - Empty: χ = 0
    - Single simplex / Ball(D): χ = 1
    - Closed sphere S^D: χ = 1 + (-1)^D
@@ -468,9 +479,12 @@ pub fn validate_with_level(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3
 
 ### Validation Passes Level 2, Fails at Level 3
 
-**Problem**: Manifold property violated (facet has 0 or >2 cells), triangulation disconnected, or Euler characteristic wrong
-**Likely Cause**: Non-manifold topology, missing/broken neighbor wiring, or disconnected components
-**Fix**: Check facet-to-cells mapping, ensure no isolated cells, and verify the cell neighbor graph is connected
+**Problem**: Codimension-1 manifoldness violated (facet has 0 or >2 cells), boundary is not closed ("boundary of boundary"),
+triangulation disconnected, isolated vertex present, or Euler characteristic wrong
+**Likely Cause**: Non-manifold topology, missing/broken neighbor wiring, boundary topology corruption,
+or disconnected components
+**Fix**: Check facet-to-cells mapping, ensure boundary ridges have degree 2 within boundary facets,
+ensure no isolated vertices, and verify the cell neighbor graph is connected
 
 ### Validation Passes Level 3, Fails at Level 4
 

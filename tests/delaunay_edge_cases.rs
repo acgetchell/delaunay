@@ -104,6 +104,93 @@ test_regression_config!(
     ]
 );
 
+/// Regression: 4D construction must not produce a manifold-with-boundary "shell" (χ=0).
+///
+/// This configuration was found by `proptest_delaunay_triangulation::prop_insertion_order_robustness_4d`
+/// and produced an Euler characteristic mismatch:
+/// - expected Ball(4) χ = 1
+/// - computed χ = 0
+///
+/// The triangulation must either:
+/// - construct a valid manifold ball (Levels 1–3 pass), or
+/// - reject/skip degeneracies without leaving the structure topologically invalid.
+#[test]
+fn test_regression_proptest_insertion_order_4d_euler_mismatch() {
+    let vertices = vec![
+        vertex!([
+            -65.070_532_013_377_94,
+            72.223_880_592_145_24,
+            -97.837_333_303_337_39,
+            35.700_988_360_396_63,
+        ]),
+        vertex!([
+            27.011_682_298_030_294,
+            52.054_594_213_988_53,
+            -4.067_357_689_604_181,
+            59.253_713_038_817_09,
+        ]),
+        vertex!([
+            64.848_601_083_080_47,
+            84.907_367_805_317_42,
+            -98.659_828_418_664_1,
+            70.056_498_821_543_85,
+        ]),
+        vertex!([
+            -23.543_852_823_069_876,
+            96.741_963_200_207_22,
+            -50.539_503_136_092_634,
+            -49.616_262_314_856_67,
+        ]),
+        vertex!([
+            24.886_830_567_772_98,
+            -81.708_725_314_824,
+            50.775_700_870_880_27,
+            20.281_603_779_436_033,
+        ]),
+        vertex!([
+            78.030_479_318_165_25,
+            -82.763_788_627_520_88,
+            94.075_337_487_756_27,
+            44.637_774_779_142_73,
+        ]),
+        vertex!([
+            -5.175_491_150_708_228,
+            97.527_582_084_288_54,
+            95.344_552_027_220_42,
+            84.908_292_808_161_85,
+        ]),
+        vertex!([
+            71.994_788_686_588_11,
+            4.833_973_465_666_131,
+            -80.802_685_728_835_39,
+            64.010_634_775_159_37,
+        ]),
+        vertex!([
+            23.390_079_186_814_17,
+            -2.157_395_632_040_824_7,
+            -6.601_766_119_999_574,
+            32.062_796_044_560_2,
+        ]),
+    ];
+
+    let dt: DelaunayTriangulation<_, (), (), 4> = DelaunayTriangulation::new(&vertices)
+        .unwrap_or_else(|err| panic!("4D regression configuration failed to construct: {err}"));
+
+    assert!(
+        dt.number_of_vertices() >= 5,
+        "Should have at least 5 vertices for a 4D triangulation"
+    );
+    assert!(dt.number_of_vertices() <= vertices.len());
+    assert!(dt.number_of_cells() > 0);
+
+    let validation = dt.as_triangulation().validate();
+    assert!(
+        validation.is_ok(),
+        "Triangulation has topology violations: {:?}",
+        validation.err()
+    );
+}
+
 // 5D regression: known configuration that previously failed
 test_regression_config!(
     regression_5d_known_config,

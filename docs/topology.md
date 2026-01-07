@@ -2,7 +2,8 @@
 
 This document outlines the design and implementation strategy for introducing topology analysis and validation into the delaunay triangulation library.
 
-> Note: Level 3 topology validation (manifold-with-boundary, connectedness, and Euler characteristic)
+> Note: Level 3 topology validation (codimension-1 manifoldness, closed boundary/codimension-2 boundary manifoldness,
+> connectedness, isolated-vertex checks, and Euler characteristic)
 > is implemented in `Triangulation::is_valid()` as of v0.6.x.
 > Some sections below describe earlier plans and are marked as historical/superseded.
 
