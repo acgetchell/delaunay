@@ -288,7 +288,13 @@ fn insert_simplices_of_size(
         return;
     }
 
-    // Generate all C(n, simplex_size) combinations of vertex keys using indices.
+    // Generate all C(n, simplex_size) combinations using the standard lexicographic algorithm.
+    //
+    // We maintain `indices[0..simplex_size]` as strictly increasing positions into `vertex_keys`.
+    // To advance to the next combination:
+    // 1) Find the rightmost index that can be incremented without running out of room (the pivot).
+    // 2) Increment it.
+    // 3) Reset all subsequent indices to consecutive values.
     let mut indices: SmallBuffer<usize, MAX_PRACTICAL_DIMENSION_SIZE> = (0..simplex_size).collect();
 
     'outer: loop {
@@ -301,7 +307,8 @@ fn insert_simplices_of_size(
         simplex_vertices.sort();
         simplex_set.insert(simplex_vertices);
 
-        // Generate next combination using standard algorithm
+        // Generate next combination.
+        // The maximum valid value at position `i` is `i + n - simplex_size`.
         let mut pivot = simplex_size;
         while pivot > 0 {
             pivot -= 1;

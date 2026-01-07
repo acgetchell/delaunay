@@ -400,6 +400,9 @@ setup: setup-tools
     echo "✅ Setup complete! Run 'just help-workflows' to see available commands."
 
 # Development tooling installation (best-effort)
+#
+# Note: this recipe is intentionally self-contained. If it grows further, consider splitting
+# it into smaller helper recipes (e.g. brew installs, cargo tool installs, verification).
 setup-tools:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -551,8 +554,11 @@ spell-check:
     files=()
     # Use -z for NUL-delimited output to handle filenames with spaces.
     #
-    # Note: For renames/copies, `git status --porcelain -z` emits two NUL-separated paths:
-    #   XY old_path\0new_path\0
+    # Note: For renames/copies, `git status --porcelain -z` emits *two* NUL-separated paths.
+    # Examples:
+    #   R  old_path\0new_path\0
+    #   C  old_path\0new_path\0
+    # We therefore read two tokens and treat the second as the destination filename.
     while IFS= read -r -d '' status_line; do
         status="${status_line:0:2}"
         filename="${status_line:3}"
