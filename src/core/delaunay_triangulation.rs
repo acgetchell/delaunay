@@ -18,8 +18,8 @@ use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{
-    ManifoldValidationMode, Triangulation, TriangulationConstructionError,
-    TriangulationValidationError, ValidationPolicy,
+    TopologyGuarantee, Triangulation, TriangulationConstructionError, TriangulationValidationError,
+    ValidationPolicy,
 };
 use crate::core::triangulation_data_structure::{
     CellKey, InvariantKind, InvariantViolation, Tds, TdsConstructionError, TdsValidationError,
@@ -314,7 +314,7 @@ where
                 kernel,
                 tds,
                 validation_policy: ValidationPolicy::default(),
-                manifold_validation_mode: ManifoldValidationMode::default(),
+                manifold_validation_mode: TopologyGuarantee::default(),
             },
             last_inserted_cell: None,
         };
@@ -727,7 +727,10 @@ where
     /// assert!(dt.validate().is_ok());
     /// ```
     #[must_use]
-    #[allow(clippy::missing_const_for_fn)] // mutable refs from const fn not widely supported
+    #[expect(
+        clippy::missing_const_for_fn,
+        reason = "Returning mutable references from const fn isn't broadly supported"
+    )]
     pub fn as_triangulation_mut(&mut self) -> &mut Triangulation<K, U, V, D> {
         &mut self.tri
     }
@@ -794,16 +797,16 @@ where
         self.tri.validation_policy = policy;
     }
 
-    /// Returns the strictness mode used for Level 3 manifold validation.
+    /// Returns the topology guarantee used for Level 3 topology validation.
     #[inline]
     #[must_use]
-    pub const fn manifold_validation_mode(&self) -> ManifoldValidationMode {
+    pub const fn manifold_validation_mode(&self) -> TopologyGuarantee {
         self.tri.manifold_validation_mode
     }
 
-    /// Sets the strictness mode used for Level 3 manifold validation.
+    /// Sets the topology guarantee used for Level 3 topology validation.
     #[inline]
-    pub const fn set_manifold_validation_mode(&mut self, mode: ManifoldValidationMode) {
+    pub const fn set_manifold_validation_mode(&mut self, mode: TopologyGuarantee) {
         self.tri.manifold_validation_mode = mode;
     }
 
@@ -1522,7 +1525,7 @@ where
                 kernel,
                 tds,
                 validation_policy: ValidationPolicy::OnSuspicion,
-                manifold_validation_mode: ManifoldValidationMode::Pseudomanifold,
+                manifold_validation_mode: TopologyGuarantee::Pseudomanifold,
             },
             last_inserted_cell: None,
         }

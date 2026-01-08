@@ -588,8 +588,11 @@ pub mod topology {
     }
 
     // Re-export commonly used types
+    pub use crate::core::triangulation::TopologyGuarantee;
     pub use characteristics::*;
-    pub use manifold::{validate_closed_boundary, validate_facet_degree, validate_ridge_links};
+    pub use manifold::{
+        ManifoldError, validate_closed_boundary, validate_facet_degree, validate_ridge_links,
+    };
     pub use traits::*;
 }
 

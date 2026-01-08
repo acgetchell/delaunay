@@ -344,7 +344,10 @@ impl From<ManifoldError> for TriangulationValidationError {
 
 /// Adaptive error-checking on suspicious operations.
 #[derive(Clone, Copy, Debug, Default)]
-#[allow(clippy::struct_excessive_bools)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "A small set of boolean flags is clearer here than bitflags or an enum"
+)]
 pub struct SuspicionFlags {
     /// A perturbation retry was required to resolve a geometric degeneracy.
     pub perturbation_used: bool,
@@ -422,13 +425,13 @@ impl Default for ValidationPolicy {
     }
 }
 
-/// Controls which manifold invariants are enforced by Level 3 topology validation.
+/// Controls which topology invariants are enforced by Level 3 topology validation.
 ///
 /// This is intentionally separate from [`ValidationPolicy`]:
 /// - `ValidationPolicy` controls **when** Level 3 validation runs automatically during insertion.
-/// - `ManifoldValidationMode` controls **what** Level 3 validation checks.
+/// - `TopologyGuarantee` controls **what** Level 3 validation checks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ManifoldValidationMode {
+pub enum TopologyGuarantee {
     /// Validate only the pseudomanifold / manifold-with-boundary invariants:
     /// - facet degree (1 or 2 incident cells per facet)
     /// - closed boundary ("no boundary of boundary")
@@ -437,10 +440,10 @@ pub enum ManifoldValidationMode {
     /// Validate PL-manifold invariants.
     ///
     /// This includes all `Pseudomanifold` checks plus ridge-link validation.
-    PlManifold,
+    PLManifold,
 }
 
-impl Default for ManifoldValidationMode {
+impl Default for TopologyGuarantee {
     #[inline]
     fn default() -> Self {
         Self::Pseudomanifold
@@ -472,7 +475,7 @@ where
     // /// The topological space this triangulation lives in.
     // pub(crate) topology: Box<dyn TopologicalSpace>,
     pub(crate) validation_policy: ValidationPolicy,
-    pub(crate) manifold_validation_mode: ManifoldValidationMode,
+    pub(crate) manifold_validation_mode: TopologyGuarantee,
 }
 
 // =============================================================================
@@ -573,20 +576,20 @@ where
             kernel,
             tds: Tds::empty(),
             validation_policy: ValidationPolicy::default(),
-            manifold_validation_mode: ManifoldValidationMode::default(),
+            manifold_validation_mode: TopologyGuarantee::default(),
         }
     }
 
-    /// Returns the strictness mode used for Level 3 manifold validation.
+    /// Returns the topology guarantee used for Level 3 topology validation.
     #[inline]
     #[must_use]
-    pub const fn manifold_validation_mode(&self) -> ManifoldValidationMode {
+    pub const fn manifold_validation_mode(&self) -> TopologyGuarantee {
         self.manifold_validation_mode
     }
 
-    /// Sets the strictness mode used for Level 3 manifold validation.
+    /// Sets the topology guarantee used for Level 3 topology validation.
     #[inline]
-    pub const fn set_manifold_validation_mode(&mut self, mode: ManifoldValidationMode) {
+    pub const fn set_manifold_validation_mode(&mut self, mode: TopologyGuarantee) {
         self.manifold_validation_mode = mode;
     }
 
@@ -608,7 +611,7 @@ where
             kernel,
             tds,
             validation_policy: ValidationPolicy::default(),
-            manifold_validation_mode: ManifoldValidationMode::default(),
+            manifold_validation_mode: TopologyGuarantee::default(),
         }
     }
 
@@ -1561,7 +1564,7 @@ where
     /// This checks the triangulation/topology layer **only**:
     /// - Codimension-1 pseudomanifold condition: each facet is incident to 1 (boundary) or 2 (interior) cells
     /// - Codimension-2 boundary manifoldness: the boundary must be closed ("no boundary of boundary")
-    /// - PL-manifold ridge-link condition (when `manifold_validation_mode == PlManifold`)
+    /// - PL-manifold ridge-link condition (when `manifold_validation_mode == TopologyGuarantee::PLManifold`)
     /// - Connectedness (single component in the cell neighbor graph)
     /// - No isolated vertices (every vertex must be incident to at least one cell)
     /// - Euler characteristic
@@ -1608,7 +1611,7 @@ where
         validate_closed_boundary(&self.tds, &facet_to_cells)?;
 
         // 1c. PL-manifold ridge-link condition (optional strict mode).
-        if self.manifold_validation_mode == ManifoldValidationMode::PlManifold {
+        if self.manifold_validation_mode == TopologyGuarantee::PLManifold {
             validate_ridge_links(&self.tds)?;
         }
 
@@ -2121,7 +2124,10 @@ where
     /// 6. If the error is non-retryable: return `Err(InsertionError)`
     ///
     /// This guarantees we transition from one valid manifold to another.
-    #[allow(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Complex insertion logic; splitting further would harm readability"
+    )]
     fn insert_transactional(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
@@ -2531,7 +2537,10 @@ where
     ///
     /// Note: `conflict_cells` parameter is optional. If `None`, it will be computed automatically
     /// for interior points using `locate()` + `find_conflict_region()`.
-    #[allow(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Complex insertion logic; splitting further would harm readability"
+    )]
     fn try_insert_impl(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
@@ -2725,7 +2734,13 @@ where
 
                 // 9. Iteratively repair non-manifold topology until facet sharing is valid
                 let mut total_removed = 0;
-                #[allow(unused_variables)]
+                #[cfg_attr(
+                    not(debug_assertions),
+                    expect(
+                        unused_variables,
+                        reason = "`iteration` is only used for debug logging",
+                    )
+                )]
                 for iteration in 0..MAX_REPAIR_ITERATIONS {
                     // Check for non-manifold issues in newly created cells (local scan)
                     // This keeps the repair O(k·D) where k is the cavity size, rather than O(N·D)
@@ -2866,7 +2881,13 @@ where
 
                 // Iteratively repair non-manifold topology until facet sharing is valid
                 let mut total_removed = 0;
-                #[allow(unused_variables)]
+                #[cfg_attr(
+                    not(debug_assertions),
+                    expect(
+                        unused_variables,
+                        reason = "`iteration` is only used for debug logging",
+                    )
+                )]
                 for iteration in 0..MAX_REPAIR_ITERATIONS {
                     // Check for non-manifold issues in newly created hull cells (local scan)
                     // This keeps the repair O(k·D) where k is the number of new hull cells, rather than O(N·D)
@@ -3473,12 +3494,66 @@ mod tests {
     use super::*;
     use crate::core::collections::NeighborBuffer;
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
+    use crate::core::facet::facet_key_from_vertices;
     use crate::core::vertex::VertexBuilder;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::topology::characteristics::validation::validate_triangulation_euler;
     use crate::vertex;
+
+    #[test]
+    fn test_triangulation_validation_error_from_manifold_error_preserves_detail() {
+        let tds_err = TdsValidationError::InvalidNeighbors {
+            message: "unit test".to_string(),
+        };
+
+        assert_eq!(
+            TriangulationValidationError::from(ManifoldError::Tds(tds_err.clone())),
+            TriangulationValidationError::Tds(tds_err)
+        );
+
+        assert!(matches!(
+            TriangulationValidationError::from(ManifoldError::ManifoldFacetMultiplicity {
+                facet_key: 123,
+                cell_count: 3
+            }),
+            TriangulationValidationError::ManifoldFacetMultiplicity {
+                facet_key: 123,
+                cell_count: 3
+            }
+        ));
+
+        assert!(matches!(
+            TriangulationValidationError::from(ManifoldError::BoundaryRidgeMultiplicity {
+                ridge_key: 0x00ab_cdef,
+                boundary_facet_count: 4
+            }),
+            TriangulationValidationError::BoundaryRidgeMultiplicity {
+                ridge_key: 0x00ab_cdef,
+                boundary_facet_count: 4
+            }
+        ));
+
+        assert!(matches!(
+            TriangulationValidationError::from(ManifoldError::RidgeLinkNotManifold {
+                ridge_key: 0x00ab_cdef,
+                link_vertex_count: 7,
+                link_edge_count: 8,
+                max_degree: 3,
+                degree_one_vertices: 2,
+                connected: false
+            }),
+            TriangulationValidationError::RidgeLinkNotManifold {
+                ridge_key: 0x00ab_cdef,
+                link_vertex_count: 7,
+                link_edge_count: 8,
+                max_degree: 3,
+                degree_one_vertices: 2,
+                connected: false
+            }
+        ));
+    }
 
     /// Macro to generate `build_initial_simplex` tests across dimensions.
     ///
@@ -3678,6 +3753,96 @@ mod tests {
             tri.is_valid().is_ok(),
             "Empty triangulation should be a valid (empty) manifold"
         );
+    }
+
+    #[test]
+    fn test_is_valid_pl_manifold_mode_rejects_wedge_at_vertex_in_2d() {
+        // This builds the same 2D "wedge at a vertex" configuration as the topology-module
+        // unit test, but exercises the Level 3 validation pipeline and TopologyGuarantee gating.
+        //
+        // The complex is a pseudomanifold (every edge has degree 2), but not a PL 2-manifold:
+        // the shared vertex has a disconnected link (two disjoint cycles).
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        // Shared vertex.
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+
+        // First tetrahedron boundary (4 triangles on 4 vertices).
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v3], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v2, v3], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v1, v2, v3], None).unwrap())
+            .unwrap();
+
+        // Second tetrahedron boundary (shares only v0).
+        let v4 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 10.0]))
+            .unwrap();
+        let v5 = tds
+            .insert_vertex_with_mapping(vertex!([11.0, 10.0]))
+            .unwrap();
+        let v6 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 11.0]))
+            .unwrap();
+
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v4, v5], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v4, v6], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v5, v6], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v4, v5, v6], None).unwrap())
+            .unwrap();
+
+        // Ensure neighbor pointers exist so connectedness validation is meaningful.
+        repair_neighbor_pointers(&mut tds).unwrap();
+
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+
+        // In pseudomanifold mode, Level 3 validation proceeds past manifold checks and fails at
+        // connectedness (two components that share only a vertex).
+        assert!(matches!(
+            tri.is_valid(),
+            Err(TriangulationValidationError::Tds(
+                TdsValidationError::InconsistentDataStructure { .. }
+            ))
+        ));
+
+        tri.set_manifold_validation_mode(TopologyGuarantee::PLManifold);
+
+        let expected_ridge_key = facet_key_from_vertices(&[v0]);
+
+        match tri.is_valid() {
+            Err(TriangulationValidationError::RidgeLinkNotManifold {
+                ridge_key,
+                connected,
+                degree_one_vertices,
+                max_degree,
+                ..
+            }) => {
+                assert_eq!(ridge_key, expected_ridge_key);
+                assert!(!connected);
+                assert_eq!(degree_one_vertices, 0);
+                assert_eq!(max_degree, 2);
+            }
+            other => panic!("Expected RidgeLinkNotManifold in PL-manifold mode, got {other:?}"),
+        }
     }
 
     #[test]

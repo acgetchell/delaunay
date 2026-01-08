@@ -689,7 +689,10 @@ where
     ///
     /// Inline to zero cost in release builds. Only allocates if the buffer doesn't exist.
     #[inline]
-    #[allow(dead_code)]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Currently only used by unit tests")
+    )]
     pub(crate) fn ensure_neighbors_buffer_mut(&mut self) -> &mut NeighborBuffer<Option<CellKey>> {
         debug_assert!(
             self.neighbors.as_ref().is_none_or(|buf| buf.len() == D + 1),

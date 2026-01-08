@@ -255,7 +255,10 @@ where
 ///
 /// This helper does **not** call `tds.is_valid()`; it performs lightweight checks and
 /// returns [`ManifoldError::Tds`] if the underlying TDS is internally inconsistent.
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "Not used yet; intended for reuse by future local topology mutations (e.g. bistellar flips)"
+)]
 pub(crate) fn ridge_star_cells<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     ridge_vertices: &[VertexKey],
@@ -372,6 +375,15 @@ struct RidgeStar {
     star_cells: SmallBuffer<CellKey, 8>,
 }
 
+// Performance: This builds a ridge → star incidence map by visiting every cell and
+// enumerating its ridges.
+//
+// In terms of D, each cell contributes C(D+1, 2) = O(D²) ridges, each with O(D) vertices.
+// Therefore this pass is O(#cells × C(D+1,2) × D) time (i.e., O(#cells × D³) in D) and
+// O(#cells × C(D+1,2)) additional memory for the incidence map.
+//
+// This is appropriate for Level 3 topology validation / debugging, but it can be expensive
+// for extremely large triangulations (e.g., millions of cells) or higher-dimensional complexes.
 fn build_ridge_star_map<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
 ) -> Result<FastHashMap<u64, RidgeStar>, ManifoldError>
@@ -460,6 +472,19 @@ where
 ///
 /// This check is a strict refinement of codimension-1 manifoldness, and detects common
 /// singularities like “two surface components glued at a single vertex” in 2D.
+///
+/// # Performance
+///
+/// This is intentionally more expensive than basic codimension-1 manifold validation
+/// (e.g., [`validate_facet_degree`]) because it must inspect ridge stars/links across the
+/// entire complex.
+///
+/// Roughly speaking, this requires a full pass over all cells to build a ridge → star
+/// incidence map, which is O(#cells × C(D+1,2) × D) time (linear in #cells for fixed small D)
+/// and uses additional memory proportional to total ridge incidences.
+///
+/// Prefer reserving this check for debug/test builds or on-demand validation in production,
+/// especially for very large triangulations or higher-dimensional complexes.
 ///
 /// # Errors
 ///

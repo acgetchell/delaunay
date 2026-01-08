@@ -40,11 +40,11 @@ looks “off”.
 ### What is validated automatically?
 
 Only **Level 3** (`Triangulation::is_valid()`), using the triangulation’s current
-`ManifoldValidationMode` (default: `Pseudomanifold`):
+`TopologyGuarantee` (default: `Pseudomanifold`):
 
 - Codimension-1 manifoldness (facet degree: 1 or 2 incident cells per facet)
 - Codimension-2 boundary manifoldness (the boundary is closed; "no boundary of boundary")
-- (Optional) PL-manifold ridge-link condition (when `ManifoldValidationMode::PlManifold`)
+- (Optional) PL-manifold ridge-link condition (when `TopologyGuarantee::PLManifold`)
 - Connectedness (single component)
 - No isolated vertices
 - Euler characteristic
@@ -98,7 +98,7 @@ dt.set_validation_policy(ValidationPolicy::Never);
 
 ---
 
-## Choosing Level 3 manifold strictness (`ManifoldValidationMode`)
+## Choosing Level 3 topology guarantee (`TopologyGuarantee`)
 
 Level 3 topology validation can be configured to enforce either:
 
@@ -121,10 +121,10 @@ let vertices = vec![
 ];
 
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-assert_eq!(dt.manifold_validation_mode(), ManifoldValidationMode::Pseudomanifold);
+assert_eq!(dt.manifold_validation_mode(), TopologyGuarantee::Pseudomanifold);
 
 // Opt into stricter PL-manifold validation.
-dt.set_manifold_validation_mode(ManifoldValidationMode::PlManifold);
+dt.set_manifold_validation_mode(TopologyGuarantee::PLManifold);
 
 // Now Level 3 includes ridge-link validation.
 dt.as_triangulation().is_valid().unwrap();
@@ -293,7 +293,7 @@ Validates that the triangulation forms a valid topological manifold.
 2. **Codimension-2 boundary manifoldness (closed boundary)**: Each (d−2)-ridge on the boundary must be incident to exactly 2 boundary facets
    - This is the "no boundary of boundary" condition
    - Interior ridges can have higher degree; only boundary ridges are constrained
-3. **PL-manifold ridge-link condition** (when `ManifoldValidationMode::PlManifold`):
+3. **PL-manifold ridge-link condition** (when `TopologyGuarantee::PLManifold`):
    Each (d−2)-ridge must have a link that is a connected 1-manifold (cycle or path)
 4. **Connectedness**: All cells form a single connected component in the cell neighbor graph
    - Detected via a graph traversal over neighbor pointers (O(N·D))
