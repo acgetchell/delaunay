@@ -119,7 +119,9 @@ use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
 use crate::geometry::util::safe_scalar_to_f64;
 use crate::topology::characteristics::euler::TopologyClassification;
 use crate::topology::characteristics::validation::validate_triangulation_euler_with_facet_to_cells_map;
-use crate::topology::manifold::{validate_closed_boundary, validate_facet_degree};
+use crate::topology::manifold::{
+    ManifoldError, validate_closed_boundary, validate_facet_degree, validate_ridge_links,
+};
 use crate::topology::traits::topological_space::TopologyError;
 
 /// Maximum number of repair iterations for fixing non-manifold topology after insertion.
@@ -258,6 +260,27 @@ pub enum TriangulationValidationError {
         boundary_facet_count: usize,
     },
 
+    /// A ridge's link graph is not a 1-manifold (path or cycle).
+    ///
+    /// This is required for PL-manifold validation.
+    #[error(
+        "Ridge link is not a 1-manifold: ridge {ridge_key:016x} has link graph with {link_vertex_count} vertices, {link_edge_count} edges, max degree {max_degree}, degree-1 vertices {degree_one_vertices}, connected={connected} (expected connected cycle or path)"
+    )]
+    RidgeLinkNotManifold {
+        /// Canonical key for the (D-2)-simplex (ridge).
+        ridge_key: u64,
+        /// Number of vertices in the ridge's link graph.
+        link_vertex_count: usize,
+        /// Number of edges in the ridge's link graph.
+        link_edge_count: usize,
+        /// Maximum vertex degree observed in the link graph.
+        max_degree: usize,
+        /// Number of vertices of degree 1 observed in the link graph.
+        degree_one_vertices: usize,
+        /// Whether the link graph is connected.
+        connected: bool,
+    },
+
     /// Euler characteristic does not match the expected value for the classified topology.
     #[error(
         "Euler characteristic mismatch: computed χ={computed}, expected χ={expected} for {classification:?}"
@@ -282,23 +305,38 @@ impl From<TdsMutationError> for TriangulationValidationError {
     }
 }
 
-impl From<crate::topology::manifold::ManifoldError> for TriangulationValidationError {
-    fn from(err: crate::topology::manifold::ManifoldError) -> Self {
+impl From<ManifoldError> for TriangulationValidationError {
+    fn from(err: ManifoldError) -> Self {
         match err {
-            crate::topology::manifold::ManifoldError::Tds(source) => Self::Tds(source),
-            crate::topology::manifold::ManifoldError::ManifoldFacetMultiplicity {
+            ManifoldError::Tds(source) => Self::Tds(source),
+            ManifoldError::ManifoldFacetMultiplicity {
                 facet_key,
                 cell_count,
             } => Self::ManifoldFacetMultiplicity {
                 facet_key,
                 cell_count,
             },
-            crate::topology::manifold::ManifoldError::BoundaryRidgeMultiplicity {
+            ManifoldError::BoundaryRidgeMultiplicity {
                 ridge_key,
                 boundary_facet_count,
             } => Self::BoundaryRidgeMultiplicity {
                 ridge_key,
                 boundary_facet_count,
+            },
+            ManifoldError::RidgeLinkNotManifold {
+                ridge_key,
+                link_vertex_count,
+                link_edge_count,
+                max_degree,
+                degree_one_vertices,
+                connected,
+            } => Self::RidgeLinkNotManifold {
+                ridge_key,
+                link_vertex_count,
+                link_edge_count,
+                max_degree,
+                degree_one_vertices,
+                connected,
             },
         }
     }
@@ -384,6 +422,31 @@ impl Default for ValidationPolicy {
     }
 }
 
+/// Controls which manifold invariants are enforced by Level 3 topology validation.
+///
+/// This is intentionally separate from [`ValidationPolicy`]:
+/// - `ValidationPolicy` controls **when** Level 3 validation runs automatically during insertion.
+/// - `ManifoldValidationMode` controls **what** Level 3 validation checks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ManifoldValidationMode {
+    /// Validate only the pseudomanifold / manifold-with-boundary invariants:
+    /// - facet degree (1 or 2 incident cells per facet)
+    /// - closed boundary ("no boundary of boundary")
+    Pseudomanifold,
+
+    /// Validate PL-manifold invariants.
+    ///
+    /// This includes all `Pseudomanifold` checks plus ridge-link validation.
+    PlManifold,
+}
+
+impl Default for ManifoldValidationMode {
+    #[inline]
+    fn default() -> Self {
+        Self::Pseudomanifold
+    }
+}
+
 /// Generic triangulation combining kernel and data structure.
 ///
 /// # Type Parameters
@@ -409,6 +472,7 @@ where
     // /// The topological space this triangulation lives in.
     // pub(crate) topology: Box<dyn TopologicalSpace>,
     pub(crate) validation_policy: ValidationPolicy,
+    pub(crate) manifold_validation_mode: ManifoldValidationMode,
 }
 
 // =============================================================================
@@ -509,7 +573,21 @@ where
             kernel,
             tds: Tds::empty(),
             validation_policy: ValidationPolicy::default(),
+            manifold_validation_mode: ManifoldValidationMode::default(),
         }
+    }
+
+    /// Returns the strictness mode used for Level 3 manifold validation.
+    #[inline]
+    #[must_use]
+    pub const fn manifold_validation_mode(&self) -> ManifoldValidationMode {
+        self.manifold_validation_mode
+    }
+
+    /// Sets the strictness mode used for Level 3 manifold validation.
+    #[inline]
+    pub const fn set_manifold_validation_mode(&mut self, mode: ManifoldValidationMode) {
+        self.manifold_validation_mode = mode;
     }
 
     /// Returns the number of times the topology safety-net recovered from a Level 3
@@ -530,6 +608,7 @@ where
             kernel,
             tds,
             validation_policy: ValidationPolicy::default(),
+            manifold_validation_mode: ManifoldValidationMode::default(),
         }
     }
 
@@ -1482,6 +1561,7 @@ where
     /// This checks the triangulation/topology layer **only**:
     /// - Codimension-1 pseudomanifold condition: each facet is incident to 1 (boundary) or 2 (interior) cells
     /// - Codimension-2 boundary manifoldness: the boundary must be closed ("no boundary of boundary")
+    /// - PL-manifold ridge-link condition (when `manifold_validation_mode == PlManifold`)
     /// - Connectedness (single component in the cell neighbor graph)
     /// - No isolated vertices (every vertex must be incident to at least one cell)
     /// - Euler characteristic
@@ -1526,6 +1606,11 @@ where
         // 1b. Boundary manifoldness in codimension 2: the boundary must be "closed"
         // (i.e., its ridges must have degree 2 within boundary facets).
         validate_closed_boundary(&self.tds, &facet_to_cells)?;
+
+        // 1c. PL-manifold ridge-link condition (optional strict mode).
+        if self.manifold_validation_mode == ManifoldValidationMode::PlManifold {
+            validate_ridge_links(&self.tds)?;
+        }
 
         // 2. Connectedness (single component in the cell neighbor graph).
         //

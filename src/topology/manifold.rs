@@ -10,10 +10,13 @@
 use thiserror::Error;
 
 use crate::core::{
-    collections::{FacetToCellsMap, FastHashMap, VertexKeyBuffer, fast_hash_map_with_capacity},
+    collections::{
+        CellKeySet, FacetToCellsMap, FastHashMap, FastHashSet, SmallBuffer, VertexKeyBuffer,
+        fast_hash_map_with_capacity, fast_hash_set_with_capacity,
+    },
     facet::facet_key_from_vertices,
     traits::DataType,
-    triangulation_data_structure::{Tds, TdsValidationError},
+    triangulation_data_structure::{CellKey, Tds, TdsValidationError, VertexKey},
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
 
@@ -48,6 +51,29 @@ pub enum ManifoldError {
         ridge_key: u64,
         /// Number of incident boundary facets observed.
         boundary_facet_count: usize,
+    },
+
+    /// A ridge's link graph is not a 1-manifold (path or cycle).
+    ///
+    /// In a PL-manifold (with boundary), the link of every (D-2)-simplex is:
+    /// - a cycle (S¹) for interior ridges, or
+    /// - a path (I) for boundary ridges.
+    #[error(
+        "Ridge link is not a 1-manifold: ridge {ridge_key:016x} has link graph with {link_vertex_count} vertices, {link_edge_count} edges, max degree {max_degree}, degree-1 vertices {degree_one_vertices}, connected={connected} (expected connected cycle or path)"
+    )]
+    RidgeLinkNotManifold {
+        /// Canonical key for the (D-2)-simplex (ridge).
+        ridge_key: u64,
+        /// Number of vertices in the ridge's link graph.
+        link_vertex_count: usize,
+        /// Number of edges in the ridge's link graph.
+        link_edge_count: usize,
+        /// Maximum vertex degree observed in the link graph.
+        max_degree: usize,
+        /// Number of vertices of degree 1 observed in the link graph.
+        degree_one_vertices: usize,
+        /// Whether the link graph is connected.
+        connected: bool,
     },
 }
 
@@ -220,6 +246,345 @@ where
     }
 
     Ok(())
+}
+
+/// Computes the star of a ridge (a (D-2)-simplex) as the set of incident D-cells.
+///
+/// This is a local combinatorial query intended for reuse by topology validation and
+/// (future) local topology mutations (e.g. bistellar flips).
+///
+/// This helper does **not** call `tds.is_valid()`; it performs lightweight checks and
+/// returns [`ManifoldError::Tds`] if the underlying TDS is internally inconsistent.
+#[allow(dead_code)]
+pub(crate) fn ridge_star_cells<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    ridge_vertices: &[VertexKey],
+) -> Result<SmallBuffer<CellKey, 8>, ManifoldError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    // Ridge stars are only meaningful for D>=2.
+    if D < 2 {
+        return Ok(SmallBuffer::new());
+    }
+
+    let expected_ridge_vertices = D.saturating_sub(1);
+    if ridge_vertices.len() != expected_ridge_vertices {
+        return Err(TdsValidationError::InconsistentDataStructure {
+            message: format!(
+                "Ridge expected {expected_ridge_vertices} vertices for {D}D, got {}",
+                ridge_vertices.len(),
+            ),
+        }
+        .into());
+    }
+
+    // Defensive: ensure all ridge vertices exist in the vertex store.
+    //
+    // Note: This is cheaper than `tds.is_valid()` and provides a clearer error when
+    // callers use this helper on stale keys.
+    for &vk in ridge_vertices {
+        if !tds.contains_vertex_key(vk) {
+            return Err(TdsValidationError::InconsistentDataStructure {
+                message: format!("Ridge vertex {vk:?} not found in vertices storage map"),
+            }
+            .into());
+        }
+    }
+
+    // Use the first ridge vertex to get a small candidate set (local star walk when possible).
+    let candidates: CellKeySet = tds.find_cells_containing_vertex_by_key(ridge_vertices[0]);
+
+    let mut star_cells: SmallBuffer<CellKey, 8> = SmallBuffer::with_capacity(candidates.len());
+
+    for cell_key in candidates {
+        let cell_vertices = tds.get_cell_vertices(cell_key)?;
+        if ridge_vertices.iter().all(|&rv| cell_vertices.contains(&rv)) {
+            star_cells.push(cell_key);
+        }
+    }
+
+    Ok(star_cells)
+}
+
+pub(crate) fn ridge_link_edges_from_star<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    ridge_vertices: &[VertexKey],
+    star_cells: &[CellKey],
+) -> Result<SmallBuffer<(VertexKey, VertexKey), 8>, ManifoldError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    // Ridge links are only meaningful for D>=2.
+    if D < 2 {
+        return Ok(SmallBuffer::new());
+    }
+
+    let expected_ridge_vertices = D.saturating_sub(1);
+    if ridge_vertices.len() != expected_ridge_vertices {
+        return Err(TdsValidationError::InconsistentDataStructure {
+            message: format!(
+                "Ridge expected {expected_ridge_vertices} vertices for {D}D, got {}",
+                ridge_vertices.len(),
+            ),
+        }
+        .into());
+    }
+
+    let mut link_edges: SmallBuffer<(VertexKey, VertexKey), 8> =
+        SmallBuffer::with_capacity(star_cells.len());
+
+    let mut link_vertices: VertexKeyBuffer = VertexKeyBuffer::with_capacity(2);
+
+    for &cell_key in star_cells {
+        let cell_vertices = tds.get_cell_vertices(cell_key)?;
+
+        link_vertices.clear();
+        for &vk in &cell_vertices {
+            if !ridge_vertices.contains(&vk) {
+                link_vertices.push(vk);
+            }
+        }
+
+        if link_vertices.len() != 2 {
+            return Err(TdsValidationError::InconsistentDataStructure {
+                message: format!(
+                    "Ridge link expected 2 link vertices for {D}D, got {} (cell_key={cell_key:?})",
+                    link_vertices.len(),
+                ),
+            }
+            .into());
+        }
+
+        link_edges.push((link_vertices[0], link_vertices[1]));
+    }
+
+    Ok(link_edges)
+}
+
+#[derive(Clone, Debug)]
+struct RidgeStar {
+    ridge_vertices: VertexKeyBuffer,
+    star_cells: SmallBuffer<CellKey, 8>,
+}
+
+fn build_ridge_star_map<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+) -> Result<FastHashMap<u64, RidgeStar>, ManifoldError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let cell_count = tds.number_of_cells();
+    if cell_count == 0 {
+        return Ok(FastHashMap::default());
+    }
+
+    // Each D-simplex has C(D+1, 2) ridges (omit two vertices).
+    let ridges_per_cell = (D + 1).saturating_mul(D) / 2;
+
+    // A crude-but-safe estimate: in a manifold, ridges are typically incident to ~2 cells, so the
+    // number of unique ridges is often around half the total ridge incidences.
+    let estimated_unique_ridges = cell_count
+        .saturating_mul(ridges_per_cell)
+        .saturating_div(2)
+        .max(1);
+
+    // Map ridge key -> ridge star (incident cells).
+    let mut ridge_to_star: FastHashMap<u64, RidgeStar> =
+        fast_hash_map_with_capacity(estimated_unique_ridges);
+
+    let mut ridge_vertices: VertexKeyBuffer = VertexKeyBuffer::with_capacity(D.saturating_sub(1));
+
+    for (cell_key, _cell) in tds.cells() {
+        let cell_vertices = tds.get_cell_vertices(cell_key)?;
+
+        if cell_vertices.len() != D + 1 {
+            return Err(TdsValidationError::InconsistentDataStructure {
+                message: format!(
+                    "Cell {cell_key:?} expected {} vertices for {D}D, got {}",
+                    D + 1,
+                    cell_vertices.len(),
+                ),
+            }
+            .into());
+        }
+
+        // Enumerate ridges in this cell by omitting two vertices.
+        for omit_a in 0..cell_vertices.len() {
+            for omit_b in (omit_a + 1)..cell_vertices.len() {
+                ridge_vertices.clear();
+                for (i, &vk) in cell_vertices.iter().enumerate() {
+                    if i == omit_a || i == omit_b {
+                        continue;
+                    }
+                    ridge_vertices.push(vk);
+                }
+
+                if ridge_vertices.len() != D.saturating_sub(1) {
+                    return Err(TdsValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Ridge expected {} vertices for {D}D, got {} (cell_key={cell_key:?}, omit_a={omit_a}, omit_b={omit_b})",
+                            D.saturating_sub(1),
+                            ridge_vertices.len(),
+                        ),
+                    }
+                    .into());
+                }
+
+                let ridge_key = facet_key_from_vertices(&ridge_vertices);
+                let star = ridge_to_star.entry(ridge_key).or_insert_with(|| RidgeStar {
+                    ridge_vertices: ridge_vertices.clone(),
+                    star_cells: SmallBuffer::new(),
+                });
+                star.star_cells.push(cell_key);
+            }
+        }
+    }
+
+    Ok(ridge_to_star)
+}
+
+/// Validates the ridge-link condition for a PL-manifold (with boundary).
+///
+/// For a D-dimensional simplicial complex, the link of any (D-2)-simplex is a
+/// 1-dimensional simplicial complex. In a PL-manifold (with boundary), this link must
+/// be a 1-manifold:
+/// - a **cycle** for interior ridges, or
+/// - a **path** for boundary ridges.
+///
+/// This check is a strict refinement of codimension-1 manifoldness, and detects common
+/// singularities like “two surface components glued at a single vertex” in 2D.
+///
+/// # Errors
+///
+/// Returns:
+/// - [`ManifoldError::Tds`] if the underlying triangulation data structure is internally inconsistent.
+/// - [`ManifoldError::RidgeLinkNotManifold`] if any ridge has a link graph that is not a connected
+///   cycle or path.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::*;
+/// use delaunay::topology::manifold::validate_ridge_links;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
+///
+/// validate_ridge_links(&tds).unwrap();
+/// ```
+pub fn validate_ridge_links<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+) -> Result<(), ManifoldError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    // Ridge links are only meaningful for D>=2.
+    if D < 2 {
+        return Ok(());
+    }
+
+    if tds.number_of_cells() == 0 {
+        return Ok(());
+    }
+
+    // Algorithm: ridge -> star (incident cells) -> link (edges) -> validate link graph.
+    let ridge_to_star = build_ridge_star_map(tds)?;
+    for (ridge_key, star) in ridge_to_star {
+        let link_edges = ridge_link_edges_from_star(tds, &star.ridge_vertices, &star.star_cells)?;
+        validate_ridge_link_graph(ridge_key, &link_edges)?;
+    }
+
+    Ok(())
+}
+
+fn validate_ridge_link_graph(
+    ridge_key: u64,
+    link_edges: &[(VertexKey, VertexKey)],
+) -> Result<(), ManifoldError> {
+    let link_edge_count = link_edges.len();
+
+    // Build adjacency lists for the link graph.
+    let estimated_link_vertices = link_edge_count.saturating_mul(2).max(1);
+    let mut adjacency: FastHashMap<VertexKey, SmallBuffer<VertexKey, 2>> =
+        fast_hash_map_with_capacity(estimated_link_vertices);
+
+    let mut max_degree = 0usize;
+
+    for &(a, b) in link_edges {
+        let a_neighbors = adjacency.entry(a).or_default();
+        a_neighbors.push(b);
+        max_degree = max_degree.max(a_neighbors.len());
+
+        let b_neighbors = adjacency.entry(b).or_default();
+        b_neighbors.push(a);
+        max_degree = max_degree.max(b_neighbors.len());
+    }
+
+    let link_vertex_count = adjacency.len();
+
+    let degree_one_vertices = adjacency.values().filter(|n| n.len() == 1).count();
+
+    // Connectivity check: traverse the link graph.
+    let connected = match adjacency.iter().next() {
+        None => true,
+        Some((&start, _)) => {
+            let mut visited: FastHashSet<VertexKey> =
+                fast_hash_set_with_capacity(link_vertex_count);
+            let mut stack: VertexKeyBuffer = VertexKeyBuffer::with_capacity(link_vertex_count);
+            stack.push(start);
+
+            while let Some(v) = stack.pop() {
+                if !visited.insert(v) {
+                    continue;
+                }
+
+                let Some(neighbors) = adjacency.get(&v) else {
+                    continue;
+                };
+
+                for &n in neighbors {
+                    if !visited.contains(&n) {
+                        stack.push(n);
+                    }
+                }
+            }
+
+            visited.len() == link_vertex_count
+        }
+    };
+
+    // A 1-manifold graph is a connected union of cycles and paths.
+    // For a connected graph with max degree <=2, that reduces to:
+    // - degree_one_vertices == 0  => cycle
+    // - degree_one_vertices == 2  => path
+    let ok = connected && max_degree <= 2 && (degree_one_vertices == 0 || degree_one_vertices == 2);
+
+    if ok {
+        Ok(())
+    } else {
+        Err(ManifoldError::RidgeLinkNotManifold {
+            ridge_key,
+            link_vertex_count,
+            link_edge_count,
+            max_degree,
+            degree_one_vertices,
+            connected,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -435,6 +800,97 @@ mod tests {
                 assert_eq!(boundary_facet_count, 4);
             }
             other => panic!("Expected BoundaryRidgeMultiplicity, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_ridge_links_ok_for_single_tetrahedron() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
+
+        assert!(validate_ridge_links(&tds).is_ok());
+    }
+
+    #[test]
+    fn test_validate_ridge_links_rejects_wedge_at_vertex_in_2d() {
+        // Build two closed 2D spheres (boundaries of tetrahedra) that share a single vertex.
+        // This is a pseudomanifold (every edge has degree 2), but it is not a PL 2-manifold:
+        // the shared vertex has a disconnected link (two disjoint cycles).
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        // Shared vertex.
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+
+        // First tetrahedron boundary (4 triangles on 4 vertices).
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v3], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v2, v3], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v1, v2, v3], None).unwrap())
+            .unwrap();
+
+        // Second tetrahedron boundary (shares only v0).
+        let v4 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 10.0]))
+            .unwrap();
+        let v5 = tds
+            .insert_vertex_with_mapping(vertex!([11.0, 10.0]))
+            .unwrap();
+        let v6 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 11.0]))
+            .unwrap();
+
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v4, v5], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v4, v6], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v5, v6], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v4, v5, v6], None).unwrap())
+            .unwrap();
+
+        // Sanity: pseudomanifold-with-boundary checks pass (in fact, this complex is closed).
+        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+        validate_facet_degree(&facet_to_cells).unwrap();
+        validate_closed_boundary(&tds, &facet_to_cells).unwrap();
+
+        let expected_ridge_key = facet_key_from_vertices(&[v0]);
+
+        match validate_ridge_links(&tds) {
+            Err(ManifoldError::RidgeLinkNotManifold {
+                ridge_key,
+                connected,
+                degree_one_vertices,
+                max_degree,
+                ..
+            }) => {
+                assert_eq!(ridge_key, expected_ridge_key);
+                assert!(!connected);
+                assert_eq!(degree_one_vertices, 0);
+                assert_eq!(max_degree, 2);
+            }
+            other => panic!("Expected RidgeLinkNotManifold, got {other:?}"),
         }
     }
 }

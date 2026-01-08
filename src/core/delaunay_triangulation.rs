@@ -18,7 +18,8 @@ use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{
-    Triangulation, TriangulationConstructionError, TriangulationValidationError, ValidationPolicy,
+    ManifoldValidationMode, Triangulation, TriangulationConstructionError,
+    TriangulationValidationError, ValidationPolicy,
 };
 use crate::core::triangulation_data_structure::{
     CellKey, InvariantKind, InvariantViolation, Tds, TdsConstructionError, TdsValidationError,
@@ -313,6 +314,7 @@ where
                 kernel,
                 tds,
                 validation_policy: ValidationPolicy::default(),
+                manifold_validation_mode: ManifoldValidationMode::default(),
             },
             last_inserted_cell: None,
         };
@@ -790,6 +792,19 @@ where
     #[inline]
     pub const fn set_validation_policy(&mut self, policy: ValidationPolicy) {
         self.tri.validation_policy = policy;
+    }
+
+    /// Returns the strictness mode used for Level 3 manifold validation.
+    #[inline]
+    #[must_use]
+    pub const fn manifold_validation_mode(&self) -> ManifoldValidationMode {
+        self.tri.manifold_validation_mode
+    }
+
+    /// Sets the strictness mode used for Level 3 manifold validation.
+    #[inline]
+    pub const fn set_manifold_validation_mode(&mut self, mode: ManifoldValidationMode) {
+        self.tri.manifold_validation_mode = mode;
     }
 
     /// Returns an iterator over all facets in the triangulation.
@@ -1507,6 +1522,7 @@ where
                 kernel,
                 tds,
                 validation_policy: ValidationPolicy::OnSuspicion,
+                manifold_validation_mode: ManifoldValidationMode::Pseudomanifold,
             },
             last_inserted_cell: None,
         }
