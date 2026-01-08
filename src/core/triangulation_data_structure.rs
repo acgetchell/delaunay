@@ -3301,8 +3301,100 @@ where
     ///
     /// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
     fn validate_neighbors(&self) -> Result<(), TdsValidationError> {
+        let facet_to_cells: FacetToCellsMap = self.build_facet_to_cells_map()?;
+        self.validate_neighbor_pointers_match_facet_to_cells_map(&facet_to_cells)?;
+
         let cell_vertices = self.build_cell_vertex_sets()?;
         self.validate_neighbors_with_precomputed_vertex_sets(&cell_vertices)
+    }
+
+    fn validate_neighbor_pointers_match_facet_to_cells_map(
+        &self,
+        facet_to_cells: &FacetToCellsMap,
+    ) -> Result<(), TdsValidationError> {
+        for (facet_key, cell_facet_pairs) in facet_to_cells {
+            match cell_facet_pairs.as_slice() {
+                [handle] => {
+                    // Boundary facet: must not have a neighbor across this facet.
+                    let cell_key = handle.cell_key();
+                    let facet_index = handle.facet_index() as usize;
+
+                    let cell = self.cells.get(cell_key).ok_or_else(|| {
+                        TdsError::InconsistentDataStructure {
+                            message: format!(
+                                "Cell key {cell_key:?} not found during neighbor validation"
+                            ),
+                        }
+                    })?;
+
+                    if let Some(neighbors) = cell.neighbors() {
+                        let neighbor = neighbors.get(facet_index).and_then(|n| *n);
+                        if let Some(neighbor_key) = neighbor {
+                            return Err(TdsError::InvalidNeighbors {
+                                message: format!(
+                                    "Boundary facet {facet_key} unexpectedly has a neighbor across cell {}[{facet_index}] -> {neighbor_key:?}",
+                                    cell.uuid(),
+                                ),
+                            });
+                        }
+                    }
+                }
+                [a, b] => {
+                    // Interior facet: both cells must be neighbors across the corresponding facet indices.
+                    let first_cell_key = a.cell_key();
+                    let first_facet_index = a.facet_index() as usize;
+                    let second_cell_key = b.cell_key();
+                    let second_facet_index = b.facet_index() as usize;
+
+                    let first_cell = self.cells.get(first_cell_key).ok_or_else(|| {
+                        TdsError::InconsistentDataStructure {
+                            message: format!(
+                                "Cell key {first_cell_key:?} not found during neighbor validation"
+                            ),
+                        }
+                    })?;
+                    let second_cell = self.cells.get(second_cell_key).ok_or_else(|| {
+                        TdsError::InconsistentDataStructure {
+                            message: format!(
+                                "Cell key {second_cell_key:?} not found during neighbor validation"
+                            ),
+                        }
+                    })?;
+
+                    let first_neighbor = first_cell
+                        .neighbors()
+                        .and_then(|n| n.get(first_facet_index))
+                        .and_then(|n| *n);
+                    let second_neighbor = second_cell
+                        .neighbors()
+                        .and_then(|n| n.get(second_facet_index))
+                        .and_then(|n| *n);
+
+                    if first_neighbor != Some(second_cell_key)
+                        || second_neighbor != Some(first_cell_key)
+                    {
+                        return Err(TdsError::InvalidNeighbors {
+                            message: format!(
+                                "Interior facet {facet_key} has inconsistent neighbor pointers: {}[{first_facet_index}] -> {first_neighbor:?}, {}[{second_facet_index}] -> {second_neighbor:?}",
+                                first_cell.uuid(),
+                                second_cell.uuid(),
+                            ),
+                        });
+                    }
+                }
+                _ => {
+                    // Non-manifold facet multiplicity should have been caught by facet-sharing validation.
+                    return Err(TdsError::InconsistentDataStructure {
+                        message: format!(
+                            "Facet with key {facet_key} is shared by {} cells, but should be shared by at most 2 cells in a valid triangulation",
+                            cell_facet_pairs.len()
+                        ),
+                    });
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn validate_neighbors_with_precomputed_vertex_sets(

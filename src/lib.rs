@@ -565,6 +565,10 @@ pub mod topology {
         pub use euler::*;
         pub use validation::*;
     }
+
+    /// Manifold / simplicial-complex validity checks (topology-only).
+    pub mod manifold;
+
     /// Concrete topological space implementations (future work).
     ///
     /// This module will contain specialized implementations for different
@@ -585,6 +589,7 @@ pub mod topology {
 
     // Re-export commonly used types
     pub use characteristics::*;
+    pub use manifold::{validate_closed_boundary, validate_facet_degree};
     pub use traits::*;
 }
 
