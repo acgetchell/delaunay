@@ -255,9 +255,12 @@ where
 ///
 /// This helper does **not** call `tds.is_valid()`; it performs lightweight checks and
 /// returns [`ManifoldError::Tds`] if the underlying TDS is internally inconsistent.
-#[expect(
-    dead_code,
-    reason = "Not used yet; intended for reuse by future local topology mutations (e.g. bistellar flips)"
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "Not used yet; intended for reuse by future local topology mutations (e.g. bistellar flips)"
+    )
 )]
 pub(crate) fn ridge_star_cells<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
@@ -621,6 +624,8 @@ mod tests {
     use crate::geometry::kernel::FastKernel;
     use crate::vertex;
 
+    use slotmap::KeyData;
+
     #[test]
     fn test_validate_facet_degree_ok_for_single_tetrahedron() {
         let vertices = vec![
@@ -739,9 +744,21 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_closed_boundary_noop_for_d_lt_2() {
+        let vertices = vec![vertex!([0.0]), vertex!([1.0])];
+
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 1>::build_initial_simplex(&vertices).unwrap();
+        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+
+        // Codimension-2 boundary manifoldness is only meaningful for D>=2.
+        assert!(validate_closed_boundary(&tds, &facet_to_cells).is_ok());
+    }
+
+    #[test]
     fn test_validate_closed_boundary_noop_for_closed_2d_surface() {
-        // Build the boundary of a tetrahedron as a 2D simplicial complex (a closed S^2):
-        // 4 triangles on 4 vertices, with every edge shared by exactly 2 triangles.
+        // Build a closed 2D simplicial complex (topologically S²): 4 triangles on 4 vertices
+        // where every edge is shared by exactly 2 triangles (manifold without boundary).
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
@@ -768,6 +785,115 @@ mod tests {
         assert!(facet_to_cells.values().all(|handles| handles.len() == 2));
 
         assert!(validate_closed_boundary(&tds, &facet_to_cells).is_ok());
+    }
+
+    #[test]
+    fn test_validate_ridge_links_ok_for_closed_2d_surface() {
+        // Same closed 2D surface as above, but exercises the ridge-link (PL) condition.
+        //
+        // In 2D, ridges are vertices and their links must be cycles for a closed surface.
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v3], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v2, v3], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v1, v2, v3], None).unwrap())
+            .unwrap();
+
+        // Sanity: pseudomanifold checks pass.
+        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+        validate_facet_degree(&facet_to_cells).unwrap();
+        validate_closed_boundary(&tds, &facet_to_cells).unwrap();
+
+        assert!(validate_ridge_links(&tds).is_ok());
+    }
+
+    #[test]
+    fn test_ridge_star_cells_returns_incident_cells_for_vertex_ridge_in_2d() {
+        // In 2D, a ridge is a vertex and its star is the set of incident triangles.
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let c012 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let c013 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v3], None).unwrap())
+            .unwrap();
+        let c023 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v2, v3], None).unwrap())
+            .unwrap();
+        let _c123 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v1, v2, v3], None).unwrap())
+            .unwrap();
+
+        let star = ridge_star_cells(&tds, &[v0]).unwrap();
+        let star_set: CellKeySet = star.iter().copied().collect();
+
+        let expected: CellKeySet = [c012, c013, c023].into_iter().collect();
+        assert_eq!(star_set, expected);
+    }
+
+    #[test]
+    fn test_ridge_star_cells_errors_on_missing_vertex_key() {
+        let tds: Tds<f64, (), (), 2> = Tds::empty();
+        let missing = VertexKey::from(KeyData::from_ffi(u64::MAX));
+
+        match ridge_star_cells(&tds, &[missing]) {
+            Err(ManifoldError::Tds(TdsValidationError::InconsistentDataStructure { message })) => {
+                assert!(message.contains("not found"));
+            }
+            other => panic!("Expected missing-vertex error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_ridge_links_errors_on_corrupted_cell_with_duplicate_vertices() {
+        // This is a defensive robustness test: a corrupted cell with duplicate vertices can
+        // produce a malformed ridge link (wrong number of link vertices).
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+
+        // Corrupt the cell in-place: keep length == D+1 but introduce a duplicate vertex.
+        {
+            let cell = tds
+                .get_cell_by_key_mut(cell_key)
+                .expect("cell key should be valid in test");
+            cell.clear_vertex_keys();
+            cell.push_vertex_key(v0);
+            cell.push_vertex_key(v1);
+            cell.push_vertex_key(v1);
+        }
+
+        match validate_ridge_links(&tds) {
+            Err(ManifoldError::Tds(TdsValidationError::InconsistentDataStructure { message })) => {
+                assert!(message.contains("Ridge link expected 2 link vertices"));
+            }
+            other => panic!("Expected ridge-link structural error, got {other:?}"),
+        }
     }
 
     #[test]
@@ -840,6 +966,12 @@ mod tests {
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
 
+        assert!(validate_ridge_links(&tds).is_ok());
+    }
+
+    #[test]
+    fn test_validate_ridge_links_noop_for_empty_tds() {
+        let tds: Tds<f64, (), (), 2> = Tds::empty();
         assert!(validate_ridge_links(&tds).is_ok());
     }
 

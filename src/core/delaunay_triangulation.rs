@@ -1726,6 +1726,65 @@ mod tests {
     use crate::geometry::kernel::{FastKernel, RobustKernel};
     use crate::vertex;
 
+    #[test]
+    fn test_delaunay_constructors_default_to_pseudomanifold_mode() {
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+
+        let dt_new: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        assert_eq!(
+            dt_new.manifold_validation_mode(),
+            TopologyGuarantee::Pseudomanifold
+        );
+
+        let dt_empty: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::empty();
+        assert_eq!(
+            dt_empty.manifold_validation_mode(),
+            TopologyGuarantee::Pseudomanifold
+        );
+
+        let dt_with_kernel: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+        assert_eq!(
+            dt_with_kernel.manifold_validation_mode(),
+            TopologyGuarantee::Pseudomanifold
+        );
+
+        let dt_from_tds: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::from_tds(dt_new.tds().clone(), FastKernel::new());
+        assert_eq!(
+            dt_from_tds.manifold_validation_mode(),
+            TopologyGuarantee::Pseudomanifold
+        );
+    }
+
+    #[test]
+    fn test_set_manifold_validation_mode_updates_underlying_triangulation() {
+        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::empty();
+
+        assert_eq!(
+            dt.manifold_validation_mode(),
+            TopologyGuarantee::Pseudomanifold
+        );
+        assert_eq!(
+            dt.tri.manifold_validation_mode,
+            TopologyGuarantee::Pseudomanifold
+        );
+
+        dt.set_manifold_validation_mode(TopologyGuarantee::PLManifold);
+        assert_eq!(dt.manifold_validation_mode(), TopologyGuarantee::PLManifold);
+        assert_eq!(
+            dt.tri.manifold_validation_mode,
+            TopologyGuarantee::PLManifold
+        );
+    }
+
     /// Macro to generate comprehensive triangulation construction tests across dimensions.
     ///
     /// This macro generates tests that verify all construction patterns:

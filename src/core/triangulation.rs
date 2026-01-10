@@ -3555,6 +3555,46 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn test_triangulation_new_empty_and_new_with_tds_default_to_pseudomanifold() {
+        let tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+        assert_eq!(
+            tri.manifold_validation_mode(),
+            TopologyGuarantee::Pseudomanifold
+        );
+
+        let tri_with_tds: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_with_tds(FastKernel::new(), Tds::<f64, (), (), 2>::empty());
+        assert_eq!(
+            tri_with_tds.manifold_validation_mode(),
+            TopologyGuarantee::Pseudomanifold
+        );
+    }
+
+    #[test]
+    fn test_triangulation_set_manifold_validation_mode_round_trips() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+
+        assert_eq!(
+            tri.manifold_validation_mode(),
+            TopologyGuarantee::Pseudomanifold
+        );
+
+        tri.set_manifold_validation_mode(TopologyGuarantee::PLManifold);
+        assert_eq!(
+            tri.manifold_validation_mode(),
+            TopologyGuarantee::PLManifold
+        );
+
+        tri.set_manifold_validation_mode(TopologyGuarantee::Pseudomanifold);
+        assert_eq!(
+            tri.manifold_validation_mode(),
+            TopologyGuarantee::Pseudomanifold
+        );
+    }
+
     /// Macro to generate `build_initial_simplex` tests across dimensions.
     ///
     /// This macro generates tests that verify `build_initial_simplex` by:

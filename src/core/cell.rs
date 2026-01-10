@@ -679,7 +679,10 @@ where
     /// Ensures the cell has a properly initialized neighbors buffer of size D+1.
     ///
     /// This helper centralizes neighbor buffer initialization logic to avoid code duplication
-    /// and reduce the error surface for off-by-one bugs. Used internally by insertion algorithms.
+    /// and reduce the error surface for off-by-one bugs.
+    ///
+    /// Note: This is currently only used by unit tests, but is kept as a small internal building
+    /// block for future insertion/repair code that needs to mutate neighbor buffers in-place.
     ///
     /// # Returns
     ///

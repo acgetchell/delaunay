@@ -4950,7 +4950,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message } if !message.is_empty()
+            TdsError::InvalidNeighbors { message } if message.contains("ambiguous")
         ));
     }
 
@@ -4980,7 +4980,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message } if !message.is_empty()
+            TdsError::InvalidNeighbors { message } if message.contains("share all vertices")
         ));
     }
 
@@ -5038,7 +5038,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message } if !message.is_empty()
+            TdsError::InvalidNeighbors { message } if message.contains("Could not find mirror facet")
         ));
     }
 
@@ -5070,7 +5070,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message } if !message.is_empty()
+            TdsError::InvalidNeighbors { message } if message.contains("index mismatch")
         ));
     }
 
@@ -5117,7 +5117,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message } if !message.is_empty()
+            TdsError::InvalidNeighbors { message } if message.contains("index mismatch")
         ));
     }
 
@@ -5192,7 +5192,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message } if !message.is_empty()
+            TdsError::InvalidNeighbors { message } if message.contains("Shared facet mismatch")
         ));
     }
 
@@ -5252,7 +5252,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message } if !message.is_empty()
+            TdsError::InvalidNeighbors { message } if message.contains("neighbor has no neighbors")
         ));
     }
 
@@ -5293,7 +5293,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message } if !message.is_empty()
+            TdsError::InvalidNeighbors { message } if message.contains("expected back-reference")
         ));
     }
 
