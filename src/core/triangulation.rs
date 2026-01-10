@@ -101,11 +101,11 @@ use crate::core::algorithms::locate::{
 use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::{
     CavityBoundaryBuffer, CellKeyBuffer, CellKeySet, FacetIssuesMap, FacetToCellsMap, FastHashMap,
-    FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, VertexKeyBuffer,
-    VertexToCellsMap, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
+    FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, VertexToCellsMap,
+    fast_hash_map_with_capacity, fast_hash_set_with_capacity,
 };
 use crate::core::edge::EdgeKey;
-use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter, FacetHandle, facet_key_from_vertices};
+use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter, FacetHandle};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation_data_structure::{
     CellKey, InvariantError, InvariantKind, InvariantViolation, Tds, TdsConstructionError,
@@ -119,6 +119,9 @@ use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
 use crate::geometry::util::safe_scalar_to_f64;
 use crate::topology::characteristics::euler::TopologyClassification;
 use crate::topology::characteristics::validation::validate_triangulation_euler_with_facet_to_cells_map;
+use crate::topology::manifold::{
+    ManifoldError, validate_closed_boundary, validate_facet_degree, validate_ridge_links,
+};
 use crate::topology::traits::topological_space::TopologyError;
 
 /// Maximum number of repair iterations for fixing non-manifold topology after insertion.
@@ -194,7 +197,7 @@ pub enum TriangulationValidationError {
 
     /// A facet belongs to an unexpected number of cells for a manifold-with-boundary.
     #[error(
-        "Non-manifold facet: facet {facet_key} belongs to {cell_count} cells (expected 1 or 2)"
+        "Non-manifold facet: facet {facet_key:016x} belongs to {cell_count} cells (expected 1 or 2)"
     )]
     ManifoldFacetMultiplicity {
         /// The facet key with invalid multiplicity.
@@ -205,7 +208,7 @@ pub enum TriangulationValidationError {
 
     /// A boundary facet unexpectedly has a neighbor pointer across it.
     #[error(
-        "Boundary facet {facet_key} unexpectedly has a neighbor across cell {cell_uuid}[{facet_index}] -> {neighbor_key:?}"
+        "Boundary facet {facet_key:016x} unexpectedly has a neighbor across cell {cell_uuid}[{facet_index}] -> {neighbor_key:?}"
     )]
     BoundaryFacetHasNeighbor {
         /// The facet key.
@@ -220,7 +223,7 @@ pub enum TriangulationValidationError {
 
     /// Two cells that share a facet do not point to each other as neighbors across that facet.
     #[error(
-        "Interior facet {facet_key} has inconsistent neighbor pointers: {first_cell_uuid}[{first_facet_index}] -> {first_neighbor:?}, {second_cell_uuid}[{second_facet_index}] -> {second_neighbor:?}"
+        "Interior facet {facet_key:016x} has inconsistent neighbor pointers: {first_cell_uuid}[{first_facet_index}] -> {first_neighbor:?}, {second_cell_uuid}[{second_facet_index}] -> {second_neighbor:?}"
     )]
     InteriorFacetNeighborMismatch {
         /// The facet key.
@@ -257,6 +260,27 @@ pub enum TriangulationValidationError {
         boundary_facet_count: usize,
     },
 
+    /// A ridge's link graph is not a 1-manifold (path or cycle).
+    ///
+    /// This is required for PL-manifold validation.
+    #[error(
+        "Ridge link is not a 1-manifold: ridge {ridge_key:016x} has link graph with {link_vertex_count} vertices, {link_edge_count} edges, max degree {max_degree}, degree-1 vertices {degree_one_vertices}, connected={connected} (expected connected cycle or path)"
+    )]
+    RidgeLinkNotManifold {
+        /// Canonical key for the (D-2)-simplex (ridge).
+        ridge_key: u64,
+        /// Number of vertices in the ridge's link graph.
+        link_vertex_count: usize,
+        /// Number of edges in the ridge's link graph.
+        link_edge_count: usize,
+        /// Maximum vertex degree observed in the link graph.
+        max_degree: usize,
+        /// Number of vertices of degree 1 observed in the link graph.
+        degree_one_vertices: usize,
+        /// Whether the link graph is connected.
+        connected: bool,
+    },
+
     /// Euler characteristic does not match the expected value for the classified topology.
     #[error(
         "Euler characteristic mismatch: computed χ={computed}, expected χ={expected} for {classification:?}"
@@ -281,9 +305,49 @@ impl From<TdsMutationError> for TriangulationValidationError {
     }
 }
 
+impl From<ManifoldError> for TriangulationValidationError {
+    fn from(err: ManifoldError) -> Self {
+        match err {
+            ManifoldError::Tds(source) => Self::Tds(source),
+            ManifoldError::ManifoldFacetMultiplicity {
+                facet_key,
+                cell_count,
+            } => Self::ManifoldFacetMultiplicity {
+                facet_key,
+                cell_count,
+            },
+            ManifoldError::BoundaryRidgeMultiplicity {
+                ridge_key,
+                boundary_facet_count,
+            } => Self::BoundaryRidgeMultiplicity {
+                ridge_key,
+                boundary_facet_count,
+            },
+            ManifoldError::RidgeLinkNotManifold {
+                ridge_key,
+                link_vertex_count,
+                link_edge_count,
+                max_degree,
+                degree_one_vertices,
+                connected,
+            } => Self::RidgeLinkNotManifold {
+                ridge_key,
+                link_vertex_count,
+                link_edge_count,
+                max_degree,
+                degree_one_vertices,
+                connected,
+            },
+        }
+    }
+}
+
 /// Adaptive error-checking on suspicious operations.
 #[derive(Clone, Copy, Debug, Default)]
-#[allow(clippy::struct_excessive_bools)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "A small set of boolean flags is clearer here than bitflags or an enum"
+)]
 pub struct SuspicionFlags {
     /// A perturbation retry was required to resolve a geometric degeneracy.
     pub perturbation_used: bool,
@@ -361,6 +425,31 @@ impl Default for ValidationPolicy {
     }
 }
 
+/// Controls which topology invariants are enforced by Level 3 topology validation.
+///
+/// This is intentionally separate from [`ValidationPolicy`]:
+/// - `ValidationPolicy` controls **when** Level 3 validation runs automatically during insertion.
+/// - `TopologyGuarantee` controls **what** Level 3 validation checks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TopologyGuarantee {
+    /// Validate only the pseudomanifold / manifold-with-boundary invariants:
+    /// - facet degree (1 or 2 incident cells per facet)
+    /// - closed boundary ("no boundary of boundary")
+    Pseudomanifold,
+
+    /// Validate PL-manifold invariants.
+    ///
+    /// This includes all `Pseudomanifold` checks plus ridge-link validation.
+    PLManifold,
+}
+
+impl Default for TopologyGuarantee {
+    #[inline]
+    fn default() -> Self {
+        Self::Pseudomanifold
+    }
+}
+
 /// Generic triangulation combining kernel and data structure.
 ///
 /// # Type Parameters
@@ -386,6 +475,7 @@ where
     // /// The topological space this triangulation lives in.
     // pub(crate) topology: Box<dyn TopologicalSpace>,
     pub(crate) validation_policy: ValidationPolicy,
+    pub(crate) manifold_validation_mode: TopologyGuarantee,
 }
 
 // =============================================================================
@@ -486,7 +576,21 @@ where
             kernel,
             tds: Tds::empty(),
             validation_policy: ValidationPolicy::default(),
+            manifold_validation_mode: TopologyGuarantee::default(),
         }
+    }
+
+    /// Returns the topology guarantee used for Level 3 topology validation.
+    #[inline]
+    #[must_use]
+    pub const fn manifold_validation_mode(&self) -> TopologyGuarantee {
+        self.manifold_validation_mode
+    }
+
+    /// Sets the topology guarantee used for Level 3 topology validation.
+    #[inline]
+    pub const fn set_manifold_validation_mode(&mut self, mode: TopologyGuarantee) {
+        self.manifold_validation_mode = mode;
     }
 
     /// Returns the number of times the topology safety-net recovered from a Level 3
@@ -507,6 +611,7 @@ where
             kernel,
             tds,
             validation_policy: ValidationPolicy::default(),
+            manifold_validation_mode: TopologyGuarantee::default(),
         }
     }
 
@@ -1457,9 +1562,9 @@ where
     /// Validates topological invariants of the triangulation (Level 3).
     ///
     /// This checks the triangulation/topology layer **only**:
-    /// - Codimension-1 manifoldness: manifold facet property allowing a boundary
-    /// - Codimension-1 boundary consistency: boundary facets must have no neighbor pointer
+    /// - Codimension-1 pseudomanifold condition: each facet is incident to 1 (boundary) or 2 (interior) cells
     /// - Codimension-2 boundary manifoldness: the boundary must be closed ("no boundary of boundary")
+    /// - PL-manifold ridge-link condition (when `manifold_validation_mode == TopologyGuarantee::PLManifold`)
     /// - Connectedness (single component in the cell neighbor graph)
     /// - No isolated vertices (every vertex must be incident to at least one cell)
     /// - Euler characteristic
@@ -1495,15 +1600,20 @@ where
     /// assert!(dt.as_triangulation().is_valid().is_ok());
     /// ```
     pub fn is_valid(&self) -> Result<(), TriangulationValidationError> {
-        // 1. Manifold facet property (with boundary-aware neighbor consistency)
+        // 1. Manifold facet multiplicity (codimension-1 pseudomanifold condition)
         //
         // Build the facet map once and reuse it for manifold validation and Euler counting.
         let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
-        self.validate_manifold_facets_with_map(&facet_to_cells)?;
+        validate_facet_degree(&facet_to_cells)?;
 
         // 1b. Boundary manifoldness in codimension 2: the boundary must be "closed"
         // (i.e., its ridges must have degree 2 within boundary facets).
-        self.validate_closed_boundary_with_map(&facet_to_cells)?;
+        validate_closed_boundary(&self.tds, &facet_to_cells)?;
+
+        // 1c. PL-manifold ridge-link condition (optional strict mode).
+        if self.manifold_validation_mode == TopologyGuarantee::PLManifold {
+            validate_ridge_links(&self.tds)?;
+        }
 
         // 2. Connectedness (single component in the cell neighbor graph).
         //
@@ -1638,208 +1748,6 @@ where
         } else {
             Err(TriangulationValidationReport { violations })
         }
-    }
-
-    /// Validates that all facets in the triangulation satisfy the manifold property,
-    /// and that boundary facets correspond to "outside" adjacency.
-    #[cfg(test)]
-    fn validate_manifold_facets(&self) -> Result<(), TriangulationValidationError> {
-        let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
-        self.validate_manifold_facets_with_map(&facet_to_cells)
-    }
-
-    /// Validates the manifold facet property using a precomputed facet-to-cells map.
-    fn validate_manifold_facets_with_map(
-        &self,
-        facet_to_cells: &FacetToCellsMap,
-    ) -> Result<(), TriangulationValidationError> {
-        for (facet_key, cell_facet_pairs) in facet_to_cells {
-            match cell_facet_pairs.as_slice() {
-                [handle] => {
-                    // Boundary facet: must not have a neighbor across this facet.
-                    let cell_key = handle.cell_key();
-                    let facet_index = handle.facet_index() as usize;
-
-                    let cell = self.tds.get_cell(cell_key).ok_or_else(|| {
-                        TdsValidationError::InconsistentDataStructure {
-                            message: format!(
-                                "Cell key {cell_key:?} not found during manifold validation"
-                            ),
-                        }
-                    })?;
-
-                    if let Some(neighbors) = cell.neighbors() {
-                        let neighbor = neighbors.get(facet_index).and_then(|n| *n);
-                        if let Some(neighbor_key) = neighbor {
-                            return Err(TriangulationValidationError::BoundaryFacetHasNeighbor {
-                                facet_key: *facet_key,
-                                cell_uuid: cell.uuid(),
-                                facet_index,
-                                neighbor_key,
-                            });
-                        }
-                    }
-                }
-                [a, b] => {
-                    // Interior facet: both cells must be neighbors across the corresponding facet indices.
-                    let first_cell_key = a.cell_key();
-                    let first_facet_index = a.facet_index() as usize;
-                    let second_cell_key = b.cell_key();
-                    let second_facet_index = b.facet_index() as usize;
-
-                    let first_cell = self.tds.get_cell(first_cell_key).ok_or_else(|| {
-                        TdsValidationError::InconsistentDataStructure {
-                            message: format!(
-                                "Cell key {first_cell_key:?} not found during manifold validation"
-                            ),
-                        }
-                    })?;
-                    let second_cell = self.tds.get_cell(second_cell_key).ok_or_else(|| {
-                        TdsValidationError::InconsistentDataStructure {
-                            message: format!(
-                                "Cell key {second_cell_key:?} not found during manifold validation"
-                            ),
-                        }
-                    })?;
-
-                    let first_neighbor = first_cell
-                        .neighbors()
-                        .and_then(|n| n.get(first_facet_index))
-                        .and_then(|n| *n);
-                    let second_neighbor = second_cell
-                        .neighbors()
-                        .and_then(|n| n.get(second_facet_index))
-                        .and_then(|n| *n);
-
-                    if first_neighbor != Some(second_cell_key)
-                        || second_neighbor != Some(first_cell_key)
-                    {
-                        return Err(
-                            TriangulationValidationError::InteriorFacetNeighborMismatch {
-                                facet_key: *facet_key,
-                                first_cell_key,
-                                first_cell_uuid: first_cell.uuid(),
-                                first_facet_index,
-                                first_neighbor,
-                                second_cell_key,
-                                second_cell_uuid: second_cell.uuid(),
-                                second_facet_index,
-                                second_neighbor,
-                            },
-                        );
-                    }
-                }
-                _ => {
-                    // Non-manifold facet multiplicity (0 or >2).
-                    return Err(TriangulationValidationError::ManifoldFacetMultiplicity {
-                        facet_key: *facet_key,
-                        cell_count: cell_facet_pairs.len(),
-                    });
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Validates that the boundary (if present) is a closed (D-1)-manifold.
-    ///
-    /// This enforces a codimension-2 manifoldness condition for manifold-with-boundary
-    /// triangulations: every (D-2)-simplex (ridge) that lies on the boundary must be
-    /// incident to exactly 2 boundary facets.
-    ///
-    /// Notes:
-    /// - Interior ridges can have arbitrary degree; this check only counts incidence among
-    ///   boundary facets (facets with exactly 1 incident D-cell).
-    /// - If the triangulation has no boundary facets, this check is a no-op.
-    fn validate_closed_boundary_with_map(
-        &self,
-        facet_to_cells: &FacetToCellsMap,
-    ) -> Result<(), TriangulationValidationError> {
-        // The boundary is a (D-1)-complex. Codimension-2 manifoldness is only meaningful for D>=2.
-        if D < 2 {
-            return Ok(());
-        }
-
-        // First count boundary facets so we can reserve reasonably.
-        let boundary_facet_count = facet_to_cells
-            .values()
-            .filter(|handles| matches!(handles.as_slice(), [_]))
-            .count();
-
-        if boundary_facet_count == 0 {
-            return Ok(());
-        }
-
-        // Each boundary facet contributes D ridges; each boundary ridge is shared by exactly 2
-        // boundary facets in a closed boundary manifold.
-        let estimated_boundary_ridges = boundary_facet_count
-            .saturating_mul(D)
-            .saturating_div(2)
-            .max(1);
-
-        let mut ridge_to_boundary_facet_count: FastHashMap<u64, usize> =
-            fast_hash_map_with_capacity(estimated_boundary_ridges);
-
-        let mut facet_vertices: VertexKeyBuffer = VertexKeyBuffer::with_capacity(D);
-        let mut ridge_vertices: VertexKeyBuffer =
-            VertexKeyBuffer::with_capacity(D.saturating_sub(1));
-
-        for cell_facet_pairs in facet_to_cells.values() {
-            // Only boundary facets (exactly one incident cell).
-            let [handle] = cell_facet_pairs.as_slice() else {
-                continue;
-            };
-
-            let cell_key = handle.cell_key();
-            let facet_index = handle.facet_index() as usize;
-
-            // Derive the facet's vertex keys from the owning cell.
-            let cell_vertices = self.tds.get_cell_vertices(cell_key)?;
-            facet_vertices.clear();
-            for (i, &vk) in cell_vertices.iter().enumerate() {
-                if i == facet_index {
-                    continue;
-                }
-                facet_vertices.push(vk);
-            }
-
-            if facet_vertices.len() != D {
-                return Err(TdsValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Boundary facet expected {D} vertices, got {} (cell_key={cell_key:?}, facet_index={facet_index})",
-                        facet_vertices.len()
-                    ),
-                }
-                .into());
-            }
-
-            // Enumerate the (D-2)-faces (ridges) of this boundary facet by excluding each
-            // facet vertex in turn.
-            for omit in 0..facet_vertices.len() {
-                ridge_vertices.clear();
-                for (j, &vk) in facet_vertices.iter().enumerate() {
-                    if j == omit {
-                        continue;
-                    }
-                    ridge_vertices.push(vk);
-                }
-
-                let ridge_key = facet_key_from_vertices(&ridge_vertices);
-                *ridge_to_boundary_facet_count.entry(ridge_key).or_insert(0) += 1;
-            }
-        }
-
-        for (ridge_key, boundary_facet_count) in ridge_to_boundary_facet_count {
-            if boundary_facet_count != 2 {
-                return Err(TriangulationValidationError::BoundaryRidgeMultiplicity {
-                    ridge_key,
-                    boundary_facet_count,
-                });
-            }
-        }
-
-        Ok(())
     }
 
     /// Validates that the triangulation's cell neighbor graph is a single connected component.
@@ -2216,7 +2124,10 @@ where
     /// 6. If the error is non-retryable: return `Err(InsertionError)`
     ///
     /// This guarantees we transition from one valid manifold to another.
-    #[allow(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Complex insertion logic; splitting further would harm readability"
+    )]
     fn insert_transactional(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
@@ -2626,7 +2537,10 @@ where
     ///
     /// Note: `conflict_cells` parameter is optional. If `None`, it will be computed automatically
     /// for interior points using `locate()` + `find_conflict_region()`.
-    #[allow(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Complex insertion logic; splitting further would harm readability"
+    )]
     fn try_insert_impl(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
@@ -2820,7 +2734,13 @@ where
 
                 // 9. Iteratively repair non-manifold topology until facet sharing is valid
                 let mut total_removed = 0;
-                #[allow(unused_variables)]
+                #[cfg_attr(
+                    not(debug_assertions),
+                    expect(
+                        unused_variables,
+                        reason = "`iteration` is only used for debug logging",
+                    )
+                )]
                 for iteration in 0..MAX_REPAIR_ITERATIONS {
                     // Check for non-manifold issues in newly created cells (local scan)
                     // This keeps the repair O(k·D) where k is the cavity size, rather than O(N·D)
@@ -2961,7 +2881,13 @@ where
 
                 // Iteratively repair non-manifold topology until facet sharing is valid
                 let mut total_removed = 0;
-                #[allow(unused_variables)]
+                #[cfg_attr(
+                    not(debug_assertions),
+                    expect(
+                        unused_variables,
+                        reason = "`iteration` is only used for debug logging",
+                    )
+                )]
                 for iteration in 0..MAX_REPAIR_ITERATIONS {
                     // Check for non-manifold issues in newly created hull cells (local scan)
                     // This keeps the repair O(k·D) where k is the number of new hull cells, rather than O(N·D)
@@ -3568,12 +3494,106 @@ mod tests {
     use super::*;
     use crate::core::collections::NeighborBuffer;
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
+    use crate::core::facet::facet_key_from_vertices;
     use crate::core::vertex::VertexBuilder;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::topology::characteristics::validation::validate_triangulation_euler;
     use crate::vertex;
+
+    #[test]
+    fn test_triangulation_validation_error_from_manifold_error_preserves_detail() {
+        let tds_err = TdsValidationError::InvalidNeighbors {
+            message: "unit test".to_string(),
+        };
+
+        assert_eq!(
+            TriangulationValidationError::from(ManifoldError::Tds(tds_err.clone())),
+            TriangulationValidationError::Tds(tds_err)
+        );
+
+        assert!(matches!(
+            TriangulationValidationError::from(ManifoldError::ManifoldFacetMultiplicity {
+                facet_key: 123,
+                cell_count: 3
+            }),
+            TriangulationValidationError::ManifoldFacetMultiplicity {
+                facet_key: 123,
+                cell_count: 3
+            }
+        ));
+
+        assert!(matches!(
+            TriangulationValidationError::from(ManifoldError::BoundaryRidgeMultiplicity {
+                ridge_key: 0x00ab_cdef,
+                boundary_facet_count: 4
+            }),
+            TriangulationValidationError::BoundaryRidgeMultiplicity {
+                ridge_key: 0x00ab_cdef,
+                boundary_facet_count: 4
+            }
+        ));
+
+        assert!(matches!(
+            TriangulationValidationError::from(ManifoldError::RidgeLinkNotManifold {
+                ridge_key: 0x00ab_cdef,
+                link_vertex_count: 7,
+                link_edge_count: 8,
+                max_degree: 3,
+                degree_one_vertices: 2,
+                connected: false
+            }),
+            TriangulationValidationError::RidgeLinkNotManifold {
+                ridge_key: 0x00ab_cdef,
+                link_vertex_count: 7,
+                link_edge_count: 8,
+                max_degree: 3,
+                degree_one_vertices: 2,
+                connected: false
+            }
+        ));
+    }
+
+    #[test]
+    fn test_triangulation_new_empty_and_new_with_tds_default_to_pseudomanifold() {
+        let tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+        assert_eq!(
+            tri.manifold_validation_mode(),
+            TopologyGuarantee::Pseudomanifold
+        );
+
+        let tri_with_tds: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_with_tds(FastKernel::new(), Tds::<f64, (), (), 2>::empty());
+        assert_eq!(
+            tri_with_tds.manifold_validation_mode(),
+            TopologyGuarantee::Pseudomanifold
+        );
+    }
+
+    #[test]
+    fn test_triangulation_set_manifold_validation_mode_round_trips() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+
+        assert_eq!(
+            tri.manifold_validation_mode(),
+            TopologyGuarantee::Pseudomanifold
+        );
+
+        tri.set_manifold_validation_mode(TopologyGuarantee::PLManifold);
+        assert_eq!(
+            tri.manifold_validation_mode(),
+            TopologyGuarantee::PLManifold
+        );
+
+        tri.set_manifold_validation_mode(TopologyGuarantee::Pseudomanifold);
+        assert_eq!(
+            tri.manifold_validation_mode(),
+            TopologyGuarantee::Pseudomanifold
+        );
+    }
 
     /// Macro to generate `build_initial_simplex` tests across dimensions.
     ///
@@ -3776,32 +3796,18 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_closed_boundary_with_map_ok_for_single_tetrahedron() {
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-
-        let tds =
-            Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
-        let tri = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
-
-        let facet_to_cells = tri.tds.build_facet_to_cells_map().unwrap();
-        assert!(
-            tri.validate_closed_boundary_with_map(&facet_to_cells)
-                .is_ok()
-        );
-    }
-
-    #[test]
-    fn test_validate_closed_boundary_with_map_noop_for_closed_2d_surface() {
-        // Build the boundary of a tetrahedron as a 2D simplicial complex (a closed S^2):
-        // 4 triangles on 4 vertices, with every edge shared by exactly 2 triangles.
+    fn test_is_valid_pl_manifold_mode_rejects_wedge_at_vertex_in_2d() {
+        // This builds the same 2D "wedge at a vertex" configuration as the topology-module
+        // unit test, but exercises the Level 3 validation pipeline and TopologyGuarantee gating.
+        //
+        // The complex is a pseudomanifold (every edge has degree 2), but not a PL 2-manifold:
+        // the shared vertex has a disconnected link (two disjoint cycles).
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
+        // Shared vertex.
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+
+        // First tetrahedron boundary (4 triangles on 4 vertices).
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
         let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
         let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
@@ -3819,20 +3825,68 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vec![v1, v2, v3], None).unwrap())
             .unwrap();
 
-        let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        let facet_to_cells = tri.tds.build_facet_to_cells_map().unwrap();
+        // Second tetrahedron boundary (shares only v0).
+        let v4 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 10.0]))
+            .unwrap();
+        let v5 = tds
+            .insert_vertex_with_mapping(vertex!([11.0, 10.0]))
+            .unwrap();
+        let v6 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 11.0]))
+            .unwrap();
 
-        // Sanity: no boundary facets (every edge has exactly 2 incident triangles).
-        assert!(facet_to_cells.values().all(|handles| handles.len() == 2));
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v4, v5], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v4, v6], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v5, v6], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v4, v5, v6], None).unwrap())
+            .unwrap();
 
-        assert!(
-            tri.validate_closed_boundary_with_map(&facet_to_cells)
-                .is_ok()
-        );
+        // Ensure neighbor pointers exist so connectedness validation is meaningful.
+        repair_neighbor_pointers(&mut tds).unwrap();
+
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+
+        // In pseudomanifold mode, Level 3 validation proceeds past manifold checks and fails at
+        // connectedness (two components that share only a vertex).
+        assert!(matches!(
+            tri.is_valid(),
+            Err(TriangulationValidationError::Tds(
+                TdsValidationError::InconsistentDataStructure { .. }
+            ))
+        ));
+
+        tri.set_manifold_validation_mode(TopologyGuarantee::PLManifold);
+
+        let expected_ridge_key = facet_key_from_vertices(&[v0]);
+
+        match tri.is_valid() {
+            Err(TriangulationValidationError::RidgeLinkNotManifold {
+                ridge_key,
+                connected,
+                degree_one_vertices,
+                max_degree,
+                ..
+            }) => {
+                assert_eq!(ridge_key, expected_ridge_key);
+                assert!(!connected);
+                assert_eq!(degree_one_vertices, 0);
+                assert_eq!(max_degree, 2);
+            }
+            other => panic!("Expected RidgeLinkNotManifold in PL-manifold mode, got {other:?}"),
+        }
     }
 
     #[test]
-    fn test_validate_closed_boundary_with_map_errors_on_non_manifold_boundary_ridge() {
+    fn test_is_valid_errors_on_non_manifold_boundary_ridge_before_connectedness() {
         // Two tetrahedra that share an edge but not a facet create a non-manifold boundary:
         // the shared edge is incident to 4 boundary triangles.
         let mut tds: Tds<f64, (), (), 3> = Tds::empty();
@@ -3873,29 +3927,18 @@ mod tests {
             .unwrap();
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
-        let facet_to_cells = tri.tds.build_facet_to_cells_map().unwrap();
 
-        // The shared edge should appear in 4 boundary facets.
-        let expected_ridge_key = facet_key_from_vertices(&[shared_edge_v0, shared_edge_v1]);
-
-        match tri.validate_closed_boundary_with_map(&facet_to_cells) {
+        // Ordering check: Level 3 should fail for boundary ridge multiplicity before connectedness.
+        match tri.is_valid() {
             Err(TriangulationValidationError::BoundaryRidgeMultiplicity {
-                ridge_key,
                 boundary_facet_count,
+                ..
             }) => {
-                assert_eq!(ridge_key, expected_ridge_key);
                 assert_eq!(boundary_facet_count, 4);
             }
             other => panic!("Expected BoundaryRidgeMultiplicity, got {other:?}"),
         }
-
-        // Ordering check: Level 3 should fail for boundary ridge multiplicity before connectedness.
-        assert!(matches!(
-            tri.is_valid(),
-            Err(TriangulationValidationError::BoundaryRidgeMultiplicity { .. })
-        ));
     }
-
     #[test]
     fn test_validate_includes_tds_validation() {
         let vertices = vec![
@@ -4063,8 +4106,9 @@ mod tests {
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 1>::new_with_tds(FastKernel::new(), tds);
 
-        // Sanity: manifold check passes.
-        tri.validate_manifold_facets().unwrap();
+        // Sanity: codimension-1 pseudomanifold facet multiplicity passes.
+        let facet_to_cells = tri.tds.build_facet_to_cells_map().unwrap();
+        validate_facet_degree(&facet_to_cells).unwrap();
 
         // Sanity: Euler characteristic check would pass for this disconnected complex.
         let topology = validate_triangulation_euler(&tri.tds).unwrap();
@@ -4091,7 +4135,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_valid_boundary_facet_has_neighbor() {
+    fn test_tds_is_valid_rejects_boundary_facet_has_neighbor() {
         // Create two disjoint tetrahedra and manually introduce an invalid neighbor pointer
         // across a boundary facet.
         let vertices_cell_1 = vec![
@@ -4130,22 +4174,24 @@ mod tests {
         neighbors[0] = Some(second_cell_key);
         first_cell.neighbors = Some(neighbors);
 
-        let tri = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
-
-        match tri.is_valid() {
-            Err(TriangulationValidationError::BoundaryFacetHasNeighbor {
-                neighbor_key, ..
-            }) => {
-                assert_eq!(neighbor_key, second_cell_key);
+        match tds.is_valid() {
+            Err(TdsValidationError::InvalidNeighbors { message }) => {
+                assert!(
+                    message.contains("Boundary facet"),
+                    "Unexpected message: {message}"
+                );
+                assert!(
+                    message.contains(&format!("{second_cell_key:?}")),
+                    "Expected message to reference {second_cell_key:?}, got: {message}"
+                );
             }
-            other => panic!("Expected BoundaryFacetHasNeighbor, got {other:?}"),
+            other => panic!("Expected InvalidNeighbors, got {other:?}"),
         }
     }
 
     #[test]
-    fn test_is_valid_interior_facet_neighbor_mismatch() {
+    fn test_tds_is_valid_rejects_interior_facet_neighbor_mismatch() {
         // Two tetrahedra share a facet, but we leave neighbor pointers unset.
-        // This should trigger InteriorFacetNeighborMismatch.
         let mut tds: Tds<f64, (), (), 3> = Tds::empty();
 
         let v0 = tds
@@ -4166,15 +4212,22 @@ mod tests {
 
         let cell_1 = Cell::new(vec![v0, v1, v2, v3], None).unwrap();
         let cell_2 = Cell::new(vec![v0, v1, v2, v4], None).unwrap();
-        let _c1 = tds.insert_cell_with_mapping(cell_1).unwrap();
-        let _c2 = tds.insert_cell_with_mapping(cell_2).unwrap();
+        let _ = tds.insert_cell_with_mapping(cell_1).unwrap();
+        let _ = tds.insert_cell_with_mapping(cell_2).unwrap();
 
-        let tri = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
-
-        assert!(matches!(
-            tri.is_valid(),
-            Err(TriangulationValidationError::InteriorFacetNeighborMismatch { .. })
-        ));
+        match tds.is_valid() {
+            Err(TdsValidationError::InvalidNeighbors { message }) => {
+                assert!(
+                    message.contains("Interior facet"),
+                    "Unexpected message: {message}"
+                );
+                assert!(
+                    message.contains("inconsistent neighbor pointers"),
+                    "Unexpected message: {message}"
+                );
+            }
+            other => panic!("Expected InvalidNeighbors, got {other:?}"),
+        }
     }
 
     #[test]

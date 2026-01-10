@@ -219,7 +219,6 @@ where
 }
 
 #[cfg(test)]
-#[allow(unnameable_test_items)]
 mod tests {
     use super::BoundaryAnalysis;
     use crate::core::delaunay_triangulation::DelaunayTriangulation;

@@ -506,7 +506,10 @@ where
 /// assert_eq!(euler_characteristic(&counts_3d), 1);
 /// ```
 #[must_use]
-#[allow(clippy::cast_possible_wrap)] // Simplex counts won't exceed isize::MAX in practice
+#[expect(
+    clippy::cast_possible_wrap,
+    reason = "Simplex counts won't exceed isize::MAX in practice"
+)]
 pub fn euler_characteristic(counts: &FVector) -> isize {
     counts
         .by_dim

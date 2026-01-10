@@ -634,7 +634,10 @@ gen_insertion_order_robustness_test!(2, 6, 10);
 //   to improve the generator or to strengthen the underlying 3D robustness (rather than to
 //   further weaken the property).
 #[test]
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "Large property-based test with extensive rejection tracking and diagnostics"
+)]
 fn prop_insertion_order_robustness_3d() {
     use proptest::test_runner::{Config, TestCaseError, TestRunner};
     use std::cell::RefCell;

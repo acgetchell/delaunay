@@ -12,7 +12,13 @@ const BOUNDS: (f64, f64) = (-100.0, 100.0);
 /// Macro to generate dimension-specific memory analysis functions
 macro_rules! generate_memory_analysis {
     ($name:ident, $dim:literal) => {
-        #[allow(unused_variables)] // tri_info and hull_info are used conditionally based on count-allocations feature
+        #[cfg_attr(
+            not(feature = "count-allocations"),
+            expect(
+                unused_variables,
+                reason = "tri_info and hull_info are only used when the count-allocations feature is enabled",
+            )
+        )]
         fn $name(n_points: usize, seed: u64) {
             println!("  Analyzing {}D triangulation with {} points", $dim, n_points);
 
