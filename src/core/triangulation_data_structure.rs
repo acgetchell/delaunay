@@ -3282,6 +3282,11 @@ where
             }
             Err(e) => {
                 // If we can't build the facet map, both facet-sharing and neighbor checks are blocked.
+                //
+                // We intentionally record *both* invariant kinds for diagnostic granularity.
+                // This requires cloning the error once (so each violation owns an error), which
+                // may allocate/copy string payloads, but this is on an error path and facet-map
+                // build errors are expected to be rare and small.
                 violations.push(InvariantViolation {
                     kind: InvariantKind::FacetSharing,
                     error: e.clone().into(),

@@ -14,6 +14,7 @@ use crate::core::{
         CellKeySet, FacetToCellsMap, FastHashMap, FastHashSet, SmallBuffer, VertexKeyBuffer,
         fast_hash_map_with_capacity, fast_hash_set_with_capacity,
     },
+    edge::EdgeKey,
     facet::facet_key_from_vertices,
     traits::DataType,
     triangulation_data_structure::{CellKey, Tds, TdsValidationError, VertexKey},
@@ -30,7 +31,7 @@ pub enum ManifoldError {
 
     /// A facet belongs to an unexpected number of cells for a manifold-with-boundary.
     #[error(
-        "Non-manifold facet: facet {facet_key} belongs to {cell_count} cells (expected 1 or 2)"
+        "Non-manifold facet: facet {facet_key:016x} belongs to {cell_count} cells (expected 1 or 2)"
     )]
     ManifoldFacetMultiplicity {
         /// The facet key with invalid multiplicity.
@@ -202,6 +203,16 @@ where
 
         // Derive the facet's vertex keys from the owning cell.
         let cell_vertices = tds.get_cell_vertices(cell_key)?;
+        if facet_index >= cell_vertices.len() {
+            return Err(TdsValidationError::InconsistentDataStructure {
+                message: format!(
+                    "Boundary facet index {facet_index} out of bounds: cell {cell_key:?} has {} vertices",
+                    cell_vertices.len()
+                ),
+            }
+            .into());
+        }
+
         facet_vertices.clear();
         for (i, &vk) in cell_vertices.iter().enumerate() {
             if i == facet_index {
@@ -361,6 +372,16 @@ where
                 message: format!(
                     "Ridge link expected 2 link vertices for {D}D, got {} (cell_key={cell_key:?})",
                     link_vertices.len(),
+                ),
+            }
+            .into());
+        }
+
+        if link_vertices[0] == link_vertices[1] {
+            return Err(TdsValidationError::InconsistentDataStructure {
+                message: format!(
+                    "Ridge link edge is a self-loop: link vertex {vk:?} repeated (cell_key={cell_key:?})",
+                    vk = link_vertices[0],
                 ),
             }
             .into());
@@ -543,16 +564,29 @@ fn validate_ridge_link_graph(
     ridge_key: u64,
     link_edges: &[(VertexKey, VertexKey)],
 ) -> Result<(), ManifoldError> {
-    let link_edge_count = link_edges.len();
+    // De-duplicate parallel edges defensively: if the underlying TDS contains duplicate
+    // cells/edges, the ridge link can contain repeated edges which would otherwise inflate
+    // degrees and edge counts.
+    let mut unique_edges: FastHashSet<EdgeKey> =
+        fast_hash_set_with_capacity(link_edges.len().max(1));
 
-    // Build adjacency lists for the link graph.
-    let estimated_link_vertices = link_edge_count.saturating_mul(2).max(1);
+    // Build adjacency lists for the (simple) link graph.
+    let estimated_link_vertices = link_edges.len().saturating_mul(2).max(1);
     let mut adjacency: FastHashMap<VertexKey, SmallBuffer<VertexKey, 2>> =
         fast_hash_map_with_capacity(estimated_link_vertices);
 
     let mut max_degree = 0usize;
+    let mut link_edge_count = 0usize;
 
     for &(a, b) in link_edges {
+        let edge = EdgeKey::new(a, b);
+        if !unique_edges.insert(edge) {
+            continue;
+        }
+        link_edge_count += 1;
+
+        let (a, b) = edge.endpoints();
+
         let a_neighbors = adjacency.entry(a).or_default();
         a_neighbors.push(b);
         max_degree = max_degree.max(a_neighbors.len());
@@ -744,6 +778,36 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_closed_boundary_errors_on_out_of_bounds_facet_index() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
+        let cell_key = tds.cells().next().unwrap().0;
+
+        // Synthesize an invalid boundary facet handle: facet indices must be < D+1.
+        let mut facet_to_cells: FacetToCellsMap = FacetToCellsMap::default();
+        let mut handles: SmallBuffer<crate::core::facet::FacetHandle, 2> = SmallBuffer::new();
+        handles.push(crate::core::facet::FacetHandle::new(cell_key, u8::MAX));
+        facet_to_cells.insert(0_u64, handles);
+
+        match validate_closed_boundary(&tds, &facet_to_cells) {
+            Err(ManifoldError::Tds(TdsValidationError::InconsistentDataStructure { message })) => {
+                assert!(
+                    message.contains("out of bounds"),
+                    "Unexpected message: {message}"
+                );
+            }
+            other => panic!("Expected out-of-bounds facet index error, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn test_validate_closed_boundary_noop_for_d_lt_2() {
         let vertices = vec![vertex!([0.0]), vertex!([1.0])];
 
@@ -864,6 +928,52 @@ mod tests {
     }
 
     #[test]
+    fn test_ridge_link_edges_from_star_rejects_self_loop_edge() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+
+        // Corrupt the cell in-place: keep length == D+1 but introduce a duplicate link vertex.
+        {
+            let cell = tds
+                .get_cell_by_key_mut(cell_key)
+                .expect("cell key should be valid in test");
+            cell.clear_vertex_keys();
+            cell.push_vertex_key(v0);
+            cell.push_vertex_key(v1);
+            cell.push_vertex_key(v1);
+        }
+
+        // For ridge (vertex) v0, the link edge becomes (v1, v1), which is not a simplicial edge.
+        match ridge_link_edges_from_star(&tds, &[v0], &[cell_key]) {
+            Err(ManifoldError::Tds(TdsValidationError::InconsistentDataStructure { message })) => {
+                assert!(
+                    message.contains("self-loop"),
+                    "Unexpected message: {message}"
+                );
+            }
+            other => panic!("Expected self-loop edge error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_ridge_link_graph_deduplicates_parallel_edges() {
+        // Triangle cycle a-b-c-a, but with a duplicated edge.
+        let a = VertexKey::from(KeyData::from_ffi(1));
+        let b = VertexKey::from(KeyData::from_ffi(2));
+        let c = VertexKey::from(KeyData::from_ffi(3));
+
+        let edges = vec![(a, b), (b, c), (c, a), (a, b)];
+        assert!(validate_ridge_link_graph(0_u64, &edges).is_ok());
+    }
+
+    #[test]
     fn test_validate_ridge_links_errors_on_corrupted_cell_with_duplicate_vertices() {
         // This is a defensive robustness test: a corrupted cell with duplicate vertices can
         // produce a malformed ridge link (wrong number of link vertices).
@@ -884,8 +994,8 @@ mod tests {
                 .expect("cell key should be valid in test");
             cell.clear_vertex_keys();
             cell.push_vertex_key(v0);
-            cell.push_vertex_key(v1);
-            cell.push_vertex_key(v1);
+            cell.push_vertex_key(v0);
+            cell.push_vertex_key(v0);
         }
 
         match validate_ridge_links(&tds) {

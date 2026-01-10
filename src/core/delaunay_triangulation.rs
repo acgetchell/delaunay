@@ -314,7 +314,7 @@ where
                 kernel,
                 tds,
                 validation_policy: ValidationPolicy::default(),
-                manifold_validation_mode: TopologyGuarantee::default(),
+                manifold_validation_mode: TopologyGuarantee::Pseudomanifold,
             },
             last_inserted_cell: None,
         };
@@ -801,13 +801,13 @@ where
     #[inline]
     #[must_use]
     pub const fn manifold_validation_mode(&self) -> TopologyGuarantee {
-        self.tri.manifold_validation_mode
+        self.tri.manifold_validation_mode()
     }
 
     /// Sets the topology guarantee used for Level 3 topology validation.
     #[inline]
     pub const fn set_manifold_validation_mode(&mut self, mode: TopologyGuarantee) {
-        self.tri.manifold_validation_mode = mode;
+        self.tri.set_manifold_validation_mode(mode);
     }
 
     /// Returns an iterator over all facets in the triangulation.
@@ -1491,6 +1491,10 @@ where
     ///   across serialization boundaries. Constructing via `from_tds` (including the serde
     ///   `Deserialize` impl below) always resets it to `None`. This can make the first few
     ///   insertions after loading slightly slower, but is otherwise behaviorally irrelevant.
+    /// - The topology guarantee (`manifold_validation_mode`) is also not serialized (this type
+    ///   serializes only the `Tds`). Constructing via `from_tds` resets it to
+    ///   [`TopologyGuarantee::Pseudomanifold`]. Call [`set_manifold_validation_mode`](Self::set_manifold_validation_mode)
+    ///   if you want to enable stricter PL-manifold validation after loading.
     ///
     /// # Examples
     ///

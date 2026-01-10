@@ -197,7 +197,7 @@ pub enum TriangulationValidationError {
 
     /// A facet belongs to an unexpected number of cells for a manifold-with-boundary.
     #[error(
-        "Non-manifold facet: facet {facet_key} belongs to {cell_count} cells (expected 1 or 2)"
+        "Non-manifold facet: facet {facet_key:016x} belongs to {cell_count} cells (expected 1 or 2)"
     )]
     ManifoldFacetMultiplicity {
         /// The facet key with invalid multiplicity.
@@ -208,7 +208,7 @@ pub enum TriangulationValidationError {
 
     /// A boundary facet unexpectedly has a neighbor pointer across it.
     #[error(
-        "Boundary facet {facet_key} unexpectedly has a neighbor across cell {cell_uuid}[{facet_index}] -> {neighbor_key:?}"
+        "Boundary facet {facet_key:016x} unexpectedly has a neighbor across cell {cell_uuid}[{facet_index}] -> {neighbor_key:?}"
     )]
     BoundaryFacetHasNeighbor {
         /// The facet key.
@@ -223,7 +223,7 @@ pub enum TriangulationValidationError {
 
     /// Two cells that share a facet do not point to each other as neighbors across that facet.
     #[error(
-        "Interior facet {facet_key} has inconsistent neighbor pointers: {first_cell_uuid}[{first_facet_index}] -> {first_neighbor:?}, {second_cell_uuid}[{second_facet_index}] -> {second_neighbor:?}"
+        "Interior facet {facet_key:016x} has inconsistent neighbor pointers: {first_cell_uuid}[{first_facet_index}] -> {first_neighbor:?}, {second_cell_uuid}[{second_facet_index}] -> {second_neighbor:?}"
     )]
     InteriorFacetNeighborMismatch {
         /// The facet key.
