@@ -781,9 +781,15 @@ where
     }
 
     // Safe to cast: we've verified values are within safe range
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "Safe: intersection/union are bounded to 2^53 before casting to f64"
+    )]
     let inter_f64 = intersection as f64;
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "Safe: intersection/union are bounded to 2^53 before casting to f64"
+    )]
     let union_f64 = union as f64;
 
     Ok(inter_f64 / union_f64)
@@ -1152,9 +1158,15 @@ where
         }
 
         // Safe to cast: we've verified values are within safe range
-        #[allow(clippy::cast_precision_loss)]
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "Safe: intersection/union are bounded to 2^53 before casting to f64"
+        )]
         let inter_f64 = intersection as f64;
-        #[allow(clippy::cast_precision_loss)]
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "Safe: intersection/union are bounded to 2^53 before casting to f64"
+        )]
         let union_f64 = union as f64;
 
         inter_f64 / union_f64
@@ -1805,7 +1817,10 @@ where
 ///   - At least one offending external vertex (if found)
 ///   - Neighbor information for each facet
 #[cfg(any(test, debug_assertions))]
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "Debug-only helper with intentionally verbose logging"
+)]
 pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cells_subset: Option<&[CellKey]>,

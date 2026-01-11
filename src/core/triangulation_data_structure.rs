@@ -1217,7 +1217,13 @@ where
     ///
     /// A mutable reference to the storage map containing all cells.
     #[doc(hidden)]
-    #[allow(dead_code)]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Dangerous internal API used only in tests to intentionally violate invariants",
+        )
+    )]
     pub(crate) const fn cells_mut(&mut self) -> &mut StorageMap<CellKey, Cell<T, U, V, D>> {
         &mut self.cells
     }
@@ -3024,11 +3030,16 @@ where
     ///
     /// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
     pub(crate) fn validate_facet_sharing(&self) -> Result<(), TdsValidationError> {
-        // Build a map from facet keys to the cells that contain them
-        // Use the strict version to ensure we catch any missing vertex keys
+        // Build a map from facet keys to the cells that contain them.
+        // Use the strict version to ensure we catch any missing vertex keys.
         let facet_to_cells = self.build_facet_to_cells_map()?;
+        Self::validate_facet_sharing_with_facet_to_cells_map(&facet_to_cells)
+    }
 
-        // Check for facets shared by more than 2 cells
+    fn validate_facet_sharing_with_facet_to_cells_map(
+        facet_to_cells: &FacetToCellsMap,
+    ) -> Result<(), TdsValidationError> {
+        // Check for facets shared by more than 2 cells.
         for (facet_key, cell_facet_pairs) in facet_to_cells {
             if cell_facet_pairs.len() > 2 {
                 return Err(TdsError::InconsistentDataStructure {
@@ -3104,8 +3115,12 @@ where
         self.validate_vertex_incidence()?;
 
         self.validate_no_duplicate_cells()?;
-        self.validate_facet_sharing()?;
-        self.validate_neighbors()?;
+
+        // Build the facet-to-cells map once and share it between facet-sharing and neighbor validators.
+        let facet_to_cells = self.build_facet_to_cells_map()?;
+        Self::validate_facet_sharing_with_facet_to_cells_map(&facet_to_cells)?;
+        self.validate_neighbors_with_facet_to_cells_map(&facet_to_cells)?;
+
         Ok(())
     }
 
@@ -3246,20 +3261,41 @@ where
             });
         }
 
-        // 5. Facet sharing (no facet shared by more than 2 cells)
-        if let Err(e) = self.validate_facet_sharing() {
-            violations.push(InvariantViolation {
-                kind: InvariantKind::FacetSharing,
-                error: e.into(),
-            });
-        }
+        // 5–6. Facet sharing + neighbor consistency share the facet-to-cells map.
+        match self.build_facet_to_cells_map() {
+            Ok(facet_to_cells) => {
+                if let Err(e) =
+                    Self::validate_facet_sharing_with_facet_to_cells_map(&facet_to_cells)
+                {
+                    violations.push(InvariantViolation {
+                        kind: InvariantKind::FacetSharing,
+                        error: e.into(),
+                    });
+                }
 
-        // 6. Neighbor relationships (mutual neighbors, correct shared facets)
-        if let Err(e) = self.validate_neighbors() {
-            violations.push(InvariantViolation {
-                kind: InvariantKind::NeighborConsistency,
-                error: e.into(),
-            });
+                if let Err(e) = self.validate_neighbors_with_facet_to_cells_map(&facet_to_cells) {
+                    violations.push(InvariantViolation {
+                        kind: InvariantKind::NeighborConsistency,
+                        error: e.into(),
+                    });
+                }
+            }
+            Err(e) => {
+                // If we can't build the facet map, both facet-sharing and neighbor checks are blocked.
+                //
+                // We intentionally record *both* invariant kinds for diagnostic granularity.
+                // This requires cloning the error once (so each violation owns an error), which
+                // may allocate/copy string payloads, but this is on an error path and facet-map
+                // build errors are expected to be rare and small.
+                violations.push(InvariantViolation {
+                    kind: InvariantKind::FacetSharing,
+                    error: e.clone().into(),
+                });
+                violations.push(InvariantViolation {
+                    kind: InvariantKind::NeighborConsistency,
+                    error: e.into(),
+                });
+            }
         }
 
         if violations.is_empty() {
@@ -3300,9 +3336,106 @@ where
     /// [`DelaunayTriangulation::validation_report()`].
     ///
     /// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
-    fn validate_neighbors(&self) -> Result<(), TdsValidationError> {
+    ///
+    /// Note: callers provide `facet_to_cells` so `is_valid()` and `validation_report()` can share
+    /// the precomputed facet map between validators.
+    fn validate_neighbors_with_facet_to_cells_map(
+        &self,
+        facet_to_cells: &FacetToCellsMap,
+    ) -> Result<(), TdsValidationError> {
+        self.validate_neighbor_pointers_match_facet_to_cells_map(facet_to_cells)?;
+
         let cell_vertices = self.build_cell_vertex_sets()?;
         self.validate_neighbors_with_precomputed_vertex_sets(&cell_vertices)
+    }
+
+    fn validate_neighbor_pointers_match_facet_to_cells_map(
+        &self,
+        facet_to_cells: &FacetToCellsMap,
+    ) -> Result<(), TdsValidationError> {
+        for (facet_key, cell_facet_pairs) in facet_to_cells {
+            match cell_facet_pairs.as_slice() {
+                [handle] => {
+                    // Boundary facet: must not have a neighbor across this facet.
+                    let cell_key = handle.cell_key();
+                    let facet_index = handle.facet_index() as usize;
+
+                    let cell = self.cells.get(cell_key).ok_or_else(|| {
+                        TdsError::InconsistentDataStructure {
+                            message: format!(
+                                "Cell key {cell_key:?} not found during neighbor validation"
+                            ),
+                        }
+                    })?;
+
+                    if let Some(neighbors) = cell.neighbors() {
+                        let neighbor = neighbors.get(facet_index).and_then(|n| *n);
+                        if let Some(neighbor_key) = neighbor {
+                            return Err(TdsError::InvalidNeighbors {
+                                message: format!(
+                                    "Boundary facet {facet_key} unexpectedly has a neighbor across cell {}[{facet_index}] -> {neighbor_key:?}",
+                                    cell.uuid(),
+                                ),
+                            });
+                        }
+                    }
+                }
+                [a, b] => {
+                    // Interior facet: both cells must be neighbors across the corresponding facet indices.
+                    let first_cell_key = a.cell_key();
+                    let first_facet_index = a.facet_index() as usize;
+                    let second_cell_key = b.cell_key();
+                    let second_facet_index = b.facet_index() as usize;
+
+                    let first_cell = self.cells.get(first_cell_key).ok_or_else(|| {
+                        TdsError::InconsistentDataStructure {
+                            message: format!(
+                                "Cell key {first_cell_key:?} not found during neighbor validation"
+                            ),
+                        }
+                    })?;
+                    let second_cell = self.cells.get(second_cell_key).ok_or_else(|| {
+                        TdsError::InconsistentDataStructure {
+                            message: format!(
+                                "Cell key {second_cell_key:?} not found during neighbor validation"
+                            ),
+                        }
+                    })?;
+
+                    let first_neighbor = first_cell
+                        .neighbors()
+                        .and_then(|n| n.get(first_facet_index))
+                        .and_then(|n| *n);
+                    let second_neighbor = second_cell
+                        .neighbors()
+                        .and_then(|n| n.get(second_facet_index))
+                        .and_then(|n| *n);
+
+                    if first_neighbor != Some(second_cell_key)
+                        || second_neighbor != Some(first_cell_key)
+                    {
+                        return Err(TdsError::InvalidNeighbors {
+                            message: format!(
+                                "Interior facet {facet_key} has inconsistent neighbor pointers: {}[{first_facet_index}] -> {first_neighbor:?}, {}[{second_facet_index}] -> {second_neighbor:?}",
+                                first_cell.uuid(),
+                                second_cell.uuid(),
+                            ),
+                        });
+                    }
+                }
+                _ => {
+                    // Non-manifold facet multiplicity should have been caught by facet-sharing validation.
+                    return Err(TdsError::InconsistentDataStructure {
+                        message: format!(
+                            "Facet with key {facet_key} is shared by {} cells, but should be shared by at most 2 cells in a valid triangulation",
+                            cell_facet_pairs.len()
+                        ),
+                    });
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn validate_neighbors_with_precomputed_vertex_sets(
@@ -3924,7 +4057,10 @@ mod tests {
     // =============================================================================
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Coverage-oriented test that exercises many edge cases"
+    )]
     fn test_add_vertex_comprehensive() {
         // Test successful vertex addition into existing triangulation
         {
@@ -4819,8 +4955,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message }
-                if message.contains("Mirror facet is ambiguous")
+            TdsError::InvalidNeighbors { message } if message.contains("ambiguous")
         ));
     }
 
@@ -4850,8 +4985,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message }
-                if message.contains("appear to share all vertices")
+            TdsError::InvalidNeighbors { message } if message.contains("share all vertices")
         ));
     }
 
@@ -4909,8 +5043,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message }
-                if message.contains("Could not find mirror facet")
+            TdsError::InvalidNeighbors { message } if message.contains("Could not find mirror facet")
         ));
     }
 
@@ -4942,15 +5075,14 @@ mod tests {
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message }
-                if message.contains("Mirror facet index mismatch")
+            TdsError::InvalidNeighbors { message } if message.contains("index mismatch")
         ));
     }
 
     #[test]
     fn test_validate_neighbors_errors_on_mirror_facet_index_mismatch() {
         // This test exercises the same "mirror facet index mismatch" defensive branch, but via the
-        // neighbor-validation loop used by `validate_neighbors()`.
+        // neighbor-validation loop used by `validate_neighbors_with_precomputed_vertex_sets()`.
         //
         // The mismatch is only reachable if the precomputed per-cell vertex-set map is inconsistent
         // with the cell's actual vertex buffer (e.g., a bug/corruption in the precompute step). To
@@ -4990,8 +5122,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message }
-                if message.contains("Mirror facet index mismatch")
+            TdsError::InvalidNeighbors { message } if message.contains("index mismatch")
         ));
     }
 
@@ -5066,8 +5197,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message }
-                if message.contains("Shared facet mismatch: neighbor")
+            TdsError::InvalidNeighbors { message } if message.contains("Shared facet mismatch")
         ));
     }
 
@@ -5127,8 +5257,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message }
-                if message.contains("neighbor has no neighbors")
+            TdsError::InvalidNeighbors { message } if message.contains("neighbor has no neighbors")
         ));
     }
 
@@ -5169,8 +5298,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message }
-                if message.contains("expected back-reference")
+            TdsError::InvalidNeighbors { message } if message.contains("expected back-reference")
         ));
     }
 

@@ -613,7 +613,10 @@ where
 ///     assert_eq!(boundary_facets.len(), 5);
 /// }
 /// ```
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "Long function; keep boundary extraction logic in one place for clarity"
+)]
 pub fn extract_cavity_boundary<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     conflict_cells: &CellKeyBuffer,

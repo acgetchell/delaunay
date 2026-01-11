@@ -39,13 +39,18 @@ looks “off”.
 
 ### What is validated automatically?
 
-Only **Level 3** (`Triangulation::is_valid()`):
+Only **Level 3** (`Triangulation::is_valid()`), using the triangulation’s current
+`TopologyGuarantee` (default: `Pseudomanifold`):
 
-- Codimension-1 manifoldness (facet multiplicity 1 or 2 + boundary neighbor consistency)
+- Codimension-1 manifoldness (facet degree: 1 or 2 incident cells per facet)
 - Codimension-2 boundary manifoldness (the boundary is closed; "no boundary of boundary")
+- (Optional) PL-manifold ridge-link condition (when `TopologyGuarantee::PLManifold`)
 - Connectedness (single component)
 - No isolated vertices
 - Euler characteristic
+
+Note: neighbor-pointer consistency is a **Level 2** structural invariant checked by
+`Tds::is_valid()` / `Tds::validate()`, and is intentionally not part of Level 3.
 
 Automatic validation does **not** run Level 4 (the Delaunay empty-circumsphere property).
 If you need geometric verification, call `dt.is_valid()` or `dt.validate()` explicitly.
@@ -93,6 +98,40 @@ dt.set_validation_policy(ValidationPolicy::Never);
 
 ---
 
+## Choosing Level 3 topology guarantee (`TopologyGuarantee`)
+
+Level 3 topology validation can be configured to enforce either:
+
+- **Pseudomanifold / manifold-with-boundary** invariants (default), or
+- **PL-manifold** invariants (strict mode, adds ridge-link validation).
+
+This is separate from [`ValidationPolicy`](#automatic-validation-during-incremental-insertion-validationpolicy),
+which controls *when* Level 3 is run automatically during incremental insertion.
+
+### Default: `Pseudomanifold`
+
+```rust
+use delaunay::prelude::*;
+
+let vertices = vec![
+    vertex!([0.0, 0.0, 0.0]),
+    vertex!([1.0, 0.0, 0.0]),
+    vertex!([0.0, 1.0, 0.0]),
+    vertex!([0.0, 0.0, 1.0]),
+];
+
+let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+assert_eq!(dt.manifold_validation_mode(), TopologyGuarantee::Pseudomanifold);
+
+// Opt into stricter PL-manifold validation.
+dt.set_manifold_validation_mode(TopologyGuarantee::PLManifold);
+
+// Now Level 3 includes ridge-link validation.
+dt.as_triangulation().is_valid().unwrap();
+```
+
+---
+
 ## Error Types by Layer
 
 The library separates **construction-time** failures from **validation-time** invariant violations, and also separates errors by layer.
@@ -111,7 +150,8 @@ The library separates **construction-time** failures from **validation-time** in
 
 - `TdsValidationError` (Levels 1–2): element + structural invariants.
 - `TriangulationValidationError` (Level 3): wraps `TdsValidationError` and adds
-  codimension-1 manifoldness + codimension-2 boundary manifoldness (closed boundary) + connectedness + isolated-vertex + Euler characteristic checks.
+  codimension-1 manifoldness + codimension-2 boundary manifoldness (closed boundary) +
+  (optional) ridge-link PL-manifold checks + connectedness + isolated-vertex + Euler characteristic checks.
 - `DelaunayTriangulationValidationError` (Level 4): wraps `TriangulationValidationError` and adds
   the empty-circumsphere (Delaunay) checks.
 
@@ -182,7 +222,7 @@ Validates the combinatorial structure of the Triangulation Data Structure.
 1. **UUID ↔ Key Mappings**: Bidirectional consistency for vertices and cells
 2. **No Duplicate Cells**: No cells with identical vertex sets
 3. **Facet Sharing Invariant**: Each facet shared by at most 2 cells
-4. **Neighbor Consistency**: Mutual neighbor relationships are correct
+4. **Neighbor Consistency**: Mutual neighbor relationships are correct (boundary facets have no neighbor; interior facets have reciprocal neighbors)
 
 `Tds::validate()` (Levels 1–2) additionally checks:
 
@@ -250,10 +290,11 @@ Validates that the triangulation forms a valid topological manifold.
 
 1. **Codimension-1 manifoldness (facet degree)**: Each facet belongs to exactly 1 cell (boundary) or exactly 2 cells (interior)
    - Stronger than Level 2's "≤2 cells per facet"
-2. **Codimension-1 boundary consistency (neighbor pointers)**: Boundary facets must have no neighbor pointer across them
-3. **Codimension-2 boundary manifoldness (closed boundary)**: Each (d−2)-ridge on the boundary must be incident to exactly 2 boundary facets
+2. **Codimension-2 boundary manifoldness (closed boundary)**: Each (d−2)-ridge on the boundary must be incident to exactly 2 boundary facets
    - This is the "no boundary of boundary" condition
    - Interior ridges can have higher degree; only boundary ridges are constrained
+3. **PL-manifold ridge-link condition** (when `TopologyGuarantee::PLManifold`):
+   Each (d−2)-ridge must have a link that is a connected 1-manifold (cycle or path)
 4. **Connectedness**: All cells form a single connected component in the cell neighbor graph
    - Detected via a graph traversal over neighbor pointers (O(N·D))
 5. **No isolated vertices**: Every vertex must be incident to at least one cell

@@ -1501,7 +1501,7 @@ mod tests {
     // =============================================================================
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "Comprehensive validation test")]
     fn test_vertex_validation() {
         // Test valid vertices with various coordinate types and dimensions
         let valid_f64: Vertex<f64, (), 3> = vertex!([1.0, 2.0, 3.0]);
@@ -1767,7 +1767,10 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Comprehensive deserialization edge-case test"
+    )]
     fn test_vertex_deserialization_edge_cases() {
         // Test deserialization with minimal required fields
         let json_minimal = r#"{

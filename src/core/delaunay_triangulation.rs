@@ -18,7 +18,8 @@ use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{
-    Triangulation, TriangulationConstructionError, TriangulationValidationError, ValidationPolicy,
+    TopologyGuarantee, Triangulation, TriangulationConstructionError, TriangulationValidationError,
+    ValidationPolicy,
 };
 use crate::core::triangulation_data_structure::{
     CellKey, InvariantKind, InvariantViolation, Tds, TdsConstructionError, TdsValidationError,
@@ -313,6 +314,7 @@ where
                 kernel,
                 tds,
                 validation_policy: ValidationPolicy::default(),
+                manifold_validation_mode: TopologyGuarantee::Pseudomanifold,
             },
             last_inserted_cell: None,
         };
@@ -725,7 +727,10 @@ where
     /// assert!(dt.validate().is_ok());
     /// ```
     #[must_use]
-    #[allow(clippy::missing_const_for_fn)] // mutable refs from const fn not widely supported
+    #[expect(
+        clippy::missing_const_for_fn,
+        reason = "Returning mutable references from const fn isn't broadly supported"
+    )]
     pub fn as_triangulation_mut(&mut self) -> &mut Triangulation<K, U, V, D> {
         &mut self.tri
     }
@@ -790,6 +795,19 @@ where
     #[inline]
     pub const fn set_validation_policy(&mut self, policy: ValidationPolicy) {
         self.tri.validation_policy = policy;
+    }
+
+    /// Returns the topology guarantee used for Level 3 topology validation.
+    #[inline]
+    #[must_use]
+    pub const fn manifold_validation_mode(&self) -> TopologyGuarantee {
+        self.tri.manifold_validation_mode()
+    }
+
+    /// Sets the topology guarantee used for Level 3 topology validation.
+    #[inline]
+    pub const fn set_manifold_validation_mode(&mut self, mode: TopologyGuarantee) {
+        self.tri.set_manifold_validation_mode(mode);
     }
 
     /// Returns an iterator over all facets in the triangulation.
@@ -1473,6 +1491,10 @@ where
     ///   across serialization boundaries. Constructing via `from_tds` (including the serde
     ///   `Deserialize` impl below) always resets it to `None`. This can make the first few
     ///   insertions after loading slightly slower, but is otherwise behaviorally irrelevant.
+    /// - The topology guarantee (`manifold_validation_mode`) is also not serialized (this type
+    ///   serializes only the `Tds`). Constructing via `from_tds` resets it to
+    ///   [`TopologyGuarantee::Pseudomanifold`]. Call [`set_manifold_validation_mode`](Self::set_manifold_validation_mode)
+    ///   if you want to enable stricter PL-manifold validation after loading.
     ///
     /// # Examples
     ///
@@ -1507,6 +1529,7 @@ where
                 kernel,
                 tds,
                 validation_policy: ValidationPolicy::OnSuspicion,
+                manifold_validation_mode: TopologyGuarantee::Pseudomanifold,
             },
             last_inserted_cell: None,
         }
@@ -1706,6 +1729,65 @@ mod tests {
     use super::*;
     use crate::geometry::kernel::{FastKernel, RobustKernel};
     use crate::vertex;
+
+    #[test]
+    fn test_delaunay_constructors_default_to_pseudomanifold_mode() {
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+
+        let dt_new: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        assert_eq!(
+            dt_new.manifold_validation_mode(),
+            TopologyGuarantee::Pseudomanifold
+        );
+
+        let dt_empty: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::empty();
+        assert_eq!(
+            dt_empty.manifold_validation_mode(),
+            TopologyGuarantee::Pseudomanifold
+        );
+
+        let dt_with_kernel: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+        assert_eq!(
+            dt_with_kernel.manifold_validation_mode(),
+            TopologyGuarantee::Pseudomanifold
+        );
+
+        let dt_from_tds: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::from_tds(dt_new.tds().clone(), FastKernel::new());
+        assert_eq!(
+            dt_from_tds.manifold_validation_mode(),
+            TopologyGuarantee::Pseudomanifold
+        );
+    }
+
+    #[test]
+    fn test_set_manifold_validation_mode_updates_underlying_triangulation() {
+        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::empty();
+
+        assert_eq!(
+            dt.manifold_validation_mode(),
+            TopologyGuarantee::Pseudomanifold
+        );
+        assert_eq!(
+            dt.tri.manifold_validation_mode,
+            TopologyGuarantee::Pseudomanifold
+        );
+
+        dt.set_manifold_validation_mode(TopologyGuarantee::PLManifold);
+        assert_eq!(dt.manifold_validation_mode(), TopologyGuarantee::PLManifold);
+        assert_eq!(
+            dt.tri.manifold_validation_mode,
+            TopologyGuarantee::PLManifold
+        );
+    }
 
     /// Macro to generate comprehensive triangulation construction tests across dimensions.
     ///

@@ -317,6 +317,7 @@ with convenient `just` shortcuts for common workflows.
 
 - `characteristics/euler.rs` - Euler characteristic computation for full complexes and boundaries
 - `characteristics/validation.rs` - Topological validation functions
+- `manifold.rs` - Topology-only manifold invariants (e.g., closed boundary checks)
 - `spaces/euclidean.rs` - Euclidean space topology implementation
 - `spaces/spherical.rs` - Spherical space topology implementation
 - `spaces/toroidal.rs` - Toroidal space topology implementation

@@ -548,7 +548,6 @@ where
 
     // Wire all matching facets (both internal and external)
     // Two cells share a facet if they have the same facet key
-    #[allow(unused_variables)] // Used in debug_assertions
     for (facet_key, cells) in &facet_map {
         if cells.len() == 2 {
             let (c1, idx1) = cells[0];
@@ -662,7 +661,10 @@ fn compute_facet_hash(sorted_vkeys: &[VertexKey]) -> u64 {
 /// In debug builds, this function performs additional cycle detection via BFS
 /// (see `validate_no_neighbor_cycles`). This adds overhead but helps catch
 /// neighbor graph corruption early during development.
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "Long function; keep the repair algorithm in one place for clarity"
+)]
 pub fn repair_neighbor_pointers<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
 ) -> Result<usize, InsertionError>
