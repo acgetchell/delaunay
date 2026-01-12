@@ -656,8 +656,6 @@ mod euler_tests {
     #[test] 
     fn test_3d_tetrahedron_euler_characteristic() {
         // Single tetrahedron: V=4, E=6, F=4, C=1 → χ = 4-6+4-1 = 1
-        // Wait, this should be χ = 2 for a convex 3D polytope
-        // Let me recalculate: for boundary of tetrahedron χ = 2
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -667,7 +665,7 @@ mod euler_tests {
         
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
         let euler = tds.euler_characteristic();
-        assert_eq!(euler, 2);
+        assert_eq!(euler, 1);
     }
     
     #[test]
@@ -682,8 +680,8 @@ mod euler_tests {
         
         let tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices).unwrap();
         let euler = tds.euler_characteristic();
-        // Expected for 4D convex polytope
-        assert_eq!(euler, 0);
+        // Single 4-simplex: χ = 1
+        assert_eq!(euler, 1);
     }
 }
 ```

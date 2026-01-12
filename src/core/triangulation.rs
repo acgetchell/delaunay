@@ -78,7 +78,15 @@
 //! [`Vertex::is_valid()`]: crate::core::vertex::Vertex::is_valid
 //! [`Tds::is_valid()`]: crate::core::triangulation_data_structure::Tds::is_valid
 //! [`Tds::validate()`]: crate::core::triangulation_data_structure::Tds::validate
-
+//!
+//!  ## Topology guarantees
+//!
+//! Topological correctness is parameterized by [`TopologyGuarantee`](crate::core::triangulation::TopologyGuarantee).
+//! The triangulation always satisfies the pseudomanifold (codimension-1) facet adjacency condition.
+//! When [`TopologyGuarantee::PLManifold`](crate::core::triangulation::TopologyGuarantee::PLManifold) is selected,
+//! additional codimension-2 invariants are enforced using the algorithms in [`crate::topology::manifold`],
+//! guaranteeing that the triangulation is a simplicial PL-manifold with boundary.
+//!
 use core::iter::Sum;
 use core::ops::{AddAssign, Div, SubAssign};
 use std::borrow::Cow;
@@ -425,11 +433,18 @@ impl Default for ValidationPolicy {
     }
 }
 
-/// Controls which topology invariants are enforced by Level 3 topology validation.
+/// Declares the topological guarantees enforced by a triangulation.
 ///
-/// This is intentionally separate from [`ValidationPolicy`]:
-/// - `ValidationPolicy` controls **when** Level 3 validation runs automatically during insertion.
-/// - `TopologyGuarantee` controls **what** Level 3 validation checks.
+/// This enum specifies *what must be true* about the underlying simplicial complex,
+/// independent of *when* validation is performed (see [`ValidationPolicy`]).
+///
+/// - [`TopologyGuarantee::Pseudomanifold`] enforces the codimension-1 adjacency condition:
+///   each facet is incident to one or two cells. This is sufficient for many geometric
+///   algorithms but does not guarantee local Euclidean structure.
+///
+/// - [`TopologyGuarantee::PLManifold`] additionally enforces codimension-2 link
+///   manifoldness (via ridge-link validation), guaranteeing that the triangulation
+///   is a simplicial piecewise-linear (PL) manifold with boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TopologyGuarantee {
     /// Validate only the pseudomanifold / manifold-with-boundary invariants:
@@ -447,6 +462,16 @@ impl Default for TopologyGuarantee {
     #[inline]
     fn default() -> Self {
         Self::Pseudomanifold
+    }
+}
+
+impl TopologyGuarantee {
+    /// Returns `true` if this topology guarantee requires full codimension-2
+    /// ridge-link manifoldness checks.
+    #[inline]
+    #[must_use]
+    pub const fn requires_ridge_links(self) -> bool {
+        matches!(self, Self::PLManifold)
     }
 }
 
@@ -475,7 +500,7 @@ where
     // /// The topological space this triangulation lives in.
     // pub(crate) topology: Box<dyn TopologicalSpace>,
     pub(crate) validation_policy: ValidationPolicy,
-    pub(crate) manifold_validation_mode: TopologyGuarantee,
+    pub(crate) topology_guarantee: TopologyGuarantee,
 }
 
 // =============================================================================
@@ -576,21 +601,21 @@ where
             kernel,
             tds: Tds::empty(),
             validation_policy: ValidationPolicy::default(),
-            manifold_validation_mode: TopologyGuarantee::default(),
+            topology_guarantee: TopologyGuarantee::default(),
         }
     }
 
     /// Returns the topology guarantee used for Level 3 topology validation.
     #[inline]
     #[must_use]
-    pub const fn manifold_validation_mode(&self) -> TopologyGuarantee {
-        self.manifold_validation_mode
+    pub const fn topology_guarantee(&self) -> TopologyGuarantee {
+        self.topology_guarantee
     }
 
     /// Sets the topology guarantee used for Level 3 topology validation.
     #[inline]
-    pub const fn set_manifold_validation_mode(&mut self, mode: TopologyGuarantee) {
-        self.manifold_validation_mode = mode;
+    pub const fn set_topology_guarantee(&mut self, guarantee: TopologyGuarantee) {
+        self.topology_guarantee = guarantee;
     }
 
     /// Returns the number of times the topology safety-net recovered from a Level 3
@@ -611,7 +636,7 @@ where
             kernel,
             tds,
             validation_policy: ValidationPolicy::default(),
-            manifold_validation_mode: TopologyGuarantee::default(),
+            topology_guarantee: TopologyGuarantee::default(),
         }
     }
 
@@ -1564,7 +1589,7 @@ where
     /// This checks the triangulation/topology layer **only**:
     /// - Codimension-1 pseudomanifold condition: each facet is incident to 1 (boundary) or 2 (interior) cells
     /// - Codimension-2 boundary manifoldness: the boundary must be closed ("no boundary of boundary")
-    /// - PL-manifold ridge-link condition (when `manifold_validation_mode == TopologyGuarantee::PLManifold`)
+    /// - PL-manifold ridge-link condition (when `topology_guarantee == TopologyGuarantee::PLManifold`)
     /// - Connectedness (single component in the cell neighbor graph)
     /// - No isolated vertices (every vertex must be incident to at least one cell)
     /// - Euler characteristic
@@ -1611,7 +1636,7 @@ where
         validate_closed_boundary(&self.tds, &facet_to_cells)?;
 
         // 1c. PL-manifold ridge-link condition (optional strict mode).
-        if self.manifold_validation_mode == TopologyGuarantee::PLManifold {
+        if self.topology_guarantee.requires_ridge_links() {
             validate_ridge_links(&self.tds)?;
         }
 
@@ -3559,40 +3584,28 @@ mod tests {
     fn test_triangulation_new_empty_and_new_with_tds_default_to_pseudomanifold() {
         let tri: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_empty(FastKernel::new());
-        assert_eq!(
-            tri.manifold_validation_mode(),
-            TopologyGuarantee::Pseudomanifold
-        );
+        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
 
         let tri_with_tds: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_with_tds(FastKernel::new(), Tds::<f64, (), (), 2>::empty());
         assert_eq!(
-            tri_with_tds.manifold_validation_mode(),
+            tri_with_tds.topology_guarantee(),
             TopologyGuarantee::Pseudomanifold
         );
     }
 
     #[test]
-    fn test_triangulation_set_manifold_validation_mode_round_trips() {
+    fn test_triangulation_set_topology_guarantee_round_trips() {
         let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_empty(FastKernel::new());
 
-        assert_eq!(
-            tri.manifold_validation_mode(),
-            TopologyGuarantee::Pseudomanifold
-        );
+        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
 
-        tri.set_manifold_validation_mode(TopologyGuarantee::PLManifold);
-        assert_eq!(
-            tri.manifold_validation_mode(),
-            TopologyGuarantee::PLManifold
-        );
+        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::PLManifold);
 
-        tri.set_manifold_validation_mode(TopologyGuarantee::Pseudomanifold);
-        assert_eq!(
-            tri.manifold_validation_mode(),
-            TopologyGuarantee::Pseudomanifold
-        );
+        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
     }
 
     /// Macro to generate `build_initial_simplex` tests across dimensions.
@@ -3864,7 +3877,7 @@ mod tests {
             ))
         ));
 
-        tri.set_manifold_validation_mode(TopologyGuarantee::PLManifold);
+        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
         let expected_ridge_key = facet_key_from_vertices(&[v0]);
 

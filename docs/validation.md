@@ -121,10 +121,10 @@ let vertices = vec![
 ];
 
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-assert_eq!(dt.manifold_validation_mode(), TopologyGuarantee::Pseudomanifold);
+assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
 
 // Opt into stricter PL-manifold validation.
-dt.set_manifold_validation_mode(TopologyGuarantee::PLManifold);
+dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
 // Now Level 3 includes ridge-link validation.
 dt.as_triangulation().is_valid().unwrap();
@@ -553,6 +553,6 @@ ensure no isolated vertices, and verify the cell neighbor graph is connected
 
 ## See Also
 
-- [Topology Documentation](topology.md) - Topological concepts and Euler characteristic
+- [Topology integration design](topology.md) - Design notes on topology integration (includes historical sections)
 - [Code Organization](code_organization.md) - Where to find validation code
 - [CGAL Triangulation](https://doc.cgal.org/latest/Triangulation/index.html) - Inspiration for validation design

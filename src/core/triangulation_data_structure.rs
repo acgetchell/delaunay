@@ -1867,6 +1867,61 @@ where
         removed_count
     }
 
+    /// Repairs locally degenerate cells by removing them and restoring combinatorial consistency.
+    ///
+    /// This is a narrowly scoped repair primitive intended for benchmarks/tests.
+    ///
+    /// A cell is treated as degenerate if it:
+    /// - fails basic per-cell validity (`Cell::is_valid()`),
+    /// - references a missing vertex key, or
+    /// - contains a neighbor pointer to a missing cell key.
+    ///
+    /// This method does **not** retriangulate cavities, insert new cells, or attempt to repair
+    /// geometric degeneracy. It only removes cells and relies on [`Tds::remove_cells_by_keys`]
+    /// to clear neighbor back-references and repair `incident_cell` pointers.
+    ///
+    /// Returns the number of cells removed.
+    #[cfg(all(test, feature = "bench"))]
+    pub(crate) fn repair_degenerate_cells(&mut self) -> usize {
+        if self.cells.is_empty() {
+            return 0;
+        }
+
+        // Collect keys first (cannot mutate while iterating).
+        let mut to_remove: Vec<CellKey> = Vec::new();
+
+        for (cell_key, cell) in self.cells() {
+            if cell.is_valid().is_err() {
+                to_remove.push(cell_key);
+                continue;
+            }
+
+            if cell
+                .vertices()
+                .iter()
+                .any(|&vkey| !self.vertices.contains_key(vkey))
+            {
+                to_remove.push(cell_key);
+                continue;
+            }
+
+            if cell.neighbors().is_some_and(|neighbors| {
+                neighbors
+                    .iter()
+                    .flatten()
+                    .any(|&neighbor_key| !self.cells.contains_key(neighbor_key))
+            }) {
+                to_remove.push(cell_key);
+            }
+        }
+
+        if to_remove.is_empty() {
+            return 0;
+        }
+
+        self.remove_cells_by_keys(&to_remove)
+    }
+
     fn collect_removal_frontier_and_clear_neighbor_back_references(
         &mut self,
         cell_keys: &[CellKey],

@@ -1,11 +1,76 @@
-//! Topology-only manifold validation utilities.
+//! # PL-Manifold Validation (Topology Only)
 //!
-//! This module contains invariants that depend only on the combinatorial structure
-//! of the simplicial complex stored in a [`Tds`](crate::core::triangulation_data_structure::Tds).
-//! These checks:
-//! - are independent of geometry and Delaunay predicates,
-//! - are not TDS structural invariants (Level 2), and
-//! - are intended to back Level 3 (manifold topology) validation.
+//! This module implements *topological* (combinatorial) invariants that are sufficient
+//! to guarantee that a finite simplicial complex is a **piecewise-linear (PL) manifold
+//! with boundary**, assuming the underlying triangulation data structure (TDS) is
+//! structurally consistent.
+//!
+//! ## What is being validated
+//!
+//! Let `K` be a pure D-dimensional simplicial complex. Classical PL topology shows that
+//! `K` is a PL-manifold with boundary if and only if the following local conditions hold:
+//!
+//! 1. **Codimension-1 (facet) condition**
+//!    Every (D−1)-simplex is incident to exactly one or two D-simplices.
+//!
+//! 2. **Boundary codimension-2 condition**
+//!    Every (D−2)-simplex lying on the boundary is incident to exactly two boundary facets
+//!    (equivalently, ∂² = ∅).
+//!
+//! 3. **Codimension-2 link condition**
+//!    The link of every (D−2)-simplex is a 1-dimensional PL-manifold:
+//!    - a cycle (S¹) for interior ridges, or
+//!    - a path (I) for boundary ridges.
+//!
+//! These conditions are enforced respectively by:
+//!
+//! - [`validate_facet_degree`]
+//! - [`validate_closed_boundary`]
+//! - [`validate_ridge_links`]
+//!
+//! Together, they are **sufficient** to guarantee that the link of *every* simplex
+//! (including vertices) is a sphere or ball of the appropriate dimension, which is the
+//! defining property of a PL-manifold.
+//!
+//! ## What is *not* checked here
+//!
+//! - Geometric predicates (e.g. Delaunay conditions)
+//! - Metric properties
+//! - Global topology classification (e.g. genus, Euler characteristic)
+//! - TDS structural invariants (neighbor pointers, index validity, etc.)
+//!
+//! Those concerns are handled elsewhere:
+//!
+//! - TDS structural correctness is validated at **Level 2**
+//! - Global invariants (Euler characteristic, classification) live in
+//!   `topology::characteristics`
+//!
+//! ## Why ridge links instead of vertex links?
+//!
+//! Although PL-manifoldness is often defined in terms of **vertex links**, it is a
+//! classical result that for simplicial complexes it is sufficient to verify
+//! manifoldness of links in codimensions 1 and 2. In practice, validating **ridge links**
+//! is both stronger and more efficient than attempting to classify vertex links directly,
+//! and avoids false positives that can arise from scalar invariants such as Euler
+//! characteristic alone.
+//!
+//! ## References
+//!
+//! - J. R. Munkres, *Elements of Algebraic Topology*, Addison–Wesley, 1984.
+//!   (Chapter 9: Simplicial Manifolds and Links.)
+//!
+//! - C. P. Rourke & B. J. Sanderson, *Introduction to Piecewise-Linear Topology*,
+//!   Springer, 1972.
+//!
+//! - A. Hatcher, *Algebraic Topology*, Cambridge University Press, 2002.
+//!   (Appendix A: PL Manifolds and Links.)
+//!
+//! - H. Edelsbrunner & J. Harer, *Computational Topology*, AMS, 2010.
+//!   (Sections on pseudomanifolds and manifold conditions in simplicial complexes.)
+//!
+//! These invariants are standard in computational geometry, Regge calculus, and
+//! Causal Dynamical Triangulations (CDT), where curvature and local neighborhood
+//! structure are only well-defined for simplicial PL-manifolds.
 
 use thiserror::Error;
 
@@ -80,7 +145,8 @@ pub enum ManifoldError {
 
 /// Validates that each (D-1)-facet has degree 1 (boundary) or 2 (interior).
 ///
-/// This is the codimension-1 pseudomanifold / manifold-with-boundary condition.
+/// This enforces the codimension-1 pseudomanifold condition and is not sufficient by itself
+/// to guarantee full PL-manifoldness.
 ///
 /// # Errors
 ///
@@ -125,6 +191,7 @@ pub fn validate_facet_degree(facet_to_cells: &FacetToCellsMap) -> Result<(), Man
 /// This is the codimension-2 pseudomanifold / manifold-with-boundary condition for
 /// triangulations: every (D-2)-simplex (ridge) that lies on the boundary must be
 /// incident to exactly 2 boundary facets.
+/// This enforces the identity ∂² = ∅ (the boundary of a manifold has no boundary).
 ///
 /// # Errors
 ///
@@ -494,7 +561,10 @@ where
 /// - a **cycle** for interior ridges, or
 /// - a **path** for boundary ridges.
 ///
-/// This check is a strict refinement of codimension-1 manifoldness, and detects common
+/// This check rules out wedge and branching singularities that are not detected by
+/// facet-degree or boundary-closure checks alone.
+///
+/// It is a strict refinement of codimension-1 manifoldness, and detects common
 /// singularities like “two surface components glued at a single vertex” in 2D.
 ///
 /// # Performance

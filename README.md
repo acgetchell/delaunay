@@ -59,6 +59,24 @@ For details, see: [Issue #120 Investigation](docs/issue_120_investigation.md)
 - **Level 4** (`dt.is_valid()`) - Delaunay property only (may fail in rare cases per Issue #120)
 - **All levels (1–4)** (`dt.validate()`) - Elements + structure + topology + Delaunay property
 
+Level 3 topology validation is parameterized by `TopologyGuarantee` (default: `Pseudomanifold`).
+To enable stricter PL-manifold checks, set `TopologyGuarantee::PLManifold` (adds ridge-link validation).
+
+During incremental insertion, the automatic Level 3 validation pass is controlled by
+`ValidationPolicy` (default: `OnSuspicion`).
+
+```rust
+use delaunay::prelude::*;
+
+let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+
+// Strictest topology checks (adds ridge-link validation):
+dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+
+// In tests/debugging, validate Level 3 after every insertion:
+dt.set_validation_policy(ValidationPolicy::Always);
+```
+
 For applications requiring strict Delaunay guarantees:
 
 - Use `dt.is_valid()` (Level 4 only) or `dt.validate()` (Levels 1–4) to check your specific triangulation
@@ -135,7 +153,7 @@ This includes information about:
 ## 📖 Documentation
 
 - **[Code Organization](docs/code_organization.md)** - Project structure and module patterns
-- **[Topology Guide](docs/topology.md)** - Topological concepts and Euler characteristic
+- **[Topology integration design](docs/topology.md)** - Design notes on topology integration (includes historical sections)
 - **[Validation Guide](docs/validation.md)** - Comprehensive 4-level validation hierarchy guide (element → structural → manifold → Delaunay)
 - **[Issue #120 Investigation](docs/issue_120_investigation.md)** - Known Delaunay property limitations
 

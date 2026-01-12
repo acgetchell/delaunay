@@ -448,7 +448,15 @@ mod tests {
         ];
 
         let vertices = Vertex::from_points(&points);
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
+
+        // Repair degeneracies by removing structurally invalid cells until stable.
+        loop {
+            let removed = dt.tds_mut().repair_degenerate_cells();
+            if removed == 0 {
+                break;
+            }
+        }
 
         if dt.number_of_cells() > 0 {
             println!(

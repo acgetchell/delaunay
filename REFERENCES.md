@@ -99,6 +99,18 @@ This section contains the foundational algorithms and data structures that form 
   EATCS Monographs on Theoretical Computer Science. Berlin: Springer-Verlag, 1987.
   DOI: [10.1007/978-3-642-61568-9](https://doi.org/10.1007/978-3-642-61568-9)
 
+## Topological Manifolds and PL Topology (Level 3 Validation)
+
+These references support the topology-only manifold / PL-manifold validation logic in this
+library (facet degree, closed-boundary checks, and links of simplices).
+
+- Munkres, J. R. *Elements of Algebraic Topology*. Addison–Wesley, 1984.
+  (Chapter 9: Simplicial Manifolds and Links.)
+- Rourke, C. P., and Sanderson, B. J. *Introduction to Piecewise-Linear Topology*. Springer, 1972.
+- Hatcher, A. *Algebraic Topology*. Cambridge University Press, 2002.
+  (Appendix A: PL Manifolds and Links.)
+- Edelsbrunner, H., and Harer, J. *Computational Topology*. AMS, 2010.
+
 ## Geometric Predicates and Numerical Robustness
 
 These references ensure the library's geometric computations are mathematically sound and numerically stable.
