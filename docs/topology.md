@@ -653,8 +653,9 @@ mod euler_tests {
         assert_eq!(euler, 1);
     }
     
-    #[test] 
+    #[test]
     fn test_3d_tetrahedron_euler_characteristic() {
+        // Note: χ here is for the full simplicial complex (a 3-ball), not just the boundary.
         // Single tetrahedron: V=4, E=6, F=4, C=1 → χ = 4-6+4-1 = 1
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -680,6 +681,7 @@ mod euler_tests {
         
         let tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices).unwrap();
         let euler = tds.euler_characteristic();
+        // Note: χ here is for the full simplicial complex (a 4-ball), not just the boundary.
         // Single 4-simplex: χ = 1
         assert_eq!(euler, 1);
     }

@@ -79,13 +79,19 @@
 //! [`Tds::is_valid()`]: crate::core::triangulation_data_structure::Tds::is_valid
 //! [`Tds::validate()`]: crate::core::triangulation_data_structure::Tds::validate
 //!
-//!  ## Topology guarantees
+//! ## Topology guarantees
 //!
-//! Topological correctness is parameterized by [`TopologyGuarantee`](crate::core::triangulation::TopologyGuarantee).
-//! The triangulation always satisfies the pseudomanifold (codimension-1) facet adjacency condition.
-//! When [`TopologyGuarantee::PLManifold`](crate::core::triangulation::TopologyGuarantee::PLManifold) is selected,
-//! additional codimension-2 invariants are enforced using the algorithms in [`crate::topology::manifold`],
-//! guaranteeing that the triangulation is a simplicial PL-manifold with boundary.
+//! [`TopologyGuarantee`](crate::core::triangulation::TopologyGuarantee) selects which invariants are
+//! **checked by Level 3 topology validation**.
+//!
+//! Whether these checks run automatically after insertion is controlled by
+//! [`ValidationPolicy`](crate::core::triangulation::ValidationPolicy).
+//!
+//! - At minimum, Level 3 validation checks the pseudomanifold (codimension-1) facet adjacency condition
+//!   and the codimension-2 boundary manifoldness (closed boundary).
+//! - With [`TopologyGuarantee::PLManifold`](crate::core::triangulation::TopologyGuarantee::PLManifold),
+//!   Level 3 validation additionally checks codimension-2 ridge-link manifoldness via
+//!   [`crate::topology::manifold`].
 //!
 use core::iter::Sum;
 use core::ops::{AddAssign, Div, SubAssign};
@@ -433,17 +439,18 @@ impl Default for ValidationPolicy {
     }
 }
 
-/// Declares the topological guarantees enforced by a triangulation.
+/// Selects which topological invariants are checked by Level 3 validation.
 ///
-/// This enum specifies *what must be true* about the underlying simplicial complex,
-/// independent of *when* validation is performed (see [`ValidationPolicy`]).
+/// This enum specifies *what is checked* about the underlying simplicial complex when
+/// Level 3 validation runs. Whether Level 3 validation runs automatically after insertion
+/// is controlled by [`ValidationPolicy`].
 ///
-/// - [`TopologyGuarantee::Pseudomanifold`] enforces the codimension-1 adjacency condition:
-///   each facet is incident to one or two cells. This is sufficient for many geometric
-///   algorithms but does not guarantee local Euclidean structure.
+/// - [`TopologyGuarantee::Pseudomanifold`] checks the codimension-1 adjacency condition:
+///   each facet is incident to one or two cells, and the codimension-2 boundary is closed.
+///   This is sufficient for many geometric algorithms but does not guarantee local Euclidean structure.
 ///
-/// - [`TopologyGuarantee::PLManifold`] additionally enforces codimension-2 link
-///   manifoldness (via ridge-link validation), guaranteeing that the triangulation
+/// - [`TopologyGuarantee::PLManifold`] additionally checks codimension-2 link
+///   manifoldness (via ridge-link validation), i.e. that the triangulation
 ///   is a simplicial piecewise-linear (PL) manifold with boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TopologyGuarantee {
@@ -461,11 +468,24 @@ pub enum TopologyGuarantee {
 impl Default for TopologyGuarantee {
     #[inline]
     fn default() -> Self {
-        Self::Pseudomanifold
+        Self::DEFAULT
     }
 }
 
 impl TopologyGuarantee {
+    /// The default topology guarantee used when constructing triangulations.
+    pub const DEFAULT: Self = Self::Pseudomanifold;
+
+    /// Returns the default topology guarantee.
+    ///
+    /// This is a `const` alternative to `<Self as Default>::default()` so it can be used
+    /// from `const fn` constructors.
+    #[inline]
+    #[must_use]
+    pub const fn default() -> Self {
+        Self::DEFAULT
+    }
+
     /// Returns `true` if this topology guarantee requires full codimension-2
     /// ridge-link manifoldness checks.
     #[inline]
@@ -2184,8 +2204,13 @@ where
                     4 => 2e-2,
                     _ => 5e-2, // 5% for attempt 5 and beyond
                 };
-                let epsilon = <K::Scalar as NumCast>::from(epsilon_value)
-                    .expect("Failed to convert perturbation scale");
+                let epsilon = <K::Scalar as NumCast>::from(epsilon_value).ok_or_else(|| {
+                    InsertionError::CavityFilling {
+                        message: format!(
+                            "Failed to convert perturbation scale {epsilon_value} into scalar type"
+                        ),
+                    }
+                })?;
 
                 for (idx, coord) in perturbed_coords.iter_mut().enumerate() {
                     let abs_coord = if *coord < K::Scalar::zero() {
@@ -2207,16 +2232,20 @@ where
                         VertexBuilder::default()
                             .point(Point::new(perturbed_coords))
                             .build()
-                            .expect("Failed to build perturbed vertex")
+                            .map_err(|e| InsertionError::CavityFilling {
+                                message: format!("Failed to build perturbed vertex: {e}"),
+                            })
                     },
                     |data| {
                         VertexBuilder::default()
                             .point(Point::new(perturbed_coords))
                             .data(data)
                             .build()
-                            .expect("Failed to build perturbed vertex")
+                            .map_err(|e| InsertionError::CavityFilling {
+                                message: format!("Failed to build perturbed vertex: {e}"),
+                            })
                     },
-                );
+                )?;
             }
 
             // Clone TDS for rollback (transactional semantics)
