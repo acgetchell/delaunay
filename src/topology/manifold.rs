@@ -96,6 +96,9 @@ use crate::core::{
     triangulation_data_structure::{CellKey, Tds, TdsValidationError, VertexKey},
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
+use crate::topology::characteristics::euler::{
+    triangulated_surface_boundary_component_count, triangulated_surface_euler_characteristic,
+};
 
 /// Errors that can occur during manifold (topology) validation.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -923,6 +926,9 @@ where
 
         let link_vertex_count = link_vertices.len();
 
+        // For D=1: the link is a 0-manifold.
+        // - Interior vertex: Lk(v) ≅ S⁰ (2 isolated points) ⇒ exactly 2 neighbors.
+        // - Boundary vertex:  Lk(v) ≅ B⁰ (1 point)           ⇒ exactly 1 neighbor.
         let ok = if interior_vertex {
             link_vertex_count == 2
         } else {
@@ -981,7 +987,24 @@ where
     let (boundary_facet_count, link_is_manifold) =
         validate_link_facets_and_boundary::<D>(&link_simplices, interior_vertex);
 
-    let ok = connected && link_is_manifold;
+    // For D=3, the link is a triangulated 2D surface. In this case we can enforce the
+    // canonical PL-manifoldness condition (sphere/ball) via Euler characteristic.
+    //
+    // For D>=4, Euler characteristic is not sufficient to distinguish spheres from other
+    // closed manifolds in general, so we fall back to manifoldness-only checks.
+    let link_topology_ok = if D == 3 {
+        let chi = triangulated_surface_euler_characteristic(&link_simplices);
+        let boundary_components = triangulated_surface_boundary_component_count(&link_simplices);
+        if interior_vertex {
+            chi == 2 && boundary_components == 0
+        } else {
+            chi == 1 && boundary_components == 1
+        }
+    } else {
+        true
+    };
+
+    let ok = connected && link_is_manifold && link_topology_ok;
 
     if ok {
         Ok(())
@@ -1840,52 +1863,47 @@ mod tests {
         // This is a pseudomanifold and passes ridge-link validation, but is NOT a PL 3-manifold:
         // the apex vertex has link homeomorphic to T^2 instead of S^2.
 
+        const N: usize = 3;
+        const M: usize = 3;
+
         let mut tds: Tds<f64, (), (), 3> = Tds::empty();
 
-        // Build a minimal triangulated square torus (2D) using 8 triangles.
-        // Square with opposite edges identified; we realize this combinatorially by
-        // explicitly gluing the triangles.
+        // Build a small triangulated torus using a periodic 3x3 grid.
+        let mut v: [[VertexKey; M]; N] = [[VertexKey::from(KeyData::from_ffi(0)); M]; N];
+        for (i, row) in v.iter_mut().enumerate() {
+            for (j, slot) in row.iter_mut().enumerate() {
+                let i_f = <f64 as std::convert::From<u32>>::from(u32::try_from(i).unwrap());
+                let j_f = <f64 as std::convert::From<u32>>::from(u32::try_from(j).unwrap());
+                *slot = tds
+                    .insert_vertex_with_mapping(vertex!([i_f, j_f, 0.0]))
+                    .unwrap();
+            }
+        }
 
-        // Torus vertices (square fundamental domain)
-        let a = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
-            .unwrap();
-        let b = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
-            .unwrap();
-        let c = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 1.0, 0.0]))
-            .unwrap();
-        let d = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
-            .unwrap();
-
-        // Duplicate vertices to encode edge identifications (minimal explicit torus model)
-        let b2 = b;
-        let c2 = c;
-        let d2 = d;
-        let a2 = a;
-
-        // Apex of the cone
+        // Apex of the cone (interior vertex; not on any boundary facet).
         let apex = tds
             .insert_vertex_with_mapping(vertex!([0.5, 0.5, 1.0]))
             .unwrap();
 
-        // Triangulate the torus surface (2 triangles per square face, with identifications)
-        let torus_faces = vec![
-            vec![a, b, d],
-            vec![b, c, d],
-            vec![b2, a2, c2],
-            vec![a2, d2, c2],
-        ];
+        // Triangulate each periodic square into two triangles, then cone to the apex.
+        for i in 0..N {
+            for j in 0..M {
+                let i1 = (i + 1) % N;
+                let j1 = (j + 1) % M;
 
-        // Cone each torus triangle to the apex, forming tetrahedra
-        for tri in torus_faces {
-            let mut verts = tri.clone();
-            verts.push(apex);
-            let _ = tds
-                .insert_cell_with_mapping(Cell::new(verts, None).unwrap())
-                .unwrap();
+                let v00 = v[i][j];
+                let v10 = v[i1][j];
+                let v01 = v[i][j1];
+                let v11 = v[i1][j1];
+
+                for tri in [[v00, v10, v01], [v10, v11, v01]] {
+                    let _ = tds
+                        .insert_cell_with_mapping(
+                            Cell::new(vec![tri[0], tri[1], tri[2], apex], None).unwrap(),
+                        )
+                        .unwrap();
+                }
+            }
         }
 
         // Sanity: pseudomanifold checks pass
@@ -1906,6 +1924,7 @@ mod tests {
                 assert_eq!(vertex_key, apex);
                 assert!(interior_vertex);
             }
+            Ok(()) => panic!("Expected VertexLinkNotManifold for cone apex, got Ok(())"),
             other => panic!("Expected VertexLinkNotManifold for cone apex, got {other:?}"),
         }
     }

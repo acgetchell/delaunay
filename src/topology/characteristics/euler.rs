@@ -23,7 +23,11 @@
 //! ```
 
 use crate::core::{
-    collections::{FacetToCellsMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer},
+    collections::{
+        FacetToCellsMap, FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
+        VertexKeyBuffer, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
+    },
+    edge::EdgeKey,
     traits::{BoundaryAnalysis, DataType},
     triangulation_data_structure::{Tds, VertexKey},
 };
@@ -522,6 +526,117 @@ pub fn euler_characteristic(counts: &FVector) -> isize {
         .sum()
 }
 
+pub(crate) fn triangulated_surface_euler_characteristic(
+    triangles: &SmallBuffer<VertexKeyBuffer, 8>,
+) -> isize {
+    // For a triangulated 2D complex: χ = V - E + F.
+    let mut vertices: FastHashSet<VertexKey> =
+        fast_hash_set_with_capacity(triangles.len().saturating_mul(3).max(1));
+    let mut edges: FastHashSet<EdgeKey> =
+        fast_hash_set_with_capacity(triangles.len().saturating_mul(3).max(1));
+
+    let mut face_count = 0usize;
+
+    for tri in triangles {
+        // Expect triangles.
+        if tri.len() != 3 {
+            continue;
+        }
+        face_count += 1;
+
+        let a = tri[0];
+        let b = tri[1];
+        let c = tri[2];
+
+        vertices.insert(a);
+        vertices.insert(b);
+        vertices.insert(c);
+
+        edges.insert(EdgeKey::new(a, b));
+        edges.insert(EdgeKey::new(b, c));
+        edges.insert(EdgeKey::new(c, a));
+    }
+
+    let counts = FVector {
+        by_dim: vec![vertices.len(), edges.len(), face_count],
+    };
+
+    euler_characteristic(&counts)
+}
+
+pub(crate) fn triangulated_surface_boundary_component_count(
+    triangles: &SmallBuffer<VertexKeyBuffer, 8>,
+) -> usize {
+    // Count boundary edges (edges incident to exactly 1 triangle), then count connected components
+    // in the boundary 1-skeleton.
+    let mut edge_counts: FastHashMap<EdgeKey, usize> =
+        fast_hash_map_with_capacity(triangles.len().saturating_mul(3).max(1));
+
+    for tri in triangles {
+        if tri.len() != 3 {
+            continue;
+        }
+
+        let a = tri[0];
+        let b = tri[1];
+        let c = tri[2];
+
+        for e in [EdgeKey::new(a, b), EdgeKey::new(b, c), EdgeKey::new(c, a)] {
+            *edge_counts.entry(e).or_insert(0) += 1;
+        }
+    }
+
+    let mut boundary_adjacency: FastHashMap<VertexKey, SmallBuffer<VertexKey, 2>> =
+        FastHashMap::default();
+
+    for (e, count) in edge_counts {
+        if count != 1 {
+            continue;
+        }
+
+        let (u, v) = e.endpoints();
+        boundary_adjacency.entry(u).or_default().push(v);
+        boundary_adjacency.entry(v).or_default().push(u);
+    }
+
+    if boundary_adjacency.is_empty() {
+        return 0;
+    }
+
+    let mut visited: FastHashSet<VertexKey> =
+        fast_hash_set_with_capacity(boundary_adjacency.len().max(1));
+    let mut components = 0usize;
+
+    for &start in boundary_adjacency.keys() {
+        if visited.contains(&start) {
+            continue;
+        }
+
+        components += 1;
+
+        let mut stack: VertexKeyBuffer = VertexKeyBuffer::with_capacity(16);
+        stack.push(start);
+
+        while let Some(v) = stack.pop() {
+            if !visited.insert(v) {
+                continue;
+            }
+
+            let Some(neigh) = boundary_adjacency.get(&v) else {
+                continue;
+            };
+
+            for &n in neigh {
+                if !visited.contains(&n) {
+                    stack.push(n);
+                }
+            }
+        }
+    }
+
+    components
+}
+
 /// Classify the triangulation topologically.
 ///
 /// Determines the topological type based on the number of cells
@@ -628,6 +743,8 @@ pub fn expected_chi_for(classification: &TopologyClassification) -> Option<isize
 mod tests {
     use super::*;
 
+    use slotmap::KeyData;
+
     #[test]
     fn test_simplex_counts() {
         let counts = FVector {
@@ -717,6 +834,125 @@ mod tests {
             by_dim: vec![4, 6, 4, 1],
         };
         assert_eq!(euler_characteristic(&counts), 1);
+    }
+
+    fn tri(a: VertexKey, b: VertexKey, c: VertexKey) -> VertexKeyBuffer {
+        let mut t: VertexKeyBuffer = VertexKeyBuffer::with_capacity(3);
+        t.push(a);
+        t.push(b);
+        t.push(c);
+        t
+    }
+
+    #[test]
+    fn test_triangulated_surface_euler_characteristic_single_triangle_is_one() {
+        let a = VertexKey::from(KeyData::from_ffi(1));
+        let b = VertexKey::from(KeyData::from_ffi(2));
+        let c = VertexKey::from(KeyData::from_ffi(3));
+
+        let mut triangles: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        triangles.push(tri(a, b, c));
+
+        assert_eq!(triangulated_surface_euler_characteristic(&triangles), 1);
+    }
+
+    #[test]
+    fn test_triangulated_surface_boundary_component_count_single_triangle_is_one() {
+        let a = VertexKey::from(KeyData::from_ffi(1));
+        let b = VertexKey::from(KeyData::from_ffi(2));
+        let c = VertexKey::from(KeyData::from_ffi(3));
+
+        let mut triangles: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        triangles.push(tri(a, b, c));
+
+        assert_eq!(triangulated_surface_boundary_component_count(&triangles), 1);
+    }
+
+    #[test]
+    fn test_triangulated_surface_two_triangles_sharing_edge_is_disk() {
+        // Square split into two triangles (a,b,c) and (a,c,d).
+        // V=4, E=5, F=2 => χ=1 (disk); boundary is one cycle.
+        let a = VertexKey::from(KeyData::from_ffi(1));
+        let b = VertexKey::from(KeyData::from_ffi(2));
+        let c = VertexKey::from(KeyData::from_ffi(3));
+        let d = VertexKey::from(KeyData::from_ffi(4));
+
+        let mut triangles: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        triangles.push(tri(a, b, c));
+        triangles.push(tri(a, c, d));
+
+        assert_eq!(triangulated_surface_euler_characteristic(&triangles), 1);
+        assert_eq!(triangulated_surface_boundary_component_count(&triangles), 1);
+    }
+
+    #[test]
+    fn test_triangulated_surface_tetrahedron_boundary_is_sphere() {
+        // Boundary of a tetrahedron: V=4, E=6, F=4 => χ=2 (S^2), no boundary.
+        let a = VertexKey::from(KeyData::from_ffi(1));
+        let b = VertexKey::from(KeyData::from_ffi(2));
+        let c = VertexKey::from(KeyData::from_ffi(3));
+        let d = VertexKey::from(KeyData::from_ffi(4));
+
+        let mut triangles: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        triangles.push(tri(a, b, c));
+        triangles.push(tri(a, b, d));
+        triangles.push(tri(a, c, d));
+        triangles.push(tri(b, c, d));
+
+        assert_eq!(triangulated_surface_euler_characteristic(&triangles), 2);
+        assert_eq!(triangulated_surface_boundary_component_count(&triangles), 0);
+    }
+
+    #[test]
+    fn test_triangulated_surface_two_disjoint_triangles_have_two_boundary_components() {
+        // Disjoint union of two triangles:
+        // χ = 1 + 1 = 2, and boundary has two connected components.
+        let a0 = VertexKey::from(KeyData::from_ffi(1));
+        let a1 = VertexKey::from(KeyData::from_ffi(2));
+        let a2 = VertexKey::from(KeyData::from_ffi(3));
+        let b0 = VertexKey::from(KeyData::from_ffi(4));
+        let b1 = VertexKey::from(KeyData::from_ffi(5));
+        let b2 = VertexKey::from(KeyData::from_ffi(6));
+
+        let mut triangles: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        triangles.push(tri(a0, a1, a2));
+        triangles.push(tri(b0, b1, b2));
+
+        assert_eq!(triangulated_surface_euler_characteristic(&triangles), 2);
+        assert_eq!(triangulated_surface_boundary_component_count(&triangles), 2);
+    }
+
+    #[test]
+    fn test_triangulated_surface_periodic_grid_torus_has_chi_zero_and_no_boundary() {
+        // A small triangulated torus (T^2): χ(T^2) = 0 and it has no boundary.
+        const N: usize = 3;
+        const M: usize = 3;
+        const BASE: u64 = 1_000;
+
+        let v = |i: usize, j: usize| -> VertexKey {
+            let idx = i * M + j;
+            let idx_u64 = u64::try_from(idx).unwrap();
+            VertexKey::from(KeyData::from_ffi(BASE + idx_u64))
+        };
+
+        let mut triangles: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        for i in 0..N {
+            for j in 0..M {
+                let i1 = (i + 1) % N;
+                let j1 = (j + 1) % M;
+
+                let v00 = v(i, j);
+                let v10 = v(i1, j);
+                let v01 = v(i, j1);
+                let v11 = v(i1, j1);
+
+                triangles.push(tri(v00, v10, v01));
+                triangles.push(tri(v10, v11, v01));
+            }
+        }
+
+        assert_eq!(triangulated_surface_euler_characteristic(&triangles), 0);
+        assert_eq!(triangulated_surface_boundary_component_count(&triangles), 0);
     }
 
     #[test]

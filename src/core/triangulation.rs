@@ -3999,6 +3999,88 @@ mod tests {
     }
 
     #[test]
+    fn test_is_valid_pl_manifold_mode_rejects_cone_on_torus_in_3d_even_when_cell_graph_connected() {
+        // Cone over a triangulated torus:
+        // - The 3D cell neighbor graph is connected.
+        // - Facet-degree and closed-boundary checks pass.
+        // - But the apex has link T^2 (χ=0), so PL-manifold vertex-link validation must fail.
+        const N: usize = 3;
+        const M: usize = 3;
+
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+
+        let mut v: [[VertexKey; M]; N] = [[VertexKey::from(KeyData::from_ffi(0)); M]; N];
+        for (i, row) in v.iter_mut().enumerate() {
+            for (j, slot) in row.iter_mut().enumerate() {
+                let i_f = <f64 as std::convert::From<u32>>::from(u32::try_from(i).unwrap());
+                let j_f = <f64 as std::convert::From<u32>>::from(u32::try_from(j).unwrap());
+                *slot = tds
+                    .insert_vertex_with_mapping(vertex!([i_f, j_f, 0.0]))
+                    .unwrap();
+            }
+        }
+
+        let apex = tds
+            .insert_vertex_with_mapping(vertex!([0.5, 0.5, 1.0]))
+            .unwrap();
+
+        for i in 0..N {
+            for j in 0..M {
+                let i1 = (i + 1) % N;
+                let j1 = (j + 1) % M;
+
+                let v00 = v[i][j];
+                let v10 = v[i1][j];
+                let v01 = v[i][j1];
+                let v11 = v[i1][j1];
+
+                for tri in [[v00, v10, v01], [v10, v11, v01]] {
+                    let _ = tds
+                        .insert_cell_with_mapping(
+                            Cell::new(vec![tri[0], tri[1], tri[2], apex], None).unwrap(),
+                        )
+                        .unwrap();
+                }
+            }
+        }
+
+        repair_neighbor_pointers(&mut tds).unwrap();
+
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
+
+        // Sanity: the cell neighbor graph is connected.
+        tri.validate_global_connectedness().unwrap();
+
+        // Sanity: pseudomanifold-with-boundary checks pass.
+        let facet_to_cells = tri.tds.build_facet_to_cells_map().unwrap();
+        validate_facet_degree(&facet_to_cells).unwrap();
+        validate_closed_boundary(&tri.tds, &facet_to_cells).unwrap();
+
+        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
+
+        match tri.is_valid() {
+            Err(TriangulationValidationError::VertexLinkNotManifold {
+                vertex_key,
+                link_vertex_count,
+                link_cell_count,
+                boundary_facet_count,
+                connected,
+                interior_vertex,
+                ..
+            }) => {
+                assert_eq!(vertex_key, apex);
+                assert!(interior_vertex);
+                assert!(connected);
+                assert_eq!(boundary_facet_count, 0);
+                assert_eq!(link_vertex_count, N * M);
+                assert_eq!(link_cell_count, 2 * N * M);
+            }
+            other => panic!("Expected VertexLinkNotManifold for cone apex, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn test_is_valid_errors_on_non_manifold_boundary_ridge_before_connectedness() {
         // Two tetrahedra that share an edge but not a facet create a non-manifold boundary:
         // the shared edge is incident to 4 boundary triangles.
