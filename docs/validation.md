@@ -44,7 +44,7 @@ Only **Level 3** (`Triangulation::is_valid()`), using the triangulation’s curr
 
 - Codimension-1 manifoldness (facet degree: 1 or 2 incident cells per facet)
 - Codimension-2 boundary manifoldness (the boundary is closed; "no boundary of boundary")
-- (Optional) PL-manifold ridge-link condition (when `TopologyGuarantee::PLManifold`)
+- (Optional) PL-manifold vertex-link condition (when `TopologyGuarantee::PLManifold`)
 - Connectedness (single component)
 - No isolated vertices
 - Euler characteristic
@@ -103,7 +103,7 @@ dt.set_validation_policy(ValidationPolicy::Never);
 Level 3 topology validation can be configured to enforce either:
 
 - **Pseudomanifold / manifold-with-boundary** invariants (default), or
-- **PL-manifold** invariants (strict mode, adds ridge-link validation).
+- **PL-manifold** invariants (strict mode, adds vertex-link validation).
 
 This is separate from [`ValidationPolicy`](#automatic-validation-during-incremental-insertion-validationpolicy),
 which controls *when* Level 3 is run automatically during incremental insertion.
@@ -121,12 +121,12 @@ let vertices = vec![
 ];
 
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-assert_eq!(dt.manifold_validation_mode(), TopologyGuarantee::Pseudomanifold);
+assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
 
 // Opt into stricter PL-manifold validation.
-dt.set_manifold_validation_mode(TopologyGuarantee::PLManifold);
+dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
-// Now Level 3 includes ridge-link validation.
+// Now Level 3 includes vertex-link validation.
 dt.as_triangulation().is_valid().unwrap();
 ```
 
@@ -151,7 +151,7 @@ The library separates **construction-time** failures from **validation-time** in
 - `TdsValidationError` (Levels 1–2): element + structural invariants.
 - `TriangulationValidationError` (Level 3): wraps `TdsValidationError` and adds
   codimension-1 manifoldness + codimension-2 boundary manifoldness (closed boundary) +
-  (optional) ridge-link PL-manifold checks + connectedness + isolated-vertex + Euler characteristic checks.
+  (optional) vertex-link PL-manifold checks + connectedness + isolated-vertex + Euler characteristic checks.
 - `DelaunayTriangulationValidationError` (Level 4): wraps `TriangulationValidationError` and adds
   the empty-circumsphere (Delaunay) checks.
 
@@ -293,8 +293,8 @@ Validates that the triangulation forms a valid topological manifold.
 2. **Codimension-2 boundary manifoldness (closed boundary)**: Each (d−2)-ridge on the boundary must be incident to exactly 2 boundary facets
    - This is the "no boundary of boundary" condition
    - Interior ridges can have higher degree; only boundary ridges are constrained
-3. **PL-manifold ridge-link condition** (when `TopologyGuarantee::PLManifold`):
-   Each (d−2)-ridge must have a link that is a connected 1-manifold (cycle or path)
+3. **PL-manifold vertex-link condition** (when `TopologyGuarantee::PLManifold`):
+   For every vertex `v`, the link `Lk(v)` must be a (D−1)-sphere (interior vertex) or (D−1)-ball (boundary vertex).
 4. **Connectedness**: All cells form a single connected component in the cell neighbor graph
    - Detected via a graph traversal over neighbor pointers (O(N·D))
 5. **No isolated vertices**: Every vertex must be incident to at least one cell
@@ -553,6 +553,6 @@ ensure no isolated vertices, and verify the cell neighbor graph is connected
 
 ## See Also
 
-- [Topology Documentation](topology.md) - Topological concepts and Euler characteristic
+- [Topology integration design](topology.md) - Design notes on topology integration (includes historical sections)
 - [Code Organization](code_organization.md) - Where to find validation code
 - [CGAL Triangulation](https://doc.cgal.org/latest/Triangulation/index.html) - Inspiration for validation design

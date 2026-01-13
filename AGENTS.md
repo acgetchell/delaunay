@@ -1,4 +1,4 @@
-# WARP.md
+# AGENTS.md
 
 Essential guidance for AI assistants working in this repository.
 

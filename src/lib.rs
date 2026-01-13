@@ -178,6 +178,36 @@
 //! dt.set_validation_policy(ValidationPolicy::Never);
 //! ```
 //!
+//! ### Choosing Level 3 topology guarantee (`TopologyGuarantee`)
+//!
+//! Level 3 topology validation is parameterized by
+//! [`TopologyGuarantee`](crate::core::triangulation::TopologyGuarantee). This is separate from
+//! `ValidationPolicy`: it controls *what* invariants Level 3 enforces, not *when* automatic
+//! validation runs.
+//!
+//! - [`TopologyGuarantee::Pseudomanifold`](crate::core::triangulation::TopologyGuarantee::Pseudomanifold)
+//!   (default): facet degree + closed boundary + connectedness + isolated-vertex + Euler characteristic checks.
+//! - [`TopologyGuarantee::PLManifold`](crate::core::triangulation::TopologyGuarantee::PLManifold):
+//!   additionally runs vertex-link validation (strict mode).
+//!
+//! ```rust
+//! use delaunay::prelude::*;
+//! # let vertices = vec![
+//! #     vertex!([0.0, 0.0, 0.0]),
+//! #     vertex!([1.0, 0.0, 0.0]),
+//! #     vertex!([0.0, 1.0, 0.0]),
+//! #     vertex!([0.0, 0.0, 1.0]),
+//! # ];
+//! let mut dt: DelaunayTriangulation<_, (), (), 3> =
+//!     DelaunayTriangulation::new(&vertices).unwrap();
+//!
+//! assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+//! dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+//!
+//! // Now Level 3 includes vertex-link validation.
+//! dt.as_triangulation().is_valid().unwrap();
+//! ```
+//!
 //! ```rust
 //! use delaunay::prelude::*;
 //!
@@ -592,6 +622,7 @@ pub mod topology {
     pub use characteristics::*;
     pub use manifold::{
         ManifoldError, validate_closed_boundary, validate_facet_degree, validate_ridge_links,
+        validate_vertex_links,
     };
     pub use traits::*;
 }

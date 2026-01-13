@@ -78,7 +78,32 @@
 //! [`Vertex::is_valid()`]: crate::core::vertex::Vertex::is_valid
 //! [`Tds::is_valid()`]: crate::core::triangulation_data_structure::Tds::is_valid
 //! [`Tds::validate()`]: crate::core::triangulation_data_structure::Tds::validate
-
+//!
+//! ## Topology guarantees
+//!
+//! [`TopologyGuarantee`](crate::core::triangulation::TopologyGuarantee) selects which **manifoldness**
+//! invariants are checked by Level 3 topology validation.
+//!
+//! Whether these checks run automatically after insertion is controlled by
+//! [`ValidationPolicy`](crate::core::triangulation::ValidationPolicy).
+//!
+//! Level 3 validation always checks:
+//! - Codimension-1 facet degree (pseudomanifold condition: 1 boundary or 2 interior cells per facet)
+//! - Codimension-2 boundary manifoldness (closed boundary: "no boundary of boundary")
+//! - Connectedness (single connected component in the cell neighbor graph)
+//! - No isolated vertices (every vertex must be incident to at least one cell)
+//! - Euler characteristic
+//!
+//! With [`TopologyGuarantee::PLManifold`](crate::core::triangulation::TopologyGuarantee::PLManifold),
+//! Level 3 validation additionally checks the canonical **vertex-link** PL-manifoldness
+//! condition via [`crate::topology::manifold::validate_vertex_links`].
+//!
+//! Note: for **D=3**, the current vertex-link validator additionally enforces that each link
+//! has the Euler characteristic / boundary component counts of a sphere/ball (S²/B²).
+//! For **D≥4**, it currently checks that each vertex link is a connected (D−1)-manifold
+//! with the correct boundary behavior (a necessary condition), but does not attempt to
+//! distinguish spheres/balls from other manifolds (not sufficient in general).
+//!
 use core::iter::Sum;
 use core::ops::{AddAssign, Div, SubAssign};
 use std::borrow::Cow;
@@ -111,7 +136,7 @@ use crate::core::triangulation_data_structure::{
     CellKey, InvariantError, InvariantKind, InvariantViolation, Tds, TdsConstructionError,
     TdsMutationError, TdsValidationError, TriangulationValidationReport, VertexKey,
 };
-use crate::core::vertex::{Vertex, VertexBuilder};
+use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::quality::radius_ratio;
@@ -120,7 +145,7 @@ use crate::geometry::util::safe_scalar_to_f64;
 use crate::topology::characteristics::euler::TopologyClassification;
 use crate::topology::characteristics::validation::validate_triangulation_euler_with_facet_to_cells_map;
 use crate::topology::manifold::{
-    ManifoldError, validate_closed_boundary, validate_facet_degree, validate_ridge_links,
+    ManifoldError, validate_closed_boundary, validate_facet_degree, validate_vertex_links,
 };
 use crate::topology::traits::topological_space::TopologyError;
 
@@ -281,6 +306,27 @@ pub enum TriangulationValidationError {
         connected: bool,
     },
 
+    /// A vertex link is not a (D-1)-manifold (sphere/ball) as required for PL-manifoldness.
+    #[error(
+        "Vertex link is not a PL (D-1)-manifold: vertex {vertex_key:?} has link with {link_vertex_count} vertices, {link_cell_count} cells, boundary_facets={boundary_facet_count}, max_degree={max_degree}, connected={connected}, interior_vertex={interior_vertex}"
+    )]
+    VertexLinkNotManifold {
+        /// The vertex whose link failed validation.
+        vertex_key: VertexKey,
+        /// Number of vertices in the link (0-simplices of the link).
+        link_vertex_count: usize,
+        /// Number of (D-1)-simplices (cells) in the link.
+        link_cell_count: usize,
+        /// Number of boundary facets in the link (facets of degree 1).
+        boundary_facet_count: usize,
+        /// Maximum degree in the link 1-skeleton.
+        max_degree: usize,
+        /// Whether the link 1-skeleton is connected.
+        connected: bool,
+        /// Whether the vertex was classified as an interior vertex of the original complex.
+        interior_vertex: bool,
+    },
+
     /// Euler characteristic does not match the expected value for the classified topology.
     #[error(
         "Euler characteristic mismatch: computed χ={computed}, expected χ={expected} for {classification:?}"
@@ -337,6 +383,23 @@ impl From<ManifoldError> for TriangulationValidationError {
                 max_degree,
                 degree_one_vertices,
                 connected,
+            },
+            ManifoldError::VertexLinkNotManifold {
+                vertex_key,
+                link_vertex_count,
+                link_cell_count,
+                boundary_facet_count,
+                max_degree,
+                connected,
+                interior_vertex,
+            } => Self::VertexLinkNotManifold {
+                vertex_key,
+                link_vertex_count,
+                link_cell_count,
+                boundary_facet_count,
+                max_degree,
+                connected,
+                interior_vertex,
             },
         }
     }
@@ -425,11 +488,19 @@ impl Default for ValidationPolicy {
     }
 }
 
-/// Controls which topology invariants are enforced by Level 3 topology validation.
+/// Selects which topological invariants are checked by Level 3 validation.
 ///
-/// This is intentionally separate from [`ValidationPolicy`]:
-/// - `ValidationPolicy` controls **when** Level 3 validation runs automatically during insertion.
-/// - `TopologyGuarantee` controls **what** Level 3 validation checks.
+/// This enum specifies *what is checked* about the underlying simplicial complex when
+/// Level 3 validation runs. Whether Level 3 validation runs automatically after insertion
+/// is controlled by [`ValidationPolicy`].
+///
+/// - [`TopologyGuarantee::Pseudomanifold`] checks the codimension-1 adjacency condition:
+///   each facet is incident to one or two cells, and the codimension-2 boundary is closed.
+///   This is sufficient for many geometric algorithms but does not guarantee local Euclidean structure.
+///
+/// - [`TopologyGuarantee::PLManifold`] additionally checks the **vertex-link** condition
+///   (via [`crate::topology::manifold::validate_vertex_links`]), i.e. that the triangulation
+///   is a simplicial piecewise-linear (PL) manifold with boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TopologyGuarantee {
     /// Validate only the pseudomanifold / manifold-with-boundary invariants:
@@ -439,14 +510,29 @@ pub enum TopologyGuarantee {
 
     /// Validate PL-manifold invariants.
     ///
-    /// This includes all `Pseudomanifold` checks plus ridge-link validation.
+    /// This includes all `Pseudomanifold` checks plus vertex-link validation.
     PLManifold,
 }
 
 impl Default for TopologyGuarantee {
     #[inline]
     fn default() -> Self {
-        Self::Pseudomanifold
+        Self::DEFAULT
+    }
+}
+
+impl TopologyGuarantee {
+    /// The default topology guarantee used when constructing triangulations.
+    ///
+    /// This is a `const` alternative to `<Self as Default>::default()` for `const fn` constructors.
+    pub const DEFAULT: Self = Self::Pseudomanifold;
+
+    /// Returns `true` if this topology guarantee requires the full vertex-link
+    /// PL-manifoldness check.
+    #[inline]
+    #[must_use]
+    pub const fn requires_vertex_links(self) -> bool {
+        matches!(self, Self::PLManifold)
     }
 }
 
@@ -475,7 +561,7 @@ where
     // /// The topological space this triangulation lives in.
     // pub(crate) topology: Box<dyn TopologicalSpace>,
     pub(crate) validation_policy: ValidationPolicy,
-    pub(crate) manifold_validation_mode: TopologyGuarantee,
+    pub(crate) topology_guarantee: TopologyGuarantee,
 }
 
 // =============================================================================
@@ -576,21 +662,21 @@ where
             kernel,
             tds: Tds::empty(),
             validation_policy: ValidationPolicy::default(),
-            manifold_validation_mode: TopologyGuarantee::default(),
+            topology_guarantee: TopologyGuarantee::DEFAULT,
         }
     }
 
     /// Returns the topology guarantee used for Level 3 topology validation.
     #[inline]
     #[must_use]
-    pub const fn manifold_validation_mode(&self) -> TopologyGuarantee {
-        self.manifold_validation_mode
+    pub const fn topology_guarantee(&self) -> TopologyGuarantee {
+        self.topology_guarantee
     }
 
     /// Sets the topology guarantee used for Level 3 topology validation.
     #[inline]
-    pub const fn set_manifold_validation_mode(&mut self, mode: TopologyGuarantee) {
-        self.manifold_validation_mode = mode;
+    pub const fn set_topology_guarantee(&mut self, guarantee: TopologyGuarantee) {
+        self.topology_guarantee = guarantee;
     }
 
     /// Returns the number of times the topology safety-net recovered from a Level 3
@@ -611,7 +697,7 @@ where
             kernel,
             tds,
             validation_policy: ValidationPolicy::default(),
-            manifold_validation_mode: TopologyGuarantee::default(),
+            topology_guarantee: TopologyGuarantee::DEFAULT,
         }
     }
 
@@ -1564,7 +1650,7 @@ where
     /// This checks the triangulation/topology layer **only**:
     /// - Codimension-1 pseudomanifold condition: each facet is incident to 1 (boundary) or 2 (interior) cells
     /// - Codimension-2 boundary manifoldness: the boundary must be closed ("no boundary of boundary")
-    /// - PL-manifold ridge-link condition (when `manifold_validation_mode == TopologyGuarantee::PLManifold`)
+    /// - PL-manifold vertex-link condition (when `topology_guarantee.requires_vertex_links()`)
     /// - Connectedness (single component in the cell neighbor graph)
     /// - No isolated vertices (every vertex must be incident to at least one cell)
     /// - Euler characteristic
@@ -1610,9 +1696,9 @@ where
         // (i.e., its ridges must have degree 2 within boundary facets).
         validate_closed_boundary(&self.tds, &facet_to_cells)?;
 
-        // 1c. PL-manifold ridge-link condition (optional strict mode).
-        if self.manifold_validation_mode == TopologyGuarantee::PLManifold {
-            validate_ridge_links(&self.tds)?;
+        // 1c. PL-manifold vertex-link condition (optional strict mode).
+        if self.topology_guarantee.requires_vertex_links() {
+            validate_vertex_links(&self.tds, &facet_to_cells)?;
         }
 
         // 2. Connectedness (single component in the cell neighbor graph).
@@ -2140,7 +2226,20 @@ where
     {
         let mut stats = InsertionStatistics::default();
         let original_coords = *vertex.point().coords();
+        let original_uuid = vertex.uuid();
         let mut current_vertex = vertex;
+        let mut last_retryable_error: Option<InsertionError> = None;
+
+        // Anchor used to make perturbations depend only on relative geometry (translation-invariant).
+        //
+        // If we perturb based on absolute coordinate magnitudes, translating the whole input point set
+        // changes the perturbation scale and can lead to non-equivalent results. Using an anchor that
+        // translates with the triangulation makes the perturbation depend only on relative geometry.
+        let perturbation_anchor = self
+            .tds
+            .vertices()
+            .next()
+            .map_or(original_coords, |(_, v)| *v.point().coords());
 
         for attempt in 0..=max_perturbation_attempts {
             stats.attempts = attempt + 1;
@@ -2159,16 +2258,30 @@ where
                     4 => 2e-2,
                     _ => 5e-2, // 5% for attempt 5 and beyond
                 };
-                let epsilon = <K::Scalar as NumCast>::from(epsilon_value)
-                    .expect("Failed to convert perturbation scale");
+                let Some(epsilon) = <K::Scalar as NumCast>::from(epsilon_value) else {
+                    // We failed to convert the perturbation scale into the scalar type.
+                    //
+                    // This should not happen for our supported scalar types (`f32`, `f64`), but if it
+                    // does (e.g. with a custom scalar), we degrade gracefully by skipping this vertex
+                    // rather than aborting the whole insertion.
+                    stats.result = InsertionResult::SkippedDegeneracy;
+                    let error = last_retryable_error.unwrap_or_else(|| InsertionError::CavityFilling {
+                        message: format!(
+                            "Failed to convert perturbation scale {epsilon_value} into scalar type"
+                        ),
+                    });
+                    return Ok((InsertionOutcome::Skipped { error }, stats));
+                };
 
                 for (idx, coord) in perturbed_coords.iter_mut().enumerate() {
-                    let abs_coord = if *coord < K::Scalar::zero() {
-                        -*coord
+                    let delta = *coord - perturbation_anchor[idx];
+                    let abs_delta = if delta < K::Scalar::zero() {
+                        -delta
                     } else {
-                        *coord
+                        delta
                     };
-                    let perturbation_scale = epsilon * abs_coord.max(K::Scalar::one());
+
+                    let perturbation_scale = epsilon * abs_delta.max(K::Scalar::one());
                     let perturbation = if (attempt + idx) % 2 == 0 {
                         perturbation_scale
                     } else {
@@ -2177,21 +2290,11 @@ where
                     *coord += perturbation;
                 }
 
-                current_vertex = vertex.data.map_or_else(
-                    || {
-                        VertexBuilder::default()
-                            .point(Point::new(perturbed_coords))
-                            .build()
-                            .expect("Failed to build perturbed vertex")
-                    },
-                    |data| {
-                        VertexBuilder::default()
-                            .point(Point::new(perturbed_coords))
-                            .data(data)
-                            .build()
-                            .expect("Failed to build perturbed vertex")
-                    },
-                );
+                // Preserve the caller-provided vertex UUID across perturbation retries.
+                // This ensures the inserted vertex retains its original identity even if we have
+                // to retry with perturbed coordinates.
+                current_vertex =
+                    Vertex::new_with_uuid(Point::new(perturbed_coords), original_uuid, vertex.data);
             }
 
             // Clone TDS for rollback (transactional semantics)
@@ -2240,6 +2343,7 @@ where
                     let is_retryable = e.is_retryable();
 
                     if is_retryable && attempt < max_perturbation_attempts {
+                        last_retryable_error = Some(e.clone());
                         #[cfg(debug_assertions)]
                         eprintln!(
                             "RETRYING: Attempt {} failed with: {e}. Applying perturbation...",
@@ -3494,13 +3598,14 @@ mod tests {
     use super::*;
     use crate::core::collections::NeighborBuffer;
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
-    use crate::core::facet::facet_key_from_vertices;
     use crate::core::vertex::VertexBuilder;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::topology::characteristics::validation::validate_triangulation_euler;
     use crate::vertex;
+
+    use slotmap::KeyData;
 
     #[test]
     fn test_triangulation_validation_error_from_manifold_error_preserves_detail() {
@@ -3553,46 +3658,55 @@ mod tests {
                 connected: false
             }
         ));
+
+        assert!(matches!(
+            TriangulationValidationError::from(ManifoldError::VertexLinkNotManifold {
+                vertex_key: VertexKey::from(KeyData::from_ffi(1)),
+                link_vertex_count: 3,
+                link_cell_count: 4,
+                boundary_facet_count: 1,
+                max_degree: 2,
+                connected: false,
+                interior_vertex: true,
+            }),
+            TriangulationValidationError::VertexLinkNotManifold {
+                link_vertex_count: 3,
+                link_cell_count: 4,
+                boundary_facet_count: 1,
+                max_degree: 2,
+                connected: false,
+                interior_vertex: true,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn test_triangulation_new_empty_and_new_with_tds_default_to_pseudomanifold() {
         let tri: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_empty(FastKernel::new());
-        assert_eq!(
-            tri.manifold_validation_mode(),
-            TopologyGuarantee::Pseudomanifold
-        );
+        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
 
         let tri_with_tds: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_with_tds(FastKernel::new(), Tds::<f64, (), (), 2>::empty());
         assert_eq!(
-            tri_with_tds.manifold_validation_mode(),
+            tri_with_tds.topology_guarantee(),
             TopologyGuarantee::Pseudomanifold
         );
     }
 
     #[test]
-    fn test_triangulation_set_manifold_validation_mode_round_trips() {
+    fn test_triangulation_set_topology_guarantee_round_trips() {
         let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_empty(FastKernel::new());
 
-        assert_eq!(
-            tri.manifold_validation_mode(),
-            TopologyGuarantee::Pseudomanifold
-        );
+        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
 
-        tri.set_manifold_validation_mode(TopologyGuarantee::PLManifold);
-        assert_eq!(
-            tri.manifold_validation_mode(),
-            TopologyGuarantee::PLManifold
-        );
+        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::PLManifold);
 
-        tri.set_manifold_validation_mode(TopologyGuarantee::Pseudomanifold);
-        assert_eq!(
-            tri.manifold_validation_mode(),
-            TopologyGuarantee::Pseudomanifold
-        );
+        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
     }
 
     /// Macro to generate `build_initial_simplex` tests across dimensions.
@@ -3864,24 +3978,111 @@ mod tests {
             ))
         ));
 
-        tri.set_manifold_validation_mode(TopologyGuarantee::PLManifold);
+        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
-        let expected_ridge_key = facet_key_from_vertices(&[v0]);
+        // In PL-manifold mode, Level 3 validation performs the canonical vertex-link check and
+        // fails before connectedness.
+        match tri.is_valid() {
+            Err(TriangulationValidationError::VertexLinkNotManifold {
+                vertex_key,
+                link_vertex_count,
+                link_cell_count,
+                boundary_facet_count,
+                max_degree,
+                connected,
+                interior_vertex,
+            }) => {
+                assert_eq!(vertex_key, v0);
+                assert!(interior_vertex);
+                assert!(link_vertex_count > 0);
+                assert!(link_cell_count > 0);
+                assert_eq!(boundary_facet_count, 0);
+                assert_eq!(max_degree, 2);
+                assert!(!connected);
+            }
+            other => panic!("Expected VertexLinkNotManifold in PL-manifold mode, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_is_valid_pl_manifold_mode_rejects_cone_on_torus_in_3d_even_when_cell_graph_connected() {
+        // Cone over a triangulated torus:
+        // - The 3D cell neighbor graph is connected.
+        // - Facet-degree and closed-boundary checks pass.
+        // - But the apex has link T^2 (χ=0), so PL-manifold vertex-link validation must fail.
+        const N: usize = 3;
+        const M: usize = 3;
+
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+
+        let mut v: [[VertexKey; M]; N] = [[VertexKey::from(KeyData::from_ffi(0)); M]; N];
+        for (i, row) in v.iter_mut().enumerate() {
+            for (j, slot) in row.iter_mut().enumerate() {
+                let i_f = <f64 as std::convert::From<u32>>::from(u32::try_from(i).unwrap());
+                let j_f = <f64 as std::convert::From<u32>>::from(u32::try_from(j).unwrap());
+                *slot = tds
+                    .insert_vertex_with_mapping(vertex!([i_f, j_f, 0.0]))
+                    .unwrap();
+            }
+        }
+
+        let apex = tds
+            .insert_vertex_with_mapping(vertex!([0.5, 0.5, 1.0]))
+            .unwrap();
+
+        for i in 0..N {
+            for j in 0..M {
+                let i1 = (i + 1) % N;
+                let j1 = (j + 1) % M;
+
+                let v00 = v[i][j];
+                let v10 = v[i1][j];
+                let v01 = v[i][j1];
+                let v11 = v[i1][j1];
+
+                for tri in [[v00, v10, v01], [v10, v11, v01]] {
+                    let _ = tds
+                        .insert_cell_with_mapping(
+                            Cell::new(vec![tri[0], tri[1], tri[2], apex], None).unwrap(),
+                        )
+                        .unwrap();
+                }
+            }
+        }
+
+        repair_neighbor_pointers(&mut tds).unwrap();
+
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
+
+        // Sanity: the cell neighbor graph is connected.
+        tri.validate_global_connectedness().unwrap();
+
+        // Sanity: pseudomanifold-with-boundary checks pass.
+        let facet_to_cells = tri.tds.build_facet_to_cells_map().unwrap();
+        validate_facet_degree(&facet_to_cells).unwrap();
+        validate_closed_boundary(&tri.tds, &facet_to_cells).unwrap();
+
+        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
         match tri.is_valid() {
-            Err(TriangulationValidationError::RidgeLinkNotManifold {
-                ridge_key,
+            Err(TriangulationValidationError::VertexLinkNotManifold {
+                vertex_key,
+                link_vertex_count,
+                link_cell_count,
+                boundary_facet_count,
                 connected,
-                degree_one_vertices,
-                max_degree,
+                interior_vertex,
                 ..
             }) => {
-                assert_eq!(ridge_key, expected_ridge_key);
-                assert!(!connected);
-                assert_eq!(degree_one_vertices, 0);
-                assert_eq!(max_degree, 2);
+                assert_eq!(vertex_key, apex);
+                assert!(interior_vertex);
+                assert!(connected);
+                assert_eq!(boundary_facet_count, 0);
+                assert!(link_vertex_count > 0);
+                assert!(link_cell_count > 0);
             }
-            other => panic!("Expected RidgeLinkNotManifold in PL-manifold mode, got {other:?}"),
+            other => panic!("Expected VertexLinkNotManifold for cone apex, got {other:?}"),
         }
     }
 

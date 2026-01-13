@@ -1,10 +1,10 @@
 # Clippy configuration for the delaunay crate
 # This ensures consistent configuration across all developers and IDEs
 
-# Minimum Supported Rust Version - matches WARP.md and Cargo.toml
+# Minimum Supported Rust Version - matches AGENTS.md and Cargo.toml
 msrv = "1.92.0"
 
-# Note: Lint levels are controlled via command-line flags in WARP.md:
+# Note: Lint levels are controlled via command-line flags in AGENTS.md:
 # cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 #
 # This file contains configuration options that Clippy supports.

@@ -1867,6 +1867,63 @@ where
         removed_count
     }
 
+    /// Repairs locally degenerate cells by removing them and clearing dangling references
+    /// (neighbor back-references + `incident_cell` pointers).
+    ///
+    /// This is a narrowly scoped repair primitive intended for test-only usage
+    /// (including bench-feature tests).
+    ///
+    /// A cell is treated as degenerate if it:
+    /// - fails basic per-cell validity (`Cell::is_valid()`),
+    /// - references a missing vertex key, or
+    /// - contains a neighbor pointer to a missing cell key.
+    ///
+    /// This method does **not** retriangulate cavities, insert new cells, or attempt to repair
+    /// geometric degeneracy. It only removes cells and relies on [`Tds::remove_cells_by_keys`]
+    /// to clear neighbor back-references and repair `incident_cell` pointers.
+    ///
+    /// Returns the number of cells removed.
+    #[cfg(test)]
+    pub(crate) fn repair_degenerate_cells(&mut self) -> usize {
+        if self.cells.is_empty() {
+            return 0;
+        }
+
+        // Collect keys first (cannot mutate while iterating).
+        let mut to_remove: Vec<CellKey> = Vec::new();
+
+        for (cell_key, cell) in self.cells() {
+            if cell.is_valid().is_err() {
+                to_remove.push(cell_key);
+                continue;
+            }
+
+            if cell
+                .vertices()
+                .iter()
+                .any(|&vkey| !self.vertices.contains_key(vkey))
+            {
+                to_remove.push(cell_key);
+                continue;
+            }
+
+            if cell.neighbors().is_some_and(|neighbors| {
+                neighbors
+                    .iter()
+                    .flatten()
+                    .any(|&neighbor_key| !self.cells.contains_key(neighbor_key))
+            }) {
+                to_remove.push(cell_key);
+            }
+        }
+
+        if to_remove.is_empty() {
+            return 0;
+        }
+
+        self.remove_cells_by_keys(&to_remove)
+    }
+
     fn collect_removal_frontier_and_clear_neighbor_back_references(
         &mut self,
         cell_keys: &[CellKey],
@@ -4055,6 +4112,66 @@ mod tests {
     // =============================================================================
     // VERTEX ADDITION TESTS - CONSOLIDATED
     // =============================================================================
+
+    #[test]
+    fn test_repair_degenerate_cells() {
+        // Exercise the repair primitive by creating a cell with a neighbor pointer
+        // to a missing cell key.
+        use crate::core::cell::Cell;
+
+        let vertices = [
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_keys: Vec<_> = vertices
+            .iter()
+            .copied()
+            .map(|v| tds.insert_vertex_with_mapping(v).unwrap())
+            .collect();
+
+        // A valid cell that should remain after repair.
+        let good_cell = Cell::new(vec![v_keys[0], v_keys[1], v_keys[2]], None).unwrap();
+        let good_cell_key = tds.insert_cell_with_mapping(good_cell).unwrap();
+
+        // A second cell that will be made degenerate.
+        let bad_cell = Cell::new(vec![v_keys[0], v_keys[1], v_keys[3]], None).unwrap();
+        let bad_cell_key = tds.insert_cell_with_mapping(bad_cell).unwrap();
+
+        // Insert and then remove a third cell so we get a real CellKey that no longer exists.
+        // Removing *after* inserting bad_cell avoids key reuse affecting the test.
+        let removed_target_cell = Cell::new(vec![v_keys[1], v_keys[2], v_keys[3]], None).unwrap();
+        let removed_target_key = tds.insert_cell_with_mapping(removed_target_cell).unwrap();
+        assert!(tds.remove_cell_by_key(removed_target_key).is_some());
+
+        // Inject a dangling neighbor pointer using cells_mut() (violates invariants deliberately).
+        {
+            let bad_cell_mut = tds.cells_mut().get_mut(bad_cell_key).unwrap();
+            let mut neighbors = crate::core::collections::NeighborBuffer::new();
+            neighbors.push(Some(removed_target_key));
+            neighbors.push(None);
+            neighbors.push(None);
+            bad_cell_mut.neighbors = Some(neighbors);
+        }
+
+        let removed_count = tds.repair_degenerate_cells();
+        assert_eq!(
+            removed_count, 1,
+            "Expected exactly 1 degenerate cell removed (bad_cell with dangling neighbor), got {removed_count}",
+        );
+
+        assert_eq!(tds.number_of_cells(), 1);
+        assert!(tds.cells.contains_key(good_cell_key));
+        assert!(!tds.cells.contains_key(bad_cell_key));
+
+        assert_eq!(tds.repair_degenerate_cells(), 0);
+        assert!(tds.is_valid().is_ok());
+
+        println!("✓ repair_degenerate_cells removes cells with dangling neighbor pointers");
+    }
 
     #[test]
     #[expect(

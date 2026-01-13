@@ -29,6 +29,7 @@ lightweight alternative to [CGAL] for the [Rust] ecosystem.
 - [x]  Geometry quality metrics for simplices: radius ratio and normalized volume (dimension-agnostic)
 - [x]  Serialization/Deserialization of all data structures to/from [JSON]
 - [x]  Tested for 2-, 3-, 4-, and 5-dimensional triangulations
+- [x]  Local topology validation ([Pseudomanifold] default, [PL-manifold] opt-in)
 
 See [CHANGELOG.md](CHANGELOG.md) for details.
 
@@ -58,6 +59,24 @@ For details, see: [Issue #120 Investigation](docs/issue_120_investigation.md)
 - **Level 3** (`dt.as_triangulation().is_valid()`) - Manifold topology + Euler characteristic
 - **Level 4** (`dt.is_valid()`) - Delaunay property only (may fail in rare cases per Issue #120)
 - **All levels (1–4)** (`dt.validate()`) - Elements + structure + topology + Delaunay property
+
+Level 3 topology validation is parameterized by `TopologyGuarantee` (default: `Pseudomanifold`).
+To enable stricter PL-manifold checks, set `TopologyGuarantee::PLManifold` (adds vertex-link validation).
+
+During incremental insertion, the automatic Level 3 validation pass is controlled by
+`ValidationPolicy` (default: `OnSuspicion`).
+
+```rust
+use delaunay::prelude::*;
+
+let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+
+// Strictest topology checks (adds vertex-link validation):
+dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+
+// In tests/debugging, validate Level 3 after every insertion:
+dt.set_validation_policy(ValidationPolicy::Always);
+```
 
 For applications requiring strict Delaunay guarantees:
 
@@ -135,7 +154,7 @@ This includes information about:
 ## 📖 Documentation
 
 - **[Code Organization](docs/code_organization.md)** - Project structure and module patterns
-- **[Topology Guide](docs/topology.md)** - Topological concepts and Euler characteristic
+- **[Topology integration design](docs/topology.md)** - Design notes on topology integration (includes historical sections)
 - **[Validation Guide](docs/validation.md)** - Comprehensive 4-level validation hierarchy guide (element → structural → manifold → Delaunay)
 - **[Issue #120 Investigation](docs/issue_120_investigation.md)** - Known Delaunay property limitations
 
@@ -143,14 +162,22 @@ This includes information about:
 
 For a comprehensive list of academic references and bibliographic citations used throughout the library, see [REFERENCES.md](REFERENCES.md).
 
-> Portions of this library were developed with the assistance of these AI tools:
->
-> - [ChatGPT]
-> - [Claude]
-> - [CodeRabbit]
-> - [GitHub Copilot]
-> - [KiloCode]
-> - [WARP](WARP.md)
+## 🤖 AI Agents
+
+This repository contains an `AGENTS.md` file, which defines the canonical rules and invariants
+for all AI coding assistants and autonomous agents working on this codebase.
+
+AI tools (including ChatGPT, Claude, GitHub Copilot, Cursor, Warp, and CI repair agents) are
+expected to read and follow `AGENTS.md` when proposing or applying changes.
+
+Portions of this library were developed with the assistance of these AI tools:
+
+- [ChatGPT]
+- [Claude]
+- [CodeRabbit]
+- [GitHub Copilot]
+- [KiloCode]
+- [WARP]
 >
 > All code was written and/or reviewed and validated by the author.
 
@@ -168,3 +195,6 @@ For a comprehensive list of academic references and bibliographic citations used
 [CodeRabbit]: https://coderabbit.ai/
 [GitHub Copilot]: https://github.com/features/copilot
 [KiloCode]: https://kilocode.ai/
+[WARP]: https://www.warp.dev
+[Pseudomanifold]: https://grokipedia.com/page/Pseudomanifold
+[PL-manifold]: https://grokipedia.com/page/Piecewise_linear_manifold
