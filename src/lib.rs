@@ -188,7 +188,7 @@
 //! - [`TopologyGuarantee::Pseudomanifold`](crate::core::triangulation::TopologyGuarantee::Pseudomanifold)
 //!   (default): facet degree + closed boundary + connectedness + isolated-vertex + Euler characteristic checks.
 //! - [`TopologyGuarantee::PLManifold`](crate::core::triangulation::TopologyGuarantee::PLManifold):
-//!   additionally runs ridge-link validation (strict mode).
+//!   additionally runs vertex-link validation (strict mode).
 //!
 //! ```rust
 //! use delaunay::prelude::*;
@@ -204,7 +204,7 @@
 //! assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
 //! dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
 //!
-//! // Now Level 3 includes ridge-link validation.
+//! // Now Level 3 includes vertex-link validation.
 //! dt.as_triangulation().is_valid().unwrap();
 //! ```
 //!
@@ -622,6 +622,7 @@ pub mod topology {
     pub use characteristics::*;
     pub use manifold::{
         ManifoldError, validate_closed_boundary, validate_facet_degree, validate_ridge_links,
+        validate_vertex_links,
     };
     pub use traits::*;
 }

@@ -95,8 +95,8 @@
 //! - Euler characteristic
 //!
 //! With [`TopologyGuarantee::PLManifold`](crate::core::triangulation::TopologyGuarantee::PLManifold),
-//! Level 3 validation additionally checks codimension-2 ridge-link manifoldness via
-//! [`crate::topology::manifold`].
+//! Level 3 validation additionally checks the canonical **vertex-link** PL-manifoldness
+//! condition via [`crate::topology::manifold::validate_vertex_links`].
 //!
 use core::iter::Sum;
 use core::ops::{AddAssign, Div, SubAssign};
@@ -139,7 +139,7 @@ use crate::geometry::util::safe_scalar_to_f64;
 use crate::topology::characteristics::euler::TopologyClassification;
 use crate::topology::characteristics::validation::validate_triangulation_euler_with_facet_to_cells_map;
 use crate::topology::manifold::{
-    ManifoldError, validate_closed_boundary, validate_facet_degree, validate_ridge_links,
+    ManifoldError, validate_closed_boundary, validate_facet_degree, validate_vertex_links,
 };
 use crate::topology::traits::topological_space::TopologyError;
 
@@ -300,6 +300,27 @@ pub enum TriangulationValidationError {
         connected: bool,
     },
 
+    /// A vertex link is not a (D-1)-manifold (sphere/ball) as required for PL-manifoldness.
+    #[error(
+        "Vertex link is not a PL (D-1)-manifold: vertex {vertex_key:?} has link with {link_vertex_count} vertices, {link_cell_count} cells, boundary_facets={boundary_facet_count}, max_degree={max_degree}, connected={connected}, interior_vertex={interior_vertex}"
+    )]
+    VertexLinkNotManifold {
+        /// The vertex whose link failed validation.
+        vertex_key: VertexKey,
+        /// Number of vertices in the link (0-simplices of the link).
+        link_vertex_count: usize,
+        /// Number of (D-1)-simplices (cells) in the link.
+        link_cell_count: usize,
+        /// Number of boundary facets in the link (facets of degree 1).
+        boundary_facet_count: usize,
+        /// Maximum degree in the link 1-skeleton.
+        max_degree: usize,
+        /// Whether the link 1-skeleton is connected.
+        connected: bool,
+        /// Whether the vertex was classified as an interior vertex of the original complex.
+        interior_vertex: bool,
+    },
+
     /// Euler characteristic does not match the expected value for the classified topology.
     #[error(
         "Euler characteristic mismatch: computed χ={computed}, expected χ={expected} for {classification:?}"
@@ -356,6 +377,23 @@ impl From<ManifoldError> for TriangulationValidationError {
                 max_degree,
                 degree_one_vertices,
                 connected,
+            },
+            ManifoldError::VertexLinkNotManifold {
+                vertex_key,
+                link_vertex_count,
+                link_cell_count,
+                boundary_facet_count,
+                max_degree,
+                connected,
+                interior_vertex,
+            } => Self::VertexLinkNotManifold {
+                vertex_key,
+                link_vertex_count,
+                link_cell_count,
+                boundary_facet_count,
+                max_degree,
+                connected,
+                interior_vertex,
             },
         }
     }
@@ -454,8 +492,8 @@ impl Default for ValidationPolicy {
 ///   each facet is incident to one or two cells, and the codimension-2 boundary is closed.
 ///   This is sufficient for many geometric algorithms but does not guarantee local Euclidean structure.
 ///
-/// - [`TopologyGuarantee::PLManifold`] additionally checks codimension-2 link
-///   manifoldness (via ridge-link validation), i.e. that the triangulation
+/// - [`TopologyGuarantee::PLManifold`] additionally checks the **vertex-link** condition
+///   (via [`crate::topology::manifold::validate_vertex_links`]), i.e. that the triangulation
 ///   is a simplicial piecewise-linear (PL) manifold with boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TopologyGuarantee {
@@ -466,7 +504,7 @@ pub enum TopologyGuarantee {
 
     /// Validate PL-manifold invariants.
     ///
-    /// This includes all `Pseudomanifold` checks plus ridge-link validation.
+    /// This includes all `Pseudomanifold` checks plus vertex-link validation.
     PLManifold,
 }
 
@@ -483,11 +521,11 @@ impl TopologyGuarantee {
     /// This is a `const` alternative to `<Self as Default>::default()` for `const fn` constructors.
     pub const DEFAULT: Self = Self::Pseudomanifold;
 
-    /// Returns `true` if this topology guarantee requires full codimension-2
-    /// ridge-link manifoldness checks.
+    /// Returns `true` if this topology guarantee requires the full vertex-link
+    /// PL-manifoldness check.
     #[inline]
     #[must_use]
-    pub const fn requires_ridge_links(self) -> bool {
+    pub const fn requires_vertex_links(self) -> bool {
         matches!(self, Self::PLManifold)
     }
 }
@@ -1606,7 +1644,7 @@ where
     /// This checks the triangulation/topology layer **only**:
     /// - Codimension-1 pseudomanifold condition: each facet is incident to 1 (boundary) or 2 (interior) cells
     /// - Codimension-2 boundary manifoldness: the boundary must be closed ("no boundary of boundary")
-    /// - PL-manifold ridge-link condition (when `topology_guarantee.requires_ridge_links()`)
+    /// - PL-manifold vertex-link condition (when `topology_guarantee.requires_vertex_links()`)
     /// - Connectedness (single component in the cell neighbor graph)
     /// - No isolated vertices (every vertex must be incident to at least one cell)
     /// - Euler characteristic
@@ -1652,9 +1690,9 @@ where
         // (i.e., its ridges must have degree 2 within boundary facets).
         validate_closed_boundary(&self.tds, &facet_to_cells)?;
 
-        // 1c. PL-manifold ridge-link condition (optional strict mode).
-        if self.topology_guarantee.requires_ridge_links() {
-            validate_ridge_links(&self.tds)?;
+        // 1c. PL-manifold vertex-link condition (optional strict mode).
+        if self.topology_guarantee.requires_vertex_links() {
+            validate_vertex_links(&self.tds, &facet_to_cells)?;
         }
 
         // 2. Connectedness (single component in the cell neighbor graph).
@@ -3554,13 +3592,14 @@ mod tests {
     use super::*;
     use crate::core::collections::NeighborBuffer;
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
-    use crate::core::facet::facet_key_from_vertices;
     use crate::core::vertex::VertexBuilder;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::topology::characteristics::validation::validate_triangulation_euler;
     use crate::vertex;
+
+    use slotmap::KeyData;
 
     #[test]
     fn test_triangulation_validation_error_from_manifold_error_preserves_detail() {
@@ -3611,6 +3650,27 @@ mod tests {
                 max_degree: 3,
                 degree_one_vertices: 2,
                 connected: false
+            }
+        ));
+
+        assert!(matches!(
+            TriangulationValidationError::from(ManifoldError::VertexLinkNotManifold {
+                vertex_key: VertexKey::from(KeyData::from_ffi(1)),
+                link_vertex_count: 3,
+                link_cell_count: 4,
+                boundary_facet_count: 1,
+                max_degree: 2,
+                connected: false,
+                interior_vertex: true,
+            }),
+            TriangulationValidationError::VertexLinkNotManifold {
+                link_vertex_count: 3,
+                link_cell_count: 4,
+                boundary_facet_count: 1,
+                max_degree: 2,
+                connected: false,
+                interior_vertex: true,
+                ..
             }
         ));
     }
@@ -3914,22 +3974,27 @@ mod tests {
 
         tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
-        let expected_ridge_key = facet_key_from_vertices(&[v0]);
-
+        // In PL-manifold mode, Level 3 validation performs the canonical vertex-link check and
+        // fails before connectedness.
         match tri.is_valid() {
-            Err(TriangulationValidationError::RidgeLinkNotManifold {
-                ridge_key,
-                connected,
-                degree_one_vertices,
+            Err(TriangulationValidationError::VertexLinkNotManifold {
+                vertex_key,
+                link_vertex_count,
+                link_cell_count,
+                boundary_facet_count,
                 max_degree,
-                ..
+                connected,
+                interior_vertex,
             }) => {
-                assert_eq!(ridge_key, expected_ridge_key);
-                assert!(!connected);
-                assert_eq!(degree_one_vertices, 0);
+                assert_eq!(vertex_key, v0);
+                assert!(interior_vertex);
+                assert_eq!(link_vertex_count, 6);
+                assert_eq!(link_cell_count, 6);
+                assert_eq!(boundary_facet_count, 0);
                 assert_eq!(max_degree, 2);
+                assert!(!connected);
             }
-            other => panic!("Expected RidgeLinkNotManifold in PL-manifold mode, got {other:?}"),
+            other => panic!("Expected VertexLinkNotManifold in PL-manifold mode, got {other:?}"),
         }
     }
 

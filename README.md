@@ -29,6 +29,7 @@ lightweight alternative to [CGAL] for the [Rust] ecosystem.
 - [x]  Geometry quality metrics for simplices: radius ratio and normalized volume (dimension-agnostic)
 - [x]  Serialization/Deserialization of all data structures to/from [JSON]
 - [x]  Tested for 2-, 3-, 4-, and 5-dimensional triangulations
+- [x]  Local topology validation ([Pseudomanifold] default, [PL-manifold] opt-in)
 
 See [CHANGELOG.md](CHANGELOG.md) for details.
 
@@ -60,7 +61,7 @@ For details, see: [Issue #120 Investigation](docs/issue_120_investigation.md)
 - **All levels (1–4)** (`dt.validate()`) - Elements + structure + topology + Delaunay property
 
 Level 3 topology validation is parameterized by `TopologyGuarantee` (default: `Pseudomanifold`).
-To enable stricter PL-manifold checks, set `TopologyGuarantee::PLManifold` (adds ridge-link validation).
+To enable stricter PL-manifold checks, set `TopologyGuarantee::PLManifold` (adds vertex-link validation).
 
 During incremental insertion, the automatic Level 3 validation pass is controlled by
 `ValidationPolicy` (default: `OnSuspicion`).
@@ -70,7 +71,7 @@ use delaunay::prelude::*;
 
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 
-// Strictest topology checks (adds ridge-link validation):
+// Strictest topology checks (adds vertex-link validation):
 dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
 // In tests/debugging, validate Level 3 after every insertion:
@@ -186,3 +187,5 @@ For a comprehensive list of academic references and bibliographic citations used
 [CodeRabbit]: https://coderabbit.ai/
 [GitHub Copilot]: https://github.com/features/copilot
 [KiloCode]: https://kilocode.ai/
+[Pseudomanifold]: https://grokipedia.com/page/Pseudomanifold
+[PL-manifold]: https://grokipedia.com/page/Piecewise_linear_manifold

@@ -1,7 +1,7 @@
 //! # PL-Manifold Validation (Topology Only)
 //!
-//! This module implements *topological* (combinatorial) invariants that are sufficient
-//! to guarantee that a finite simplicial complex is a **piecewise-linear (PL) manifold
+//! This module implements *topological* (combinatorial) invariants that are useful
+//! for certifying that a finite simplicial complex is a **piecewise-linear (PL) manifold
 //! with boundary**, assuming the underlying triangulation data structure (TDS) is
 //! structurally consistent.
 //!
@@ -28,9 +28,16 @@
 //! - [`validate_closed_boundary`]
 //! - [`validate_ridge_links`]
 //!
-//! Together, they are **sufficient** to guarantee that the link of *every* simplex
-//! (including vertices) is a sphere or ball of the appropriate dimension, which is the
-//! defining property of a PL-manifold.
+//! These conditions are necessary and catch many common non-manifold singularities, but they
+//! are **not sufficient** in general (for D≥3) to certify full PL-manifoldness.
+//!
+//! To certify that `K` is a **PL-manifold with boundary**, the canonical condition is:
+//!
+//! 4. **Vertex-link condition (canonical PL-manifold test)**
+//!    For every vertex `v`, the link `Lk(v)` is a (D−1)-sphere if `v` is an interior vertex,
+//!    or a (D−1)-ball if `v` lies on the boundary.
+//!
+//! This condition is enforced by [`validate_vertex_links`].
 //!
 //! ## What is *not* checked here
 //!
@@ -45,14 +52,18 @@
 //! - Global invariants (Euler characteristic, classification) live in
 //!   `topology::characteristics`
 //!
-//! ## Why ridge links instead of vertex links?
+//! ## Ridge links vs vertex links
 //!
-//! Although PL-manifoldness is often defined in terms of **vertex links**, it is a
-//! classical result that for simplicial complexes it is sufficient to verify
-//! manifoldness of links in codimensions 1 and 2. In practice, validating **ridge links**
-//! is both stronger and more efficient than attempting to classify vertex links directly,
-//! and avoids false positives that can arise from scalar invariants such as Euler
-//! characteristic alone.
+//! PL-manifoldness is canonically defined in terms of **vertex links**. This module provides
+//! both:
+//!
+//! - **Ridge-link validation** ([`validate_ridge_links`]) as an efficient, highly-local check
+//!   that detects many codimension-2 branching/wedge singularities.
+//! - **Vertex-link validation** ([`validate_vertex_links`]) as the definitive (topological)
+//!   certificate for PL-manifoldness.
+//!
+//! In debug/test builds, or when a strong `TopologyGuarantee` is requested, callers should
+//! prefer running [`validate_vertex_links`] (optionally in addition to ridge links).
 //!
 //! ## References
 //!
@@ -140,6 +151,26 @@ pub enum ManifoldError {
         degree_one_vertices: usize,
         /// Whether the link graph is connected.
         connected: bool,
+    },
+    /// A vertex link is not a (D-1)-manifold (sphere/ball) as required for PL-manifoldness.
+    #[error(
+        "Vertex link is not a PL (D-1)-manifold: vertex {vertex_key:?} has link with {link_vertex_count} vertices, {link_cell_count} cells, boundary_facets={boundary_facet_count}, max_degree={max_degree}, connected={connected}, interior_vertex={interior_vertex}"
+    )]
+    VertexLinkNotManifold {
+        /// The vertex whose link failed validation.
+        vertex_key: VertexKey,
+        /// Number of vertices in the link (0-simplices of the link).
+        link_vertex_count: usize,
+        /// Number of (D-1)-simplices (cells) in the link.
+        link_cell_count: usize,
+        /// Number of boundary facets in the link (facets of degree 1).
+        boundary_facet_count: usize,
+        /// Maximum degree in the link 1-skeleton.
+        max_degree: usize,
+        /// Whether the link 1-skeleton is connected.
+        connected: bool,
+        /// Whether the vertex was classified as an interior vertex of the original complex.
+        interior_vertex: bool,
     },
 }
 
@@ -326,6 +357,114 @@ where
     Ok(())
 }
 
+/// Computes the star of a simplex (a set of vertices) as the set of incident D-cells.
+///
+/// This is a local combinatorial query intended for reuse by topology validation and
+/// (future) local topology mutations (e.g. bistellar flips).
+///
+/// This helper does **not** call `tds.is_valid()`; it performs lightweight checks and
+/// returns [`ManifoldError::Tds`] if the underlying TDS is internally inconsistent.
+fn simplex_star_cells<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    simplex_vertices: &[VertexKey],
+) -> Result<SmallBuffer<CellKey, 8>, ManifoldError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    if simplex_vertices.is_empty() {
+        return Err(TdsValidationError::InconsistentDataStructure {
+            message: "Simplex must contain at least one vertex".to_string(),
+        }
+        .into());
+    }
+
+    // Defensive: ensure all simplex vertices exist in the vertex store.
+    //
+    // Note: This is cheaper than `tds.is_valid()` and provides a clearer error when
+    // callers use this helper on stale keys.
+    for &vk in simplex_vertices {
+        if !tds.contains_vertex_key(vk) {
+            return Err(TdsValidationError::InconsistentDataStructure {
+                message: format!("Simplex vertex {vk:?} not found in vertices storage map"),
+            }
+            .into());
+        }
+    }
+
+    // Use the first simplex vertex to get a small candidate set (local star walk when possible).
+    let candidates: CellKeySet = tds.find_cells_containing_vertex_by_key(simplex_vertices[0]);
+
+    let mut star_cells: SmallBuffer<CellKey, 8> = SmallBuffer::with_capacity(candidates.len());
+
+    for cell_key in candidates {
+        let cell_vertices = tds.get_cell_vertices(cell_key)?;
+        if simplex_vertices
+            .iter()
+            .all(|&sv| cell_vertices.contains(&sv))
+        {
+            star_cells.push(cell_key);
+        }
+    }
+
+    Ok(star_cells)
+}
+
+/// Computes the link simplices induced by a simplex star.
+///
+/// For each incident D-cell, this returns the complementary vertex set (the vertices in the
+/// D-cell that are not in `simplex_vertices`). This is the standard combinatorial definition of
+/// the link of a simplex in a pure simplicial complex.
+fn simplex_link_simplices_from_star<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    simplex_vertices: &[VertexKey],
+    star_cells: &[CellKey],
+) -> Result<SmallBuffer<VertexKeyBuffer, 8>, ManifoldError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    if simplex_vertices.is_empty() {
+        return Err(TdsValidationError::InconsistentDataStructure {
+            message: "Simplex must contain at least one vertex".to_string(),
+        }
+        .into());
+    }
+
+    let expected_link_vertices = (D + 1).saturating_sub(simplex_vertices.len());
+
+    let mut link_simplices: SmallBuffer<VertexKeyBuffer, 8> =
+        SmallBuffer::with_capacity(star_cells.len());
+
+    for &cell_key in star_cells {
+        let cell_vertices = tds.get_cell_vertices(cell_key)?;
+
+        let mut link_vertices: VertexKeyBuffer =
+            VertexKeyBuffer::with_capacity(expected_link_vertices);
+        for &vk in &cell_vertices {
+            if !simplex_vertices.contains(&vk) {
+                link_vertices.push(vk);
+            }
+        }
+
+        if link_vertices.len() != expected_link_vertices {
+            return Err(TdsValidationError::InconsistentDataStructure {
+                message: format!(
+                    "Simplex link expected {expected_link_vertices} link vertices for {D}D, got {} (cell_key={cell_key:?})",
+                    link_vertices.len(),
+                ),
+            }
+            .into());
+        }
+
+        link_simplices.push(link_vertices);
+    }
+
+    Ok(link_simplices)
+}
+
 /// Computes the star of a ridge (a (D-2)-simplex) as the set of incident D-cells.
 ///
 /// This is a local combinatorial query intended for reuse by topology validation and
@@ -365,32 +504,7 @@ where
         .into());
     }
 
-    // Defensive: ensure all ridge vertices exist in the vertex store.
-    //
-    // Note: This is cheaper than `tds.is_valid()` and provides a clearer error when
-    // callers use this helper on stale keys.
-    for &vk in ridge_vertices {
-        if !tds.contains_vertex_key(vk) {
-            return Err(TdsValidationError::InconsistentDataStructure {
-                message: format!("Ridge vertex {vk:?} not found in vertices storage map"),
-            }
-            .into());
-        }
-    }
-
-    // Use the first ridge vertex to get a small candidate set (local star walk when possible).
-    let candidates: CellKeySet = tds.find_cells_containing_vertex_by_key(ridge_vertices[0]);
-
-    let mut star_cells: SmallBuffer<CellKey, 8> = SmallBuffer::with_capacity(candidates.len());
-
-    for cell_key in candidates {
-        let cell_vertices = tds.get_cell_vertices(cell_key)?;
-        if ridge_vertices.iter().all(|&rv| cell_vertices.contains(&rv)) {
-            star_cells.push(cell_key);
-        }
-    }
-
-    Ok(star_cells)
+    simplex_star_cells(tds, ridge_vertices)
 }
 
 pub(crate) fn ridge_link_edges_from_star<T, U, V, const D: usize>(
@@ -628,6 +742,494 @@ where
     }
 
     Ok(())
+}
+
+/// Validates the vertex-link condition for PL-manifoldness (with boundary).
+///
+/// A pure D-dimensional simplicial complex is a PL-manifold with boundary if and only if
+/// for every vertex `v`, the link `Lk(v)` is a (D-1)-sphere when `v` is interior, or a
+/// (D-1)-ball when `v` lies on the boundary.
+///
+/// This validator treats a vertex as a *boundary vertex* if it participates in any
+/// boundary facet of the original complex (a facet incident to exactly one D-cell).
+///
+/// # Performance
+///
+/// For fixed D, this runs in time proportional to the total size of all vertex stars
+/// (roughly O(#cells × (D+1))) plus local work to build and validate each link.
+///
+/// # Errors
+///
+/// Returns:
+/// - [`ManifoldError::Tds`] if the underlying triangulation data structure is internally inconsistent.
+/// - [`ManifoldError::VertexLinkNotManifold`] if any vertex has a link that is not a connected
+///   (D-1)-manifold with the expected boundary behavior.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::*;
+/// use delaunay::topology::manifold::{
+///     validate_closed_boundary, validate_facet_degree, validate_vertex_links,
+/// };
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
+/// let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+///
+/// validate_facet_degree(&facet_to_cells).unwrap();
+/// validate_closed_boundary(&tds, &facet_to_cells).unwrap();
+/// validate_vertex_links(&tds, &facet_to_cells).unwrap();
+/// ```
+pub fn validate_vertex_links<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    facet_to_cells: &FacetToCellsMap,
+) -> Result<(), ManifoldError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    // Vertex links are only meaningful for D>=1.
+    if D < 1 {
+        return Ok(());
+    }
+
+    if tds.number_of_cells() == 0 {
+        return Ok(());
+    }
+
+    let boundary_vertices = build_boundary_vertex_set(tds, facet_to_cells)?;
+
+    for (vertex_key, _vertex) in tds.vertices() {
+        let interior_vertex = !boundary_vertices.contains(&vertex_key);
+        validate_single_vertex_link(tds, vertex_key, interior_vertex)?;
+    }
+
+    Ok(())
+}
+
+fn build_boundary_vertex_set<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    facet_to_cells: &FacetToCellsMap,
+) -> Result<FastHashSet<VertexKey>, ManifoldError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    // If there is no boundary, return an empty set.
+    let boundary_facet_count = facet_to_cells
+        .values()
+        .filter(|handles| matches!(handles.as_slice(), [_]))
+        .count();
+
+    if boundary_facet_count == 0 {
+        return Ok(FastHashSet::default());
+    }
+
+    // Each boundary facet contains D vertices.
+    let mut boundary_vertices: FastHashSet<VertexKey> =
+        fast_hash_set_with_capacity(boundary_facet_count.saturating_mul(D).max(1));
+
+    let mut facet_vertices: VertexKeyBuffer = VertexKeyBuffer::with_capacity(D);
+
+    for cell_facet_pairs in facet_to_cells.values() {
+        let [handle] = cell_facet_pairs.as_slice() else {
+            continue;
+        };
+
+        let cell_key = handle.cell_key();
+        let facet_index = handle.facet_index() as usize;
+
+        let cell_vertices = tds.get_cell_vertices(cell_key)?;
+        if facet_index >= cell_vertices.len() {
+            return Err(TdsValidationError::InconsistentDataStructure {
+                message: format!(
+                    "Boundary facet index {facet_index} out of bounds: cell {cell_key:?} has {} vertices",
+                    cell_vertices.len()
+                ),
+            }
+            .into());
+        }
+
+        facet_vertices.clear();
+        for (i, &vk) in cell_vertices.iter().enumerate() {
+            if i == facet_index {
+                continue;
+            }
+            facet_vertices.push(vk);
+        }
+
+        if facet_vertices.len() != D {
+            return Err(TdsValidationError::InconsistentDataStructure {
+                message: format!(
+                    "Boundary facet expected {D} vertices, got {} (cell_key={cell_key:?}, facet_index={facet_index})",
+                    facet_vertices.len()
+                ),
+            }
+            .into());
+        }
+
+        for &vk in &facet_vertices {
+            boundary_vertices.insert(vk);
+        }
+    }
+
+    Ok(boundary_vertices)
+}
+
+fn validate_single_vertex_link<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    vertex_key: VertexKey,
+    interior_vertex: bool,
+) -> Result<(), ManifoldError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    // Collect the star of the vertex.
+    let star_cells = simplex_star_cells(tds, &[vertex_key])?;
+    if star_cells.is_empty() {
+        // A vertex with empty star violates purity for a non-empty triangulation.
+        return Err(ManifoldError::VertexLinkNotManifold {
+            vertex_key,
+            link_vertex_count: 0,
+            link_cell_count: 0,
+            boundary_facet_count: 0,
+            max_degree: 0,
+            connected: true,
+            interior_vertex,
+        });
+    }
+
+    let link_simplices = simplex_link_simplices_from_star(tds, &[vertex_key], &star_cells)?;
+
+    // D=1: the link is a 0-manifold (S^0 for interior vertices, B^0 for boundary vertices).
+    if D == 1 {
+        let mut link_vertices: FastHashSet<VertexKey> =
+            fast_hash_set_with_capacity(link_simplices.len().max(1));
+        for simplex in &link_simplices {
+            for &vk in simplex {
+                link_vertices.insert(vk);
+            }
+        }
+
+        let link_vertex_count = link_vertices.len();
+
+        let ok = if interior_vertex {
+            link_vertex_count == 2
+        } else {
+            link_vertex_count == 1
+        };
+
+        if ok {
+            return Ok(());
+        }
+
+        return Err(ManifoldError::VertexLinkNotManifold {
+            vertex_key,
+            link_vertex_count,
+            link_cell_count: link_simplices.len(),
+            boundary_facet_count: usize::from(!interior_vertex),
+            max_degree: 0,
+            connected: true,
+            interior_vertex,
+        });
+    }
+
+    let mut link_vertex_set: FastHashSet<VertexKey> =
+        fast_hash_set_with_capacity(link_simplices.len().saturating_mul(D).max(1));
+
+    for simplex in &link_simplices {
+        for &vk in simplex {
+            link_vertex_set.insert(vk);
+        }
+    }
+
+    let link_cell_count = link_simplices.len();
+    let link_vertex_count = link_vertex_set.len();
+
+    // Connectivity + max-degree in the link 1-skeleton.
+    let (connected, max_degree) = link_1_skeleton_connectivity_and_max_degree(&link_simplices);
+
+    // D=2: the link is 1-dimensional; validate it as a connected path/cycle.
+    if D == 2 {
+        let boundary_facet_count = 0; // not used for 1D links
+        let ok_1d = validate_1d_link_as_path_or_cycle(&link_simplices);
+        if ok_1d {
+            return Ok(());
+        }
+        return Err(ManifoldError::VertexLinkNotManifold {
+            vertex_key,
+            link_vertex_count,
+            link_cell_count,
+            boundary_facet_count,
+            max_degree,
+            connected,
+            interior_vertex,
+        });
+    }
+
+    // D>=3: validate the (D-1)-dimensional link via facet degrees and boundary closure.
+    let (boundary_facet_count, link_is_manifold) =
+        validate_link_facets_and_boundary::<D>(&link_simplices, interior_vertex);
+
+    let ok = connected && link_is_manifold;
+
+    if ok {
+        Ok(())
+    } else {
+        Err(ManifoldError::VertexLinkNotManifold {
+            vertex_key,
+            link_vertex_count,
+            link_cell_count,
+            boundary_facet_count,
+            max_degree,
+            connected,
+            interior_vertex,
+        })
+    }
+}
+
+fn link_1_skeleton_connectivity_and_max_degree(
+    link_cells: &SmallBuffer<VertexKeyBuffer, 8>,
+) -> (bool, usize) {
+    // Build adjacency from the 1-skeleton of the link.
+    let mut unique_edges: FastHashSet<EdgeKey> =
+        fast_hash_set_with_capacity(link_cells.len().max(1));
+    let mut adjacency: FastHashMap<VertexKey, SmallBuffer<VertexKey, 8>> =
+        fast_hash_map_with_capacity(link_cells.len().saturating_mul(2).max(1));
+
+    for simplex in link_cells {
+        // Add all edges in the simplex.
+        for i in 0..simplex.len() {
+            for j in (i + 1)..simplex.len() {
+                let e = EdgeKey::new(simplex[i], simplex[j]);
+                if !unique_edges.insert(e) {
+                    continue;
+                }
+                let (a, b) = e.endpoints();
+                adjacency.entry(a).or_default().push(b);
+                adjacency.entry(b).or_default().push(a);
+            }
+        }
+
+        // Ensure isolated vertices are present in adjacency.
+        for &vk in simplex {
+            adjacency.entry(vk).or_default();
+        }
+    }
+
+    let mut max_degree = 0usize;
+    for neighbors in adjacency.values() {
+        max_degree = max_degree.max(neighbors.len());
+    }
+
+    // Connectivity check.
+    let connected = match adjacency.iter().next() {
+        None => true,
+        Some((&start, _)) => {
+            let mut visited: FastHashSet<VertexKey> =
+                fast_hash_set_with_capacity(adjacency.len().max(1));
+            let mut stack: VertexKeyBuffer = VertexKeyBuffer::with_capacity(adjacency.len().max(1));
+            stack.push(start);
+
+            while let Some(v) = stack.pop() {
+                if !visited.insert(v) {
+                    continue;
+                }
+                let Some(neigh) = adjacency.get(&v) else {
+                    continue;
+                };
+                for &n in neigh {
+                    if !visited.contains(&n) {
+                        stack.push(n);
+                    }
+                }
+            }
+
+            visited.len() == adjacency.len()
+        }
+    };
+
+    (connected, max_degree)
+}
+
+fn validate_1d_link_as_path_or_cycle(link_cells: &SmallBuffer<VertexKeyBuffer, 8>) -> bool {
+    // In D=2, link cells are edges (2 vertices). Build an undirected graph and validate
+    // connected + max degree <= 2 + degree-1 vertices in {0,2}.
+    let mut unique_edges: FastHashSet<EdgeKey> =
+        fast_hash_set_with_capacity(link_cells.len().max(1));
+    let mut adjacency: FastHashMap<VertexKey, SmallBuffer<VertexKey, 2>> =
+        fast_hash_map_with_capacity(link_cells.len().saturating_mul(2).max(1));
+
+    for e in link_cells {
+        if e.len() != 2 {
+            return false;
+        }
+        let edge = EdgeKey::new(e[0], e[1]);
+        if !unique_edges.insert(edge) {
+            continue;
+        }
+        let (a, b) = edge.endpoints();
+        adjacency.entry(a).or_default().push(b);
+        adjacency.entry(b).or_default().push(a);
+    }
+
+    let link_vertex_count = adjacency.len();
+    if link_vertex_count == 0 {
+        return false;
+    }
+
+    let mut max_degree = 0usize;
+    let mut degree_one = 0usize;
+    for neighbors in adjacency.values() {
+        max_degree = max_degree.max(neighbors.len());
+        if neighbors.len() == 1 {
+            degree_one += 1;
+        }
+    }
+
+    // Connectivity.
+    let connected = match adjacency.iter().next() {
+        None => true,
+        Some((&start, _)) => {
+            let mut visited: FastHashSet<VertexKey> =
+                fast_hash_set_with_capacity(link_vertex_count);
+            let mut stack: VertexKeyBuffer = VertexKeyBuffer::with_capacity(link_vertex_count);
+            stack.push(start);
+
+            while let Some(v) = stack.pop() {
+                if !visited.insert(v) {
+                    continue;
+                }
+                let Some(neigh) = adjacency.get(&v) else {
+                    continue;
+                };
+                for &n in neigh {
+                    if !visited.contains(&n) {
+                        stack.push(n);
+                    }
+                }
+            }
+
+            visited.len() == link_vertex_count
+        }
+    };
+
+    connected && max_degree <= 2 && (degree_one == 0 || degree_one == 2)
+}
+
+fn validate_link_facets_and_boundary<const D: usize>(
+    link_cells: &SmallBuffer<VertexKeyBuffer, 8>,
+    interior_vertex: bool,
+) -> (usize, bool) {
+    // For a vertex link in D>=3, the link dimension is (D-1) >= 2.
+    // Validate that every (D-2)-facet has degree 1 or 2 (manifold-with-boundary), and
+    // that the boundary (if present) has empty boundary (∂² = ∅).
+
+    #[derive(Clone, Debug)]
+    struct FacetInfo {
+        vertices: VertexKeyBuffer,
+        count: usize,
+    }
+
+    let mut facet_map: FastHashMap<u64, FacetInfo> =
+        fast_hash_map_with_capacity(link_cells.len().saturating_mul(D).max(1));
+
+    let mut facet_vertices: VertexKeyBuffer = VertexKeyBuffer::with_capacity(D.saturating_sub(1));
+
+    for simplex in link_cells {
+        if simplex.len() != D {
+            return (0, false);
+        }
+
+        for omit in 0..simplex.len() {
+            facet_vertices.clear();
+            for (j, &vk) in simplex.iter().enumerate() {
+                if j == omit {
+                    continue;
+                }
+                facet_vertices.push(vk);
+            }
+
+            if facet_vertices.len() != D.saturating_sub(1) {
+                return (0, false);
+            }
+
+            let key = facet_key_from_vertices(&facet_vertices);
+            let entry = facet_map.entry(key).or_insert_with(|| FacetInfo {
+                vertices: facet_vertices.clone(),
+                count: 0,
+            });
+            entry.count += 1;
+        }
+    }
+
+    let mut boundary_facet_count = 0usize;
+    for info in facet_map.values() {
+        match info.count {
+            1 => boundary_facet_count += 1,
+            2 => {}
+            _ => return (boundary_facet_count, false),
+        }
+    }
+
+    // Interior vertex => link must be closed (no boundary facets).
+    if interior_vertex && boundary_facet_count != 0 {
+        return (boundary_facet_count, false);
+    }
+
+    // If boundary exists in the link, validate that boundary is closed: every (D-3)-ridge
+    // on the boundary is incident to exactly 2 boundary facets.
+    if boundary_facet_count > 0 {
+        // Only meaningful when (D-1) >= 2 => D>=3, which is our caller contract.
+        let mut ridge_map: FastHashMap<u64, usize> = fast_hash_map_with_capacity(
+            boundary_facet_count
+                .saturating_mul(D.saturating_sub(1))
+                .max(1),
+        );
+
+        let mut ridge_vertices: VertexKeyBuffer =
+            VertexKeyBuffer::with_capacity(D.saturating_sub(2));
+
+        for info in facet_map.values() {
+            if info.count != 1 {
+                continue;
+            }
+
+            let f = &info.vertices;
+            for omit in 0..f.len() {
+                ridge_vertices.clear();
+                for (j, &vk) in f.iter().enumerate() {
+                    if j == omit {
+                        continue;
+                    }
+                    ridge_vertices.push(vk);
+                }
+                if ridge_vertices.len() != D.saturating_sub(2) {
+                    return (boundary_facet_count, false);
+                }
+                let ridge_key = facet_key_from_vertices(&ridge_vertices);
+                *ridge_map.entry(ridge_key).or_insert(0) += 1;
+            }
+        }
+
+        for c in ridge_map.values() {
+            if *c != 2 {
+                return (boundary_facet_count, false);
+            }
+        }
+    }
+
+    (boundary_facet_count, true)
 }
 
 fn validate_ridge_link_graph(
@@ -1229,5 +1831,158 @@ mod tests {
             }
             other => panic!("Expected RidgeLinkNotManifold, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_validate_vertex_links_rejects_cone_on_torus_in_3d() {
+        // Construct a 3D simplicial complex that is a cone over a triangulated 2-torus.
+        //
+        // This is a pseudomanifold and passes ridge-link validation, but is NOT a PL 3-manifold:
+        // the apex vertex has link homeomorphic to T^2 instead of S^2.
+
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+
+        // Build a minimal triangulated square torus (2D) using 8 triangles.
+        // Square with opposite edges identified; we realize this combinatorially by
+        // explicitly gluing the triangles.
+
+        // Torus vertices (square fundamental domain)
+        let a = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0, 0.0]))
+            .unwrap();
+        let d = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .unwrap();
+
+        // Duplicate vertices to encode edge identifications (minimal explicit torus model)
+        let b2 = b;
+        let c2 = c;
+        let d2 = d;
+        let a2 = a;
+
+        // Apex of the cone
+        let apex = tds
+            .insert_vertex_with_mapping(vertex!([0.5, 0.5, 1.0]))
+            .unwrap();
+
+        // Triangulate the torus surface (2 triangles per square face, with identifications)
+        let torus_faces = vec![
+            vec![a, b, d],
+            vec![b, c, d],
+            vec![b2, a2, c2],
+            vec![a2, d2, c2],
+        ];
+
+        // Cone each torus triangle to the apex, forming tetrahedra
+        for tri in torus_faces {
+            let mut verts = tri.clone();
+            verts.push(apex);
+            let _ = tds
+                .insert_cell_with_mapping(Cell::new(verts, None).unwrap())
+                .unwrap();
+        }
+
+        // Sanity: pseudomanifold checks pass
+        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+        validate_facet_degree(&facet_to_cells).unwrap();
+        validate_closed_boundary(&tds, &facet_to_cells).unwrap();
+
+        // Ridge-link validation should *not* detect this singularity
+        assert!(validate_ridge_links(&tds).is_ok());
+
+        // Vertex-link validation MUST reject it: apex link is T^2, not S^2
+        match validate_vertex_links(&tds, &facet_to_cells) {
+            Err(ManifoldError::VertexLinkNotManifold {
+                vertex_key,
+                interior_vertex,
+                ..
+            }) => {
+                assert_eq!(vertex_key, apex);
+                assert!(interior_vertex);
+            }
+            other => panic!("Expected VertexLinkNotManifold for cone apex, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_vertex_links_accepts_cone_on_sphere_in_3d() {
+        // Cone on the boundary of a tetrahedron (S^2).
+        // The apex link is S^2, so this IS a valid PL 3-manifold (a 3-ball).
+
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+
+        // Base tetrahedron vertices (triangulated S^2 boundary)
+        let v0 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .unwrap();
+
+        // Apex of the cone
+        let apex = tds
+            .insert_vertex_with_mapping(vertex!([0.3, 0.3, 0.3]))
+            .unwrap();
+
+        // Each boundary triangle of the tetrahedron, coned to apex
+        let sphere_faces = vec![
+            vec![v0, v1, v2],
+            vec![v0, v1, v3],
+            vec![v0, v2, v3],
+            vec![v1, v2, v3],
+        ];
+
+        for tri in sphere_faces {
+            let mut verts = tri;
+            verts.push(apex);
+            tds.insert_cell_with_mapping(Cell::new(verts, None).unwrap())
+                .unwrap();
+        }
+
+        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+
+        // Sanity: pseudomanifold + ridge links pass
+        validate_facet_degree(&facet_to_cells).unwrap();
+        validate_closed_boundary(&tds, &facet_to_cells).unwrap();
+        validate_ridge_links(&tds).unwrap();
+
+        // Vertex-link validation should ACCEPT this complex
+        validate_vertex_links(&tds, &facet_to_cells).unwrap();
+    }
+
+    #[test]
+    fn test_validate_vertex_links_boundary_vertex_has_ball_link_in_3d() {
+        // A single tetrahedron is a 3-ball.
+        // Each boundary vertex has a link homeomorphic to a 2-ball.
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
+        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+
+        // All vertices are boundary vertices in a single tetrahedron
+        validate_facet_degree(&facet_to_cells).unwrap();
+        validate_closed_boundary(&tds, &facet_to_cells).unwrap();
+
+        // Vertex-link validation must succeed (links are 2-balls)
+        validate_vertex_links(&tds, &facet_to_cells).unwrap();
     }
 }
