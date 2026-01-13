@@ -81,17 +81,22 @@
 //!
 //! ## Topology guarantees
 //!
-//! [`TopologyGuarantee`](crate::core::triangulation::TopologyGuarantee) selects which invariants are
-//! **checked by Level 3 topology validation**.
+//! [`TopologyGuarantee`](crate::core::triangulation::TopologyGuarantee) selects which **manifoldness**
+//! invariants are checked by Level 3 topology validation.
 //!
 //! Whether these checks run automatically after insertion is controlled by
 //! [`ValidationPolicy`](crate::core::triangulation::ValidationPolicy).
 //!
-//! - At minimum, Level 3 validation checks the pseudomanifold (codimension-1) facet adjacency condition
-//!   and the codimension-2 boundary manifoldness (closed boundary).
-//! - With [`TopologyGuarantee::PLManifold`](crate::core::triangulation::TopologyGuarantee::PLManifold),
-//!   Level 3 validation additionally checks codimension-2 ridge-link manifoldness via
-//!   [`crate::topology::manifold`].
+//! Level 3 validation always checks:
+//! - Codimension-1 facet degree (pseudomanifold condition: 1 boundary or 2 interior cells per facet)
+//! - Codimension-2 boundary manifoldness (closed boundary: "no boundary of boundary")
+//! - Connectedness (single connected component in the cell neighbor graph)
+//! - No isolated vertices (every vertex must be incident to at least one cell)
+//! - Euler characteristic
+//!
+//! With [`TopologyGuarantee::PLManifold`](crate::core::triangulation::TopologyGuarantee::PLManifold),
+//! Level 3 validation additionally checks codimension-2 ridge-link manifoldness via
+//! [`crate::topology::manifold`].
 //!
 use core::iter::Sum;
 use core::ops::{AddAssign, Div, SubAssign};
@@ -125,7 +130,7 @@ use crate::core::triangulation_data_structure::{
     CellKey, InvariantError, InvariantKind, InvariantViolation, Tds, TdsConstructionError,
     TdsMutationError, TdsValidationError, TriangulationValidationReport, VertexKey,
 };
-use crate::core::vertex::{Vertex, VertexBuilder};
+use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::quality::radius_ratio;
@@ -474,17 +479,9 @@ impl Default for TopologyGuarantee {
 
 impl TopologyGuarantee {
     /// The default topology guarantee used when constructing triangulations.
-    pub const DEFAULT: Self = Self::Pseudomanifold;
-
-    /// Returns the default topology guarantee.
     ///
-    /// This is a `const` alternative to `<Self as Default>::default()` so it can be used
-    /// from `const fn` constructors.
-    #[inline]
-    #[must_use]
-    pub const fn default() -> Self {
-        Self::DEFAULT
-    }
+    /// This is a `const` alternative to `<Self as Default>::default()` for `const fn` constructors.
+    pub const DEFAULT: Self = Self::Pseudomanifold;
 
     /// Returns `true` if this topology guarantee requires full codimension-2
     /// ridge-link manifoldness checks.
@@ -621,7 +618,7 @@ where
             kernel,
             tds: Tds::empty(),
             validation_policy: ValidationPolicy::default(),
-            topology_guarantee: TopologyGuarantee::default(),
+            topology_guarantee: TopologyGuarantee::DEFAULT,
         }
     }
 
@@ -656,7 +653,7 @@ where
             kernel,
             tds,
             validation_policy: ValidationPolicy::default(),
-            topology_guarantee: TopologyGuarantee::default(),
+            topology_guarantee: TopologyGuarantee::DEFAULT,
         }
     }
 
@@ -1609,7 +1606,7 @@ where
     /// This checks the triangulation/topology layer **only**:
     /// - Codimension-1 pseudomanifold condition: each facet is incident to 1 (boundary) or 2 (interior) cells
     /// - Codimension-2 boundary manifoldness: the boundary must be closed ("no boundary of boundary")
-    /// - PL-manifold ridge-link condition (when `topology_guarantee == TopologyGuarantee::PLManifold`)
+    /// - PL-manifold ridge-link condition (when `topology_guarantee.requires_ridge_links()`)
     /// - Connectedness (single component in the cell neighbor graph)
     /// - No isolated vertices (every vertex must be incident to at least one cell)
     /// - Euler characteristic
@@ -2185,7 +2182,20 @@ where
     {
         let mut stats = InsertionStatistics::default();
         let original_coords = *vertex.point().coords();
+        let original_uuid = vertex.uuid();
         let mut current_vertex = vertex;
+        let mut last_retryable_error: Option<InsertionError> = None;
+
+        // Anchor used to make perturbations depend only on relative geometry (translation-invariant).
+        //
+        // If we perturb based on absolute coordinate magnitudes, translating the whole input point set
+        // changes the perturbation scale and can lead to non-equivalent results. Using an anchor that
+        // translates with the triangulation makes the perturbation depend only on relative geometry.
+        let perturbation_anchor = self
+            .tds
+            .vertices()
+            .next()
+            .map_or(original_coords, |(_, v)| *v.point().coords());
 
         for attempt in 0..=max_perturbation_attempts {
             stats.attempts = attempt + 1;
@@ -2204,21 +2214,30 @@ where
                     4 => 2e-2,
                     _ => 5e-2, // 5% for attempt 5 and beyond
                 };
-                let epsilon = <K::Scalar as NumCast>::from(epsilon_value).ok_or_else(|| {
-                    InsertionError::CavityFilling {
+                let Some(epsilon) = <K::Scalar as NumCast>::from(epsilon_value) else {
+                    // We failed to convert the perturbation scale into the scalar type.
+                    //
+                    // This should not happen for our supported scalar types (`f32`, `f64`), but if it
+                    // does (e.g. with a custom scalar), we degrade gracefully by skipping this vertex
+                    // rather than aborting the whole insertion.
+                    stats.result = InsertionResult::SkippedDegeneracy;
+                    let error = last_retryable_error.unwrap_or_else(|| InsertionError::CavityFilling {
                         message: format!(
                             "Failed to convert perturbation scale {epsilon_value} into scalar type"
                         ),
-                    }
-                })?;
+                    });
+                    return Ok((InsertionOutcome::Skipped { error }, stats));
+                };
 
                 for (idx, coord) in perturbed_coords.iter_mut().enumerate() {
-                    let abs_coord = if *coord < K::Scalar::zero() {
-                        -*coord
+                    let delta = *coord - perturbation_anchor[idx];
+                    let abs_delta = if delta < K::Scalar::zero() {
+                        -delta
                     } else {
-                        *coord
+                        delta
                     };
-                    let perturbation_scale = epsilon * abs_coord.max(K::Scalar::one());
+
+                    let perturbation_scale = epsilon * abs_delta.max(K::Scalar::one());
                     let perturbation = if (attempt + idx) % 2 == 0 {
                         perturbation_scale
                     } else {
@@ -2227,25 +2246,11 @@ where
                     *coord += perturbation;
                 }
 
-                current_vertex = vertex.data.map_or_else(
-                    || {
-                        VertexBuilder::default()
-                            .point(Point::new(perturbed_coords))
-                            .build()
-                            .map_err(|e| InsertionError::CavityFilling {
-                                message: format!("Failed to build perturbed vertex: {e}"),
-                            })
-                    },
-                    |data| {
-                        VertexBuilder::default()
-                            .point(Point::new(perturbed_coords))
-                            .data(data)
-                            .build()
-                            .map_err(|e| InsertionError::CavityFilling {
-                                message: format!("Failed to build perturbed vertex: {e}"),
-                            })
-                    },
-                )?;
+                // Preserve the caller-provided vertex UUID across perturbation retries.
+                // This ensures the inserted vertex retains its original identity even if we have
+                // to retry with perturbed coordinates.
+                current_vertex =
+                    Vertex::new_with_uuid(Point::new(perturbed_coords), original_uuid, vertex.data);
             }
 
             // Clone TDS for rollback (transactional semantics)
@@ -2294,6 +2299,7 @@ where
                     let is_retryable = e.is_retryable();
 
                     if is_retryable && attempt < max_perturbation_attempts {
+                        last_retryable_error = Some(e.clone());
                         #[cfg(debug_assertions)]
                         eprintln!(
                             "RETRYING: Attempt {} failed with: {e}. Applying perturbation...",

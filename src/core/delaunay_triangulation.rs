@@ -314,7 +314,7 @@ where
                 kernel,
                 tds,
                 validation_policy: ValidationPolicy::default(),
-                topology_guarantee: TopologyGuarantee::default(),
+                topology_guarantee: TopologyGuarantee::DEFAULT,
             },
             last_inserted_cell: None,
         };
@@ -1492,7 +1492,7 @@ where
     ///   `Deserialize` impl below) always resets it to `None`. This can make the first few
     ///   insertions after loading slightly slower, but is otherwise behaviorally irrelevant.
     /// - The topology guarantee ([`TopologyGuarantee`]) is also not serialized (this type serializes
-    ///   only the `Tds`). Constructing via `from_tds` resets it to `TopologyGuarantee::default()`.
+    ///   only the `Tds`). Constructing via `from_tds` resets it to `TopologyGuarantee::DEFAULT`.
     ///   Call [`set_topology_guarantee`](Self::set_topology_guarantee) if you want to change this
     ///   after loading (e.g. enable stricter PL-manifold validation).
     ///
@@ -1529,7 +1529,7 @@ where
                 kernel,
                 tds,
                 validation_policy: ValidationPolicy::OnSuspicion,
-                topology_guarantee: TopologyGuarantee::default(),
+                topology_guarantee: TopologyGuarantee::DEFAULT,
             },
             last_inserted_cell: None,
         }

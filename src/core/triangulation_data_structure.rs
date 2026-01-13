@@ -4158,7 +4158,10 @@ mod tests {
         }
 
         let removed_count = tds.repair_degenerate_cells();
-        assert_eq!(removed_count, 1, "Should remove one degenerate cell");
+        assert_eq!(
+            removed_count, 1,
+            "Expected exactly 1 degenerate cell removed (bad_cell with dangling neighbor), got {removed_count}",
+        );
 
         assert_eq!(tds.number_of_cells(), 1);
         assert!(tds.cells.contains_key(good_cell_key));
