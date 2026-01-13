@@ -162,14 +162,22 @@ This includes information about:
 
 For a comprehensive list of academic references and bibliographic citations used throughout the library, see [REFERENCES.md](REFERENCES.md).
 
-> Portions of this library were developed with the assistance of these AI tools:
->
-> - [ChatGPT]
-> - [Claude]
-> - [CodeRabbit]
-> - [GitHub Copilot]
-> - [KiloCode]
-> - [WARP](WARP.md)
+## 🤖 AI Agents
+
+This repository contains an `AGENTS.md` file, which defines the canonical rules and invariants
+for all AI coding assistants and autonomous agents working on this codebase.
+
+AI tools (including ChatGPT, Claude, GitHub Copilot, Cursor, Warp, and CI repair agents) are
+expected to read and follow `AGENTS.md` when proposing or applying changes.
+
+Portions of this library were developed with the assistance of these AI tools:
+
+- [ChatGPT]
+- [Claude]
+- [CodeRabbit]
+- [GitHub Copilot]
+- [KiloCode]
+- [WARP]
 >
 > All code was written and/or reviewed and validated by the author.
 
@@ -187,5 +195,6 @@ For a comprehensive list of academic references and bibliographic citations used
 [CodeRabbit]: https://coderabbit.ai/
 [GitHub Copilot]: https://github.com/features/copilot
 [KiloCode]: https://kilocode.ai/
+[WARP]: https://www.warp.dev
 [Pseudomanifold]: https://grokipedia.com/page/Pseudomanifold
 [PL-manifold]: https://grokipedia.com/page/Piecewise_linear_manifold

@@ -1960,6 +1960,6 @@ for the Delaunay triangulation library. The plan:
 <citations>
 <document>
     <document_type>RULE</document_type>
-    <document_id>/Users/adam/projects/delaunay/WARP.md</document_id>
+    <document_id>/Users/adam/projects/delaunay/AGENTS.md</document_id>
 </document>
 </citations>

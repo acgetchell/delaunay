@@ -268,7 +268,7 @@ The project follows a standard Rust library structure with additional tooling fo
 
 ### Development Resources
 
-- **`WARP.md`** - AI development assistant guidance
+- **`AGENTS.md`** - AI development assistant guidance
 - **`CONTRIBUTING.md`** - This file
 - **`REFERENCES.md`** - Academic citations and bibliography
 - **`.github/workflows/`** - CI/CD automation (testing, benchmarks, quality checks)
@@ -506,7 +506,7 @@ git checkout -b docs/doc-improvement
 
 **Important Note on Git Operations:**
 
-Per project rules (see [WARP.md](WARP.md)), **DO NOT** include `git commit` or `git push` commands in
+Per project rules (see [AGENTS.md](AGENTS.md)), **DO NOT** include `git commit` or `git push` commands in
 development scripts. All git operations should be handled manually by contributors to maintain full control over
 version control operations. This ensures:
 
@@ -550,7 +550,7 @@ The project uses **Codacy** for automated code quality analysis across both Rust
 
 - Codacy analysis runs automatically on all PRs
 - Quality issues are reported as PR comments
-- The same tools and rules used locally in development (following WARP.md guidelines)
+- The same tools and rules used locally in development (following AGENTS.md guidelines)
 - No additional setup required - uses existing project configurations
 
 ## Commit Message Format
@@ -940,7 +940,7 @@ just profile-dev
 - **Regression Detection**: CI fails on >5% performance regressions
 - **Hardware Awareness**: Consider performance implications across different hardware configurations
 
-See [scripts documentation][scripts-readme] for detailed benchmarking workflows and the [WARP.md](WARP.md) file
+See [scripts documentation][scripts-readme] for detailed benchmarking workflows and the [AGENTS.md](AGENTS.md) file
 for implementation details of the automated baseline system.
 
 ## Submitting Changes

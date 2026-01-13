@@ -826,21 +826,11 @@ where
     U: DataType,
     V: DataType,
 {
-    // If there is no boundary, return an empty set.
-    let boundary_facet_count = facet_to_cells
-        .values()
-        .filter(|handles| matches!(handles.as_slice(), [_]))
-        .count();
-
-    if boundary_facet_count == 0 {
-        return Ok(FastHashSet::default());
-    }
-
-    // Each boundary facet contains D vertices.
-    let mut boundary_vertices: FastHashSet<VertexKey> =
-        fast_hash_set_with_capacity(boundary_facet_count.saturating_mul(D).max(1));
-
-    let mut facet_vertices: VertexKeyBuffer = VertexKeyBuffer::with_capacity(D);
+    // Single pass: collect all vertices that appear on a boundary facet (a facet incident to exactly 1 D-cell).
+    //
+    // NOTE: We intentionally avoid a pre-count pass over `facet_to_cells` since Level-3 validation is already
+    // expensive and we only need a coarse set (it can grow dynamically).
+    let mut boundary_vertices: FastHashSet<VertexKey> = FastHashSet::default();
 
     for cell_facet_pairs in facet_to_cells.values() {
         let [handle] = cell_facet_pairs.as_slice() else {
@@ -861,30 +851,111 @@ where
             .into());
         }
 
-        facet_vertices.clear();
+        let mut facet_vertex_count = 0usize;
         for (i, &vk) in cell_vertices.iter().enumerate() {
             if i == facet_index {
                 continue;
             }
-            facet_vertices.push(vk);
+            boundary_vertices.insert(vk);
+            facet_vertex_count += 1;
         }
 
-        if facet_vertices.len() != D {
+        if facet_vertex_count != D {
             return Err(TdsValidationError::InconsistentDataStructure {
                 message: format!(
-                    "Boundary facet expected {D} vertices, got {} (cell_key={cell_key:?}, facet_index={facet_index})",
-                    facet_vertices.len()
+                    "Boundary facet expected {D} vertices, got {facet_vertex_count} (cell_key={cell_key:?}, facet_index={facet_index})",
                 ),
             }
             .into());
         }
-
-        for &vk in &facet_vertices {
-            boundary_vertices.insert(vk);
-        }
     }
 
     Ok(boundary_vertices)
+}
+
+fn validate_vertex_link_d1(
+    vertex_key: VertexKey,
+    interior_vertex: bool,
+    link_simplices: &SmallBuffer<VertexKeyBuffer, 8>,
+) -> Result<(), ManifoldError> {
+    let mut link_vertices: FastHashSet<VertexKey> =
+        fast_hash_set_with_capacity(link_simplices.len().max(1));
+    for simplex in link_simplices {
+        for &vk in simplex {
+            link_vertices.insert(vk);
+        }
+    }
+
+    let link_vertex_count = link_vertices.len();
+
+    // For D=1: the link is a 0-manifold.
+    // - Interior vertex: Lk(v) ≅ S⁰ (2 isolated points) ⇒ exactly 2 neighbors.
+    // - Boundary vertex:  Lk(v) ≅ B⁰ (1 point)           ⇒ exactly 1 neighbor.
+    let ok = if interior_vertex {
+        link_vertex_count == 2
+    } else {
+        link_vertex_count == 1
+    };
+
+    if ok {
+        Ok(())
+    } else {
+        Err(ManifoldError::VertexLinkNotManifold {
+            vertex_key,
+            link_vertex_count,
+            link_cell_count: link_simplices.len(),
+            boundary_facet_count: usize::from(!interior_vertex),
+            max_degree: 0,
+            connected: true,
+            interior_vertex,
+        })
+    }
+}
+
+fn validate_vertex_link_d2(
+    vertex_key: VertexKey,
+    interior_vertex: bool,
+    link_simplices: &SmallBuffer<VertexKeyBuffer, 8>,
+    link_vertex_count: usize,
+    link_cell_count: usize,
+) -> Result<(), ManifoldError> {
+    // In D=2, the link is a 1-manifold.
+    //
+    // For PL 2-manifolds, the correct local condition is:
+    // - Interior vertex: Lk(v) is a cycle (S¹)            ⇒ degree-1 vertices = 0.
+    // - Boundary vertex:  Lk(v) is a path (I)             ⇒ degree-1 vertices = 2.
+    let boundary_facet_count = 0; // not used for 1D links
+
+    let Some((connected, max_degree, degree_one_vertices, _vertex_count)) =
+        link_1d_graph_stats(link_simplices)
+    else {
+        return Err(ManifoldError::VertexLinkNotManifold {
+            vertex_key,
+            link_vertex_count,
+            link_cell_count,
+            boundary_facet_count,
+            max_degree: 0,
+            connected: false,
+            interior_vertex,
+        });
+    };
+
+    let expected_degree_one_vertices = if interior_vertex { 0 } else { 2 };
+    let ok_1d = connected && max_degree <= 2 && degree_one_vertices == expected_degree_one_vertices;
+
+    if ok_1d {
+        Ok(())
+    } else {
+        Err(ManifoldError::VertexLinkNotManifold {
+            vertex_key,
+            link_vertex_count,
+            link_cell_count,
+            boundary_facet_count,
+            max_degree,
+            connected,
+            interior_vertex,
+        })
+    }
 }
 
 fn validate_single_vertex_link<T, U, V, const D: usize>(
@@ -916,38 +987,7 @@ where
 
     // D=1: the link is a 0-manifold (S^0 for interior vertices, B^0 for boundary vertices).
     if D == 1 {
-        let mut link_vertices: FastHashSet<VertexKey> =
-            fast_hash_set_with_capacity(link_simplices.len().max(1));
-        for simplex in &link_simplices {
-            for &vk in simplex {
-                link_vertices.insert(vk);
-            }
-        }
-
-        let link_vertex_count = link_vertices.len();
-
-        // For D=1: the link is a 0-manifold.
-        // - Interior vertex: Lk(v) ≅ S⁰ (2 isolated points) ⇒ exactly 2 neighbors.
-        // - Boundary vertex:  Lk(v) ≅ B⁰ (1 point)           ⇒ exactly 1 neighbor.
-        let ok = if interior_vertex {
-            link_vertex_count == 2
-        } else {
-            link_vertex_count == 1
-        };
-
-        if ok {
-            return Ok(());
-        }
-
-        return Err(ManifoldError::VertexLinkNotManifold {
-            vertex_key,
-            link_vertex_count,
-            link_cell_count: link_simplices.len(),
-            boundary_facet_count: usize::from(!interior_vertex),
-            max_degree: 0,
-            connected: true,
-            interior_vertex,
-        });
+        return validate_vertex_link_d1(vertex_key, interior_vertex, &link_simplices);
     }
 
     let mut link_vertex_set: FastHashSet<VertexKey> =
@@ -962,26 +1002,19 @@ where
     let link_cell_count = link_simplices.len();
     let link_vertex_count = link_vertex_set.len();
 
-    // Connectivity + max-degree in the link 1-skeleton.
-    let (connected, max_degree) = link_1_skeleton_connectivity_and_max_degree(&link_simplices);
-
-    // D=2: the link is 1-dimensional; validate it as a connected path/cycle.
+    // D=2: the link is a 1-manifold.
     if D == 2 {
-        let boundary_facet_count = 0; // not used for 1D links
-        let ok_1d = validate_1d_link_as_path_or_cycle(&link_simplices);
-        if ok_1d {
-            return Ok(());
-        }
-        return Err(ManifoldError::VertexLinkNotManifold {
+        return validate_vertex_link_d2(
             vertex_key,
+            interior_vertex,
+            &link_simplices,
             link_vertex_count,
             link_cell_count,
-            boundary_facet_count,
-            max_degree,
-            connected,
-            interior_vertex,
-        });
+        );
     }
+
+    // Connectivity + max-degree in the link 1-skeleton.
+    let (connected, max_degree) = link_1_skeleton_connectivity_and_max_degree(&link_simplices);
 
     // D>=3: validate the (D-1)-dimensional link via facet degrees and boundary closure.
     let (boundary_facet_count, link_is_manifold) =
@@ -1085,9 +1118,14 @@ fn link_1_skeleton_connectivity_and_max_degree(
     (connected, max_degree)
 }
 
-fn validate_1d_link_as_path_or_cycle(link_cells: &SmallBuffer<VertexKeyBuffer, 8>) -> bool {
-    // In D=2, link cells are edges (2 vertices). Build an undirected graph and validate
-    // connected + max degree <= 2 + degree-1 vertices in {0,2}.
+fn link_1d_graph_stats(
+    link_cells: &SmallBuffer<VertexKeyBuffer, 8>,
+) -> Option<(bool, usize, usize, usize)> {
+    // In D=2, link cells are edges (2 vertices). Build an undirected graph and compute:
+    // - connectivity
+    // - max degree
+    // - number of degree-1 vertices
+    // - vertex count
     let mut unique_edges: FastHashSet<EdgeKey> =
         fast_hash_set_with_capacity(link_cells.len().max(1));
     let mut adjacency: FastHashMap<VertexKey, SmallBuffer<VertexKey, 2>> =
@@ -1095,7 +1133,7 @@ fn validate_1d_link_as_path_or_cycle(link_cells: &SmallBuffer<VertexKeyBuffer, 8
 
     for e in link_cells {
         if e.len() != 2 {
-            return false;
+            return None;
         }
         let edge = EdgeKey::new(e[0], e[1]);
         if !unique_edges.insert(edge) {
@@ -1106,17 +1144,17 @@ fn validate_1d_link_as_path_or_cycle(link_cells: &SmallBuffer<VertexKeyBuffer, 8
         adjacency.entry(b).or_default().push(a);
     }
 
-    let link_vertex_count = adjacency.len();
-    if link_vertex_count == 0 {
-        return false;
+    let vertex_count = adjacency.len();
+    if vertex_count == 0 {
+        return None;
     }
 
     let mut max_degree = 0usize;
-    let mut degree_one = 0usize;
+    let mut degree_one_vertices = 0usize;
     for neighbors in adjacency.values() {
         max_degree = max_degree.max(neighbors.len());
         if neighbors.len() == 1 {
-            degree_one += 1;
+            degree_one_vertices += 1;
         }
     }
 
@@ -1124,9 +1162,8 @@ fn validate_1d_link_as_path_or_cycle(link_cells: &SmallBuffer<VertexKeyBuffer, 8
     let connected = match adjacency.iter().next() {
         None => true,
         Some((&start, _)) => {
-            let mut visited: FastHashSet<VertexKey> =
-                fast_hash_set_with_capacity(link_vertex_count);
-            let mut stack: VertexKeyBuffer = VertexKeyBuffer::with_capacity(link_vertex_count);
+            let mut visited: FastHashSet<VertexKey> = fast_hash_set_with_capacity(vertex_count);
+            let mut stack: VertexKeyBuffer = VertexKeyBuffer::with_capacity(vertex_count);
             stack.push(start);
 
             while let Some(v) = stack.pop() {
@@ -1143,11 +1180,11 @@ fn validate_1d_link_as_path_or_cycle(link_cells: &SmallBuffer<VertexKeyBuffer, 8
                 }
             }
 
-            visited.len() == link_vertex_count
+            visited.len() == vertex_count
         }
     };
 
-    connected && max_degree <= 2 && (degree_one == 0 || degree_one == 2)
+    Some((connected, max_degree, degree_one_vertices, vertex_count))
 }
 
 fn validate_link_facets_and_boundary<const D: usize>(
@@ -1355,6 +1392,16 @@ mod tests {
 
     use slotmap::KeyData;
 
+    fn vk(id: u64) -> VertexKey {
+        VertexKey::from(KeyData::from_ffi(id))
+    }
+
+    fn simplex(vertices: &[VertexKey]) -> VertexKeyBuffer {
+        let mut s: VertexKeyBuffer = VertexKeyBuffer::with_capacity(vertices.len());
+        s.extend(vertices.iter().copied());
+        s
+    }
+
     #[test]
     fn test_validate_facet_degree_ok_for_single_tetrahedron() {
         let vertices = vec![
@@ -1500,6 +1547,328 @@ mod tests {
             }
             other => panic!("Expected out-of-bounds facet index error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_validate_vertex_link_d1_accepts_interior_vertex_with_two_neighbors() {
+        let vertex_key = vk(0);
+
+        let mut link_simplices: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        link_simplices.push(simplex(&[vk(1)]));
+        link_simplices.push(simplex(&[vk(2)]));
+
+        validate_vertex_link_d1(vertex_key, true, &link_simplices).unwrap();
+    }
+
+    #[test]
+    fn test_validate_vertex_link_d1_rejects_interior_vertex_with_one_neighbor() {
+        let vertex_key = vk(0);
+
+        let mut link_simplices: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        link_simplices.push(simplex(&[vk(1)]));
+
+        match validate_vertex_link_d1(vertex_key, true, &link_simplices) {
+            Err(ManifoldError::VertexLinkNotManifold {
+                vertex_key: got,
+                link_vertex_count,
+                link_cell_count,
+                boundary_facet_count,
+                interior_vertex,
+                ..
+            }) => {
+                assert_eq!(got, vertex_key);
+                assert!(interior_vertex);
+                assert_eq!(link_vertex_count, 1);
+                assert_eq!(link_cell_count, 1);
+                assert_eq!(boundary_facet_count, 0);
+            }
+            other => panic!("Expected VertexLinkNotManifold, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_vertex_link_d1_accepts_boundary_vertex_with_one_neighbor() {
+        let vertex_key = vk(0);
+
+        let mut link_simplices: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        link_simplices.push(simplex(&[vk(1)]));
+
+        validate_vertex_link_d1(vertex_key, false, &link_simplices).unwrap();
+    }
+
+    #[test]
+    fn test_validate_vertex_link_d1_rejects_boundary_vertex_with_two_neighbors() {
+        let vertex_key = vk(0);
+
+        let mut link_simplices: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        link_simplices.push(simplex(&[vk(1)]));
+        link_simplices.push(simplex(&[vk(2)]));
+
+        match validate_vertex_link_d1(vertex_key, false, &link_simplices) {
+            Err(ManifoldError::VertexLinkNotManifold {
+                vertex_key: got,
+                link_vertex_count,
+                link_cell_count,
+                boundary_facet_count,
+                interior_vertex,
+                ..
+            }) => {
+                assert_eq!(got, vertex_key);
+                assert!(!interior_vertex);
+                assert_eq!(link_vertex_count, 2);
+                assert_eq!(link_cell_count, 2);
+                assert_eq!(boundary_facet_count, 1);
+            }
+            other => panic!("Expected VertexLinkNotManifold, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_vertex_link_d2_accepts_cycle_for_interior_vertex() {
+        let vertex_key = vk(0);
+        let a = vk(1);
+        let b = vk(2);
+        let c = vk(3);
+
+        let mut link_simplices: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        link_simplices.push(simplex(&[a, b]));
+        link_simplices.push(simplex(&[b, c]));
+        link_simplices.push(simplex(&[c, a]));
+
+        validate_vertex_link_d2(vertex_key, true, &link_simplices, 3, 3).unwrap();
+    }
+
+    #[test]
+    fn test_validate_vertex_link_d2_accepts_path_for_boundary_vertex() {
+        let vertex_key = vk(0);
+        let a = vk(1);
+        let b = vk(2);
+        let c = vk(3);
+
+        let mut link_simplices: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        link_simplices.push(simplex(&[a, b]));
+        link_simplices.push(simplex(&[b, c]));
+
+        validate_vertex_link_d2(vertex_key, false, &link_simplices, 3, 2).unwrap();
+    }
+
+    #[test]
+    fn test_validate_vertex_link_d2_rejects_path_for_interior_vertex() {
+        let vertex_key = vk(0);
+        let a = vk(1);
+        let b = vk(2);
+        let c = vk(3);
+
+        let mut link_simplices: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        link_simplices.push(simplex(&[a, b]));
+        link_simplices.push(simplex(&[b, c]));
+
+        match validate_vertex_link_d2(vertex_key, true, &link_simplices, 3, 2) {
+            Err(ManifoldError::VertexLinkNotManifold {
+                vertex_key: got,
+                link_vertex_count,
+                link_cell_count,
+                boundary_facet_count,
+                connected,
+                max_degree,
+                interior_vertex,
+            }) => {
+                assert_eq!(got, vertex_key);
+                assert!(interior_vertex);
+                assert_eq!(link_vertex_count, 3);
+                assert_eq!(link_cell_count, 2);
+                assert_eq!(boundary_facet_count, 0);
+                assert!(connected);
+                assert_eq!(max_degree, 2);
+            }
+            other => panic!("Expected VertexLinkNotManifold, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_vertex_link_d2_rejects_cycle_for_boundary_vertex() {
+        let vertex_key = vk(0);
+        let a = vk(1);
+        let b = vk(2);
+        let c = vk(3);
+
+        let mut link_simplices: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        link_simplices.push(simplex(&[a, b]));
+        link_simplices.push(simplex(&[b, c]));
+        link_simplices.push(simplex(&[c, a]));
+
+        assert!(matches!(
+            validate_vertex_link_d2(vertex_key, false, &link_simplices, 3, 3),
+            Err(ManifoldError::VertexLinkNotManifold { .. })
+        ));
+    }
+
+    #[test]
+    fn test_validate_vertex_link_d2_rejects_non_edge_link_simplices() {
+        let vertex_key = vk(0);
+
+        let mut link_simplices: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        link_simplices.push(simplex(&[vk(1)]));
+
+        assert!(matches!(
+            validate_vertex_link_d2(vertex_key, true, &link_simplices, 1, 1),
+            Err(ManifoldError::VertexLinkNotManifold { .. })
+        ));
+    }
+
+    #[test]
+    fn test_validate_single_vertex_link_d1_accepts_path_middle_and_endpoints() {
+        // 0--1--2 : middle vertex is interior (2 neighbors), endpoints are boundary (1 neighbor).
+        let mut tds: Tds<f64, (), (), 1> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([2.0])).unwrap();
+
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1], None).unwrap())
+            .unwrap();
+        tds.insert_cell_with_mapping(Cell::new(vec![v1, v2], None).unwrap())
+            .unwrap();
+
+        validate_single_vertex_link(&tds, v0, false).unwrap();
+        validate_single_vertex_link(&tds, v1, true).unwrap();
+        validate_single_vertex_link(&tds, v2, false).unwrap();
+    }
+
+    #[test]
+    fn test_validate_single_vertex_link_d1_rejects_endpoint_classified_as_interior() {
+        let mut tds: Tds<f64, (), (), 1> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0])).unwrap();
+
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1], None).unwrap())
+            .unwrap();
+
+        assert!(matches!(
+            validate_single_vertex_link(&tds, v0, true),
+            Err(ManifoldError::VertexLinkNotManifold { .. })
+        ));
+    }
+
+    #[test]
+    fn test_validate_single_vertex_link_d2_accepts_boundary_vertex_in_single_triangle() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+
+        validate_single_vertex_link(&tds, v0, false).unwrap();
+        assert!(matches!(
+            validate_single_vertex_link(&tds, v0, true),
+            Err(ManifoldError::VertexLinkNotManifold { .. })
+        ));
+    }
+
+    #[test]
+    fn test_validate_single_vertex_link_d2_accepts_interior_vertex_in_closed_surface() {
+        // Boundary of a tetrahedron as a closed 2D surface (S^2).
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v3], None).unwrap())
+            .unwrap();
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v2, v3], None).unwrap())
+            .unwrap();
+        tds.insert_cell_with_mapping(Cell::new(vec![v1, v2, v3], None).unwrap())
+            .unwrap();
+
+        validate_single_vertex_link(&tds, v0, true).unwrap();
+        assert!(matches!(
+            validate_single_vertex_link(&tds, v0, false),
+            Err(ManifoldError::VertexLinkNotManifold { .. })
+        ));
+    }
+
+    #[test]
+    fn test_validate_vertex_links_in_2d_disk_distinguishes_boundary_and_interior_vertices() {
+        // Triangulated 2D disk: a 4-cycle boundary with a single interior vertex.
+        //
+        // Boundary vertices must have path links (degree-one vertices = 2), while the interior
+        // vertex has a cycle link (degree-one vertices = 0).
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let va = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let vb = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let vc = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+        let vd = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let center = tds.insert_vertex_with_mapping(vertex!([0.5, 0.5])).unwrap();
+
+        for tri in [
+            [center, va, vb],
+            [center, vb, vc],
+            [center, vc, vd],
+            [center, vd, va],
+        ] {
+            tds.insert_cell_with_mapping(Cell::new(vec![tri[0], tri[1], tri[2]], None).unwrap())
+                .unwrap();
+        }
+
+        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+
+        // Sanity: pseudomanifold-with-boundary checks pass.
+        validate_facet_degree(&facet_to_cells).unwrap();
+        validate_closed_boundary(&tds, &facet_to_cells).unwrap();
+
+        let boundary_vertices = build_boundary_vertex_set(&tds, &facet_to_cells).unwrap();
+        for boundary_vertex in [va, vb, vc, vd] {
+            assert!(boundary_vertices.contains(&boundary_vertex));
+        }
+        assert!(!boundary_vertices.contains(&center));
+
+        // Boundary vertex link is a path (two degree-1 vertices).
+        let star_a = simplex_star_cells(&tds, &[va]).unwrap();
+        let link_a = simplex_link_simplices_from_star(&tds, &[va], &star_a).unwrap();
+        let Some((connected, max_degree, degree_one_vertices, vertex_count)) =
+            link_1d_graph_stats(&link_a)
+        else {
+            panic!("Expected 1D link stats for boundary vertex");
+        };
+        assert!(connected);
+        assert_eq!(max_degree, 2);
+        assert_eq!(degree_one_vertices, 2);
+        assert_eq!(vertex_count, 3);
+
+        // Interior vertex link is a cycle (no degree-1 vertices).
+        let star_o = simplex_star_cells(&tds, &[center]).unwrap();
+        let link_o = simplex_link_simplices_from_star(&tds, &[center], &star_o).unwrap();
+        let Some((connected, max_degree, degree_one_vertices, vertex_count)) =
+            link_1d_graph_stats(&link_o)
+        else {
+            panic!("Expected 1D link stats for interior vertex");
+        };
+        assert!(connected);
+        assert_eq!(max_degree, 2);
+        assert_eq!(degree_one_vertices, 0);
+        assert_eq!(vertex_count, 4);
+
+        // Full vertex-link validation should succeed.
+        validate_vertex_links(&tds, &facet_to_cells).unwrap();
+
+        // And misclassifications should be rejected (guards the interior/boundary distinction).
+        assert!(matches!(
+            validate_single_vertex_link(&tds, va, true),
+            Err(ManifoldError::VertexLinkNotManifold { .. })
+        ));
+        assert!(matches!(
+            validate_single_vertex_link(&tds, center, false),
+            Err(ManifoldError::VertexLinkNotManifold { .. })
+        ));
     }
 
     #[test]

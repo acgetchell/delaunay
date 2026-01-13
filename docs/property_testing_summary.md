@@ -137,7 +137,7 @@ Added comprehensive property testing section:
 - Usage instructions
 - Configuration notes (`PROPTEST_CASES` environment variable)
 
-#### `WARP.md`
+#### `AGENTS.md`
 
 Added property testing guidelines:
 
