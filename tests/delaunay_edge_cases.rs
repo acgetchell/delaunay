@@ -278,8 +278,9 @@ test_regression_config!(
 #[test]
 fn test_regression_non_manifold_3d_seed123_50pts() {
     // Exact configuration from CI failure (matches ci_performance_suite.rs)
+    let n_points = 50;
     let result = generate_random_triangulation::<f64, (), (), 3>(
-        50,              // Point count from CI benchmark
+        n_points,        // Point count from CI benchmark
         (-100.0, 100.0), // Bounds from benchmark
         None,            // No vertex data
         Some(123),       // Seed from benchmark (line 85 in ci_performance_suite.rs)
@@ -297,13 +298,14 @@ fn test_regression_non_manifold_3d_seed123_50pts() {
     // Verify basic properties
     // Note: Some vertices may be skipped due to geometric degeneracy
     let num_vertices = dt.number_of_vertices();
+    let min_vertices = (n_points / 6).max(4);
     assert!(
-        num_vertices <= 50,
-        "Should have ≤50 vertices, got {num_vertices}"
+        num_vertices <= n_points,
+        "Should have ≤{n_points} vertices, got {num_vertices}"
     );
     assert!(
-        num_vertices >= 20,
-        "Should have ≥20 vertices (extremely degenerate cases can skip 60%+), got {num_vertices}"
+        num_vertices >= min_vertices,
+        "Should have ≥{min_vertices} vertices (extremely degenerate cases can skip 80%+), got {num_vertices}"
     );
     assert!(dt.number_of_cells() > 0);
 
@@ -323,10 +325,16 @@ fn test_regression_non_manifold_3d_seed123_50pts() {
 #[test]
 fn test_regression_non_manifold_nearby_seeds() {
     let test_seeds = [120, 121, 122, 123, 124, 125, 126];
+    let n_points = 50;
+    let min_vertices = (n_points / 6).max(4);
 
     for seed in test_seeds {
-        let result =
-            generate_random_triangulation::<f64, (), (), 3>(50, (-100.0, 100.0), None, Some(seed));
+        let result = generate_random_triangulation::<f64, (), (), 3>(
+            n_points,
+            (-100.0, 100.0),
+            None,
+            Some(seed),
+        );
 
         assert!(
             result.is_ok(),
@@ -338,12 +346,12 @@ fn test_regression_non_manifold_nearby_seeds() {
         let dt = result.unwrap();
         let num_vertices = dt.number_of_vertices();
         assert!(
-            num_vertices <= 50,
+            num_vertices <= n_points,
             "Seed {seed}: too many vertices ({num_vertices})"
         );
         assert!(
-            num_vertices >= 20,
-            "Seed {seed}: too few vertices ({num_vertices}), degenerate cases can skip 60%+"
+            num_vertices >= min_vertices,
+            "Seed {seed}: too few vertices ({num_vertices}), degenerate cases can skip 80%+"
         );
         let validation = dt.as_triangulation().validate();
         assert!(

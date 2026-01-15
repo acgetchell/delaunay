@@ -121,7 +121,7 @@ use crate::core::algorithms::incremental_insertion::{
     fill_cavity, repair_neighbor_pointers, wire_cavity_neighbors,
 };
 use crate::core::algorithms::locate::{
-    LocateResult, extract_cavity_boundary, find_conflict_region, locate,
+    ConflictError, LocateResult, extract_cavity_boundary, find_conflict_region, locate,
 };
 use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::{
@@ -2636,6 +2636,231 @@ where
         Ok(())
     }
 
+    /// Find all conflict cells by scanning the entire triangulation.
+    ///
+    /// This is used for exterior points where the standard BFS conflict-region
+    /// search lacks a guaranteed seed cell inside the conflict region.
+    fn find_conflict_region_global(
+        &self,
+        point: &Point<K::Scalar, D>,
+    ) -> Result<CellKeyBuffer, ConflictError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        let mut conflict_cells = CellKeyBuffer::new();
+
+        for (cell_key, cell) in self.tds.cells() {
+            let simplex_points: SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+                cell.vertices()
+                    .iter()
+                    .filter_map(|&vkey| self.tds.get_vertex_by_key(vkey).map(|v| *v.point()))
+                    .collect();
+
+            if simplex_points.len() != D + 1 {
+                return Err(ConflictError::CellDataAccessFailed {
+                    cell_key,
+                    message: format!("Expected {} vertices, got {}", D + 1, simplex_points.len()),
+                });
+            }
+
+            let sign = self.kernel.in_sphere(&simplex_points, point)?;
+            if sign > 0 {
+                conflict_cells.push(cell_key);
+            }
+        }
+
+        Ok(conflict_cells)
+    }
+
+    /// Perform cavity insertion given an explicit conflict region.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Keep cavity insertion and repair logic together for clarity"
+    )]
+    fn insert_with_conflict_region(
+        &mut self,
+        v_key: VertexKey,
+        point: &Point<K::Scalar, D>,
+        mut conflict_cells: CellKeyBuffer,
+        fallback_cell: Option<CellKey>,
+        suspicion: &mut SuspicionFlags,
+    ) -> Result<(Option<CellKey>, usize), InsertionError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        if conflict_cells.is_empty() {
+            let Some(start_cell) = fallback_cell else {
+                return Err(InsertionError::CavityFilling {
+                    message: "Empty conflict region for exterior insertion".to_string(),
+                });
+            };
+            suspicion.empty_conflict_region = true;
+            suspicion.fallback_star_split = true;
+            conflict_cells.push(start_cell);
+        }
+
+        // Extract cavity boundary
+        let mut boundary_facets = extract_cavity_boundary(&self.tds, &conflict_cells)?;
+
+        // Fallback: never allow an insertion to create a dangling vertex.
+        if boundary_facets.is_empty() {
+            let Some(start_cell) = fallback_cell else {
+                return Err(InsertionError::CavityFilling {
+                    message: "Empty cavity boundary for exterior insertion".to_string(),
+                });
+            };
+
+            suspicion.empty_conflict_region = true;
+            suspicion.fallback_star_split = true;
+
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "WARNING: empty cavity boundary; falling back to splitting containing cell {start_cell:?}"
+            );
+
+            conflict_cells = {
+                let mut owned = CellKeyBuffer::new();
+                owned.push(start_cell);
+                owned
+            };
+            boundary_facets = Self::star_split_boundary_facets(start_cell);
+        }
+
+        // Fill cavity BEFORE removing old cells
+        let new_cells = fill_cavity(&mut self.tds, v_key, &boundary_facets)?;
+
+        // Wire neighbors (while both old and new cells exist)
+        wire_cavity_neighbors(&mut self.tds, &new_cells, Some(&conflict_cells))?;
+
+        // Remove conflict cells (now that new cells are wired up)
+        let _removed_count = self.tds.remove_cells_by_keys(&conflict_cells);
+
+        // Iteratively repair non-manifold topology until facet sharing is valid
+        let mut total_removed = 0;
+        #[cfg_attr(
+            not(debug_assertions),
+            expect(
+                unused_variables,
+                reason = "`iteration` is only used for debug logging",
+            )
+        )]
+        for iteration in 0..MAX_REPAIR_ITERATIONS {
+            // Check for non-manifold issues in newly created cells (local scan)
+            let cells_to_check: CellKeyBuffer = new_cells
+                .iter()
+                .copied()
+                .filter(|ck| self.tds.contains_cell(*ck))
+                .collect();
+
+            if let Some(issues) = self.detect_local_facet_issues(&cells_to_check)? {
+                // Only mark this as "suspicious" if we *actually* detected local facet issues
+                // and entered the repair path.
+                suspicion.repair_loop_entered = true;
+
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "Repair iteration {}: {} over-shared facets detected, removing cells...",
+                    iteration + 1,
+                    issues.len()
+                );
+
+                let removed = self.repair_local_facet_issues(&issues)?;
+
+                // Early exit if repair made no progress
+                if removed == 0 {
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "No cells removed in iteration {} - repair cannot make progress",
+                        iteration + 1
+                    );
+                    return Err(InsertionError::TopologyValidation(
+                        TdsValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Repair stalled: {} over-shared facets remain but no cells could be removed",
+                                issues.len()
+                            ),
+                        },
+                    ));
+                }
+
+                total_removed += removed;
+
+                if removed > 0 {
+                    suspicion.cells_removed = true;
+                }
+
+                #[cfg(debug_assertions)]
+                eprintln!("Removed {removed} cells (total: {total_removed})");
+
+                // Early exit if repair succeeded
+                if self.tds.validate_facet_sharing().is_ok() {
+                    break;
+                }
+            } else {
+                // No more non-manifold issues - safe to rebuild neighbors
+                break;
+            }
+        }
+
+        // Rebuild neighbor pointers now that topology is manifold
+        #[cfg(debug_assertions)]
+        eprintln!("After repair loop: total_removed={total_removed}");
+
+        // After insertion we ALWAYS removed the conflict region, which can leave broken/None neighbor
+        // pointers in surviving cells. Even if the subsequent non-manifold repair loop removed 0 cells,
+        // we still must repair neighbor pointers to ensure the cavity is glued.
+        let facet_valid = self.tds.validate_facet_sharing().is_ok();
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "Before repair_neighbor_pointers: facet_sharing_valid={facet_valid}, cells={}",
+            self.tds.number_of_cells()
+        );
+
+        if !facet_valid {
+            return Err(InsertionError::CavityFilling {
+                message:
+                    "Facet sharing invalid after insertion/repairs - cannot safely repair neighbors"
+                        .to_string(),
+            });
+        }
+
+        // Surgical reconstruction: fix broken/None pointers by facet matching.
+        let repaired =
+            repair_neighbor_pointers(&mut self.tds).map_err(|e| InsertionError::CavityFilling {
+                message: format!("Failed to repair neighbor pointers after insertion: {e}"),
+            })?;
+        suspicion.neighbor_pointers_rebuilt = repaired > 0;
+
+        // Validate neighbor pointers by forcing a full facet walk (no hint).
+        let _ = locate(&self.tds, &self.kernel, point, None)?;
+
+        // Always rebuild vertex→cell incidence after insertion.
+        self.tds
+            .assign_incident_cells()
+            .map_err(|e| InsertionError::CavityFilling {
+                message: format!("Failed to assign incident cells after insertion: {e}"),
+            })?;
+
+        // If any vertex is not incident to a cell, topology is not a pure ball anymore.
+        if self.tds.vertices().any(|(_, v)| v.incident_cell.is_none()) {
+            return Err(InsertionError::TopologyValidation(
+                TdsValidationError::InconsistentDataStructure {
+                    message: "Isolated vertex detected after insertion (vertex not in any cell)"
+                        .to_string(),
+                },
+            ));
+        }
+
+        // Connectedness guard (STRUCTURAL SAFETY, NOT Level 3 validation)
+        self.validate_connectedness(&new_cells)?;
+
+        // Return hint for next insertion
+        let hint = new_cells
+            .iter()
+            .copied()
+            .find(|ck| self.tds.contains_cell(*ck));
+        Ok((hint, total_removed))
+    }
     /// Internal implementation of insert without retry logic.
     /// Returns the result and the number of cells removed during repair.
     ///
@@ -2782,7 +3007,25 @@ where
                     start_cell,
                 ))
             }
-            (LocateResult::Outside, _) => None, // Hull extension doesn't need conflict region
+            (LocateResult::Outside, None) => {
+                if D == 2 {
+                    None
+                } else {
+                    let computed = self.find_conflict_region_global(&point)?;
+                    if computed.is_empty() {
+                        None
+                    } else {
+                        Some(Cow::Owned(computed))
+                    }
+                }
+            }
+            (LocateResult::Outside, Some(cells)) => {
+                if cells.is_empty() {
+                    None
+                } else {
+                    Some(Cow::Borrowed(cells))
+                }
+            }
             (location, _) => {
                 // Degenerate locations (OnFacet, OnEdge, OnVertex)
                 return Err(InsertionError::CavityFilling {
@@ -2796,190 +3039,30 @@ where
         // 5. Handle different location results
         match location {
             LocateResult::InsideCell(start_cell) => {
-                // Interior vertex: use computed or provided conflict_cells
-                let mut conflict_cells =
-                    conflict_cells.expect("conflict_cells should be computed above");
-
-                // 5. Extract cavity boundary
-                let mut boundary_facets =
-                    extract_cavity_boundary(&self.tds, conflict_cells.as_ref())?;
-
-                // Fallback: never allow an interior insertion to create a dangling vertex.
-                //
-                // If the boundary is empty, `fill_cavity()` would create zero cells, leaving the
-                // inserted vertex isolated (increases χ by 1; observed as χ=2 for Ball(3)).
-                // In that case, force a star-split of the containing cell.
-                if boundary_facets.is_empty() {
-                    suspicion.empty_conflict_region = true;
-                    suspicion.fallback_star_split = true;
-
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "WARNING: empty cavity boundary for interior insertion; falling back to splitting containing cell {start_cell:?}"
-                    );
-
-                    conflict_cells = Cow::Owned({
-                        let mut owned = CellKeyBuffer::new();
-                        owned.push(start_cell);
-                        owned
-                    });
-
-                    boundary_facets = Self::star_split_boundary_facets(start_cell);
-                }
-
-                // 6. Fill cavity BEFORE removing old cells
-                let new_cells = fill_cavity(&mut self.tds, v_key, &boundary_facets)?;
-
-                // 7. Wire neighbors (while both old and new cells exist)
-                wire_cavity_neighbors(&mut self.tds, &new_cells, Some(conflict_cells.as_ref()))?;
-
-                // 8. Remove conflict cells (now that new cells are wired up)
-                let _removed_count = self.tds.remove_cells_by_keys(conflict_cells.as_ref());
-
-                // 9. Iteratively repair non-manifold topology until facet sharing is valid
-                let mut total_removed = 0;
-                #[cfg_attr(
-                    not(debug_assertions),
-                    expect(
-                        unused_variables,
-                        reason = "`iteration` is only used for debug logging",
-                    )
-                )]
-                for iteration in 0..MAX_REPAIR_ITERATIONS {
-                    // Check for non-manifold issues in newly created cells (local scan)
-                    // This keeps the repair O(k·D) where k is the cavity size, rather than O(N·D)
-                    let cells_to_check: CellKeyBuffer = new_cells
-                        .iter()
-                        .copied()
-                        .filter(|ck| self.tds.contains_cell(*ck))
-                        .collect();
-
-                    if let Some(issues) = self.detect_local_facet_issues(&cells_to_check)? {
-                        // Only mark this as "suspicious" if we *actually* detected local facet issues
-                        // and entered the repair path.
-                        suspicion.repair_loop_entered = true;
-
-                        #[cfg(debug_assertions)]
-                        eprintln!(
-                            "Repair iteration {}: {} over-shared facets detected, removing cells...",
-                            iteration + 1,
-                            issues.len()
-                        );
-
-                        let removed = self.repair_local_facet_issues(&issues)?;
-
-                        // Early exit if repair made no progress
-                        if removed == 0 {
-                            #[cfg(debug_assertions)]
-                            eprintln!(
-                                "No cells removed in iteration {} - repair cannot make progress",
-                                iteration + 1
-                            );
-                            return Err(InsertionError::TopologyValidation(
-                                TdsValidationError::InconsistentDataStructure {
-                                    message: format!(
-                                        "Repair stalled: {} over-shared facets remain but no cells could be removed",
-                                        issues.len()
-                                    ),
-                                },
-                            ));
-                        }
-
-                        total_removed += removed;
-
-                        if removed > 0 {
-                            suspicion.cells_removed = true;
-                        }
-
-                        #[cfg(debug_assertions)]
-                        eprintln!("Removed {removed} cells (total: {total_removed})");
-
-                        // Early exit if repair succeeded
-                        if self.tds.validate_facet_sharing().is_ok() {
-                            break;
-                        }
-                    } else {
-                        // No more non-manifold issues - safe to rebuild neighbors
-                        break;
-                    }
-                }
-
-                // 10. Rebuild neighbor pointers now that topology is manifold
-                #[cfg(debug_assertions)]
-                eprintln!("After repair loop (interior): total_removed={total_removed}");
-
-                // After interior insertion we ALWAYS removed the conflict region (step 8),
-                // which can leave broken/None neighbor pointers in surviving cells.
-                // Even if the subsequent non-manifold repair loop removed 0 cells,
-                // we still must repair neighbor pointers to ensure the cavity is glued.
-                //
-                // Double-check that facet sharing is valid before repairing neighbors.
-                let facet_valid = self.tds.validate_facet_sharing().is_ok();
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "Before repair_neighbor_pointers (interior): facet_sharing_valid={facet_valid}, cells={}",
-                    self.tds.number_of_cells()
-                );
-
-                if !facet_valid {
-                    return Err(InsertionError::CavityFilling {
-                        message: "Facet sharing invalid after insertion/repairs - cannot safely repair neighbors".to_string(),
-                    });
-                }
-
-                // Surgical reconstruction: fix broken/None pointers by facet matching.
-                let repaired = repair_neighbor_pointers(&mut self.tds).map_err(|e| {
-                    InsertionError::CavityFilling {
-                        message: format!("Failed to repair neighbor pointers after insertion: {e}"),
-                    }
-                })?;
-                suspicion.neighbor_pointers_rebuilt = repaired > 0;
-
-                // Validate neighbor pointers by forcing a full facet walk (no hint).
-                let _ = locate(&self.tds, &self.kernel, &point, None)?;
-
-                // Always rebuild vertex→cell incidence after insertion.
-                self.tds
-                    .assign_incident_cells()
-                    .map_err(|e| InsertionError::CavityFilling {
-                        message: format!("Failed to assign incident cells after insertion: {e}"),
-                    })?;
-
-                // If any vertex is not incident to a cell, topology is not a pure ball anymore
-                // (χ typically increases by 1 per isolated vertex). Treat as retryable degeneracy.
-                if self.tds.vertices().any(|(_, v)| v.incident_cell.is_none()) {
-                    return Err(InsertionError::TopologyValidation(
-                        TdsValidationError::InconsistentDataStructure {
-                            message:
-                                "Isolated vertex detected after insertion (vertex not in any cell)"
-                                    .to_string(),
-                        },
-                    ));
-                }
-
-                // Connectedness guard (STRUCTURAL SAFETY, NOT Level 3 validation):
-                //
-                // This check is intentionally unconditional.
-                // It ensures the newly created cells form a single connected component and that
-                // component is attached to the existing triangulation before we commit.
-                //
-                // - This is NOT `Triangulation::is_valid()`
-                // - It does NOT compute Euler characteristic
-                // - It does NOT perform global facet manifold checks
-                //
-                // Cost: O(k·D) where k is the number of newly created cells.
-                //
-                // If this fails, the triangulation is already corrupted and must be rolled back.
-                self.validate_connectedness(&new_cells)?;
-
-                // Return vertex key and hint for next insertion
-                let hint = new_cells
-                    .iter()
-                    .copied()
-                    .find(|ck| self.tds.contains_cell(*ck));
+                let conflict_cells = conflict_cells
+                    .expect("conflict_cells should be computed above")
+                    .into_owned();
+                let (hint, total_removed) = self.insert_with_conflict_region(
+                    v_key,
+                    &point,
+                    conflict_cells,
+                    Some(start_cell),
+                    &mut suspicion,
+                )?;
                 Ok(((v_key, hint), total_removed, suspicion))
             }
             LocateResult::Outside => {
+                if let Some(conflict_cells) = conflict_cells {
+                    let conflict_cells = conflict_cells.into_owned();
+                    let (hint, total_removed) = self.insert_with_conflict_region(
+                        v_key,
+                        &point,
+                        conflict_cells,
+                        None,
+                        &mut suspicion,
+                    )?;
+                    return Ok(((v_key, hint), total_removed, suspicion));
+                }
                 // Exterior vertex: extend convex hull
                 let new_cells = extend_hull(&mut self.tds, &self.kernel, v_key, &point)?;
 

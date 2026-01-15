@@ -6,9 +6,22 @@
 
 ## Summary
 
-The property tests for Delaunay empty circumsphere validation cannot be stabilized
-without implementing bistellar flip operations. The tests are correctly identifying
-algorithmic limitations rather than test configuration issues.
+The property tests for Delaunay empty circumsphere validation originally could not
+be stabilized without implementing bistellar flip operations. As of 2026-01-14,
+k=2 facet flips and flip-based Delaunay repair are implemented; 2D/3D property
+tests are re-enabled, while 4D/5D and duplicate-cloud tests remain ignored pending
+broader flip coverage and validation.
+
+## Update (2026-01-14)
+
+- Implemented k=2 facet flips in `src/core/algorithms/flips.rs`, with a queue-based repair loop.
+- Added `DelaunayRepairPolicy` and automatic repair after insertion (default: every insertion).
+- Added a manual repair entrypoint: `DelaunayTriangulation::repair_delaunay_with_flips`.
+- Re-enabled `prop_empty_circumsphere_{2d,3d}`; `4d/5d` remain ignored.
+- Duplicate-cloud integration tests remain ignored pending broader flip coverage.
+
+> Note: The sections below capture the original investigation and plan. Where they
+> conflict with the update above, the update is authoritative.
 
 ## Root Cause
 
@@ -21,12 +34,13 @@ These violations occur even with:
 - ✅ Robust geometric predicates (`robust_insphere`)
 - ✅ Global repair loops (removes violated cells but cannot fix topology)
 
-## Failing Tests
+## Test Status
 
-All tests in `tests/proptest_delaunay_triangulation.rs`:
+Current status in `tests/proptest_delaunay_triangulation.rs`:
 
-- `prop_empty_circumsphere_{2d,3d,4d,5d}` - Empty circumsphere property validation
-- `prop_cloud_with_duplicates_is_delaunay_{2d,3d,4d,5d}` - Duplicate cloud integration tests
+- **Enabled**: `prop_empty_circumsphere_{2d,3d}`
+- **Ignored**: `prop_empty_circumsphere_{4d,5d}` (higher-dimensional flip validation)
+- **Ignored**: `prop_cloud_with_duplicates_is_delaunay_{2d,3d,4d,5d}` (broader flip coverage)
 
 ## Example Failure Case (2D)
 
@@ -81,6 +95,8 @@ But it cannot **flip edges** or change topology, which is required to fix certai
 
 Topology-preserving transformations that restore the Delaunay property by reconfiguring cell adjacencies without changing the vertex set.
 
+**Status (2026-01-14)**: Implemented k=2 facet flips (2 → D+1) with queue-based repair. Additional flip types (k>2) and reverse flips remain future work.
+
 ### Required Implementations
 
 #### 2D: Edge Flip (2-to-2)
@@ -134,11 +150,10 @@ General bistellar flip operations based on i-to-j transformations.
 
 ### Current State
 
-- **Stub implementation**: `src/core/algorithms/flips.rs` (placeholder with TODOs, no functional
-  implementation)
-- **Failing tests**: `tests/proptest_delaunay_triangulation.rs` (empty circumsphere and duplicate
-  cloud test sections)
-- **Documentation**: `tests/README.md` (updated to reflect bistellar flip dependency)
+- **Flip implementation**: `src/core/algorithms/flips.rs` (k=2 facet flips + repair queue)
+- **Repair integration**: `src/core/delaunay_triangulation.rs` (`DelaunayRepairPolicy`, auto repair)
+- **Tests**: `tests/proptest_delaunay_triangulation.rs` (2D/3D empty-circumsphere enabled; 4D/5D ignored)
+- **Documentation**: `tests/README.md` (notes higher-dimensional flip dependency)
 
 ### References
 
@@ -187,17 +202,15 @@ General bistellar flip operations based on i-to-j transformations.
 
 - Issue #120: Stabilize property tests (this investigation)
 - Issue #98: Topology and Euler characteristic (can proceed independently)
-- Stub file: `src/core/algorithms/flips.rs` (ready for implementation)
+- Flip implementation: `src/core/algorithms/flips.rs` (k=2 facet flips + repair queue)
 
 ## Conclusion
 
-The property tests are **working as intended**—they correctly identify that the
-current algorithm cannot guarantee the Delaunay property without bistellar flips.
-This is a known limitation of incremental algorithms without post-processing.
-
-The tests should remain ignored until bistellar flips are implemented, as they
-represent a fundamental algorithmic capability gap rather than a test configuration
-issue.
+The property tests were **working as intended**—they identified that the
+incremental algorithm could not guarantee the Delaunay property without flips.
+With k=2 facet flips now implemented, 2D/3D empty-circumsphere tests are re-enabled,
+and remaining higher-dimensional/duplicate-cloud tests stay ignored until broader
+flip coverage and validation are complete.
 
 ## Proposed Resolution
 

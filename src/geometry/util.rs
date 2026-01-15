@@ -6,7 +6,10 @@
 
 use num_traits::{Float, Zero};
 use rand::Rng;
+use rand::SeedableRng;
 use rand::distr::uniform::SampleUniform;
+use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
 use std::iter::Sum;
 use std::ops::{AddAssign, SubAssign};
 
@@ -19,11 +22,12 @@ use crate::core::facet::FacetView;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::TriangulationConstructionError;
 use crate::core::vertex::{Vertex, VertexBuilder};
-use crate::geometry::kernel::FastKernel;
+use crate::geometry::kernel::{FastKernel, RobustKernel};
 use crate::geometry::matrix::{
     Matrix, MatrixError, StackMatrixDispatchError, matrix_get, matrix_set,
 };
 use crate::geometry::point::Point;
+use crate::geometry::robust_predicates::config_presets;
 use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar,
 };
@@ -2052,12 +2056,132 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
     Ok(points)
 }
 
-/// Generate a random Delaunay triangulation with specified parameters.
+// =============================================================================
+// RANDOM TRIANGULATION HELPERS
+// =============================================================================
+
+const RANDOM_TRIANGULATION_MAX_SHUFFLE_ATTEMPTS: usize = 6;
+const RANDOM_TRIANGULATION_MAX_POINTSET_ATTEMPTS: usize = 6;
+const RANDOM_TRIANGULATION_POINTSET_SEED_MIX: u64 = 0x9E37_79B9_7F4A_7C15;
+
+fn random_triangulation_is_acceptable<K, U, V, const D: usize>(
+    dt: &DelaunayTriangulation<K, U, V, D>,
+    min_vertices: usize,
+) -> bool
+where
+    K: crate::geometry::kernel::Kernel<D>,
+    K::Scalar: CoordinateScalar + AddAssign + SubAssign + Sum + num_traits::cast::NumCast,
+    U: DataType,
+    V: DataType,
+{
+    dt.as_triangulation().validate().is_ok() && dt.number_of_vertices() >= min_vertices
+}
+
+fn random_triangulation_try_build<K, T, U, V, const D: usize>(
+    kernel: K,
+    vertices: &[Vertex<T, U, D>],
+    min_vertices: usize,
+) -> Option<DelaunayTriangulation<K, U, V, D>>
+where
+    K: crate::geometry::kernel::Kernel<D, Scalar = T>,
+    T: CoordinateScalar + AddAssign + SubAssign + Sum + num_traits::cast::NumCast,
+    U: DataType,
+    V: DataType,
+{
+    let dt = DelaunayTriangulation::with_kernel(kernel, vertices).ok()?;
+    random_triangulation_is_acceptable(&dt, min_vertices).then_some(dt)
+}
+
+fn random_triangulation_build_vertices<T, U, const D: usize>(
+    points: Vec<Point<T, D>>,
+    vertex_data: Option<U>,
+) -> Vec<Vertex<T, U, D>>
+where
+    T: CoordinateScalar,
+    U: DataType,
+{
+    points
+        .into_iter()
+        .map(|point| {
+            vertex_data.map_or_else(
+                || {
+                    VertexBuilder::default()
+                        .point(point)
+                        .build()
+                        .expect("Failed to build vertex without data")
+                },
+                |data| {
+                    VertexBuilder::default()
+                        .point(point)
+                        .data(data)
+                        .build()
+                        .expect("Failed to build vertex with data")
+                },
+            )
+        })
+        .collect()
+}
+
+fn random_triangulation_to_fast_kernel<T, U, V, const D: usize>(
+    dt: &DelaunayTriangulation<RobustKernel<T>, U, V, D>,
+) -> DelaunayTriangulation<FastKernel<T>, U, V, D>
+where
+    T: CoordinateScalar + AddAssign + SubAssign + Sum + num_traits::cast::NumCast + Zero,
+    U: DataType,
+    V: DataType,
+{
+    let tds = dt.tds().clone();
+    DelaunayTriangulation::from_tds(tds, FastKernel::new())
+}
+
+fn random_triangulation_try_with_vertices<T, U, V, const D: usize>(
+    vertices: &[Vertex<T, U, D>],
+    min_vertices: usize,
+    shuffle_seed: Option<u64>,
+) -> Option<DelaunayTriangulation<FastKernel<T>, U, V, D>>
+where
+    T: CoordinateScalar + AddAssign + SubAssign + Sum + num_traits::cast::NumCast + Zero,
+    U: DataType,
+    V: DataType,
+{
+    if let Some(dt) = random_triangulation_try_build(FastKernel::new(), vertices, min_vertices) {
+        return Some(dt);
+    }
+
+    let robust_config = config_presets::degenerate_robust::<T>();
+    let robust_kernel = RobustKernel::with_config(robust_config);
+
+    if let Some(dt) = random_triangulation_try_build(robust_kernel.clone(), vertices, min_vertices)
+    {
+        return Some(random_triangulation_to_fast_kernel(&dt));
+    }
+
+    for attempt in 0..RANDOM_TRIANGULATION_MAX_SHUFFLE_ATTEMPTS {
+        let mut shuffled = vertices.to_vec();
+        if let Some(seed_value) = shuffle_seed {
+            let mix = seed_value.wrapping_add(attempt as u64 + 1);
+            let mut rng = StdRng::seed_from_u64(mix);
+            shuffled.shuffle(&mut rng);
+        } else {
+            let mut rng = rand::rng();
+            shuffled.shuffle(&mut rng);
+        }
+
+        if let Some(dt) =
+            random_triangulation_try_build(robust_kernel.clone(), &shuffled, min_vertices)
+        {
+            return Some(random_triangulation_to_fast_kernel(&dt));
+        }
+    }
+
+    None
+}
+
+/// This utility function combines random point generation and triangulation creation.
 ///
-/// This utility function combines random point generation and triangulation creation
-/// in a single convenient function. It generates random points using either seeded
-/// or unseeded random generation, converts them to vertices, and creates a Delaunay
-/// triangulation using the incremental cavity-based insertion algorithm.
+/// It generates random points using either seeded or unseeded random generation,
+/// converts them to vertices, and creates a Delaunay triangulation using the
+/// incremental cavity-based insertion algorithm.
 ///
 /// This function is particularly useful for testing, benchmarking, and creating
 /// triangulations for analysis or visualization purposes.
@@ -2190,7 +2314,8 @@ where
         + std::ops::AddAssign<T>
         + std::ops::SubAssign<T>
         + std::iter::Sum
-        + num_traits::cast::NumCast,
+        + num_traits::cast::NumCast
+        + num_traits::Zero,
     U: DataType,
     V: DataType,
 {
@@ -2217,35 +2342,50 @@ where
             })?,
         };
 
-    // Convert points to vertices using the vertex! macro pattern
-    let vertices: Vec<Vertex<T, U, D>> = points
-        .into_iter()
-        .map(|point| {
-            vertex_data.map_or_else(
-                || {
-                    VertexBuilder::default()
-                        .point(point)
-                        .build()
-                        .expect("Failed to build vertex without data")
-                },
-                |data| {
-                    VertexBuilder::default()
-                        .point(point)
-                        .data(data)
-                        .build()
-                        .expect("Failed to build vertex with data")
-                },
-            )
-        })
-        .collect();
+    let min_vertices = (n_points / 6).max(D + 1);
 
-    // Create and return DelaunayTriangulation with FastKernel
-    let kernel = FastKernel::new();
-    let delaunay_triangulation = DelaunayTriangulation::with_kernel(kernel, &vertices)?;
+    let mut initial_points = Some(points);
 
-    Ok(delaunay_triangulation)
+    for attempt in 0..=RANDOM_TRIANGULATION_MAX_POINTSET_ATTEMPTS {
+        let point_seed = seed.map(|base| {
+            if attempt > 0 {
+                base ^ RANDOM_TRIANGULATION_POINTSET_SEED_MIX.wrapping_mul(attempt as u64)
+            } else {
+                base
+            }
+        });
+
+        let points = if attempt == 0 {
+            initial_points
+                .take()
+                .expect("initial points already consumed")
+        } else {
+            match point_seed {
+                Some(seed_value) => generate_random_points_seeded(n_points, bounds, seed_value)
+                    .map_err(|e| TriangulationConstructionError::GeometricDegeneracy {
+                        message: format!("Random point generation failed: {e}"),
+                    })?,
+                None => generate_random_points(n_points, bounds).map_err(|e| {
+                    TriangulationConstructionError::GeometricDegeneracy {
+                        message: format!("Random point generation failed: {e}"),
+                    }
+                })?,
+            }
+        };
+
+        let vertices = random_triangulation_build_vertices(points, vertex_data);
+        if let Some(dt) =
+            random_triangulation_try_with_vertices(&vertices, min_vertices, point_seed)
+        {
+            return Ok(dt);
+        }
+    }
+
+    Err(TriangulationConstructionError::GeometricDegeneracy {
+        message: "Random triangulation failed validation after robust fallback".to_string(),
+    }
+    .into())
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5064,10 +5204,30 @@ mod tests {
         let string_representation: String = char_array_data.iter().collect();
         assert_eq!(string_representation, "vertex_d");
 
-        // Test with integer data
-        let tri_with_int_data =
-            generate_random_triangulation::<f64, u32, (), 3>(8, (0.0, 5.0), Some(42u32), Some(999))
-                .unwrap();
+        // Test with integer data (try multiple deterministic seeds to avoid rare degeneracies)
+        let seeds = [999_u64, 123, 456, 789, 2024];
+        let mut tri_with_int_data: Option<DelaunayTriangulation<FastKernel<f64>, u32, (), 3>> =
+            None;
+        let mut last_err: Option<String> = None;
+        for seed in seeds {
+            match generate_random_triangulation::<f64, u32, (), 3>(
+                8,
+                (0.0, 5.0),
+                Some(42u32),
+                Some(seed),
+            ) {
+                Ok(tri) => {
+                    tri_with_int_data = Some(tri);
+                    break;
+                }
+                Err(e) => {
+                    last_err = Some(format!("{e}"));
+                }
+            }
+        }
+        let tri_with_int_data = tri_with_int_data.unwrap_or_else(|| {
+            panic!("All seeds failed to generate 3D triangulation with int data: {last_err:?}")
+        });
 
         assert!(
             tri_with_int_data.number_of_vertices() >= 4,

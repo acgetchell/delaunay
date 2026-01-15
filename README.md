@@ -33,22 +33,15 @@ lightweight alternative to [CGAL] for the [Rust] ecosystem.
 
 See [CHANGELOG.md](CHANGELOG.md) for details.
 
-## ⚠️ Known Limitations
+## ⚠️ Delaunay Property
 
-<!-- TODO: Remove this entire section once Issue #120 is resolved (bistellar flips implemented) -->
+The triangulation uses flip-based Delaunay repair (k=2 facet flips) after insertion by
+default via `DelaunayRepairPolicy`. This restores the local Delaunay property for most
+configurations and preserves all structural invariants (TDS validity).
 
-### Delaunay Property
-
-The incremental Bowyer-Watson algorithm produces structurally valid triangulations but may
-contain local violations of the Delaunay empty circumsphere property in rare cases. These
-violations typically occur with:
-
-- Near-degenerate point configurations
-- Specific geometric arrangements of input points
-
-Most triangulations satisfy the Delaunay property, and all structural invariants (TDS validity)
-are maintained. Full Delaunay property guarantees will require a future bistellar flip implementation,
-currently planned for v0.7.0+.
+In rare cases, repair may fail to converge; insertion returns an error and the
+triangulation remains structurally valid but not guaranteed Delaunay. Higher-dimensional
+cases (4D/5D) may require additional flip types (k>2) beyond the current k=2 implementation.
 
 For details, see: [Issue #120 Investigation](docs/issue_120_investigation.md)
 
@@ -57,7 +50,7 @@ For details, see: [Issue #120 Investigation](docs/issue_120_investigation.md)
 
 - **Level 2** (`dt.tds().is_valid()`) - Structural correctness (expected to pass when using public APIs; not affected by Issue #120)
 - **Level 3** (`dt.as_triangulation().is_valid()`) - Manifold topology + Euler characteristic
-- **Level 4** (`dt.is_valid()`) - Delaunay property only (may fail in rare cases per Issue #120)
+- **Level 4** (`dt.is_valid()`) - Delaunay property only (may fail if repair is disabled or non-convergent)
 - **All levels (1–4)** (`dt.validate()`) - Elements + structure + topology + Delaunay property
 
 Level 3 topology validation is parameterized by `TopologyGuarantee` (default: `Pseudomanifold`).
@@ -80,10 +73,10 @@ dt.set_validation_policy(ValidationPolicy::Always);
 
 For applications requiring strict Delaunay guarantees:
 
-- Use `dt.is_valid()` (Level 4 only) or `dt.validate()` (Levels 1–4) to check your specific triangulation
-- Use smaller point sets (violations are rarer)
+- Keep `DelaunayRepairPolicy::EveryInsertion` (default) or call `repair_delaunay_with_flips()` after batch edits
+- Use `dt.is_valid()` (Level 4 only) or `dt.validate()` (Levels 1–4) to check your triangulation
 - Filter degenerate configurations when possible
-- Monitor for updates in future releases
+- Monitor for additional flip types in future releases
 
 ## 🚧 Project History
 

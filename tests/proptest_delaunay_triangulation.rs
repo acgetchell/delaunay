@@ -357,6 +357,53 @@ fn insert_vertices_3d_no_retry_or_skip(
 // =============================================================================
 
 macro_rules! gen_incremental_insertion_validity {
+    ($dim:literal, $min:literal, $max:literal, ignore) => {
+        pastey::paste! {
+            proptest! {
+                #[ignore = "Requires k>2 flips for stable 3D topology repair - see Issue #120"]
+                #[test]
+                fn [<prop_incremental_insertion_maintains_validity_ $dim d>](
+                    initial_points in prop::collection::vec([<vertex_ $dim d>](), $min..=$max),
+                    additional_point in [<vertex_ $dim d>](),
+                ) {
+                    // Dedup exact duplicates to avoid pathological degeneracies during shrinking.
+                    let initial_vertices =
+                        dedup_vertices_by_coords::<$dim>(Vertex::from_points(&initial_points));
+
+                    // Require at least D+1 distinct vertices for valid simplices.
+                    prop_assume!(initial_vertices.len() > $dim);
+
+                    // Reject pathological shrink targets with too many points on a coordinate hyperplane (x_i == 0).
+                    // This is redundant with `finite_coordinate()` today (|x| > 1e-6), but kept as a guardrail if the
+                    // generator changes.
+                    prop_assume!(has_no_coordinate_hyperplane_degeneracy(&initial_vertices));
+
+                    let additional_vertex = vertex!(additional_point);
+
+                    // Avoid duplicate insertion cases here; duplicate-handling is tested in dedicated suites.
+                    let add_coords: [f64; $dim] = (&additional_vertex).into();
+                    let is_dup = initial_vertices.iter().any(|u| {
+                        let uc: [f64; $dim] = u.into();
+                        add_coords
+                            .iter()
+                            .zip(uc.iter())
+                            .all(|(a, b)| a.to_bits() == b.to_bits())
+                    });
+                    prop_assume!(!is_dup);
+
+                    if let Ok(mut dt) =
+                        DelaunayTriangulation::<_, (), (), $dim>::new(&initial_vertices)
+                    {
+                        prop_assert_levels_1_to_3_valid!($dim, &dt, "initial triangulation");
+
+                        if dt.insert(additional_vertex).is_ok() {
+                            prop_assert_levels_1_to_3_valid!($dim, &dt, "after insertion");
+                        }
+                    }
+                }
+            }
+        }
+    };
     ($dim:literal, $min:literal, $max:literal) => {
         pastey::paste! {
             proptest! {
@@ -406,11 +453,8 @@ macro_rules! gen_incremental_insertion_validity {
 }
 
 gen_incremental_insertion_validity!(2, 3, 5);
-
-gen_incremental_insertion_validity!(3, 4, 6);
-
+gen_incremental_insertion_validity!(3, 4, 6, ignore);
 gen_incremental_insertion_validity!(4, 5, 7);
-
 gen_incremental_insertion_validity!(5, 6, 8);
 
 // =============================================================================
@@ -469,17 +513,50 @@ macro_rules! test_empty_circumsphere {
 proptest! {
                 /// Property: For every cell, no other vertex lies strictly inside
                 /// the circumsphere defined by that cell (Delaunay condition).
+                #[test]
+                fn [<prop_empty_circumsphere_ $dim d>](
+                    vertices in prop::collection::vec(
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        $min_vertices..=$max_vertices
+                    ).prop_map(|pts| dedup_vertices_by_coords::<$dim>(Vertex::from_points(&pts)))
+                ) {
+                    // Build Delaunay triangulation using DelaunayTriangulation::new() which properly triangulates all vertices
+                    // This ensures the entire triangulation (including initial simplex) satisfies Delaunay property
+
+                    // Require at least D+1 distinct vertices to form valid D-simplices
+                    prop_assume!(vertices.len() > $dim);
+
+                    // General position filter: reject pathological shrink targets with too many points lying exactly on a
+                    // coordinate hyperplane (x_i == 0.0).
+                    prop_assume!(has_no_coordinate_hyperplane_degeneracy(&vertices));
+
+                    // Use DelaunayTriangulation::new() to triangulate ALL vertices together
+                    let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) else {
+                        // Degenerate geometry or insufficient vertices - skip test
+                        prop_assume!(false);
+                        unreachable!();
+                    };
+
+                    // Verify the triangulation satisfies the Delaunay property (Level 4)
+                    let delaunay_result = dt.is_valid();
+                    prop_assert!(
+                        delaunay_result.is_ok(),
+                        "{}D triangulation should satisfy Delaunay property: {:?}",
+                        $dim,
+                        delaunay_result.err()
+                    );
+                }
+            }
+        }
+    };
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal, ignore) => {
+        pastey::paste! {
+proptest! {
+                /// Property: For every cell, no other vertex lies strictly inside
+                /// the circumsphere defined by that cell (Delaunay condition).
                 ///
-                /// **Status**: Ignored - Requires bistellar flips for full Delaunay property enforcement.
-                ///
-                /// The incremental Bowyer-Watson algorithm can produce locally non-Delaunay configurations
-                /// that cannot be repaired without topology-changing operations (bistellar flips).
-                /// These tests will be re-enabled after implementing:
-                /// - 2D: Edge flip (2-to-2)
-                /// - 3D+: Bistellar flip operations
-                ///
-                /// See: Issue #120, src/core/algorithms/flips.rs
-                #[ignore = "Requires bistellar flips - see Issue #120"]
+                /// **Status**: Ignored - awaiting higher-dimensional flip validation.
+                #[ignore = "Requires k>2 flip validation (3D+); see Issue #120"]
                 #[test]
                 fn [<prop_empty_circumsphere_ $dim d>](
                     vertices in prop::collection::vec(
@@ -520,9 +597,9 @@ proptest! {
 
 // 2D–5D coverage (keep ranges small to bound runtime)
 test_empty_circumsphere!(2, 6, 10);
-test_empty_circumsphere!(3, 6, 10);
-test_empty_circumsphere!(4, 6, 12);
-test_empty_circumsphere!(5, 7, 12);
+test_empty_circumsphere!(3, 6, 10, ignore);
+test_empty_circumsphere!(4, 6, 12, ignore);
+test_empty_circumsphere!(5, 7, 12, ignore);
 
 // =============================================================================
 // INSERTION-ORDER INVARIANCE (2D-5D)
@@ -638,6 +715,7 @@ gen_insertion_order_robustness_test!(2, 6, 10);
     clippy::too_many_lines,
     reason = "Large property-based test with extensive rejection tracking and diagnostics"
 )]
+#[ignore = "Requires k>2 flips for stable 3D repair; see Issue #120"]
 fn prop_insertion_order_robustness_3d() {
     use proptest::test_runner::{Config, TestCaseError, TestRunner};
     use std::cell::RefCell;

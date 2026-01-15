@@ -10,6 +10,9 @@ use std::num::NonZeroUsize;
 use num_traits::NumCast;
 
 use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
+use crate::core::algorithms::flips::{
+    DelaunayRepairError, DelaunayRepairStats, repair_delaunay_with_flips_k2,
+};
 use crate::core::algorithms::incremental_insertion::{
     InsertionError, InsertionOutcome, InsertionStatistics,
 };
@@ -89,20 +92,15 @@ pub enum DelaunayTriangulationValidationError {
 ///
 /// # Delaunay Property Note
 ///
-/// The triangulation satisfies **structural validity** (all TDS invariants) but may
-/// contain local violations of the empty circumsphere property in rare cases. In this
-/// implementation, this arises from using an incremental Bowyer–Watson–style algorithm
-/// without topology-changing post-processing (bistellar flips).
+/// The triangulation satisfies **structural validity** (all TDS invariants) and
+/// uses **flip-based repairs** to restore the local Delaunay property after insertion.
+/// By default, a k=2 bistellar flip queue runs automatically after each successful
+/// insertion (see [`DelaunayRepairPolicy`]).
 ///
-/// Most triangulations satisfy the Delaunay property. Violations typically occur with:
-/// - Near-degenerate point configurations
-/// - Specific geometric arrangements
-///
-/// For applications requiring strict Delaunay guarantees:
-/// - Run [`is_valid`](Self::is_valid) (Level 4) in tests or debug builds
-/// - Use smaller point sets (violations are rarer)
-/// - Filter degenerate configurations when possible
-/// - Monitor for bistellar flip implementation (planned for v0.7.0+)
+/// For applications requiring explicit verification, you can still call
+/// [`is_valid`](Self::is_valid) (Level 4) or [`validate`](Self::validate) (Levels 1–4).
+/// If flip-based repair fails to converge, insertion returns an error and the
+/// triangulation is left structurally valid but not guaranteed Delaunay.
 ///
 /// See: [Issue #120 Investigation](https://github.com/acgetchell/delaunay/blob/main/docs/issue_120_investigation.md)
 ///
@@ -114,6 +112,7 @@ pub enum DelaunayTriangulationValidationError {
 /// - ✅ Cavity extraction and filling - [`extract_cavity_boundary`], [`fill_cavity`]
 /// - ✅ Local neighbor wiring - [`wire_cavity_neighbors`]
 /// - ✅ Hull extension for outside points - [`extend_hull`]
+/// - ✅ Flip-based Delaunay repair (k=2 bistellar flips)
 ///
 /// [`locate`]: crate::core::algorithms::locate::locate
 /// [`find_conflict_region`]: crate::core::algorithms::locate::find_conflict_region
@@ -132,6 +131,10 @@ where
     pub(crate) tri: Triangulation<K, U, V, D>,
     /// Hint for next `locate()` call (last inserted cell)
     last_inserted_cell: Option<CellKey>,
+    /// Policy controlling automatic Delaunay repair (flip-based).
+    delaunay_repair_policy: DelaunayRepairPolicy,
+    /// Count of successful insertions (used to schedule repairs).
+    delaunay_repair_insertion_count: usize,
 }
 
 // Most common case: f64 with FastKernel, no vertex or cell data
@@ -245,6 +248,8 @@ where
         Self {
             tri: Triangulation::new_empty(kernel),
             last_inserted_cell: None,
+            delaunay_repair_policy: DelaunayRepairPolicy::EveryInsertion,
+            delaunay_repair_insertion_count: 0,
         }
     }
 
@@ -317,6 +322,8 @@ where
                 topology_guarantee: TopologyGuarantee::DEFAULT,
             },
             last_inserted_cell: None,
+            delaunay_repair_policy: DelaunayRepairPolicy::EveryInsertion,
+            delaunay_repair_insertion_count: 0,
         };
 
         // During batch construction, enable strict Level 3 validation in debug builds so the
@@ -336,13 +343,31 @@ where
             {
                 Ok((
                     InsertionOutcome::Inserted {
-                        vertex_key: _v_key,
+                        vertex_key: v_key,
                         hint,
                     },
                     _stats,
                 )) => {
                     // Cache hint for faster subsequent insertions.
                     dt.last_inserted_cell = hint;
+                    dt.delaunay_repair_insertion_count =
+                        dt.delaunay_repair_insertion_count.saturating_add(1);
+                    let seed_cells = if D == 2 {
+                        let cells: Vec<CellKey> = dt.tri.adjacent_cells(v_key).collect();
+                        (!cells.is_empty()).then_some(cells)
+                    } else {
+                        None
+                    };
+                    let hint_slice = hint.map(|ck| [ck]);
+                    let seed_ref = seed_cells
+                        .as_deref()
+                        .or_else(|| hint_slice.as_ref().map(<[CellKey; 1]>::as_slice));
+                    if let Err(e) = dt.maybe_repair_after_insertion(seed_ref) {
+                        return Err(TriangulationConstructionError::GeometricDegeneracy {
+                            message: e.to_string(),
+                        }
+                        .into());
+                    }
                 }
                 Ok((InsertionOutcome::Skipped { error }, stats)) => {
                     // Keep going: this vertex was intentionally skipped (e.g. duplicate/near-duplicate
@@ -359,56 +384,7 @@ where
                 }
                 Err(e) => {
                     // Non-retryable failure: abort construction with a structured error.
-                    return Err(match e {
-                        // Preserve underlying construction errors (e.g. duplicate UUID).
-                        InsertionError::Construction(source) => source,
-                        InsertionError::CavityFilling { message } => {
-                            TriangulationConstructionError::FailedToCreateCell { message }
-                        }
-                        InsertionError::NeighborWiring { message } => {
-                            TriangulationConstructionError::from(
-                                TdsConstructionError::ValidationError(
-                                    TdsValidationError::InvalidNeighbors { message },
-                                ),
-                            )
-                        }
-                        InsertionError::TopologyValidation(source) => {
-                            TriangulationConstructionError::from(
-                                TdsConstructionError::ValidationError(source),
-                            )
-                        }
-                        InsertionError::DuplicateUuid { entity, uuid } => {
-                            TriangulationConstructionError::from(
-                                TdsConstructionError::DuplicateUuid { entity, uuid },
-                            )
-                        }
-                        InsertionError::DuplicateCoordinates { coordinates } => {
-                            TriangulationConstructionError::DuplicateCoordinates { coordinates }
-                        }
-
-                        // Insertion-layer failures that are best surfaced during construction as a
-                        // geometric degeneracy (e.g. numerical instability, hull visibility issues).
-                        //
-                        // NOTE: This match is intentionally exhaustive over `InsertionError`.
-                        // When adding new insertion failure modes in the future, revisit whether they
-                        // deserve a dedicated `TriangulationConstructionError` variant instead of being
-                        // collapsed into `GeometricDegeneracy`.
-                        //
-                        // We intentionally preserve the high-level insertion failure *bucket* in the
-                        // degeneracy message by capturing `e.to_string()` (rather than only
-                        // `source.to_string()`), so callers/telemetry can distinguish e.g.
-                        // "Conflict region error" vs "Location error" vs "Hull extension failed".
-                        insertion_error @ (InsertionError::ConflictRegion(_)
-                        | InsertionError::Location(_)
-                        | InsertionError::NonManifoldTopology { .. }
-                        | InsertionError::HullExtension { .. }
-                        | InsertionError::TopologyValidationFailed { .. }) => {
-                            TriangulationConstructionError::GeometricDegeneracy {
-                                message: insertion_error.to_string(),
-                            }
-                        }
-                    }
-                    .into());
+                    return Err(Self::map_insertion_error(e).into());
                 }
             }
         }
@@ -417,6 +393,55 @@ where
         dt.tri.validation_policy = original_validation_policy;
 
         Ok(dt)
+    }
+
+    fn map_insertion_error(error: InsertionError) -> TriangulationConstructionError {
+        match error {
+            // Preserve underlying construction errors (e.g. duplicate UUID).
+            InsertionError::Construction(source) => source,
+            InsertionError::CavityFilling { message } => {
+                TriangulationConstructionError::FailedToCreateCell { message }
+            }
+            InsertionError::NeighborWiring { message } => {
+                TriangulationConstructionError::from(TdsConstructionError::ValidationError(
+                    TdsValidationError::InvalidNeighbors { message },
+                ))
+            }
+            InsertionError::TopologyValidation(source) => {
+                TriangulationConstructionError::from(TdsConstructionError::ValidationError(source))
+            }
+            InsertionError::DuplicateUuid { entity, uuid } => {
+                TriangulationConstructionError::from(TdsConstructionError::DuplicateUuid {
+                    entity,
+                    uuid,
+                })
+            }
+            InsertionError::DuplicateCoordinates { coordinates } => {
+                TriangulationConstructionError::DuplicateCoordinates { coordinates }
+            }
+
+            // Insertion-layer failures that are best surfaced during construction as a
+            // geometric degeneracy (e.g. numerical instability, hull visibility issues).
+            //
+            // NOTE: This match is intentionally exhaustive over `InsertionError`.
+            // When adding new insertion failure modes in the future, revisit whether they
+            // deserve a dedicated `TriangulationConstructionError` variant instead of being
+            // collapsed into `GeometricDegeneracy`.
+            //
+            // We intentionally preserve the high-level insertion failure *bucket* in the
+            // degeneracy message by capturing `error.to_string()` (rather than only
+            // `source.to_string()`), so callers/telemetry can distinguish e.g.
+            // "Conflict region error" vs "Location error" vs "Hull extension failed".
+            insertion_error @ (InsertionError::ConflictRegion(_)
+            | InsertionError::Location(_)
+            | InsertionError::NonManifoldTopology { .. }
+            | InsertionError::HullExtension { .. }
+            | InsertionError::TopologyValidationFailed { .. }) => {
+                TriangulationConstructionError::GeometricDegeneracy {
+                    message: insertion_error.to_string(),
+                }
+            }
+        }
     }
 
     // TODO: Implement after bistellar flips + robust insertion (v0.7.0+)
@@ -795,6 +820,35 @@ where
     #[inline]
     pub const fn set_validation_policy(&mut self, policy: ValidationPolicy) {
         self.tri.validation_policy = policy;
+    }
+    /// Returns the automatic Delaunay repair policy.
+    #[inline]
+    #[must_use]
+    pub const fn delaunay_repair_policy(&self) -> DelaunayRepairPolicy {
+        self.delaunay_repair_policy
+    }
+
+    /// Sets the automatic Delaunay repair policy.
+    #[inline]
+    pub const fn set_delaunay_repair_policy(&mut self, policy: DelaunayRepairPolicy) {
+        self.delaunay_repair_policy = policy;
+    }
+
+    /// Runs flip-based Delaunay repair over the full triangulation.
+    ///
+    /// This is a manual entrypoint that performs a global scan of interior facets
+    /// and applies k=2 bistellar flips until locally Delaunay or until the flip
+    /// budget is exhausted.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`DelaunayRepairError`] if the repair fails to converge or an underlying
+    /// flip operation fails.
+    pub fn repair_delaunay_with_flips(&mut self) -> Result<DelaunayRepairStats, DelaunayRepairError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        repair_delaunay_with_flips_k2(&mut self.tri.tds, &self.tri.kernel, None)
     }
 
     /// Returns the topology guarantee used for Level 3 topology validation.
@@ -1257,6 +1311,19 @@ where
         // - Future: Delaunay property restoration after removal
         let (v_key, hint) = self.tri.insert(vertex, None, self.last_inserted_cell)?;
         self.last_inserted_cell = hint;
+        self.delaunay_repair_insertion_count =
+            self.delaunay_repair_insertion_count.saturating_add(1);
+        let seed_cells = if D == 2 {
+            let cells: Vec<CellKey> = self.tri.adjacent_cells(v_key).collect();
+            (!cells.is_empty()).then_some(cells)
+        } else {
+            None
+        };
+        let hint_slice = hint.map(|ck| [ck]);
+        let seed_ref = seed_cells
+            .as_deref()
+            .or_else(|| hint_slice.as_ref().map(<[CellKey; 1]>::as_slice));
+        self.maybe_repair_after_insertion(seed_ref)?;
         Ok(v_key)
     }
 
@@ -1296,11 +1363,68 @@ where
             self.tri
                 .insert_with_statistics(vertex, None, self.last_inserted_cell)?;
 
-        if let InsertionOutcome::Inserted { hint, .. } = &outcome {
+        if let InsertionOutcome::Inserted { vertex_key, hint } = &outcome {
             self.last_inserted_cell = *hint;
+            self.delaunay_repair_insertion_count =
+                self.delaunay_repair_insertion_count.saturating_add(1);
+            let seed_cells = if D == 2 {
+                let cells: Vec<CellKey> = self.tri.adjacent_cells(*vertex_key).collect();
+                (!cells.is_empty()).then_some(cells)
+            } else {
+                None
+            };
+            let hint_slice = (*hint).map(|ck| [ck]);
+            let seed_ref = seed_cells
+                .as_deref()
+                .or_else(|| hint_slice.as_ref().map(<[CellKey; 1]>::as_slice));
+            self.maybe_repair_after_insertion(seed_ref)?;
         }
 
         Ok((outcome, stats))
+    }
+
+    fn maybe_repair_after_insertion(
+        &mut self,
+        seed_cells: Option<&[CellKey]>,
+    ) -> Result<(), InsertionError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        if D < 2 {
+            return Ok(());
+        }
+        if D > 2 {
+            // k=2 flips are not sufficient to guarantee Delaunay in higher dimensions
+            // and can introduce topology corruption. Disable automatic repair beyond 2D
+            // until higher-dimensional flip validation is complete.
+            return Ok(());
+        }
+        if self.tri.tds.number_of_cells() == 0 {
+            return Ok(());
+        }
+        if !self
+            .delaunay_repair_policy
+            .should_repair(self.delaunay_repair_insertion_count)
+        {
+            return Ok(());
+        }
+
+        let repair_result =
+            repair_delaunay_with_flips_k2(&mut self.tri.tds, &self.tri.kernel, seed_cells);
+
+        let repair_result = match repair_result {
+            Ok(stats) => Ok(stats),
+            Err(DelaunayRepairError::NonConvergent { .. }) if seed_cells.is_some() => {
+                repair_delaunay_with_flips_k2(&mut self.tri.tds, &self.tri.kernel, None)
+            }
+            Err(err) => Err(err),
+        };
+
+        repair_result
+            .map(|_| ())
+            .map_err(|e| InsertionError::CavityFilling {
+                message: format!("Delaunay repair failed: {e}"),
+            })
     }
 
     /// Removes a vertex and retriangulates the resulting cavity using fan triangulation.
@@ -1532,6 +1656,8 @@ where
                 topology_guarantee: TopologyGuarantee::DEFAULT,
             },
             last_inserted_cell: None,
+            delaunay_repair_policy: DelaunayRepairPolicy::EveryInsertion,
+            delaunay_repair_insertion_count: 0,
         }
     }
 
@@ -1689,31 +1815,47 @@ where
     }
 }
 
-/// Policy controlling when global Delaunay validation runs during triangulation.
+/// Policy controlling automatic flip-based Delaunay repair.
+///
+/// This policy schedules **local flip-based repairs** during incremental insertion.
+/// It is separate from any *validation-only* policy to allow checking the Delaunay
+/// property without mutating topology when needed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DelaunayRepairPolicy {
+    /// Disable automatic Delaunay repairs.
+    Never,
+    /// Run local flip-based repair after every successful insertion.
+    EveryInsertion,
+    /// Run local flip-based repair after every N successful insertions.
+    EveryN(NonZeroUsize),
+}
+
+impl Default for DelaunayRepairPolicy {
+    #[inline]
+    fn default() -> Self {
+        Self::EveryInsertion
+    }
+}
+
+impl DelaunayRepairPolicy {
+    /// Returns true if a repair pass should run after the given insertion count.
+    #[inline]
+    #[must_use]
+    pub const fn should_repair(self, insertion_count: usize) -> bool {
+        match self {
+            Self::Never => false,
+            Self::EveryInsertion => true,
+            Self::EveryN(n) => insertion_count.is_multiple_of(n.get()),
+        }
+    }
+}
+
+/// Policy controlling when **global** Delaunay validation runs during triangulation.
 ///
 /// **Status**: Experimental API. Currently defined but not yet wired into insertion logic.
 ///
-/// # Future Usage
-///
-/// This policy will be interpreted by insertion algorithms to schedule validation passes.
-/// Planned integration points include:
-/// - Configuration field on `DelaunayTriangulation` to control validation frequency
-/// - Argument to higher-level construction routines (e.g., `new_with_policy`)
-/// - Periodic `is_valid()` calls during incremental insertion
-///
-/// Until wired in, users should call `is_valid()` (Level 4 only) or `validate()` (Levels 1–4)
-/// explicitly as needed.
-///
-/// # Examples (Future API)
-///
-/// ```ignore
-/// // Once implemented:
-/// let mut dt = DelaunayTriangulation::with_policy(
-///     vertices,
-///     DelaunayCheckPolicy::EveryN(NonZeroUsize::new(100).unwrap())
-/// )?;
-/// // Validation runs automatically every 100 insertions
-/// ```
+/// This policy is *validation-only* (non-mutating) and is distinct from
+/// [`DelaunayRepairPolicy`], which performs flip-based repairs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DelaunayCheckPolicy {
     /// Run global Delaunay validation only at the end of triangulation.
