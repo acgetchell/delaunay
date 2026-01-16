@@ -1,16 +1,31 @@
 //! Bistellar flip operations for triangulations.
 //!
-//! This module implements **k=2 and k=3 bistellar flips** for Delaunay repair:
-//! - k=2: facet flips (2↔D), valid for D≥2
-//! - k=3: ridge flips (3↔(D-1)), valid for D≥3
+//! This module implements **Pachner (bistellar) moves** for Delaunay repair and topology editing.
 //!
-//! It supports dimensions 2D–5D and is wired for automatic repair via a
-//! flip-queue driver.
+//! We use the **standard convention** where a k-move (1 ≤ k ≤ D+1) replaces the star of a
+//! `(D+1−k)`-simplex with the star of the complementary `(k−1)`-simplex:
+//! - removed D-simplices = k
+//! - inserted D-simplices = D+2−k
+//! - removed-face dimension = D+1−k
+//! - inserted-face dimension = k−1
+//!
+//! Implemented moves:
+//! - k=1: cell split/merge (1↔(D+1)), valid for D≥1
+//! - k=2: facet flips (2↔D), valid for D≥2
+//! - k=3: ridge flips (3↔(D−1)), valid for D≥3
+//!
+//! We represent higher-order flips via **inverse** directions:
+//! - In D=4, inverse k=2 is the k=4 flip (4↔2).
+//! - In D=5, inverse k=2 is k=5 (5↔2) and inverse k=3 is k=4 (4↔3).
+//!
+//! Delaunay repair uses k=2 (facets) and k=3 (ridges) only; k=1 is exposed for
+//! topological editing via the public API.
 //!
 //! # References
 //! - Edelsbrunner & Shah (1996) - "Incremental Topological Flipping Works for Regular Triangulations"
 //! - Bistellar flips implementation notebook (Warp Drive)
 
+use slotmap::Key;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -21,9 +36,11 @@ use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::{
     CellKeyBuffer, FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
 };
+use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, FacetHandle, facet_key_from_vertices};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation_data_structure::{CellKey, Tds, VertexKey};
+use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateScalar;
@@ -37,7 +54,232 @@ pub struct BistellarFlipKind {
     pub d: usize,
 }
 
+fn apply_bistellar_flip_with_k<K, U, V, const D: usize>(
+    tds: &mut Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    k_move: usize,
+    removed_face_vertices: &[VertexKey],
+    inserted_face_vertices: &[VertexKey],
+    removed_cells: &CellKeyBuffer,
+    direction: FlipDirection,
+) -> Result<FlipInfo<D>, FlipError>
+where
+    K: Kernel<D>,
+    K::Scalar: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    if k_move == 0 || k_move > D + 1 {
+        return Err(FlipError::InvalidFlipContext {
+            message: format!("k must be in 1..=D+1 (k={k_move}, D={D})"),
+        });
+    }
+
+    let expected_removed_face = D + 2 - k_move;
+    if removed_face_vertices.len() != expected_removed_face {
+        return Err(FlipError::InvalidFlipContext {
+            message: format!(
+                "removed-face must have {expected_removed_face} vertices, got {}",
+                removed_face_vertices.len()
+            ),
+        });
+    }
+    if inserted_face_vertices.len() != k_move {
+        return Err(FlipError::InvalidFlipContext {
+            message: format!(
+                "inserted-face must have {k_move} vertices, got {}",
+                inserted_face_vertices.len()
+            ),
+        });
+    }
+    if removed_cells.len() != k_move {
+        return Err(FlipError::InvalidFlipContext {
+            message: format!(
+                "removed_cells must have {k_move} entries, got {}",
+                removed_cells.len()
+            ),
+        });
+    }
+    if removed_face_vertices
+        .iter()
+        .any(|v| inserted_face_vertices.contains(v))
+    {
+        return Err(FlipError::InvalidFlipContext {
+            message: "removed-face and inserted-face must be disjoint".to_string(),
+        });
+    }
+
+    let mut new_cells = CellKeyBuffer::new();
+    let mut new_cell_vertices: SmallBuffer<
+        SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+        MAX_PRACTICAL_DIMENSION_SIZE,
+    > = SmallBuffer::with_capacity(removed_face_vertices.len());
+
+    for &omit in removed_face_vertices {
+        let mut vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(D + 1);
+        vertices.extend_from_slice(inserted_face_vertices);
+        for &v in removed_face_vertices {
+            if v != omit {
+                vertices.push(v);
+            }
+        }
+
+        if flip_would_duplicate_cell_any(tds, &vertices, removed_cells) {
+            return Err(FlipError::DuplicateCell);
+        }
+        if flip_would_create_nonmanifold_facets_any(
+            tds,
+            &vertices,
+            removed_cells,
+            inserted_face_vertices,
+        ) {
+            return Err(FlipError::NonManifoldFacet);
+        }
+
+        let points = vertices_to_points(tds, &vertices)?;
+        let orientation = kernel
+            .orientation(&points)
+            .map_err(|e| FlipError::PredicateFailure {
+                message: format!("orientation failed for flip cell: {e}"),
+            })?;
+        if orientation == 0 {
+            return Err(FlipError::DegenerateCell);
+        }
+
+        new_cell_vertices.push(vertices);
+    }
+
+    for vertices in new_cell_vertices {
+        let cell = Cell::new(vertices, None)?;
+        let cell_key = tds
+            .insert_cell_with_mapping(cell)
+            .map_err(|e| FlipError::TdsMutation {
+                message: e.to_string(),
+            })?;
+        new_cells.push(cell_key);
+    }
+
+    wire_cavity_neighbors(tds, &new_cells, Some(removed_cells)).map_err(|e| {
+        FlipError::NeighborWiring {
+            message: e.to_string(),
+        }
+    })?;
+
+    tds.remove_cells_by_keys(removed_cells);
+
+    Ok(FlipInfo {
+        kind: BistellarFlipKind { k: k_move, d: D },
+        direction,
+        removed_cells: removed_cells.iter().copied().collect(),
+        new_cells,
+        removed_face_vertices: removed_face_vertices.iter().copied().collect(),
+        inserted_face_vertices: inserted_face_vertices.iter().copied().collect(),
+    })
+}
+/// Check whether a k=3 ridge violates the local Delaunay condition.
+///
+/// # Errors
+///
+/// Returns a [`FlipError`] if any referenced cell/vertex is missing or a predicate
+/// evaluation fails.
+pub fn is_delaunay_violation_k3<K, U, V, const D: usize>(
+    tds: &Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    context: &FlipContext<D, 3>,
+) -> Result<bool, FlipError>
+where
+    K: Kernel<D>,
+    K::Scalar: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    delaunay_violation_k3_for_ridge(
+        tds,
+        kernel,
+        &context.removed_face_vertices,
+        &context.inserted_face_vertices,
+    )
+}
+
+/// Apply a generic k-move (no Delaunay check).
+///
+/// # Errors
+///
+/// Returns a [`FlipError`] if the flip would be degenerate, duplicate an existing cell,
+/// create non-manifold topology, if predicate evaluation fails, or if underlying TDS
+/// mutations fail.
+pub fn apply_bistellar_flip<K, U, V, const D: usize, const K_MOVE: usize>(
+    tds: &mut Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    context: &FlipContext<D, K_MOVE>,
+) -> Result<FlipInfo<D>, FlipError>
+where
+    K: Kernel<D>,
+    K::Scalar: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    apply_bistellar_flip_with_k(
+        tds,
+        kernel,
+        K_MOVE,
+        &context.removed_face_vertices,
+        &context.inserted_face_vertices,
+        &context.removed_cells,
+        context.direction,
+    )
+}
+
+fn apply_bistellar_flip_dynamic<K, U, V, const D: usize>(
+    tds: &mut Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    k_move: usize,
+    context: &FlipContextDyn<D>,
+) -> Result<FlipInfo<D>, FlipError>
+where
+    K: Kernel<D>,
+    K::Scalar: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    apply_bistellar_flip_with_k(
+        tds,
+        kernel,
+        k_move,
+        &context.removed_face_vertices,
+        &context.inserted_face_vertices,
+        &context.removed_cells,
+        context.direction,
+    )
+}
+
+/// Direction of a bistellar flip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlipDirection {
+    /// Forward (k → D+2−k).
+    Forward,
+    /// Inverse (D+2−k → k).
+    Inverse,
+}
+
+impl FlipDirection {
+    /// Return the opposite direction.
+    #[must_use]
+    pub const fn inverse(self) -> Self {
+        match self {
+            Self::Forward => Self::Inverse,
+            Self::Inverse => Self::Forward,
+        }
+    }
+}
+
 impl BistellarFlipKind {
+    /// Construct a k=1 flip kind for the given dimension.
+    #[must_use]
+    pub const fn k1(d: usize) -> Self {
+        Self { k: 1, d }
+    }
     /// Construct a k=2 flip kind for the given dimension.
     #[must_use]
     pub const fn k2(d: usize) -> Self {
@@ -49,6 +291,29 @@ impl BistellarFlipKind {
     pub const fn k3(d: usize) -> Self {
         Self { k: 3, d }
     }
+
+    /// Construct the inverse flip kind (k' = D + 2 - k).
+    #[must_use]
+    pub const fn inverse(self) -> Self {
+        Self {
+            k: self.d + 2 - self.k,
+            d: self.d,
+        }
+    }
+}
+
+/// Const-generic move marker for Pachner k-moves.
+#[derive(Debug, Clone, Copy)]
+pub struct ConstK<const K: usize>;
+
+/// Const-generic descriptor for a Pachner move in dimension `D`.
+pub trait BistellarMove<const D: usize> {
+    /// Number of removed D-simplices (k).
+    const K: usize;
+}
+
+impl<const D: usize, const K: usize> BistellarMove<D> for ConstK<K> {
+    const K: usize = K;
 }
 
 /// Errors that can occur during bistellar flips or repair.
@@ -56,7 +321,7 @@ impl BistellarFlipKind {
 #[non_exhaustive]
 pub enum FlipError {
     /// Flips are not supported for this dimension.
-    #[error("Bistellar flips are only supported for D>=2, got D={dimension}")]
+    #[error("Bistellar flip not supported for D={dimension}")]
     UnsupportedDimension {
         /// Dimension of the triangulation.
         dimension: usize,
@@ -133,6 +398,60 @@ pub enum FlipError {
         /// Number of incident cells found.
         found: usize,
     },
+    /// Edge has an invalid multiplicity for inverse k=2 flips.
+    #[error("Edge has invalid multiplicity {found}, expected {expected}")]
+    InvalidEdgeMultiplicity {
+        /// Number of incident cells found.
+        found: usize,
+        /// Expected multiplicity for the dimension.
+        expected: usize,
+    },
+    /// Triangle has an invalid multiplicity for inverse k=3 flips.
+    #[error("Triangle has invalid multiplicity {found}, expected {expected}")]
+    InvalidTriangleMultiplicity {
+        /// Number of incident cells found.
+        found: usize,
+        /// Expected multiplicity for the dimension.
+        expected: usize,
+    },
+    /// Edge adjacency information is inconsistent.
+    #[error("Edge adjacency mismatch: {message}")]
+    InvalidEdgeAdjacency {
+        /// Context message.
+        message: String,
+    },
+    /// Triangle adjacency information is inconsistent.
+    #[error("Triangle adjacency mismatch: {message}")]
+    InvalidTriangleAdjacency {
+        /// Context message.
+        message: String,
+    },
+    /// Vertex star has an invalid multiplicity for inverse k=1 flips.
+    #[error("Vertex star has invalid multiplicity {found}, expected {expected}")]
+    InvalidVertexMultiplicity {
+        /// Number of incident cells found.
+        found: usize,
+        /// Expected multiplicity for the dimension.
+        expected: usize,
+    },
+    /// Vertex adjacency information is inconsistent.
+    #[error("Vertex adjacency mismatch: {message}")]
+    InvalidVertexAdjacency {
+        /// Context message.
+        message: String,
+    },
+    /// Flip direction is not supported for this operation.
+    #[error("Flip direction {direction:?} is not supported for this operation")]
+    InvalidFlipDirection {
+        /// Requested direction.
+        direction: FlipDirection,
+    },
+    /// Flip context is inconsistent with the requested move.
+    #[error("Flip context invalid: {message}")]
+    InvalidFlipContext {
+        /// Context message.
+        message: String,
+    },
     /// Geometric predicate failed.
     #[error("Geometric predicate failed: {message}")]
     PredicateFailure {
@@ -170,17 +489,19 @@ pub enum FlipError {
 pub struct FlipInfo<const D: usize> {
     /// Flip kind (k, d).
     pub kind: BistellarFlipKind,
+    /// Flip direction.
+    pub direction: FlipDirection,
     /// Cells removed by the flip.
-    pub removed_cells: [CellKey; 2],
+    pub removed_cells: CellKeyBuffer,
     /// Newly created cells.
     pub new_cells: CellKeyBuffer,
-    /// The shared facet (D vertices).
-    pub shared_facet: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-    /// The two opposite vertices across the facet.
-    pub opposite_vertices: (VertexKey, VertexKey),
+    /// The removed-face simplex (shared by removed cells).
+    pub removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+    /// The inserted-face simplex (complementary simplex).
+    pub inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
 }
 
-/// Flip decision result.
+/// Flip decision result (used by k=2 repair).
 #[derive(Debug, Clone)]
 pub enum FlipDecision<const D: usize> {
     /// The facet was flipped.
@@ -189,14 +510,74 @@ pub enum FlipDecision<const D: usize> {
     NoFlip,
 }
 
-/// Flip context for a k=2 (facet) flip.
+/// Const-generic flip context for a k-move (forward or inverse).
 #[derive(Debug, Clone)]
-pub struct FlipContext<const D: usize> {
-    cell_a: CellKey,
-    cell_b: CellKey,
-    opposite_a: VertexKey,
-    opposite_b: VertexKey,
-    shared_facet: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+pub struct FlipContext<const D: usize, const K: usize> {
+    /// Vertices of the removed-face simplex (dimension D+1−K).
+    pub removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+    /// Vertices of the inserted-face simplex (dimension K−1).
+    pub inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+    /// Cells removed by the flip (count = K).
+    pub removed_cells: CellKeyBuffer,
+    /// Flip direction (forward/inverse).
+    pub direction: FlipDirection,
+}
+
+impl<const D: usize, const K: usize> FlipContext<D, K> {
+    /// Returns the flip direction for this context.
+    #[must_use]
+    pub const fn direction(&self) -> FlipDirection {
+        self.direction
+    }
+}
+
+/// Runtime-k flip context for moves where k depends on D.
+#[derive(Debug, Clone)]
+pub struct FlipContextDyn<const D: usize> {
+    /// Vertices of the removed-face simplex (dimension D+1−k).
+    pub removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+    /// Vertices of the inserted-face simplex (dimension k−1).
+    pub inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+    /// Cells removed by the flip (count = k).
+    pub removed_cells: CellKeyBuffer,
+    /// Flip direction (forward/inverse).
+    pub direction: FlipDirection,
+}
+
+impl<const D: usize> FlipContextDyn<D> {
+    /// Returns the flip direction for this context.
+    #[must_use]
+    pub const fn direction(&self) -> FlipDirection {
+        self.direction
+    }
+}
+
+/// Canonical handle to a triangle (three vertices).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TriangleHandle {
+    v0: VertexKey,
+    v1: VertexKey,
+    v2: VertexKey,
+}
+
+impl TriangleHandle {
+    /// Create a canonical triangle handle with ordered vertex keys.
+    #[must_use]
+    pub fn new(a: VertexKey, b: VertexKey, c: VertexKey) -> Self {
+        let mut verts = [a, b, c];
+        verts.sort_unstable_by_key(|v| v.data().as_ffi());
+        Self {
+            v0: verts[0],
+            v1: verts[1],
+            v2: verts[2],
+        }
+    }
+
+    /// Return the triangle vertices.
+    #[must_use]
+    pub const fn vertices(self) -> [VertexKey; 3] {
+        [self.v0, self.v1, self.v2]
+    }
 }
 /// Lightweight handle to a ridge (codimension-2 face) within a cell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -244,34 +625,10 @@ impl RidgeHandle {
     }
 }
 
-/// Flip context for a k=3 (ridge) flip.
-#[derive(Debug, Clone)]
-pub struct FlipContextK3<const D: usize> {
-    cells: [CellKey; 3],
-    ridge: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-    opposite_vertices: [VertexKey; 3],
-    missing_opposites: [VertexKey; 3],
-}
-
-/// Information about a successful k=3 flip.
-#[derive(Debug, Clone)]
-pub struct FlipInfoK3<const D: usize> {
-    /// Flip kind (k, d).
-    pub kind: BistellarFlipKind,
-    /// Cells removed by the flip.
-    pub removed_cells: [CellKey; 3],
-    /// Newly created cells.
-    pub new_cells: CellKeyBuffer,
-    /// The shared ridge (D-1 vertices).
-    pub ridge: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-    /// The three opposite vertices defining the flip.
-    pub opposite_vertices: [VertexKey; 3],
-}
-
 /// Statistics for flip-based Delaunay repair.
 #[derive(Debug, Clone, Default)]
 pub struct DelaunayRepairStats {
-    /// Number of queued items checked (facets, and ridges when k=3 is enabled).
+    /// Number of queued items checked (facets, ridges, edges, triangles).
     pub facets_checked: usize,
     /// Number of flips performed.
     pub flips_performed: usize,
@@ -307,7 +664,7 @@ pub enum DelaunayRepairError {
 pub fn build_k2_flip_context<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     facet: FacetHandle,
-) -> Result<FlipContext<D>, FlipError>
+) -> Result<FlipContext<D, 2>, FlipError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -386,15 +743,304 @@ where
         }
     }
 
+    let removed_cells: CellKeyBuffer = [cell_a_key, neighbor_key].into_iter().collect();
+    let mut inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::with_capacity(2);
+    inserted_face_vertices.push(opposite_a);
+    inserted_face_vertices.push(opposite_b);
+
     Ok(FlipContext {
-        cell_a: cell_a_key,
-        cell_b: neighbor_key,
-        opposite_a,
-        opposite_b,
-        shared_facet,
+        removed_face_vertices: shared_facet,
+        inserted_face_vertices,
+        removed_cells,
+        direction: FlipDirection::Forward,
     })
 }
 
+/// Build inverse k=2 flip context from an edge and its incident cells.
+///
+/// # Errors
+///
+/// Returns a [`FlipError`] if the edge is invalid, references missing vertices/cells,
+/// or the adjacency data is inconsistent.
+pub fn build_k2_flip_context_from_edge<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    edge: EdgeKey,
+) -> Result<FlipContextDyn<D>, FlipError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    if D < 3 {
+        return Err(FlipError::UnsupportedDimension { dimension: D });
+    }
+
+    let (v0, v1) = edge.endpoints();
+    if v0 == v1 {
+        return Err(FlipError::InvalidEdgeAdjacency {
+            message: "edge endpoints must be distinct".to_string(),
+        });
+    }
+
+    if tds.get_vertex_by_key(v0).is_none() {
+        return Err(FlipError::MissingVertex { vertex_key: v0 });
+    }
+    if tds.get_vertex_by_key(v1).is_none() {
+        return Err(FlipError::MissingVertex { vertex_key: v1 });
+    }
+
+    let cells_v0 = tds.find_cells_containing_vertex_by_key(v0);
+    let cells_v1 = tds.find_cells_containing_vertex_by_key(v1);
+    let (small, large) = if cells_v0.len() <= cells_v1.len() {
+        (&cells_v0, &cells_v1)
+    } else {
+        (&cells_v1, &cells_v0)
+    };
+
+    let mut removed_cells: CellKeyBuffer = CellKeyBuffer::new();
+    for &cell_key in small {
+        if large.contains(&cell_key) {
+            removed_cells.push(cell_key);
+        }
+    }
+
+    if removed_cells.len() != D {
+        return Err(FlipError::InvalidEdgeMultiplicity {
+            found: removed_cells.len(),
+            expected: D,
+        });
+    }
+
+    let mut counts: FastHashMap<VertexKey, usize> = FastHashMap::default();
+    for &cell_key in &removed_cells {
+        let cell = tds
+            .get_cell(cell_key)
+            .ok_or(FlipError::MissingCell { cell_key })?;
+        if !cell.contains_vertex(v0) || !cell.contains_vertex(v1) {
+            return Err(FlipError::InvalidEdgeAdjacency {
+                message: format!("cell {cell_key:?} does not contain edge vertices"),
+            });
+        }
+        for &vk in cell.vertices() {
+            if vk != v0 && vk != v1 {
+                *counts.entry(vk).or_insert(0) += 1;
+            }
+        }
+    }
+
+    if counts.len() != D || !counts.values().all(|&count| count == D - 1) {
+        return Err(FlipError::InvalidEdgeAdjacency {
+            message: format!(
+                "edge star must have {D} distinct opposite vertices each appearing {expected} times",
+                expected = D - 1
+            ),
+        });
+    }
+
+    let mut inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+        counts.keys().copied().collect();
+    inserted_face_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
+
+    let mut removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::with_capacity(2);
+    removed_face_vertices.push(v0);
+    removed_face_vertices.push(v1);
+
+    Ok(FlipContextDyn {
+        removed_face_vertices,
+        inserted_face_vertices,
+        removed_cells,
+        direction: FlipDirection::Inverse,
+    })
+}
+
+fn build_k1_forward_context_from_cell<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cell_key: CellKey,
+    inserted_vertex: VertexKey,
+) -> Result<FlipContext<D, 1>, FlipError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    if D < 1 {
+        return Err(FlipError::UnsupportedDimension { dimension: D });
+    }
+
+    let cell = tds
+        .get_cell(cell_key)
+        .ok_or(FlipError::MissingCell { cell_key })?;
+    if tds.get_vertex_by_key(inserted_vertex).is_none() {
+        return Err(FlipError::MissingVertex {
+            vertex_key: inserted_vertex,
+        });
+    }
+
+    let removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+        cell.vertices().iter().copied().collect();
+    let mut inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::with_capacity(1);
+    inserted_face_vertices.push(inserted_vertex);
+
+    let removed_cells: CellKeyBuffer = std::iter::once(cell_key).collect();
+
+    Ok(FlipContext {
+        removed_face_vertices,
+        inserted_face_vertices,
+        removed_cells,
+        direction: FlipDirection::Forward,
+    })
+}
+
+/// Build inverse k=1 flip context from a vertex and its incident cells.
+///
+/// # Errors
+///
+/// Returns a [`FlipError`] if the vertex is missing, its incident cell count is
+/// not D+1, or the adjacency data is inconsistent.
+pub fn build_k1_inverse_context<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    vertex_key: VertexKey,
+) -> Result<FlipContextDyn<D>, FlipError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    if D < 1 {
+        return Err(FlipError::UnsupportedDimension { dimension: D });
+    }
+
+    if tds.get_vertex_by_key(vertex_key).is_none() {
+        return Err(FlipError::MissingVertex { vertex_key });
+    }
+
+    let removed_cells = tds.find_cells_containing_vertex_by_key(vertex_key);
+    let expected = D + 1;
+    if removed_cells.len() != expected {
+        return Err(FlipError::InvalidVertexMultiplicity {
+            found: removed_cells.len(),
+            expected,
+        });
+    }
+
+    let mut counts: FastHashMap<VertexKey, usize> = FastHashMap::default();
+    let mut removed_cells_buf: CellKeyBuffer = CellKeyBuffer::new();
+    for &cell_key in &removed_cells {
+        let cell = tds
+            .get_cell(cell_key)
+            .ok_or(FlipError::MissingCell { cell_key })?;
+        if !cell.contains_vertex(vertex_key) {
+            return Err(FlipError::InvalidVertexAdjacency {
+                message: format!("cell {cell_key:?} does not contain vertex"),
+            });
+        }
+        removed_cells_buf.push(cell_key);
+        for &vk in cell.vertices() {
+            if vk != vertex_key {
+                *counts.entry(vk).or_insert(0) += 1;
+            }
+        }
+    }
+
+    if counts.len() != expected || !counts.values().all(|&count| count == D) {
+        return Err(FlipError::InvalidVertexAdjacency {
+            message: format!(
+                "vertex star must have {expected} link vertices each appearing {D} times"
+            ),
+        });
+    }
+
+    let mut inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+        counts.keys().copied().collect();
+    inserted_face_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
+
+    let mut removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::with_capacity(1);
+    removed_face_vertices.push(vertex_key);
+
+    Ok(FlipContextDyn {
+        removed_face_vertices,
+        inserted_face_vertices,
+        removed_cells: removed_cells_buf,
+        direction: FlipDirection::Inverse,
+    })
+}
+
+fn delaunay_violation_k2_for_facet<K, U, V, const D: usize>(
+    tds: &Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    facet_vertices: &[VertexKey],
+    opposite_a: VertexKey,
+    opposite_b: VertexKey,
+) -> Result<bool, FlipError>
+where
+    K: Kernel<D>,
+    K::Scalar: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    if facet_vertices.len() != D {
+        return Err(FlipError::InvalidFlipContext {
+            message: format!(
+                "k=2 facet must have {D} vertices, got {}",
+                facet_vertices.len()
+            ),
+        });
+    }
+    if facet_vertices.contains(&opposite_a)
+        || facet_vertices.contains(&opposite_b)
+        || opposite_a == opposite_b
+    {
+        return Err(FlipError::InvalidFlipContext {
+            message: "k=2 opposites must be distinct and not in the facet".to_string(),
+        });
+    }
+
+    let mut cell_vertices: [SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>; 2] = [
+        SmallBuffer::with_capacity(D + 1),
+        SmallBuffer::with_capacity(D + 1),
+    ];
+    for vertices in &mut cell_vertices {
+        vertices.extend_from_slice(facet_vertices);
+    }
+    cell_vertices[0].push(opposite_a);
+    cell_vertices[1].push(opposite_b);
+
+    let points_a = vertices_to_points(tds, &cell_vertices[0])?;
+    let points_b = vertices_to_points(tds, &cell_vertices[1])?;
+
+    let opposite_point_a = tds
+        .get_vertex_by_key(opposite_a)
+        .ok_or(FlipError::MissingVertex {
+            vertex_key: opposite_a,
+        })?
+        .point();
+    let opposite_point_b = tds
+        .get_vertex_by_key(opposite_b)
+        .ok_or(FlipError::MissingVertex {
+            vertex_key: opposite_b,
+        })?
+        .point();
+
+    let in_a =
+        kernel
+            .in_sphere(&points_a, opposite_point_b)
+            .map_err(|e| FlipError::PredicateFailure {
+                message: format!("in_sphere failed for k=2 cell A: {e}"),
+            })?;
+
+    let in_b =
+        kernel
+            .in_sphere(&points_b, opposite_point_a)
+            .map_err(|e| FlipError::PredicateFailure {
+                message: format!("in_sphere failed for k=2 cell B: {e}"),
+            })?;
+
+    Ok(in_a > 0 || in_b > 0)
+}
 /// Check whether a k=2 facet violates the local Delaunay condition.
 ///
 /// # Errors
@@ -404,7 +1050,7 @@ where
 pub fn is_delaunay_violation_k2<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
-    context: &FlipContext<D>,
+    context: &FlipContext<D, 2>,
 ) -> Result<bool, FlipError>
 where
     K: Kernel<D>,
@@ -412,37 +1058,23 @@ where
     U: DataType,
     V: DataType,
 {
-    let points_a = cell_points(tds, context.cell_a)?;
-    let points_b = cell_points(tds, context.cell_b)?;
-
-    let opposite_point_a = tds
-        .get_vertex_by_key(context.opposite_a)
-        .ok_or(FlipError::MissingVertex {
-            vertex_key: context.opposite_a,
-        })?
-        .point();
-    let opposite_point_b = tds
-        .get_vertex_by_key(context.opposite_b)
-        .ok_or(FlipError::MissingVertex {
-            vertex_key: context.opposite_b,
-        })?
-        .point();
-
-    let in_a =
-        kernel
-            .in_sphere(&points_a, opposite_point_b)
-            .map_err(|e| FlipError::PredicateFailure {
-                message: format!("in_sphere failed for cell {:?}: {e}", context.cell_a),
-            })?;
-
-    let in_b =
-        kernel
-            .in_sphere(&points_b, opposite_point_a)
-            .map_err(|e| FlipError::PredicateFailure {
-                message: format!("in_sphere failed for cell {:?}: {e}", context.cell_b),
-            })?;
-
-    Ok(in_a > 0 || in_b > 0)
+    if context.inserted_face_vertices.len() != 2 {
+        return Err(FlipError::InvalidFlipContext {
+            message: format!(
+                "k=2 inserted-face must have 2 vertices, got {}",
+                context.inserted_face_vertices.len()
+            ),
+        });
+    }
+    let opposite_a = context.inserted_face_vertices[0];
+    let opposite_b = context.inserted_face_vertices[1];
+    delaunay_violation_k2_for_facet(
+        tds,
+        kernel,
+        &context.removed_face_vertices,
+        opposite_a,
+        opposite_b,
+    )
 }
 
 /// Apply a k=2 bistellar flip (no Delaunay check).
@@ -455,7 +1087,7 @@ where
 pub fn apply_bistellar_flip_k2<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
-    context: &FlipContext<D>,
+    context: &FlipContext<D, 2>,
 ) -> Result<FlipInfo<D>, FlipError>
 where
     K: Kernel<D>,
@@ -463,74 +1095,7 @@ where
     U: DataType,
     V: DataType,
 {
-    let mut new_cells = CellKeyBuffer::new();
-    let mut new_cell_vertices: SmallBuffer<
-        SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-        MAX_PRACTICAL_DIMENSION_SIZE,
-    > = SmallBuffer::with_capacity(D);
-
-    let removed = [context.cell_a, context.cell_b];
-    let shared = &context.shared_facet;
-    let opposite_a = context.opposite_a;
-    let opposite_b = context.opposite_b;
-
-    for &omit in shared {
-        let mut vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-            SmallBuffer::with_capacity(D + 1);
-        vertices.push(opposite_a);
-        vertices.push(opposite_b);
-        for &v in shared {
-            if v != omit {
-                vertices.push(v);
-            }
-        }
-
-        if flip_would_duplicate_cell(tds, &vertices, &removed) {
-            return Err(FlipError::DuplicateCell);
-        }
-        if flip_would_create_nonmanifold_facets(tds, &vertices, &removed, opposite_a, opposite_b) {
-            return Err(FlipError::NonManifoldFacet);
-        }
-
-        let points = vertices_to_points(tds, &vertices)?;
-        let orientation = kernel
-            .orientation(&points)
-            .map_err(|e| FlipError::PredicateFailure {
-                message: format!("orientation failed for flip cell: {e}"),
-            })?;
-        if orientation == 0 {
-            return Err(FlipError::DegenerateCell);
-        }
-
-        new_cell_vertices.push(vertices);
-    }
-
-    for vertices in new_cell_vertices {
-        let cell = Cell::new(vertices, None)?;
-        let cell_key = tds
-            .insert_cell_with_mapping(cell)
-            .map_err(|e| FlipError::TdsMutation {
-                message: e.to_string(),
-            })?;
-        new_cells.push(cell_key);
-    }
-    let removed_keys: CellKeyBuffer = removed.iter().copied().collect();
-
-    wire_cavity_neighbors(tds, &new_cells, Some(&removed_keys)).map_err(|e| {
-        FlipError::NeighborWiring {
-            message: e.to_string(),
-        }
-    })?;
-
-    tds.remove_cells_by_keys(&removed_keys);
-
-    Ok(FlipInfo {
-        kind: BistellarFlipKind::k2(D),
-        removed_cells: removed,
-        new_cells,
-        shared_facet: shared.clone(),
-        opposite_vertices: (opposite_a, opposite_b),
-    })
+    apply_bistellar_flip::<K, U, V, D, 2>(tds, kernel, context)
 }
 
 /// Attempt a k=2 bistellar flip for Delaunay repair.
@@ -566,7 +1131,7 @@ where
 pub fn build_k3_flip_context<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     ridge: RidgeHandle,
-) -> Result<FlipContextK3<D>, FlipError>
+) -> Result<FlipContext<D, 3>, FlipError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -637,31 +1202,121 @@ where
         .try_into()
         .map_err(|_| FlipError::InvalidRidgeAdjacency { cell_key })?;
 
-    let mut missing_opposites = [opposite_vertices[0]; 3];
-    for (idx, extras) in extras_per_cell.iter().enumerate() {
-        let missing = missing_opposite_for_cell(extras, &opposite_vertices)
+    for extras in &extras_per_cell {
+        let _missing = missing_opposite_for_cell(extras, &opposite_vertices)
             .ok_or(FlipError::InvalidRidgeAdjacency { cell_key })?;
-        missing_opposites[idx] = missing;
     }
 
-    Ok(FlipContextK3 {
-        cells: [cells[0], cells[1], cells[2]],
-        ridge: ridge_vertices,
-        opposite_vertices,
-        missing_opposites,
+    let mut inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::with_capacity(3);
+    inserted_face_vertices.extend(opposite_vertices);
+
+    Ok(FlipContext {
+        removed_face_vertices: ridge_vertices,
+        inserted_face_vertices,
+        removed_cells: cells,
+        direction: FlipDirection::Forward,
     })
 }
 
-/// Check whether a k=3 ridge violates the local Delaunay condition.
+/// Build inverse k=3 flip context from a triangle and its incident cells.
 ///
 /// # Errors
 ///
-/// Returns a [`FlipError`] if any referenced cell/vertex is missing or a predicate
-/// evaluation fails.
-pub fn is_delaunay_violation_k3<K, U, V, const D: usize>(
+/// Returns a [`FlipError`] if the triangle is invalid, references missing vertices/cells,
+/// or the adjacency data is inconsistent.
+pub fn build_k3_flip_context_from_triangle<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    triangle: TriangleHandle,
+) -> Result<FlipContextDyn<D>, FlipError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    if D < 4 {
+        return Err(FlipError::UnsupportedDimension { dimension: D });
+    }
+
+    let [a, b, c] = triangle.vertices();
+    if tds.get_vertex_by_key(a).is_none() {
+        return Err(FlipError::MissingVertex { vertex_key: a });
+    }
+    if tds.get_vertex_by_key(b).is_none() {
+        return Err(FlipError::MissingVertex { vertex_key: b });
+    }
+    if tds.get_vertex_by_key(c).is_none() {
+        return Err(FlipError::MissingVertex { vertex_key: c });
+    }
+
+    let cells_a = tds.find_cells_containing_vertex_by_key(a);
+    let cells_b = tds.find_cells_containing_vertex_by_key(b);
+    let cells_c = tds.find_cells_containing_vertex_by_key(c);
+
+    let mut removed_cells: CellKeyBuffer = CellKeyBuffer::new();
+    for &cell_key in &cells_a {
+        if cells_b.contains(&cell_key) && cells_c.contains(&cell_key) {
+            removed_cells.push(cell_key);
+        }
+    }
+
+    let expected = D - 1;
+    if removed_cells.len() != expected {
+        return Err(FlipError::InvalidTriangleMultiplicity {
+            found: removed_cells.len(),
+            expected,
+        });
+    }
+
+    let mut counts: FastHashMap<VertexKey, usize> = FastHashMap::default();
+    for &cell_key in &removed_cells {
+        let cell = tds
+            .get_cell(cell_key)
+            .ok_or(FlipError::MissingCell { cell_key })?;
+        if !cell.contains_vertex(a) || !cell.contains_vertex(b) || !cell.contains_vertex(c) {
+            return Err(FlipError::InvalidTriangleAdjacency {
+                message: format!("cell {cell_key:?} does not contain triangle vertices"),
+            });
+        }
+        for &vk in cell.vertices() {
+            if vk != a && vk != b && vk != c {
+                *counts.entry(vk).or_insert(0) += 1;
+            }
+        }
+    }
+
+    if counts.len() != expected || !counts.values().all(|&count| count == expected - 1) {
+        return Err(FlipError::InvalidTriangleAdjacency {
+            message: format!(
+                "triangle star must have {expected} ridge vertices each appearing {count} times",
+                count = expected - 1
+            ),
+        });
+    }
+
+    let mut inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+        counts.keys().copied().collect();
+    inserted_face_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
+
+    let mut removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::with_capacity(3);
+    removed_face_vertices.push(a);
+    removed_face_vertices.push(b);
+    removed_face_vertices.push(c);
+
+    Ok(FlipContextDyn {
+        removed_face_vertices,
+        inserted_face_vertices,
+        removed_cells,
+        direction: FlipDirection::Inverse,
+    })
+}
+
+fn delaunay_violation_k3_for_ridge<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
-    context: &FlipContextK3<D>,
+    ridge_vertices: &[VertexKey],
+    triangle_vertices: &[VertexKey],
 ) -> Result<bool, FlipError>
 where
     K: Kernel<D>,
@@ -669,8 +1324,35 @@ where
     U: DataType,
     V: DataType,
 {
-    for (cell_key, &missing) in context.cells.iter().zip(context.missing_opposites.iter()) {
-        let points = cell_points(tds, *cell_key)?;
+    if triangle_vertices.len() != 3 {
+        return Err(FlipError::InvalidFlipContext {
+            message: format!(
+                "k=3 inserted-face must have 3 vertices, got {}",
+                triangle_vertices.len()
+            ),
+        });
+    }
+    if ridge_vertices.len() != D.saturating_sub(1) {
+        return Err(FlipError::InvalidFlipContext {
+            message: format!(
+                "k=3 ridge must have {} vertices, got {}",
+                D.saturating_sub(1),
+                ridge_vertices.len()
+            ),
+        });
+    }
+
+    for &missing in triangle_vertices {
+        let mut cell_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(D + 1);
+        cell_vertices.extend_from_slice(ridge_vertices);
+        for &v in triangle_vertices {
+            if v != missing {
+                cell_vertices.push(v);
+            }
+        }
+
+        let points = vertices_to_points(tds, &cell_vertices)?;
         let missing_point = tds
             .get_vertex_by_key(missing)
             .ok_or(FlipError::MissingVertex {
@@ -682,7 +1364,7 @@ where
             kernel
                 .in_sphere(&points, missing_point)
                 .map_err(|e| FlipError::PredicateFailure {
-                    message: format!("in_sphere failed for cell {cell_key:?}: {e}"),
+                    message: format!("in_sphere failed for k=3 cell: {e}"),
                 })?;
         if in_sphere > 0 {
             return Ok(true);
@@ -702,82 +1384,86 @@ where
 pub fn apply_bistellar_flip_k3<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
-    context: &FlipContextK3<D>,
-) -> Result<FlipInfoK3<D>, FlipError>
+    context: &FlipContext<D, 3>,
+) -> Result<FlipInfo<D>, FlipError>
 where
     K: Kernel<D>,
     K::Scalar: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    let mut new_cells = CellKeyBuffer::new();
-    let mut new_cell_vertices: SmallBuffer<
-        SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-        MAX_PRACTICAL_DIMENSION_SIZE,
-    > = SmallBuffer::with_capacity(D.saturating_sub(1));
-    let removed = context.cells;
-    let ridge = &context.ridge;
-    let opposites = &context.opposite_vertices;
+    apply_bistellar_flip::<K, U, V, D, 3>(tds, kernel, context)
+}
 
-    for &omit in ridge {
-        let mut vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-            SmallBuffer::with_capacity(D + 1);
-        for &v in opposites {
-            vertices.push(v);
-        }
-        for &v in ridge {
-            if v != omit {
-                vertices.push(v);
-            }
-        }
-
-        if flip_would_duplicate_cell_any(tds, &vertices, &removed) {
-            return Err(FlipError::DuplicateCell);
-        }
-        if flip_would_create_nonmanifold_facets_any(tds, &vertices, &removed, opposites) {
-            return Err(FlipError::NonManifoldFacet);
-        }
-
-        let points = vertices_to_points(tds, &vertices)?;
-        let orientation = kernel
-            .orientation(&points)
-            .map_err(|e| FlipError::PredicateFailure {
-                message: format!("orientation failed for flip cell: {e}"),
-            })?;
-        if orientation == 0 {
-            return Err(FlipError::DegenerateCell);
-        }
-
-        new_cell_vertices.push(vertices);
+/// Apply a forward k=1 move (cell split) by inserting a new vertex.
+///
+/// # Errors
+///
+/// Returns a [`FlipError`] if the cell is missing, the vertex cannot be inserted,
+/// or the flip would be degenerate.
+pub fn apply_bistellar_flip_k1<K, U, V, const D: usize>(
+    tds: &mut Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    cell_key: CellKey,
+    vertex: Vertex<K::Scalar, U, D>,
+) -> Result<FlipInfo<D>, FlipError>
+where
+    K: Kernel<D>,
+    K::Scalar: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    if D < 1 {
+        return Err(FlipError::UnsupportedDimension { dimension: D });
     }
 
-    for vertices in new_cell_vertices {
-        let cell = Cell::new(vertices, None)?;
-        let cell_key = tds
-            .insert_cell_with_mapping(cell)
+    let vertex_key =
+        tds.insert_vertex_with_mapping(vertex)
             .map_err(|e| FlipError::TdsMutation {
                 message: e.to_string(),
             })?;
-        new_cells.push(cell_key);
+
+    let context = build_k1_forward_context_from_cell(tds, cell_key, vertex_key)?;
+    let result = apply_bistellar_flip::<K, U, V, D, 1>(tds, kernel, &context);
+
+    if result.is_err()
+        && let Some(inserted) = tds.get_vertex_by_key(vertex_key).copied()
+    {
+        let _ = tds.remove_vertex(&inserted);
     }
 
-    let removed_keys: CellKeyBuffer = removed.iter().copied().collect();
+    result
+}
 
-    wire_cavity_neighbors(tds, &new_cells, Some(&removed_keys)).map_err(|e| {
-        FlipError::NeighborWiring {
-            message: e.to_string(),
-        }
-    })?;
+/// Apply an inverse k=1 move (vertex collapse) by removing a vertex whose star
+/// is a simplex.
+///
+/// # Errors
+///
+/// Returns a [`FlipError`] if the vertex star is invalid or the flip would be degenerate.
+pub fn apply_bistellar_flip_k1_inverse<K, U, V, const D: usize>(
+    tds: &mut Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    vertex_key: VertexKey,
+) -> Result<FlipInfo<D>, FlipError>
+where
+    K: Kernel<D>,
+    K::Scalar: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    if D < 1 {
+        return Err(FlipError::UnsupportedDimension { dimension: D });
+    }
 
-    tds.remove_cells_by_keys(&removed_keys);
+    let context = build_k1_inverse_context(tds, vertex_key)?;
+    let info = apply_bistellar_flip_dynamic(tds, kernel, D + 1, &context)?;
 
-    Ok(FlipInfoK3 {
-        kind: BistellarFlipKind::k3(D),
-        removed_cells: removed,
-        new_cells,
-        ridge: ridge.clone(),
-        opposite_vertices: *opposites,
-    })
+    if let Some(vertex) = tds.get_vertex_by_key(vertex_key).copied() {
+        let _ = tds.remove_vertex(&vertex);
+    }
+
+    Ok(info)
 }
 
 /// Repair Delaunay violations using a k=2 flip queue.
@@ -877,7 +1563,8 @@ where
     Ok(stats)
 }
 
-/// Repair Delaunay violations using k=2 and (for D==3) k=3 flip queues.
+/// Repair Delaunay violations using k=2 queues, k=3 queues in 3D,
+/// and inverse edge/triangle queues in higher dimensions.
 ///
 /// # Errors
 ///
@@ -897,7 +1584,7 @@ where
     if D < 2 {
         return Err(FlipError::UnsupportedDimension { dimension: D }.into());
     }
-    if D != 3 {
+    if D == 2 {
         return repair_delaunay_with_flips_k2(tds, kernel, seed_cells);
     }
 
@@ -907,26 +1594,28 @@ where
     let mut queues = RepairQueues::new();
     seed_repair_queues(tds, seed_cells, &mut queues, &mut stats)?;
 
-    let mut prefer_ridge = false;
+    let mut prefer_secondary = false;
 
     while queues.has_work() {
-        let do_ridge = if queues.ridge_queue.is_empty() {
-            false
-        } else if queues.facet_queue.is_empty() {
-            true
-        } else {
-            prefer_ridge
-        };
-
-        if do_ridge {
-            if process_ridge_queue_step(tds, kernel, &mut queues, &mut stats, max_flips)? {
-                prefer_ridge = false;
-            }
+        if prefer_secondary
+            && (process_ridge_queue_step(tds, kernel, &mut queues, &mut stats, max_flips)?
+                || process_edge_queue_step(tds, kernel, &mut queues, &mut stats, max_flips)?
+                || process_triangle_queue_step(tds, kernel, &mut queues, &mut stats, max_flips)?)
+        {
+            prefer_secondary = false;
             continue;
         }
 
         if process_facet_queue_step(tds, kernel, &mut queues, &mut stats, max_flips)? {
-            prefer_ridge = true;
+            prefer_secondary = true;
+            continue;
+        }
+
+        if process_ridge_queue_step(tds, kernel, &mut queues, &mut stats, max_flips)?
+            || process_edge_queue_step(tds, kernel, &mut queues, &mut stats, max_flips)?
+            || process_triangle_queue_step(tds, kernel, &mut queues, &mut stats, max_flips)?
+        {
+            prefer_secondary = false;
         }
     }
 
@@ -949,6 +1638,10 @@ struct RepairQueues {
     facet_queued: FastHashSet<u64>,
     ridge_queue: VecDeque<(RidgeHandle, u64)>,
     ridge_queued: FastHashSet<u64>,
+    edge_queue: VecDeque<(EdgeKey, u64)>,
+    edge_queued: FastHashSet<u64>,
+    triangle_queue: VecDeque<(TriangleHandle, u64)>,
+    triangle_queued: FastHashSet<u64>,
 }
 
 impl RepairQueues {
@@ -958,15 +1651,25 @@ impl RepairQueues {
             facet_queued: FastHashSet::default(),
             ridge_queue: VecDeque::new(),
             ridge_queued: FastHashSet::default(),
+            edge_queue: VecDeque::new(),
+            edge_queued: FastHashSet::default(),
+            triangle_queue: VecDeque::new(),
+            triangle_queued: FastHashSet::default(),
         }
     }
 
     fn total_len(&self) -> usize {
-        self.facet_queue.len() + self.ridge_queue.len()
+        self.facet_queue.len()
+            + self.ridge_queue.len()
+            + self.edge_queue.len()
+            + self.triangle_queue.len()
     }
 
     fn has_work(&self) -> bool {
-        !self.facet_queue.is_empty() || !self.ridge_queue.is_empty()
+        !self.facet_queue.is_empty()
+            || !self.ridge_queue.is_empty()
+            || !self.edge_queue.is_empty()
+            || !self.triangle_queue.is_empty()
     }
 }
 
@@ -997,6 +1700,20 @@ where
                 &mut queues.ridge_queued,
                 stats,
             )?;
+            enqueue_cell_edges(
+                tds,
+                cell_key,
+                &mut queues.edge_queue,
+                &mut queues.edge_queued,
+                stats,
+            );
+            enqueue_cell_triangles(
+                tds,
+                cell_key,
+                &mut queues.triangle_queue,
+                &mut queues.triangle_queued,
+                stats,
+            );
             stats.max_queue_len = stats.max_queue_len.max(queues.total_len());
         }
     } else {
@@ -1018,6 +1735,20 @@ where
                 &mut queues.ridge_queued,
                 stats,
             )?;
+            enqueue_cell_edges(
+                tds,
+                cell_key,
+                &mut queues.edge_queue,
+                &mut queues.edge_queued,
+                stats,
+            );
+            enqueue_cell_triangles(
+                tds,
+                cell_key,
+                &mut queues.triangle_queue,
+                &mut queues.triangle_queued,
+                stats,
+            );
         }
         stats.max_queue_len = stats.max_queue_len.max(queues.total_len());
     }
@@ -1050,6 +1781,20 @@ where
             &mut queues.ridge_queued,
             stats,
         )?;
+        enqueue_cell_edges(
+            tds,
+            cell_key,
+            &mut queues.edge_queue,
+            &mut queues.edge_queued,
+            stats,
+        );
+        enqueue_cell_triangles(
+            tds,
+            cell_key,
+            &mut queues.triangle_queue,
+            &mut queues.triangle_queued,
+            stats,
+        );
         stats.max_queue_len = stats.max_queue_len.max(queues.total_len());
     }
     Ok(())
@@ -1100,6 +1845,165 @@ where
     }
 
     let info = match apply_bistellar_flip_k3(tds, kernel, &context) {
+        Ok(info) => info,
+        Err(
+            FlipError::DegenerateCell
+            | FlipError::DuplicateCell
+            | FlipError::NonManifoldFacet
+            | FlipError::CellCreation(_),
+        ) => {
+            return Ok(true);
+        }
+        Err(e) => return Err(e.into()),
+    };
+    stats.flips_performed += 1;
+
+    if stats.flips_performed > max_flips {
+        return Err(DelaunayRepairError::NonConvergent {
+            max_flips,
+            facets_checked: stats.facets_checked,
+        });
+    }
+
+    enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
+
+    Ok(true)
+}
+
+fn process_edge_queue_step<K, U, V, const D: usize>(
+    tds: &mut Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    queues: &mut RepairQueues,
+    stats: &mut DelaunayRepairStats,
+    max_flips: usize,
+) -> Result<bool, DelaunayRepairError>
+where
+    K: Kernel<D>,
+    K::Scalar: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let Some((edge, key)) = queues.edge_queue.pop_front() else {
+        return Ok(false);
+    };
+    queues.edge_queued.remove(&key);
+    stats.facets_checked += 1;
+
+    let context = match build_k2_flip_context_from_edge(tds, edge) {
+        Ok(ctx) => ctx,
+        Err(
+            FlipError::InvalidEdgeMultiplicity { .. }
+            | FlipError::InvalidEdgeAdjacency { .. }
+            | FlipError::MissingCell { .. }
+            | FlipError::MissingVertex { .. },
+        ) => {
+            return Ok(true);
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    if context.removed_face_vertices.len() != 2 {
+        return Ok(true);
+    }
+    let opposite_a = context.removed_face_vertices[0];
+    let opposite_b = context.removed_face_vertices[1];
+
+    let violates = match delaunay_violation_k2_for_facet(
+        tds,
+        kernel,
+        &context.inserted_face_vertices,
+        opposite_a,
+        opposite_b,
+    ) {
+        Ok(violates) => violates,
+        Err(FlipError::PredicateFailure { .. }) => {
+            return Ok(true);
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    // Only flip if the target (2-cell) configuration is locally Delaunay.
+    if violates {
+        return Ok(true);
+    }
+
+    let info = match apply_bistellar_flip_dynamic(tds, kernel, D, &context) {
+        Ok(info) => info,
+        Err(
+            FlipError::DegenerateCell
+            | FlipError::DuplicateCell
+            | FlipError::NonManifoldFacet
+            | FlipError::CellCreation(_),
+        ) => {
+            return Ok(true);
+        }
+        Err(e) => return Err(e.into()),
+    };
+    stats.flips_performed += 1;
+
+    if stats.flips_performed > max_flips {
+        return Err(DelaunayRepairError::NonConvergent {
+            max_flips,
+            facets_checked: stats.facets_checked,
+        });
+    }
+
+    enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
+
+    Ok(true)
+}
+
+fn process_triangle_queue_step<K, U, V, const D: usize>(
+    tds: &mut Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    queues: &mut RepairQueues,
+    stats: &mut DelaunayRepairStats,
+    max_flips: usize,
+) -> Result<bool, DelaunayRepairError>
+where
+    K: Kernel<D>,
+    K::Scalar: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let Some((triangle, key)) = queues.triangle_queue.pop_front() else {
+        return Ok(false);
+    };
+    queues.triangle_queued.remove(&key);
+    stats.facets_checked += 1;
+
+    let context = match build_k3_flip_context_from_triangle(tds, triangle) {
+        Ok(ctx) => ctx,
+        Err(
+            FlipError::InvalidTriangleMultiplicity { .. }
+            | FlipError::InvalidTriangleAdjacency { .. }
+            | FlipError::MissingCell { .. }
+            | FlipError::MissingVertex { .. },
+        ) => {
+            return Ok(true);
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    let violates = match delaunay_violation_k3_for_ridge(
+        tds,
+        kernel,
+        &context.inserted_face_vertices,
+        &context.removed_face_vertices,
+    ) {
+        Ok(violates) => violates,
+        Err(FlipError::PredicateFailure { .. }) => {
+            return Ok(true);
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    // Only flip if the target (3-cell) configuration is locally Delaunay.
+    if violates {
+        return Ok(true);
+    }
+
+    let info = match apply_bistellar_flip_dynamic(tds, kernel, D - 1, &context) {
         Ok(info) => info,
         Err(
             FlipError::DegenerateCell
@@ -1331,29 +2235,6 @@ where
     Ok(cells)
 }
 
-fn cell_points<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
-    cell_key: CellKey,
-) -> Result<SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>, FlipError>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
-    let cell = tds
-        .get_cell(cell_key)
-        .ok_or(FlipError::MissingCell { cell_key })?;
-    let mut points: SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
-        SmallBuffer::with_capacity(D + 1);
-    for &vkey in cell.vertices() {
-        let vertex = tds
-            .get_vertex_by_key(vkey)
-            .ok_or(FlipError::MissingVertex { vertex_key: vkey })?;
-        points.push(*vertex.point());
-    }
-    Ok(points)
-}
-
 fn vertices_to_points<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     vertices: &[VertexKey],
@@ -1405,19 +2286,6 @@ where
     false
 }
 
-fn flip_would_duplicate_cell<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
-    vertices: &[VertexKey],
-    removed: &[CellKey; 2],
-) -> bool
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
-    flip_would_duplicate_cell_any(tds, vertices, removed)
-}
-
 fn flip_would_create_nonmanifold_facets_any<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     vertices: &[VertexKey],
@@ -1429,10 +2297,9 @@ where
     U: DataType,
     V: DataType,
 {
-    let vertex_count = vertices.len();
-    for omit_idx in 0..vertex_count {
+    for omit_idx in 0..vertices.len() {
         let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-            SmallBuffer::with_capacity(vertex_count.saturating_sub(1));
+            SmallBuffer::with_capacity(D);
         for (i, &vkey) in vertices.iter().enumerate() {
             if i != omit_idx {
                 facet_vertices.push(vkey);
@@ -1458,22 +2325,6 @@ where
         }
     }
     false
-}
-
-fn flip_would_create_nonmanifold_facets<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
-    vertices: &[VertexKey],
-    removed: &[CellKey; 2],
-    opposite_a: VertexKey,
-    opposite_b: VertexKey,
-) -> bool
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
-    let opposites = [opposite_a, opposite_b];
-    flip_would_create_nonmanifold_facets_any(tds, vertices, removed, &opposites)
 }
 
 fn enqueue_cell_facets<T, U, V, const D: usize>(
@@ -1542,6 +2393,93 @@ fn enqueue_facet<T, U, V, const D: usize>(
     }
 }
 
+fn enqueue_cell_edges<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cell_key: CellKey,
+    queue: &mut VecDeque<(EdgeKey, u64)>,
+    queued: &mut FastHashSet<u64>,
+    stats: &mut DelaunayRepairStats,
+) where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    if D < 4 {
+        return;
+    }
+
+    let Some(cell) = tds.get_cell(cell_key) else {
+        return;
+    };
+
+    let vertices = cell.vertices();
+    let vertex_count = vertices.len();
+    for i in 0..vertex_count {
+        for j in (i + 1)..vertex_count {
+            let edge = EdgeKey::new(vertices[i], vertices[j]);
+            enqueue_edge(edge, queue, queued, stats);
+        }
+    }
+}
+
+fn enqueue_edge(
+    edge: EdgeKey,
+    queue: &mut VecDeque<(EdgeKey, u64)>,
+    queued: &mut FastHashSet<u64>,
+    stats: &mut DelaunayRepairStats,
+) {
+    let key = facet_key_from_vertices(&[edge.v0(), edge.v1()]);
+    if queued.insert(key) {
+        queue.push_back((edge, key));
+        stats.max_queue_len = stats.max_queue_len.max(queue.len());
+    }
+}
+
+fn enqueue_cell_triangles<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cell_key: CellKey,
+    queue: &mut VecDeque<(TriangleHandle, u64)>,
+    queued: &mut FastHashSet<u64>,
+    stats: &mut DelaunayRepairStats,
+) where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    if D < 5 {
+        return;
+    }
+
+    let Some(cell) = tds.get_cell(cell_key) else {
+        return;
+    };
+
+    let vertices = cell.vertices();
+    let vertex_count = vertices.len();
+    for i in 0..vertex_count {
+        for j in (i + 1)..vertex_count {
+            for k in (j + 1)..vertex_count {
+                let triangle = TriangleHandle::new(vertices[i], vertices[j], vertices[k]);
+                enqueue_triangle(triangle, queue, queued, stats);
+            }
+        }
+    }
+}
+
+fn enqueue_triangle(
+    triangle: TriangleHandle,
+    queue: &mut VecDeque<(TriangleHandle, u64)>,
+    queued: &mut FastHashSet<u64>,
+    stats: &mut DelaunayRepairStats,
+) {
+    let vertices = triangle.vertices();
+    let key = facet_key_from_vertices(&vertices);
+    if queued.insert(key) {
+        queue.push_back((triangle, key));
+        stats.max_queue_len = stats.max_queue_len.max(queue.len());
+    }
+}
+
 fn enqueue_cell_ridges<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cell_key: CellKey,
@@ -1554,7 +2492,7 @@ where
     U: DataType,
     V: DataType,
 {
-    if D < 3 {
+    if D != 3 {
         return Ok(());
     }
 
@@ -1598,7 +2536,7 @@ fn enqueue_ridge<T, U, V, const D: usize>(
     U: DataType,
     V: DataType,
 {
-    if D < 3 {
+    if D != 3 {
         return;
     }
 
@@ -1659,16 +2597,20 @@ mod tests {
                         .insert_vertex_with_mapping(vertex!([1.0; $dim]))
                         .unwrap();
 
-                    let mut cell_a_vertices = shared_vertices.clone();
-                    cell_a_vertices.push(opposite_a);
+                    let mut vertices_with_first_opposite = shared_vertices.clone();
+                    vertices_with_first_opposite.push(opposite_a);
                     let cell_a = tds
-                        .insert_cell_with_mapping(Cell::new(cell_a_vertices, None).unwrap())
+                        .insert_cell_with_mapping(
+                            Cell::new(vertices_with_first_opposite, None).unwrap(),
+                        )
                         .unwrap();
 
-                    let mut cell_b_vertices = shared_vertices.clone();
-                    cell_b_vertices.push(opposite_b);
+                    let mut vertices_with_second_opposite = shared_vertices.clone();
+                    vertices_with_second_opposite.push(opposite_b);
                     let _cell_b = tds
-                        .insert_cell_with_mapping(Cell::new(cell_b_vertices, None).unwrap())
+                        .insert_cell_with_mapping(
+                            Cell::new(vertices_with_second_opposite, None).unwrap(),
+                        )
                         .unwrap();
 
                     repair_neighbor_pointers(&mut tds).unwrap();
@@ -1681,7 +2623,7 @@ mod tests {
                     assert_eq!(info.kind, BistellarFlipKind::k2($dim));
                     assert_eq!(info.removed_cells.len(), 2);
                     assert_eq!(info.new_cells.len(), $dim);
-                    assert_eq!(info.shared_facet.len(), $dim);
+                    assert_eq!(info.removed_face_vertices.len(), $dim);
                     assert!(tds.is_valid().is_ok());
                 }
             }
@@ -1903,6 +2845,126 @@ mod tests {
         assert_eq!(info.kind, BistellarFlipKind::k3(5));
         assert_eq!(info.removed_cells.len(), 3);
         assert_eq!(info.new_cells.len(), 4);
+        assert!(tds.is_valid().is_ok());
+    }
+    #[test]
+    fn test_flip_k1_2d_roundtrip() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+            .unwrap();
+
+        let kernel = FastKernel::<f64>::new();
+        let new_vertex = vertex!([0.2, 0.2]);
+        let new_uuid = new_vertex.uuid();
+        let info = apply_bistellar_flip_k1(&mut tds, &kernel, cell, new_vertex).unwrap();
+
+        assert_eq!(info.kind.k, 1);
+        assert_eq!(info.kind.d, 2);
+        assert_eq!(tds.number_of_cells(), 3);
+
+        let new_key = tds.vertex_key_from_uuid(&new_uuid).unwrap();
+        let info_back = apply_bistellar_flip_k1_inverse(&mut tds, &kernel, new_key).unwrap();
+
+        assert_eq!(info_back.kind.k, 3);
+        assert_eq!(info_back.kind.d, 2);
+        assert_eq!(tds.number_of_cells(), 1);
+        assert_eq!(tds.number_of_vertices(), 3);
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_repair_queue_inverse_k2_smoke_4d() {
+        let mut tds: Tds<f64, (), (), 4> = Tds::empty();
+        let mut shared_vertices = Vec::with_capacity(4);
+        for i in 0..4 {
+            let v = tds
+                .insert_vertex_with_mapping(vertex!(unit_vector::<4>(i)))
+                .unwrap();
+            shared_vertices.push(v);
+        }
+
+        let opposite_a = tds.insert_vertex_with_mapping(vertex!([0.0; 4])).unwrap();
+        let opposite_b = tds.insert_vertex_with_mapping(vertex!([1.0; 4])).unwrap();
+
+        let mut vertices_with_first_opposite = shared_vertices.clone();
+        vertices_with_first_opposite.push(opposite_a);
+        let cell_a = tds
+            .insert_cell_with_mapping(Cell::new(vertices_with_first_opposite, None).unwrap())
+            .unwrap();
+
+        let mut vertices_with_second_opposite = shared_vertices.clone();
+        vertices_with_second_opposite.push(opposite_b);
+        let _cell_b = tds
+            .insert_cell_with_mapping(Cell::new(vertices_with_second_opposite, None).unwrap())
+            .unwrap();
+
+        repair_neighbor_pointers(&mut tds).unwrap();
+
+        let facet = FacetHandle::new(cell_a, 4);
+        let context = build_k2_flip_context(&tds, facet).unwrap();
+        let kernel = FastKernel::<f64>::new();
+        let info = apply_bistellar_flip_k2(&mut tds, &kernel, &context).unwrap();
+
+        let seed_cells: Vec<CellKey> = info.new_cells.iter().copied().collect();
+        let stats =
+            repair_delaunay_with_flips_k2_k3(&mut tds, &kernel, Some(seed_cells.as_slice()))
+                .unwrap();
+        assert!(stats.facets_checked > 0);
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_repair_queue_inverse_k3_smoke_5d() {
+        let mut tds: Tds<f64, (), (), 5> = Tds::empty();
+        let r0 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 0.0]))
+            .unwrap();
+        let r1 = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0, 0.0, 0.0]))
+            .unwrap();
+        let r2 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0, 0.0, 0.0]))
+            .unwrap();
+        let r3 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0, 0.0, 0.0]))
+            .unwrap();
+        let a = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 1.0, 0.0]))
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 1.0]))
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(vertex!([0.2, 0.2, 0.2, 0.2, 0.5]))
+            .unwrap();
+
+        let c1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, r3, a, b], None).unwrap())
+            .unwrap();
+        let _c2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, r3, b, c], None).unwrap())
+            .unwrap();
+        let _c3 = tds
+            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, r3, c, a], None).unwrap())
+            .unwrap();
+
+        repair_neighbor_pointers(&mut tds).unwrap();
+
+        let ridge = RidgeHandle::new(c1, 4, 5);
+        let context = build_k3_flip_context(&tds, ridge).unwrap();
+        let kernel = FastKernel::<f64>::new();
+        let info = apply_bistellar_flip_k3(&mut tds, &kernel, &context).unwrap();
+
+        let seed_cells: Vec<CellKey> = info.new_cells.iter().copied().collect();
+        let stats =
+            repair_delaunay_with_flips_k2_k3(&mut tds, &kernel, Some(seed_cells.as_slice()))
+                .unwrap();
+        assert!(stats.facets_checked > 0);
         assert!(tds.is_valid().is_ok());
     }
 
