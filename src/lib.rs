@@ -470,6 +470,8 @@ pub mod core {
     pub mod delaunay_triangulation;
     pub mod edge;
     pub mod facet;
+    /// Semantic classification and telemetry for topological operations
+    pub mod operations;
     /// Generic triangulation combining kernel + Tds - Phase 2 TODO
     pub mod triangulation;
     pub mod triangulation_data_structure;
@@ -647,10 +649,9 @@ pub mod prelude {
     // Re-export point location algorithms from core::algorithms
     pub use crate::core::algorithms::locate::{LocateError, LocateResult, locate};
 
-    // Re-export incremental insertion types from core::algorithms
-    pub use crate::core::algorithms::incremental_insertion::{
-        InsertionError, InsertionOutcome, InsertionStatistics,
-    };
+    // Re-export incremental insertion types
+    pub use crate::core::algorithms::incremental_insertion::InsertionError;
+    pub use crate::core::operations::{InsertionOutcome, InsertionStatistics, SuspicionFlags};
 
     // Re-export commonly used collection types from core::collections
     // These are frequently used in advanced examples and downstream code

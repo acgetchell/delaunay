@@ -117,8 +117,7 @@ use uuid::Uuid;
 
 use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
 use crate::core::algorithms::incremental_insertion::{
-    InsertionError, InsertionOutcome, InsertionResult, InsertionStatistics, extend_hull,
-    fill_cavity, repair_neighbor_pointers, wire_cavity_neighbors,
+    InsertionError, extend_hull, fill_cavity, repair_neighbor_pointers, wire_cavity_neighbors,
 };
 use crate::core::algorithms::locate::{
     ConflictError, LocateResult, extract_cavity_boundary, find_conflict_region, locate,
@@ -131,6 +130,9 @@ use crate::core::collections::{
 };
 use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter, FacetHandle};
+use crate::core::operations::{
+    InsertionOutcome, InsertionResult, InsertionStatistics, SuspicionFlags,
+};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation_data_structure::{
     CellKey, InvariantError, InvariantKind, InvariantViolation, Tds, TdsConstructionError,
@@ -405,47 +407,6 @@ impl From<ManifoldError> for TriangulationValidationError {
     }
 }
 
-/// Adaptive error-checking on suspicious operations.
-#[derive(Clone, Copy, Debug, Default)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "A small set of boolean flags is clearer here than bitflags or an enum"
-)]
-pub struct SuspicionFlags {
-    /// A perturbation retry was required to resolve a geometric degeneracy.
-    pub perturbation_used: bool,
-
-    /// A conflict-region computation returned an empty set for an interior point.
-    pub empty_conflict_region: bool,
-
-    /// The insertion fell back to splitting the containing cell (star-split) to avoid
-    /// creating a dangling vertex.
-    pub fallback_star_split: bool,
-
-    /// The non-manifold repair loop was entered after insertion/hull extension.
-    pub repair_loop_entered: bool,
-
-    /// One or more cells were removed during non-manifold repair.
-    pub cells_removed: bool,
-
-    /// Neighbor pointers were rebuilt (facet-matched) after topology repair.
-    pub neighbor_pointers_rebuilt: bool,
-}
-
-impl SuspicionFlags {
-    /// Returns `true` if any suspicious condition was observed.
-    #[inline]
-    #[must_use]
-    pub const fn is_suspicious(&self) -> bool {
-        self.perturbation_used
-            || self.empty_conflict_region
-            || self.fallback_star_split
-            || self.repair_loop_entered
-            || self.cells_removed
-            || self.neighbor_pointers_rebuilt
-    }
-}
-
 type TryInsertImplOk = ((VertexKey, Option<CellKey>), usize, SuspicionFlags);
 
 /// Policy controlling when the triangulation runs global validation passes.
@@ -468,7 +429,8 @@ pub enum ValidationPolicy {
 }
 
 impl ValidationPolicy {
-    /// Returns `true` if a global validation pass should be run given the observed [`SuspicionFlags`].
+    /// Returns `true` if a global validation pass should be run given the observed
+    /// [`crate::core::operations::SuspicionFlags`].
     #[inline]
     #[must_use]
     pub const fn should_validate(&self, suspicion: SuspicionFlags) -> bool {

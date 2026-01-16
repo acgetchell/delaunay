@@ -13,12 +13,11 @@ use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
 use crate::core::algorithms::flips::{
     DelaunayRepairError, DelaunayRepairStats, repair_delaunay_with_flips_k2,
 };
-use crate::core::algorithms::incremental_insertion::{
-    InsertionError, InsertionOutcome, InsertionStatistics,
-};
+use crate::core::algorithms::incremental_insertion::InsertionError;
 use crate::core::cell::Cell;
 use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
+use crate::core::operations::{DelaunayInsertionState, InsertionOutcome, InsertionStatistics};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{
     TopologyGuarantee, Triangulation, TriangulationConstructionError, TriangulationValidationError,
@@ -129,12 +128,8 @@ where
 {
     /// The underlying generic triangulation.
     pub(crate) tri: Triangulation<K, U, V, D>,
-    /// Hint for next `locate()` call (last inserted cell)
-    last_inserted_cell: Option<CellKey>,
-    /// Policy controlling automatic Delaunay repair (flip-based).
-    delaunay_repair_policy: DelaunayRepairPolicy,
-    /// Count of successful insertions (used to schedule repairs).
-    delaunay_repair_insertion_count: usize,
+    /// Ephemeral insertion/repair state (hint caching + repair scheduling).
+    insertion_state: DelaunayInsertionState,
 }
 
 // Most common case: f64 with FastKernel, no vertex or cell data
@@ -247,9 +242,7 @@ where
     pub fn with_empty_kernel(kernel: K) -> Self {
         Self {
             tri: Triangulation::new_empty(kernel),
-            last_inserted_cell: None,
-            delaunay_repair_policy: DelaunayRepairPolicy::EveryInsertion,
-            delaunay_repair_insertion_count: 0,
+            insertion_state: DelaunayInsertionState::new(),
         }
     }
 
@@ -321,9 +314,7 @@ where
                 validation_policy: ValidationPolicy::default(),
                 topology_guarantee: TopologyGuarantee::DEFAULT,
             },
-            last_inserted_cell: None,
-            delaunay_repair_policy: DelaunayRepairPolicy::EveryInsertion,
-            delaunay_repair_insertion_count: 0,
+            insertion_state: DelaunayInsertionState::new(),
         };
 
         // During batch construction, enable strict Level 3 validation in debug builds so the
@@ -337,10 +328,11 @@ where
         // (transactional rollback) to keep the triangulation manifold. Duplicate/near-duplicate
         // coordinates are skipped immediately.
         for vertex in vertices.iter().skip(D + 1) {
-            match dt
-                .tri
-                .insert_with_statistics(*vertex, None, dt.last_inserted_cell)
-            {
+            match dt.tri.insert_with_statistics(
+                *vertex,
+                None,
+                dt.insertion_state.last_inserted_cell,
+            ) {
                 Ok((
                     InsertionOutcome::Inserted {
                         vertex_key: v_key,
@@ -349,9 +341,11 @@ where
                     _stats,
                 )) => {
                     // Cache hint for faster subsequent insertions.
-                    dt.last_inserted_cell = hint;
-                    dt.delaunay_repair_insertion_count =
-                        dt.delaunay_repair_insertion_count.saturating_add(1);
+                    dt.insertion_state.last_inserted_cell = hint;
+                    dt.insertion_state.delaunay_repair_insertion_count = dt
+                        .insertion_state
+                        .delaunay_repair_insertion_count
+                        .saturating_add(1);
                     let seed_cells = if D == 2 {
                         let cells: Vec<CellKey> = dt.tri.adjacent_cells(v_key).collect();
                         (!cells.is_empty()).then_some(cells)
@@ -825,13 +819,13 @@ where
     #[inline]
     #[must_use]
     pub const fn delaunay_repair_policy(&self) -> DelaunayRepairPolicy {
-        self.delaunay_repair_policy
+        self.insertion_state.delaunay_repair_policy
     }
 
     /// Sets the automatic Delaunay repair policy.
     #[inline]
     pub const fn set_delaunay_repair_policy(&mut self, policy: DelaunayRepairPolicy) {
-        self.delaunay_repair_policy = policy;
+        self.insertion_state.delaunay_repair_policy = policy;
     }
 
     /// Runs flip-based Delaunay repair over the full triangulation.
@@ -1309,10 +1303,14 @@ where
         // - Kernel (provides in-sphere predicate for Delaunay property)
         // - Hint caching for performance
         // - Future: Delaunay property restoration after removal
-        let (v_key, hint) = self.tri.insert(vertex, None, self.last_inserted_cell)?;
-        self.last_inserted_cell = hint;
-        self.delaunay_repair_insertion_count =
-            self.delaunay_repair_insertion_count.saturating_add(1);
+        let (v_key, hint) =
+            self.tri
+                .insert(vertex, None, self.insertion_state.last_inserted_cell)?;
+        self.insertion_state.last_inserted_cell = hint;
+        self.insertion_state.delaunay_repair_insertion_count = self
+            .insertion_state
+            .delaunay_repair_insertion_count
+            .saturating_add(1);
         let seed_cells = if D == 2 {
             let cells: Vec<CellKey> = self.tri.adjacent_cells(v_key).collect();
             (!cells.is_empty()).then_some(cells)
@@ -1330,7 +1328,7 @@ where
     /// Insert a vertex and return the insertion outcome plus statistics.
     ///
     /// This is a convenience wrapper around [`Triangulation::insert_with_statistics`] that also
-    /// updates the internal `last_inserted_cell` hint cache.
+    /// updates the internal `insertion_state.last_inserted_cell` hint cache.
     ///
     /// # Errors
     ///
@@ -1359,14 +1357,18 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
-        let (outcome, stats) =
-            self.tri
-                .insert_with_statistics(vertex, None, self.last_inserted_cell)?;
+        let (outcome, stats) = self.tri.insert_with_statistics(
+            vertex,
+            None,
+            self.insertion_state.last_inserted_cell,
+        )?;
 
         if let InsertionOutcome::Inserted { vertex_key, hint } = &outcome {
-            self.last_inserted_cell = *hint;
-            self.delaunay_repair_insertion_count =
-                self.delaunay_repair_insertion_count.saturating_add(1);
+            self.insertion_state.last_inserted_cell = *hint;
+            self.insertion_state.delaunay_repair_insertion_count = self
+                .insertion_state
+                .delaunay_repair_insertion_count
+                .saturating_add(1);
             let seed_cells = if D == 2 {
                 let cells: Vec<CellKey> = self.tri.adjacent_cells(*vertex_key).collect();
                 (!cells.is_empty()).then_some(cells)
@@ -1403,8 +1405,9 @@ where
             return Ok(());
         }
         if !self
+            .insertion_state
             .delaunay_repair_policy
-            .should_repair(self.delaunay_repair_insertion_count)
+            .should_repair(self.insertion_state.delaunay_repair_insertion_count)
         {
             return Ok(());
         }
@@ -1611,7 +1614,7 @@ where
     ///
     /// # Notes
     ///
-    /// - The internal `last_inserted_cell` "locate hint" is intentionally **not** persisted
+    /// - The internal `insertion_state.last_inserted_cell` "locate hint" is intentionally **not** persisted
     ///   across serialization boundaries. Constructing via `from_tds` (including the serde
     ///   `Deserialize` impl below) always resets it to `None`. This can make the first few
     ///   insertions after loading slightly slower, but is otherwise behaviorally irrelevant.
@@ -1655,9 +1658,7 @@ where
                 validation_policy: ValidationPolicy::OnSuspicion,
                 topology_guarantee: TopologyGuarantee::DEFAULT,
             },
-            last_inserted_cell: None,
-            delaunay_repair_policy: DelaunayRepairPolicy::EveryInsertion,
-            delaunay_repair_insertion_count: 0,
+            insertion_state: DelaunayInsertionState::new(),
         }
     }
 
@@ -1772,7 +1773,7 @@ where
 /// - Custom kernels are rare and can deserialize manually
 ///
 /// # Note on Locate Hint Persistence
-///
+/// The internal `insertion_state.last_inserted_cell` "locate hint" is intentionally **not** serialized.
 /// The internal `last_inserted_cell` "locate hint" is intentionally **not** serialized.
 /// Deserialization reconstructs a fresh triangulation via [`from_tds()`](Self::from_tds),
 /// which resets the hint to `None`. This only affects performance for the first few
@@ -2447,11 +2448,11 @@ mod tests {
             DelaunayTriangulation::new(&vertices).unwrap();
 
         // Initially no last_inserted_cell
-        assert!(dt.last_inserted_cell.is_none());
+        assert!(dt.insertion_state.last_inserted_cell.is_none());
 
         // After insertion, should have a cached cell
         dt.insert(vertex!([0.3, 0.3])).unwrap();
-        assert!(dt.last_inserted_cell.is_some());
+        assert!(dt.insertion_state.last_inserted_cell.is_some());
     }
 
     #[test]
@@ -2841,9 +2842,9 @@ mod tests {
         assert_eq!(roundtrip.number_of_vertices(), dt.number_of_vertices());
         assert_eq!(roundtrip.number_of_cells(), dt.number_of_cells());
 
-        // `last_inserted_cell` is a performance-only locate hint and is intentionally not
+        // `insertion_state.last_inserted_cell` is a performance-only locate hint and is intentionally not
         // persisted across serde round-trips (it is reset to `None` in `from_tds`).
-        assert!(roundtrip.last_inserted_cell.is_none());
+        assert!(roundtrip.insertion_state.last_inserted_cell.is_none());
     }
 
     // =========================================================================
