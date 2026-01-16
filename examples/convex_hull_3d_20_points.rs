@@ -393,6 +393,14 @@ fn analyze_visible_facets(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>
 fn performance_analysis(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>) {
     println!("Performance Analysis:");
     println!("====================");
+    let hull = match ConvexHull::from_triangulation(dt.as_triangulation()) {
+        Ok(hull) => hull,
+        Err(e) => {
+            println!("✗ Failed to extract convex hull for performance analysis: {e}");
+            println!();
+            return;
+        }
+    };
 
     // Benchmark convex hull extraction
     let extraction_times: Vec<_> = (0..5)
@@ -415,7 +423,6 @@ fn performance_analysis(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>) 
     println!("    • Max time:     {max_extraction_time:?}");
 
     // Benchmark point containment queries
-    let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
     let test_point = Point::new([5.0, 5.0, 5.0]);
 
     let containment_times: Vec<_> = (0..10)

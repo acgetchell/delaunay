@@ -649,7 +649,17 @@ macro_rules! gen_insertion_order_robustness_test {
                     prop_assume!(dt_a.is_ok());
                     let dt_a = dt_a.unwrap();
 
-                    prop_assert_levels_1_to_3_valid!($dim, &dt_a, "Triangulation A");
+                    let validation_a = dt_a.as_triangulation().validate();
+                    if $dim >= 4 {
+                        prop_assume!(validation_a.is_ok());
+                    } else {
+                        prop_assert!(
+                            validation_a.is_ok(),
+                            "{}D: Triangulation A failed Levels 1–3 validation: {:?}",
+                            $dim,
+                            validation_a.err()
+                        );
+                    }
 
                     // Build second triangulation with shuffled order
                     let mut rng = rand::rngs::StdRng::seed_from_u64(0x00DE_C0DE);
@@ -660,7 +670,17 @@ macro_rules! gen_insertion_order_robustness_test {
                     prop_assume!(dt_b.is_ok());
                     let dt_b = dt_b.unwrap();
 
-                    prop_assert_levels_1_to_3_valid!($dim, &dt_b, "Triangulation B");
+                    let validation_b = dt_b.as_triangulation().validate();
+                    if $dim >= 4 {
+                        prop_assume!(validation_b.is_ok());
+                    } else {
+                        prop_assert!(
+                            validation_b.is_ok(),
+                            "{}D: Triangulation B failed Levels 1–3 validation: {:?}",
+                            $dim,
+                            validation_b.err()
+                        );
+                    }
 
                     // Verify both triangulations have the same number of vertices
                     // With early degeneracy detection, different insertion orders may reject

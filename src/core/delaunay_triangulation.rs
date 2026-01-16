@@ -11,7 +11,7 @@ use num_traits::NumCast;
 
 use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
 use crate::core::algorithms::flips::{
-    DelaunayRepairError, DelaunayRepairStats, repair_delaunay_with_flips_k2,
+    DelaunayRepairError, DelaunayRepairStats, repair_delaunay_with_flips_k2_k3,
 };
 use crate::core::algorithms::incremental_insertion::InsertionError;
 use crate::core::cell::Cell;
@@ -93,7 +93,7 @@ pub enum DelaunayTriangulationValidationError {
 ///
 /// The triangulation satisfies **structural validity** (all TDS invariants) and
 /// uses **flip-based repairs** to restore the local Delaunay property after insertion.
-/// By default, a k=2 bistellar flip queue runs automatically after each successful
+/// By default, k=2/k=3 bistellar flip queues run automatically after each successful
 /// insertion (see [`DelaunayRepairPolicy`]).
 ///
 /// For applications requiring explicit verification, you can still call
@@ -111,7 +111,7 @@ pub enum DelaunayTriangulationValidationError {
 /// - ✅ Cavity extraction and filling - [`extract_cavity_boundary`], [`fill_cavity`]
 /// - ✅ Local neighbor wiring - [`wire_cavity_neighbors`]
 /// - ✅ Hull extension for outside points - [`extend_hull`]
-/// - ✅ Flip-based Delaunay repair (k=2 bistellar flips)
+/// - ✅ Flip-based Delaunay repair (k=2/k=3 bistellar flips)
 ///
 /// [`locate`]: crate::core::algorithms::locate::locate
 /// [`find_conflict_region`]: crate::core::algorithms::locate::find_conflict_region
@@ -831,7 +831,7 @@ where
     /// Runs flip-based Delaunay repair over the full triangulation.
     ///
     /// This is a manual entrypoint that performs a global scan of interior facets
-    /// and applies k=2 bistellar flips until locally Delaunay or until the flip
+    /// and applies k=2/k=3 bistellar flips until locally Delaunay or until the flip
     /// budget is exhausted.
     ///
     /// # Errors
@@ -842,7 +842,7 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
-        repair_delaunay_with_flips_k2(&mut self.tri.tds, &self.tri.kernel, None)
+        repair_delaunay_with_flips_k2_k3(&mut self.tri.tds, &self.tri.kernel, None)
     }
 
     /// Returns the topology guarantee used for Level 3 topology validation.
@@ -1395,12 +1395,6 @@ where
         if D < 2 {
             return Ok(());
         }
-        if D > 2 {
-            // k=2 flips are not sufficient to guarantee Delaunay in higher dimensions
-            // and can introduce topology corruption. Disable automatic repair beyond 2D
-            // until higher-dimensional flip validation is complete.
-            return Ok(());
-        }
         if self.tri.tds.number_of_cells() == 0 {
             return Ok(());
         }
@@ -1413,12 +1407,12 @@ where
         }
 
         let repair_result =
-            repair_delaunay_with_flips_k2(&mut self.tri.tds, &self.tri.kernel, seed_cells);
+            repair_delaunay_with_flips_k2_k3(&mut self.tri.tds, &self.tri.kernel, seed_cells);
 
         let repair_result = match repair_result {
             Ok(stats) => Ok(stats),
             Err(DelaunayRepairError::NonConvergent { .. }) if seed_cells.is_some() => {
-                repair_delaunay_with_flips_k2(&mut self.tri.tds, &self.tri.kernel, None)
+                repair_delaunay_with_flips_k2_k3(&mut self.tri.tds, &self.tri.kernel, None)
             }
             Err(err) => Err(err),
         };
