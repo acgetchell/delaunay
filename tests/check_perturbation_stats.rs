@@ -20,11 +20,7 @@ fn check_perturbation_effectiveness() {
     for point in points {
         let vertex = VertexBuilder::default().point(point).build().unwrap();
 
-        // Access statistics via triangulation_mut()
-        match dt
-            .as_triangulation_mut()
-            .insert_with_statistics(vertex, None, None)
-        {
+        match dt.insert_with_statistics(vertex) {
             Ok((InsertionOutcome::Inserted { .. }, stats)) => {
                 total_attempts_successful += stats.attempts;
                 if stats.attempts == 1 {

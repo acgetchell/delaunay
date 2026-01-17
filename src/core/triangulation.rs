@@ -463,6 +463,24 @@ impl Default for ValidationPolicy {
 /// - [`TopologyGuarantee::PLManifold`] additionally checks the **vertex-link** condition
 ///   (via [`crate::topology::manifold::validate_vertex_links`]), i.e. that the triangulation
 ///   is a simplicial piecewise-linear (PL) manifold with boundary.
+///
+/// # Example
+///
+/// ```rust
+/// use delaunay::prelude::*;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+///
+/// dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+/// assert!(dt.topology_guarantee().requires_vertex_links());
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TopologyGuarantee {
     /// Validate only the pseudomanifold / manifold-with-boundary invariants:
@@ -2047,40 +2065,9 @@ where
     /// - Cavity operations fail
     /// - Degenerate location (`OnFacet`, `OnEdge`, `OnVertex`) - not yet implemented
     ///
-    /// # Examples
-    ///
-    /// Bootstrap phase (first D+1 vertices build initial simplex automatically):
-    ///
-    /// ```rust
-    /// use delaunay::prelude::*;
-    ///
-    /// // Create empty 3D triangulation
-    /// let mut tri: Triangulation<FastKernel<f64>, (), (), 3> =
-    ///     Triangulation::new_empty(FastKernel::new());
-    ///
-    /// // Bootstrap phase: first 3 vertices accumulate without creating cells
-    /// tri.insert(vertex!([0.0, 0.0, 0.0]), None, None).unwrap();
-    /// assert_eq!(tri.number_of_vertices(), 1);
-    /// assert_eq!(tri.number_of_cells(), 0); // No cells yet
-    ///
-    /// tri.insert(vertex!([1.0, 0.0, 0.0]), None, None).unwrap();
-    /// assert_eq!(tri.number_of_vertices(), 2);
-    /// assert_eq!(tri.number_of_cells(), 0); // Still no cells
-    ///
-    /// tri.insert(vertex!([0.0, 1.0, 0.0]), None, None).unwrap();
-    /// assert_eq!(tri.number_of_vertices(), 3);
-    /// assert_eq!(tri.number_of_cells(), 0); // Still no cells
-    ///
-    /// // 4th vertex triggers initial simplex creation
-    /// let (_, hint) = tri.insert(vertex!([0.0, 0.0, 1.0]), None, None).unwrap();
-    /// assert_eq!(tri.number_of_vertices(), 4);
-    /// assert_eq!(tri.number_of_cells(), 1); // Initial simplex created!
-    /// assert!(hint.is_some()); // Hint available for next insertion
-    /// ```
-    ///
     /// **Note**: For insertions beyond D+1 vertices, use `DelaunayTriangulation::insert()`
     /// instead, which handles conflict region computation automatically.
-    pub fn insert(
+    pub(crate) fn insert(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
         conflict_cells: Option<&CellKeyBuffer>,
@@ -2108,46 +2095,12 @@ where
     /// This is useful for testing, debugging, and understanding how the
     /// triangulation handles geometric degeneracies.
     ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::*;
-    ///
-    /// // Create an empty 3D triangulation.
-    /// let mut tri: Triangulation<FastKernel<f64>, (), (), 3> =
-    ///     Triangulation::new_empty(FastKernel::new());
-    ///
-    /// // Insert a vertex and inspect the outcome + statistics.
-    /// let (outcome, stats) = tri
-    ///     .insert_with_statistics(vertex!([0.0, 0.0, 0.0]), None, None)
-    ///     .unwrap();
-    ///
-    /// assert!(stats.success());
-    /// assert!(!stats.skipped());
-    /// assert!(matches!(outcome, InsertionOutcome::Inserted { hint: None, .. }));
-    ///
-    /// // Insert enough vertices to trigger initial simplex creation (D+1 vertices).
-    /// tri.insert_with_statistics(vertex!([1.0, 0.0, 0.0]), None, None)
-    ///     .unwrap();
-    /// tri.insert_with_statistics(vertex!([0.0, 1.0, 0.0]), None, None)
-    ///     .unwrap();
-    ///
-    /// let (outcome, _stats) = tri
-    ///     .insert_with_statistics(vertex!([0.0, 0.0, 1.0]), None, None)
-    ///     .unwrap();
-    ///
-    /// match outcome {
-    ///     InsertionOutcome::Inserted { hint, .. } => assert!(hint.is_some()),
-    ///     InsertionOutcome::Skipped { .. } => panic!("unexpected skip"),
-    /// }
-    /// ```
-    ///
     /// # Errors
     ///
     /// Returns an error only for non-retryable structural failures (e.g. duplicate UUID).
     /// Retryable geometric degeneracies that exhaust all attempts, and duplicate coordinates,
     /// return `Ok((InsertionOutcome::Skipped { .. }, stats))`.
-    pub fn insert_with_statistics(
+    pub(crate) fn insert_with_statistics(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
         conflict_cells: Option<&CellKeyBuffer>,
@@ -3188,25 +3141,7 @@ where
     /// (Note: `TdsMutationError` is currently a thin wrapper around
     /// [`TdsValidationError`]; the wrapper exists to make mutation call sites/docs more semantically explicit.)
     ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::*;
-    ///
-    /// let vertices = [
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
-    ///     vertex!([1.0, 1.0]),
-    /// ];
-    /// let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
-    ///
-    /// // Remove a vertex - cavity is automatically retriangulated
-    /// let vertex_to_remove = dt.vertices().next().unwrap().1.clone();
-    /// let cells_removed = dt.remove_vertex(&vertex_to_remove).unwrap();
-    /// assert!(dt.as_triangulation().validate().is_ok());
-    /// ```
-    pub fn remove_vertex(
+    pub(crate) fn remove_vertex(
         &mut self,
         vertex: &Vertex<K::Scalar, U, D>,
     ) -> Result<usize, TdsMutationError>
@@ -5322,5 +5257,230 @@ mod tests {
         assert!(index.vertex_to_cells.is_empty());
         assert!(index.cell_to_neighbors.is_empty());
         assert!(index.vertex_to_edges.is_empty());
+    }
+
+    // =============================================================================
+    // Triangulation insert_with_statistics tests (internal API)
+    // =============================================================================
+
+    #[test]
+    fn triangulation_insert_with_statistics_basic_2d() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+
+        // Insert first vertex
+        let (outcome, stats) = tri
+            .insert_with_statistics(vertex!([0.0, 0.0]), None, None)
+            .expect("insertion should succeed");
+
+        assert!(matches!(
+            outcome,
+            InsertionOutcome::Inserted { hint: None, .. }
+        ));
+        assert_eq!(stats.attempts, 1);
+        assert!(!stats.used_perturbation());
+        assert!(!stats.skipped());
+        assert!(stats.success());
+        assert_eq!(tri.number_of_vertices(), 1);
+    }
+
+    #[test]
+    fn triangulation_insert_with_statistics_bootstrap_3d() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 3> =
+            Triangulation::new_empty(FastKernel::new());
+
+        // Insert D+1 vertices to create initial simplex
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        for (i, v) in vertices.into_iter().enumerate() {
+            let (outcome, stats) = tri.insert_with_statistics(v, None, None).unwrap();
+
+            assert!(matches!(outcome, InsertionOutcome::Inserted { .. }));
+            assert_eq!(stats.attempts, 1);
+
+            if i < 3 {
+                // Bootstrap phase - no hint yet
+                assert!(matches!(
+                    outcome,
+                    InsertionOutcome::Inserted { hint: None, .. }
+                ));
+            } else {
+                // After D+1 vertices, hint should be available
+                assert!(matches!(
+                    outcome,
+                    InsertionOutcome::Inserted { hint: Some(_), .. }
+                ));
+            }
+        }
+
+        assert_eq!(tri.number_of_vertices(), 4);
+        assert_eq!(tri.number_of_cells(), 1);
+    }
+
+    #[test]
+    fn triangulation_insert_with_statistics_hint_usage_4d() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 4> =
+            Triangulation::new_empty(FastKernel::new());
+
+        // Build initial simplex
+        for i in 0..5 {
+            let mut coords = [0.0; 4];
+            if i > 0 {
+                coords[i - 1] = 1.0;
+            }
+            tri.insert_with_statistics(vertex!(coords), None, None)
+                .unwrap();
+        }
+
+        // Insert with explicit hint
+        let hint_cell = tri.cells().next().map(|(key, _)| key);
+        let (outcome, stats) = tri
+            .insert_with_statistics(vertex!([0.2, 0.2, 0.2, 0.2]), None, hint_cell)
+            .unwrap();
+
+        assert!(matches!(
+            outcome,
+            InsertionOutcome::Inserted { hint: Some(_), .. }
+        ));
+        assert_eq!(stats.attempts, 1);
+        assert!(stats.success());
+    }
+
+    #[test]
+    fn triangulation_insert_with_statistics_duplicate_coordinates_3d() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 3> =
+            Triangulation::new_empty(FastKernel::new());
+
+        // Insert first vertex
+        tri.insert_with_statistics(vertex!([1.0, 2.0, 3.0]), None, None)
+            .unwrap();
+
+        // Try duplicate - should be skipped
+        let result = tri.insert_with_statistics(vertex!([1.0, 2.0, 3.0]), None, None);
+
+        assert!(matches!(
+            result,
+            Ok((
+                InsertionOutcome::Skipped {
+                    error: InsertionError::DuplicateCoordinates { .. }
+                },
+                _
+            ))
+        ));
+    }
+
+    #[test]
+    fn triangulation_insert_with_statistics_multiple_insertions_2d() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+
+        let points = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.5, 1.0]),
+            vertex!([0.3, 0.3]),
+            vertex!([0.7, 0.3]),
+        ];
+
+        let mut all_succeeded = true;
+        let mut max_attempts = 0;
+
+        for point in points {
+            match tri.insert_with_statistics(point, None, None) {
+                Ok((InsertionOutcome::Inserted { .. }, stats)) => {
+                    max_attempts = max_attempts.max(stats.attempts);
+                    assert!(stats.success());
+                }
+                Ok((InsertionOutcome::Skipped { .. }, _)) | Err(_) => {
+                    all_succeeded = false;
+                }
+            }
+        }
+
+        assert!(all_succeeded, "all insertions should succeed");
+        assert!(max_attempts >= 1);
+        assert_eq!(tri.number_of_vertices(), 5);
+    }
+
+    #[test]
+    fn triangulation_insert_with_statistics_outcome_types() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+
+        // Test Inserted variant
+        let (outcome, _) = tri
+            .insert_with_statistics(vertex!([0.0, 0.0]), None, None)
+            .unwrap();
+
+        match outcome {
+            InsertionOutcome::Inserted { vertex_key, hint } => {
+                // Verify we can access the fields
+                assert!(tri.vertices().any(|(k, _)| k == vertex_key));
+                assert_eq!(hint, None); // No hint during bootstrap
+            }
+            InsertionOutcome::Skipped { .. } => panic!("expected Inserted, got Skipped"),
+        }
+    }
+
+    #[test]
+    fn triangulation_insert_with_statistics_sequential_5d() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 5> =
+            Triangulation::new_empty(FastKernel::new());
+
+        // Insert 6 vertices to form initial simplex
+        for i in 0..6 {
+            let mut coords = [0.0; 5];
+            if i > 0 {
+                coords[i - 1] = 1.0;
+            }
+
+            let (outcome, stats) = tri
+                .insert_with_statistics(vertex!(coords), None, None)
+                .unwrap();
+
+            assert!(matches!(outcome, InsertionOutcome::Inserted { .. }));
+            assert_eq!(stats.attempts, 1);
+            assert!(stats.success());
+        }
+
+        assert_eq!(tri.number_of_vertices(), 6);
+        assert_eq!(tri.number_of_cells(), 1);
+    }
+
+    #[test]
+    fn statistics_cells_removed_during_repair() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+
+        // Build simplex
+        tri.insert_with_statistics(vertex!([0.0, 0.0]), None, None)
+            .unwrap();
+        tri.insert_with_statistics(vertex!([1.0, 0.0]), None, None)
+            .unwrap();
+        tri.insert_with_statistics(vertex!([0.5, 1.0]), None, None)
+            .unwrap();
+
+        let cells_before = tri.number_of_cells();
+
+        // Insert interior point - might trigger repair
+        let (_outcome, stats) = tri
+            .insert_with_statistics(vertex!([0.5, 0.3]), None, None)
+            .unwrap();
+
+        let cells_after = tri.number_of_cells();
+
+        // Basic sanity: repair can't remove more cells than existed before insertion.
+        assert!(
+            stats.cells_removed_during_repair <= cells_before,
+            "cells_removed_during_repair ({}) should not exceed cell count before insertion ({}); cells after insertion: {}",
+            stats.cells_removed_during_repair,
+            cells_before,
+            cells_after
+        );
     }
 }

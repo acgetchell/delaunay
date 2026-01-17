@@ -2231,7 +2231,14 @@ where
     ///
     /// assert!(dt.tds().validate().is_ok());
     /// ```
-    pub fn remove_vertex(&mut self, vertex: &Vertex<T, U, D>) -> Result<usize, TdsMutationError> {
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "Keep Result for future mutation validation without changing the API"
+    )]
+    pub(crate) fn remove_vertex(
+        &mut self,
+        vertex: &Vertex<T, U, D>,
+    ) -> Result<usize, TdsMutationError> {
         // Find the vertex key
         let Some(vertex_key) = self.vertex_key_from_uuid(&vertex.uuid()) else {
             return Ok(0); // Vertex not found, nothing to remove

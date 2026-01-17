@@ -585,6 +585,8 @@ pub mod geometry {
 /// assert!(result.is_valid());
 /// ```
 pub mod topology {
+    /// Topology editing operations (bistellar flips).
+    pub mod edit;
     /// Traits for topological spaces and error types
     pub mod traits {
         pub mod topological_space;
@@ -627,6 +629,25 @@ pub mod topology {
         validate_vertex_links,
     };
     pub use traits::*;
+
+    /// Prelude modules for topology editing and validation.
+    pub mod prelude {
+        /// High-level topology edit API (bistellar flips).
+        pub mod edit {
+            pub use crate::topology::edit::*;
+        }
+
+        /// Topology validation & analysis utilities.
+        pub mod validation {
+            pub use crate::core::triangulation::TopologyGuarantee;
+            pub use crate::topology::characteristics::*;
+            pub use crate::topology::manifold::{
+                ManifoldError, validate_closed_boundary, validate_facet_degree,
+                validate_ridge_links, validate_vertex_links,
+            };
+            pub use crate::topology::traits::*;
+        }
+    }
 }
 
 /// A prelude module that re-exports commonly used types and macros.
@@ -717,6 +738,10 @@ pub mod prelude {
 
         // Convenience macro (commonly used in docs/tests/examples) without importing full `prelude::*`.
         pub use crate::vertex;
+    }
+    /// Topology edit API (bistellar flips).
+    pub mod edit {
+        pub use crate::topology::prelude::edit::*;
     }
 
     // Convenience macros

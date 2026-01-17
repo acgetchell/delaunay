@@ -11,10 +11,12 @@ use num_traits::NumCast;
 
 use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
 use crate::core::algorithms::flips::{
-    DelaunayRepairError, DelaunayRepairStats, repair_delaunay_with_flips_k2_k3,
+    DelaunayRepairError, DelaunayRepairStats, FlipError, apply_bistellar_flip_k1_inverse,
+    repair_delaunay_with_flips_k2_k3,
 };
 use crate::core::algorithms::incremental_insertion::InsertionError;
 use crate::core::cell::Cell;
+use crate::core::collections::CellKeyBuffer;
 use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::operations::{DelaunayInsertionState, InsertionOutcome, InsertionStatistics};
@@ -1327,8 +1329,8 @@ where
 
     /// Insert a vertex and return the insertion outcome plus statistics.
     ///
-    /// This is a convenience wrapper around [`Triangulation::insert_with_statistics`] that also
-    /// updates the internal `insertion_state.last_inserted_cell` hint cache.
+    /// This is a convenience wrapper around the triangulation-layer insertion-with-statistics
+    /// implementation that also updates the internal `insertion_state.last_inserted_cell` hint cache.
     ///
     /// # Errors
     ///
@@ -1433,12 +1435,19 @@ where
     /// 4. Wires neighbors and rebuilds vertex-cell incidence
     /// 5. Removes the vertex
     ///
-    /// The triangulation remains topologically valid after removal. However, the fan
-    /// triangulation may temporarily violate the Delaunay property in some cases.
+    /// Fast-path: if the vertex star is a simplex (exactly D+1 incident cells with
+    /// consistent adjacency), this method collapses it via the **inverse k=1** bistellar
+    /// flip. Otherwise it falls back to fan triangulation.
     ///
-    /// **Future Enhancement**: Delaunay-aware cavity retriangulation will be added when
-    /// iterative flip operations are implemented. For now, occasional Delaunay violations
-    /// after removal are expected and will be addressed by the global flip refinement system.
+    /// The triangulation remains topologically valid after removal. However, both the
+    /// inverse k=1 fast-path and fan triangulation may temporarily violate the Delaunay
+    /// property in some cases. If the [`DelaunayRepairPolicy`] allows it, a flip-based
+    /// repair pass is run automatically after removal.
+    ///
+    /// **Future Enhancement**: Delaunay-aware cavity retriangulation will be added for
+    /// removals. For now, occasional Delaunay violations after removal are expected and
+    /// can be addressed by running flip-based repair (e.g., [`repair_delaunay_with_flips`](Self::repair_delaunay_with_flips))
+    /// or by leaving automatic repair enabled via [`DelaunayRepairPolicy`].
     ///
     /// # Arguments
     ///
@@ -1483,9 +1492,54 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
-        // Delegate to Triangulation layer
-        // Future: Could add Delaunay property restoration after removal
-        self.tri.remove_vertex(vertex).map_err(Into::into)
+        let Some(vertex_key) = self.tri.tds.vertex_key_from_uuid(&vertex.uuid()) else {
+            return Ok(0);
+        };
+
+        // Fast path: inverse k=1 flip when the vertex star is a simplex.
+        let mut seed_cells: Option<CellKeyBuffer> = None;
+        let cells_removed = match apply_bistellar_flip_k1_inverse(
+            &mut self.tri.tds,
+            &self.tri.kernel,
+            vertex_key,
+        ) {
+            Ok(info) => {
+                seed_cells = Some(info.new_cells);
+                info.removed_cells.len()
+            }
+            Err(FlipError::NeighborWiring { message }) => {
+                return Err(TdsValidationError::InconsistentDataStructure {
+                    message: format!("inverse k=1 flip failed during remove_vertex: {message}"),
+                }
+                .into());
+            }
+            Err(_) => self
+                .tri
+                .remove_vertex(vertex)
+                .map_err(TriangulationValidationError::from)?,
+        };
+
+        if self.insertion_state.delaunay_repair_policy != DelaunayRepairPolicy::Never
+            && D >= 2
+            && self.tri.tds.number_of_cells() > 0
+        {
+            let seed_ref = seed_cells.as_deref();
+            let repair_result =
+                repair_delaunay_with_flips_k2_k3(&mut self.tri.tds, &self.tri.kernel, seed_ref);
+            let repair_result = match repair_result {
+                Ok(stats) => Ok(stats),
+                Err(DelaunayRepairError::NonConvergent { .. }) if seed_ref.is_some() => {
+                    repair_delaunay_with_flips_k2_k3(&mut self.tri.tds, &self.tri.kernel, None)
+                }
+                Err(err) => Err(err),
+            };
+
+            repair_result.map_err(|e| TdsValidationError::InconsistentDataStructure {
+                message: format!("Delaunay repair failed after vertex removal: {e}"),
+            })?;
+        }
+
+        Ok(cells_removed)
     }
 
     /// Validates the Delaunay empty-circumsphere property (Level 4).
@@ -1812,7 +1866,8 @@ where
 
 /// Policy controlling automatic flip-based Delaunay repair.
 ///
-/// This policy schedules **local flip-based repairs** during incremental insertion.
+/// This policy schedules **local flip-based repairs** after successful insertions
+/// (and removals that modify topology).
 /// It is separate from any *validation-only* policy to allow checking the Delaunay
 /// property without mutating topology when needed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1865,6 +1920,7 @@ pub enum DelaunayCheckPolicy {
 mod tests {
     use super::*;
     use crate::geometry::kernel::{FastKernel, RobustKernel};
+    use crate::topology::edit::TopologyEdit;
     use crate::vertex;
 
     #[test]
@@ -1915,6 +1971,44 @@ mod tests {
         dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
         assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
         assert_eq!(dt.tri.topology_guarantee, TopologyGuarantee::PLManifold);
+    }
+
+    #[test]
+    fn test_remove_vertex_fast_path_inverse_k1() {
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let original_vertex_count = dt.number_of_vertices();
+        let original_cell_count = dt.number_of_cells();
+
+        let cell_key = dt.cells().next().unwrap().0;
+        let inserted_vertex = vertex!([0.2, 0.2, 0.2]);
+        let inserted_uuid = inserted_vertex.uuid();
+        dt.flip_k1_insert(cell_key, inserted_vertex).unwrap();
+
+        assert_eq!(dt.number_of_vertices(), original_vertex_count + 1);
+        assert_eq!(dt.number_of_cells(), original_cell_count + 3);
+
+        let vertex_to_remove = dt
+            .vertices()
+            .find(|(_, v)| v.uuid() == inserted_uuid)
+            .map(|(_, v)| *v)
+            .expect("Inserted vertex not found");
+
+        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
+        let removed_cells = dt.remove_vertex(&vertex_to_remove).unwrap();
+
+        assert_eq!(removed_cells, 4);
+        assert_eq!(dt.number_of_vertices(), original_vertex_count);
+        assert_eq!(dt.number_of_cells(), original_cell_count);
+        assert!(dt.as_triangulation().validate().is_ok());
+        assert!(dt.vertices().all(|(_, v)| v.uuid() != inserted_uuid));
     }
 
     /// Macro to generate comprehensive triangulation construction tests across dimensions.
