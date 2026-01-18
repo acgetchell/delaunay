@@ -5,9 +5,19 @@
 
 use core::iter::Sum;
 use core::ops::{AddAssign, SubAssign};
+#[cfg(any(test, debug_assertions))]
+use std::hash::{Hash, Hasher};
 use std::num::NonZeroUsize;
 
-use num_traits::NumCast;
+use num_traits::{NumCast, Zero};
+#[cfg(any(test, debug_assertions))]
+use rand::SeedableRng;
+#[cfg(any(test, debug_assertions))]
+use rand::rngs::StdRng;
+#[cfg(any(test, debug_assertions))]
+use rand::seq::SliceRandom;
+#[cfg(any(test, debug_assertions))]
+use rustc_hash::FxHasher;
 
 use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
 use crate::core::algorithms::flips::{
@@ -19,7 +29,10 @@ use crate::core::cell::Cell;
 use crate::core::collections::CellKeyBuffer;
 use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
-use crate::core::operations::{DelaunayInsertionState, InsertionOutcome, InsertionStatistics};
+use crate::core::operations::{
+    DelaunayInsertionState, InsertionOutcome, InsertionStatistics, RepairDecision,
+    TopologicalOperation,
+};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{
     TopologyGuarantee, Triangulation, TriangulationConstructionError, TriangulationValidationError,
@@ -30,6 +43,8 @@ use crate::core::triangulation_data_structure::{
     TriangulationValidationReport, VertexKey,
 };
 use crate::core::util::DelaunayValidationError;
+#[cfg(any(test, debug_assertions))]
+use crate::core::util::stable_hash_u64_slice;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{FastKernel, Kernel};
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
@@ -37,6 +52,11 @@ use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateS
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 use uuid::Uuid;
+
+#[cfg(any(test, debug_assertions))]
+const DELAUNAY_SHUFFLE_ATTEMPTS: usize = 6;
+#[cfg(any(test, debug_assertions))]
+const DELAUNAY_SHUFFLE_SEED_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
 
 /// Errors that can occur during Delaunay triangulation construction.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -172,6 +192,22 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
         Self::with_kernel(FastKernel::<f64>::new(), vertices)
     }
 
+    /// Create a Delaunay triangulation with an explicit topology guarantee (fast-kernel convenience).
+    ///
+    /// Use this to **enforce PL-manifoldness during construction** by passing
+    /// [`TopologyGuarantee::PLManifold`]. This will run strict Level 3 validation
+    /// during construction and validate the final topology before returning.
+    ///
+    /// # Errors
+    /// Returns error if construction fails or if the requested topology guarantee
+    /// cannot be satisfied.
+    pub fn new_with_topology_guarantee(
+        vertices: &[Vertex<f64, (), D>],
+        topology_guarantee: TopologyGuarantee,
+    ) -> Result<Self, DelaunayTriangulationConstructionError> {
+        Self::with_topology_guarantee(FastKernel::<f64>::new(), vertices, topology_guarantee)
+    }
+
     /// Create an empty Delaunay triangulation with no data (most common case).
     ///
     /// Use this when you want to build a triangulation incrementally by inserting vertices
@@ -200,6 +236,15 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
     #[must_use]
     pub fn empty() -> Self {
         Self::with_empty_kernel(FastKernel::<f64>::new())
+    }
+
+    /// Create an empty Delaunay triangulation with an explicit topology guarantee (fast-kernel convenience).
+    ///
+    /// Use this to **enforce PL-manifoldness during construction** by passing
+    /// [`TopologyGuarantee::PLManifold`].
+    #[must_use]
+    pub fn empty_with_topology_guarantee(topology_guarantee: TopologyGuarantee) -> Self {
+        Self::with_empty_kernel_and_topology_guarantee(FastKernel::<f64>::new(), topology_guarantee)
     }
 }
 
@@ -248,6 +293,23 @@ where
         }
     }
 
+    /// Create an empty Delaunay triangulation with the given kernel and topology guarantee.
+    ///
+    /// This is the kernel-parameterized variant of
+    /// [`DelaunayTriangulation::empty_with_topology_guarantee`].
+    #[must_use]
+    pub fn with_empty_kernel_and_topology_guarantee(
+        kernel: K,
+        topology_guarantee: TopologyGuarantee,
+    ) -> Self {
+        let mut tri = Triangulation::new_empty(kernel);
+        tri.set_topology_guarantee(topology_guarantee);
+        Self {
+            tri,
+            insertion_state: DelaunayInsertionState::new(),
+        }
+    }
+
     /// Create a Delaunay triangulation from vertices with an explicit kernel (advanced usage).
     ///
     /// Most users should use [`DelaunayTriangulation::new()`] instead, which uses fast predicates
@@ -291,7 +353,110 @@ where
         vertices: &[Vertex<K::Scalar, U, D>],
     ) -> Result<Self, DelaunayTriangulationConstructionError>
     where
-        K::Scalar: CoordinateScalar,
+        K::Scalar: CoordinateScalar + Sum + Zero,
+    {
+        Self::with_topology_guarantee(kernel, vertices, TopologyGuarantee::DEFAULT)
+    }
+
+    /// Create a Delaunay triangulation with an explicit topology guarantee.
+    ///
+    /// Passing [`TopologyGuarantee::PLManifold`] enforces PL-manifold validation
+    /// during construction and validates the final topology before returning.
+    ///
+    /// # Errors
+    /// Returns error if construction fails or if the requested topology guarantee
+    /// cannot be satisfied.
+    pub fn with_topology_guarantee(
+        kernel: K,
+        vertices: &[Vertex<K::Scalar, U, D>],
+        topology_guarantee: TopologyGuarantee,
+    ) -> Result<Self, DelaunayTriangulationConstructionError>
+    where
+        K::Scalar: CoordinateScalar + Sum + Zero,
+    {
+        let dt = Self::build_with_kernel_inner(kernel, vertices, topology_guarantee)?;
+
+        #[cfg(any(test, debug_assertions))]
+        {
+            if Self::should_retry_construction(vertices)
+                && crate::core::util::is_delaunay_property_only(&dt.tri.tds).is_err()
+            {
+                let base_seed = Self::construction_shuffle_seed(vertices);
+
+                for attempt in 0..DELAUNAY_SHUFFLE_ATTEMPTS {
+                    let mut shuffled = vertices.to_vec();
+                    let attempt_seed = base_seed.wrapping_add(
+                        (attempt as u64 + 1).wrapping_mul(DELAUNAY_SHUFFLE_SEED_SALT),
+                    );
+                    Self::shuffle_vertices(&mut shuffled, attempt_seed);
+                    match Self::build_with_kernel_inner(
+                        dt.tri.kernel.clone(),
+                        &shuffled,
+                        topology_guarantee,
+                    ) {
+                        Ok(candidate)
+                            if crate::core::util::is_delaunay_property_only(&candidate.tri.tds)
+                                .is_ok() =>
+                        {
+                            return Ok(candidate);
+                        }
+                        _ => {}
+                    }
+                }
+
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "WARNING: Delaunay property violated after shuffled reconstruction attempts"
+                );
+            }
+        }
+
+        Ok(dt)
+    }
+
+    #[cfg(any(test, debug_assertions))]
+    const fn should_retry_construction(vertices: &[Vertex<K::Scalar, U, D>]) -> bool {
+        D >= 3 && vertices.len() > D + 1
+    }
+
+    #[cfg(any(test, debug_assertions))]
+    fn construction_shuffle_seed(vertices: &[Vertex<K::Scalar, U, D>]) -> u64 {
+        let mut vertex_hashes = Vec::with_capacity(vertices.len());
+        for vertex in vertices {
+            let mut fx_hasher = FxHasher::default();
+            vertex.hash(&mut fx_hasher);
+            vertex_hashes.push(fx_hasher.finish());
+        }
+        vertex_hashes.sort_unstable();
+        stable_hash_u64_slice(&vertex_hashes)
+    }
+
+    #[cfg(any(test, debug_assertions))]
+    fn shuffle_vertices(vertices: &mut [Vertex<K::Scalar, U, D>], seed: u64) {
+        let mut rng = StdRng::seed_from_u64(seed);
+        vertices.shuffle(&mut rng);
+    }
+
+    fn build_with_kernel_inner(
+        kernel: K,
+        vertices: &[Vertex<K::Scalar, U, D>],
+        topology_guarantee: TopologyGuarantee,
+    ) -> Result<Self, DelaunayTriangulationConstructionError>
+    where
+        K::Scalar: CoordinateScalar + Sum + Zero,
+    {
+        Self::build_with_kernel_inner_seeded(kernel, vertices, topology_guarantee, 0, true)
+    }
+
+    fn build_with_kernel_inner_seeded(
+        kernel: K,
+        vertices: &[Vertex<K::Scalar, U, D>],
+        topology_guarantee: TopologyGuarantee,
+        perturbation_seed: u64,
+        run_final_repair: bool,
+    ) -> Result<Self, DelaunayTriangulationConstructionError>
+    where
+        K::Scalar: CoordinateScalar + Sum + Zero,
     {
         if vertices.len() < D + 1 {
             return Err(TriangulationConstructionError::InsufficientVertices {
@@ -314,26 +479,54 @@ where
                 kernel,
                 tds,
                 validation_policy: ValidationPolicy::default(),
-                topology_guarantee: TopologyGuarantee::DEFAULT,
+                topology_guarantee,
             },
             insertion_state: DelaunayInsertionState::new(),
         };
 
-        // During batch construction, enable strict Level 3 validation in debug builds so the
-        // topology safety-net can rollback/skip rare cases that would otherwise leave the final
-        // triangulation topologically invalid.
+        // During batch construction, enforce topology guarantees:
+        // - PL-manifold: always validate (vertex-link checks) on each insertion
+        // - Pseudomanifold: keep debug-only strictness for safety without release overhead
         let original_validation_policy = dt.tri.validation_policy;
-        dt.tri.validation_policy = ValidationPolicy::DebugOnly;
+        dt.tri.validation_policy = if dt.tri.topology_guarantee.requires_vertex_links() {
+            ValidationPolicy::Always
+        } else {
+            ValidationPolicy::DebugOnly
+        };
 
+        // Temporarily disable flip-based Delaunay repairs during bulk construction to avoid
+        // aborting otherwise valid (manifold) triangulations in numerically degenerate cases.
+        // The final global repair pass remains enabled after construction unless suppressed.
+        let original_repair_policy = dt.insertion_state.delaunay_repair_policy;
+        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
+        dt.insert_remaining_vertices_seeded(vertices, perturbation_seed)?;
+        dt.finalize_bulk_construction(
+            original_validation_policy,
+            original_repair_policy,
+            run_final_repair,
+        )?;
+
+        Ok(dt)
+    }
+
+    fn insert_remaining_vertices_seeded(
+        &mut self,
+        vertices: &[Vertex<K::Scalar, U, D>],
+        perturbation_seed: u64,
+    ) -> Result<(), DelaunayTriangulationConstructionError>
+    where
+        K::Scalar: CoordinateScalar + Sum + Zero,
+    {
         // Insert remaining vertices incrementally.
         // Retryable geometric degeneracies are retried with perturbation and ultimately skipped
         // (transactional rollback) to keep the triangulation manifold. Duplicate/near-duplicate
         // coordinates are skipped immediately.
         for vertex in vertices.iter().skip(D + 1) {
-            match dt.tri.insert_with_statistics(
+            match self.tri.insert_with_statistics_seeded(
                 *vertex,
                 None,
-                dt.insertion_state.last_inserted_cell,
+                self.insertion_state.last_inserted_cell,
+                perturbation_seed,
             ) {
                 Ok((
                     InsertionOutcome::Inserted {
@@ -343,13 +536,13 @@ where
                     _stats,
                 )) => {
                     // Cache hint for faster subsequent insertions.
-                    dt.insertion_state.last_inserted_cell = hint;
-                    dt.insertion_state.delaunay_repair_insertion_count = dt
+                    self.insertion_state.last_inserted_cell = hint;
+                    self.insertion_state.delaunay_repair_insertion_count = self
                         .insertion_state
                         .delaunay_repair_insertion_count
                         .saturating_add(1);
                     let seed_cells = if D == 2 {
-                        let cells: Vec<CellKey> = dt.tri.adjacent_cells(v_key).collect();
+                        let cells: Vec<CellKey> = self.tri.adjacent_cells(v_key).collect();
                         (!cells.is_empty()).then_some(cells)
                     } else {
                         None
@@ -358,7 +551,7 @@ where
                     let seed_ref = seed_cells
                         .as_deref()
                         .or_else(|| hint_slice.as_ref().map(<[CellKey; 1]>::as_slice));
-                    if let Err(e) = dt.maybe_repair_after_insertion(seed_ref) {
+                    if let Err(e) = self.maybe_repair_after_insertion(seed_ref) {
                         return Err(TriangulationConstructionError::GeometricDegeneracy {
                             message: e.to_string(),
                         }
@@ -385,10 +578,53 @@ where
             }
         }
 
-        // Restore the default validation policy after batch construction.
-        dt.tri.validation_policy = original_validation_policy;
+        Ok(())
+    }
 
-        Ok(dt)
+    fn finalize_bulk_construction(
+        &mut self,
+        original_validation_policy: ValidationPolicy,
+        original_repair_policy: DelaunayRepairPolicy,
+        run_final_repair: bool,
+    ) -> Result<(), DelaunayTriangulationConstructionError>
+    where
+        K::Scalar: CoordinateScalar + Sum + Zero,
+    {
+        // Restore policies after batch construction.
+        self.tri.validation_policy = original_validation_policy;
+        self.insertion_state.delaunay_repair_policy = original_repair_policy;
+        if run_final_repair
+            && D >= 2
+            && self.insertion_state.delaunay_repair_policy != DelaunayRepairPolicy::Never
+            && self.tri.tds.number_of_cells() > 0
+        {
+            let topology = self.tri.topology_guarantee();
+            let decision = self.insertion_state.delaunay_repair_policy.decide(
+                0,
+                topology,
+                TopologicalOperation::FacetFlip,
+            );
+            if matches!(decision, RepairDecision::Proceed) {
+                let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
+                if let Err(err) = repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology) {
+                    return Err(TriangulationConstructionError::GeometricDegeneracy {
+                        message: format!("Delaunay repair failed after construction: {err}"),
+                    }
+                    .into());
+                }
+            }
+        }
+
+        if self.tri.topology_guarantee.requires_vertex_links()
+            && let Err(err) = self.tri.validate()
+        {
+            return Err(TriangulationConstructionError::GeometricDegeneracy {
+                message: format!("PL-manifold validation failed after construction: {err}"),
+            }
+            .into());
+        }
+
+        Ok(())
     }
 
     fn map_insertion_error(error: InsertionError) -> TriangulationConstructionError {
@@ -842,9 +1078,103 @@ where
     /// flip operation fails.
     pub fn repair_delaunay_with_flips(&mut self) -> Result<DelaunayRepairStats, DelaunayRepairError>
     where
-        K::Scalar: CoordinateScalar,
+        K::Scalar: CoordinateScalar + Sum + Zero,
     {
-        repair_delaunay_with_flips_k2_k3(&mut self.tri.tds, &self.tri.kernel, None)
+        let operation = TopologicalOperation::FacetFlip;
+        let topology = self.tri.topology_guarantee();
+        if !operation.is_admissible_under(topology) {
+            return Err(DelaunayRepairError::InvalidTopology {
+                required: operation.required_topology(),
+                found: topology,
+                message: "Bistellar flips require a PL-manifold (vertex-link validation)",
+            });
+        }
+        let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
+        repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology)
+    }
+
+    /// Runs flip-based Delaunay repair with an optional heuristic rebuild fallback.
+    ///
+    /// This first attempts the standard two-pass flip repair. If it fails to converge,
+    /// it rebuilds the triangulation from the current vertex set using a shuffled
+    /// insertion order and a fresh perturbation seed, then runs a final flip-repair pass.
+    ///
+    /// The returned outcome marks whether the heuristic fallback was used and records
+    /// the seeds needed to reproduce it (if desired).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DelaunayRepairError`] if the flip-based repair fails or if the heuristic
+    /// rebuild fallback cannot construct a valid triangulation.
+    pub fn repair_delaunay_with_flips_advanced(
+        &mut self,
+        config: DelaunayRepairHeuristicConfig,
+    ) -> Result<DelaunayRepairOutcome, DelaunayRepairError>
+    where
+        K::Scalar: CoordinateScalar + Sum + Zero,
+    {
+        match self.repair_delaunay_with_flips() {
+            Ok(stats) => Ok(DelaunayRepairOutcome {
+                stats,
+                heuristic: None,
+            }),
+            Err(DelaunayRepairError::NonConvergent { .. }) => {
+                let seeds = config.resolve_seeds();
+                let (candidate, stats) = self.rebuild_with_heuristic(seeds)?;
+                *self = candidate;
+                Ok(DelaunayRepairOutcome {
+                    stats,
+                    heuristic: Some(seeds),
+                })
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn rebuild_with_heuristic(
+        &self,
+        seeds: DelaunayRepairHeuristicSeeds,
+    ) -> Result<(Self, DelaunayRepairStats), DelaunayRepairError>
+    where
+        K::Scalar: CoordinateScalar + Sum + Zero,
+    {
+        use rand::{SeedableRng, seq::SliceRandom};
+
+        let mut vertices = self.collect_vertices_for_rebuild();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seeds.shuffle_seed);
+        vertices.shuffle(&mut rng);
+
+        let mut candidate = Self::build_with_kernel_inner_seeded(
+            self.tri.kernel.clone(),
+            &vertices,
+            self.tri.topology_guarantee(),
+            seeds.perturbation_seed,
+            false,
+        )
+        .map_err(|e| DelaunayRepairError::HeuristicRebuildFailed {
+            message: e.to_string(),
+        })?;
+
+        candidate.tri.validation_policy = self.tri.validation_policy;
+        candidate.insertion_state.delaunay_repair_policy =
+            self.insertion_state.delaunay_repair_policy;
+        candidate.insertion_state.delaunay_repair_insertion_count =
+            self.insertion_state.delaunay_repair_insertion_count;
+        candidate.insertion_state.last_inserted_cell = None;
+
+        let topology = candidate.tri.topology_guarantee();
+        let (tds, kernel) = (&mut candidate.tri.tds, &candidate.tri.kernel);
+        let stats = repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology)?;
+
+        Ok((candidate, stats))
+    }
+
+    fn collect_vertices_for_rebuild(&self) -> Vec<Vertex<K::Scalar, U, D>> {
+        self.tri
+            .tds
+            .vertices()
+            .map(|(_, vertex)| Vertex::new_with_uuid(*vertex.point(), vertex.uuid(), vertex.data))
+            .collect()
     }
 
     /// Returns the topology guarantee used for Level 3 topology validation.
@@ -1293,7 +1623,7 @@ where
     /// ```
     pub fn insert(&mut self, vertex: Vertex<K::Scalar, U, D>) -> Result<VertexKey, InsertionError>
     where
-        K::Scalar: CoordinateScalar,
+        K::Scalar: CoordinateScalar + Sum + Zero,
     {
         // Fully delegate to Triangulation layer
         // Triangulation handles:
@@ -1357,7 +1687,7 @@ where
         vertex: Vertex<K::Scalar, U, D>,
     ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError>
     where
-        K::Scalar: CoordinateScalar,
+        K::Scalar: CoordinateScalar + Sum + Zero,
     {
         let (outcome, stats) = self.tri.insert_with_statistics(
             vertex,
@@ -1392,7 +1722,7 @@ where
         seed_cells: Option<&[CellKey]>,
     ) -> Result<(), InsertionError>
     where
-        K::Scalar: CoordinateScalar,
+        K::Scalar: CoordinateScalar + Sum + Zero,
     {
         if D < 2 {
             return Ok(());
@@ -1400,26 +1730,18 @@ where
         if self.tri.tds.number_of_cells() == 0 {
             return Ok(());
         }
-        if !self
-            .insertion_state
-            .delaunay_repair_policy
-            .should_repair(self.insertion_state.delaunay_repair_insertion_count)
-        {
+        let topology = self.tri.topology_guarantee();
+        let decision = self.insertion_state.delaunay_repair_policy.decide(
+            self.insertion_state.delaunay_repair_insertion_count,
+            topology,
+            TopologicalOperation::FacetFlip,
+        );
+        if !matches!(decision, RepairDecision::Proceed) {
             return Ok(());
         }
 
-        let repair_result =
-            repair_delaunay_with_flips_k2_k3(&mut self.tri.tds, &self.tri.kernel, seed_cells);
-
-        let repair_result = match repair_result {
-            Ok(stats) => Ok(stats),
-            Err(DelaunayRepairError::NonConvergent { .. }) if seed_cells.is_some() => {
-                repair_delaunay_with_flips_k2_k3(&mut self.tri.tds, &self.tri.kernel, None)
-            }
-            Err(err) => Err(err),
-        };
-
-        repair_result
+        let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
+        repair_delaunay_with_flips_k2_k3(tds, kernel, seed_cells, topology)
             .map(|_| ())
             .map_err(|e| InsertionError::CavityFilling {
                 message: format!("Delaunay repair failed: {e}"),
@@ -1490,7 +1812,7 @@ where
         vertex: &Vertex<K::Scalar, U, D>,
     ) -> Result<usize, TriangulationValidationError>
     where
-        K::Scalar: CoordinateScalar,
+        K::Scalar: CoordinateScalar + Sum + Zero,
     {
         let Some(vertex_key) = self.tri.tds.vertex_key_from_uuid(&vertex.uuid()) else {
             return Ok(0);
@@ -1523,19 +1845,21 @@ where
             && D >= 2
             && self.tri.tds.number_of_cells() > 0
         {
+            let topology = self.tri.topology_guarantee();
+            let decision = self.insertion_state.delaunay_repair_policy.decide(
+                0,
+                topology,
+                TopologicalOperation::FacetFlip,
+            );
+            if !matches!(decision, RepairDecision::Proceed) {
+                return Ok(cells_removed);
+            }
             let seed_ref = seed_cells.as_deref();
-            let repair_result =
-                repair_delaunay_with_flips_k2_k3(&mut self.tri.tds, &self.tri.kernel, seed_ref);
-            let repair_result = match repair_result {
-                Ok(stats) => Ok(stats),
-                Err(DelaunayRepairError::NonConvergent { .. }) if seed_ref.is_some() => {
-                    repair_delaunay_with_flips_k2_k3(&mut self.tri.tds, &self.tri.kernel, None)
+            let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
+            repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology).map_err(|e| {
+                TdsValidationError::InconsistentDataStructure {
+                    message: format!("Delaunay repair failed after vertex removal: {e}"),
                 }
-                Err(err) => Err(err),
-            };
-
-            repair_result.map_err(|e| TdsValidationError::InconsistentDataStructure {
-                message: format!("Delaunay repair failed after vertex removal: {e}"),
             })?;
         }
 
@@ -1668,8 +1992,9 @@ where
     ///   insertions after loading slightly slower, but is otherwise behaviorally irrelevant.
     /// - The topology guarantee ([`TopologyGuarantee`]) is also not serialized (this type serializes
     ///   only the `Tds`). Constructing via `from_tds` resets it to `TopologyGuarantee::DEFAULT`.
-    ///   Call [`set_topology_guarantee`](Self::set_topology_guarantee) if you want to change this
-    ///   after loading (e.g. enable stricter PL-manifold validation).
+    ///   Call [`set_topology_guarantee`](Self::set_topology_guarantee) after loading, or use
+    ///   [`from_tds_with_topology_guarantee`](Self::from_tds_with_topology_guarantee) to set it
+    ///   at construction time (e.g. enable stricter PL-manifold validation).
     ///
     /// # Examples
     ///
@@ -1705,6 +2030,27 @@ where
                 tds,
                 validation_policy: ValidationPolicy::OnSuspicion,
                 topology_guarantee: TopologyGuarantee::DEFAULT,
+            },
+            insertion_state: DelaunayInsertionState::new(),
+        }
+    }
+
+    /// Create a `DelaunayTriangulation` from a deserialized `Tds` with an explicit topology guarantee.
+    ///
+    /// This is identical to [`from_tds`](Self::from_tds), but allows callers to set the desired
+    /// [`TopologyGuarantee`] at construction time.
+    #[must_use]
+    pub const fn from_tds_with_topology_guarantee(
+        tds: Tds<K::Scalar, U, V, D>,
+        kernel: K,
+        topology_guarantee: TopologyGuarantee,
+    ) -> Self {
+        Self {
+            tri: Triangulation {
+                kernel,
+                tds,
+                validation_policy: ValidationPolicy::OnSuspicion,
+                topology_guarantee,
             },
             insertion_state: DelaunayInsertionState::new(),
         }
@@ -1899,6 +2245,57 @@ impl DelaunayRepairPolicy {
         }
     }
 }
+/// Configuration for the optional heuristic rebuild fallback in Delaunay repair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DelaunayRepairHeuristicConfig {
+    /// Optional RNG seed used to shuffle vertex insertion order.
+    pub shuffle_seed: Option<u64>,
+    /// Optional seed used to vary the deterministic perturbation pattern.
+    pub perturbation_seed: Option<u64>,
+}
+
+impl DelaunayRepairHeuristicConfig {
+    fn resolve_seeds(self) -> DelaunayRepairHeuristicSeeds {
+        let mut shuffle_seed = self.shuffle_seed.unwrap_or_else(rand::random::<u64>);
+        if self.shuffle_seed.is_none() && shuffle_seed == 0 {
+            shuffle_seed = 1;
+        }
+        let mut perturbation_seed = self.perturbation_seed.unwrap_or_else(rand::random::<u64>);
+        if self.perturbation_seed.is_none() && perturbation_seed == 0 {
+            perturbation_seed = 1;
+        }
+        DelaunayRepairHeuristicSeeds {
+            shuffle_seed,
+            perturbation_seed,
+        }
+    }
+}
+
+/// Seeds used for a heuristic rebuild (non-reproducible unless recorded).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DelaunayRepairHeuristicSeeds {
+    /// RNG seed used to shuffle vertex insertion order.
+    pub shuffle_seed: u64,
+    /// Seed used to vary the perturbation pattern during retries.
+    pub perturbation_seed: u64,
+}
+
+/// Result of a flip-based repair attempt, including heuristic fallback metadata.
+#[derive(Debug, Clone)]
+pub struct DelaunayRepairOutcome {
+    /// Statistics from the final flip-based repair pass.
+    pub stats: DelaunayRepairStats,
+    /// Heuristic rebuild seeds, if a non-reproducible fallback was used.
+    pub heuristic: Option<DelaunayRepairHeuristicSeeds>,
+}
+
+impl DelaunayRepairOutcome {
+    /// Returns `true` if a heuristic rebuild fallback was used.
+    #[must_use]
+    pub const fn used_heuristic(&self) -> bool {
+        self.heuristic.is_some()
+    }
+}
 
 /// Policy controlling when **global** Delaunay validation runs during triangulation.
 ///
@@ -1919,6 +2316,7 @@ pub enum DelaunayCheckPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::algorithms::flips::DelaunayRepairError;
     use crate::geometry::kernel::{FastKernel, RobustKernel};
     use crate::topology::edit::TopologyEdit;
     use crate::vertex;
@@ -1974,6 +2372,24 @@ mod tests {
     }
 
     #[test]
+    fn test_new_with_topology_guarantee_sets_pl() {
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+
+        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::new_with_topology_guarantee(
+                &vertices,
+                TopologyGuarantee::PLManifold,
+            )
+            .unwrap();
+
+        assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
+    }
+
+    #[test]
     fn test_remove_vertex_fast_path_inverse_k1() {
         let vertices: Vec<Vertex<f64, (), 3>> = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -1984,6 +2400,7 @@ mod tests {
 
         let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
+        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
         let original_vertex_count = dt.number_of_vertices();
         let original_cell_count = dt.number_of_cells();
 
@@ -2009,6 +2426,26 @@ mod tests {
         assert_eq!(dt.number_of_cells(), original_cell_count);
         assert!(dt.as_triangulation().validate().is_ok());
         assert!(dt.vertices().all(|(_, v)| v.uuid() != inserted_uuid));
+    }
+
+    #[test]
+    fn test_repair_delaunay_with_flips_allows_pl_manifold() {
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 1.0]),
+        ];
+
+        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+
+        let result = dt.repair_delaunay_with_flips();
+        assert!(
+            !matches!(result, Err(DelaunayRepairError::InvalidTopology { .. })),
+            "Flip-based repair should be admissible under PLManifold topology"
+        );
     }
 
     /// Macro to generate comprehensive triangulation construction tests across dimensions.

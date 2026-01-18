@@ -111,7 +111,7 @@ use std::cmp::Ordering as CmpOrdering;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use num_traits::{Float, NumCast, One, Zero};
+use num_traits::{NumCast, One, Zero};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -2076,9 +2076,8 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
-        // Use transactional insertion with perturbation retry, discard stats
-        // 5 retry attempts: 1e-4, 1e-3, 1e-2, 2e-2, 5e-2 (up to 5% perturbation)
-        let (outcome, _stats) = self.insert_transactional(vertex, conflict_cells, hint, 5)?;
+        // Use transactional insertion with a single local-scale perturbation retry.
+        let (outcome, _stats) = self.insert_transactional(vertex, conflict_cells, hint, 1, 0)?;
         match outcome {
             InsertionOutcome::Inserted { vertex_key, hint } => Ok((vertex_key, hint)),
             InsertionOutcome::Skipped { error } => Err(error),
@@ -2109,8 +2108,25 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
-        // 5 retry attempts: 1e-4, 1e-3, 1e-2, 2e-2, 5e-2 (up to 5% perturbation)
-        self.insert_transactional(vertex, conflict_cells, hint, 5)
+        // Single perturbation retry (local-scale) for geometric degeneracies.
+        self.insert_transactional(vertex, conflict_cells, hint, 1, 0)
+    }
+
+    /// Insert a vertex with statistics, using a custom perturbation seed.
+    ///
+    /// This is identical to [`insert_with_statistics`](Self::insert_with_statistics) but allows
+    /// callers (e.g., heuristic rebuilds) to vary the deterministic perturbation pattern.
+    pub(crate) fn insert_with_statistics_seeded(
+        &mut self,
+        vertex: Vertex<K::Scalar, U, D>,
+        conflict_cells: Option<&CellKeyBuffer>,
+        hint: Option<CellKey>,
+        perturbation_seed: u64,
+    ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        self.insert_transactional(vertex, conflict_cells, hint, 1, perturbation_seed)
     }
 
     /// Transactional insertion with automatic rollback and perturbation retry.
@@ -2135,6 +2151,7 @@ where
         conflict_cells: Option<&CellKeyBuffer>,
         hint: Option<CellKey>,
         max_perturbation_attempts: usize,
+        perturbation_seed: u64,
     ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError>
     where
         K::Scalar: CoordinateScalar,
@@ -2145,16 +2162,7 @@ where
         let mut current_vertex = vertex;
         let mut last_retryable_error: Option<InsertionError> = None;
 
-        // Anchor used to make perturbations depend only on relative geometry (translation-invariant).
-        //
-        // If we perturb based on absolute coordinate magnitudes, translating the whole input point set
-        // changes the perturbation scale and can lead to non-equivalent results. Using an anchor that
-        // translates with the triangulation makes the perturbation depend only on relative geometry.
-        let perturbation_anchor = self
-            .tds
-            .vertices()
-            .next()
-            .map_or(original_coords, |(_, v)| *v.point().coords());
+        let local_scale = self.estimate_local_perturbation_scale(&original_coords, hint);
 
         for attempt in 0..=max_perturbation_attempts {
             stats.attempts = attempt + 1;
@@ -2162,16 +2170,13 @@ where
             // Apply perturbation for retry attempts
             if attempt > 0 {
                 let mut perturbed_coords = original_coords;
-                // Progressive perturbation schedule:
-                // Attempt 1: 1e-4 (0.01%), Attempt 2: 1e-3 (0.1%), Attempt 3: 1e-2 (1%)
-                // Attempt 4: 2e-2 (2%), Attempt 5: 5e-2 (5%)
-                // This balances resolving degeneracies without introducing locate cycles
-                let epsilon_value = match attempt {
-                    1 => 1e-4,
-                    2 => 1e-3,
-                    3 => 1e-2,
-                    4 => 2e-2,
-                    _ => 5e-2, // 5% for attempt 5 and beyond
+                // Single local-scale perturbation:
+                // - f64: 1e-8 × local scale
+                // - f32: 1e-4 × local scale
+                let epsilon_value = if K::Scalar::mantissa_digits() <= 24 {
+                    1e-4
+                } else {
+                    1e-8
                 };
                 let Some(epsilon) = <K::Scalar as NumCast>::from(epsilon_value) else {
                     // We failed to convert the perturbation scale into the scalar type.
@@ -2188,19 +2193,23 @@ where
                     return Ok((InsertionOutcome::Skipped { error }, stats));
                 };
 
+                let perturbation_scale = epsilon * local_scale;
                 for (idx, coord) in perturbed_coords.iter_mut().enumerate() {
-                    let delta = *coord - perturbation_anchor[idx];
-                    let abs_delta = if delta < K::Scalar::zero() {
-                        -delta
+                    let perturbation = if perturbation_seed == 0 {
+                        if (attempt + idx) % 2 == 0 {
+                            perturbation_scale
+                        } else {
+                            -perturbation_scale
+                        }
                     } else {
-                        delta
-                    };
-
-                    let perturbation_scale = epsilon * abs_delta.max(K::Scalar::one());
-                    let perturbation = if (attempt + idx) % 2 == 0 {
-                        perturbation_scale
-                    } else {
-                        -perturbation_scale
+                        let mix = perturbation_seed
+                            ^ ((attempt as u64) << 32)
+                            ^ (idx as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                        if mix & 1 == 0 {
+                            perturbation_scale
+                        } else {
+                            -perturbation_scale
+                        }
                     };
                     *coord += perturbation;
                 }
@@ -2290,6 +2299,67 @@ where
         }
 
         unreachable!("Loop should have returned in all cases");
+    }
+
+    /// Estimate a local length scale for perturbation based on nearby vertices.
+    ///
+    /// Uses the hint cell when available; otherwise falls back to the closest
+    /// existing vertex. This keeps perturbations translation-invariant and
+    /// proportional to local feature size.
+    fn estimate_local_perturbation_scale(
+        &self,
+        coords: &[K::Scalar; D],
+        hint: Option<CellKey>,
+    ) -> K::Scalar
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        let mut min_dist_sq: Option<K::Scalar> = None;
+
+        let consider_vertex = |vertex: &Vertex<K::Scalar, U, D>,
+                               min_dist_sq: &mut Option<K::Scalar>| {
+            let vcoords = vertex.point().coords();
+            let mut dist_sq = K::Scalar::zero();
+            for i in 0..D {
+                let diff = vcoords[i] - coords[i];
+                dist_sq += diff * diff;
+            }
+            match min_dist_sq {
+                Some(current) => {
+                    if dist_sq < *current {
+                        *current = dist_sq;
+                    }
+                }
+                None => {
+                    *min_dist_sq = Some(dist_sq);
+                }
+            }
+        };
+
+        if let Some(cell_key) = hint
+            && let Some(cell) = self.tds.get_cell(cell_key)
+        {
+            for &vkey in cell.vertices() {
+                if let Some(vertex) = self.tds.get_vertex_by_key(vkey) {
+                    consider_vertex(vertex, &mut min_dist_sq);
+                }
+            }
+        }
+
+        if min_dist_sq.is_none() {
+            for (_, vertex) in self.tds.vertices() {
+                consider_vertex(vertex, &mut min_dist_sq);
+            }
+        }
+
+        let mut scale = min_dist_sq.map_or_else(K::Scalar::one, num_traits::Float::sqrt);
+
+        let min_scale = K::Scalar::default_tolerance();
+        if scale < min_scale {
+            scale = min_scale;
+        }
+
+        scale
     }
 
     // -------------------------------------------------------------------------
@@ -2615,7 +2685,41 @@ where
         }
 
         // Extract cavity boundary
-        let mut boundary_facets = extract_cavity_boundary(&self.tds, &conflict_cells)?;
+        let mut boundary_facets = match extract_cavity_boundary(&self.tds, &conflict_cells) {
+            Ok(boundary) => boundary,
+            Err(err) => {
+                let should_fallback = matches!(
+                    err,
+                    ConflictError::NonManifoldFacet { .. }
+                        | ConflictError::RidgeFan { .. }
+                        | ConflictError::DisconnectedBoundary { .. }
+                        | ConflictError::OpenBoundary { .. }
+                );
+
+                if should_fallback {
+                    let Some(start_cell) = fallback_cell else {
+                        return Err(err.into());
+                    };
+
+                    suspicion.fallback_star_split = true;
+
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "WARNING: conflict region degeneracy ({err}); falling back to star-split of cell {start_cell:?}"
+                    );
+
+                    conflict_cells = {
+                        let mut owned = CellKeyBuffer::new();
+                        owned.push(start_cell);
+                        owned
+                    };
+
+                    Self::star_split_boundary_facets(start_cell)
+                } else {
+                    return Err(err.into());
+                }
+            }
+        };
 
         // Fallback: never allow an insertion to create a dangling vertex.
         if boundary_facets.is_empty() {

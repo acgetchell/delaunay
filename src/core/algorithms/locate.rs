@@ -279,6 +279,9 @@ where
     for step in 0..MAX_STEPS {
         // Detect cycles
         if !visited.insert(current_cell) {
+            if let Ok(result) = locate_by_scan(tds, kernel, point) {
+                return Ok(result);
+            }
             return Err(LocateError::CycleDetected { steps: step });
         }
 
@@ -315,8 +318,42 @@ where
         }
     }
 
-    // Reached step limit - treat as cycle
+    // Reached step limit - attempt a brute-force scan before reporting a cycle.
+    if let Ok(result) = locate_by_scan(tds, kernel, point) {
+        return Ok(result);
+    }
+
     Err(LocateError::CycleDetected { steps: MAX_STEPS })
+}
+
+fn locate_by_scan<K, U, V, const D: usize>(
+    tds: &Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    point: &Point<K::Scalar, D>,
+) -> Result<LocateResult, LocateError>
+where
+    K: Kernel<D>,
+    K::Scalar: std::iter::Sum,
+    U: DataType,
+    V: DataType,
+{
+    for (cell_key, cell) in tds.cells() {
+        let mut found_outside_facet = false;
+        let facet_count = cell.number_of_vertices();
+
+        for facet_idx in 0..facet_count {
+            if is_point_outside_facet(tds, kernel, cell_key, facet_idx, point)? == Some(true) {
+                found_outside_facet = true;
+                break;
+            }
+        }
+
+        if !found_outside_facet {
+            return Ok(LocateResult::InsideCell(cell_key));
+        }
+    }
+
+    Ok(LocateResult::Outside)
 }
 
 /// Test if a point is on the outside of a cell's facet.

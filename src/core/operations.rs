@@ -9,6 +9,7 @@
 
 use crate::core::algorithms::incremental_insertion::InsertionError;
 use crate::core::delaunay_triangulation::DelaunayRepairPolicy;
+use crate::core::triangulation::TopologyGuarantee;
 use crate::core::triangulation_data_structure::CellKey;
 
 /// Semantic classification of topological modifications to a triangulation.
@@ -25,6 +26,90 @@ pub enum TopologicalOperation {
     FacetFlip,
     /// k ≥ 3: higher-order cavity flip (typically in higher dimensions).
     CavityFlip,
+}
+
+/// Decision outcome for a flip-based Delaunay repair attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepairDecision {
+    /// Proceed with flip-based repair.
+    Proceed,
+    /// Skip repair, with a structured reason.
+    Skip {
+        /// Reason the repair was skipped.
+        reason: RepairSkipReason,
+    },
+}
+
+/// Reason why flip-based repair was skipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepairSkipReason {
+    /// Repair policy is disabled for this insertion count.
+    PolicyDisabled,
+    /// The requested operation is inadmissible under the current topology guarantee.
+    Inadmissible {
+        /// The operation that was attempted.
+        operation: TopologicalOperation,
+        /// Required topology guarantee for this operation.
+        required: TopologyGuarantee,
+        /// Actual topology guarantee.
+        found: TopologyGuarantee,
+    },
+}
+
+impl DelaunayRepairPolicy {
+    /// Decide whether a flip-based repair should run, given topology and operation constraints.
+    #[must_use]
+    pub const fn decide(
+        self,
+        insertion_count: usize,
+        topology: TopologyGuarantee,
+        operation: TopologicalOperation,
+    ) -> RepairDecision {
+        if !self.should_repair(insertion_count) {
+            return RepairDecision::Skip {
+                reason: RepairSkipReason::PolicyDisabled,
+            };
+        }
+
+        if !operation.is_admissible_under(topology) {
+            return RepairDecision::Skip {
+                reason: RepairSkipReason::Inadmissible {
+                    operation,
+                    required: operation.required_topology(),
+                    found: topology,
+                },
+            };
+        }
+
+        RepairDecision::Proceed
+    }
+}
+
+impl TopologicalOperation {
+    /// Returns `true` if this operation requires a PL-manifold topology guarantee.
+    #[must_use]
+    pub const fn requires_pl_manifold(self) -> bool {
+        matches!(self, Self::FacetFlip | Self::CavityFlip)
+    }
+
+    /// Returns `true` if this operation is admissible under the given topology guarantee.
+    #[must_use]
+    pub const fn is_admissible_under(self, topology: TopologyGuarantee) -> bool {
+        match topology {
+            TopologyGuarantee::PLManifold => true,
+            TopologyGuarantee::Pseudomanifold => !self.requires_pl_manifold(),
+        }
+    }
+
+    /// Returns the minimum topology guarantee required for this operation.
+    #[must_use]
+    pub const fn required_topology(self) -> TopologyGuarantee {
+        if self.requires_pl_manifold() {
+            TopologyGuarantee::PLManifold
+        } else {
+            TopologyGuarantee::Pseudomanifold
+        }
+    }
 }
 
 /// Result of an insertion attempt.
@@ -175,5 +260,58 @@ impl SuspicionFlags {
             || self.repair_loop_entered
             || self.cells_removed
             || self.neighbor_pointers_rebuilt
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_topological_operation_admissibility() {
+        assert!(TopologicalOperation::FacetFlip.requires_pl_manifold());
+        assert!(TopologicalOperation::CavityFlip.requires_pl_manifold());
+        assert!(!TopologicalOperation::InsertVertex.requires_pl_manifold());
+        assert!(!TopologicalOperation::DeleteVertex.requires_pl_manifold());
+
+        assert!(TopologicalOperation::FacetFlip.is_admissible_under(TopologyGuarantee::PLManifold));
+        assert!(
+            !TopologicalOperation::FacetFlip.is_admissible_under(TopologyGuarantee::Pseudomanifold)
+        );
+
+        assert!(
+            TopologicalOperation::InsertVertex
+                .is_admissible_under(TopologyGuarantee::Pseudomanifold)
+        );
+    }
+
+    #[test]
+    fn test_repair_policy_decide_respects_policy_and_topology() {
+        let op = TopologicalOperation::FacetFlip;
+
+        let decision =
+            DelaunayRepairPolicy::EveryInsertion.decide(1, TopologyGuarantee::PLManifold, op);
+        assert!(matches!(decision, RepairDecision::Proceed));
+
+        let decision =
+            DelaunayRepairPolicy::EveryInsertion.decide(1, TopologyGuarantee::Pseudomanifold, op);
+        assert!(matches!(
+            decision,
+            RepairDecision::Skip {
+                reason: RepairSkipReason::Inadmissible {
+                    required: TopologyGuarantee::PLManifold,
+                    found: TopologyGuarantee::Pseudomanifold,
+                    operation: TopologicalOperation::FacetFlip,
+                }
+            }
+        ));
+
+        let decision = DelaunayRepairPolicy::Never.decide(1, TopologyGuarantee::PLManifold, op);
+        assert!(matches!(
+            decision,
+            RepairDecision::Skip {
+                reason: RepairSkipReason::PolicyDisabled
+            }
+        ));
     }
 }

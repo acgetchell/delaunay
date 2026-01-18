@@ -357,9 +357,14 @@ Validates the geometric optimality of the triangulation.
 - **Empty Circumsphere Property**: For every D-dimensional cell, no vertex lies strictly inside its circumsphere
 - Uses geometric predicates from the kernel (`insphere` test)
 - **Independent of Levels 1-3**: Checks geometric property, not structural/topological
-- **Flip-based repair**: Insertions run k=2 flip repairs by default. Delaunay validation can still
-  fail if repair is disabled, if repair fails to converge, or if additional flip types are required
-  (higher dimensions). See [Issue #120 Investigation](issue_120_investigation.md).
+- **Flip-based repair**: Insertions run k=2/k=3 flip repairs with inverse edge/triangle queues in
+  higher dimensions by default. Delaunay validation can still fail if repair is disabled, if repair
+  fails to converge, or if inputs are highly degenerate/duplicate-heavy. See
+  [Issue #120 Investigation](issue_120_investigation.md).
+- **Heuristic fallback**: If flip-based repair does not converge, you can opt into a heuristic
+  rebuild fallback via `DelaunayTriangulation::repair_delaunay_with_flips_advanced`.
+  This requires `TopologyGuarantee::PLManifold` and records the shuffle/perturbation seeds used.
+  See [Numerical Robustness Guide](numerical_robustness_guide.md).
 
 ### Complexity
 
@@ -534,7 +539,8 @@ ensure no isolated vertices, and verify the cell neighbor graph is connected
 **Likely Cause**: Repair disabled or non-convergent, geometric degeneracy, numerical precision,
 or missing higher-dimensional flip coverage
 **Fix**: Keep flip repair enabled, handle insertion errors, check for near-coplanar/collinear points,
-and consider using RobustKernel instead of FastKernel
+and consider using RobustKernel instead of FastKernel. If repair fails to converge, consider the
+opt-in heuristic rebuild fallback via `dt.repair_delaunay_with_flips_advanced(...)` (PL-manifold only).
 
 ---
 

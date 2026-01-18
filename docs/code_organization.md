@@ -91,6 +91,7 @@ delaunay/
 │   ├── convex_hull_3d_20_points.rs
 │   ├── into_from_conversions.rs
 │   ├── memory_analysis.rs
+│   ├── pachner_roundtrip_4d.rs
 │   ├── point_comparison_and_hashing.rs
 │   ├── triangulation_3d_20_points.rs
 │   └── zero_allocation_iterator_demo.rs
@@ -339,7 +340,8 @@ with convenient `just` shortcuts for common workflows.
 #### Development Infrastructure
 
 - **`examples/`** - Usage demos and trait examples, including memory profiling
-  (see: [examples/memory_analysis.rs](../examples/README.md#5-memory-analysis-across-dimensions-memory_analysisrs)) and zero-allocation iterator demonstrations
+  (see: [examples/memory_analysis.rs](../examples/README.md#5-memory-analysis-across-dimensions-memory_analysisrs)), Pachner move roundtrips
+  (see: [examples/pachner_roundtrip_4d.rs](../examples/pachner_roundtrip_4d.rs)), and zero-allocation iterator demonstrations
 - **`benches/`** - Performance benchmarks with automated baseline management (2D-5D coverage) and memory allocation tracking
   (see: [benches/profiling_suite.rs](../benches/README.md#profiling-suite-comprehensive))
 - **`tests/`** - Integration tests including basic TDS validation (creation, neighbor assignment, boundary analysis),

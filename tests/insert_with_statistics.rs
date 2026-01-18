@@ -22,7 +22,8 @@ use delaunay::prelude::*;
 
 #[test]
 fn delaunay_insert_with_statistics_basic_2d() {
-    let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 2> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     // Insert first vertex
     let (outcome, stats) = dt
@@ -61,7 +62,8 @@ fn delaunay_insert_with_statistics_basic_2d() {
 
 #[test]
 fn delaunay_insert_with_statistics_hint_caching_3d() {
-    let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     // Build initial simplex
     dt.insert_with_statistics(vertex!([0.0, 0.0, 0.0])).unwrap();
@@ -92,7 +94,8 @@ fn delaunay_insert_with_statistics_hint_caching_3d() {
 
 #[test]
 fn delaunay_insert_with_statistics_multiple_vertices_4d() {
-    let mut dt: DelaunayTriangulation<_, (), (), 4> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 4> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -135,7 +138,8 @@ fn delaunay_insert_with_statistics_multiple_vertices_4d() {
 
 #[test]
 fn delaunay_insert_with_statistics_duplicate_coordinates_2d() {
-    let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 2> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     // Insert first vertex
     dt.insert_with_statistics(vertex!([1.0, 2.0]))
@@ -167,7 +171,8 @@ fn delaunay_insert_with_statistics_duplicate_coordinates_2d() {
 #[test]
 fn delaunay_insert_with_statistics_bootstrap_happy_path_3d() {
     // Happy path: inserting D+1 well-separated vertices should succeed without retries.
-    let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     // Build simplex with well-separated points
     let vertices = vec![
@@ -188,7 +193,8 @@ fn delaunay_insert_with_statistics_bootstrap_happy_path_3d() {
 
 #[test]
 fn delaunay_insert_with_statistics_statistics_fields_3d() {
-    let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     // Bootstrap phase
     for i in 0..4 {
@@ -220,7 +226,8 @@ fn delaunay_insert_with_statistics_statistics_fields_3d() {
 
 #[test]
 fn statistics_invariants() {
-    let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     // Build simplex
     let vertices = vec![
@@ -278,7 +285,8 @@ fn statistics_invariants() {
 
 #[test]
 fn insert_with_statistics_2d_coverage() {
-    let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 2> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let vertices = vec![
         vertex!([0.0, 0.0]),
@@ -297,7 +305,8 @@ fn insert_with_statistics_2d_coverage() {
 
 #[test]
 fn insert_with_statistics_3d_coverage() {
-    let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
@@ -317,7 +326,8 @@ fn insert_with_statistics_3d_coverage() {
 
 #[test]
 fn insert_with_statistics_4d_coverage() {
-    let mut dt: DelaunayTriangulation<_, (), (), 4> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 4> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -338,7 +348,8 @@ fn insert_with_statistics_4d_coverage() {
 
 #[test]
 fn insert_with_statistics_5d_coverage() {
-    let mut dt: DelaunayTriangulation<_, (), (), 5> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 5> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),

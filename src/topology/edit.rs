@@ -39,7 +39,12 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let mut dt: DelaunayTriangulation<_, (), (), 3> =
+///     DelaunayTriangulation::new_with_topology_guarantee(
+///         &vertices,
+///         TopologyGuarantee::PLManifold,
+///     )
+///     .unwrap();
 /// let cell_key = dt.cells().next().unwrap().0;
 ///
 /// // Split a cell by inserting a vertex (k=1 move).

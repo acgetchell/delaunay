@@ -15,7 +15,11 @@ fn regression_empty_circumsphere_2d_minimal_case() {
     ];
 
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new(&vertices).unwrap();
+        DelaunayTriangulation::new_with_topology_guarantee(
+            &vertices,
+            TopologyGuarantee::PLManifold,
+        )
+        .unwrap();
 
     if dt.is_valid().is_err() {
         #[cfg(any(test, debug_assertions))]

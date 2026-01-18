@@ -21,7 +21,8 @@
 //! - **Insertion-order invariance** - Edge set independent of insertion order (2D, currently ignored - Issue #120)
 //! - **Duplicate cloud integration** - Full pipeline with messy real-world inputs (2D-5D: duplicates + near-duplicates)
 //!
-//! All structural tests use `DelaunayTriangulation::new()` and `insert()` which maintain
+//! All structural tests construct with `DelaunayTriangulation::new_with_topology_guarantee(..., TopologyGuarantee::PLManifold)`
+//! and then use `insert()`, ensuring PL-manifoldness by construction while maintaining
 //! invariants through the incremental cavity-based insertion algorithm.
 
 use delaunay::prelude::*;
@@ -391,9 +392,10 @@ macro_rules! gen_incremental_insertion_validity {
                     });
                     prop_assume!(!is_dup);
 
-                    if let Ok(mut dt) =
-                        DelaunayTriangulation::<_, (), (), $dim>::new(&initial_vertices)
-                    {
+                    if let Ok(mut dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &initial_vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         prop_assert_levels_1_to_3_valid!($dim, &dt, "initial triangulation");
 
                         if dt.insert(additional_vertex).is_ok() {
@@ -437,9 +439,10 @@ macro_rules! gen_incremental_insertion_validity {
                     });
                     prop_assume!(!is_dup);
 
-                    if let Ok(mut dt) =
-                        DelaunayTriangulation::<_, (), (), $dim>::new(&initial_vertices)
-                    {
+                    if let Ok(mut dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &initial_vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         prop_assert_levels_1_to_3_valid!($dim, &dt, "initial triangulation");
 
                         if dt.insert(additional_vertex).is_ok() {
@@ -453,7 +456,7 @@ macro_rules! gen_incremental_insertion_validity {
 }
 
 gen_incremental_insertion_validity!(2, 3, 5);
-gen_incremental_insertion_validity!(3, 4, 6, ignore);
+gen_incremental_insertion_validity!(3, 4, 6);
 gen_incremental_insertion_validity!(4, 5, 7);
 gen_incremental_insertion_validity!(5, 6, 8);
 
@@ -478,12 +481,15 @@ macro_rules! gen_duplicate_coords_test {
                         $min..=$max
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(mut dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new(&vertices) {
+                    if let Ok(mut dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         // Select a vertex that is actually present in the triangulation.
-                        // `DelaunayTriangulation::new` may skip some input vertices (e.g., due to degeneracy),
+                        // `DelaunayTriangulation::new_with_topology_guarantee` may skip some input vertices (e.g., due to degeneracy),
                         // so we must use stored vertices to test duplicate rejection.
                         let (_, existing_vertex) = dt.vertices().next()
-                            .expect("DelaunayTriangulation::new returned Ok but has no vertices");
+                            .expect("DelaunayTriangulation::new_with_topology_guarantee returned Ok but has no vertices");
                         let p = *existing_vertex.point();
                         let dup = Vertex::from_points(&[p])[0];
                         let result = dt.insert(dup);
@@ -520,7 +526,7 @@ proptest! {
                         $min_vertices..=$max_vertices
                     ).prop_map(|pts| dedup_vertices_by_coords::<$dim>(Vertex::from_points(&pts)))
                 ) {
-                    // Build Delaunay triangulation using DelaunayTriangulation::new() which properly triangulates all vertices
+                    // Build Delaunay triangulation with PL-manifold guarantee, triangulating all vertices together.
                     // This ensures the entire triangulation (including initial simplex) satisfies Delaunay property
 
                     // Require at least D+1 distinct vertices to form valid D-simplices
@@ -530,8 +536,11 @@ proptest! {
                     // coordinate hyperplane (x_i == 0.0).
                     prop_assume!(has_no_coordinate_hyperplane_degeneracy(&vertices));
 
-                    // Use DelaunayTriangulation::new() to triangulate ALL vertices together
-                    let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) else {
+                    // Use DelaunayTriangulation::new_with_topology_guarantee() to triangulate ALL vertices together
+                    let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) else {
                         // Degenerate geometry or insufficient vertices - skip test
                         prop_assume!(false);
                         unreachable!();
@@ -564,7 +573,7 @@ proptest! {
                         $min_vertices..=$max_vertices
                     ).prop_map(|pts| dedup_vertices_by_coords::<$dim>(Vertex::from_points(&pts)))
                 ) {
-                    // Build Delaunay triangulation using DelaunayTriangulation::new() which properly triangulates all vertices
+                    // Build Delaunay triangulation using DelaunayTriangulation::new_with_topology_guarantee() which properly triangulates all vertices
                     // This ensures the entire triangulation (including initial simplex) satisfies Delaunay property
 
                     // Require at least D+1 distinct vertices to form valid D-simplices
@@ -574,8 +583,11 @@ proptest! {
                     // coordinate hyperplane (x_i == 0.0).
                     prop_assume!(has_no_coordinate_hyperplane_degeneracy(&vertices));
 
-                    // Use DelaunayTriangulation::new() to triangulate ALL vertices together
-                    let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) else {
+                    // Use DelaunayTriangulation::new_with_topology_guarantee() to triangulate ALL vertices together
+                    let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) else {
                         // Degenerate geometry or insufficient vertices - skip test
                         prop_assume!(false);
                         unreachable!();
@@ -597,9 +609,9 @@ proptest! {
 
 // 2D–5D coverage (keep ranges small to bound runtime)
 test_empty_circumsphere!(2, 6, 10);
-test_empty_circumsphere!(3, 6, 10, ignore);
-test_empty_circumsphere!(4, 6, 12, ignore);
-test_empty_circumsphere!(5, 7, 12, ignore);
+test_empty_circumsphere!(3, 6, 10);
+test_empty_circumsphere!(4, 6, 12);
+test_empty_circumsphere!(5, 7, 12);
 
 // =============================================================================
 // INSERTION-ORDER INVARIANCE (2D-5D)
@@ -645,7 +657,10 @@ macro_rules! gen_insertion_order_robustness_test {
                     prop_assume!(has_no_coordinate_hyperplane_degeneracy(&points));
 
                     // Build first triangulation with natural order
-                    let dt_a = DelaunayTriangulation::<_, (), (), $dim>::new(&points);
+                    let dt_a = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &points,
+                        TopologyGuarantee::PLManifold,
+                    );
                     prop_assume!(dt_a.is_ok());
                     let dt_a = dt_a.unwrap();
 
@@ -666,7 +681,10 @@ macro_rules! gen_insertion_order_robustness_test {
                     let mut points_shuffled = points;
                     points_shuffled.shuffle(&mut rng);
 
-                    let dt_b = DelaunayTriangulation::<_, (), (), $dim>::new(&points_shuffled);
+                    let dt_b = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &points_shuffled,
+                        TopologyGuarantee::PLManifold,
+                    );
                     prop_assume!(dt_b.is_ok());
                     let dt_b = dt_b.unwrap();
 
@@ -735,7 +753,6 @@ gen_insertion_order_robustness_test!(2, 6, 10);
     clippy::too_many_lines,
     reason = "Large property-based test with extensive rejection tracking and diagnostics"
 )]
-#[ignore = "Requires k>2 flips for stable 3D repair; see Issue #120"]
 fn prop_insertion_order_robustness_3d() {
     use proptest::test_runner::{Config, TestCaseError, TestRunner};
     use std::cell::RefCell;
@@ -828,7 +845,7 @@ fn prop_insertion_order_robustness_3d() {
         // - no retry/perturbation (stats.attempts == 1 for all insertions)
         // - no skipped vertices
         let mut dt_a: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
-            DelaunayTriangulation::empty();
+            DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
         let run_a = insert_vertices_3d_no_retry_or_skip(&mut dt_a, &points);
         match run_a {
             InsertionOrder3dRunStatus::Clean => {}
@@ -866,7 +883,7 @@ fn prop_insertion_order_robustness_3d() {
         points_shuffled.shuffle(&mut rng);
 
         let mut dt_b: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
-            DelaunayTriangulation::empty();
+            DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
         let run_b = insert_vertices_3d_no_retry_or_skip(&mut dt_b, &points_shuffled);
         match run_b {
             InsertionOrder3dRunStatus::Clean => {}
@@ -921,26 +938,31 @@ fn prop_insertion_order_robustness_3d() {
             verts_b
         );
 
-        // Parity check: the high-level constructor path (`DelaunayTriangulation::new`) should also
+        // Parity check: the high-level constructor path (`DelaunayTriangulation::new_with_topology_guarantee`) should also
         // succeed for the same generated inputs. This helps prevent maintenance drift vs the
         // 2D/4D/5D insertion-order tests which use `new()` directly.
-        let dt_new_a = match DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new(&points) {
+        let dt_new_a = match DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new_with_topology_guarantee(
+            &points,
+            TopologyGuarantee::PLManifold,
+        ) {
             Ok(dt) => dt,
             Err(e) => {
                 stats.rejected_new_a_failed += 1;
                 return Err(TestCaseError::reject(format!(
-                    "3D: DelaunayTriangulation::new() failed for generated inputs (order A; treated as out of scope): {e}"
+                    "3D: DelaunayTriangulation::new_with_topology_guarantee() failed for generated inputs (order A; treated as out of scope): {e}"
                 )));
             }
         };
 
-        let dt_new_b =
-            match DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new(&points_shuffled) {
+        let dt_new_b = match DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new_with_topology_guarantee(
+            &points_shuffled,
+            TopologyGuarantee::PLManifold,
+        ) {
                 Ok(dt) => dt,
                 Err(e) => {
                     stats.rejected_new_b_failed += 1;
                     return Err(TestCaseError::reject(format!(
-                        "3D: DelaunayTriangulation::new() failed for generated inputs (order B; treated as out of scope): {e}"
+                        "3D: DelaunayTriangulation::new_with_topology_guarantee() failed for generated inputs (order B; treated as out of scope): {e}"
                     )));
                 }
             };
@@ -948,7 +970,7 @@ fn prop_insertion_order_robustness_3d() {
         if dt_new_a.number_of_vertices() != points.len() {
             stats.rejected_new_a_skipped_vertices += 1;
             return Err(TestCaseError::reject(format!(
-                "3D: new() skipped vertices for generated inputs (order A; treated as out of scope): expected {}, got {}",
+                "3D: new_with_topology_guarantee() skipped vertices for generated inputs (order A; treated as out of scope): expected {}, got {}",
                 points.len(),
                 dt_new_a.number_of_vertices()
             )));
@@ -957,7 +979,7 @@ fn prop_insertion_order_robustness_3d() {
         if dt_new_b.number_of_vertices() != points.len() {
             stats.rejected_new_b_skipped_vertices += 1;
             return Err(TestCaseError::reject(format!(
-                "3D: new() skipped vertices for generated inputs (order B; treated as out of scope): expected {}, got {}",
+                "3D: new_with_topology_guarantee() skipped vertices for generated inputs (order B; treated as out of scope): expected {}, got {}",
                 points.len(),
                 dt_new_b.number_of_vertices()
             )));
@@ -967,7 +989,7 @@ fn prop_insertion_order_robustness_3d() {
         if let Err(e) = validation_new_a {
             stats.rejected_new_a_invalid_levels_1_to_3 += 1;
             return Err(TestCaseError::reject(format!(
-                "3D: Triangulation A (new()) failed Levels 1–3 validation (treated as out of scope): {e:?}"
+                "3D: Triangulation A (new_with_topology_guarantee()) failed Levels 1–3 validation (treated as out of scope): {e:?}"
             )));
         }
 
@@ -975,7 +997,7 @@ fn prop_insertion_order_robustness_3d() {
         if let Err(e) = validation_new_b {
             stats.rejected_new_b_invalid_levels_1_to_3 += 1;
             return Err(TestCaseError::reject(format!(
-                "3D: Triangulation B (new()) failed Levels 1–3 validation (treated as out of scope): {e:?}"
+                "3D: Triangulation B (new_with_topology_guarantee()) failed Levels 1–3 validation (treated as out of scope): {e:?}"
             )));
         }
 
@@ -1107,7 +1129,6 @@ macro_rules! gen_duplicate_cloud_test {
                 /// inputs. Will be re-enabled after bistellar flip implementation.
                 ///
                 /// See: Issue #120, src/core/algorithms/flips.rs
-                #[ignore = "Requires bistellar flips - see Issue #120"]
                 #[test]
                 fn [<prop_cloud_with_duplicates_is_delaunay_ $dim d>](
                     points in [<cloud_with_duplicates_ $dim d>]()

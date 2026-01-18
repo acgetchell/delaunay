@@ -30,18 +30,45 @@ lightweight alternative to [CGAL] for the [Rust] ecosystem.
 - [x]  Serialization/Deserialization of all data structures to/from [JSON]
 - [x]  Tested for 2-, 3-, 4-, and 5-dimensional triangulations
 - [x]  Local topology validation ([Pseudomanifold] default, [PL-manifold] opt-in)
+- [x]  [Bistellar k-flips] for k = 1, 2, 3 plus inverse moves (repair uses k=2/k=3; inverse edge/triangle queues in 4D/5D)
 
 See [CHANGELOG.md](CHANGELOG.md) for details.
 
 ## ⚠️ Delaunay Property
 
-The triangulation uses flip-based Delaunay repair (k=2 facet flips) after insertion by
-default via `DelaunayRepairPolicy`. This restores the local Delaunay property for most
-configurations and preserves all structural invariants (TDS validity).
+The triangulation uses flip-based [Delaunay repair] (k=2 facet queues, k=3 ridge queues,
+and inverse edge/triangle queues in 4D/5D) after insertion by default via
+`DelaunayRepairPolicy`. Flip-based repair **requires** `TopologyGuarantee::PLManifold`
+(automatic repair is skipped under `Pseudomanifold`, and manual repair returns
+`InvalidTopology`). This restores the local Delaunay property for most configurations
+and preserves all structural invariants (TDS validity).
 
-In rare cases, repair may fail to converge; insertion returns an error and the
-triangulation remains structurally valid but not guaranteed Delaunay. Higher-dimensional
-cases (4D/5D) may require additional flip types (k>2) beyond the current k=2 implementation.
+Repair is **bounded to two attempts**: attempt 1 uses FIFO ordering with fast predicates;
+on non-convergence it retries once with LIFO ordering and robust predicates **only for
+ambiguous boundary classifications**. If it still fails, the error includes diagnostics
+(checked counts, ambiguous predicate samples, max queue depth, etc.). Highly degenerate
+inputs or duplicate-handling edge cases can still require additional filtering.
+For persistent failures, an **optional heuristic fallback** is available via
+`repair_delaunay_with_flips_advanced`. This runs the standard two-pass repair, and
+if it still fails, rebuilds the triangulation from the current vertex set using a
+shuffled insertion order and a fresh perturbation seed, then runs a final flip-repair
+pass. This fallback is heuristic and **non-reproducible by default**; the returned
+`DelaunayRepairOutcome` includes the seeds used so you can replay the exact run.
+
+```rust
+use delaunay::prelude::*;
+
+let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+
+let outcome = dt.repair_delaunay_with_flips_advanced(
+    DelaunayRepairHeuristicConfig::default(),
+)?;
+
+if outcome.used_heuristic() {
+    eprintln!("Heuristic rebuild used: {:?}", outcome.heuristic);
+}
+```
 
 For details, see: [Issue #120 Investigation](docs/issue_120_investigation.md)
 
@@ -74,6 +101,7 @@ dt.set_validation_policy(ValidationPolicy::Always);
 For applications requiring strict Delaunay guarantees:
 
 - Keep `DelaunayRepairPolicy::EveryInsertion` (default) or call `repair_delaunay_with_flips()` after batch edits
+- If standard repair does not converge, consider `repair_delaunay_with_flips_advanced()` for the heuristic rebuild fallback
 - Use `dt.is_valid()` (Level 4 only) or `dt.validate()` (Levels 1–4) to check your triangulation
 - Filter degenerate configurations when possible
 - Monitor for additional flip types in future releases
@@ -191,3 +219,5 @@ Portions of this library were developed with the assistance of these AI tools:
 [WARP]: https://www.warp.dev
 [Pseudomanifold]: https://grokipedia.com/page/Pseudomanifold
 [PL-manifold]: https://grokipedia.com/page/Piecewise_linear_manifold
+[Delaunay repair]: https://link.springer.com/article/10.1007/BF01975867
+[Bistellar k-flips]: https://grokipedia.com/page/Bistellar_flip

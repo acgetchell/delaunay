@@ -9,7 +9,14 @@ fn check_perturbation_effectiveness() {
     // Generate 50 random points with seed 123 (known problematic case)
     let points = generate_random_points_seeded::<f64, 3>(50, (-100.0, 100.0), 123).unwrap();
 
-    let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+    // Ensure topology safety net runs after every insertion so invalid states are rolled back.
+    dt.set_validation_policy(delaunay::core::triangulation::ValidationPolicy::Always);
+    // Disable Delaunay repair to keep the test focused on perturbation and topology stability.
+    dt.set_delaunay_repair_policy(
+        delaunay::core::delaunay_triangulation::DelaunayRepairPolicy::Never,
+    );
 
     let mut total_attempts_successful = 0usize;
     let mut first_try_success = 0usize;

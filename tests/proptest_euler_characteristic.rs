@@ -66,7 +66,10 @@ macro_rules! test_euler_properties {
                     )
                 ) {
                     // Attempt to build triangulation
-                    if let Ok(dt) = DelaunayTriangulation::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         // Validate Euler characteristic
                         let result = validation::validate_triangulation_euler(dt.tds())?;
 
@@ -99,7 +102,10 @@ macro_rules! test_euler_properties {
                         $min_vertices..$max_vertices
                     )
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let counts = euler::count_simplices(dt.tds())?;
 
                         // Basic sanity checks
@@ -135,7 +141,10 @@ macro_rules! test_euler_properties {
                         $min_vertices..$max_vertices
                     )
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let result = validation::validate_triangulation_euler(dt.tds())?;
 
                         // If we have an expected χ, computed χ must match

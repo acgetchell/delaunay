@@ -25,7 +25,11 @@ macro_rules! test_insert_single_point {
                 ];
 
                 let mut dt: DelaunayTriangulation<_, (), (), $dim> =
-                    DelaunayTriangulation::new(&vertices).unwrap();
+                    DelaunayTriangulation::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    )
+                    .unwrap();
 
                 let initial_vertices = vertices.len();
                 assert_eq!(dt.number_of_cells(), 1);
@@ -89,7 +93,11 @@ macro_rules! test_insert_5_points {
                 ];
 
                 let mut dt: DelaunayTriangulation<_, (), (), $dim> =
-                    DelaunayTriangulation::new(&vertices).unwrap();
+                    DelaunayTriangulation::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    )
+                    .unwrap();
 
                 let initial_vertices = vertices.len();
                 assert_eq!(dt.number_of_cells(), 1);
@@ -185,10 +193,20 @@ fn test_fast_kernel_vs_robust_kernel_2d() {
     ];
 
     let dt_fast: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
-        DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+        DelaunayTriangulation::with_topology_guarantee(
+            FastKernel::new(),
+            &vertices,
+            TopologyGuarantee::PLManifold,
+        )
+        .unwrap();
 
     let dt_robust: DelaunayTriangulation<RobustKernel<f64>, (), (), 2> =
-        DelaunayTriangulation::with_kernel(RobustKernel::new(), &vertices).unwrap();
+        DelaunayTriangulation::with_topology_guarantee(
+            RobustKernel::new(),
+            &vertices,
+            TopologyGuarantee::PLManifold,
+        )
+        .unwrap();
 
     // Both should produce same vertex count
     assert_eq!(dt_fast.number_of_vertices(), dt_robust.number_of_vertices());
@@ -210,7 +228,12 @@ fn test_robust_kernel_incremental_insertion() {
     ];
 
     let mut dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 2> =
-        DelaunayTriangulation::with_kernel(RobustKernel::new(), &vertices).unwrap();
+        DelaunayTriangulation::with_topology_guarantee(
+            RobustKernel::new(),
+            &vertices,
+            TopologyGuarantee::PLManifold,
+        )
+        .unwrap();
 
     // Insert points with robust kernel
     dt.insert(vertex!([0.3, 0.3])).unwrap();
@@ -234,7 +257,11 @@ fn test_clustered_points_2d() {
     ];
 
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new(&vertices).unwrap();
+        DelaunayTriangulation::new_with_topology_guarantee(
+            &vertices,
+            TopologyGuarantee::PLManifold,
+        )
+        .unwrap();
 
     // Insert 5 points clustered around (3.0, 3.0)
     dt.insert(vertex!([3.0, 3.0])).unwrap();
@@ -256,7 +283,11 @@ fn test_grid_pattern_2d() {
     ];
 
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new(&vertices).unwrap();
+        DelaunayTriangulation::new_with_topology_guarantee(
+            &vertices,
+            TopologyGuarantee::PLManifold,
+        )
+        .unwrap();
 
     // Insert 4 points in a grid
     dt.insert(vertex!([1.0, 1.0])).unwrap();
@@ -285,7 +316,11 @@ fn test_batch_vs_incremental_same_vertex_count() {
 
     // Batch construction
     let dt_batch: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new(&all_vertices).unwrap();
+        DelaunayTriangulation::new_with_topology_guarantee(
+            &all_vertices,
+            TopologyGuarantee::PLManifold,
+        )
+        .unwrap();
 
     // Incremental construction
     let initial = vec![
@@ -294,7 +329,8 @@ fn test_batch_vs_incremental_same_vertex_count() {
         vertex!([2.0, 4.0]),
     ];
     let mut dt_incremental: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new(&initial).unwrap();
+        DelaunayTriangulation::new_with_topology_guarantee(&initial, TopologyGuarantee::PLManifold)
+            .unwrap();
 
     dt_incremental.insert(vertex!([1.0, 1.0])).unwrap();
     dt_incremental.insert(vertex!([2.0, 1.0])).unwrap();
@@ -325,7 +361,11 @@ fn test_insert_at_centroid() {
     ];
 
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new(&vertices).unwrap();
+        DelaunayTriangulation::new_with_topology_guarantee(
+            &vertices,
+            TopologyGuarantee::PLManifold,
+        )
+        .unwrap();
 
     // Insert point at approximate centroid
     dt.insert(vertex!([1.5, 1.0])).unwrap();
@@ -345,7 +385,11 @@ fn test_minimal_simplex_then_insert() {
     ];
 
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new(&vertices).unwrap();
+        DelaunayTriangulation::new_with_topology_guarantee(
+            &vertices,
+            TopologyGuarantee::PLManifold,
+        )
+        .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 4);
     assert_eq!(dt.number_of_cells(), 1);
@@ -372,7 +416,12 @@ fn test_f32_coordinates() {
     ];
 
     let mut dt: DelaunayTriangulation<FastKernel<f32>, (), (), 2> =
-        DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+        DelaunayTriangulation::with_topology_guarantee(
+            FastKernel::new(),
+            &vertices,
+            TopologyGuarantee::PLManifold,
+        )
+        .unwrap();
 
     dt.insert(vertex!([0.3f32, 0.3f32])).unwrap();
 
@@ -395,7 +444,9 @@ macro_rules! test_bootstrap_key_stability {
             #[test]
             fn [<test_bootstrap_key_stability_ $dim d>]() {
                 let mut dt: DelaunayTriangulation<_, (), (), $dim> =
-                    DelaunayTriangulation::empty();
+                    DelaunayTriangulation::empty_with_topology_guarantee(
+                        TopologyGuarantee::PLManifold,
+                    );
 
                 // Collect the test points
                 let points = vec![$(vertex!($point)),+];
@@ -502,7 +553,8 @@ fn test_bootstrap_returns_valid_key_after_tds_rebuild() {
     let v3 = Vertex::new_with_uuid(Point::new([0.0, 1.0]), uuid3, None);
 
     // Bootstrap insertion: vertices inserted in order v1, v2, v3
-    let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 2> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let key1 = dt.insert(v1).unwrap();
     assert_eq!(dt.number_of_vertices(), 1);

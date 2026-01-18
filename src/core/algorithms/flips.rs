@@ -25,24 +25,31 @@
 //! - Edelsbrunner & Shah (1996) - "Incremental Topological Flipping Works for Regular Triangulations"
 //! - Bistellar flips implementation notebook (Warp Drive)
 
+use core::iter::Sum;
 use slotmap::Key;
 use std::collections::VecDeque;
+use std::fmt;
+use std::hash::{Hash, Hasher};
 
 use thiserror::Error;
 
 use crate::core::algorithms::incremental_insertion::wire_cavity_neighbors;
 use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::{
-    CellKeyBuffer, FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
+    CellKeyBuffer, FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
 };
 use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, FacetHandle, facet_key_from_vertices};
 use crate::core::traits::data_type::DataType;
+use crate::core::triangulation::TopologyGuarantee;
 use crate::core::triangulation_data_structure::{CellKey, Tds, VertexKey};
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
+use crate::geometry::predicates::InSphere;
+use crate::geometry::robust_predicates::{config_presets, robust_insphere};
 use crate::geometry::traits::coordinate::CoordinateScalar;
+use num_traits::Zero;
 
 /// Bistellar flip kind descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +58,111 @@ pub struct BistellarFlipKind {
     pub k: usize,
     /// Dimension of the triangulation (D).
     pub d: usize,
+}
+
+fn repair_delaunay_with_flips_k2_k3_attempt<K, U, V, const D: usize>(
+    tds: &mut Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    seed_cells: Option<&[CellKey]>,
+    config: &RepairAttemptConfig,
+) -> Result<DelaunayRepairStats, DelaunayRepairError>
+where
+    K: Kernel<D>,
+    K::Scalar: CoordinateScalar + Sum + Zero,
+    U: DataType,
+    V: DataType,
+{
+    if D < 2 {
+        return Err(FlipError::UnsupportedDimension { dimension: D }.into());
+    }
+    if D == 2 {
+        return repair_delaunay_with_flips_k2_attempt(tds, kernel, seed_cells, config);
+    }
+
+    let max_flips = default_max_flips::<D>(tds.number_of_cells());
+
+    let mut stats = DelaunayRepairStats::default();
+    let mut diagnostics = RepairDiagnostics::default();
+    let mut queues = RepairQueues::new();
+    seed_repair_queues(tds, seed_cells, &mut queues, &mut stats)?;
+
+    let mut prefer_secondary = false;
+
+    while queues.has_work() {
+        if prefer_secondary
+            && (process_ridge_queue_step(
+                tds,
+                kernel,
+                &mut queues,
+                &mut stats,
+                max_flips,
+                config,
+                &mut diagnostics,
+            )? || process_edge_queue_step(
+                tds,
+                kernel,
+                &mut queues,
+                &mut stats,
+                max_flips,
+                config,
+                &mut diagnostics,
+            )? || process_triangle_queue_step(
+                tds,
+                kernel,
+                &mut queues,
+                &mut stats,
+                max_flips,
+                config,
+                &mut diagnostics,
+            )?)
+        {
+            prefer_secondary = false;
+            continue;
+        }
+
+        if process_facet_queue_step(
+            tds,
+            kernel,
+            &mut queues,
+            &mut stats,
+            max_flips,
+            config,
+            &mut diagnostics,
+        )? {
+            prefer_secondary = true;
+            continue;
+        }
+
+        if process_ridge_queue_step(
+            tds,
+            kernel,
+            &mut queues,
+            &mut stats,
+            max_flips,
+            config,
+            &mut diagnostics,
+        )? || process_edge_queue_step(
+            tds,
+            kernel,
+            &mut queues,
+            &mut stats,
+            max_flips,
+            config,
+            &mut diagnostics,
+        )? || process_triangle_queue_step(
+            tds,
+            kernel,
+            &mut queues,
+            &mut stats,
+            max_flips,
+            config,
+            &mut diagnostics,
+        )? {
+            prefer_secondary = false;
+        }
+    }
+
+    Ok(stats)
 }
 
 fn apply_bistellar_flip_with_k<K, U, V, const D: usize>(
@@ -182,14 +294,16 @@ where
 ///
 /// Returns a [`FlipError`] if any referenced cell/vertex is missing or a predicate
 /// evaluation fails.
-pub(crate) fn is_delaunay_violation_k3<K, U, V, const D: usize>(
+fn is_delaunay_violation_k3<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
     context: &FlipContext<D, 3>,
+    config: &RepairAttemptConfig,
+    diagnostics: &mut RepairDiagnostics,
 ) -> Result<bool, FlipError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
+    K::Scalar: CoordinateScalar + Sum + Zero,
     U: DataType,
     V: DataType,
 {
@@ -198,6 +312,8 @@ where
         kernel,
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
+        config,
+        diagnostics,
     )
 }
 
@@ -610,20 +726,82 @@ pub struct DelaunayRepairStats {
     /// Maximum queue length observed.
     pub max_queue_len: usize,
 }
+/// Queue ordering policy for flip repair attempts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepairQueueOrder {
+    /// FIFO (breadth-like) ordering.
+    Fifo,
+    /// LIFO (depth-like) ordering.
+    Lifo,
+}
+
+/// Diagnostics captured when flip-based repair fails to converge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DelaunayRepairDiagnostics {
+    /// Number of queued items checked.
+    pub facets_checked: usize,
+    /// Number of flips performed.
+    pub flips_performed: usize,
+    /// Maximum queue length observed.
+    pub max_queue_len: usize,
+    /// Count of ambiguous predicate evaluations (boundary classifications).
+    pub ambiguous_predicates: usize,
+    /// Sample of ambiguous predicate site hashes (deterministic, truncated).
+    pub ambiguous_predicate_samples: Vec<u64>,
+    /// Count of predicate failures (conversion/robust fallback errors).
+    pub predicate_failures: usize,
+    /// Attempt number (1-based).
+    pub attempt: usize,
+    /// Queue ordering policy used for this attempt.
+    pub queue_order: RepairQueueOrder,
+    /// Whether robust predicates were enabled for ambiguous tests.
+    pub used_robust_predicates: bool,
+}
+
+impl fmt::Display for DelaunayRepairDiagnostics {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "checked {} facets, ambiguous={}, max_queue={}, flips={}, attempt={}, order={:?}, robust={}, predicate_failures={}",
+            self.facets_checked,
+            self.ambiguous_predicates,
+            self.max_queue_len,
+            self.flips_performed,
+            self.attempt,
+            self.queue_order,
+            self.used_robust_predicates,
+            self.predicate_failures
+        )
+    }
+}
 
 /// Errors that can occur during flip-based Delaunay repair.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum DelaunayRepairError {
     /// Repair did not converge within the flip budget.
-    #[error(
-        "Delaunay repair failed to converge after {max_flips} flips (checked {facets_checked} facets)"
-    )]
+    #[error("Delaunay repair failed to converge after {max_flips} flips ({diagnostics})")]
     NonConvergent {
         /// Maximum flips allowed.
         max_flips: usize,
-        /// Number of facets checked.
-        facets_checked: usize,
+        /// Diagnostics captured during the failed attempt.
+        diagnostics: DelaunayRepairDiagnostics,
+    },
+    /// Flip-based repair is not admissible under the current topology guarantee.
+    #[error("Delaunay repair requires {required:?} topology, found {found:?}: {message}")]
+    InvalidTopology {
+        /// Required topology guarantee.
+        required: TopologyGuarantee,
+        /// Actual topology guarantee.
+        found: TopologyGuarantee,
+        /// Additional context for the mismatch.
+        message: &'static str,
+    },
+    /// Heuristic rebuild failed during advanced repair.
+    #[error("Heuristic rebuild failed: {message}")]
+    HeuristicRebuildFailed {
+        /// Additional context for the rebuild failure.
+        message: String,
     },
     /// Underlying flip error.
     #[error(transparent)]
@@ -950,10 +1128,12 @@ fn delaunay_violation_k2_for_facet<K, U, V, const D: usize>(
     facet_vertices: &[VertexKey],
     opposite_a: VertexKey,
     opposite_b: VertexKey,
+    config: &RepairAttemptConfig,
+    diagnostics: &mut RepairDiagnostics,
 ) -> Result<bool, FlipError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
+    K::Scalar: CoordinateScalar + Sum + Zero,
     U: DataType,
     V: DataType,
 {
@@ -999,20 +1179,41 @@ where
             vertex_key: opposite_b,
         })?
         .point();
-
-    let in_a =
-        kernel
-            .in_sphere(&points_a, opposite_point_b)
-            .map_err(|e| FlipError::PredicateFailure {
+    let mut in_a = match kernel.in_sphere(&points_a, opposite_point_b) {
+        Ok(value) => value,
+        Err(e) => {
+            diagnostics.predicate_failures += 1;
+            return Err(FlipError::PredicateFailure {
                 message: format!("in_sphere failed for k=2 cell A: {e}"),
-            })?;
+            });
+        }
+    };
 
-    let in_b =
-        kernel
-            .in_sphere(&points_b, opposite_point_a)
-            .map_err(|e| FlipError::PredicateFailure {
+    let mut in_b = match kernel.in_sphere(&points_b, opposite_point_a) {
+        Ok(value) => value,
+        Err(e) => {
+            diagnostics.predicate_failures += 1;
+            return Err(FlipError::PredicateFailure {
                 message: format!("in_sphere failed for k=2 cell B: {e}"),
-            })?;
+            });
+        }
+    };
+
+    if in_a == 0 {
+        let key = predicate_key_from_vertices(&cell_vertices[0], opposite_b);
+        diagnostics.record_ambiguous(key);
+        if config.use_robust_on_ambiguous {
+            in_a = robust_insphere_sign(&points_a, opposite_point_b, diagnostics);
+        }
+    }
+
+    if in_b == 0 {
+        let key = predicate_key_from_vertices(&cell_vertices[1], opposite_a);
+        diagnostics.record_ambiguous(key);
+        if config.use_robust_on_ambiguous {
+            in_b = robust_insphere_sign(&points_b, opposite_point_a, diagnostics);
+        }
+    }
 
     Ok(in_a > 0 || in_b > 0)
 }
@@ -1022,14 +1223,16 @@ where
 ///
 /// Returns a [`FlipError`] if any referenced cell/vertex is missing or a predicate
 /// evaluation fails.
-pub(crate) fn is_delaunay_violation_k2<K, U, V, const D: usize>(
+fn is_delaunay_violation_k2<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
     context: &FlipContext<D, 2>,
+    config: &RepairAttemptConfig,
+    diagnostics: &mut RepairDiagnostics,
 ) -> Result<bool, FlipError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
+    K::Scalar: CoordinateScalar + Sum + Zero,
     U: DataType,
     V: DataType,
 {
@@ -1049,6 +1252,8 @@ where
         &context.removed_face_vertices,
         opposite_a,
         opposite_b,
+        config,
+        diagnostics,
     )
 }
 
@@ -1268,10 +1473,12 @@ fn delaunay_violation_k3_for_ridge<K, U, V, const D: usize>(
     kernel: &K,
     ridge_vertices: &[VertexKey],
     triangle_vertices: &[VertexKey],
+    config: &RepairAttemptConfig,
+    diagnostics: &mut RepairDiagnostics,
 ) -> Result<bool, FlipError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
+    K::Scalar: CoordinateScalar + Sum + Zero,
     U: DataType,
     V: DataType,
 {
@@ -1311,12 +1518,22 @@ where
             })?
             .point();
 
-        let in_sphere =
-            kernel
-                .in_sphere(&points, missing_point)
-                .map_err(|e| FlipError::PredicateFailure {
+        let mut in_sphere = match kernel.in_sphere(&points, missing_point) {
+            Ok(value) => value,
+            Err(e) => {
+                diagnostics.predicate_failures += 1;
+                return Err(FlipError::PredicateFailure {
                     message: format!("in_sphere failed for k=3 cell: {e}"),
-                })?;
+                });
+            }
+        };
+        if in_sphere == 0 {
+            let key = predicate_key_from_vertices(&cell_vertices, missing);
+            diagnostics.record_ambiguous(key);
+            if config.use_robust_on_ambiguous {
+                in_sphere = robust_insphere_sign(&points, missing_point, diagnostics);
+            }
+        }
         if in_sphere > 0 {
             return Ok(true);
         }
@@ -1423,14 +1640,15 @@ where
 ///
 /// Returns a [`DelaunayRepairError`] if the repair fails to converge or an underlying
 /// flip operation encounters an unrecoverable error.
-pub(crate) fn repair_delaunay_with_flips_k2<K, U, V, const D: usize>(
+fn repair_delaunay_with_flips_k2_attempt<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
     seed_cells: Option<&[CellKey]>,
+    config: &RepairAttemptConfig,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
+    K::Scalar: CoordinateScalar + Sum + Zero,
     U: DataType,
     V: DataType,
 {
@@ -1441,6 +1659,7 @@ where
     let max_flips = default_max_flips::<D>(tds.number_of_cells());
 
     let mut stats = DelaunayRepairStats::default();
+    let mut diagnostics = RepairDiagnostics::default();
     let mut queue: VecDeque<(FacetHandle, u64)> = VecDeque::new();
     let mut queued: FastHashSet<u64> = FastHashSet::default();
 
@@ -1455,7 +1674,7 @@ where
         }
     }
 
-    while let Some((facet, key)) = queue.pop_front() {
+    while let Some((facet, key)) = pop_queue(&mut queue, config.queue_order) {
         queued.remove(&key);
         stats.facets_checked += 1;
 
@@ -1473,13 +1692,14 @@ where
             Err(e) => return Err(e.into()),
         };
 
-        let violates = match is_delaunay_violation_k2(tds, kernel, &context) {
-            Ok(violates) => violates,
-            Err(FlipError::PredicateFailure { .. }) => {
-                continue;
-            }
-            Err(e) => return Err(e.into()),
-        };
+        let violates =
+            match is_delaunay_violation_k2(tds, kernel, &context, config, &mut diagnostics) {
+                Ok(violates) => violates,
+                Err(FlipError::PredicateFailure { .. }) => {
+                    continue;
+                }
+                Err(e) => return Err(e.into()),
+            };
 
         if !violates {
             continue;
@@ -1500,10 +1720,12 @@ where
         stats.flips_performed += 1;
 
         if stats.flips_performed > max_flips {
-            return Err(DelaunayRepairError::NonConvergent {
+            return Err(non_convergent_error(
                 max_flips,
-                facets_checked: stats.facets_checked,
-            });
+                &stats,
+                &diagnostics,
+                config,
+            ));
         }
 
         for &cell_key in &info.new_cells {
@@ -1525,57 +1747,149 @@ pub(crate) fn repair_delaunay_with_flips_k2_k3<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
     seed_cells: Option<&[CellKey]>,
+    topology: TopologyGuarantee,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
+    K::Scalar: CoordinateScalar + Sum + Zero,
     U: DataType,
     V: DataType,
 {
     if D < 2 {
         return Err(FlipError::UnsupportedDimension { dimension: D }.into());
     }
-    if D == 2 {
-        return repair_delaunay_with_flips_k2(tds, kernel, seed_cells);
+    if topology != TopologyGuarantee::PLManifold {
+        return Err(DelaunayRepairError::InvalidTopology {
+            required: TopologyGuarantee::PLManifold,
+            found: topology,
+            message: "Bistellar flips require a PL-manifold (vertex-link validation)",
+        });
     }
+    let attempt1 = RepairAttemptConfig {
+        attempt: 1,
+        queue_order: RepairQueueOrder::Fifo,
+        use_robust_on_ambiguous: false,
+    };
 
-    let max_flips = default_max_flips::<D>(tds.number_of_cells());
+    let attempt1_result = if D == 2 {
+        repair_delaunay_with_flips_k2_attempt(tds, kernel, seed_cells, &attempt1)
+    } else {
+        repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, seed_cells, &attempt1)
+    };
 
-    let mut stats = DelaunayRepairStats::default();
-    let mut queues = RepairQueues::new();
-    seed_repair_queues(tds, seed_cells, &mut queues, &mut stats)?;
+    match attempt1_result {
+        Ok(stats) => Ok(stats),
+        Err(DelaunayRepairError::NonConvergent { .. }) => {
+            let attempt2 = RepairAttemptConfig {
+                attempt: 2,
+                queue_order: RepairQueueOrder::Lifo,
+                use_robust_on_ambiguous: true,
+            };
 
-    let mut prefer_secondary = false;
+            let retry_seed_cells = None;
 
-    while queues.has_work() {
-        if prefer_secondary
-            && (process_ridge_queue_step(tds, kernel, &mut queues, &mut stats, max_flips)?
-                || process_edge_queue_step(tds, kernel, &mut queues, &mut stats, max_flips)?
-                || process_triangle_queue_step(tds, kernel, &mut queues, &mut stats, max_flips)?)
-        {
-            prefer_secondary = false;
-            continue;
+            if D == 2 {
+                repair_delaunay_with_flips_k2_attempt(tds, kernel, retry_seed_cells, &attempt2)
+            } else {
+                repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, retry_seed_cells, &attempt2)
+            }
         }
-
-        if process_facet_queue_step(tds, kernel, &mut queues, &mut stats, max_flips)? {
-            prefer_secondary = true;
-            continue;
-        }
-
-        if process_ridge_queue_step(tds, kernel, &mut queues, &mut stats, max_flips)?
-            || process_edge_queue_step(tds, kernel, &mut queues, &mut stats, max_flips)?
-            || process_triangle_queue_step(tds, kernel, &mut queues, &mut stats, max_flips)?
-        {
-            prefer_secondary = false;
-        }
+        Err(err) => Err(err),
     }
-
-    Ok(stats)
 }
 
 // =============================================================================
 // Internal helpers
 // =============================================================================
+const AMBIGUOUS_SAMPLE_LIMIT: usize = 16;
+
+#[derive(Debug, Default)]
+struct RepairDiagnostics {
+    ambiguous_predicates: usize,
+    ambiguous_samples: Vec<u64>,
+    predicate_failures: usize,
+}
+
+impl RepairDiagnostics {
+    fn record_ambiguous(&mut self, key: u64) {
+        self.ambiguous_predicates += 1;
+        if self.ambiguous_samples.len() >= AMBIGUOUS_SAMPLE_LIMIT {
+            return;
+        }
+        if !self.ambiguous_samples.contains(&key) {
+            self.ambiguous_samples.push(key);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RepairAttemptConfig {
+    attempt: usize,
+    queue_order: RepairQueueOrder,
+    use_robust_on_ambiguous: bool,
+}
+
+fn non_convergent_error(
+    max_flips: usize,
+    stats: &DelaunayRepairStats,
+    diagnostics: &RepairDiagnostics,
+    config: &RepairAttemptConfig,
+) -> DelaunayRepairError {
+    DelaunayRepairError::NonConvergent {
+        max_flips,
+        diagnostics: DelaunayRepairDiagnostics {
+            facets_checked: stats.facets_checked,
+            flips_performed: stats.flips_performed,
+            max_queue_len: stats.max_queue_len,
+            ambiguous_predicates: diagnostics.ambiguous_predicates,
+            ambiguous_predicate_samples: diagnostics.ambiguous_samples.clone(),
+            predicate_failures: diagnostics.predicate_failures,
+            attempt: config.attempt,
+            queue_order: config.queue_order,
+            used_robust_predicates: config.use_robust_on_ambiguous,
+        },
+    }
+}
+
+fn pop_queue<T>(queue: &mut VecDeque<T>, order: RepairQueueOrder) -> Option<T> {
+    match order {
+        RepairQueueOrder::Fifo => queue.pop_front(),
+        RepairQueueOrder::Lifo => queue.pop_back(),
+    }
+}
+
+fn predicate_key_from_vertices(simplex_vertices: &[VertexKey], test_vertex: VertexKey) -> u64 {
+    let mut sorted: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+        simplex_vertices.iter().copied().collect();
+    sorted.sort_unstable();
+
+    let mut hasher = FastHasher::default();
+    for vkey in &sorted {
+        vkey.hash(&mut hasher);
+    }
+    test_vertex.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn robust_insphere_sign<T, const D: usize>(
+    simplex_points: &[Point<T, D>],
+    test_point: &Point<T, D>,
+    diagnostics: &mut RepairDiagnostics,
+) -> i32
+where
+    T: CoordinateScalar + Sum + Zero,
+{
+    let config = config_presets::high_precision::<T>();
+    match robust_insphere(simplex_points, test_point, &config) {
+        Ok(InSphere::INSIDE) => 1,
+        Ok(InSphere::OUTSIDE) => -1,
+        Ok(InSphere::BOUNDARY) => 0,
+        Err(_) => {
+            diagnostics.predicate_failures += 1;
+            0
+        }
+    }
+}
 
 fn default_max_flips<const D: usize>(cell_count: usize) -> usize {
     let base = cell_count
@@ -1757,14 +2071,16 @@ fn process_ridge_queue_step<K, U, V, const D: usize>(
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
     max_flips: usize,
+    config: &RepairAttemptConfig,
+    diagnostics: &mut RepairDiagnostics,
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
+    K::Scalar: CoordinateScalar + Sum + Zero,
     U: DataType,
     V: DataType,
 {
-    let Some((ridge, key)) = queues.ridge_queue.pop_front() else {
+    let Some((ridge, key)) = pop_queue(&mut queues.ridge_queue, config.queue_order) else {
         return Ok(false);
     };
     queues.ridge_queued.remove(&key);
@@ -1783,7 +2099,7 @@ where
         Err(e) => return Err(e.into()),
     };
 
-    let violates = match is_delaunay_violation_k3(tds, kernel, &context) {
+    let violates = match is_delaunay_violation_k3(tds, kernel, &context, config, diagnostics) {
         Ok(violates) => violates,
         Err(FlipError::PredicateFailure { .. }) => {
             return Ok(true);
@@ -1810,10 +2126,7 @@ where
     stats.flips_performed += 1;
 
     if stats.flips_performed > max_flips {
-        return Err(DelaunayRepairError::NonConvergent {
-            max_flips,
-            facets_checked: stats.facets_checked,
-        });
+        return Err(non_convergent_error(max_flips, stats, diagnostics, config));
     }
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
@@ -1827,14 +2140,16 @@ fn process_edge_queue_step<K, U, V, const D: usize>(
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
     max_flips: usize,
+    config: &RepairAttemptConfig,
+    diagnostics: &mut RepairDiagnostics,
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
+    K::Scalar: CoordinateScalar + Sum + Zero,
     U: DataType,
     V: DataType,
 {
-    let Some((edge, key)) = queues.edge_queue.pop_front() else {
+    let Some((edge, key)) = pop_queue(&mut queues.edge_queue, config.queue_order) else {
         return Ok(false);
     };
     queues.edge_queued.remove(&key);
@@ -1865,6 +2180,8 @@ where
         &context.inserted_face_vertices,
         opposite_a,
         opposite_b,
+        config,
+        diagnostics,
     ) {
         Ok(violates) => violates,
         Err(FlipError::PredicateFailure { .. }) => {
@@ -1893,10 +2210,7 @@ where
     stats.flips_performed += 1;
 
     if stats.flips_performed > max_flips {
-        return Err(DelaunayRepairError::NonConvergent {
-            max_flips,
-            facets_checked: stats.facets_checked,
-        });
+        return Err(non_convergent_error(max_flips, stats, diagnostics, config));
     }
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
@@ -1910,14 +2224,16 @@ fn process_triangle_queue_step<K, U, V, const D: usize>(
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
     max_flips: usize,
+    config: &RepairAttemptConfig,
+    diagnostics: &mut RepairDiagnostics,
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
+    K::Scalar: CoordinateScalar + Sum + Zero,
     U: DataType,
     V: DataType,
 {
-    let Some((triangle, key)) = queues.triangle_queue.pop_front() else {
+    let Some((triangle, key)) = pop_queue(&mut queues.triangle_queue, config.queue_order) else {
         return Ok(false);
     };
     queues.triangle_queued.remove(&key);
@@ -1941,6 +2257,8 @@ where
         kernel,
         &context.inserted_face_vertices,
         &context.removed_face_vertices,
+        config,
+        diagnostics,
     ) {
         Ok(violates) => violates,
         Err(FlipError::PredicateFailure { .. }) => {
@@ -1969,10 +2287,7 @@ where
     stats.flips_performed += 1;
 
     if stats.flips_performed > max_flips {
-        return Err(DelaunayRepairError::NonConvergent {
-            max_flips,
-            facets_checked: stats.facets_checked,
-        });
+        return Err(non_convergent_error(max_flips, stats, diagnostics, config));
     }
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
@@ -1986,14 +2301,16 @@ fn process_facet_queue_step<K, U, V, const D: usize>(
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
     max_flips: usize,
+    config: &RepairAttemptConfig,
+    diagnostics: &mut RepairDiagnostics,
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
+    K::Scalar: CoordinateScalar + Sum + Zero,
     U: DataType,
     V: DataType,
 {
-    let Some((facet, key)) = queues.facet_queue.pop_front() else {
+    let Some((facet, key)) = pop_queue(&mut queues.facet_queue, config.queue_order) else {
         return Ok(false);
     };
     queues.facet_queued.remove(&key);
@@ -2013,7 +2330,7 @@ where
         Err(e) => return Err(e.into()),
     };
 
-    let violates = match is_delaunay_violation_k2(tds, kernel, &context) {
+    let violates = match is_delaunay_violation_k2(tds, kernel, &context, config, diagnostics) {
         Ok(violates) => violates,
         Err(FlipError::PredicateFailure { .. }) => {
             return Ok(true);
@@ -2040,10 +2357,7 @@ where
     stats.flips_performed += 1;
 
     if stats.flips_performed > max_flips {
-        return Err(DelaunayRepairError::NonConvergent {
-            max_flips,
-            facets_checked: stats.facets_checked,
-        });
+        return Err(non_convergent_error(max_flips, stats, diagnostics, config));
     }
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
@@ -2443,7 +2757,7 @@ where
     U: DataType,
     V: DataType,
 {
-    if D != 3 {
+    if D < 3 {
         return Ok(());
     }
 
@@ -2487,7 +2801,7 @@ fn enqueue_ridge<T, U, V, const D: usize>(
     U: DataType,
     V: DataType,
 {
-    if D != 3 {
+    if D < 3 {
         return;
     }
 
@@ -3069,9 +3383,13 @@ mod tests {
         let info = apply_bistellar_flip_k2(&mut tds, &kernel, &context).unwrap();
 
         let seed_cells: Vec<CellKey> = info.new_cells.iter().copied().collect();
-        let stats =
-            repair_delaunay_with_flips_k2_k3(&mut tds, &kernel, Some(seed_cells.as_slice()))
-                .unwrap();
+        let stats = repair_delaunay_with_flips_k2_k3(
+            &mut tds,
+            &kernel,
+            Some(seed_cells.as_slice()),
+            TopologyGuarantee::PLManifold,
+        )
+        .unwrap();
         assert!(stats.facets_checked > 0);
         assert!(tds.is_valid().is_ok());
     }
@@ -3119,9 +3437,13 @@ mod tests {
         let info = apply_bistellar_flip_k3(&mut tds, &kernel, &context).unwrap();
 
         let seed_cells: Vec<CellKey> = info.new_cells.iter().copied().collect();
-        let stats =
-            repair_delaunay_with_flips_k2_k3(&mut tds, &kernel, Some(seed_cells.as_slice()))
-                .unwrap();
+        let stats = repair_delaunay_with_flips_k2_k3(
+            &mut tds,
+            &kernel,
+            Some(seed_cells.as_slice()),
+            TopologyGuarantee::PLManifold,
+        )
+        .unwrap();
         assert!(stats.facets_checked > 0);
         assert!(tds.is_valid().is_ok());
     }
@@ -3140,7 +3462,13 @@ mod tests {
         let kernel = FastKernel::<f64>::new();
 
         let seed_cell = tds.cell_keys().next().unwrap();
-        let stats = repair_delaunay_with_flips_k2(&mut tds, &kernel, Some(&[seed_cell])).unwrap();
+        let stats = repair_delaunay_with_flips_k2_k3(
+            &mut tds,
+            &kernel,
+            Some(&[seed_cell]),
+            TopologyGuarantee::PLManifold,
+        )
+        .unwrap();
         assert!(stats.facets_checked > 0);
         assert!(tds.is_valid().is_ok());
     }

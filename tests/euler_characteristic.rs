@@ -47,7 +47,11 @@ fn test_2d_single_triangle() {
         vertex!([0.5, 1.0]),
     ];
 
-    let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    let dt = DelaunayTriangulation::new_with_topology_guarantee(
+        &vertices,
+        TopologyGuarantee::PLManifold,
+    )
+    .unwrap();
     let result = validation::validate_triangulation_euler(dt.tds()).unwrap();
 
     assert_eq!(result.counts.count(0), 3, "Should have 3 vertices");
@@ -71,7 +75,11 @@ fn test_2d_multiple_triangles() {
         vertex!([0.5, 0.3]), // Interior point
     ];
 
-    let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    let dt = DelaunayTriangulation::new_with_topology_guarantee(
+        &vertices,
+        TopologyGuarantee::PLManifold,
+    )
+    .unwrap();
     let result = validation::validate_triangulation_euler(dt.tds()).unwrap();
 
     assert_eq!(result.counts.count(0), 4, "Should have 4 vertices");
@@ -96,7 +104,11 @@ fn test_3d_single_tetrahedron() {
         vertex!([0.0, 0.0, 1.0]),
     ];
 
-    let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    let dt = DelaunayTriangulation::new_with_topology_guarantee(
+        &vertices,
+        TopologyGuarantee::PLManifold,
+    )
+    .unwrap();
     let result = validation::validate_triangulation_euler(dt.tds()).unwrap();
 
     assert_eq!(result.counts.count(0), 4, "Should have 4 vertices");
@@ -122,7 +134,11 @@ fn test_3d_with_interior_vertex() {
         vertex!([0.25, 0.25, 0.25]), // Interior point
     ];
 
-    let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    let dt = DelaunayTriangulation::new_with_topology_guarantee(
+        &vertices,
+        TopologyGuarantee::PLManifold,
+    )
+    .unwrap();
     let result = validation::validate_triangulation_euler(dt.tds()).unwrap();
 
     assert_eq!(result.counts.count(0), 5, "Should have 5 vertices");
@@ -149,7 +165,11 @@ fn test_4d_single_simplex() {
         vertex!([0.0, 0.0, 0.0, 1.0]),
     ];
 
-    let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    let dt = DelaunayTriangulation::new_with_topology_guarantee(
+        &vertices,
+        TopologyGuarantee::PLManifold,
+    )
+    .unwrap();
     let result = validation::validate_triangulation_euler(dt.tds()).unwrap();
 
     assert_eq!(result.counts.count(0), 5, "Should have 5 vertices");
@@ -177,7 +197,11 @@ fn test_5d_single_simplex() {
         vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
     ];
 
-    let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    let dt = DelaunayTriangulation::new_with_topology_guarantee(
+        &vertices,
+        TopologyGuarantee::PLManifold,
+    )
+    .unwrap();
     let result = validation::validate_triangulation_euler(dt.tds()).unwrap();
 
     assert_eq!(result.counts.count(0), 6, "Should have 6 vertices");
@@ -207,7 +231,8 @@ macro_rules! test_complex_with_interior {
         fn $test_name() {
             use delaunay::geometry::kernel::FastKernel;
             type DT = DelaunayTriangulation<FastKernel<f64>, (), (), $dim>;
-            let dt = DT::new($vertices).unwrap();
+            let dt =
+                DT::new_with_topology_guarantee($vertices, TopologyGuarantee::PLManifold).unwrap();
 
             // Full complex should have χ = 1 (D-ball)
             let full_result = validation::validate_triangulation_euler(dt.tds()).unwrap();

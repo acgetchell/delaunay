@@ -20,7 +20,7 @@ use crate::core::delaunay_triangulation::{
 };
 use crate::core::facet::FacetView;
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation::TriangulationConstructionError;
+use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionError};
 use crate::core::vertex::{Vertex, VertexBuilder};
 use crate::geometry::kernel::{FastKernel, RobustKernel};
 use crate::geometry::matrix::{
@@ -2081,6 +2081,7 @@ fn random_triangulation_try_build<K, T, U, V, const D: usize>(
     kernel: K,
     vertices: &[Vertex<T, U, D>],
     min_vertices: usize,
+    topology_guarantee: TopologyGuarantee,
 ) -> Option<DelaunayTriangulation<K, U, V, D>>
 where
     K: crate::geometry::kernel::Kernel<D, Scalar = T>,
@@ -2088,7 +2089,8 @@ where
     U: DataType,
     V: DataType,
 {
-    let dt = DelaunayTriangulation::with_kernel(kernel, vertices).ok()?;
+    let dt = DelaunayTriangulation::with_topology_guarantee(kernel, vertices, topology_guarantee)
+        .ok()?;
     random_triangulation_is_acceptable(&dt, min_vertices).then_some(dt)
 }
 
@@ -2124,6 +2126,7 @@ where
 
 fn random_triangulation_to_fast_kernel<T, U, V, const D: usize>(
     dt: &DelaunayTriangulation<RobustKernel<T>, U, V, D>,
+    topology_guarantee: TopologyGuarantee,
 ) -> DelaunayTriangulation<FastKernel<T>, U, V, D>
 where
     T: CoordinateScalar + AddAssign + SubAssign + Sum + num_traits::cast::NumCast + Zero,
@@ -2131,29 +2134,43 @@ where
     V: DataType,
 {
     let tds = dt.tds().clone();
-    DelaunayTriangulation::from_tds(tds, FastKernel::new())
+    DelaunayTriangulation::from_tds_with_topology_guarantee(
+        tds,
+        FastKernel::new(),
+        topology_guarantee,
+    )
 }
 
 fn random_triangulation_try_with_vertices<T, U, V, const D: usize>(
     vertices: &[Vertex<T, U, D>],
     min_vertices: usize,
     shuffle_seed: Option<u64>,
+    topology_guarantee: TopologyGuarantee,
 ) -> Option<DelaunayTriangulation<FastKernel<T>, U, V, D>>
 where
     T: CoordinateScalar + AddAssign + SubAssign + Sum + num_traits::cast::NumCast + Zero,
     U: DataType,
     V: DataType,
 {
-    if let Some(dt) = random_triangulation_try_build(FastKernel::new(), vertices, min_vertices) {
+    if let Some(dt) = random_triangulation_try_build(
+        FastKernel::new(),
+        vertices,
+        min_vertices,
+        topology_guarantee,
+    ) {
         return Some(dt);
     }
 
     let robust_config = config_presets::degenerate_robust::<T>();
     let robust_kernel = RobustKernel::with_config(robust_config);
 
-    if let Some(dt) = random_triangulation_try_build(robust_kernel.clone(), vertices, min_vertices)
-    {
-        return Some(random_triangulation_to_fast_kernel(&dt));
+    if let Some(dt) = random_triangulation_try_build(
+        robust_kernel.clone(),
+        vertices,
+        min_vertices,
+        topology_guarantee,
+    ) {
+        return Some(random_triangulation_to_fast_kernel(&dt, topology_guarantee));
     }
 
     for attempt in 0..RANDOM_TRIANGULATION_MAX_SHUFFLE_ATTEMPTS {
@@ -2167,10 +2184,13 @@ where
             shuffled.shuffle(&mut rng);
         }
 
-        if let Some(dt) =
-            random_triangulation_try_build(robust_kernel.clone(), &shuffled, min_vertices)
-        {
-            return Some(random_triangulation_to_fast_kernel(&dt));
+        if let Some(dt) = random_triangulation_try_build(
+            robust_kernel.clone(),
+            &shuffled,
+            min_vertices,
+            topology_guarantee,
+        ) {
+            return Some(random_triangulation_to_fast_kernel(&dt, topology_guarantee));
         }
     }
 
@@ -2319,10 +2339,60 @@ where
     U: DataType,
     V: DataType,
 {
+    generate_random_triangulation_with_topology_guarantee(
+        n_points,
+        bounds,
+        vertex_data,
+        seed,
+        TopologyGuarantee::DEFAULT,
+    )
+}
+
+/// This utility function combines random point generation and triangulation creation.
+///
+/// This variant allows selecting the [`TopologyGuarantee`] used during construction.
+///
+/// # Errors
+///
+/// Returns `Err(DelaunayTriangulationConstructionError)` if:
+/// - Random point generation fails (invalid bounds or RNG issues), mapped to
+///   `TriangulationConstructionError::GeometricDegeneracy`.
+/// - Triangulation construction fails due to geometric degeneracy, insertion errors, or the
+///   requested topology guarantee not being satisfiable.
+/// - Validation fails after the robust fallback attempts.
+///
+/// # Panics
+///
+/// Panics if internal point-set bookkeeping is inconsistent (this indicates a bug). In
+/// particular, it will panic if the initial point set is unexpectedly consumed.
+#[allow(clippy::too_many_lines)]
+pub fn generate_random_triangulation_with_topology_guarantee<T, U, V, const D: usize>(
+    n_points: usize,
+    bounds: (T, T),
+    vertex_data: Option<U>,
+    seed: Option<u64>,
+    topology_guarantee: TopologyGuarantee,
+) -> Result<DelaunayTriangulation<FastKernel<T>, U, V, D>, DelaunayTriangulationConstructionError>
+where
+    T: CoordinateScalar
+        + SampleUniform
+        + std::ops::AddAssign<T>
+        + std::ops::SubAssign<T>
+        + std::iter::Sum
+        + num_traits::cast::NumCast
+        + num_traits::Zero,
+    U: DataType,
+    V: DataType,
+{
     // Handle empty triangulation case (0 points)
     if n_points == 0 {
         let kernel = FastKernel::new();
-        return Ok(DelaunayTriangulation::with_empty_kernel(kernel));
+        return Ok(
+            DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
+                kernel,
+                topology_guarantee,
+            ),
+        );
     }
 
     // Generate random points (seeded or unseeded)
@@ -2374,9 +2444,12 @@ where
         };
 
         let vertices = random_triangulation_build_vertices(points, vertex_data);
-        if let Some(dt) =
-            random_triangulation_try_with_vertices(&vertices, min_vertices, point_seed)
-        {
+        if let Some(dt) = random_triangulation_try_with_vertices(
+            &vertices,
+            min_vertices,
+            point_seed,
+            topology_guarantee,
+        ) {
             return Ok(dt);
         }
     }

@@ -218,7 +218,11 @@ macro_rules! test_quality_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                        FastKernel::default(),
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let tds = dt.tds();
                         let tri = dt.as_triangulation();
                         for cell_key in tds.cell_keys() {
@@ -301,7 +305,11 @@ macro_rules! test_quality_properties {
                     ).prop_map(|v| Vertex::from_points(&v)),
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                        FastKernel::default(),
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         // Translate all vertices
                         let translated_vertices: Vec<_> = vertices
                             .iter()
@@ -317,7 +325,11 @@ macro_rules! test_quality_properties {
 
                         let translated_vertices = Vertex::from_points(&translated_vertices);
 
-                        if let Ok(dt_translated) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &translated_vertices) {
+                        if let Ok(dt_translated) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                            FastKernel::default(),
+                            &translated_vertices,
+                            TopologyGuarantee::PLManifold,
+                        ) {
                             // Build mapping from original UUIDs to translated UUIDs
                             let uuid_map: HashMap<_, _> = vertices.iter()
                                 .zip(translated_vertices.iter())
@@ -369,7 +381,11 @@ macro_rules! test_quality_properties {
                     ).prop_map(|v| Vertex::from_points(&v)),
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                        FastKernel::default(),
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         // Translate all vertices
                         let translated_vertices: Vec<_> = vertices
                             .iter()
@@ -385,7 +401,11 @@ macro_rules! test_quality_properties {
 
                         let translated_vertices = Vertex::from_points(&translated_vertices);
 
-                        if let Ok(dt_translated) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &translated_vertices) {
+                        if let Ok(dt_translated) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                            FastKernel::default(),
+                            &translated_vertices,
+                            TopologyGuarantee::PLManifold,
+                        ) {
                             // Build UUID mapping
                             let uuid_map: HashMap<_, _> = vertices.iter()
                                 .zip(translated_vertices.iter())
@@ -453,7 +473,11 @@ macro_rules! test_quality_properties {
 
                         let scaled_vertices = Vertex::from_points(&scaled_vertices);
 
-                        if let Ok(dt_scaled) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &scaled_vertices) {
+                        if let Ok(dt_scaled) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                            FastKernel::default(),
+                            &scaled_vertices,
+                            TopologyGuarantee::PLManifold,
+                        ) {
                             // Build UUID mapping
                             let uuid_map: HashMap<_, _> = vertices.iter()
                                 .zip(scaled_vertices.iter())
@@ -622,9 +646,11 @@ macro_rules! test_facet_topology_invariant {
                         $min_vertices..$max_vertices
                     )
                 ) {
-
                     // Build triangulation
-                    if let Ok(dt) = DelaunayTriangulation::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let tri = dt.as_triangulation();
 
                         // Get all cell keys
@@ -649,9 +675,11 @@ macro_rules! test_facet_topology_invariant {
                         $min_vertices..$max_vertices
                     )
                 ) {
-
                     // Build triangulation
-                    if let Ok(mut dt) = DelaunayTriangulation::new(&vertices) {
+                    if let Ok(mut dt) = DelaunayTriangulation::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let tri = dt.as_triangulation_mut();
 
                         // Get all cell keys
@@ -682,9 +710,11 @@ macro_rules! test_facet_topology_invariant {
                         $min_vertices..$max_vertices
                     )
                 ) {
-
                     // Build triangulation
-                    if let Ok(dt) = DelaunayTriangulation::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let tri = dt.as_triangulation();
 
                         // Empty cell list should always return None
