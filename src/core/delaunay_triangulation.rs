@@ -363,6 +363,11 @@ where
     /// Passing [`TopologyGuarantee::PLManifold`] enforces PL-manifold validation
     /// during construction and validates the final topology before returning.
     ///
+    /// # Debug/Test Behavior
+    /// In debug/test builds (for `D >= 3` with more than `D + 1` vertices), the constructor may
+    /// retry construction with a handful of shuffled insertion orders if the Delaunay property
+    /// check fails. Release builds skip these shuffled reconstruction attempts.
+    ///
     /// # Errors
     /// Returns error if construction fails or if the requested topology guarantee
     /// cannot be satisfied.
@@ -2168,7 +2173,6 @@ where
 ///
 /// # Note on Locate Hint Persistence
 /// The internal `insertion_state.last_inserted_cell` "locate hint" is intentionally **not** serialized.
-/// The internal `last_inserted_cell` "locate hint" is intentionally **not** serialized.
 /// Deserialization reconstructs a fresh triangulation via [`from_tds()`](Self::from_tds),
 /// which resets the hint to `None`. This only affects performance for the first few
 /// insertions after loading.

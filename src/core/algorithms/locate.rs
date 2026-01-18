@@ -276,13 +276,10 @@ where
     let mut visited = FastHashSet::default();
 
     // Walk toward the query point
-    for step in 0..MAX_STEPS {
+    for _ in 0..MAX_STEPS {
         // Detect cycles
         if !visited.insert(current_cell) {
-            if let Ok(result) = locate_by_scan(tds, kernel, point) {
-                return Ok(result);
-            }
-            return Err(LocateError::CycleDetected { steps: step });
+            return locate_by_scan(tds, kernel, point);
         }
 
         // Get current cell
@@ -319,11 +316,7 @@ where
     }
 
     // Reached step limit - attempt a brute-force scan before reporting a cycle.
-    if let Ok(result) = locate_by_scan(tds, kernel, point) {
-        return Ok(result);
-    }
-
-    Err(LocateError::CycleDetected { steps: MAX_STEPS })
+    locate_by_scan(tds, kernel, point)
 }
 
 fn locate_by_scan<K, U, V, const D: usize>(

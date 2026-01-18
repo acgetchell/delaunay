@@ -29,7 +29,7 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 ///
 /// # Example
 ///
-/// ```rust,no_run
+/// ```rust
 /// use delaunay::prelude::*;
 /// use delaunay::prelude::edit::*;
 ///

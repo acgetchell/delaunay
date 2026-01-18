@@ -63,7 +63,7 @@ As of version 0.4.3, the delaunay library includes comprehensive robustness impr
 4. **Enhanced Error Handling** (`src/core/algorithms/incremental_insertion.rs`, `src/core/triangulation.rs`)
    - Structured `InsertionError` enum with geometric degeneracy classification
    - `NonManifoldTopology` variant for facet sharing violations (retryable via perturbation)
-   - Automatic retry logic with a single local-scale perturbation attempt
+   - Automatic retry logic with a single local-scale perturbation attempt (one retry, two total attempts)
    - Direct error propagation avoiding unnecessary unwrapping
    - Transactional insertion with automatic rollback on failure
    - Detailed error diagnostics with facet hash and cell count information
@@ -204,7 +204,8 @@ match outcome {
 
 ### Single Local-Scale Perturbation
 
-The retry mechanism uses **at most one** perturbation attempt:
+The retry mechanism uses **at most one** perturbation attempt (configured by
+`max_perturbation_attempts = 1` in the public insertion APIs):
 
 1. **Attempt 0**: Original coordinates (no perturbation)
 2. **Attempt 1**: Deterministic, local-scale offset per coordinate
@@ -215,12 +216,14 @@ Each attempt:
 - Clones the TDS for rollback (transactional semantics)
 - Applies the local-scale perturbation (on the retry attempt only)
 - Attempts insertion
-- On failure: restores TDS from snapshot and (if retryable) returns a skip after the single retry
+- On failure: restores TDS from snapshot and (if retryable) returns a skip after the single retry attempt
 - On success: returns result with statistics
 
 ### Flip-Based Delaunay Repair Retry Policy
 
-Flip-based repair runs only under `TopologyGuarantee::PLManifold` and is **bounded to two attempts**:
+Flip-based repair runs only under `TopologyGuarantee::PLManifold` and is **bounded to two attempts**.
+Automatic repair is gated by `DelaunayRepairPolicy::decide` in `core::operations` and is skipped
+when the policy is disabled or the topology guarantee is not admissible.
 
 1. **Attempt 1**: FIFO queue ordering with fast predicates
 2. **Attempt 2** (if non-convergent): LIFO ordering with robust predicates **only** for ambiguous
@@ -245,8 +248,8 @@ When used, the returned `DelaunayRepairOutcome` includes the exact seeds so you 
 ```rust
 use delaunay::prelude::*;
 
-let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
-dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+let mut dt: DelaunayTriangulation<_, (), (), 3> =
+    DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
 let outcome = dt.repair_delaunay_with_flips_advanced(
     DelaunayRepairHeuristicConfig {
@@ -286,7 +289,7 @@ The `is_retryable()` method classifies errors:
 2. **Automatic Recovery**: Retry logic resolves most geometric degeneracies
 3. **Transactional Semantics**: TDS always remains in valid state
 4. **Diagnostic Information**: Detailed error context for debugging
-5. **Bounded Resolution**: A single local-scale retry resolves most degeneracies without large perturbations
+5. **Bounded Resolution**: One local-scale retry (two total attempts) resolves most degeneracies without large perturbations
 
 ## Robust Predicates
 

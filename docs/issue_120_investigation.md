@@ -15,9 +15,9 @@ duplicate-coordinate suites remain ignored pending stronger duplicate handling.
 ## Update (2026-01-17)
 
 - Implemented k=2 facet flips and k=3 ridge flips in `src/core/algorithms/flips.rs`, with queue-based repair.
-- Added inverse edge/triangle queues for 4D/5D repair to avoid reliance on forward-only flips.
-- Added `DelaunayRepairPolicy` and automatic repair after insertion (default: every insertion).
-- Added a manual repair entrypoint: `DelaunayTriangulation::repair_delaunay_with_flips`.
+- Introduced inverse edge/triangle queues for 4D/5D repair to avoid reliance on forward-only flips.
+- Introduced `DelaunayRepairPolicy` and automatic repair after insertion (default: every insertion).
+- Exposed a manual repair entrypoint: `DelaunayTriangulation::repair_delaunay_with_flips`.
 - Re-enabled `prop_empty_circumsphere_{2d,3d,4d,5d}`.
 - Duplicate-cloud integration and duplicate-coordinate rejection tests remain ignored pending
   stronger duplicate handling.

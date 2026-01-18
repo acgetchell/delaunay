@@ -2395,6 +2395,18 @@ where
         );
     }
 
+    if n_points < D + 1 {
+        return Err(TriangulationConstructionError::InsufficientVertices {
+            dimension: D,
+            source: crate::core::cell::CellValidationError::InsufficientVertices {
+                actual: n_points,
+                expected: D + 1,
+                dimension: D,
+            },
+        }
+        .into());
+    }
+
     // Generate random points (seeded or unseeded)
     // Note: GeometricDegeneracy error wraps both point generation failures (invalid bounds, RNG issues)
     // and actual geometric degeneracy. This is a semantic approximation - point generation failures

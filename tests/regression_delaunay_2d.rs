@@ -1,4 +1,6 @@
-#![allow(missing_docs)]
+//! Regression tests for 2D Delaunay triangulation edge cases.
+//!
+//! This module tests circumsphere and flip repair behavior in minimal 2D configurations.
 
 use delaunay::core::util::debug_print_first_delaunay_violation;
 use delaunay::prelude::*;
@@ -22,7 +24,6 @@ fn regression_empty_circumsphere_2d_minimal_case() {
         .unwrap();
 
     if dt.is_valid().is_err() {
-        #[cfg(any(test, debug_assertions))]
         debug_print_first_delaunay_violation(dt.tds(), None);
     }
 
@@ -31,6 +32,6 @@ fn regression_empty_circumsphere_2d_minimal_case() {
 
     assert!(
         dt.is_valid().is_ok(),
-        "2D triangulation should satisfy Delaunay property after global flip repair"
+        "2D triangulation should be a valid PL-manifold after global flip repair"
     );
 }

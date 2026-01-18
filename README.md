@@ -61,6 +61,12 @@ use delaunay::prelude::*;
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
+// Insert some vertices to build an initial triangulation.
+// dt.insert(vertex!([0.0, 0.0, 0.0]))?;
+// dt.insert(vertex!([1.0, 0.0, 0.0]))?;
+// dt.insert(vertex!([0.0, 1.0, 0.0]))?;
+// dt.insert(vertex!([0.0, 0.0, 1.0]))?;
+
 let outcome = dt.repair_delaunay_with_flips_advanced(
     DelaunayRepairHeuristicConfig::default(),
 )?;

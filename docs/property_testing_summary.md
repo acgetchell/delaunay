@@ -122,9 +122,9 @@ Tests all Delaunay-specific invariants and properties:
   - Empty circumsphere condition (2D-5D) - enabled (flip repair in place)
   - Insertion-order invariance (2D) - Issue #120
   - Duplicate coordinate rejection (2D-5D) - ignored (edge case failures)
-  - Duplicate cloud integration (2D-5D) - ignored (duplicate-heavy inputs)
+  - Duplicate cloud integration (2D-5D) - enabled (duplicate-heavy inputs)
 
-**Test Count**: 17 property tests (4 passing structural, 9 active, 4 ignored pending duplicate handling)
+**Test Count**: 17 property tests (4 passing structural, 9 active, 4 ignored pending duplicate-coordinate handling)
 
 ### 3. Documentation Updates
 

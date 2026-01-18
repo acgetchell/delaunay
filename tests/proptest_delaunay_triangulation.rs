@@ -509,6 +509,39 @@ gen_duplicate_coords_test!(3, 4, 12);
 gen_duplicate_coords_test!(4, 5, 14);
 gen_duplicate_coords_test!(5, 6, 16);
 
+/// Allow runtime tuning for the empty-circumsphere property in higher dimensions.
+///
+/// These tests are expensive in 4D/5D; you can clamp the max vertex count (in addition to
+/// `PROPTEST_CASES`) via:
+/// - `DELAUNAY_EMPTY_CIRCUMSPHERE_MAX_VERTICES_4D`
+/// - `DELAUNAY_EMPTY_CIRCUMSPHERE_MAX_VERTICES_5D`
+fn empty_circumsphere_max_vertices(dim: usize, min_vertices: usize, default_max: usize) -> usize {
+    let env_key = match dim {
+        4 => "DELAUNAY_EMPTY_CIRCUMSPHERE_MAX_VERTICES_4D",
+        5 => "DELAUNAY_EMPTY_CIRCUMSPHERE_MAX_VERTICES_5D",
+        _ => return default_max,
+    };
+
+    let Ok(value) = std::env::var(env_key) else {
+        return default_max;
+    };
+
+    match value.parse::<usize>() {
+        Ok(parsed) if parsed >= min_vertices => parsed.min(default_max),
+        _ => default_max,
+    }
+}
+
+macro_rules! empty_circumsphere_vertices {
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal) => {
+        pastey::paste! {{
+            let max_vertices = empty_circumsphere_max_vertices($dim, $min_vertices, $max_vertices);
+            prop::collection::vec([<vertex_ $dim d>](), $min_vertices..=max_vertices)
+                .prop_map(|pts| dedup_vertices_by_coords::<$dim>(Vertex::from_points(&pts)))
+        }}
+    };
+}
+
 // =============================================================================
 // DELAUNAY EMPTY CIRCUMSPHERE PROPERTY
 // =============================================================================
@@ -521,10 +554,7 @@ proptest! {
                 /// the circumsphere defined by that cell (Delaunay condition).
                 #[test]
                 fn [<prop_empty_circumsphere_ $dim d>](
-                    vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
-                        $min_vertices..=$max_vertices
-                    ).prop_map(|pts| dedup_vertices_by_coords::<$dim>(Vertex::from_points(&pts)))
+                    vertices in empty_circumsphere_vertices!($dim, $min_vertices, $max_vertices)
                 ) {
                     // Build Delaunay triangulation with PL-manifold guarantee, triangulating all vertices together.
                     // This ensures the entire triangulation (including initial simplex) satisfies Delaunay property
@@ -568,10 +598,7 @@ proptest! {
                 #[ignore = "Requires k>2 flip validation (3D+); see Issue #120"]
                 #[test]
                 fn [<prop_empty_circumsphere_ $dim d>](
-                    vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
-                        $min_vertices..=$max_vertices
-                    ).prop_map(|pts| dedup_vertices_by_coords::<$dim>(Vertex::from_points(&pts)))
+                    vertices in empty_circumsphere_vertices!($dim, $min_vertices, $max_vertices)
                 ) {
                     // Build Delaunay triangulation using DelaunayTriangulation::new_with_topology_guarantee() which properly triangulates all vertices
                     // This ensures the entire triangulation (including initial simplex) satisfies Delaunay property
@@ -665,16 +692,12 @@ macro_rules! gen_insertion_order_robustness_test {
                     let dt_a = dt_a.unwrap();
 
                     let validation_a = dt_a.as_triangulation().validate();
-                    if $dim >= 4 {
-                        prop_assume!(validation_a.is_ok());
-                    } else {
-                        prop_assert!(
-                            validation_a.is_ok(),
-                            "{}D: Triangulation A failed Levels 1–3 validation: {:?}",
-                            $dim,
-                            validation_a.err()
-                        );
-                    }
+                    prop_assert!(
+                        validation_a.is_ok(),
+                        "{}D: Triangulation A failed Levels 1–3 validation: {:?}",
+                        $dim,
+                        validation_a.err()
+                    );
 
                     // Build second triangulation with shuffled order
                     let mut rng = rand::rngs::StdRng::seed_from_u64(0x00DE_C0DE);
@@ -689,16 +712,12 @@ macro_rules! gen_insertion_order_robustness_test {
                     let dt_b = dt_b.unwrap();
 
                     let validation_b = dt_b.as_triangulation().validate();
-                    if $dim >= 4 {
-                        prop_assume!(validation_b.is_ok());
-                    } else {
-                        prop_assert!(
-                            validation_b.is_ok(),
-                            "{}D: Triangulation B failed Levels 1–3 validation: {:?}",
-                            $dim,
-                            validation_b.err()
-                        );
-                    }
+                    prop_assert!(
+                        validation_b.is_ok(),
+                        "{}D: Triangulation B failed Levels 1–3 validation: {:?}",
+                        $dim,
+                        validation_b.err()
+                    );
 
                     // Verify both triangulations have the same number of vertices
                     // With early degeneracy detection, different insertion orders may reject
@@ -1072,8 +1091,212 @@ fn prop_insertion_order_robustness_3d() {
     run_result.unwrap();
 }
 
-gen_insertion_order_robustness_test!(4, 6, 12);
-gen_insertion_order_robustness_test!(5, 7, 12);
+macro_rules! gen_insertion_order_robustness_high_dim {
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal) => {
+        pastey::paste! {
+            #[test]
+            #[expect(
+                clippy::too_many_lines,
+                reason = "Large property-based test with rejection tracking and diagnostics"
+            )]
+            fn [<prop_insertion_order_robustness_ $dim d>]() {
+                use proptest::test_runner::{Config, TestCaseError, TestRunner};
+                use std::cell::RefCell;
+
+                /// Rejection-rate tracking for the high-dimensional insertion-order property.
+                ///
+                /// To print the summary (captured unless `cargo test -- --nocapture`):
+                ///   `DELAUNAY_PROPTEST_REJECT_STATS=1 cargo test prop_insertion_order_robustness_4d --test proptest_delaunay_triangulation -- --nocapture`
+                #[derive(Debug, Default)]
+                struct RejectStats {
+                    generated: usize,
+                    accepted: usize,
+
+                    rejected_too_few_unique: usize,
+                    rejected_coordinate_hyperplane: usize,
+
+                    rejected_new_a_failed: usize,
+                    rejected_new_a_invalid_levels_1_to_3: usize,
+
+                    rejected_new_b_failed: usize,
+                    rejected_new_b_invalid_levels_1_to_3: usize,
+                }
+
+                let config = Config::default();
+                let target_cases = config.cases;
+                let mut runner = TestRunner::new(config);
+
+                let strategy = prop::collection::vec(
+                    [<vertex_ $dim d>](),
+                    $min_vertices..=$max_vertices,
+                )
+                .prop_map(|pts| dedup_vertices_by_coords::<$dim>(Vertex::from_points(&pts)));
+
+                // `TestRunner::run` takes an `Fn` (not `FnMut`) closure, so use interior mutability to
+                // track rejection rates.
+                let stats = RefCell::new(RejectStats::default());
+
+                let run_result = runner.run(&strategy, |points| {
+                    use rand::seq::SliceRandom;
+                    use rand::SeedableRng;
+
+                    let mut stats = stats.borrow_mut();
+                    stats.generated += 1;
+
+                    if points.len() <= $dim {
+                        stats.rejected_too_few_unique += 1;
+                        return Err(TestCaseError::reject(format!(
+                            "{}D: <{} unique points after dedup (out of scope)",
+                            $dim,
+                            $dim + 1
+                        )));
+                    }
+
+                    if !has_no_coordinate_hyperplane_degeneracy(&points) {
+                        stats.rejected_coordinate_hyperplane += 1;
+                        return Err(TestCaseError::reject(format!(
+                            "{}D: coordinate-hyperplane degeneracy present (out of scope)",
+                            $dim
+                        )));
+                    }
+
+                    let dt_a = match DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &points,
+                        TopologyGuarantee::PLManifold,
+                    ) {
+                        Ok(dt) => dt,
+                        Err(e) => {
+                            stats.rejected_new_a_failed += 1;
+                            return Err(TestCaseError::reject(format!(
+                                "{}D: new_with_topology_guarantee failed for order A (out of scope): {e}",
+                                $dim
+                            )));
+                        }
+                    };
+
+                    let validation_a = dt_a.as_triangulation().validate();
+                    if let Err(e) = validation_a {
+                        stats.rejected_new_a_invalid_levels_1_to_3 += 1;
+                        return Err(TestCaseError::reject(format!(
+                            "{}D: Triangulation A failed Levels 1–3 validation (out of scope): {e:?}",
+                            $dim
+                        )));
+                    }
+
+                    let mut rng = rand::rngs::StdRng::seed_from_u64(0x00DE_C0DE);
+                    let mut points_shuffled = points;
+                    points_shuffled.shuffle(&mut rng);
+
+                    let dt_b = match DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &points_shuffled,
+                        TopologyGuarantee::PLManifold,
+                    ) {
+                        Ok(dt) => dt,
+                        Err(e) => {
+                            stats.rejected_new_b_failed += 1;
+                            return Err(TestCaseError::reject(format!(
+                                "{}D: new_with_topology_guarantee failed for order B (out of scope): {e}",
+                                $dim
+                            )));
+                        }
+                    };
+
+                    let validation_b = dt_b.as_triangulation().validate();
+                    if let Err(e) = validation_b {
+                        stats.rejected_new_b_invalid_levels_1_to_3 += 1;
+                        return Err(TestCaseError::reject(format!(
+                            "{}D: Triangulation B failed Levels 1–3 validation (out of scope): {e:?}",
+                            $dim
+                        )));
+                    }
+
+                    let verts_a = dt_a.number_of_vertices();
+                    let verts_b = dt_b.number_of_vertices();
+
+                    prop_assert!(
+                        verts_a > $dim,
+                        "{}D: Triangulation A should have > {} vertices, got {}",
+                        $dim,
+                        $dim,
+                        verts_a
+                    );
+                    prop_assert!(
+                        verts_b > $dim,
+                        "{}D: Triangulation B should have > {} vertices, got {}",
+                        $dim,
+                        $dim,
+                        verts_b
+                    );
+
+                    stats.accepted += 1;
+                    Ok(())
+                });
+
+                let stats = stats.into_inner();
+
+                // Report acceptance rate as a percentage with 2 decimals using integer arithmetic.
+                let generated = stats.generated.max(1);
+                let acceptance_rate_percent_x100: u128 =
+                    (stats.accepted as u128 * 10_000u128) / (generated as u128);
+                let acceptance_rate_whole = acceptance_rate_percent_x100 / 100;
+                let acceptance_rate_frac = acceptance_rate_percent_x100 % 100;
+
+                let min_acceptance_pct_str =
+                    std::env::var(format!("DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT_{}D", $dim))
+                        .ok()
+                        .or_else(|| std::env::var("DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT").ok());
+
+                if let Some(min_acceptance_pct_str) = min_acceptance_pct_str {
+                    if let Ok(min_acceptance_pct) = min_acceptance_pct_str.parse::<u128>() {
+                        let min_acceptance_pct_x100 = min_acceptance_pct * 100;
+                        assert!(
+                            acceptance_rate_percent_x100 >= min_acceptance_pct_x100,
+                            "prop_insertion_order_robustness_{}d acceptance rate {}.{:02}% below required {min_acceptance_pct}% (generated={}, accepted={})",
+                            $dim,
+                            acceptance_rate_whole,
+                            acceptance_rate_frac,
+                            stats.generated,
+                            stats.accepted
+                        );
+                    } else {
+                        eprintln!(
+                            "prop_insertion_order_robustness_{}d: invalid DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT value {min_acceptance_pct_str:?} (expected integer percent, e.g. 10)",
+                            $dim
+                        );
+                    }
+                }
+
+                let print_stats =
+                    std::env::var_os("DELAUNAY_PROPTEST_REJECT_STATS").is_some() || run_result.is_err();
+
+                if print_stats {
+                    let rejected_total = stats.generated.saturating_sub(stats.accepted);
+
+                    eprintln!(
+                        "prop_insertion_order_robustness_{}d reject stats: target_cases={target_cases} generated={} accepted={} acceptance_rate={}.{:02}% rejected_total={} too_few_unique={} coord_hyperplane={} new_a(fail={}, invalid={}) new_b(fail={}, invalid={})",
+                        $dim,
+                        stats.generated,
+                        stats.accepted,
+                        acceptance_rate_whole,
+                        acceptance_rate_frac,
+                        rejected_total,
+                        stats.rejected_too_few_unique,
+                        stats.rejected_coordinate_hyperplane,
+                        stats.rejected_new_a_failed,
+                        stats.rejected_new_a_invalid_levels_1_to_3,
+                        stats.rejected_new_b_failed,
+                        stats.rejected_new_b_invalid_levels_1_to_3
+                    );
+                }
+
+                run_result.unwrap();
+            }
+        }
+    };
+}
+
+gen_insertion_order_robustness_high_dim!(4, 6, 12);
+gen_insertion_order_robustness_high_dim!(5, 7, 12);
 
 // =============================================================================
 // DUPLICATE CLOUD INTEGRATION TESTS
