@@ -750,6 +750,10 @@ pub struct DelaunayRepairDiagnostics {
     pub ambiguous_predicate_samples: Vec<u64>,
     /// Count of predicate failures (conversion/robust fallback errors).
     pub predicate_failures: usize,
+    /// Count of detected flip cycles (repeat flip signatures within a sliding window).
+    pub cycle_detections: usize,
+    /// Sample of repeated flip-context signature hashes (deterministic, truncated).
+    pub cycle_signature_samples: Vec<u64>,
     /// Attempt number (1-based).
     pub attempt: usize,
     /// Queue ordering policy used for this attempt.
@@ -762,7 +766,7 @@ impl fmt::Display for DelaunayRepairDiagnostics {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "checked {} facets, ambiguous={}, max_queue={}, flips={}, attempt={}, order={:?}, robust={}, predicate_failures={}",
+            "checked {} facets, ambiguous={}, max_queue={}, flips={}, attempt={}, order={:?}, robust={}, predicate_failures={}, cycles={}, cycle_samples={:?}",
             self.facets_checked,
             self.ambiguous_predicates,
             self.max_queue_len,
@@ -770,7 +774,9 @@ impl fmt::Display for DelaunayRepairDiagnostics {
             self.attempt,
             self.queue_order,
             self.used_robust_predicates,
-            self.predicate_failures
+            self.predicate_failures,
+            self.cycle_detections,
+            self.cycle_signature_samples
         )
     }
 }
@@ -1718,6 +1724,12 @@ where
             Err(e) => return Err(e.into()),
         };
         stats.flips_performed += 1;
+        diagnostics.record_flip_signature(flip_signature(
+            2,
+            context.direction,
+            &context.removed_face_vertices,
+            &context.inserted_face_vertices,
+        ));
 
         if stats.flips_performed > max_flips {
             return Err(non_convergent_error(
@@ -1802,12 +1814,18 @@ where
 // Internal helpers
 // =============================================================================
 const AMBIGUOUS_SAMPLE_LIMIT: usize = 16;
+const CYCLE_SAMPLE_LIMIT: usize = 16;
+const FLIP_SIGNATURE_WINDOW: usize = 4096;
 
 #[derive(Debug, Default)]
 struct RepairDiagnostics {
     ambiguous_predicates: usize,
     ambiguous_samples: Vec<u64>,
     predicate_failures: usize,
+    cycle_detections: usize,
+    cycle_samples: Vec<u64>,
+    flip_signature_window: VecDeque<u64>,
+    flip_signature_counts: FastHashMap<u64, usize>,
 }
 
 impl RepairDiagnostics {
@@ -1818,6 +1836,31 @@ impl RepairDiagnostics {
         }
         if !self.ambiguous_samples.contains(&key) {
             self.ambiguous_samples.push(key);
+        }
+    }
+
+    fn record_flip_signature(&mut self, signature: u64) {
+        let count = self.flip_signature_counts.entry(signature).or_insert(0);
+        *count = count.saturating_add(1);
+
+        if *count > 1 {
+            self.cycle_detections = self.cycle_detections.saturating_add(1);
+            if self.cycle_samples.len() < CYCLE_SAMPLE_LIMIT
+                && !self.cycle_samples.contains(&signature)
+            {
+                self.cycle_samples.push(signature);
+            }
+        }
+
+        self.flip_signature_window.push_back(signature);
+        if self.flip_signature_window.len() > FLIP_SIGNATURE_WINDOW
+            && let Some(old) = self.flip_signature_window.pop_front()
+            && let Some(old_count) = self.flip_signature_counts.get_mut(&old)
+        {
+            *old_count = old_count.saturating_sub(1);
+            if *old_count == 0 {
+                self.flip_signature_counts.remove(&old);
+            }
         }
     }
 }
@@ -1844,6 +1887,8 @@ fn non_convergent_error(
             ambiguous_predicates: diagnostics.ambiguous_predicates,
             ambiguous_predicate_samples: diagnostics.ambiguous_samples.clone(),
             predicate_failures: diagnostics.predicate_failures,
+            cycle_detections: diagnostics.cycle_detections,
+            cycle_signature_samples: diagnostics.cycle_samples.clone(),
             attempt: config.attempt,
             queue_order: config.queue_order,
             used_robust_predicates: config.use_robust_on_ambiguous,
@@ -1868,6 +1913,37 @@ fn predicate_key_from_vertices(simplex_vertices: &[VertexKey], test_vertex: Vert
         vkey.hash(&mut hasher);
     }
     test_vertex.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn flip_signature(
+    k_move: usize,
+    direction: FlipDirection,
+    removed_face_vertices: &[VertexKey],
+    inserted_face_vertices: &[VertexKey],
+) -> u64 {
+    let mut removed: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+        removed_face_vertices.iter().copied().collect();
+    removed.sort_unstable();
+
+    let mut inserted: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+        inserted_face_vertices.iter().copied().collect();
+    inserted.sort_unstable();
+
+    let mut hasher = FastHasher::default();
+    k_move.hash(&mut hasher);
+    match direction {
+        FlipDirection::Forward => 0_u8.hash(&mut hasher),
+        FlipDirection::Inverse => 1_u8.hash(&mut hasher),
+    }
+    removed.len().hash(&mut hasher);
+    for vkey in &removed {
+        vkey.hash(&mut hasher);
+    }
+    inserted.len().hash(&mut hasher);
+    for vkey in &inserted {
+        vkey.hash(&mut hasher);
+    }
     hasher.finish()
 }
 
@@ -2124,6 +2200,12 @@ where
         Err(e) => return Err(e.into()),
     };
     stats.flips_performed += 1;
+    diagnostics.record_flip_signature(flip_signature(
+        3,
+        context.direction,
+        &context.removed_face_vertices,
+        &context.inserted_face_vertices,
+    ));
 
     if stats.flips_performed > max_flips {
         return Err(non_convergent_error(max_flips, stats, diagnostics, config));
@@ -2208,6 +2290,12 @@ where
         Err(e) => return Err(e.into()),
     };
     stats.flips_performed += 1;
+    diagnostics.record_flip_signature(flip_signature(
+        D,
+        context.direction,
+        &context.removed_face_vertices,
+        &context.inserted_face_vertices,
+    ));
 
     if stats.flips_performed > max_flips {
         return Err(non_convergent_error(max_flips, stats, diagnostics, config));
@@ -2285,6 +2373,12 @@ where
         Err(e) => return Err(e.into()),
     };
     stats.flips_performed += 1;
+    diagnostics.record_flip_signature(flip_signature(
+        D - 1,
+        context.direction,
+        &context.removed_face_vertices,
+        &context.inserted_face_vertices,
+    ));
 
     if stats.flips_performed > max_flips {
         return Err(non_convergent_error(max_flips, stats, diagnostics, config));
@@ -2355,6 +2449,12 @@ where
         Err(e) => return Err(e.into()),
     };
     stats.flips_performed += 1;
+    diagnostics.record_flip_signature(flip_signature(
+        2,
+        context.direction,
+        &context.removed_face_vertices,
+        &context.inserted_face_vertices,
+    ));
 
     if stats.flips_performed > max_flips {
         return Err(non_convergent_error(max_flips, stats, diagnostics, config));
@@ -2849,6 +2949,22 @@ mod tests {
             *coord = 0.11 * idx;
         }
         coords
+    }
+
+    #[test]
+    fn test_repair_diagnostics_cycle_detection_records_repeats() {
+        let mut diagnostics = RepairDiagnostics::default();
+        diagnostics.record_flip_signature(10);
+        diagnostics.record_flip_signature(20);
+        assert_eq!(diagnostics.cycle_detections, 0);
+
+        diagnostics.record_flip_signature(10);
+        assert_eq!(diagnostics.cycle_detections, 1);
+        assert_eq!(diagnostics.cycle_samples, vec![10]);
+
+        diagnostics.record_flip_signature(10);
+        assert_eq!(diagnostics.cycle_detections, 2);
+        assert_eq!(diagnostics.cycle_samples, vec![10]);
     }
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct TopologySnapshot {

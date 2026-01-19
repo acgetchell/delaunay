@@ -270,7 +270,6 @@ The `is_retryable()` method classifies errors:
 ```rust
 // Retryable errors (geometric degeneracies)
 - InsertionError::NonManifoldTopology { .. }        // Facet sharing violation
-- InsertionError::Location(CycleDetected { .. })    // Point location cycle
 - InsertionError::ConflictRegion(NonManifoldFacet { .. })     // Facet shared by >2 conflict cells
 - InsertionError::ConflictRegion(RidgeFan { .. })             // Ridge fan degeneracy
 - InsertionError::TopologyValidation(_)             // Repair failure

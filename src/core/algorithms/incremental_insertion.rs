@@ -132,9 +132,9 @@ impl InsertionError {
     ///
     /// Retryable errors are geometric degeneracies that may be resolved by
     /// slightly perturbing the vertex coordinates:
-    /// - Locate cycles (numerical degeneracy during point location)
     /// - Non-manifold topology (facets shared by >2 cells, ridge fans)
     /// - Topology validation failures during repair
+    /// - Conflict-region boundary degeneracies (disconnected/open boundaries)
     ///
     /// Non-retryable errors are structural failures that won't be fixed by perturbation:
     /// - Duplicate UUIDs
@@ -143,10 +143,6 @@ impl InsertionError {
     #[must_use]
     pub fn is_retryable(&self) -> bool {
         match self {
-            // Locate errors: cycles indicate numerical degeneracy
-            Self::Location(le) => {
-                matches!(le, LocateError::CycleDetected { .. })
-            }
             // Non-manifold topology and topology validation errors are retryable via perturbation
             Self::NonManifoldTopology { .. }
             | Self::TopologyValidation(_)
@@ -164,8 +160,13 @@ impl InsertionError {
                         | ConflictError::OpenBoundary { .. }
                 )
             }
-            // All other errors are not retryable
-            Self::Construction(_)
+            // All other errors are not retryable.
+            //
+            // Location errors are treated as non-retryable: `locate()` falls back to a scan when
+            // facet-walking fails to make progress (cycle / step limit). Remaining location errors
+            // are structural (invalid cell references) or predicate failures.
+            Self::Location(_)
+            | Self::Construction(_)
             | Self::CavityFilling { .. }
             | Self::HullExtension { .. }
             | Self::DuplicateCoordinates { .. }
@@ -1313,10 +1314,6 @@ mod tests {
     #[test]
     fn test_insertion_error_retryable() {
         // Retryable errors
-        assert!(
-            InsertionError::Location(LocateError::CycleDetected { steps: 1000 }).is_retryable()
-        );
-
         assert!(
             InsertionError::NonManifoldTopology {
                 facet_hash: 0x12345,

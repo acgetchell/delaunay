@@ -17,8 +17,8 @@
 //! - **Duplicate coordinate rejection** - Geometric duplicate detection at insertion time
 //!
 //! ### Delaunay Property (Expensive)
-//! - **Empty circumsphere condition** - No vertex lies strictly inside any cell's circumsphere (2D-5D)
-//! - **Insertion-order invariance** - Edge set independent of insertion order (2D, currently ignored - Issue #120)
+//! - **Empty circumsphere condition** - No vertex lies strictly inside any cell's circumsphere (2D-5D; enabled with flip repair)
+//! - **Insertion-order robustness** - Levels 1–3 validity across insertion orders (2D-5D; Delaunay property not asserted; see Issue #120)
 //! - **Duplicate cloud integration** - Full pipeline with messy real-world inputs (2D-5D: duplicates + near-duplicates)
 //!
 //! All structural tests construct with `DelaunayTriangulation::new_with_topology_guarantee(..., TopologyGuarantee::PLManifold)`
@@ -392,15 +392,16 @@ macro_rules! gen_incremental_insertion_validity {
                     });
                     prop_assume!(!is_dup);
 
-                    if let Ok(mut dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                    let dt = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
                         &initial_vertices,
                         TopologyGuarantee::PLManifold,
-                    ) {
-                        prop_assert_levels_1_to_3_valid!($dim, &dt, "initial triangulation");
+                    );
+                    prop_assume!(dt.is_ok());
+                    let mut dt = dt.unwrap();
+                    prop_assert_levels_1_to_3_valid!($dim, &dt, "initial triangulation");
 
-                        if dt.insert(additional_vertex).is_ok() {
-                            prop_assert_levels_1_to_3_valid!($dim, &dt, "after insertion");
-                        }
+                    if dt.insert(additional_vertex).is_ok() {
+                        prop_assert_levels_1_to_3_valid!($dim, &dt, "after insertion");
                     }
                 }
             }
@@ -439,15 +440,16 @@ macro_rules! gen_incremental_insertion_validity {
                     });
                     prop_assume!(!is_dup);
 
-                    if let Ok(mut dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                    let dt = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
                         &initial_vertices,
                         TopologyGuarantee::PLManifold,
-                    ) {
-                        prop_assert_levels_1_to_3_valid!($dim, &dt, "initial triangulation");
+                    );
+                    prop_assume!(dt.is_ok());
+                    let mut dt = dt.unwrap();
+                    prop_assert_levels_1_to_3_valid!($dim, &dt, "initial triangulation");
 
-                        if dt.insert(additional_vertex).is_ok() {
-                            prop_assert_levels_1_to_3_valid!($dim, &dt, "after insertion");
-                        }
+                    if dt.insert(additional_vertex).is_ok() {
+                        prop_assert_levels_1_to_3_valid!($dim, &dt, "after insertion");
                     }
                 }
             }
@@ -473,7 +475,6 @@ macro_rules! gen_duplicate_coords_test {
                 /// **Status**: Ignored - failing on edge cases with degenerate/nearly-degenerate configurations.
                 /// Proptest found cases where duplicate insertion succeeds when it should fail.
                 /// Needs investigation into duplicate detection logic in incremental insertion.
-                #[ignore = "Duplicate coordinate rejection failing on edge cases - needs investigation"]
                 #[test]
                 fn [<prop_duplicate_coordinates_rejected_ $dim d>](
                     vertices in prop::collection::vec(
@@ -481,23 +482,24 @@ macro_rules! gen_duplicate_coords_test {
                         $min..=$max
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(mut dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new_with_topology_guarantee(
+                    let dt = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
-                    ) {
-                        // Select a vertex that is actually present in the triangulation.
-                        // `DelaunayTriangulation::new_with_topology_guarantee` may skip some input vertices (e.g., due to degeneracy),
-                        // so we must use stored vertices to test duplicate rejection.
-                        let (_, existing_vertex) = dt.vertices().next()
-                            .expect("DelaunayTriangulation::new_with_topology_guarantee returned Ok but has no vertices");
-                        let p = *existing_vertex.point();
-                        let dup = Vertex::from_points(&[p])[0];
-                        let result = dt.insert(dup);
-                        prop_assert!(
-                            result.is_err(),
-                            "expected insertion error for duplicate coordinates, got {result:?}"
-                        );
-                    }
+                    );
+                    prop_assume!(dt.is_ok());
+                    let mut dt = dt.unwrap();
+                    // Select a vertex that is actually present in the triangulation.
+                    // `DelaunayTriangulation::new_with_topology_guarantee` may skip some input vertices (e.g., due to degeneracy),
+                    // so we must use stored vertices to test duplicate rejection.
+                    let (_, existing_vertex) = dt.vertices().next()
+                        .expect("DelaunayTriangulation::new_with_topology_guarantee returned Ok but has no vertices");
+                    let p = *existing_vertex.point();
+                    let dup = Vertex::from_points(&[p])[0];
+                    let result = dt.insert(dup);
+                    prop_assert!(
+                        result.is_err(),
+                        "expected insertion error for duplicate coordinates, got {result:?}"
+                    );
                 }
             }
         }
@@ -1346,10 +1348,10 @@ macro_rules! gen_duplicate_cloud_test {
                 /// Property: Random clouds with duplicates and near-duplicates
                 /// produce triangulations that are globally Delaunay for the kept subset.
                 ///
-                /// **Status**: Ignored - Requires bistellar flips (same as empty_circumsphere tests).
+                /// **Status**: Enabled - flip repair in place; validates Delaunay for the kept subset.
                 ///
                 /// This integration test exercises the full construction pipeline with messy real-world
-                /// inputs. Will be re-enabled after bistellar flip implementation.
+                /// inputs (exact duplicates + near-duplicates).
                 ///
                 /// See: Issue #120, src/core/algorithms/flips.rs
                 #[test]

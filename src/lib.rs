@@ -668,7 +668,10 @@ pub mod prelude {
     };
 
     // Re-export point location algorithms from core::algorithms
-    pub use crate::core::algorithms::locate::{LocateError, LocateResult, locate};
+    pub use crate::core::algorithms::locate::{
+        LocateError, LocateFallback, LocateFallbackReason, LocateResult, LocateStats, locate,
+        locate_with_stats,
+    };
 
     // Re-export incremental insertion types
     pub use crate::core::algorithms::incremental_insertion::InsertionError;
