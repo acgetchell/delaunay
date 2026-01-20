@@ -40,7 +40,7 @@ looks “off”.
 ### What is validated automatically?
 
 Only **Level 3** (`Triangulation::is_valid()`), using the triangulation’s current
-`TopologyGuarantee` (default: `Pseudomanifold`):
+`TopologyGuarantee` (default: `PLManifold`):
 
 - Codimension-1 manifoldness (facet degree: 1 or 2 incident cells per facet)
 - Codimension-2 boundary manifoldness (the boundary is closed; "no boundary of boundary")
@@ -102,13 +102,13 @@ dt.set_validation_policy(ValidationPolicy::Never);
 
 Level 3 topology validation can be configured to enforce either:
 
-- **Pseudomanifold / manifold-with-boundary** invariants (default), or
-- **PL-manifold** invariants (strict mode, adds vertex-link validation).
+- **PL-manifold** invariants (default, adds strict vertex-link validation), or
+- **Pseudomanifold / manifold-with-boundary** invariants (relaxed mode).
 
 This is separate from [`ValidationPolicy`](#automatic-validation-during-incremental-insertion-validationpolicy),
 which controls *when* Level 3 is run automatically during incremental insertion.
 
-### Default: `Pseudomanifold`
+### Default: `PLManifold`
 
 ```rust
 use delaunay::prelude::*;
@@ -121,12 +121,12 @@ let vertices = vec![
 ];
 
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
 
-// Opt into stricter PL-manifold validation.
-dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+// Optional: relax topology checks for speed (weaker guarantees).
+dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
 
-// Now Level 3 includes vertex-link validation.
+// Now Level 3 skips vertex-link validation.
 dt.as_triangulation().is_valid().unwrap();
 ```
 

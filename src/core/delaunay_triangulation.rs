@@ -194,9 +194,9 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
 
     /// Create a Delaunay triangulation with an explicit topology guarantee (fast-kernel convenience).
     ///
-    /// Use this to **enforce PL-manifoldness during construction** by passing
-    /// [`TopologyGuarantee::PLManifold`]. This will run strict Level 3 validation
-    /// during construction and validate the final topology before returning.
+    /// The default topology guarantee is [`TopologyGuarantee::PLManifold`]. Use this
+    /// constructor to override it (e.g. relax to [`TopologyGuarantee::Pseudomanifold`]
+    /// for speed at the cost of weaker topology guarantees).
     ///
     /// # Errors
     /// Returns error if construction fails or if the requested topology guarantee
@@ -240,8 +240,9 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
 
     /// Create an empty Delaunay triangulation with an explicit topology guarantee (fast-kernel convenience).
     ///
-    /// Use this to **enforce PL-manifoldness during construction** by passing
-    /// [`TopologyGuarantee::PLManifold`].
+    /// The default topology guarantee is [`TopologyGuarantee::PLManifold`]. Use this
+    /// constructor to override it (e.g. relax to [`TopologyGuarantee::Pseudomanifold`]
+    /// for speed at the cost of weaker topology guarantees).
     #[must_use]
     pub fn empty_with_topology_guarantee(topology_guarantee: TopologyGuarantee) -> Self {
         Self::with_empty_kernel_and_topology_guarantee(FastKernel::<f64>::new(), topology_guarantee)
@@ -379,49 +380,86 @@ where
     where
         K::Scalar: CoordinateScalar + Sum + Zero,
     {
-        let dt = Self::build_with_kernel_inner(kernel, vertices, topology_guarantee)?;
-
         #[cfg(any(test, debug_assertions))]
         {
-            if Self::should_retry_construction(vertices)
-                && crate::core::util::is_delaunay_property_only(&dt.tri.tds).is_err()
-            {
+            if Self::should_retry_construction(vertices) {
                 let base_seed = Self::construction_shuffle_seed(vertices);
+                let mut last_error: Option<String> = None;
 
-                for attempt in 0..DELAUNAY_SHUFFLE_ATTEMPTS {
-                    let mut shuffled = vertices.to_vec();
-                    let attempt_seed = base_seed.wrapping_add(
-                        (attempt as u64 + 1).wrapping_mul(DELAUNAY_SHUFFLE_SEED_SALT),
-                    );
-                    Self::shuffle_vertices(&mut shuffled, attempt_seed);
-                    match Self::build_with_kernel_inner(
-                        dt.tri.kernel.clone(),
-                        &shuffled,
-                        topology_guarantee,
-                    ) {
-                        Ok(candidate)
-                            if crate::core::util::is_delaunay_property_only(&candidate.tri.tds)
-                                .is_ok() =>
-                        {
-                            return Ok(candidate);
+                // Attempt 0: original order, no extra perturbation salt.
+                for attempt in 0..=DELAUNAY_SHUFFLE_ATTEMPTS {
+                    let (candidate_vertices, perturbation_seed) = if attempt == 0 {
+                        (vertices.to_vec(), 0_u64)
+                    } else {
+                        let mut shuffled = vertices.to_vec();
+                        let mut attempt_seed = base_seed.wrapping_add(
+                            (attempt as u64).wrapping_mul(DELAUNAY_SHUFFLE_SEED_SALT),
+                        );
+                        if attempt_seed == 0 {
+                            attempt_seed = 1;
                         }
-                        _ => {}
+
+                        Self::shuffle_vertices(&mut shuffled, attempt_seed);
+
+                        // Vary the deterministic perturbation pattern across retry attempts.
+                        let perturbation_seed = attempt_seed ^ 0xD1B5_4A32_D192_ED03;
+                        (shuffled, perturbation_seed)
+                    };
+
+                    match Self::build_with_kernel_inner_seeded(
+                        kernel.clone(),
+                        &candidate_vertices,
+                        topology_guarantee,
+                        perturbation_seed,
+                        true,
+                    ) {
+                        Ok(candidate) => {
+                            match crate::core::util::is_delaunay_property_only(&candidate.tri.tds) {
+                                Ok(()) => return Ok(candidate),
+                                Err(err) => {
+                                    last_error = Some(format!(
+                                        "Delaunay property violated after construction: {err}"
+                                    ));
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            // Some construction errors are deterministic and should not be masked
+                            // by shuffled retry logic (e.g. duplicate UUIDs).
+                            if matches!(
+                                &err,
+                                DelaunayTriangulationConstructionError::Triangulation(
+                                    TriangulationConstructionError::Tds(
+                                        TdsConstructionError::DuplicateUuid { .. }
+                                    )
+                                )
+                            ) {
+                                return Err(err);
+                            }
+                            last_error = Some(err.to_string());
+                        }
                     }
                 }
 
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "WARNING: Delaunay property violated after shuffled reconstruction attempts"
-                );
+                // In test/debug builds, treat persistent construction failures or Delaunay
+                // violations as hard construction errors so callers can deterministically reject.
+                return Err(TriangulationConstructionError::GeometricDegeneracy {
+                    message: format!(
+                        "Delaunay construction failed after shuffled reconstruction attempts: {}",
+                        last_error.unwrap_or_else(|| "unknown error".to_string())
+                    ),
+                }
+                .into());
             }
         }
 
+        let dt = Self::build_with_kernel_inner(kernel, vertices, topology_guarantee)?;
         Ok(dt)
     }
 
     #[cfg(any(test, debug_assertions))]
     const fn should_retry_construction(vertices: &[Vertex<K::Scalar, U, D>]) -> bool {
-        D >= 3 && vertices.len() > D + 1
+        D >= 2 && vertices.len() > D + 1
     }
 
     #[cfg(any(test, debug_assertions))]
@@ -1996,10 +2034,11 @@ where
     ///   `Deserialize` impl below) always resets it to `None`. This can make the first few
     ///   insertions after loading slightly slower, but is otherwise behaviorally irrelevant.
     /// - The topology guarantee ([`TopologyGuarantee`]) is also not serialized (this type serializes
-    ///   only the `Tds`). Constructing via `from_tds` resets it to `TopologyGuarantee::DEFAULT`.
-    ///   Call [`set_topology_guarantee`](Self::set_topology_guarantee) after loading, or use
+    ///   only the `Tds`). Constructing via `from_tds` resets it to `TopologyGuarantee::DEFAULT`
+    ///   (currently `PLManifold`). Call [`set_topology_guarantee`](Self::set_topology_guarantee)
+    ///   after loading if you want to relax to `Pseudomanifold` for performance, or use
     ///   [`from_tds_with_topology_guarantee`](Self::from_tds_with_topology_guarantee) to set it
-    ///   at construction time (e.g. enable stricter PL-manifold validation).
+    ///   at construction time.
     ///
     /// # Examples
     ///
@@ -2326,7 +2365,7 @@ mod tests {
     use crate::vertex;
 
     #[test]
-    fn test_delaunay_constructors_default_to_pseudomanifold_mode() {
+    fn test_delaunay_constructors_default_to_pl_manifold_mode() {
         let vertices: Vec<Vertex<f64, (), 2>> = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -2335,30 +2374,24 @@ mod tests {
 
         let dt_new: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        assert_eq!(
-            dt_new.topology_guarantee(),
-            TopologyGuarantee::Pseudomanifold
-        );
+        assert_eq!(dt_new.topology_guarantee(), TopologyGuarantee::PLManifold);
 
         let dt_empty: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
             DelaunayTriangulation::empty();
-        assert_eq!(
-            dt_empty.topology_guarantee(),
-            TopologyGuarantee::Pseudomanifold
-        );
+        assert_eq!(dt_empty.topology_guarantee(), TopologyGuarantee::PLManifold);
 
         let dt_with_kernel: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
             DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
         assert_eq!(
             dt_with_kernel.topology_guarantee(),
-            TopologyGuarantee::Pseudomanifold
+            TopologyGuarantee::PLManifold
         );
 
         let dt_from_tds: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
             DelaunayTriangulation::from_tds(dt_new.tds().clone(), FastKernel::new());
         assert_eq!(
             dt_from_tds.topology_guarantee(),
-            TopologyGuarantee::Pseudomanifold
+            TopologyGuarantee::PLManifold
         );
     }
 
@@ -2367,12 +2400,12 @@ mod tests {
         let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
             DelaunayTriangulation::empty();
 
-        assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
-        assert_eq!(dt.tri.topology_guarantee, TopologyGuarantee::Pseudomanifold);
-
-        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
         assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
         assert_eq!(dt.tri.topology_guarantee, TopologyGuarantee::PLManifold);
+
+        dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+        assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+        assert_eq!(dt.tri.topology_guarantee, TopologyGuarantee::Pseudomanifold);
     }
 
     #[test]

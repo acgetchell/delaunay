@@ -89,7 +89,12 @@ impl TopologicalOperation {
     /// Returns `true` if this operation requires a PL-manifold topology guarantee.
     #[must_use]
     pub const fn requires_pl_manifold(self) -> bool {
-        matches!(self, Self::FacetFlip | Self::CavityFlip)
+        // Higher-order cavity flips rely on stronger local topology guarantees.
+        //
+        // Note: k=2/k=3 flips used for Delaunay repair are admissible under the weaker
+        // pseudomanifold invariants (facet degree + closed boundary). Callers that need
+        // strict PL-manifold guarantees should select `TopologyGuarantee::PLManifold`.
+        matches!(self, Self::CavityFlip)
     }
 
     /// Returns `true` if this operation is admissible under the given topology guarantee.
@@ -269,14 +274,14 @@ mod tests {
 
     #[test]
     fn test_topological_operation_admissibility() {
-        assert!(TopologicalOperation::FacetFlip.requires_pl_manifold());
+        assert!(!TopologicalOperation::FacetFlip.requires_pl_manifold());
         assert!(TopologicalOperation::CavityFlip.requires_pl_manifold());
         assert!(!TopologicalOperation::InsertVertex.requires_pl_manifold());
         assert!(!TopologicalOperation::DeleteVertex.requires_pl_manifold());
 
         assert!(TopologicalOperation::FacetFlip.is_admissible_under(TopologyGuarantee::PLManifold));
         assert!(
-            !TopologicalOperation::FacetFlip.is_admissible_under(TopologyGuarantee::Pseudomanifold)
+            TopologicalOperation::FacetFlip.is_admissible_under(TopologyGuarantee::Pseudomanifold)
         );
 
         assert!(
@@ -295,16 +300,7 @@ mod tests {
 
         let decision =
             DelaunayRepairPolicy::EveryInsertion.decide(1, TopologyGuarantee::Pseudomanifold, op);
-        assert!(matches!(
-            decision,
-            RepairDecision::Skip {
-                reason: RepairSkipReason::Inadmissible {
-                    required: TopologyGuarantee::PLManifold,
-                    found: TopologyGuarantee::Pseudomanifold,
-                    operation: TopologicalOperation::FacetFlip,
-                }
-            }
-        ));
+        assert!(matches!(decision, RepairDecision::Proceed));
 
         let decision = DelaunayRepairPolicy::Never.decide(1, TopologyGuarantee::PLManifold, op);
         assert!(matches!(

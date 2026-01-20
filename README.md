@@ -29,7 +29,7 @@ lightweight alternative to [CGAL] for the [Rust] ecosystem.
 - [x]  Geometry quality metrics for simplices: radius ratio and normalized volume (dimension-agnostic)
 - [x]  Serialization/Deserialization of all data structures to/from [JSON]
 - [x]  Tested for 2-, 3-, 4-, and 5-dimensional triangulations
-- [x]  Local topology validation ([Pseudomanifold] default, [PL-manifold] opt-in)
+- [x]  Local topology validation ([PL-manifold] default, [Pseudomanifold] opt-out)
 - [x]  [Bistellar k-flips] for k = 1, 2, 3 plus inverse moves (repair uses k=2/k=3; inverse edge/triangle queues in 4D/5D)
 
 See [CHANGELOG.md](CHANGELOG.md) for details.
@@ -38,10 +38,14 @@ See [CHANGELOG.md](CHANGELOG.md) for details.
 
 The triangulation uses flip-based [Delaunay repair] (k=2 facet queues, k=3 ridge queues,
 and inverse edge/triangle queues in 4D/5D) after insertion by default via
-`DelaunayRepairPolicy`. Flip-based repair **requires** `TopologyGuarantee::PLManifold`
-(automatic repair is skipped under `Pseudomanifold`, and manual repair returns
-`InvalidTopology`). This restores the local Delaunay property for most configurations
-and preserves all structural invariants (TDS validity).
+`DelaunayRepairPolicy`.
+
+The default topology guarantee is `TopologyGuarantee::PLManifold` (strict vertex-link validation),
+which is the recommended mode for Delaunay triangulations.
+
+You can relax to `TopologyGuarantee::Pseudomanifold` for speed, but bistellar flip convergence is not
+guaranteed and the Delaunay property may not hold on construction for near-degenerate inputs (or if
+repair is disabled/non-convergent). Use `dt.is_valid()` / `dt.validate()` to verify.
 
 Repair is **bounded to two attempts**: attempt 1 uses FIFO ordering with fast predicates;
 on non-convergence it retries once with LIFO ordering and robust predicates **only for
@@ -57,9 +61,10 @@ pass. This fallback is heuristic and **non-reproducible by default**; the return
 
 ```rust
 use delaunay::prelude::*;
-
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
-dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+
+// Default topology guarantee for Delaunay triangulations:
+assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
 
 // Insert some vertices to build an initial triangulation.
 // dt.insert(vertex!([0.0, 0.0, 0.0]))?;
@@ -86,8 +91,8 @@ For details, see: [Issue #120 Investigation](docs/issue_120_investigation.md)
 - **Level 4** (`dt.is_valid()`) - Delaunay property only (may fail if repair is disabled or non-convergent)
 - **All levels (1–4)** (`dt.validate()`) - Elements + structure + topology + Delaunay property
 
-Level 3 topology validation is parameterized by `TopologyGuarantee` (default: `Pseudomanifold`).
-To enable stricter PL-manifold checks, set `TopologyGuarantee::PLManifold` (adds vertex-link validation).
+Level 3 topology validation is parameterized by `TopologyGuarantee` (default: `PLManifold`).
+To relax topology checks for speed, set `TopologyGuarantee::Pseudomanifold` (skips vertex-link validation).
 
 During incremental insertion, the automatic Level 3 validation pass is controlled by
 `ValidationPolicy` (default: `OnSuspicion`).
@@ -97,8 +102,8 @@ use delaunay::prelude::*;
 
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 
-// Strictest topology checks (adds vertex-link validation):
-dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+// Optional: relax topology checks for speed (skips vertex-link validation).
+dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
 
 // In tests/debugging, validate Level 3 after every insertion:
 dt.set_validation_policy(ValidationPolicy::Always);

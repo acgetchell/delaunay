@@ -165,10 +165,15 @@ impl InsertionError {
             // Location errors are treated as non-retryable: `locate()` falls back to a scan when
             // facet-walking fails to make progress (cycle / step limit). Remaining location errors
             // are structural (invalid cell references) or predicate failures.
+            Self::HullExtension { message } => {
+                // Hull extension can fail when the query point is nearly coplanar with the hull
+                // surface (no *strictly* visible facets). This is a geometric degeneracy that may
+                // be resolved by a perturbation retry.
+                message.contains("No visible boundary facets")
+            }
             Self::Location(_)
             | Self::Construction(_)
             | Self::CavityFilling { .. }
-            | Self::HullExtension { .. }
             | Self::DuplicateCoordinates { .. }
             | Self::DuplicateUuid { .. } => false,
         }
@@ -1394,8 +1399,15 @@ mod tests {
         );
 
         assert!(
+            InsertionError::HullExtension {
+                message: "No visible boundary facets found for exterior vertex".to_string()
+            }
+            .is_retryable()
+        );
+
+        assert!(
             !InsertionError::HullExtension {
-                message: "test".to_string()
+                message: "Failed to get boundary facets: test".to_string()
             }
             .is_retryable()
         );

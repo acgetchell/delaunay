@@ -34,7 +34,7 @@ serde = { version = "1.0.228", features = [ "derive" ] }
 serde_json = "1.0.149"
 serde_test = "1.0.177"
 slotmap = { version = "1.1.1", features = [ "serde" ] }
-thiserror = "2.0.17"
+thiserror = "2.0.18"
 uuid = { version = "1.19.0", features = [ "v4", "serde" ] }
 
 [dev-dependencies]
@@ -57,26 +57,32 @@ slow-tests = [
 
 [[bench]]
 name = "circumsphere_containment"
-harness = false
-
-[[bench]]
-name = "triangulation_creation"
+path = "benches/circumsphere_containment.rs"
 harness = false
 
 [[bench]]
 name = "microbenchmarks"
+path = "benches/microbenchmarks.rs"
+harness = false
+
+[[bench]]
+name = "topology_guarantee_construction"
+path = "benches/topology_guarantee_construction.rs"
 harness = false
 
 [[bench]]
 name = "ci_performance_suite"
+path = "benches/ci_performance_suite.rs"
 harness = false
 
 [[bench]]
 name = "profiling_suite"
+path = "benches/profiling_suite.rs"
 harness = false
 
 [[bench]]
 name = "large_scale_performance"
+path = "benches/large_scale_performance.rs"
 harness = false
 
 [lints.rust]

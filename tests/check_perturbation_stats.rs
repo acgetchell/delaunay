@@ -11,8 +11,18 @@ fn check_perturbation_effectiveness() {
 
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
         DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
-    // Ensure topology safety net runs after every insertion so invalid states are rolled back.
-    dt.set_validation_policy(delaunay::core::triangulation::ValidationPolicy::Always);
+
+    // In PL-manifold mode, incremental insertion must never commit invalid topology.
+    // This must hold independent of the user-configured `ValidationPolicy`.
+    assert_eq!(
+        dt.validation_policy(),
+        delaunay::core::triangulation::ValidationPolicy::OnSuspicion
+    );
+
+    // Even if the user disables global validation, PL-manifold insertion must still refuse to
+    // commit invalid topology (vertex-link violations).
+    dt.set_validation_policy(delaunay::core::triangulation::ValidationPolicy::Never);
+
     // Disable Delaunay repair to keep the test focused on perturbation and topology stability.
     dt.set_delaunay_repair_policy(
         delaunay::core::delaunay_triangulation::DelaunayRepairPolicy::Never,

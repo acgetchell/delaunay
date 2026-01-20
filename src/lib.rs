@@ -185,10 +185,12 @@
 //! `ValidationPolicy`: it controls *what* invariants Level 3 enforces, not *when* automatic
 //! validation runs.
 //!
-//! - [`TopologyGuarantee::Pseudomanifold`](crate::core::triangulation::TopologyGuarantee::Pseudomanifold)
-//!   (default): facet degree + closed boundary + connectedness + isolated-vertex + Euler characteristic checks.
-//! - [`TopologyGuarantee::PLManifold`](crate::core::triangulation::TopologyGuarantee::PLManifold):
-//!   additionally runs vertex-link validation (strict mode).
+//! - [`TopologyGuarantee::PLManifold`](crate::core::triangulation::TopologyGuarantee::PLManifold)
+//!   (default): facet degree + closed boundary + connectedness + isolated-vertex + Euler characteristic
+//!   checks **plus** strict vertex-link validation.
+//! - [`TopologyGuarantee::Pseudomanifold`](crate::core::triangulation::TopologyGuarantee::Pseudomanifold):
+//!   skips vertex-link validation (may be faster), but bistellar flip convergence is not guaranteed and
+//!   you may want to validate the Delaunay property explicitly for near-degenerate inputs.
 //!
 //! ```rust
 //! use delaunay::prelude::*;
@@ -201,10 +203,12 @@
 //! let mut dt: DelaunayTriangulation<_, (), (), 3> =
 //!     DelaunayTriangulation::new(&vertices).unwrap();
 //!
-//! assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
-//! dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+//! assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
 //!
-//! // Now Level 3 includes vertex-link validation.
+//! // Optional: relax topology checks for speed (weaker guarantees).
+//! dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+//!
+//! // Now Level 3 skips vertex-link validation.
 //! dt.as_triangulation().is_valid().unwrap();
 //! ```
 //!

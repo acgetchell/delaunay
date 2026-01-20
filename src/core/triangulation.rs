@@ -476,10 +476,11 @@ impl Default for ValidationPolicy {
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
 /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-/// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+/// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
 ///
-/// dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
-/// assert!(dt.topology_guarantee().requires_vertex_links());
+/// // Optional: relax topology checks for speed (weaker guarantees).
+/// dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+/// assert!(!dt.topology_guarantee().requires_vertex_links());
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TopologyGuarantee {
@@ -505,7 +506,7 @@ impl TopologyGuarantee {
     /// The default topology guarantee used when constructing triangulations.
     ///
     /// This is a `const` alternative to `<Self as Default>::default()` for `const fn` constructors.
-    pub const DEFAULT: Self = Self::Pseudomanifold;
+    pub const DEFAULT: Self = Self::PLManifold;
 
     /// Returns `true` if this topology guarantee requires the full vertex-link
     /// PL-manifoldness check.
@@ -2402,9 +2403,19 @@ where
             suspicion.perturbation_used = true;
         }
 
-        // Skip Level 3 validation during bootstrap (vertices but no cells yet), and
-        // respect the user-configured validation policy.
-        if self.tds.number_of_cells() == 0 || !self.validation_policy.should_validate(suspicion) {
+        // Skip Level 3 validation during bootstrap (vertices but no cells yet).
+        //
+        // For `TopologyGuarantee::PLManifold`, Level 3 validation (including vertex-link checks)
+        // is **non-negotiable** and must run after every insertion attempt once cells exist,
+        // regardless of the user-configured `ValidationPolicy`.
+        if self.tds.number_of_cells() == 0 {
+            return Ok((ok, cells_removed, suspicion));
+        }
+
+        let must_validate_for_topology = self.topology_guarantee.requires_vertex_links();
+        let should_validate =
+            must_validate_for_topology || self.validation_policy.should_validate(suspicion);
+        if !should_validate {
             return Ok((ok, cells_removed, suspicion));
         }
 
@@ -2464,9 +2475,12 @@ where
                 if self.tds.number_of_cells() > 0 {
                     self.log_validation_trigger_if_enabled(fallback_suspicion);
 
-                    if self.validation_policy.should_validate(fallback_suspicion)
-                        && let Err(fallback_validation_err) = self.is_valid()
-                    {
+                    let must_validate_for_topology =
+                        self.topology_guarantee.requires_vertex_links();
+                    let should_validate = must_validate_for_topology
+                        || self.validation_policy.should_validate(fallback_suspicion);
+
+                    if should_validate && let Err(fallback_validation_err) = self.is_valid() {
                         return Err(InsertionError::TopologyValidationFailed {
                             message: "Topology invalid after star-split fallback".to_string(),
                             source: fallback_validation_err,
@@ -3766,16 +3780,16 @@ mod tests {
     }
 
     #[test]
-    fn test_triangulation_new_empty_and_new_with_tds_default_to_pseudomanifold() {
+    fn test_triangulation_new_empty_and_new_with_tds_default_to_pl_manifold() {
         let tri: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_empty(FastKernel::new());
-        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::PLManifold);
 
         let tri_with_tds: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_with_tds(FastKernel::new(), Tds::<f64, (), (), 2>::empty());
         assert_eq!(
             tri_with_tds.topology_guarantee(),
-            TopologyGuarantee::Pseudomanifold
+            TopologyGuarantee::PLManifold
         );
     }
 
@@ -3784,13 +3798,57 @@ mod tests {
         let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_empty(FastKernel::new());
 
-        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
-
-        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
         assert_eq!(tri.topology_guarantee(), TopologyGuarantee::PLManifold);
 
         tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
         assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+
+        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::PLManifold);
+    }
+
+    #[test]
+    fn test_pl_manifold_insertion_never_commits_invalid_topology_under_validation_policy_never() {
+        // A small deterministic point set (seeded RNG) that exercises degeneracy handling.
+        //
+        // This test is intentionally small and validates after *each* insertion to ensure
+        // we never commit an invalid PL-manifold state, even when the user disables
+        // automatic validation via `ValidationPolicy::Never`.
+        let points = crate::geometry::util::generate_random_points_seeded::<f64, 3>(
+            25,
+            (-100.0, 100.0),
+            123,
+        )
+        .unwrap();
+
+        let mut dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+
+        dt.set_validation_policy(ValidationPolicy::Never);
+        dt.set_delaunay_repair_policy(
+            crate::core::delaunay_triangulation::DelaunayRepairPolicy::Never,
+        );
+
+        for (i, point) in points.into_iter().enumerate() {
+            let vertex = VertexBuilder::default().point(point).build().unwrap();
+
+            let result = dt
+                .insert_with_statistics(vertex)
+                .unwrap_or_else(|e| panic!("Non-retryable insertion error at i={i}: {e:?}"));
+
+            let (outcome, stats) = result;
+
+            // Skip Level 3 validation during bootstrap (vertices but no cells yet).
+            if dt.number_of_cells() > 0
+                && let Err(err) = dt.as_triangulation().validate()
+            {
+                panic!(
+                    "Topology invalid after insertion i={i} (outcome={outcome:?}, attempts={}, used_perturbation={}): {err}",
+                    stats.attempts,
+                    stats.used_perturbation()
+                );
+            }
+        }
     }
 
     /// Macro to generate `build_initial_simplex` tests across dimensions.
@@ -4053,6 +4111,9 @@ mod tests {
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
 
+        // Default is PL-manifold mode; relax to pseudomanifold for this part of the test.
+        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+
         // In pseudomanifold mode, Level 3 validation proceeds past manifold checks and fails at
         // connectedness (two components that share only a vertex).
         assert!(matches!(
@@ -4280,6 +4341,10 @@ mod tests {
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
+
+        // Default is PL-manifold mode; use pseudomanifold mode here so the isolated-vertex check
+        // triggers before vertex-link validation.
+        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
 
         // Insert a vertex into the TDS without adding any cells that reference it.
         // This creates an isolated vertex, which violates the Level 3 manifold invariant.
