@@ -28,39 +28,32 @@ const SEED_OFFSETS: [u64; 6] = [0, 19, 37, 73, 157, 313];
 struct TriangulationConfig {
     label: &'static str,
     points: usize,
-    bounds: (f64, f64),
 }
 
 const TRIANGULATION_CONFIGS: &[TriangulationConfig] = &[
     TriangulationConfig {
         label: "Primary",
         points: 100,
-        bounds: (-1.0, 1.0),
     },
     TriangulationConfig {
         label: "Fallback",
         points: 60,
-        bounds: (-1.0, 1.0),
     },
     TriangulationConfig {
         label: "Fallback",
         points: 40,
-        bounds: (-1.0, 1.0),
     },
     TriangulationConfig {
         label: "Fallback",
         points: 25,
-        bounds: (-1.0, 1.0),
     },
     TriangulationConfig {
         label: "Fallback",
         points: 16,
-        bounds: (-1.0, 1.0),
     },
     TriangulationConfig {
         label: "Fallback",
         points: 12,
-        bounds: (-1.0, 1.0),
     },
 ];
 
@@ -75,7 +68,13 @@ fn main() {
     println!("4D Pachner Move Roundtrip Example (k=1,2,3 + inverses)");
     println!("============================================================\n");
 
-    let mut dt = build_triangulation();
+    let Some(mut dt) = build_triangulation() else {
+        eprintln!(
+            "⚠️  Unable to build a stable 4D PL-manifold Delaunay triangulation after all attempts."
+        );
+        eprintln!("    Skipping Pachner roundtrip example for this run.");
+        return;
+    };
     dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
     println!(
@@ -123,20 +122,32 @@ fn main() {
     println!("============================================================");
 }
 
-fn build_triangulation() -> Dt4 {
+fn build_triangulation() -> Option<Dt4> {
     for config in TRIANGULATION_CONFIGS {
+        let bounds = match scaled_bounds_by_point_count::<f64>(config.points) {
+            Ok(bounds) => bounds,
+            Err(e) => {
+                println!(
+                    "✗ {label} bounds computation failed for {points} points: {e}",
+                    label = config.label,
+                    points = config.points
+                );
+                continue;
+            }
+        };
+
         println!(
             "Attempting {label} 4D triangulation: {points} points in [{}, {}]^4...",
-            config.bounds.0,
-            config.bounds.1,
+            bounds.0,
+            bounds.1,
             label = config.label,
             points = config.points
         );
 
         for offset in SEED_OFFSETS {
             let seed = SEED_BASE.wrapping_add(offset);
-            match try_build_triangulation(config.label, config.points, config.bounds, seed) {
-                Ok(dt) => return dt,
+            match try_build_triangulation(config.label, config.points, bounds, seed) {
+                Ok(dt) => return Some(dt),
                 Err(err) => {
                     println!(
                         "✗ {label} attempt (seed={seed}) failed: {err}",
@@ -147,7 +158,7 @@ fn build_triangulation() -> Dt4 {
         }
     }
 
-    panic!("unable to build a valid 4D PL-manifold Delaunay triangulation after all attempts");
+    None
 }
 
 fn try_build_triangulation(

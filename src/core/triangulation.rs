@@ -3048,6 +3048,11 @@ where
                     if computed.is_empty() {
                         None
                     } else {
+                        #[cfg(debug_assertions)]
+                        eprintln!(
+                            "Outside insertion (D={D}) using global conflict region with {} cells",
+                            computed.len()
+                        );
                         Some(Cow::Owned(computed))
                     }
                 }
@@ -3087,14 +3092,49 @@ where
             LocateResult::Outside => {
                 if let Some(conflict_cells) = conflict_cells {
                     let conflict_cells = conflict_cells.into_owned();
-                    let (hint, total_removed) = self.insert_with_conflict_region(
+                    #[cfg(debug_assertions)]
+                    let conflict_len = conflict_cells.len();
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "Outside insertion attempting cavity insertion with conflict region size {conflict_len}"
+                    );
+                    let result = self.insert_with_conflict_region(
                         v_key,
                         &point,
                         conflict_cells,
                         None,
                         &mut suspicion,
-                    )?;
-                    return Ok(((v_key, hint), total_removed, suspicion));
+                    );
+                    match result {
+                        Ok((hint, total_removed)) => {
+                            return Ok(((v_key, hint), total_removed, suspicion));
+                        }
+                        Err(err) => {
+                            // For exterior points, a "global" conflict region can intersect the hull,
+                            // producing an open/disconnected cavity boundary. In these cases we fall back
+                            // to hull extension instead of surfacing an insertion error.
+                            let should_fallback = matches!(
+                                &err,
+                                InsertionError::ConflictRegion(
+                                    ConflictError::NonManifoldFacet { .. }
+                                        | ConflictError::RidgeFan { .. }
+                                        | ConflictError::DisconnectedBoundary { .. }
+                                        | ConflictError::OpenBoundary { .. }
+                                )
+                            );
+
+                            if should_fallback {
+                                #[cfg(debug_assertions)]
+                                eprintln!(
+                                    "Outside insertion conflict boundary degeneracy ({err}) (conflict_cells={conflict_len}); falling back to hull extension"
+                                );
+                            } else {
+                                #[cfg(debug_assertions)]
+                                eprintln!("Outside insertion cavity insertion failed: {err}");
+                                return Err(err);
+                            }
+                        }
+                    }
                 }
                 // Exterior vertex: extend convex hull
                 let new_cells = extend_hull(&mut self.tds, &self.kernel, v_key, &point)?;

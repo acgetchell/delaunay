@@ -5,7 +5,6 @@
 
 use core::iter::Sum;
 use core::ops::{AddAssign, SubAssign};
-#[cfg(any(test, debug_assertions))]
 use std::hash::{Hash, Hasher};
 use std::num::NonZeroUsize;
 
@@ -16,8 +15,6 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 #[cfg(any(test, debug_assertions))]
 use rand::seq::SliceRandom;
-#[cfg(any(test, debug_assertions))]
-use rustc_hash::FxHasher;
 
 use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
 use crate::core::algorithms::flips::{
@@ -26,7 +23,7 @@ use crate::core::algorithms::flips::{
 };
 use crate::core::algorithms::incremental_insertion::InsertionError;
 use crate::core::cell::Cell;
-use crate::core::collections::CellKeyBuffer;
+use crate::core::collections::{CellKeyBuffer, FastHasher};
 use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::operations::{
@@ -42,9 +39,9 @@ use crate::core::triangulation_data_structure::{
     CellKey, InvariantKind, InvariantViolation, Tds, TdsConstructionError, TdsValidationError,
     TriangulationValidationReport, VertexKey,
 };
-use crate::core::util::DelaunayValidationError;
-#[cfg(any(test, debug_assertions))]
-use crate::core::util::stable_hash_u64_slice;
+use crate::core::util::{
+    DelaunayValidationError, dedup_vertices_epsilon, dedup_vertices_exact, stable_hash_u64_slice,
+};
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{FastKernel, Kernel};
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
@@ -101,6 +98,140 @@ pub enum DelaunayTriangulationValidationError {
         #[source]
         source: CoordinateConversionError,
     },
+}
+
+// =============================================================================
+// BATCH CONSTRUCTION OPTIONS
+// =============================================================================
+
+/// Strategy used to order input vertices before batch construction.
+///
+/// The default is [`InsertionOrderStrategy::Input`], which preserves the caller-provided order.
+///
+/// Additional strategies (e.g. lexicographic or space-filling curve orderings) are introduced
+/// in follow-up steps of the construction-hardening plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum InsertionOrderStrategy {
+    /// Preserve the caller-provided input order (legacy behavior).
+    #[default]
+    Input,
+}
+
+/// Policy controlling optional preprocessing to remove duplicate or near-duplicate vertices
+/// before batch construction.
+///
+/// This is intended as an *explicit* opt-in for callers who want a predictable preprocessing step.
+/// The default is [`DedupPolicy::Off`].
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[non_exhaustive]
+pub enum DedupPolicy {
+    /// Do not preprocess input vertices (legacy behavior).
+    #[default]
+    Off,
+    /// Remove exact coordinate duplicates (NaN-aware, +0.0 == -0.0).
+    Exact,
+    /// Remove near-duplicates within the given Euclidean tolerance.
+    ///
+    /// The tolerance is expressed as an `f64` and is converted to the triangulation's scalar type
+    /// at runtime. Invalid (negative / non-finite) tolerances are rejected.
+    Epsilon {
+        /// Non-negative Euclidean tolerance used when considering two vertices identical.
+        tolerance: f64,
+    },
+}
+
+/// Policy controlling deterministic "retry with alternative insertion orders" during batch
+/// construction.
+///
+/// This is currently a thin wrapper around the existing debug/test-only shuffle heuristic.
+/// In release builds, [`RetryPolicy::DebugOnlyShuffled`] is treated as [`RetryPolicy::Disabled`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RetryPolicy {
+    /// Do not attempt shuffled reconstruction retries.
+    Disabled,
+    /// In debug/test builds, retry construction with a small number of deterministic shuffles if the
+    /// final Delaunay property check fails.
+    ///
+    /// In release builds, this is treated as [`RetryPolicy::Disabled`].
+    DebugOnlyShuffled {
+        /// Number of shuffled reconstruction attempts (excluding the original-order attempt).
+        attempts: NonZeroUsize,
+        /// Optional base seed. If `None`, a deterministic seed is derived from the vertex set.
+        base_seed: Option<u64>,
+    },
+}
+
+#[cfg(any(test, debug_assertions))]
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self::DebugOnlyShuffled {
+            attempts: NonZeroUsize::new(DELAUNAY_SHUFFLE_ATTEMPTS)
+                .expect("DELAUNAY_SHUFFLE_ATTEMPTS must be non-zero"),
+            base_seed: None,
+        }
+    }
+}
+
+#[cfg(not(any(test, debug_assertions)))]
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self::Disabled
+    }
+}
+
+/// Options controlling batch construction behavior.
+///
+/// This is an additive API: existing constructors preserve their historical semantics by
+/// delegating to the options-based constructor with [`ConstructionOptions::default`].
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[non_exhaustive]
+pub struct ConstructionOptions {
+    insertion_order: InsertionOrderStrategy,
+    dedup_policy: DedupPolicy,
+    retry_policy: RetryPolicy,
+}
+
+impl ConstructionOptions {
+    /// Returns the input ordering strategy used for batch construction.
+    #[must_use]
+    pub const fn insertion_order(&self) -> InsertionOrderStrategy {
+        self.insertion_order
+    }
+
+    /// Returns the deduplication policy applied before batch construction.
+    #[must_use]
+    pub const fn dedup_policy(&self) -> DedupPolicy {
+        self.dedup_policy
+    }
+
+    /// Returns the retry policy used during batch construction.
+    #[must_use]
+    pub const fn retry_policy(&self) -> RetryPolicy {
+        self.retry_policy
+    }
+
+    /// Sets the input ordering strategy used for batch construction.
+    #[must_use]
+    pub const fn with_insertion_order(mut self, insertion_order: InsertionOrderStrategy) -> Self {
+        self.insertion_order = insertion_order;
+        self
+    }
+
+    /// Sets the deduplication policy applied before batch construction.
+    #[must_use]
+    pub const fn with_dedup_policy(mut self, dedup_policy: DedupPolicy) -> Self {
+        self.dedup_policy = dedup_policy;
+        self
+    }
+
+    /// Sets the retry policy used during batch construction.
+    #[must_use]
+    pub const fn with_retry_policy(mut self, retry_policy: RetryPolicy) -> Self {
+        self.retry_policy = retry_policy;
+        self
+    }
 }
 
 /// Delaunay triangulation with incremental insertion support.
@@ -190,6 +321,26 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
         vertices: &[Vertex<f64, (), D>],
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
         Self::with_kernel(FastKernel::<f64>::new(), vertices)
+    }
+
+    /// Create a Delaunay triangulation with explicit batch-construction options (fast-kernel convenience).
+    ///
+    /// This is an additive API over [`new`](Self::new): the existing constructors continue to
+    /// use historical defaults, while this method lets callers opt into deterministic construction
+    /// strategies.
+    ///
+    /// # Errors
+    /// Returns an error if construction fails, or if the selected options are invalid.
+    pub fn new_with_options(
+        vertices: &[Vertex<f64, (), D>],
+        options: ConstructionOptions,
+    ) -> Result<Self, DelaunayTriangulationConstructionError> {
+        Self::with_topology_guarantee_and_options(
+            FastKernel::<f64>::new(),
+            vertices,
+            TopologyGuarantee::DEFAULT,
+            options,
+        )
     }
 
     /// Create a Delaunay triangulation with an explicit topology guarantee (fast-kernel convenience).
@@ -380,81 +531,192 @@ where
     where
         K::Scalar: CoordinateScalar + Sum + Zero,
     {
+        Self::with_topology_guarantee_and_options(
+            kernel,
+            vertices,
+            topology_guarantee,
+            ConstructionOptions::default(),
+        )
+    }
+
+    /// Create a Delaunay triangulation with an explicit topology guarantee and batch-construction options.
+    ///
+    /// This is the core constructor used by the higher-level convenience constructors. It allows callers
+    /// to opt into deterministic preprocessing and retry behavior without changing the default semantics
+    /// of the legacy constructors.
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - construction fails or the requested topology guarantee cannot be satisfied, or
+    /// - the selected preprocessing options are invalid (e.g. a negative / non-finite epsilon tolerance).
+    pub fn with_topology_guarantee_and_options(
+        kernel: K,
+        vertices: &[Vertex<K::Scalar, U, D>],
+        topology_guarantee: TopologyGuarantee,
+        options: ConstructionOptions,
+    ) -> Result<Self, DelaunayTriangulationConstructionError>
+    where
+        K::Scalar: CoordinateScalar + Sum + Zero,
+    {
+        let ConstructionOptions {
+            insertion_order,
+            dedup_policy,
+            retry_policy,
+        } = options;
+
+        // Apply optional preprocessing.
+        let owned_vertices: Option<Vec<Vertex<K::Scalar, U, D>>> = match dedup_policy {
+            DedupPolicy::Off => None,
+            DedupPolicy::Exact => Some(dedup_vertices_exact(vertices.to_vec())),
+            DedupPolicy::Epsilon { tolerance } => {
+                if !tolerance.is_finite() || tolerance < 0.0 {
+                    return Err(TriangulationConstructionError::GeometricDegeneracy {
+                        message: format!(
+                            "Invalid DedupPolicy::Epsilon tolerance {tolerance:?} (must be finite and non-negative)"
+                        ),
+                    }
+                    .into());
+                }
+
+                let Some(epsilon) = <K::Scalar as NumCast>::from(tolerance) else {
+                    return Err(TriangulationConstructionError::GeometricDegeneracy {
+                        message: format!(
+                            "Failed to convert DedupPolicy::Epsilon tolerance {tolerance:?} into scalar type"
+                        ),
+                    }
+                    .into());
+                };
+
+                Some(dedup_vertices_epsilon(vertices.to_vec(), epsilon))
+            }
+        };
+
+        let vertices: &[Vertex<K::Scalar, U, D>] = owned_vertices.as_deref().unwrap_or(vertices);
+
+        // Ordering strategy (step 2 adds canonical orderings; step 1 preserves input order).
+        match insertion_order {
+            InsertionOrderStrategy::Input => {}
+        }
+
         #[cfg(any(test, debug_assertions))]
         {
-            if Self::should_retry_construction(vertices) {
-                let base_seed = Self::construction_shuffle_seed(vertices);
-                let mut last_error: Option<String> = None;
-
-                // Attempt 0: original order, no extra perturbation salt.
-                for attempt in 0..=DELAUNAY_SHUFFLE_ATTEMPTS {
-                    let (candidate_vertices, perturbation_seed) = if attempt == 0 {
-                        (vertices.to_vec(), 0_u64)
-                    } else {
-                        let mut shuffled = vertices.to_vec();
-                        let mut attempt_seed = base_seed.wrapping_add(
-                            (attempt as u64).wrapping_mul(DELAUNAY_SHUFFLE_SEED_SALT),
-                        );
-                        if attempt_seed == 0 {
-                            attempt_seed = 1;
-                        }
-
-                        Self::shuffle_vertices(&mut shuffled, attempt_seed);
-
-                        // Vary the deterministic perturbation pattern across retry attempts.
-                        let perturbation_seed = attempt_seed ^ 0xD1B5_4A32_D192_ED03;
-                        (shuffled, perturbation_seed)
-                    };
-
-                    match Self::build_with_kernel_inner_seeded(
-                        kernel.clone(),
-                        &candidate_vertices,
-                        topology_guarantee,
-                        perturbation_seed,
-                        true,
-                    ) {
-                        Ok(candidate) => {
-                            match crate::core::util::is_delaunay_property_only(&candidate.tri.tds) {
-                                Ok(()) => return Ok(candidate),
-                                Err(err) => {
-                                    last_error = Some(format!(
-                                        "Delaunay property violated after construction: {err}"
-                                    ));
-                                }
-                            }
-                        }
-                        Err(err) => {
-                            // Some construction errors are deterministic and should not be masked
-                            // by shuffled retry logic (e.g. duplicate UUIDs).
-                            if matches!(
-                                &err,
-                                DelaunayTriangulationConstructionError::Triangulation(
-                                    TriangulationConstructionError::Tds(
-                                        TdsConstructionError::DuplicateUuid { .. }
-                                    )
-                                )
-                            ) {
-                                return Err(err);
-                            }
-                            last_error = Some(err.to_string());
-                        }
-                    }
-                }
-
-                // In test/debug builds, treat persistent construction failures or Delaunay
-                // violations as hard construction errors so callers can deterministically reject.
-                return Err(TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!(
-                        "Delaunay construction failed after shuffled reconstruction attempts: {}",
-                        last_error.unwrap_or_else(|| "unknown error".to_string())
-                    ),
-                }
-                .into());
+            if let RetryPolicy::DebugOnlyShuffled {
+                attempts,
+                base_seed,
+            } = retry_policy
+                && Self::should_retry_construction(vertices)
+            {
+                return Self::build_with_debug_shuffled_retries(
+                    &kernel,
+                    vertices,
+                    topology_guarantee,
+                    attempts,
+                    base_seed,
+                );
             }
         }
 
-        let dt = Self::build_with_kernel_inner(kernel, vertices, topology_guarantee)?;
-        Ok(dt)
+        Self::build_with_kernel_inner(kernel, vertices, topology_guarantee)
+    }
+
+    #[cfg(any(test, debug_assertions))]
+    fn build_with_debug_shuffled_retries(
+        kernel: &K,
+        vertices: &[Vertex<K::Scalar, U, D>],
+        topology_guarantee: TopologyGuarantee,
+        attempts: NonZeroUsize,
+        base_seed: Option<u64>,
+    ) -> Result<Self, DelaunayTriangulationConstructionError>
+    where
+        K::Scalar: CoordinateScalar + Sum + Zero,
+    {
+        let base_seed = base_seed.unwrap_or_else(|| Self::construction_shuffle_seed(vertices));
+
+        // Attempt 0: original order, no extra perturbation salt.
+        let mut last_error: String = match Self::build_with_kernel_inner_seeded(
+            <K as Clone>::clone(kernel),
+            vertices,
+            topology_guarantee,
+            0_u64,
+            true,
+        ) {
+            Ok(candidate) => match crate::core::util::is_delaunay_property_only(&candidate.tri.tds)
+            {
+                Ok(()) => return Ok(candidate),
+                Err(err) => format!("Delaunay property violated after construction: {err}"),
+            },
+            Err(err) => {
+                // Some construction errors are deterministic and should not be masked
+                // by shuffled retry logic (e.g. duplicate UUIDs).
+                if matches!(
+                    &err,
+                    DelaunayTriangulationConstructionError::Triangulation(
+                        TriangulationConstructionError::Tds(
+                            TdsConstructionError::DuplicateUuid { .. }
+                        )
+                    )
+                ) {
+                    return Err(err);
+                }
+                err.to_string()
+            }
+        };
+
+        // Shuffled retries (total iterations: attempts shuffled).
+        for attempt in 1..=attempts.get() {
+            let mut shuffled = vertices.to_vec();
+
+            let mut attempt_seed =
+                base_seed.wrapping_add((attempt as u64).wrapping_mul(DELAUNAY_SHUFFLE_SEED_SALT));
+            if attempt_seed == 0 {
+                attempt_seed = 1;
+            }
+
+            Self::shuffle_vertices(&mut shuffled, attempt_seed);
+
+            // Vary the deterministic perturbation pattern across retry attempts.
+            let perturbation_seed = attempt_seed ^ 0xD1B5_4A32_D192_ED03;
+
+            match Self::build_with_kernel_inner_seeded(
+                <K as Clone>::clone(kernel),
+                &shuffled,
+                topology_guarantee,
+                perturbation_seed,
+                true,
+            ) {
+                Ok(candidate) => {
+                    match crate::core::util::is_delaunay_property_only(&candidate.tri.tds) {
+                        Ok(()) => return Ok(candidate),
+                        Err(err) => {
+                            last_error =
+                                format!("Delaunay property violated after construction: {err}");
+                        }
+                    }
+                }
+                Err(err) => {
+                    if matches!(
+                        &err,
+                        DelaunayTriangulationConstructionError::Triangulation(
+                            TriangulationConstructionError::Tds(
+                                TdsConstructionError::DuplicateUuid { .. }
+                            )
+                        )
+                    ) {
+                        return Err(err);
+                    }
+                    last_error = err.to_string();
+                }
+            }
+        }
+
+        // In test/debug builds, treat persistent construction failures or Delaunay
+        // violations as hard construction errors so callers can deterministically reject.
+        Err(TriangulationConstructionError::GeometricDegeneracy {
+            message: format!(
+                "Delaunay construction failed after shuffled reconstruction attempts: {last_error}"
+            ),
+        }
+        .into())
     }
 
     #[cfg(any(test, debug_assertions))]
@@ -466,9 +728,9 @@ where
     fn construction_shuffle_seed(vertices: &[Vertex<K::Scalar, U, D>]) -> u64 {
         let mut vertex_hashes = Vec::with_capacity(vertices.len());
         for vertex in vertices {
-            let mut fx_hasher = FxHasher::default();
-            vertex.hash(&mut fx_hasher);
-            vertex_hashes.push(fx_hasher.finish());
+            let mut hasher = FastHasher::default();
+            vertex.hash(&mut hasher);
+            vertex_hashes.push(hasher.finish());
         }
         vertex_hashes.sort_unstable();
         stable_hash_u64_slice(&vertex_hashes)
@@ -488,7 +750,17 @@ where
     where
         K::Scalar: CoordinateScalar + Sum + Zero,
     {
-        Self::build_with_kernel_inner_seeded(kernel, vertices, topology_guarantee, 0, true)
+        let dt =
+            Self::build_with_kernel_inner_seeded(kernel, vertices, topology_guarantee, 0, true)?;
+
+        // `DelaunayCheckPolicy::EndOnly`: always run a final global Delaunay validation pass after
+        // batch construction.
+        dt.is_valid()
+            .map_err(|err| TriangulationConstructionError::GeometricDegeneracy {
+                message: format!("Delaunay property violated after construction: {err}"),
+            })?;
+
+        Ok(dt)
     }
 
     fn build_with_kernel_inner_seeded(
@@ -584,17 +856,7 @@ where
                         .insertion_state
                         .delaunay_repair_insertion_count
                         .saturating_add(1);
-                    let seed_cells = if D == 2 {
-                        let cells: Vec<CellKey> = self.tri.adjacent_cells(v_key).collect();
-                        (!cells.is_empty()).then_some(cells)
-                    } else {
-                        None
-                    };
-                    let hint_slice = hint.map(|ck| [ck]);
-                    let seed_ref = seed_cells
-                        .as_deref()
-                        .or_else(|| hint_slice.as_ref().map(<[CellKey; 1]>::as_slice));
-                    if let Err(e) = self.maybe_repair_after_insertion(seed_ref) {
+                    if let Err(e) = self.maybe_repair_after_insertion(v_key, hint) {
                         return Err(TriangulationConstructionError::GeometricDegeneracy {
                             message: e.to_string(),
                         }
@@ -711,6 +973,7 @@ where
             | InsertionError::Location(_)
             | InsertionError::NonManifoldTopology { .. }
             | InsertionError::HullExtension { .. }
+            | InsertionError::DelaunayValidationFailed { .. }
             | InsertionError::TopologyValidationFailed { .. }) => {
                 TriangulationConstructionError::GeometricDegeneracy {
                     message: insertion_error.to_string(),
@@ -1109,6 +1372,19 @@ where
         self.insertion_state.delaunay_repair_policy = policy;
     }
 
+    /// Returns the automatic global Delaunay validation policy.
+    #[inline]
+    #[must_use]
+    pub const fn delaunay_check_policy(&self) -> DelaunayCheckPolicy {
+        self.insertion_state.delaunay_check_policy
+    }
+
+    /// Sets the automatic global Delaunay validation policy.
+    #[inline]
+    pub const fn set_delaunay_check_policy(&mut self, policy: DelaunayCheckPolicy) {
+        self.insertion_state.delaunay_check_policy = policy;
+    }
+
     /// Runs flip-based Delaunay repair over the full triangulation.
     ///
     /// This is a manual entrypoint that performs a global scan of interior facets
@@ -1138,9 +1414,10 @@ where
 
     /// Runs flip-based Delaunay repair with an optional heuristic rebuild fallback.
     ///
-    /// This first attempts the standard two-pass flip repair. If it fails to converge,
-    /// it rebuilds the triangulation from the current vertex set using a shuffled
-    /// insertion order and a fresh perturbation seed, then runs a final flip-repair pass.
+    /// This first attempts the standard two-pass flip repair. If it fails to converge (or if
+    /// the result cannot be verified as Delaunay), it rebuilds the triangulation from the
+    /// current vertex set using a shuffled insertion order and a perturbation seed, then runs
+    /// a final flip-repair pass.
     ///
     /// The returned outcome marks whether the heuristic fallback was used and records
     /// the seeds needed to reproduce it (if desired).
@@ -1161,8 +1438,12 @@ where
                 stats,
                 heuristic: None,
             }),
-            Err(DelaunayRepairError::NonConvergent { .. }) => {
-                let seeds = config.resolve_seeds();
+            Err(
+                DelaunayRepairError::NonConvergent { .. }
+                | DelaunayRepairError::PostconditionFailed { .. },
+            ) => {
+                let base_seed = self.heuristic_rebuild_base_seed();
+                let seeds = config.resolve_seeds(base_seed);
                 let (candidate, stats) = self.rebuild_with_heuristic(seeds)?;
                 *self = candidate;
                 Ok(DelaunayRepairOutcome {
@@ -1201,6 +1482,8 @@ where
         candidate.tri.validation_policy = self.tri.validation_policy;
         candidate.insertion_state.delaunay_repair_policy =
             self.insertion_state.delaunay_repair_policy;
+        candidate.insertion_state.delaunay_check_policy =
+            self.insertion_state.delaunay_check_policy;
         candidate.insertion_state.delaunay_repair_insertion_count =
             self.insertion_state.delaunay_repair_insertion_count;
         candidate.insertion_state.last_inserted_cell = None;
@@ -1218,6 +1501,17 @@ where
             .vertices()
             .map(|(_, vertex)| Vertex::new_with_uuid(*vertex.point(), vertex.uuid(), vertex.data))
             .collect()
+    }
+
+    fn heuristic_rebuild_base_seed(&self) -> u64 {
+        let mut vertex_hashes = Vec::with_capacity(self.tri.tds.number_of_vertices());
+        for (_, vertex) in self.tri.tds.vertices() {
+            let mut hasher = FastHasher::default();
+            vertex.hash(&mut hasher);
+            vertex_hashes.push(hasher.finish());
+        }
+        vertex_hashes.sort_unstable();
+        stable_hash_u64_slice(&vertex_hashes)
     }
 
     /// Returns the topology guarantee used for Level 3 topology validation.
@@ -1678,26 +1972,47 @@ where
         // - Kernel (provides in-sphere predicate for Delaunay property)
         // - Hint caching for performance
         // - Future: Delaunay property restoration after removal
-        let (v_key, hint) =
-            self.tri
-                .insert(vertex, None, self.insertion_state.last_inserted_cell)?;
-        self.insertion_state.last_inserted_cell = hint;
-        self.insertion_state.delaunay_repair_insertion_count = self
+        //
+        // Transactional guard: post-steps (flip repair and/or global Delaunay checks) can fail.
+        // If they do, rollback to leave the triangulation unchanged.
+        let next_insertion_count = self
             .insertion_state
             .delaunay_repair_insertion_count
             .saturating_add(1);
-        let seed_cells = if D == 2 {
-            let cells: Vec<CellKey> = self.tri.adjacent_cells(v_key).collect();
-            (!cells.is_empty()).then_some(cells)
-        } else {
-            None
-        };
-        let hint_slice = hint.map(|ck| [ck]);
-        let seed_ref = seed_cells
-            .as_deref()
-            .or_else(|| hint_slice.as_ref().map(<[CellKey; 1]>::as_slice));
-        self.maybe_repair_after_insertion(seed_ref)?;
-        Ok(v_key)
+        let could_have_cells_after_insertion = self.tri.tds.number_of_cells() > 0
+            || self.tri.tds.number_of_vertices().saturating_add(1) > D;
+        let snapshot_needed = could_have_cells_after_insertion
+            && (self.insertion_state.delaunay_repair_policy != DelaunayRepairPolicy::Never
+                || self
+                    .insertion_state
+                    .delaunay_check_policy
+                    .should_check(next_insertion_count));
+        let snapshot = snapshot_needed.then(|| (self.tri.tds.clone(), self.insertion_state));
+
+        let insertion_result = (|| {
+            let (v_key, hint) =
+                self.tri
+                    .insert(vertex, None, self.insertion_state.last_inserted_cell)?;
+            self.insertion_state.last_inserted_cell = hint;
+            self.insertion_state.delaunay_repair_insertion_count = self
+                .insertion_state
+                .delaunay_repair_insertion_count
+                .saturating_add(1);
+            self.maybe_repair_after_insertion(v_key, hint)?;
+            self.maybe_check_after_insertion()?;
+            Ok(v_key)
+        })();
+
+        match insertion_result {
+            Ok(v_key) => Ok(v_key),
+            Err(err) => {
+                if let Some((tds, insertion_state)) = snapshot {
+                    self.tri.tds = tds;
+                    self.insertion_state = insertion_state;
+                }
+                Err(err)
+            }
+        }
     }
 
     /// Insert a vertex and return the insertion outcome plus statistics.
@@ -1732,37 +2047,58 @@ where
     where
         K::Scalar: CoordinateScalar + Sum + Zero,
     {
-        let (outcome, stats) = self.tri.insert_with_statistics(
-            vertex,
-            None,
-            self.insertion_state.last_inserted_cell,
-        )?;
+        // Transactional guard: post-steps (flip repair and/or global Delaunay checks) can fail.
+        // If they do, rollback to leave the triangulation unchanged.
+        let next_insertion_count = self
+            .insertion_state
+            .delaunay_repair_insertion_count
+            .saturating_add(1);
+        let could_have_cells_after_insertion = self.tri.tds.number_of_cells() > 0
+            || self.tri.tds.number_of_vertices().saturating_add(1) > D;
+        let snapshot_needed = could_have_cells_after_insertion
+            && (self.insertion_state.delaunay_repair_policy != DelaunayRepairPolicy::Never
+                || self
+                    .insertion_state
+                    .delaunay_check_policy
+                    .should_check(next_insertion_count));
+        let snapshot = snapshot_needed.then(|| (self.tri.tds.clone(), self.insertion_state));
 
-        if let InsertionOutcome::Inserted { vertex_key, hint } = &outcome {
-            self.insertion_state.last_inserted_cell = *hint;
-            self.insertion_state.delaunay_repair_insertion_count = self
-                .insertion_state
-                .delaunay_repair_insertion_count
-                .saturating_add(1);
-            let seed_cells = if D == 2 {
-                let cells: Vec<CellKey> = self.tri.adjacent_cells(*vertex_key).collect();
-                (!cells.is_empty()).then_some(cells)
-            } else {
-                None
-            };
-            let hint_slice = (*hint).map(|ck| [ck]);
-            let seed_ref = seed_cells
-                .as_deref()
-                .or_else(|| hint_slice.as_ref().map(<[CellKey; 1]>::as_slice));
-            self.maybe_repair_after_insertion(seed_ref)?;
+        let insertion_result = (|| {
+            let (outcome, stats) = self.tri.insert_with_statistics(
+                vertex,
+                None,
+                self.insertion_state.last_inserted_cell,
+            )?;
+
+            if let InsertionOutcome::Inserted { vertex_key, hint } = &outcome {
+                self.insertion_state.last_inserted_cell = *hint;
+                self.insertion_state.delaunay_repair_insertion_count = self
+                    .insertion_state
+                    .delaunay_repair_insertion_count
+                    .saturating_add(1);
+                self.maybe_repair_after_insertion(*vertex_key, *hint)?;
+                self.maybe_check_after_insertion()?;
+            }
+
+            Ok((outcome, stats))
+        })();
+
+        match insertion_result {
+            Ok((outcome, stats)) => Ok((outcome, stats)),
+            Err(err) => {
+                if let Some((tds, insertion_state)) = snapshot {
+                    self.tri.tds = tds;
+                    self.insertion_state = insertion_state;
+                }
+                Err(err)
+            }
         }
-
-        Ok((outcome, stats))
     }
 
     fn maybe_repair_after_insertion(
         &mut self,
-        seed_cells: Option<&[CellKey]>,
+        vertex_key: VertexKey,
+        hint: Option<CellKey>,
     ) -> Result<(), InsertionError>
     where
         K::Scalar: CoordinateScalar + Sum + Zero,
@@ -1773,6 +2109,10 @@ where
         if self.tri.tds.number_of_cells() == 0 {
             return Ok(());
         }
+        if self.insertion_state.delaunay_repair_policy == DelaunayRepairPolicy::Never {
+            return Ok(());
+        }
+
         let topology = self.tri.topology_guarantee();
         let decision = self.insertion_state.delaunay_repair_policy.decide(
             self.insertion_state.delaunay_repair_insertion_count,
@@ -1783,11 +2123,64 @@ where
             return Ok(());
         }
 
-        let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-        repair_delaunay_with_flips_k2_k3(tds, kernel, seed_cells, topology)
-            .map(|_| ())
-            .map_err(|e| InsertionError::CavityFilling {
+        let seed_cells = if D == 2 {
+            let cells: Vec<CellKey> = self.tri.adjacent_cells(vertex_key).collect();
+            (!cells.is_empty()).then_some(cells)
+        } else {
+            None
+        };
+        let hint_slice = hint.map(|ck| [ck]);
+        let seed_ref = seed_cells
+            .as_deref()
+            .or_else(|| hint_slice.as_ref().map(<[CellKey; 1]>::as_slice));
+
+        let repair_result = {
+            let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
+            repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology).map(|_| ())
+        };
+
+        match repair_result {
+            Ok(()) => Ok(()),
+            Err(
+                e @ (DelaunayRepairError::NonConvergent { .. }
+                | DelaunayRepairError::PostconditionFailed { .. }),
+            ) => {
+                // Deterministic rebuild fallback to avoid committing a non-Delaunay triangulation.
+                //
+                // NOTE: This is intentionally expensive, but is only triggered when local repair
+                // fails to converge or leaves a detectable Delaunay violation.
+                let _ = self
+                    .repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())
+                    .map_err(|fallback_err| InsertionError::CavityFilling {
+                        message: format!(
+                            "Delaunay repair failed ({e}); heuristic rebuild fallback also failed ({fallback_err})"
+                        ),
+                    })?;
+                Ok(())
+            }
+            Err(e) => Err(InsertionError::CavityFilling {
                 message: format!("Delaunay repair failed: {e}"),
+            }),
+        }
+    }
+
+    fn maybe_check_after_insertion(&self) -> Result<(), InsertionError>
+    where
+        K::Scalar: CoordinateScalar + Sum + Zero,
+    {
+        if self.tri.tds.number_of_cells() == 0 {
+            return Ok(());
+        }
+
+        let policy = self.insertion_state.delaunay_check_policy;
+        let insertion_count = self.insertion_state.delaunay_repair_insertion_count;
+        if !policy.should_check(insertion_count) {
+            return Ok(());
+        }
+
+        self.is_valid()
+            .map_err(|e| InsertionError::DelaunayValidationFailed {
+                message: e.to_string(),
             })
     }
 
@@ -2298,15 +2691,25 @@ pub struct DelaunayRepairHeuristicConfig {
 }
 
 impl DelaunayRepairHeuristicConfig {
-    fn resolve_seeds(self) -> DelaunayRepairHeuristicSeeds {
-        let mut shuffle_seed = self.shuffle_seed.unwrap_or_else(rand::random::<u64>);
+    fn resolve_seeds(self, base_seed: u64) -> DelaunayRepairHeuristicSeeds {
+        // Derive deterministic defaults when the caller does not provide explicit seeds.
+        const SHUFFLE_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
+        const PERTURB_SALT: u64 = 0xD1B5_4A32_D192_ED03;
+
+        let mut shuffle_seed = self
+            .shuffle_seed
+            .unwrap_or_else(|| base_seed.wrapping_add(SHUFFLE_SALT));
         if self.shuffle_seed.is_none() && shuffle_seed == 0 {
             shuffle_seed = 1;
         }
-        let mut perturbation_seed = self.perturbation_seed.unwrap_or_else(rand::random::<u64>);
+
+        let mut perturbation_seed = self
+            .perturbation_seed
+            .unwrap_or_else(|| base_seed.rotate_left(17) ^ PERTURB_SALT);
         if self.perturbation_seed.is_none() && perturbation_seed == 0 {
             perturbation_seed = 1;
         }
+
         DelaunayRepairHeuristicSeeds {
             shuffle_seed,
             perturbation_seed,
@@ -2314,7 +2717,10 @@ impl DelaunayRepairHeuristicConfig {
     }
 }
 
-/// Seeds used for a heuristic rebuild (non-reproducible unless recorded).
+/// Seeds used for a heuristic rebuild.
+///
+/// If the caller does not provide explicit seeds, deterministic defaults are derived from a stable
+/// hash of the current vertex set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DelaunayRepairHeuristicSeeds {
     /// RNG seed used to shuffle vertex insertion order.
@@ -2328,7 +2734,7 @@ pub struct DelaunayRepairHeuristicSeeds {
 pub struct DelaunayRepairOutcome {
     /// Statistics from the final flip-based repair pass.
     pub stats: DelaunayRepairStats,
-    /// Heuristic rebuild seeds, if a non-reproducible fallback was used.
+    /// Heuristic rebuild seeds, if a fallback was used.
     pub heuristic: Option<DelaunayRepairHeuristicSeeds>,
 }
 
@@ -2340,20 +2746,38 @@ impl DelaunayRepairOutcome {
     }
 }
 
-/// Policy controlling when **global** Delaunay validation runs during triangulation.
+/// Policy controlling when **global** Delaunay validation runs.
 ///
-/// **Status**: Experimental API. Currently defined but not yet wired into insertion logic.
-///
-/// This policy is *validation-only* (non-mutating) and is distinct from
+/// This policy is **validation-only** (non-mutating) and is distinct from
 /// [`DelaunayRepairPolicy`], which performs flip-based repairs.
+///
+/// # ⚠️ Performance Warning
+///
+/// Global Delaunay validation is **extremely expensive**: O(cells × vertices). Use this policy
+/// primarily when you need correctness guarantees and are willing to pay the cost.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DelaunayCheckPolicy {
-    /// Run global Delaunay validation only at the end of triangulation.
+    /// Run global Delaunay validation once after batch construction (e.g. `new()` / `with_kernel()`).
+    ///
+    /// Incremental insertion does not automatically run a final global check because there is no
+    /// intrinsic “end” signal; call [`DelaunayTriangulation::is_valid`] or
+    /// [`DelaunayTriangulation::validate`] when you are done inserting.
     #[default]
     EndOnly,
-    /// Run global Delaunay validation after every N successful insertions,
-    /// in addition to a final pass at the end.
+    /// Run global Delaunay validation after every N successful insertions.
     EveryN(NonZeroUsize),
+}
+
+impl DelaunayCheckPolicy {
+    /// Returns true if a global Delaunay validation pass should run after the given insertion count.
+    #[inline]
+    #[must_use]
+    pub const fn should_check(self, insertion_count: usize) -> bool {
+        match self {
+            Self::EndOnly => false,
+            Self::EveryN(n) => insertion_count.is_multiple_of(n.get()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2363,6 +2787,36 @@ mod tests {
     use crate::geometry::kernel::{FastKernel, RobustKernel};
     use crate::topology::edit::TopologyEdit;
     use crate::vertex;
+
+    #[test]
+    fn test_construction_options_builder_roundtrip() {
+        let opts = ConstructionOptions::default()
+            .with_insertion_order(InsertionOrderStrategy::Input)
+            .with_dedup_policy(DedupPolicy::Exact)
+            .with_retry_policy(RetryPolicy::Disabled);
+
+        assert_eq!(opts.insertion_order(), InsertionOrderStrategy::Input);
+        assert_eq!(opts.dedup_policy(), DedupPolicy::Exact);
+        assert_eq!(opts.retry_policy(), RetryPolicy::Disabled);
+    }
+
+    #[test]
+    fn test_new_with_options_smoke_3d() {
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let opts = ConstructionOptions::default().with_retry_policy(RetryPolicy::Disabled);
+        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+            DelaunayTriangulation::new_with_options(&vertices, opts).unwrap();
+
+        assert_eq!(dt.number_of_vertices(), 4);
+        assert_eq!(dt.number_of_cells(), 1);
+        assert!(dt.validate().is_ok());
+    }
 
     #[test]
     fn test_delaunay_constructors_default_to_pl_manifold_mode() {
@@ -2424,6 +2878,28 @@ mod tests {
             .unwrap();
 
         assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
+    }
+
+    #[test]
+    fn test_delaunay_check_policy_should_check() {
+        assert!(!DelaunayCheckPolicy::EndOnly.should_check(1));
+
+        let every_2 = DelaunayCheckPolicy::EveryN(NonZeroUsize::new(2).unwrap());
+        assert!(!every_2.should_check(1));
+        assert!(every_2.should_check(2));
+        assert!(!every_2.should_check(3));
+        assert!(every_2.should_check(4));
+    }
+
+    #[test]
+    fn test_set_delaunay_check_policy_updates_state() {
+        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::empty();
+        assert_eq!(dt.delaunay_check_policy(), DelaunayCheckPolicy::EndOnly);
+
+        let policy = DelaunayCheckPolicy::EveryN(NonZeroUsize::new(3).unwrap());
+        dt.set_delaunay_check_policy(policy);
+        assert_eq!(dt.delaunay_check_policy(), policy);
     }
 
     #[test]

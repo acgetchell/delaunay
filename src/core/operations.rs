@@ -8,7 +8,7 @@
 //! The actual algorithms live under `core::algorithms`.
 
 use crate::core::algorithms::incremental_insertion::InsertionError;
-use crate::core::delaunay_triangulation::DelaunayRepairPolicy;
+use crate::core::delaunay_triangulation::{DelaunayCheckPolicy, DelaunayRepairPolicy};
 use crate::core::triangulation::TopologyGuarantee;
 use crate::core::triangulation_data_structure::CellKey;
 
@@ -176,7 +176,9 @@ pub(crate) struct DelaunayInsertionState {
     pub last_inserted_cell: Option<CellKey>,
     /// Policy controlling automatic Delaunay repair (flip-based).
     pub delaunay_repair_policy: DelaunayRepairPolicy,
-    /// Count of successful insertions (used to schedule repairs).
+    /// Policy controlling automatic global Delaunay validation (Level 4).
+    pub delaunay_check_policy: DelaunayCheckPolicy,
+    /// Count of successful insertions (used to schedule repairs/checks).
     pub delaunay_repair_insertion_count: usize,
 }
 
@@ -187,6 +189,7 @@ impl DelaunayInsertionState {
         Self {
             last_inserted_cell: None,
             delaunay_repair_policy: DelaunayRepairPolicy::EveryInsertion,
+            delaunay_check_policy: DelaunayCheckPolicy::EndOnly,
             delaunay_repair_insertion_count: 0,
         }
     }

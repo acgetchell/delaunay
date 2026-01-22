@@ -89,6 +89,16 @@ pub enum InsertionError {
         message: String,
     },
 
+    /// Global Delaunay validation failed after insertion.
+    ///
+    /// This indicates the triangulation is structurally valid but violates the
+    /// empty-circumsphere property (Level 4).
+    #[error("Delaunay validation failed: {message}")]
+    DelaunayValidationFailed {
+        /// Error message
+        message: String,
+    },
+
     /// Attempted to insert a vertex with coordinates that already exist.
     #[error(
         "Duplicate coordinates: vertex with coordinates {coordinates} already exists in the triangulation"
@@ -160,7 +170,8 @@ impl InsertionError {
                         | ConflictError::OpenBoundary { .. }
                 )
             }
-            // All other errors are not retryable.
+            // All other errors are not retryable, except for the specific hull-extension
+            // degeneracy handled below.
             //
             // Location errors are treated as non-retryable: `locate()` falls back to a scan when
             // facet-walking fails to make progress (cycle / step limit). Remaining location errors
@@ -174,6 +185,7 @@ impl InsertionError {
             Self::Location(_)
             | Self::Construction(_)
             | Self::CavityFilling { .. }
+            | Self::DelaunayValidationFailed { .. }
             | Self::DuplicateCoordinates { .. }
             | Self::DuplicateUuid { .. } => false,
         }

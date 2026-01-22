@@ -225,6 +225,7 @@ help-workflows:
     @echo "Testing:"
     @echo "  just test              # Lib and doc tests only (fast, used by CI)"
     @echo "  just test-integration  # All integration tests (includes proptests)"
+    @echo "  just test-integration-fast # Integration tests (skips proptests)"
     @echo "  just test-all          # All tests (lib + doc + integration + Python)"
     @echo "  just test-python       # Python tests only (pytest)"
     @echo "  just test-release      # All tests in release mode"
@@ -611,6 +612,15 @@ test-debug:
 # test-integration: runs all integration tests (includes proptests)
 test-integration:
     cargo test --tests --verbose
+
+# test-integration-fast: runs integration tests but skips proptests (tests prefixed with `prop_`)
+#
+# Useful for quick local validation on changes that don't touch the property-test surface area.
+# To run the full (slow) property suite, use: just test-integration
+#
+# Note: `--skip prop_` is a substring filter applied by the Rust test harness.
+test-integration-fast:
+    cargo test --tests --verbose -- --skip prop_
 
 test-python: _ensure-uv
     uv run pytest

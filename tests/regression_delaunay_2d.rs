@@ -35,3 +35,26 @@ fn regression_empty_circumsphere_2d_minimal_case() {
         "2D triangulation should be a valid PL-manifold after global flip repair"
     );
 }
+
+#[test]
+fn regression_issue_120_minimal_failing_input_2d() {
+    // From docs/issue_120_investigation.md (Example Failure Case (2D)).
+    let vertices = vec![
+        vertex!([0.0, 0.0]),
+        vertex!([-54.687, 0.0]),
+        vertex!([-85.026, 36.185]),
+        vertex!([0.0, 38.424]),
+    ];
+
+    let dt: DelaunayTriangulation<_, (), (), 2> =
+        DelaunayTriangulation::new_with_topology_guarantee(
+            &vertices,
+            TopologyGuarantee::PLManifold,
+        )
+        .unwrap();
+
+    if let Err(err) = dt.validate() {
+        debug_print_first_delaunay_violation(dt.tds(), None);
+        panic!("Issue #120 2D regression must validate Levels 1-4: {err}");
+    }
+}

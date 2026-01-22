@@ -1677,6 +1677,47 @@ where
 // Random Point Generation Utilities
 // ============================================================================
 
+/// Compute symmetric coordinate bounds scaled by point count.
+///
+/// This helper is intended for generating random point sets for triangulation construction
+/// without "cramming" many points into a tiny bounding box like `[-1, 1]^D`, which can
+/// increase the likelihood of near-degenerate configurations when using absolute tolerances.
+///
+/// It returns symmetric bounds `(-s/2, +s/2)` where `s = max(1, n_points)`.
+///
+/// # Errors
+///
+/// Returns `RandomPointGenerationError::RandomGenerationFailed` if `n_points` cannot be
+/// converted to the coordinate type `T` without loss of precision.
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::util::scaled_bounds_by_point_count;
+///
+/// // 100 points -> side length 100, i.e. [-50, 50]
+/// let bounds = scaled_bounds_by_point_count::<f64>(100).unwrap();
+/// assert_eq!(bounds, (-50.0, 50.0));
+/// ```
+pub fn scaled_bounds_by_point_count<T: CoordinateScalar>(
+    n_points: usize,
+) -> Result<(T, T), RandomPointGenerationError> {
+    let side_len = n_points.max(1);
+    let side = safe_usize_to_scalar::<T>(side_len).map_err(|e| {
+        RandomPointGenerationError::RandomGenerationFailed {
+            min: "n/a".to_string(),
+            max: "n/a".to_string(),
+            details: format!(
+                "Failed to convert n_points={side_len} to coordinate type {}: {e}",
+                std::any::type_name::<T>()
+            ),
+        }
+    })?;
+
+    let half = side / (T::one() + T::one());
+    Ok((-half, half))
+}
+
 /// Generate random points in D-dimensional space with uniform distribution.
 ///
 /// This function provides a flexible way to generate random points for testing,
