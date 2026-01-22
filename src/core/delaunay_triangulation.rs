@@ -3,12 +3,13 @@
 //! This layer adds Delaunay-specific operations on top of the generic
 //! `Triangulation` struct, following CGAL's architecture.
 
+use core::cmp::Ordering;
 use core::iter::Sum;
 use core::ops::{AddAssign, SubAssign};
 use std::hash::{Hash, Hasher};
 use std::num::NonZeroUsize;
 
-use num_traits::{NumCast, Zero};
+use num_traits::{NumCast, ToPrimitive, Zero};
 #[cfg(any(test, debug_assertions))]
 use rand::SeedableRng;
 #[cfg(any(test, debug_assertions))]
@@ -107,15 +108,23 @@ pub enum DelaunayTriangulationValidationError {
 /// Strategy used to order input vertices before batch construction.
 ///
 /// The default is [`InsertionOrderStrategy::Input`], which preserves the caller-provided order.
-///
-/// Additional strategies (e.g. lexicographic or space-filling curve orderings) are introduced
-/// in follow-up steps of the construction-hardening plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum InsertionOrderStrategy {
     /// Preserve the caller-provided input order (legacy behavior).
     #[default]
     Input,
+    /// Sort vertices by their coordinates (lexicographic order, `OrderedFloat` semantics).
+    ///
+    /// This ordering is deterministic and does not depend on vertex UUIDs (which are random by
+    /// default).
+    Lexicographic,
+    /// Sort vertices by Morton / Z-order curve (quantized, normalized coordinates).
+    ///
+    /// This ordering is intended to improve spatial locality during bulk insertion.
+    ///
+    /// Ties are broken lexicographically by coordinates, then by original input index.
+    Morton,
 }
 
 /// Policy controlling optional preprocessing to remove duplicate or near-duplicate vertices
@@ -232,6 +241,153 @@ impl ConstructionOptions {
         self.retry_policy = retry_policy;
         self
     }
+}
+
+// =============================================================================
+// BATCH CONSTRUCTION ORDERING HELPERS (INTERNAL)
+// =============================================================================
+
+type VertexBuffer<T, U, const D: usize> = Vec<Vertex<T, U, D>>;
+
+type PreprocessVerticesResult<T, U, const D: usize> =
+    Result<Option<VertexBuffer<T, U, D>>, DelaunayTriangulationConstructionError>;
+
+fn vertex_coordinate_hash<T, U, const D: usize>(vertex: &Vertex<T, U, D>) -> u64
+where
+    T: CoordinateScalar,
+    U: DataType,
+{
+    let mut hasher = FastHasher::default();
+    vertex.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn order_vertices_lexicographic<T, U, const D: usize>(
+    vertices: Vec<Vertex<T, U, D>>,
+) -> Vec<Vertex<T, U, D>>
+where
+    T: CoordinateScalar,
+    U: DataType,
+{
+    let mut keyed: Vec<(Vertex<T, U, D>, u64, usize)> = vertices
+        .into_iter()
+        .enumerate()
+        .map(|(input_index, vertex)| {
+            let hash = vertex_coordinate_hash(&vertex);
+            (vertex, hash, input_index)
+        })
+        .collect();
+
+    keyed.sort_by(|(a, a_hash, a_idx), (b, b_hash, b_idx)| {
+        a.partial_cmp(b)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| a_hash.cmp(b_hash))
+            .then_with(|| a_idx.cmp(b_idx))
+    });
+
+    keyed.into_iter().map(|(v, _, _)| v).collect()
+}
+
+fn morton_bits_per_coord<const D: usize>() -> Option<u32> {
+    if !(2..=5).contains(&D) {
+        return None;
+    }
+
+    let Ok(d_u32) = u32::try_from(D) else {
+        return None;
+    };
+
+    let bits_per_coord = u64::BITS / d_u32;
+    if bits_per_coord == 0 || bits_per_coord >= u64::BITS {
+        return None;
+    }
+
+    Some(bits_per_coord)
+}
+
+fn morton_code<const D: usize>(quantized: [u64; D], bits_per_coord: u32) -> u64 {
+    let mut code = 0_u64;
+
+    for bit in (0..bits_per_coord).rev() {
+        for &q in &quantized {
+            let b = (q >> bit) & 1;
+            code = (code << 1) | b;
+        }
+    }
+
+    code
+}
+
+fn order_vertices_morton<T, U, const D: usize>(
+    vertices: Vec<Vertex<T, U, D>>,
+) -> Vec<Vertex<T, U, D>>
+where
+    T: CoordinateScalar,
+    U: DataType,
+{
+    let Some(bits_per_coord) = morton_bits_per_coord::<D>() else {
+        return order_vertices_lexicographic(vertices);
+    };
+
+    // Compute bounding box in f64 for normalization. If any coordinate is non-finite,
+    // fall back to lexicographic ordering (Morton normalization assumes finite values).
+    let mut min = [f64::INFINITY; D];
+    let mut max = [f64::NEG_INFINITY; D];
+
+    for v in &vertices {
+        let coords = v.point().coords();
+        for axis in 0..D {
+            let Some(c) = coords[axis].to_f64() else {
+                return order_vertices_lexicographic(vertices);
+            };
+            if !c.is_finite() {
+                return order_vertices_lexicographic(vertices);
+            }
+            min[axis] = min[axis].min(c);
+            max[axis] = max[axis].max(c);
+        }
+    }
+
+    let mut inv_range = [0.0_f64; D];
+    for axis in 0..D {
+        let range = max[axis] - min[axis];
+        inv_range[axis] = if range > 0.0 { 1.0 / range } else { 0.0 };
+    }
+
+    let max_quant = (1_u64 << bits_per_coord) - 1;
+    let scale = <f64 as From<u32>>::from(u32::try_from(max_quant).unwrap_or(u32::MAX));
+
+    let mut keyed: Vec<(u64, Vertex<T, U, D>, usize)> = vertices
+        .into_iter()
+        .enumerate()
+        .map(|(input_index, vertex)| {
+            let coords = vertex.point().coords();
+            let mut q = [0_u64; D];
+
+            for axis in 0..D {
+                let c = coords[axis].to_f64().unwrap_or(0.0);
+                let norm = if inv_range[axis] == 0.0 {
+                    0.0
+                } else {
+                    (c - min[axis]) * inv_range[axis]
+                };
+                let clamped = norm.clamp(0.0, 1.0);
+                q[axis] = (clamped * scale).floor().to_u64().unwrap_or(0);
+            }
+
+            let code = morton_code::<D>(q, bits_per_coord);
+            (code, vertex, input_index)
+        })
+        .collect();
+
+    keyed.sort_by(|(a_code, a_vertex, a_idx), (b_code, b_vertex, b_idx)| {
+        a_code
+            .cmp(b_code)
+            .then_with(|| a_vertex.partial_cmp(b_vertex).unwrap_or(Ordering::Equal))
+            .then_with(|| a_idx.cmp(b_idx))
+    });
+
+    keyed.into_iter().map(|(_, v, _)| v).collect()
 }
 
 /// Delaunay triangulation with incremental insertion support.
@@ -564,8 +720,42 @@ where
             retry_policy,
         } = options;
 
-        // Apply optional preprocessing.
-        let owned_vertices: Option<Vec<Vertex<K::Scalar, U, D>>> = match dedup_policy {
+        let owned_vertices =
+            Self::preprocess_vertices_for_construction(vertices, dedup_policy, insertion_order)?;
+
+        let vertices: &[Vertex<K::Scalar, U, D>] = owned_vertices.as_deref().unwrap_or(vertices);
+
+        #[cfg(any(test, debug_assertions))]
+        {
+            if let RetryPolicy::DebugOnlyShuffled {
+                attempts,
+                base_seed,
+            } = retry_policy
+                && Self::should_retry_construction(vertices)
+            {
+                return Self::build_with_debug_shuffled_retries(
+                    &kernel,
+                    vertices,
+                    topology_guarantee,
+                    attempts,
+                    base_seed,
+                );
+            }
+        }
+
+        Self::build_with_kernel_inner(kernel, vertices, topology_guarantee)
+    }
+
+    fn preprocess_vertices_for_construction(
+        vertices: &[Vertex<K::Scalar, U, D>],
+        dedup_policy: DedupPolicy,
+        insertion_order: InsertionOrderStrategy,
+    ) -> PreprocessVerticesResult<K::Scalar, U, D>
+    where
+        K::Scalar: CoordinateScalar + Sum + Zero,
+    {
+        // Deduplicate first to reduce work for ordering strategies.
+        let mut owned_vertices: Option<Vec<Vertex<K::Scalar, U, D>>> = match dedup_policy {
             DedupPolicy::Off => None,
             DedupPolicy::Exact => Some(dedup_vertices_exact(vertices.to_vec())),
             DedupPolicy::Epsilon { tolerance } => {
@@ -591,32 +781,17 @@ where
             }
         };
 
-        let vertices: &[Vertex<K::Scalar, U, D>] = owned_vertices.as_deref().unwrap_or(vertices);
+        owned_vertices = match insertion_order {
+            InsertionOrderStrategy::Input => owned_vertices,
+            InsertionOrderStrategy::Lexicographic => Some(order_vertices_lexicographic(
+                owned_vertices.unwrap_or_else(|| vertices.to_vec()),
+            )),
+            InsertionOrderStrategy::Morton => Some(order_vertices_morton(
+                owned_vertices.unwrap_or_else(|| vertices.to_vec()),
+            )),
+        };
 
-        // Ordering strategy (step 2 adds canonical orderings; step 1 preserves input order).
-        match insertion_order {
-            InsertionOrderStrategy::Input => {}
-        }
-
-        #[cfg(any(test, debug_assertions))]
-        {
-            if let RetryPolicy::DebugOnlyShuffled {
-                attempts,
-                base_seed,
-            } = retry_policy
-                && Self::should_retry_construction(vertices)
-            {
-                return Self::build_with_debug_shuffled_retries(
-                    &kernel,
-                    vertices,
-                    topology_guarantee,
-                    attempts,
-                    base_seed,
-                );
-            }
-        }
-
-        Self::build_with_kernel_inner(kernel, vertices, topology_guarantee)
+        Ok(owned_vertices)
     }
 
     #[cfg(any(test, debug_assertions))]
@@ -2816,6 +2991,103 @@ mod tests {
         assert_eq!(dt.number_of_vertices(), 4);
         assert_eq!(dt.number_of_cells(), 1);
         assert!(dt.validate().is_ok());
+    }
+
+    fn vertices_from_coords_permutation_3d(
+        coords: &[[f64; 3]],
+        permutation: &[usize],
+    ) -> Vec<Vertex<f64, (), 3>> {
+        permutation.iter().map(|&i| vertex!(coords[i])).collect()
+    }
+
+    fn coord_sequence_3d(vertices: &[Vertex<f64, (), 3>]) -> Vec<[f64; 3]> {
+        vertices.iter().map(Into::into).collect()
+    }
+
+    #[test]
+    fn test_insertion_order_lexicographic_is_deterministic_across_permutations_3d() {
+        let coords: [[f64; 3]; 8] = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [2.0, 0.0, 1.0],
+            [-1.0, 5.0, 0.0],
+            [3.0, 2.0, 1.0],
+        ];
+
+        let permutations: [&[usize]; 4] = [
+            &[0, 1, 2, 3, 4, 5, 6, 7],
+            &[7, 6, 5, 4, 3, 2, 1, 0],
+            &[2, 3, 4, 5, 6, 7, 0, 1],
+            &[1, 3, 5, 7, 0, 2, 4, 6],
+        ];
+
+        let expected_vertices = vertices_from_coords_permutation_3d(&coords, permutations[0]);
+        let expected = coord_sequence_3d(&order_vertices_lexicographic(expected_vertices));
+
+        for perm in &permutations[1..] {
+            let vertices = vertices_from_coords_permutation_3d(&coords, perm);
+            let got = coord_sequence_3d(&order_vertices_lexicographic(vertices));
+            assert_eq!(got, expected);
+        }
+    }
+
+    #[test]
+    fn test_insertion_order_morton_is_deterministic_across_permutations_3d() {
+        let coords: [[f64; 3]; 8] = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [2.0, 0.0, 1.0],
+            [-1.0, 5.0, 0.0],
+            [3.0, 2.0, 1.0],
+        ];
+
+        let permutations: [&[usize]; 4] = [
+            &[0, 1, 2, 3, 4, 5, 6, 7],
+            &[7, 6, 5, 4, 3, 2, 1, 0],
+            &[2, 3, 4, 5, 6, 7, 0, 1],
+            &[1, 3, 5, 7, 0, 2, 4, 6],
+        ];
+
+        let expected_vertices = vertices_from_coords_permutation_3d(&coords, permutations[0]);
+        let expected = coord_sequence_3d(&order_vertices_morton(expected_vertices));
+
+        for perm in &permutations[1..] {
+            let vertices = vertices_from_coords_permutation_3d(&coords, perm);
+            let got = coord_sequence_3d(&order_vertices_morton(vertices));
+            assert_eq!(got, expected);
+        }
+    }
+
+    #[test]
+    fn test_new_with_options_lexicographic_and_morton_smoke_3d() {
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.25, 0.25, 0.25]),
+        ];
+
+        for insertion_order in [
+            InsertionOrderStrategy::Lexicographic,
+            InsertionOrderStrategy::Morton,
+        ] {
+            let opts = ConstructionOptions::default()
+                .with_insertion_order(insertion_order)
+                .with_retry_policy(RetryPolicy::Disabled);
+
+            let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+                DelaunayTriangulation::new_with_options(&vertices, opts).unwrap();
+
+            assert_eq!(dt.number_of_vertices(), 5);
+            assert!(dt.validate().is_ok());
+        }
     }
 
     #[test]
