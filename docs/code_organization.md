@@ -132,7 +132,14 @@ delaunay/
 │   │   ├── adjacency.rs
 │   │   ├── boundary.rs
 │   │   ├── cell.rs
-│   │   ├── collections.rs
+│   │   ├── collections/
+│   │   │   ├── aliases.rs
+│   │   │   ├── buffers.rs
+│   │   │   ├── helpers.rs
+│   │   │   ├── key_maps.rs
+│   │   │   ├── secondary_maps.rs
+│   │   │   ├── spatial_hash_grid.rs
+│   │   │   └── triangulation_maps.rs
 │   │   ├── delaunay_triangulation.rs
 │   │   ├── edge.rs
 │   │   ├── facet.rs
@@ -311,7 +318,7 @@ with convenient `just` shortcuts for common workflows.
 - `vertex.rs`, `cell.rs`, `facet.rs` - Core geometric primitives
 - `edge.rs` - Canonical `EdgeKey` for topology traversal
 - `adjacency.rs` - Optional `AdjacencyIndex` builder outputs (opt-in)
-- `collections.rs` - Optimized collection types and utilities
+- `collections/` - Optimized collection types and utilities
 - `boundary.rs` - Boundary detection and analysis
 - `algorithms/` - Core algorithms (incremental insertion, flips, point location)
 - `traits/` - Core trait definitions including FacetCacheProvider for performance optimization
@@ -899,22 +906,21 @@ mod tests {
 - Performance benchmarking
 - Integration with TDS
 
-#### `util.rs` (large module)
+#### `util/` (utility modules)
 
 - Function-focused (not struct-focused)
-- UUID generation and validation utilities with comprehensive error handling
-- Extreme coordinate finding functions for SlotMap-based vertex collections
-- Supercell simplex creation for triangulation initialization
-- Hash utilities for stable, deterministic hash computation
-- Facet adjacency checking and geometric utilities
-- Combination generation for k-simplex vertex combinations
-- **Jaccard similarity testing utilities** (v0.5.4+):
-  - Set extraction helpers: `extract_vertex_coordinate_set()`, `extract_edge_set()`, `extract_hull_facet_set()`
-  - Comparison utilities: `jaccard_index()`, `jaccard_distance()`, `format_jaccard_report()`
-  - Assertion macro: `assert_jaccard_gte!` for automatic diagnostics on failure
-  - Safe f64 conversion with overflow detection (2^53 limit)
-- Multi-dimensional testing across 1D-5D with both f32 and f64 coordinate types
-- Extensive edge case testing and error handling validation with systematic test organization
+- Split into dedicated modules under `src/core/util/` and wired explicitly in `src/lib.rs`.
+- Major submodules:
+  - `uuid.rs`: UUID generation and validation
+  - `hashing.rs`: stable, deterministic hash primitives
+  - `deduplication.rs`: vertex deduplication utilities
+  - `measurement.rs`: allocation measurement helper (feature-gated)
+  - `facet_utils.rs`: facet helpers (adjacency, vertex extraction, combination generation)
+  - `facet_keys.rs`: facet key derivation + facet index consistency helpers
+  - `jaccard.rs`: set similarity utilities + diagnostics macro `assert_jaccard_gte!`
+  - `delaunay_validation.rs`: Delaunay property validation helpers (expensive; debug-oriented)
+  - `hilbert.rs`: Hilbert ordering utilities (pure; triangulation-agnostic)
+- Unit tests live alongside each submodule for cohesion (instead of a single giant util test module).
 
 ### Key Conventions
 

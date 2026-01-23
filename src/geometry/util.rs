@@ -16,7 +16,8 @@ use std::ops::{AddAssign, SubAssign};
 use la_stack::{DEFAULT_PIVOT_TOL, DEFAULT_SINGULAR_TOL, LaError, Vector as LaVector};
 
 use crate::core::delaunay_triangulation::{
-    DelaunayTriangulation, DelaunayTriangulationConstructionError,
+    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError,
+    InsertionOrderStrategy, RetryPolicy,
 };
 use crate::core::facet::FacetView;
 use crate::core::traits::data_type::DataType;
@@ -2130,8 +2131,20 @@ where
     U: DataType,
     V: DataType,
 {
-    let dt = DelaunayTriangulation::with_topology_guarantee(kernel, vertices, topology_guarantee)
-        .ok()?;
+    // Important: use `Input` insertion order here so that the caller can apply
+    // deterministic shuffles during the robust fallback loop.
+    let options = ConstructionOptions::default()
+        .with_insertion_order(InsertionOrderStrategy::Input)
+        .with_retry_policy(RetryPolicy::Disabled);
+
+    let dt = DelaunayTriangulation::with_topology_guarantee_and_options(
+        kernel,
+        vertices,
+        topology_guarantee,
+        options,
+    )
+    .ok()?;
+
     random_triangulation_is_acceptable(&dt, min_vertices).then_some(dt)
 }
 
@@ -2363,6 +2376,7 @@ where
 /// - [`generate_random_points`] - For generating points without triangulation
 /// - [`generate_random_points_seeded`] - For seeded random point generation only
 /// - [`DelaunayTriangulation::new`] - For creating triangulations from existing vertices
+/// - [`RandomTriangulationBuilder`] - For more control over construction options
 pub fn generate_random_triangulation<T, U, V, const D: usize>(
     n_points: usize,
     bounds: (T, T),
@@ -2512,6 +2526,216 @@ where
     }
     .into())
 }
+
+/// Builder for generating random Delaunay triangulations with flexible construction options.
+///
+/// This builder provides a fluent API for constructing random triangulations with control over:
+/// - Insertion order strategy (`Input`, `Lexicographic`, `Morton`, `Hilbert`)
+/// - Topology guarantee (`None`, `PLManifold`)
+/// - Construction options (deduplication, retry policy)
+///
+/// # Examples
+///
+/// ```no_run
+/// use delaunay::geometry::util::RandomTriangulationBuilder;
+/// use delaunay::core::InsertionOrderStrategy;
+/// use delaunay::core::triangulation::TopologyGuarantee;
+///
+/// // Override the default `Hilbert` ordering with `Input` ordering.
+/// let dt = RandomTriangulationBuilder::new(20, (-3.0, 3.0))
+///     .seed(666)
+///     .insertion_order(InsertionOrderStrategy::Input)
+///     .build::<(), (), 3>()
+///     .unwrap();
+///
+/// // Build with PLManifold guarantee
+/// let dt_manifold = RandomTriangulationBuilder::new(100, (-10.0, 10.0))
+///     .seed(777)
+///     .topology_guarantee(TopologyGuarantee::PLManifold)
+///     .build::<(), (), 4>()
+///     .unwrap();
+/// ```
+pub struct RandomTriangulationBuilder<T> {
+    n_points: usize,
+    bounds: (T, T),
+    seed: Option<u64>,
+    topology_guarantee: TopologyGuarantee,
+    construction_options: ConstructionOptions,
+}
+
+impl<T> RandomTriangulationBuilder<T>
+where
+    T: CoordinateScalar
+        + SampleUniform
+        + AddAssign<T>
+        + SubAssign<T>
+        + Sum
+        + num_traits::cast::NumCast
+        + Zero,
+{
+    /// Creates a new builder with the specified number of points and coordinate bounds.
+    ///
+    /// # Arguments
+    ///
+    /// * `n_points` - Number of random points to generate
+    /// * `bounds` - Coordinate bounds as `(min, max)` tuple
+    ///
+    /// # Defaults
+    ///
+    /// - No seed (random)
+    /// - Default topology guarantee (None)
+    /// - `Hilbert` insertion order (improves spatial locality during bulk insertion)
+    /// - Default construction options (no deduplication, debug-only retries)
+    #[must_use]
+    pub fn new(n_points: usize, bounds: (T, T)) -> Self {
+        Self {
+            n_points,
+            bounds,
+            seed: None,
+            topology_guarantee: TopologyGuarantee::DEFAULT,
+            construction_options: ConstructionOptions::default(),
+        }
+    }
+
+    /// Sets the random seed for reproducible triangulation generation.
+    #[must_use]
+    pub const fn seed(mut self, seed: u64) -> Self {
+        self.seed = Some(seed);
+        self
+    }
+
+    /// Sets the topology guarantee for the triangulation.
+    ///
+    /// See [`TopologyGuarantee`] for available options.
+    #[must_use]
+    pub const fn topology_guarantee(mut self, topology_guarantee: TopologyGuarantee) -> Self {
+        self.topology_guarantee = topology_guarantee;
+        self
+    }
+
+    /// Sets the insertion order strategy.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use delaunay::geometry::util::RandomTriangulationBuilder;
+    /// use delaunay::core::InsertionOrderStrategy;
+    ///
+    /// // Override the default `Hilbert` ordering with `Input` ordering.
+    /// let dt = RandomTriangulationBuilder::new(20, (-3.0, 3.0))
+    ///     .seed(666)
+    ///     .insertion_order(InsertionOrderStrategy::Input)
+    ///     .build::<(), (), 3>()
+    ///     .unwrap();
+    /// ```
+    #[must_use]
+    pub const fn insertion_order(mut self, strategy: InsertionOrderStrategy) -> Self {
+        self.construction_options = self.construction_options.with_insertion_order(strategy);
+        self
+    }
+
+    /// Sets the full construction options.
+    ///
+    /// This provides access to advanced options like deduplication and retry policies.
+    #[must_use]
+    pub const fn construction_options(mut self, options: ConstructionOptions) -> Self {
+        self.construction_options = options;
+        self
+    }
+
+    /// Builds the random triangulation with the configured options.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `U` - Vertex data type (must implement `DataType`)
+    /// * `V` - Cell data type (must implement `DataType`)
+    /// * `D` - Dimensionality (const generic parameter)
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if:
+    /// - Random point generation fails (invalid bounds, RNG issues)
+    /// - Triangulation construction fails (geometric degeneracy, etc.)
+    /// - Validation fails after robust fallback attempts
+    pub fn build<U, V, const D: usize>(
+        self,
+    ) -> Result<DelaunayTriangulation<FastKernel<T>, U, V, D>, DelaunayTriangulationConstructionError>
+    where
+        U: DataType,
+        V: DataType,
+    {
+        self.build_with_vertex_data(None)
+    }
+
+    /// Builds the random triangulation with vertex data attached to each vertex.
+    ///
+    /// # Arguments
+    ///
+    /// * `vertex_data` - Optional data to attach to each generated vertex
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if construction fails (see [`build`](Self::build) for details).
+    pub fn build_with_vertex_data<U, V, const D: usize>(
+        self,
+        vertex_data: Option<U>,
+    ) -> Result<DelaunayTriangulation<FastKernel<T>, U, V, D>, DelaunayTriangulationConstructionError>
+    where
+        U: DataType,
+        V: DataType,
+    {
+        // Handle empty triangulation case (0 points)
+        if self.n_points == 0 {
+            let kernel = FastKernel::new();
+            return Ok(
+                DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
+                    kernel,
+                    self.topology_guarantee,
+                ),
+            );
+        }
+
+        if self.n_points < D + 1 {
+            return Err(TriangulationConstructionError::InsufficientVertices {
+                dimension: D,
+                source: crate::core::cell::CellValidationError::InsufficientVertices {
+                    actual: self.n_points,
+                    expected: D + 1,
+                    dimension: D,
+                },
+            }
+            .into());
+        }
+
+        // Generate random points
+        let points: Vec<Point<T, D>> = match self.seed {
+            Some(seed_value) => {
+                generate_random_points_seeded(self.n_points, self.bounds, seed_value).map_err(
+                    |e| TriangulationConstructionError::GeometricDegeneracy {
+                        message: format!("Random point generation failed: {e}"),
+                    },
+                )?
+            }
+            None => generate_random_points(self.n_points, self.bounds).map_err(|e| {
+                TriangulationConstructionError::GeometricDegeneracy {
+                    message: format!("Random point generation failed: {e}"),
+                }
+            })?,
+        };
+
+        // Convert to vertices
+        let vertices = random_triangulation_build_vertices(points, vertex_data);
+
+        // Build triangulation with configured options
+        DelaunayTriangulation::with_topology_guarantee_and_options(
+            FastKernel::new(),
+            &vertices,
+            self.topology_guarantee,
+            self.construction_options,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

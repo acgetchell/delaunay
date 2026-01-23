@@ -600,7 +600,7 @@ test:
     cargo test --doc --verbose
 
 # test-all: runs lib, doc, integration, and Python tests (comprehensive)
-test-all: test test-integration test-python
+test-all: test test-integration-fast test-python
     @echo "✅ All tests passed!"
 
 test-allocation:

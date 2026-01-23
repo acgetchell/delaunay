@@ -539,9 +539,9 @@ test_bootstrap_key_stability!(
 /// old TDS and lookups would fail or return wrong data.
 #[test]
 fn test_bootstrap_returns_valid_key_after_tds_rebuild() {
+    use ::uuid::Uuid;
     use delaunay::core::vertex::Vertex;
     use delaunay::geometry::point::Point;
-    use uuid::Uuid;
 
     // Create vertices with explicit UUIDs so we can track them
     let uuid1 = Uuid::new_v4();

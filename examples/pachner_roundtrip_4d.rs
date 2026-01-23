@@ -14,10 +14,12 @@
 //! cargo run --example pachner_roundtrip_4d
 //! ```
 
+use ::uuid::Uuid;
+use delaunay::core::InsertionOrderStrategy;
+use delaunay::geometry::util::RandomTriangulationBuilder;
 use delaunay::prelude::edit::*;
 use delaunay::prelude::*;
 use std::time::Instant;
-use uuid::Uuid;
 
 type Dt4 = DelaunayTriangulation<RobustKernel<f64>, (), (), 4>;
 
@@ -168,14 +170,14 @@ fn try_build_triangulation(
     seed: u64,
 ) -> Result<Dt4, String> {
     let start = Instant::now();
-    let dt_fast = generate_random_triangulation_with_topology_guarantee::<f64, (), (), 4>(
-        points,
-        bounds,
-        None,
-        Some(seed),
-        TopologyGuarantee::PLManifold,
-    )
-    .map_err(|e| format!("{label} construction failed: {e}"))?;
+    // Use Input ordering with seed for 4D PLManifold construction
+    // 4D is more sensitive to degeneracy, so we keep seeds for fallback attempts
+    let dt_fast = RandomTriangulationBuilder::new(points, bounds)
+        .seed(seed)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .insertion_order(InsertionOrderStrategy::Input)
+        .build::<(), (), 4>()
+        .map_err(|e| format!("{label} construction failed: {e}"))?;
     let dt = DelaunayTriangulation::from_tds_with_topology_guarantee(
         dt_fast.tds().clone(),
         RobustKernel::new(),

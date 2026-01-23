@@ -123,6 +123,7 @@ use crate::core::algorithms::locate::{
     ConflictError, LocateResult, extract_cavity_boundary, find_conflict_region, locate,
 };
 use crate::core::cell::{Cell, CellValidationError};
+use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::collections::{
     CavityBoundaryBuffer, CellKeyBuffer, CellKeySet, FacetIssuesMap, FacetToCellsMap, FastHashMap,
     FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, VertexToCellsMap,
@@ -2068,6 +2069,7 @@ where
     ///
     /// **Note**: For insertions beyond D+1 vertices, use `DelaunayTriangulation::insert()`
     /// instead, which handles conflict region computation automatically.
+    #[cfg(test)]
     pub(crate) fn insert(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
@@ -2078,7 +2080,8 @@ where
         K::Scalar: CoordinateScalar,
     {
         // Use transactional insertion with a single local-scale perturbation retry.
-        let (outcome, _stats) = self.insert_transactional(vertex, conflict_cells, hint, 1, 0)?;
+        let (outcome, _stats) =
+            self.insert_transactional(vertex, conflict_cells, hint, 1, 0, None)?;
         match outcome {
             InsertionOutcome::Inserted { vertex_key, hint } => Ok((vertex_key, hint)),
             InsertionOutcome::Skipped { error } => Err(error),
@@ -2100,6 +2103,7 @@ where
     /// Returns an error only for non-retryable structural failures (e.g. duplicate UUID).
     /// Retryable geometric degeneracies that exhaust all attempts, and duplicate coordinates,
     /// return `Ok((InsertionOutcome::Skipped { .. }, stats))`.
+    #[cfg(test)]
     pub(crate) fn insert_with_statistics(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
@@ -2110,24 +2114,26 @@ where
         K::Scalar: CoordinateScalar,
     {
         // Single perturbation retry (local-scale) for geometric degeneracies.
-        self.insert_transactional(vertex, conflict_cells, hint, 1, 0)
+        self.insert_transactional(vertex, conflict_cells, hint, 1, 0, None)
     }
 
-    /// Insert a vertex with statistics, using a custom perturbation seed.
+    /// Insert a vertex with statistics, using a custom perturbation seed and an optional
+    /// spatial hash-grid index.
     ///
-    /// This is identical to [`insert_with_statistics`](Self::insert_with_statistics) but allows
-    /// callers (e.g., heuristic rebuilds) to vary the deterministic perturbation pattern.
-    pub(crate) fn insert_with_statistics_seeded(
+    /// This is intended for bulk-construction paths that maintain a local index to
+    /// accelerate duplicate detection and locate-hint selection.
+    pub(in crate::core) fn insert_with_statistics_seeded_indexed(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
         conflict_cells: Option<&CellKeyBuffer>,
         hint: Option<CellKey>,
         perturbation_seed: u64,
+        index: Option<&mut HashGridIndex<K::Scalar, D>>,
     ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError>
     where
         K::Scalar: CoordinateScalar,
     {
-        self.insert_transactional(vertex, conflict_cells, hint, 1, perturbation_seed)
+        self.insert_transactional(vertex, conflict_cells, hint, 1, perturbation_seed, index)
     }
 
     /// Transactional insertion with automatic rollback and perturbation retry.
@@ -2153,6 +2159,7 @@ where
         hint: Option<CellKey>,
         max_perturbation_attempts: usize,
         perturbation_seed: u64,
+        mut index: Option<&mut HashGridIndex<K::Scalar, D>>,
     ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError>
     where
         K::Scalar: CoordinateScalar,
@@ -2163,7 +2170,18 @@ where
         let mut current_vertex = vertex;
         let mut last_retryable_error: Option<InsertionError> = None;
 
+        let mut hint = hint;
+        if hint.is_none()
+            && let Some(index_ref) = index.as_deref()
+        {
+            hint = self.select_locate_hint_from_hash_grid(&original_coords, index_ref);
+        }
+
         let local_scale = self.estimate_local_perturbation_scale(&original_coords, hint);
+
+        let duplicate_tolerance: K::Scalar =
+            <K::Scalar as NumCast>::from(1e-10_f64).unwrap_or_else(K::Scalar::default_tolerance);
+        let duplicate_tolerance_sq = duplicate_tolerance * duplicate_tolerance;
 
         for attempt in 0..=max_perturbation_attempts {
             stats.attempts = attempt + 1;
@@ -2222,6 +2240,17 @@ where
                     Vertex::new_with_uuid(Point::new(perturbed_coords), original_uuid, vertex.data);
             }
 
+            if let Some(error) = self.duplicate_coordinates_error(
+                current_vertex.point().coords(),
+                duplicate_tolerance_sq,
+                index.as_deref(),
+            ) {
+                stats.result = InsertionResult::SkippedDuplicate;
+                #[cfg(debug_assertions)]
+                eprintln!("SKIPPED: {error}");
+                return Ok((InsertionOutcome::Skipped { error }, stats));
+            }
+
             // Clone TDS for rollback (transactional semantics)
             let tds_snapshot = self.tds.clone();
 
@@ -2250,6 +2279,12 @@ where
                     }
 
                     let (vertex_key, hint) = result;
+                    if let Some(index) = index.as_deref_mut()
+                        && let Some(vertex) = self.tds.get_vertex_by_key(vertex_key)
+                    {
+                        index.insert_vertex(vertex_key, vertex.point().coords());
+                    }
+
                     return Ok((InsertionOutcome::Inserted { vertex_key, hint }, stats));
                 }
                 Err(e) => {
@@ -2300,6 +2335,113 @@ where
         }
 
         unreachable!("Loop should have returned in all cases");
+    }
+
+    fn select_locate_hint_from_hash_grid(
+        &self,
+        coords: &[K::Scalar; D],
+        index: &HashGridIndex<K::Scalar, D>,
+    ) -> Option<CellKey>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        let mut best: Option<(K::Scalar, CellKey)> = None;
+
+        index.for_each_candidate_vertex_key(coords, |vkey| {
+            let Some(vertex) = self.tds.get_vertex_by_key(vkey) else {
+                return true;
+            };
+
+            let Some(cell_key) = vertex.incident_cell else {
+                return true;
+            };
+
+            if !self.tds.contains_cell(cell_key) {
+                return true;
+            }
+
+            let vcoords = vertex.point().coords();
+            let mut dist_sq = K::Scalar::zero();
+            for i in 0..D {
+                let diff = vcoords[i] - coords[i];
+                dist_sq += diff * diff;
+            }
+
+            match best {
+                Some((best_dist, _)) if dist_sq >= best_dist => {}
+                _ => {
+                    best = Some((dist_sq, cell_key));
+                }
+            }
+
+            true
+        });
+
+        best.map(|(_, cell_key)| cell_key)
+    }
+
+    fn duplicate_coordinates_error(
+        &self,
+        coords: &[K::Scalar; D],
+        tolerance_sq: K::Scalar,
+        index: Option<&HashGridIndex<K::Scalar, D>>,
+    ) -> Option<InsertionError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        let mut duplicate_found = false;
+
+        let used_index = index.is_some_and(|index| {
+            index.for_each_candidate_vertex_key(coords, |vkey| {
+                let Some(vertex) = self.tds.get_vertex_by_key(vkey) else {
+                    return true;
+                };
+
+                let vcoords = vertex.point().coords();
+                let mut dist_sq = K::Scalar::zero();
+                for i in 0..D {
+                    let diff = vcoords[i] - coords[i];
+                    dist_sq += diff * diff;
+                }
+
+                if dist_sq < tolerance_sq {
+                    duplicate_found = true;
+                    return false;
+                }
+
+                true
+            })
+        });
+
+        if !used_index {
+            for (_, existing_vertex) in self.tds.vertices() {
+                let existing_coords = existing_vertex.point().coords();
+                let mut dist_sq = K::Scalar::zero();
+                for i in 0..D {
+                    let diff = coords[i] - existing_coords[i];
+                    dist_sq += diff * diff;
+                }
+
+                if dist_sq < tolerance_sq {
+                    duplicate_found = true;
+                    break;
+                }
+            }
+        }
+
+        if !duplicate_found {
+            return None;
+        }
+
+        let coord_str = coords
+            .iter()
+            .map(|c| format!("{c:?}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        Some(InsertionError::DuplicateCoordinates {
+            coordinates: format!("[{coord_str}]"),
+        })
     }
 
     /// Estimate a local length scale for perturbation based on nearby vertices.
@@ -2924,40 +3066,6 @@ where
         //   via the old v_key, so we must have the point value captured.
         let inserted_uuid = vertex.uuid();
         let point = *vertex.point();
-
-        // Check for duplicate coordinates (tolerance: 1e-10)
-        // This prevents inserting vertices with same/very similar coordinates.
-        // NOTE: This is an O(n·D) scan per insertion. If this becomes a hotspot,
-        // consider maintaining a keyed/quantized coordinate index per kernel/dimension.
-        let duplicate_tolerance: K::Scalar =
-            <K::Scalar as NumCast>::from(1e-10_f64).unwrap_or_else(K::Scalar::default_tolerance);
-        let duplicate_tolerance_sq = duplicate_tolerance * duplicate_tolerance;
-
-        for (_, existing_vertex) in self.tds.vertices() {
-            let existing_point = existing_vertex.point();
-            let existing_coords: &[K::Scalar] = existing_point.coords();
-            let new_coords: &[K::Scalar] = point.coords();
-
-            // Compute squared distance to avoid sqrt
-            let mut dist_sq = K::Scalar::zero();
-            for i in 0..D {
-                let diff = new_coords[i] - existing_coords[i];
-                dist_sq += diff * diff;
-            }
-
-            if dist_sq < duplicate_tolerance_sq {
-                // Format coordinates for error message
-                let coord_str = new_coords
-                    .iter()
-                    .map(|c| format!("{c:?}"))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-
-                return Err(InsertionError::DuplicateCoordinates {
-                    coordinates: format!("[{coord_str}]"),
-                });
-            }
-        }
 
         // 1. Insert vertex into Tds
         let mut v_key = self

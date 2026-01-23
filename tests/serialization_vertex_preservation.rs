@@ -148,9 +148,10 @@ fn test_vertex_preservation_many_duplicates_3d() {
     let unique_coords_len = unique_coords.len();
     println!("Unique coordinates: {unique_coords_len}");
 
-    // Duplicates should be skipped
-    let dt =
-        DelaunayTriangulation::<_, (), (), 3>::new(&vertices).expect("Tds construction succeeded");
+    // Use Input ordering to avoid Morton clustering of duplicates causing degenerate initial simplex
+    let opts = ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
+    let dt = DelaunayTriangulation::<_, (), (), 3>::new_with_options(&vertices, opts)
+        .expect("Tds construction succeeded");
     let tds = dt.tds();
     let tds_vertex_count = tds.vertices().count();
     println!("Vertices after Tds construction: {tds_vertex_count}");

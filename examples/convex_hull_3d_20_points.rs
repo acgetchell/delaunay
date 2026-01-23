@@ -28,6 +28,7 @@
 //! - Validation results
 //! - Performance metrics
 
+use delaunay::geometry::util::generate_random_triangulation;
 use delaunay::prelude::query::*;
 use num_traits::cast::cast;
 use std::time::Instant;
@@ -37,31 +38,33 @@ fn main() {
     println!("3D Convex Hull Example - 20 Random Points");
     println!("=================================================================\\n");
 
-    // Create Delaunay triangulation with timing using the utility function.
-    // NOTE: The (n_points, bounds, seed) triple matches a configuration covered by
-    // `test_generate_random_triangulation_dimensions` in `geometry::util` to avoid
-    // pathological Delaunay-repair failures in CI while still exercising a nontrivial 3D hull.
+    // Create Delaunay triangulation with timing.
+    // Use a fixed seed + bounds so that `just examples` is reproducible and robust.
+    let n_points = 20;
+    let bounds = (-3.0, 3.0);
+    let seed: u64 = std::env::var("DELAUNAY_EXAMPLE_SEED")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(666);
+
     println!(
-        "Creating 3D Delaunay triangulation with 20 random points in [-3, 3]^3 (seed = 666)..."
+        "Creating 3D Delaunay triangulation with {n_points} random points in [{:.1}, {:.1}]^3 (seed={seed})...",
+        bounds.0, bounds.1
     );
     let start = Instant::now();
 
-    let dt = match generate_random_triangulation(
-        20,          // Number of points
-        (-3.0, 3.0), // Coordinate bounds
-        None,        // No vertex data
-        Some(666),   // Fixed seed for reproducibility (matches tested configuration)
-    ) {
-        Ok(dt) => {
-            let construction_time = start.elapsed();
-            println!("✓ Triangulation created successfully in {construction_time:?}");
-            dt
-        }
-        Err(e) => {
-            println!("✗ Failed to create triangulation: {e}");
-            return;
-        }
-    };
+    let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+        match generate_random_triangulation(n_points, bounds, None, Some(seed)) {
+            Ok(dt) => {
+                let construction_time = start.elapsed();
+                println!("✓ Triangulation created successfully in {construction_time:?}");
+                dt
+            }
+            Err(e) => {
+                println!("✗ Failed to create triangulation: {e}");
+                return;
+            }
+        };
 
     // Display some vertex information
     let vertex_count = dt.tds().number_of_vertices();
