@@ -2661,6 +2661,7 @@ where
     ///
     /// Returns `Err` if:
     /// - Random point generation fails (invalid bounds, RNG issues)
+    /// - Insufficient vertices for the requested dimension (`n_points < D + 1`)
     /// - Triangulation construction fails (geometric degeneracy, etc.)
     /// - Construction fails after the configured retry policy (no robust-kernel fallback here)
     pub fn build<U, V, const D: usize>(
@@ -2736,8 +2737,12 @@ where
         #[cfg(debug_assertions)]
         if std::env::var_os("DELAUNAY_DEBUG_RANDOM_BUILDER").is_some() {
             eprintln!(
-                "random_triangulation_builder: single attempt with n_points={}, topology_guarantee={:?}, options={:?}",
-                self.n_points, self.topology_guarantee, self.construction_options
+                "random_triangulation_builder: single call to with_topology_guarantee_and_options with n_points={}, topology_guarantee={:?}, insertion_order={:?}, dedup_policy={:?}, retry_policy={:?}",
+                self.n_points,
+                self.topology_guarantee,
+                self.construction_options.insertion_order(),
+                self.construction_options.dedup_policy(),
+                self.construction_options.retry_policy(),
             );
         }
         DelaunayTriangulation::with_topology_guarantee_and_options(

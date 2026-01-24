@@ -91,8 +91,8 @@ where
 ///
 /// # Returns
 ///
-/// A new vector containing vertices that are more than `epsilon` apart from each
-/// other (strictly: distance > epsilon). The first occurrence of each cluster is kept.
+/// A new vector containing vertices that are at least `epsilon` apart from each
+/// other (distance >= epsilon). The first occurrence of each cluster is kept.
 ///
 /// # Panics
 ///
@@ -245,8 +245,15 @@ fn coords_within_epsilon<T: CoordinateScalar, const D: usize>(
         .zip(b.iter())
         .map(|(x, y)| (*x - *y) * (*x - *y))
         .fold(T::zero(), |acc, d| acc + d);
+    let epsilon_sq = epsilon * epsilon;
 
-    dist_sq < epsilon * epsilon
+    if cfg!(debug_assertions) && dist_sq == epsilon_sq {
+        eprintln!(
+            "[dedup_vertices_epsilon] distance equals epsilon; keeping point (strict < epsilon)"
+        );
+    }
+
+    dist_sq < epsilon_sq
 }
 
 #[cfg(test)]

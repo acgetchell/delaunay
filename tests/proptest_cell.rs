@@ -39,7 +39,10 @@ macro_rules! test_cell_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         for (_cell_key, cell) in dt.cells() {
                             let vertex_keys = cell.vertices();
                             let unique_vertices: HashSet<_> = vertex_keys.iter().collect();
@@ -56,7 +59,10 @@ macro_rules! test_cell_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         for (_cell_key, cell) in dt.cells() {
                             prop_assert_eq!(cell.vertices().len(), $expected_vertices);
                         }
@@ -71,7 +77,10 @@ macro_rules! test_cell_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         for (_cell_key, cell) in dt.cells() {
                             if let Some(neighbors) = cell.neighbors() {
                                 prop_assert!(neighbors.len() <= $max_neighbors);
@@ -88,7 +97,10 @@ macro_rules! test_cell_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let mut seen_uuids = HashSet::new();
                         for (_cell_key, cell) in dt.cells() {
                             prop_assert!(seen_uuids.insert(cell.uuid()));
@@ -104,7 +116,10 @@ macro_rules! test_cell_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         if dt.tds().validate().is_ok() {
                             for (_cell_key, cell) in dt.cells() {
                                 prop_assert_eq!(cell.vertices().len(), $expected_vertices);

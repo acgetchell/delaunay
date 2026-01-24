@@ -60,9 +60,20 @@ pub fn hilbert_quantize<T: CoordinateScalar, const D: usize>(
 
 #[inline]
 fn validate_hilbert_params<const D: usize>(bits: u32) {
+    #[cfg(debug_assertions)]
+    if bits == 0 || bits > 31 {
+        eprintln!("hilbert params invalid: bits={bits} (expected 1..=31)");
+    }
+
     assert!(bits > 0 && bits <= 31, "bits must be in range [1, 31]");
     let d_u32 = u32::try_from(D).expect("D should fit in u32 for overflow check");
     let total_bits = u128::from(d_u32) * u128::from(bits);
+
+    #[cfg(debug_assertions)]
+    if total_bits > 128 {
+        eprintln!("hilbert params invalid: D={D} bits={bits} total_bits={total_bits} (max 128)");
+    }
+
     assert!(
         total_bits <= 128,
         "Hilbert index would overflow u128 for D={D} and bits={bits}"
@@ -184,6 +195,10 @@ fn hilbert_sort_key<T: CoordinateScalar, const D: usize>(
 /// Stable sort helper: sort items by Hilbert index + quantized-coordinate tie-break.
 ///
 /// This is a generic helper that does not depend on triangulation types.
+///
+/// # Panics
+/// - Panics if `bits == 0` or `bits > 31`.
+/// - Panics if `D * bits > 128` (index would not fit in `u128`).
 pub fn hilbert_sort_by_stable<Item, T, F, const D: usize>(
     items: &mut [Item],
     bounds: (T, T),
@@ -204,6 +219,10 @@ pub fn hilbert_sort_by_stable<Item, T, F, const D: usize>(
 /// This avoids allocations beyond what the sort implementation may use internally,
 /// but recomputes indices during comparisons. Prefer [`hilbert_sort_by_stable`] unless
 /// memory pressure is critical, as the unstable variant recomputes keys O(n log n) times.
+///
+/// # Panics
+/// - Panics if `bits == 0` or `bits > 31`.
+/// - Panics if `D * bits > 128` (index would not fit in `u128`).
 pub fn hilbert_sort_by_unstable<Item, T, F, const D: usize>(
     items: &mut [Item],
     bounds: (T, T),
@@ -221,6 +240,10 @@ pub fn hilbert_sort_by_unstable<Item, T, F, const D: usize>(
 }
 
 /// Return the indices that would sort `coords` by Hilbert order.
+///
+/// # Panics
+/// - Panics if `bits == 0` or `bits > 31`.
+/// - Panics if `D * bits > 128` (index would not fit in `u128`).
 #[must_use]
 pub fn hilbert_sorted_indices<T: CoordinateScalar, const D: usize>(
     coords: &[[T; D]],

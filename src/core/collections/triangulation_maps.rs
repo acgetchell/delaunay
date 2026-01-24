@@ -45,11 +45,11 @@ pub type FacetToCellsMap = FastHashMap<u64, SmallBuffer<FacetHandle, 2>>;
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust
 /// use delaunay::core::collections::FacetIssuesMap;
 ///
 /// let issues: FacetIssuesMap = FacetIssuesMap::default();
-/// println!("{}", issues.len());
+/// assert!(issues.is_empty());
 /// ```
 pub type FacetIssuesMap = FastHashMap<u64, SmallBuffer<(CellKey, FacetIndex), 4>>;
 

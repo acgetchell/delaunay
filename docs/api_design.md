@@ -1,6 +1,8 @@
 # API Design: Two-Track Approach
 
-This document explains the dual API design for working with Delaunay triangulations: the **Builder API** for constructing and maintaining Delaunay triangulations, and the **Edit API** for explicit topology editing via bistellar flips.
+This document explains the dual API design for working with Delaunay triangulations:
+the **Builder API** for constructing and maintaining Delaunay triangulations, and
+the **Edit API** for explicit topology editing via bistellar flips.
 
 ## Overview
 
@@ -20,7 +22,7 @@ The library provides two distinct APIs for different use cases:
 
 ## When to Use Each API
 
-### Use the Builder API when:
+### Use the Builder API when
 
 - Building a Delaunay triangulation from a set of points
 - Adding/removing vertices while maintaining the Delaunay property
@@ -28,13 +30,14 @@ The library provides two distinct APIs for different use cases:
 - Working with standard computational geometry workflows
 
 **Example use cases:**
+
 - Computing convex hulls
 - Nearest-neighbor queries
 - Voronoi diagram construction
 - Mesh generation
 - Scientific simulations requiring Delaunay meshes
 
-### Use the Edit API when:
+### Use the Edit API when
 
 - Implementing custom topological algorithms
 - Researching bistellar flip sequences
@@ -43,6 +46,7 @@ The library provides two distinct APIs for different use cases:
 - You need explicit control over topology changes
 
 **Example use cases:**
+
 - Implementing custom Delaunay repair strategies
 - Topology optimization algorithms
 - Research on triangulation properties
@@ -183,6 +187,7 @@ dt.flip_k3_inverse_from_triangle(triangle).unwrap();
 After applying flips, you should:
 
 1. Manually verify the Delaunay property if needed:
+
    ```rust
    dt.is_valid().unwrap();  // Check Level 4 (Delaunay property)
    ```
@@ -281,7 +286,7 @@ The separation serves several purposes:
 
 See the following examples for practical demonstrations:
 
-- `examples/topology_editing_2d.rs` - Simple 2D example showing both APIs
+- `examples/topology_editing_2d_3d.rs` - 2D+3D example showing both APIs
 - `examples/pachner_roundtrip_4d.rs` - Advanced 4D example with all flip types
 - `examples/triangulation_3d_20_points.rs` - Builder API usage for construction
 

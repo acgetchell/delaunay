@@ -38,7 +38,10 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let tds = dt.tds();
                         for cell_key in tds.cell_keys() {
                             // Each cell has D+1 facets (one opposite each vertex)
@@ -68,7 +71,10 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let tds = dt.tds();
                         for cell_key in tds.cell_keys() {
                             if let Some(cell) = tds.get_cell(cell_key) {
@@ -100,7 +106,10 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let tds = dt.tds();
                         // Check that each facet is valid
                         for cell_key in tds.cell_keys() {
@@ -125,7 +134,10 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let tds = dt.tds();
                         for cell_key in tds.cell_keys() {
                             let mut facet_count = 0;
@@ -168,7 +180,10 @@ macro_rules! test_facet_multiplicity {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let tds = dt.tds();
                         // Ensure we're checking a valid triangulation to avoid degenerate edge cases
                         prop_assume!(tds.is_valid().is_ok());

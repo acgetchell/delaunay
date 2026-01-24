@@ -32,8 +32,11 @@ fn test_vertex_preservation_with_duplicates_3d() {
     println!("Unique input coordinates: {}", input_coords.len());
 
     // Construct triangulation - duplicates should be skipped
-    let dt =
-        DelaunayTriangulation::<_, (), (), 3>::new(&vertices).expect("Tds construction succeeded");
+    let dt = DelaunayTriangulation::<_, (), (), 3>::new_with_topology_guarantee(
+        &vertices,
+        TopologyGuarantee::PLManifold,
+    )
+    .expect("Tds construction succeeded");
     let tds = dt.tds();
 
     let tds_vertex_count = tds.vertices().count();
@@ -91,8 +94,11 @@ fn test_vertex_preservation_without_duplicates_3d() {
 
     println!("Input vertices (no duplicates): {}", vertices.len());
 
-    let dt =
-        DelaunayTriangulation::<_, (), (), 3>::new(&vertices).expect("Tds construction failed");
+    let dt = DelaunayTriangulation::<_, (), (), 3>::new_with_topology_guarantee(
+        &vertices,
+        TopologyGuarantee::PLManifold,
+    )
+    .expect("Tds construction failed");
     let tds = dt.tds();
     let tds_vertex_count = tds.vertices().count();
     println!("Vertices after Tds construction: {tds_vertex_count}");
@@ -195,8 +201,11 @@ fn test_vertex_coordinate_preservation_3d() {
     ];
     let vertices = Vertex::<f64, (), 3>::from_points(&points);
 
-    let dt =
-        DelaunayTriangulation::<_, (), (), 3>::new(&vertices).expect("Tds construction failed");
+    let dt = DelaunayTriangulation::<_, (), (), 3>::new_with_topology_guarantee(
+        &vertices,
+        TopologyGuarantee::PLManifold,
+    )
+    .expect("Tds construction failed");
     let tds = dt.tds();
 
     // Extract original vertex coordinates using canonical extraction

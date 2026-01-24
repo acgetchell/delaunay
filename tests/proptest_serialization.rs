@@ -47,7 +47,10 @@ macro_rules! test_serialization_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         // Serialize to JSON
                         let json = serde_json::to_string(&dt).expect("Serialization failed");
 
@@ -85,7 +88,10 @@ macro_rules! test_serialization_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         if dt.tds().validate().is_ok() {
                             // Serialize and deserialize
                             let json = serde_json::to_string(&dt).expect("Serialization failed");
@@ -111,7 +117,10 @@ macro_rules! test_serialization_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         // Filter: Skip minimal/degenerate configurations
                         // Need more than minimal simplex (D+1) to have meaningful serialization test
                         prop_assume!(dt.number_of_vertices() > $dim + 1);
@@ -165,7 +174,10 @@ macro_rules! test_serialization_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         // Count original neighbor relationships
                         let mut original_neighbor_count = 0;
                         for (_key, cell) in dt.cells() {
