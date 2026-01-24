@@ -348,6 +348,27 @@ fn test_batch_vs_incremental_same_vertex_count() {
     assert!(dt_incremental.number_of_cells() > 0);
 }
 
+#[test]
+fn test_bulk_construction_skips_near_duplicate_3d() {
+    // Use bulk construction with a near-duplicate inside the tolerance (1e-10).
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+        vertex!([0.2, 0.2, 0.2]),
+        vertex!([0.2 + 1e-11, 0.2, 0.2]),
+    ];
+
+    let opts =
+        ConstructionOptions::default().with_dedup_policy(DedupPolicy::Epsilon { tolerance: 1e-10 });
+    let dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::new_with_options(&vertices, opts).unwrap();
+
+    // The near-duplicate should be skipped, so only 5 unique vertices remain.
+    assert_eq!(dt.number_of_vertices(), 5);
+    assert!(dt.number_of_cells() > 0);
+}
 // =========================================================================
 // Edge Cases
 // =========================================================================

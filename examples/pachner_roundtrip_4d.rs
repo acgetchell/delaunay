@@ -4,9 +4,8 @@
 //! all Pachner moves (k=1,2,3) and their inverses, and verifies that the
 //! triangulation is unchanged after each paired move + inverse.
 //!
-//! The example first attempts to build a 100-point 4D triangulation. If that
-//! fails (or is too slow in your environment), it falls back to a small, stable
-//! 12-point configuration used in CI tests.
+//! The example uses a small, stable 12-point configuration (a 4-simplex plus
+//! interior points) to keep runs fast and deterministic.
 //!
 //! ## Usage
 //!
@@ -15,48 +14,26 @@
 //! ```
 
 use ::uuid::Uuid;
-use delaunay::core::InsertionOrderStrategy;
-use delaunay::geometry::util::RandomTriangulationBuilder;
 use delaunay::prelude::edit::*;
 use delaunay::prelude::*;
 use std::time::Instant;
 
 type Dt4 = DelaunayTriangulation<RobustKernel<f64>, (), (), 4>;
-
-const SEED_BASE: u64 = 777;
-const SEED_OFFSETS: [u64; 6] = [0, 19, 37, 73, 157, 313];
-
-#[derive(Clone, Copy, Debug)]
-struct TriangulationConfig {
-    label: &'static str,
-    points: usize,
-}
-
-const TRIANGULATION_CONFIGS: &[TriangulationConfig] = &[
-    TriangulationConfig {
-        label: "Primary",
-        points: 100,
-    },
-    TriangulationConfig {
-        label: "Fallback",
-        points: 60,
-    },
-    TriangulationConfig {
-        label: "Fallback",
-        points: 40,
-    },
-    TriangulationConfig {
-        label: "Fallback",
-        points: 25,
-    },
-    TriangulationConfig {
-        label: "Fallback",
-        points: 16,
-    },
-    TriangulationConfig {
-        label: "Fallback",
-        points: 12,
-    },
+const STABLE_POINTS_4D: &[[f64; 4]] = &[
+    // 4-simplex hull (convex hull vertices)
+    [0.0, 0.0, 0.0, 0.0],
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0],
+    // Interior points (non-symmetric to avoid degeneracy)
+    [0.10, 0.10, 0.10, 0.10],
+    [0.15, 0.10, 0.10, 0.10],
+    [0.10, 0.15, 0.10, 0.10],
+    [0.10, 0.10, 0.15, 0.10],
+    [0.12, 0.12, 0.12, 0.12],
+    [0.20, 0.15, 0.10, 0.05],
+    [0.08, 0.18, 0.12, 0.14],
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,14 +47,14 @@ fn main() {
     println!("4D Pachner Move Roundtrip Example (k=1,2,3 + inverses)");
     println!("============================================================\n");
 
-    let Some(mut dt) = build_triangulation() else {
-        eprintln!(
-            "⚠️  Unable to build a stable 4D PL-manifold Delaunay triangulation after all attempts."
-        );
-        eprintln!("    Skipping Pachner roundtrip example for this run.");
-        return;
+    let mut dt = match build_triangulation() {
+        Ok(dt) => dt,
+        Err(err) => {
+            eprintln!("⚠️  Unable to build the stable 4D PL-manifold triangulation: {err}");
+            eprintln!("    Skipping Pachner roundtrip example for this run.");
+            return;
+        }
     };
-    dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
     println!(
         "Triangulation: {} vertices, {} cells",
@@ -124,72 +101,29 @@ fn main() {
     println!("============================================================");
 }
 
-fn build_triangulation() -> Option<Dt4> {
-    for config in TRIANGULATION_CONFIGS {
-        let bounds = match scaled_bounds_by_point_count::<f64>(config.points) {
-            Ok(bounds) => bounds,
-            Err(e) => {
-                println!(
-                    "✗ {label} bounds computation failed for {points} points: {e}",
-                    label = config.label,
-                    points = config.points
-                );
-                continue;
-            }
-        };
-
-        println!(
-            "Attempting {label} 4D triangulation: {points} points in [{}, {}]^4...",
-            bounds.0,
-            bounds.1,
-            label = config.label,
-            points = config.points
-        );
-
-        for offset in SEED_OFFSETS {
-            let seed = SEED_BASE.wrapping_add(offset);
-            match try_build_triangulation(config.label, config.points, bounds, seed) {
-                Ok(dt) => return Some(dt),
-                Err(err) => {
-                    println!(
-                        "✗ {label} attempt (seed={seed}) failed: {err}",
-                        label = config.label
-                    );
-                }
-            }
-        }
-    }
-
-    None
-}
-
-fn try_build_triangulation(
-    label: &str,
-    points: usize,
-    bounds: (f64, f64),
-    seed: u64,
-) -> Result<Dt4, String> {
+fn build_triangulation() -> Result<Dt4, String> {
+    let vertices = stable_vertices();
     let start = Instant::now();
-    // Use Input ordering with seed for 4D PLManifold construction
-    // 4D is more sensitive to degeneracy, so we keep seeds for fallback attempts
-    let dt_fast = RandomTriangulationBuilder::new(points, bounds)
-        .seed(seed)
-        .topology_guarantee(TopologyGuarantee::PLManifold)
-        .insertion_order(InsertionOrderStrategy::Input)
-        .build::<(), (), 4>()
-        .map_err(|e| format!("{label} construction failed: {e}"))?;
-    let dt = DelaunayTriangulation::from_tds_with_topology_guarantee(
-        dt_fast.tds().clone(),
+    let dt: Dt4 = DelaunayTriangulation::with_topology_guarantee(
         RobustKernel::new(),
+        &vertices,
         TopologyGuarantee::PLManifold,
+    )
+    .map_err(|e| format!("construction failed: {e}"))?;
+    println!(
+        "✓ Stable 4D triangulation built ({} points) in {:?}",
+        vertices.len(),
+        start.elapsed()
     );
-    println!("✓ {label} triangulation built in {:?}", start.elapsed());
-
-    dt.validate()
-        .map_err(|e| format!("{label} validation failed: {e}"))?;
-    println!("✓ {label} validation passed (seed={seed})\n");
 
     Ok(dt)
+}
+
+fn stable_vertices() -> Vec<Vertex<f64, (), 4>> {
+    STABLE_POINTS_4D
+        .iter()
+        .map(|coords| vertex!(*coords))
+        .collect()
 }
 
 fn snapshot_topology(dt: &Dt4) -> TopologySnapshot {

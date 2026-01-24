@@ -148,7 +148,8 @@ use crate::geometry::util::safe_scalar_to_f64;
 use crate::topology::characteristics::euler::TopologyClassification;
 use crate::topology::characteristics::validation::validate_triangulation_euler_with_facet_to_cells_map;
 use crate::topology::manifold::{
-    ManifoldError, validate_closed_boundary, validate_facet_degree, validate_vertex_links,
+    ManifoldError, validate_closed_boundary, validate_facet_degree, validate_ridge_links,
+    validate_vertex_links,
 };
 use crate::topology::traits::topological_space::TopologyError;
 
@@ -418,10 +419,10 @@ type TryInsertImplOk = ((VertexKey, Option<CellKey>), usize, SuspicionFlags);
 /// Validation can be expensive (O(N×D²) or worse), so this allows callers to trade
 /// performance for stricter correctness checks during incremental operations.
 ///
-/// Note: when [`TopologyGuarantee::PLManifold`] is active, Level 3 topology validation
-/// is forced after each insertion once cells exist, even if [`ValidationPolicy::Never`]
-/// is selected. The policy only governs *additional* validation beyond the mandatory
-/// PL-manifold safety checks.
+/// **Note**: [`TopologyGuarantee::PLManifold`] is incompatible with [`ValidationPolicy::Never`].
+/// `PLManifold` requires at least end-of-construction validation to certify full
+/// PL-manifoldness. Use [`ValidationPolicy::OnSuspicion`] (default) for best performance,
+/// or [`ValidationPolicy::Always`] for maximum safety during incremental operations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ValidationPolicy {
     /// Never run global validation.
@@ -469,9 +470,11 @@ impl Default for ValidationPolicy {
 ///   each facet is incident to one or two cells, and the codimension-2 boundary is closed.
 ///   This is sufficient for many geometric algorithms but does not guarantee local Euclidean structure.
 ///
-/// - [`TopologyGuarantee::PLManifold`] additionally checks the **vertex-link** condition
-///   (via [`crate::topology::manifold::validate_vertex_links`]), i.e. that the triangulation
-///   is a simplicial piecewise-linear (PL) manifold with boundary.
+/// - [`TopologyGuarantee::PLManifold`] uses ridge-link validation during insertion and
+///   requires a vertex-link validation pass at construction completion to certify
+///   PL-manifoldness.
+/// - [`TopologyGuarantee::PLManifoldStrict`] runs vertex-link validation after every
+///   insertion for maximal safety (slowest).
 ///
 /// # Example
 ///
@@ -489,7 +492,7 @@ impl Default for ValidationPolicy {
 ///
 /// // Optional: relax topology checks for speed (weaker guarantees).
 /// dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
-/// assert!(!dt.topology_guarantee().requires_vertex_links());
+/// assert!(!dt.topology_guarantee().requires_vertex_links_at_completion());
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TopologyGuarantee {
@@ -498,10 +501,17 @@ pub enum TopologyGuarantee {
     /// - closed boundary ("no boundary of boundary")
     Pseudomanifold,
 
-    /// Validate PL-manifold invariants.
+    /// Validate PL-manifold invariants (incremental mode).
     ///
-    /// This includes all `Pseudomanifold` checks plus vertex-link validation.
+    /// This includes all `Pseudomanifold` checks plus ridge-link validation during
+    /// insertion, with a required vertex-link validation at construction completion.
     PLManifold,
+
+    /// Validate PL-manifold invariants with strict per-insertion checks.
+    ///
+    /// This includes all `Pseudomanifold` checks plus vertex-link validation
+    /// after every insertion (slowest, maximum safety).
+    PLManifoldStrict,
 }
 
 impl Default for TopologyGuarantee {
@@ -517,12 +527,54 @@ impl TopologyGuarantee {
     /// This is a `const` alternative to `<Self as Default>::default()` for `const fn` constructors.
     pub const DEFAULT: Self = Self::PLManifold;
 
-    /// Returns `true` if this topology guarantee requires the full vertex-link
-    /// PL-manifoldness check.
+    /// Returns `true` if this topology guarantee requires vertex-link validation
+    /// after each insertion.
+    #[inline]
+    #[must_use]
+    pub const fn requires_vertex_links_during_insertion(self) -> bool {
+        matches!(self, Self::PLManifoldStrict)
+    }
+
+    /// Returns `true` if this topology guarantee requires vertex-link validation
+    /// at construction completion.
+    #[inline]
+    #[must_use]
+    pub const fn requires_vertex_links_at_completion(self) -> bool {
+        matches!(self, Self::PLManifold | Self::PLManifoldStrict)
+    }
+
+    /// Returns `true` if this topology guarantee requires ridge-link validation.
+    ///
+    /// Ridge-link validation is fast (O(local)) and catches many PL-manifold violations,
+    /// providing good error detection even with reduced validation frequency.
+    #[inline]
+    #[must_use]
+    pub const fn requires_ridge_links(self) -> bool {
+        matches!(self, Self::PLManifold | Self::PLManifoldStrict)
+    }
+
+    /// Legacy method for backward compatibility.
+    #[deprecated(
+        since = "0.7.0",
+        note = "Use requires_vertex_links_during_insertion or requires_vertex_links_at_completion"
+    )]
     #[inline]
     #[must_use]
     pub const fn requires_vertex_links(self) -> bool {
-        matches!(self, Self::PLManifold)
+        matches!(self, Self::PLManifold | Self::PLManifoldStrict)
+    }
+
+    /// Returns `true` if this guarantee is compatible with the given validation policy.
+    ///
+    /// `PLManifold` requires at least end-of-construction validation, so it's incompatible
+    /// with `ValidationPolicy::Never`.
+    #[inline]
+    #[must_use]
+    pub const fn is_compatible_with_policy(self, policy: ValidationPolicy) -> bool {
+        match self {
+            Self::Pseudomanifold => true,
+            Self::PLManifold | Self::PLManifoldStrict => !matches!(policy, ValidationPolicy::Never),
+        }
     }
 }
 
@@ -1653,10 +1705,15 @@ where
     /// This checks the triangulation/topology layer **only**:
     /// - Codimension-1 pseudomanifold condition: each facet is incident to 1 (boundary) or 2 (interior) cells
     /// - Codimension-2 boundary manifoldness: the boundary must be closed ("no boundary of boundary")
-    /// - PL-manifold vertex-link condition (when `topology_guarantee.requires_vertex_links()`)
+    /// - Ridge-link validation (when `topology_guarantee.requires_ridge_links()`)
+    /// - Vertex-link validation during insertion (when `topology_guarantee.requires_vertex_links_during_insertion()`)
     /// - Connectedness (single component in the cell neighbor graph)
     /// - No isolated vertices (every vertex must be incident to at least one cell)
     /// - Euler characteristic
+    ///
+    /// For `TopologyGuarantee::PLManifold`, full PL-manifold certification requires
+    /// calling [`Triangulation::validate_at_completion`](Self::validate_at_completion)
+    /// (or [`Triangulation::validate`](Self::validate)) after batch construction.
     ///
     /// It intentionally does **not** validate lower layers (vertices/cells or TDS structure).
     /// For cumulative validation, use [`Triangulation::validate`](Self::validate).
@@ -1699,8 +1756,15 @@ where
         // (i.e., its ridges must have degree 2 within boundary facets).
         validate_closed_boundary(&self.tds, &facet_to_cells)?;
 
-        // 1c. PL-manifold vertex-link condition (optional strict mode).
-        if self.topology_guarantee.requires_vertex_links() {
+        // 1c. Ridge-link validation for PLManifold/PLManifoldStrict (fast, catches many PL issues).
+        if self.topology_guarantee.requires_ridge_links() {
+            validate_ridge_links(&self.tds)?;
+        }
+        // 1d. PL-manifold vertex-link condition during insertion (strict mode).
+        if self
+            .topology_guarantee
+            .requires_vertex_links_during_insertion()
+        {
             validate_vertex_links(&self.tds, &facet_to_cells)?;
         }
 
@@ -1730,11 +1794,36 @@ where
         Ok(())
     }
 
+    /// Validates vertex-link condition at construction completion.
+    ///
+    /// This should be called once after batch construction is complete to certify
+    /// full PL-manifoldness when using `TopologyGuarantee::PLManifold` (incremental mode).
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`TriangulationValidationError`] if vertex-link validation fails.
+    pub fn validate_at_completion(&self) -> Result<(), TriangulationValidationError> {
+        if !self
+            .topology_guarantee
+            .requires_vertex_links_at_completion()
+        {
+            return Ok(());
+        }
+
+        if self.tds.number_of_cells() == 0 {
+            return Ok(());
+        }
+
+        let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
+        validate_vertex_links(&self.tds, &facet_to_cells)?;
+        Ok(())
+    }
     /// Performs cumulative validation for Levels 1–3.
     ///
     /// This validates:
     /// - **Level 1–2** via [`Tds::validate`](crate::core::triangulation_data_structure::Tds::validate)
     /// - **Level 3** via [`Triangulation::is_valid`](Self::is_valid)
+    /// - **Completion-time PL-manifold check** via [`Triangulation::validate_at_completion`](Self::validate_at_completion)
     ///
     /// # Errors
     ///
@@ -1763,7 +1852,8 @@ where
     /// ```
     pub fn validate(&self) -> Result<(), TriangulationValidationError> {
         self.tds.validate()?;
-        self.is_valid()
+        self.is_valid()?;
+        self.validate_at_completion()
     }
 
     /// Generate a comprehensive validation report for Levels 1–3.
@@ -2567,24 +2657,11 @@ where
         }
 
         // Skip Level 3 validation during bootstrap (vertices but no cells yet).
-        //
-        // For `TopologyGuarantee::PLManifold`, Level 3 validation (including vertex-link checks)
-        // is **non-negotiable** and must run after every insertion attempt once cells exist,
-        // regardless of the user-configured `ValidationPolicy`.
         if self.tds.number_of_cells() == 0 {
             return Ok((ok, cells_removed, suspicion));
         }
 
-        let must_validate_for_topology = self.topology_guarantee.requires_vertex_links();
-        let policy_wants_validation = self.validation_policy.should_validate(suspicion);
-        #[cfg(debug_assertions)]
-        if must_validate_for_topology && !policy_wants_validation {
-            eprintln!(
-                "PL-manifold topology guarantee forces Level 3 validation (overriding {policy:?})",
-                policy = self.validation_policy
-            );
-        }
-        let should_validate = must_validate_for_topology || policy_wants_validation;
+        let should_validate = self.validation_policy.should_validate(suspicion);
         if !should_validate {
             return Ok((ok, cells_removed, suspicion));
         }
@@ -2645,10 +2722,8 @@ where
                 if self.tds.number_of_cells() > 0 {
                     self.log_validation_trigger_if_enabled(fallback_suspicion);
 
-                    let must_validate_for_topology =
-                        self.topology_guarantee.requires_vertex_links();
-                    let should_validate = must_validate_for_topology
-                        || self.validation_policy.should_validate(fallback_suspicion);
+                    let should_validate =
+                        self.validation_policy.should_validate(fallback_suspicion);
 
                     if should_validate && let Err(fallback_validation_err) = self.is_valid() {
                         return Err(InsertionError::TopologyValidationFailed {
@@ -3986,6 +4061,12 @@ mod tests {
         tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
         assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
 
+        tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
+        assert_eq!(
+            tri.topology_guarantee(),
+            TopologyGuarantee::PLManifoldStrict
+        );
+
         tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
         assert_eq!(tri.topology_guarantee(), TopologyGuarantee::PLManifold);
     }
@@ -4306,10 +4387,10 @@ mod tests {
             ))
         ));
 
-        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
 
-        // In PL-manifold mode, Level 3 validation performs the canonical vertex-link check and
-        // fails before connectedness.
+        // In strict PL-manifold mode, Level 3 validation should fail due to link validation.
+        // Depending on validation order, this may surface as ridge-link or vertex-link failure.
         match tri.is_valid() {
             Err(TriangulationValidationError::VertexLinkNotManifold {
                 vertex_key,
@@ -4328,7 +4409,10 @@ mod tests {
                 assert_eq!(max_degree, 2);
                 assert!(!connected);
             }
-            other => panic!("Expected VertexLinkNotManifold in PL-manifold mode, got {other:?}"),
+            Err(TriangulationValidationError::RidgeLinkNotManifold { .. }) => {}
+            other => panic!(
+                "Expected RidgeLinkNotManifold or VertexLinkNotManifold in strict PL-manifold mode, got {other:?}"
+            ),
         }
     }
 
@@ -4391,7 +4475,7 @@ mod tests {
         validate_facet_degree(&facet_to_cells).unwrap();
         validate_closed_boundary(&tri.tds, &facet_to_cells).unwrap();
 
-        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
 
         match tri.is_valid() {
             Err(TriangulationValidationError::VertexLinkNotManifold {

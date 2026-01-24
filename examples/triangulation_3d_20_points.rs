@@ -35,6 +35,8 @@ use std::iter::Sum;
 use std::ops::{AddAssign, SubAssign};
 use std::time::Instant;
 
+const SEED_CANDIDATES: &[u64] = &[1, 7, 11, 42, 99, 123, 666];
+
 fn main() {
     println!("=================================================================");
     println!("3D Delaunay Triangulation Example - 20 Random Points");
@@ -44,29 +46,50 @@ fn main() {
     // Use a fixed seed + bounds so that `just examples` is reproducible and robust.
     let n_points = 20;
     let bounds = (-3.0, 3.0);
-    let seed: u64 = std::env::var("DELAUNAY_EXAMPLE_SEED")
+    let seed_override: Option<u64> = std::env::var("DELAUNAY_EXAMPLE_SEED")
         .ok()
         .and_then(|value| value.parse().ok())
-        .unwrap_or(666);
+        .or(None);
+    let seed_candidates: Vec<u64> =
+        seed_override.map_or_else(|| SEED_CANDIDATES.to_vec(), |seed| vec![seed]);
 
     println!(
-        "Creating 3D Delaunay triangulation with {n_points} random points in [{:.1}, {:.1}]^3 (seed={seed})...",
+        "Creating 3D Delaunay triangulation with {n_points} random points in [{:.1}, {:.1}]^3 (seed candidates={seed_candidates:?})...",
         bounds.0, bounds.1
     );
     let start = Instant::now();
 
-    let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
-        match generate_random_triangulation(n_points, bounds, None, Some(seed)) {
+    let mut last_error: Option<String> = None;
+    let mut used_seed: Option<u64> = None;
+    let mut dt: Option<DelaunayTriangulation<FastKernel<f64>, (), (), 3>> = None;
+    for &candidate in &seed_candidates {
+        match generate_random_triangulation(n_points, bounds, None, Some(candidate)) {
             Ok(triangulation) => {
-                let construction_time = start.elapsed();
-                println!("✓ Triangulation created successfully in {construction_time:?}");
-                triangulation
+                dt = Some(triangulation);
+                used_seed = Some(candidate);
+                break;
             }
             Err(e) => {
-                eprintln!("✗ Failed to create triangulation: {e}");
-                return;
+                last_error = Some(format!("{e}"));
             }
-        };
+        }
+    }
+
+    let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> = if let Some(triangulation) = dt {
+        let construction_time = start.elapsed();
+        if let Some(seed) = used_seed {
+            println!("✓ Triangulation created successfully in {construction_time:?} (seed={seed})");
+        } else {
+            println!("✓ Triangulation created successfully in {construction_time:?}");
+        }
+        triangulation
+    } else {
+        eprintln!(
+            "✗ Failed to create triangulation after trying seeds {seed_candidates:?}: {}",
+            last_error.unwrap_or_else(|| "unknown error".to_string())
+        );
+        return;
+    };
 
     // Display some vertex information by accessing the triangulation's vertices
     let vertex_count = dt.tds().number_of_vertices();

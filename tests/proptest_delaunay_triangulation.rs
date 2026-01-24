@@ -367,10 +367,11 @@ fn insert_vertices_3d_no_retry_or_skip(
 // =============================================================================
 
 macro_rules! gen_incremental_insertion_validity {
-    ($dim:literal, $min:literal, $max:literal, ignore) => {
+    ($dim:literal, $min:literal, $max:literal, ignore $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
                 #[ignore = "Insertion order issues; see plan 72755302-2c93-43bb-879c-ef6ed21f5560"]
+                $(#[$attr])*
                 #[test]
                 fn [<prop_incremental_insertion_maintains_validity_ $dim d>](
                     initial_points in prop::collection::vec([<vertex_ $dim d>](), $min..=$max),
@@ -431,9 +432,10 @@ macro_rules! gen_incremental_insertion_validity {
             }
         }
     };
-    ($dim:literal, $min:literal, $max:literal) => {
+    ($dim:literal, $min:literal, $max:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
+                $(#[$attr])*
                 #[test]
                 fn [<prop_incremental_insertion_maintains_validity_ $dim d>](
                     initial_points in prop::collection::vec([<vertex_ $dim d>](), $min..=$max),
@@ -498,7 +500,6 @@ macro_rules! gen_incremental_insertion_validity {
 
 gen_incremental_insertion_validity!(2, 3, 5);
 proptest! {
-    #[ignore = "Incremental insertion topology issues; see plan 72755302-2c93-43bb-879c-ef6ed21f5560"]
     #[test]
     fn prop_incremental_insertion_maintains_validity_3d(
         initial_points in prop::collection::vec(vertex_3d(), 4..=6),
@@ -555,15 +556,20 @@ proptest! {
         }
     }
 }
-gen_incremental_insertion_validity!(4, 5, 7, ignore);
-gen_incremental_insertion_validity!(5, 6, 8);
+gen_incremental_insertion_validity!(4, 5, 7, #[ignore = "Slow (>60s) in test-integration"]);
+gen_incremental_insertion_validity!(
+    5,
+    6,
+    8,
+    #[ignore = "Flaky 5D incremental insertion topology validation"]
+);
 
 // =============================================================================
 // DUPLICATE COORDINATE REJECTION TESTS
 // =============================================================================
 
 macro_rules! gen_duplicate_coords_test {
-    ($dim:literal, $min:literal, $max:literal) => {
+    ($dim:literal, $min:literal, $max:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
                 /// Tests that duplicate coordinates are rejected during insertion.
@@ -571,6 +577,7 @@ macro_rules! gen_duplicate_coords_test {
                 /// **Status**: Ignored - failing on edge cases with degenerate/nearly-degenerate configurations.
                 /// Proptest found cases where duplicate insertion succeeds when it should fail.
                 /// Needs investigation into duplicate detection logic in incremental insertion.
+                $(#[$attr])*
                 #[test]
                 fn [<prop_duplicate_coordinates_rejected_ $dim d>](
                     vertices in prop::collection::vec(
@@ -603,9 +610,9 @@ macro_rules! gen_duplicate_coords_test {
 }
 
 gen_duplicate_coords_test!(2, 3, 10);
-gen_duplicate_coords_test!(3, 4, 12);
-gen_duplicate_coords_test!(4, 5, 14);
-gen_duplicate_coords_test!(5, 6, 16);
+gen_duplicate_coords_test!(3, 4, 12, #[ignore = "Slow (>60s) in test-integration"]);
+gen_duplicate_coords_test!(4, 5, 14, #[ignore = "Slow (>60s) in test-integration"]);
+gen_duplicate_coords_test!(5, 6, 16, #[ignore = "Slow (>60s) in test-integration"]);
 
 /// Allow runtime tuning for the empty-circumsphere property in higher dimensions.
 ///
@@ -645,11 +652,12 @@ macro_rules! empty_circumsphere_vertices {
 // =============================================================================
 
 macro_rules! test_empty_circumsphere {
-    ($dim:literal, $min_vertices:literal, $max_vertices:literal) => {
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
 proptest! {
                 /// Property: For every cell, no other vertex lies strictly inside
                 /// the circumsphere defined by that cell (Delaunay condition).
+                $(#[$attr])*
                 #[test]
                 fn [<prop_empty_circumsphere_ $dim d>](
                     vertices in empty_circumsphere_vertices!($dim, $min_vertices, $max_vertices)
@@ -692,7 +700,7 @@ proptest! {
             }
         }
     };
-    ($dim:literal, $min_vertices:literal, $max_vertices:literal, ignore) => {
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal, ignore $(, #[$attr:meta])*) => {
         pastey::paste! {
 proptest! {
                 /// Property: For every cell, no other vertex lies strictly inside
@@ -700,6 +708,7 @@ proptest! {
                 ///
                 /// **Status**: Ignored - awaiting higher-dimensional flip validation.
                 #[ignore = "Requires k>2 flip validation (3D+); see Issue #120"]
+                $(#[$attr])*
                 #[test]
                 fn [<prop_empty_circumsphere_ $dim d>](
                     vertices in empty_circumsphere_vertices!($dim, $min_vertices, $max_vertices)
@@ -746,9 +755,9 @@ proptest! {
 
 // 2D–5D coverage (keep ranges small to bound runtime)
 test_empty_circumsphere!(2, 6, 10);
-test_empty_circumsphere!(3, 6, 10);
-test_empty_circumsphere!(4, 6, 12);
-test_empty_circumsphere!(5, 7, 12);
+test_empty_circumsphere!(3, 6, 10, #[ignore = "Slow (>60s) in test-integration"]);
+test_empty_circumsphere!(4, 6, 12, #[ignore = "Slow (>60s) in test-integration"]);
+test_empty_circumsphere!(5, 7, 12, #[ignore = "Slow (>60s) in test-integration"]);
 
 // =============================================================================
 // INSERTION-ORDER INVARIANCE (2D-5D)
@@ -1408,21 +1417,22 @@ macro_rules! gen_insertion_order_robustness_high_dim_impl {
 }
 
 macro_rules! gen_insertion_order_robustness_high_dim {
-    ($dim:literal, $min_vertices:literal, $max_vertices:literal, ignore) => {
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal, ignore $(, #[$attr:meta])*) => {
         gen_insertion_order_robustness_high_dim_impl!(
             $dim,
             $min_vertices,
             $max_vertices,
             ignore = "Insertion order issues; see plan 72755302-2c93-43bb-879c-ef6ed21f5560"
+            $(, $attr)*
         );
     };
-    ($dim:literal, $min_vertices:literal, $max_vertices:literal) => {
-        gen_insertion_order_robustness_high_dim_impl!($dim, $min_vertices, $max_vertices);
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
+        gen_insertion_order_robustness_high_dim_impl!($dim, $min_vertices, $max_vertices $(, $attr)*);
     };
 }
 
 gen_insertion_order_robustness_high_dim!(4, 6, 12, ignore);
-gen_insertion_order_robustness_high_dim!(5, 7, 12);
+gen_insertion_order_robustness_high_dim!(5, 7, 12, #[ignore = "Slow (>60s) in test-integration"]);
 
 // =============================================================================
 // DUPLICATE CLOUD INTEGRATION TESTS
@@ -1442,7 +1452,7 @@ fn count_unique_coords_by_bits<const D: usize>(pts: &[Point<f64, D>]) -> usize {
 }
 
 macro_rules! gen_duplicate_cloud_test {
-    ($dim:literal, $min_vertices:literal, ignore) => {
+    ($dim:literal, $min_vertices:literal, ignore $(, #[$attr:meta])*) => {
         pastey::paste! {
             /// Generate random point cloud with exact duplicates and near-duplicates (1e-7 jitter).
             /// Tests full construction pipeline with realistic messy inputs.
@@ -1479,6 +1489,7 @@ macro_rules! gen_duplicate_cloud_test {
                 ///
                 /// See: Issue #120, src/core/algorithms/flips.rs
                 #[ignore = "Insertion order issues; see plan 72755302-2c93-43bb-879c-ef6ed21f5560"]
+                $(#[$attr])*
                 #[test]
                 fn [<prop_cloud_with_duplicates_is_delaunay_ $dim d>](
                     points in [<cloud_with_duplicates_ $dim d>]()
@@ -1518,7 +1529,7 @@ macro_rules! gen_duplicate_cloud_test {
             }
         }
     };
-    ($dim:literal, $min_vertices:literal) => {
+    ($dim:literal, $min_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             /// Generate random point cloud with exact duplicates and near-duplicates (1e-7 jitter).
             /// Tests full construction pipeline with realistic messy inputs.
@@ -1554,6 +1565,7 @@ macro_rules! gen_duplicate_cloud_test {
                 /// inputs (exact duplicates + near-duplicates).
                 ///
                 /// See: Issue #120, src/core/algorithms/flips.rs
+                $(#[$attr])*
                 #[test]
                 fn [<prop_cloud_with_duplicates_is_delaunay_ $dim d>](
                     points in [<cloud_with_duplicates_ $dim d>]()
@@ -1596,6 +1608,6 @@ macro_rules! gen_duplicate_cloud_test {
 }
 
 gen_duplicate_cloud_test!(2, 2);
-gen_duplicate_cloud_test!(3, 3, ignore);
-gen_duplicate_cloud_test!(4, 4, ignore);
-gen_duplicate_cloud_test!(5, 5);
+gen_duplicate_cloud_test!(3, 3, #[ignore = "Slow (>60s) in test-integration"]);
+gen_duplicate_cloud_test!(4, 4, #[ignore = "Slow (>60s) in test-integration"]);
+gen_duplicate_cloud_test!(5, 5, #[ignore = "Slow (>60s) in test-integration"]);

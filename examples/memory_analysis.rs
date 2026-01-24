@@ -6,6 +6,8 @@
 use delaunay::prelude::query::*;
 use std::time::Instant;
 
+const SEED_CANDIDATES: &[u64] = &[1, 7, 11, 42, 99, 123, 666];
+
 /// Bounds for random triangulation (min, max) - consistent with benchmarks
 const BOUNDS: (f64, f64) = (-100.0, 100.0);
 
@@ -19,25 +21,43 @@ macro_rules! generate_memory_analysis {
                 reason = "tri_info and hull_info are only used when the count-allocations feature is enabled",
             )
         )]
-        fn $name(n_points: usize, seed: u64) {
+        fn $name(n_points: usize, seeds: &[u64]) {
             println!("  Analyzing {}D triangulation with {} points", $dim, n_points);
 
             // Measure triangulation construction
             let start = Instant::now();
-            let (dt_res, tri_info) = measure_with_result(|| {
-                generate_random_triangulation::<f64, (), (), $dim>(
-                    n_points,
-                    BOUNDS,
-                    None,
-                    Some(seed),
-                )
-            });
-            let dt = match dt_res {
-                Ok(t) => t,
-                Err(e) => {
-                    eprintln!("✗ Failed to build triangulation: {e}");
-                    return;
+            let mut last_error: Option<String> = None;
+            let mut used_seed: Option<u64> = None;
+            let mut dt_res: Option<_> = None;
+            let mut tri_info = None;
+            for &candidate in seeds {
+                let (candidate_res, candidate_info) = measure_with_result(|| {
+                    generate_random_triangulation::<f64, (), (), $dim>(
+                        n_points,
+                        BOUNDS,
+                        None,
+                        Some(candidate),
+                    )
+                });
+                match candidate_res {
+                    Ok(dt) => {
+                        dt_res = Some(dt);
+                        tri_info = Some(candidate_info);
+                        used_seed = Some(candidate);
+                        break;
+                    }
+                    Err(e) => {
+                        last_error = Some(format!("{e}"));
+                    }
                 }
+            }
+
+            let (Some(dt), Some(tri_info)) = (dt_res, tri_info) else {
+                eprintln!(
+                    "✗ Failed to build triangulation after trying seeds {seeds:?}: {}",
+                    last_error.unwrap_or_else(|| "unknown error".to_string())
+                );
+                return;
             };
             let construction_time = start.elapsed();
 
@@ -63,6 +83,9 @@ macro_rules! generate_memory_analysis {
             // Print results
             println!("    Triangulation: {num_vertices} vertices, {num_cells} cells");
             println!("    Convex hull: {hull_facets} facets");
+            if let Some(seed) = used_seed {
+                println!("    Seed: {seed}");
+            }
             println!("    Construction time: {construction_time:?}");
             println!("    Hull extraction time: {hull_time:?}");
 
@@ -143,19 +166,19 @@ fn main() {
 
     // 2D Analysis with seed for reproducibility
     println!("--- 2D Triangulation ---");
-    analyze_triangulation_memory_2d(n_points, 12345);
+    analyze_triangulation_memory_2d(n_points, SEED_CANDIDATES);
 
     // 3D Analysis with different seed
     println!("--- 3D Triangulation ---");
-    analyze_triangulation_memory_3d(n_points, 23456);
+    analyze_triangulation_memory_3d(n_points, SEED_CANDIDATES);
 
     // 4D Analysis with different seed
     println!("--- 4D Triangulation ---");
-    analyze_triangulation_memory_4d(n_points, 34567);
+    analyze_triangulation_memory_4d(n_points, SEED_CANDIDATES);
 
     // 5D Analysis with different seed
     println!("--- 5D Triangulation ---");
-    analyze_triangulation_memory_5d(n_points, 45678);
+    analyze_triangulation_memory_5d(n_points, SEED_CANDIDATES);
 
     println!("=== Key Insights (empirical) ===");
     println!(

@@ -36,10 +36,11 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 
 /// Macro to generate serialization property tests for a given dimension
 macro_rules! test_serialization_properties {
-    ($dim:literal, $min_vertices:literal, $max_vertices:literal) => {
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
                 /// Property: Triangulation structure preserved after JSON roundtrip
+                $(#[$attr])*
                 #[test]
                 fn [<prop_triangulation_json_roundtrip_ $dim d>](
                     vertices in prop::collection::vec(
@@ -81,6 +82,7 @@ macro_rules! test_serialization_properties {
                 }
 
                 /// Property: Deserialized triangulation remains valid
+                $(#[$attr])*
                 #[test]
                 fn [<prop_deserialized_triangulation_valid_ $dim d>](
                     vertices in prop::collection::vec(
@@ -110,6 +112,7 @@ macro_rules! test_serialization_properties {
                 }
 
                 /// Property: Vertex coordinates preserved after roundtrip
+                $(#[$attr])*
                 #[test]
                 fn [<prop_vertex_coordinates_preserved_ $dim d>](
                     vertices in prop::collection::vec(
@@ -167,6 +170,7 @@ macro_rules! test_serialization_properties {
                 }
 
                 /// Property: Neighbor relationships preserved after roundtrip
+                $(#[$attr])*
                 #[test]
                 fn [<prop_neighbor_relationships_preserved_ $dim d>](
                     vertices in prop::collection::vec(
@@ -216,6 +220,6 @@ macro_rules! test_serialization_properties {
 // Generate tests for dimensions 2-5
 // Parameters: dimension, min_vertices, max_vertices
 test_serialization_properties!(2, 4, 10);
-test_serialization_properties!(3, 5, 12);
-test_serialization_properties!(4, 6, 14);
-test_serialization_properties!(5, 7, 16);
+test_serialization_properties!(3, 5, 12, #[ignore = "Slow (>60s) in test-integration"]);
+test_serialization_properties!(4, 6, 14, #[ignore = "Slow (>60s) in test-integration"]);
+test_serialization_properties!(5, 7, 16, #[ignore = "Slow (>60s) in test-integration"]);

@@ -54,10 +54,11 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 /// - Filters for finite coordinates
 /// - Automatic shrinking on failure
 macro_rules! test_euler_properties {
-    ($dim:literal, $min_vertices:literal, $max_vertices:literal) => {
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
                 /// Property: Euler characteristic matches topological classification
+                $(#[$attr])*
                 #[test]
                 fn [<prop_euler_matches_classification_ $dim d>](
                     vertices in prop::collection::vec(
@@ -95,6 +96,7 @@ macro_rules! test_euler_properties {
                 }
 
                 /// Property: Simplex counts are internally consistent
+                $(#[$attr])*
                 #[test]
                 fn [<prop_simplex_counts_consistent_ $dim d>](
                     vertices in prop::collection::vec(
@@ -134,6 +136,7 @@ macro_rules! test_euler_properties {
                 }
 
                 /// Property: Classification and expected χ are consistent
+                $(#[$attr])*
                 #[test]
                 fn [<prop_classification_chi_consistent_ $dim d>](
                     vertices in prop::collection::vec(
@@ -186,6 +189,6 @@ macro_rules! test_euler_properties {
 // - Balance test execution time with coverage
 // - Match patterns in other proptest files
 test_euler_properties!(2, 4, 15);
-test_euler_properties!(3, 5, 20);
-test_euler_properties!(4, 6, 25);
-test_euler_properties!(5, 7, 30);
+test_euler_properties!(3, 5, 20, #[ignore = "Slow (>60s) in test-integration"]);
+test_euler_properties!(4, 6, 25, #[ignore = "Slow (>60s) in test-integration"]);
+test_euler_properties!(5, 7, 30, #[ignore = "Slow (>60s) in test-integration"]);

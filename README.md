@@ -40,8 +40,9 @@ The triangulation uses flip-based [Delaunay repair] (k=2 facet queues, k=3 ridge
 and inverse edge/triangle queues in 4D/5D) after insertion by default via
 `DelaunayRepairPolicy`.
 
-The default topology guarantee is `TopologyGuarantee::PLManifold` (strict vertex-link validation),
-which is the recommended mode for Delaunay triangulations.
+The default topology guarantee is `TopologyGuarantee::PLManifold` (ridge-link validation during
+insertion, vertex-link validation at completion), which is the recommended mode for Delaunay
+triangulations. For strict per-insertion vertex-link checks, use `TopologyGuarantee::PLManifoldStrict`.
 
 You can relax to `TopologyGuarantee::Pseudomanifold` for speed, but bistellar flip convergence is not
 guaranteed and the Delaunay property may not hold on construction for near-degenerate inputs (or if
@@ -93,6 +94,7 @@ For details, see: [Issue #120 Investigation](docs/issue_120_investigation.md)
 
 Level 3 topology validation is parameterized by `TopologyGuarantee` (default: `PLManifold`).
 To relax topology checks for speed, set `TopologyGuarantee::Pseudomanifold` (skips vertex-link validation).
+For strict per-insertion vertex-link checks, use `TopologyGuarantee::PLManifoldStrict`.
 
 During incremental insertion, the automatic Level 3 validation pass is controlled by
 `ValidationPolicy` (default: `OnSuspicion`).

@@ -28,10 +28,11 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 
 /// Macro to generate convex hull property tests for a given dimension
 macro_rules! test_convex_hull_properties {
-    ($dim:literal, $min_vertices:literal, $max_vertices:literal) => {
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
                 /// Property: Convex hull can be constructed from valid triangulation
+                $(#[$attr])*
                 #[test]
                 fn [<prop_hull_construction_ $dim d>](
                     vertices in prop::collection::vec(
@@ -76,6 +77,7 @@ macro_rules! test_convex_hull_properties {
                 }
 
                 /// Property: Hull facet count is bounded by combinatorial limits
+                $(#[$attr])*
                 #[test]
                 fn [<prop_hull_facet_bounds_ $dim d>](
                     vertices in prop::collection::vec(
@@ -125,6 +127,7 @@ macro_rules! test_convex_hull_properties {
                 }
 
                 /// Property: Hull becomes invalid after TDS modification
+                $(#[$attr])*
                 #[test]
                 fn [<prop_hull_staleness_detection_ $dim d>](
                     initial_vertices in prop::collection::vec(
@@ -184,6 +187,7 @@ macro_rules! test_convex_hull_properties {
                 }
 
                 /// Property: Hull vertices are a subset of triangulation vertices
+                $(#[$attr])*
                 #[test]
                 fn [<prop_hull_vertices_subset_ $dim d>](
                     vertices in prop::collection::vec(
@@ -225,6 +229,7 @@ macro_rules! test_convex_hull_properties {
                 }
 
                 /// Property: Hull facet count for minimal simplex is D+1
+                $(#[$attr])*
                 #[test]
                 fn [<prop_minimal_simplex_hull_ $dim d>](
                     base_scale in 0.1f64..10.0f64
@@ -262,6 +267,7 @@ macro_rules! test_convex_hull_properties {
                 }
 
                 /// Property: Reconstructing hull from same TDS gives consistent facet count
+                $(#[$attr])*
                 #[test]
                 fn [<prop_hull_reconstruction_consistency_ $dim d>](
                     vertices in prop::collection::vec(
@@ -318,6 +324,6 @@ macro_rules! test_convex_hull_properties {
 // Generate tests for dimensions 2-5
 // Parameters: dimension, min_vertices, max_vertices
 test_convex_hull_properties!(2, 4, 10);
-test_convex_hull_properties!(3, 5, 12);
-test_convex_hull_properties!(4, 6, 14);
-test_convex_hull_properties!(5, 7, 16);
+test_convex_hull_properties!(3, 5, 12, #[ignore = "Slow (>60s) in test-integration"]);
+test_convex_hull_properties!(4, 6, 14, #[ignore = "Slow (>60s) in test-integration"]);
+test_convex_hull_properties!(5, 7, 16, #[ignore = "Slow (>60s) in test-integration"]);

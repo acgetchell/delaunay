@@ -221,7 +221,8 @@ Each attempt:
 
 ### Flip-Based Delaunay Repair Retry Policy
 
-Flip-based repair runs only under `TopologyGuarantee::PLManifold` and is **bounded to two attempts**.
+Flip-based repair runs only under `TopologyGuarantee::PLManifold` or
+`TopologyGuarantee::PLManifoldStrict` and is **bounded to two attempts**.
 Automatic repair is gated by `DelaunayRepairPolicy::decide` in `core::operations` and is skipped
 when the policy is disabled or the topology guarantee is not admissible.
 

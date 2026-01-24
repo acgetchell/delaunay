@@ -187,7 +187,10 @@
 //!
 //! - [`TopologyGuarantee::PLManifold`](crate::core::triangulation::TopologyGuarantee::PLManifold)
 //!   (default): facet degree + closed boundary + connectedness + isolated-vertex + Euler characteristic
-//!   checks **plus** strict vertex-link validation.
+//!   checks **plus** ridge-link validation during insertion, with vertex-link validation at
+//!   construction completion.
+//! - [`TopologyGuarantee::PLManifoldStrict`](crate::core::triangulation::TopologyGuarantee::PLManifoldStrict):
+//!   vertex-link validation after every insertion (slowest, maximum safety).
 //! - [`TopologyGuarantee::Pseudomanifold`](crate::core::triangulation::TopologyGuarantee::Pseudomanifold):
 //!   skips vertex-link validation (may be faster), but bistellar flip convergence is not guaranteed and
 //!   you may want to validate the Delaunay property explicitly for near-degenerate inputs.
@@ -208,7 +211,7 @@
 //! // Optional: relax topology checks for speed (weaker guarantees).
 //! dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
 //!
-//! // Now Level 3 skips vertex-link validation.
+//! // Now Level 3 skips vertex-link validation entirely.
 //! dt.as_triangulation().is_valid().unwrap();
 //! ```
 //!
@@ -668,7 +671,148 @@ pub mod geometry {
     /// Enhanced predicates with improved numerical robustness
     pub mod robust_predicates;
     /// Geometric utility functions for d-dimensional geometry calculations
-    pub mod util;
+    pub mod util {
+        use crate::geometry::matrix::{MatrixError, StackMatrixDispatchError};
+        use crate::geometry::traits::coordinate::CoordinateConversionError;
+
+        // Error types defined here and re-exported from submodules
+
+        /// Errors that can occur during value type conversions.
+        #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+        pub enum ValueConversionError {
+            /// Failed to convert a value from one type to another
+            #[error("Cannot convert {value} from {from_type} to {to_type}: {details}")]
+            ConversionFailed {
+                /// The value that failed to convert (as string for display)
+                value: String,
+                /// Source type name
+                from_type: &'static str,
+                /// Target type name
+                to_type: &'static str,
+                /// Additional details about the failure
+                details: String,
+            },
+        }
+
+        /// Errors that can occur during random point generation.
+        #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+        pub enum RandomPointGenerationError {
+            /// Invalid coordinate range provided
+            #[error("Invalid coordinate range: minimum {min} must be less than maximum {max}")]
+            InvalidRange {
+                /// The minimum value of the range
+                min: String,
+                /// The maximum value of the range
+                max: String,
+            },
+
+            /// Failed to generate random value within range
+            #[error("Failed to generate random value in range [{min}, {max}]: {details}")]
+            RandomGenerationFailed {
+                /// The minimum value of the range
+                min: String,
+                /// The maximum value of the range
+                max: String,
+                /// Additional details about the failure
+                details: String,
+            },
+
+            /// Invalid number of points requested
+            #[error("Invalid number of points: {n_points} (must be non-negative)")]
+            InvalidPointCount {
+                /// The invalid number of points requested
+                n_points: isize,
+            },
+        }
+
+        /// Errors that can occur during circumcenter calculation.
+        #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+        pub enum CircumcenterError {
+            /// Empty point set provided
+            #[error("Empty point set")]
+            EmptyPointSet,
+
+            /// Points do not form a valid simplex
+            #[error(
+                "Points do not form a valid simplex: expected {expected} points for dimension {dimension}, got {actual}"
+            )]
+            InvalidSimplex {
+                /// Number of points provided
+                actual: usize,
+                /// Number of points expected (D+1)
+                expected: usize,
+                /// Dimension
+                dimension: usize,
+            },
+
+            /// Matrix inversion failed (degenerate simplex)
+            #[error("Matrix inversion failed: {details}")]
+            MatrixInversionFailed {
+                /// Details about the matrix inversion failure
+                details: String,
+            },
+
+            /// Matrix operation error
+            #[error("Matrix error: {0}")]
+            MatrixError(#[from] MatrixError),
+
+            /// Array conversion failed
+            #[error("Array conversion failed: {details}")]
+            ArrayConversionFailed {
+                /// Details about the array conversion failure
+                details: String,
+            },
+
+            /// Coordinate conversion error
+            #[error("Coordinate conversion error: {0}")]
+            CoordinateConversion(#[from] CoordinateConversionError),
+
+            /// Value conversion error
+            #[error("Value conversion error: {0}")]
+            ValueConversion(#[from] ValueConversionError),
+        }
+
+        impl From<StackMatrixDispatchError> for CircumcenterError {
+            fn from(source: StackMatrixDispatchError) -> Self {
+                match source {
+                    StackMatrixDispatchError::UnsupportedDim { k, max } => {
+                        Self::MatrixInversionFailed {
+                            details: format!("unsupported stack matrix size: {k} (max {max})"),
+                        }
+                    }
+                    StackMatrixDispatchError::La(source) => Self::MatrixInversionFailed {
+                        details: format!("la-stack error: {source}"),
+                    },
+                }
+            }
+        }
+
+        /// Error type for surface measure computation operations.
+        #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+        pub enum SurfaceMeasureError {
+            /// Error retrieving vertices from a facet.
+            #[error("Failed to retrieve facet vertices: {0}")]
+            FacetError(#[from] crate::core::facet::FacetError),
+            /// Error computing geometry measure.
+            #[error("Geometry computation failed: {0}")]
+            GeometryError(#[from] CircumcenterError),
+        }
+
+        pub mod circumsphere;
+        pub mod conversions;
+        pub mod measures;
+        pub mod norms;
+        pub mod point_generation;
+        pub mod triangulation_generation;
+
+        // Re-export all public items for ergonomic `crate::geometry::util::*` access.
+        pub use circumsphere::*;
+        pub use conversions::*;
+        pub use measures::*;
+        pub use norms::*;
+        pub use point_generation::*;
+        pub use triangulation_generation::*;
+    }
     /// Traits module containing coordinate abstractions and reusable trait definitions.
     ///
     /// This module contains the core `Coordinate` trait that abstracts coordinate

@@ -41,7 +41,7 @@ uuid = { version = "1.19.0", features = [ "v4", "serde" ] }
 criterion = { version = "0.8.1", features = [ "html_reports" ] }
 pastey = "0.2.1"
 proptest = "1.9.0"
-sysinfo = "0.37.2" # Process memory monitoring for benchmarks
+sysinfo = "0.38.0" # Process memory monitoring for benchmarks
 
 [features]
 # Default feature set: prefer DenseSlotMap for better construction + iteration performance.

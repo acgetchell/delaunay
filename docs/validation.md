@@ -44,7 +44,8 @@ Only **Level 3** (`Triangulation::is_valid()`), using the triangulation’s curr
 
 - Codimension-1 manifoldness (facet degree: 1 or 2 incident cells per facet)
 - Codimension-2 boundary manifoldness (the boundary is closed; "no boundary of boundary")
-- (Optional) PL-manifold vertex-link condition (when `TopologyGuarantee::PLManifold`)
+- Ridge-link validation (when `TopologyGuarantee::PLManifold` or `TopologyGuarantee::PLManifoldStrict`)
+- Vertex-link validation during insertion (when `TopologyGuarantee::PLManifoldStrict`)
 - Connectedness (single component)
 - No isolated vertices
 - Euler characteristic
@@ -110,6 +111,11 @@ which controls *when* Level 3 is run automatically during incremental insertion.
 
 ### Default: `PLManifold`
 
+`PLManifold` uses fast ridge-link validation during insertion and requires a
+vertex-link validation pass at construction completion to certify full
+PL-manifoldness. You can trigger that final certification via
+`Triangulation::validate_at_completion()` (or `Triangulation::validate()`).
+
 ```rust
 use delaunay::prelude::*;
 
@@ -126,9 +132,14 @@ assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
 // Optional: relax topology checks for speed (weaker guarantees).
 dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
 
-// Now Level 3 skips vertex-link validation.
+// Now Level 3 skips vertex-link validation entirely.
 dt.as_triangulation().is_valid().unwrap();
 ```
+
+### Strict: `PLManifoldStrict`
+
+`PLManifoldStrict` runs full vertex-link validation after every insertion. This
+matches the legacy `PLManifold` behavior (slowest, maximum safety).
 
 ---
 

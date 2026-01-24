@@ -779,8 +779,9 @@ where
 
     /// Create a Delaunay triangulation with an explicit topology guarantee.
     ///
-    /// Passing [`TopologyGuarantee::PLManifold`] enforces PL-manifold validation
-    /// during construction and validates the final topology before returning.
+    /// Passing [`TopologyGuarantee::PLManifold`] enforces ridge-link validation during
+    /// construction and validates vertex-links at completion. Use
+    /// [`TopologyGuarantee::PLManifoldStrict`] for per-insertion vertex-link checks.
     ///
     /// # Debug/Test Behavior
     /// In debug/test builds (for `D >= 3` with more than `D + 1` vertices), the constructor may
@@ -1051,6 +1052,21 @@ where
         let dt =
             Self::build_with_kernel_inner_seeded(kernel, vertices, topology_guarantee, 0, true)?;
 
+        // Final validation at construction completion for PLManifold/PLManifoldStrict.
+        // This ensures PL-manifold guarantee even with ValidationPolicy::OnSuspicion during
+        // incremental insertion.
+        if dt
+            .tri
+            .topology_guarantee
+            .requires_vertex_links_at_completion()
+        {
+            dt.tri.validate().map_err(|err| {
+                TriangulationConstructionError::GeometricDegeneracy {
+                    message: format!("PL-manifold validation failed after construction: {err}"),
+                }
+            })?;
+        }
+
         // `DelaunayCheckPolicy::EndOnly`: always run a final global Delaunay validation pass after
         // batch construction.
         dt.is_valid()
@@ -1099,10 +1115,16 @@ where
         };
 
         // During batch construction, enforce topology guarantees:
-        // - PL-manifold: always validate (vertex-link checks) on each insertion
+        // - PLManifoldStrict: always validate (vertex-link checks) on each insertion
+        // - PLManifold: always validate (ridge-link checks) on each insertion
         // - Pseudomanifold: keep debug-only strictness for safety without release overhead
         let original_validation_policy = dt.tri.validation_policy;
-        dt.tri.validation_policy = if dt.tri.topology_guarantee.requires_vertex_links() {
+        dt.tri.validation_policy = if dt
+            .tri
+            .topology_guarantee
+            .requires_vertex_links_during_insertion()
+            || dt.tri.topology_guarantee.requires_ridge_links()
+        {
             ValidationPolicy::Always
         } else {
             ValidationPolicy::DebugOnly
@@ -1255,7 +1277,10 @@ where
             }
         }
 
-        if self.tri.topology_guarantee.requires_vertex_links()
+        if self
+            .tri
+            .topology_guarantee
+            .requires_vertex_links_at_completion()
             && let Err(err) = self.tri.validate()
         {
             return Err(TriangulationConstructionError::GeometricDegeneracy {

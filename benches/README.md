@@ -241,7 +241,9 @@ The **Profiling Suite** provides comprehensive performance analysis for optimiza
 
 ### Topology Guarantee Construction (`topology_guarantee_construction.rs`) (manual)
 
-This benchmark compares construction cost under `TopologyGuarantee::PLManifold` vs `TopologyGuarantee::Pseudomanifold` across 2D–5D.
+This benchmark compares construction cost under `TopologyGuarantee::Pseudomanifold`,
+`TopologyGuarantee::PLManifold` (incremental), and `TopologyGuarantee::PLManifoldStrict`
+across 2D–5D.
 It is intended for **manual** runs (not used by CI).
 
 ```bash
