@@ -86,6 +86,8 @@ pub type CellNeighborsMap = FastHashMap<CellKey, NeighborBuffer<Option<CellKey>>
 /// - **Value**: `SmallBuffer<CellKey, MAX_PRACTICAL_DIMENSION_SIZE>` - handles up to 8 incident cells on stack
 /// - **Typical Pattern**: Well-conditioned triangulations have low vertex degrees
 /// - **Performance**: Avoids heap allocation for most vertices
+/// - **Spill Behavior**: Degrees above `MAX_PRACTICAL_DIMENSION_SIZE` spill to heap. This is expected
+///   for high-degree vertices (e.g., higher dimensions or boundary configurations) and is not an error.
 ///
 /// # Examples
 ///

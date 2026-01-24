@@ -94,6 +94,10 @@ where
 /// A new vector containing vertices that are more than `epsilon` apart from each
 /// other (strictly: distance > epsilon). The first occurrence of each cluster is kept.
 ///
+/// # Panics
+///
+/// Panics if `epsilon` is negative.
+///
 /// # Examples
 ///
 /// ```
@@ -121,7 +125,10 @@ where
     T: CoordinateScalar,
     U: DataType,
 {
-    debug_assert!(
+    if epsilon < T::zero() {
+        eprintln!("dedup_vertices_epsilon received negative epsilon; enforcing contract");
+    }
+    assert!(
         epsilon >= T::zero(),
         "dedup_vertices_epsilon expects non-negative epsilon",
     );

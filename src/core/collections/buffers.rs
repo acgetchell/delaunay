@@ -208,7 +208,7 @@ pub type CellVertexBuffer = SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>
 /// - **Stack Allocation**: D+1 vertex UUIDs fit on stack for D ≤ 7
 /// - **Use Case**: Extracting vertex UUIDs from a cell, validation, duplicate detection
 /// - **Performance**: Avoids allocation for temporary UUID collections
-/// - **Memory Efficiency**: 16 bytes per UUID × 8 = 128 bytes on stack
+/// - **Memory Efficiency**: For D=7, D+1=8 UUIDs → 16 bytes × 8 = 128 bytes on stack
 pub type CellVertexUuidBuffer = SmallBuffer<Uuid, MAX_PRACTICAL_DIMENSION_SIZE>;
 
 /// Buffer sized for Point collections in geometric operations.
@@ -244,6 +244,12 @@ mod tests {
     #[test]
     fn test_cell_vertex_buffer_stack_allocation_boundary() {
         let mut vertex_slots: SlotMap<VertexKey, i32> = SlotMap::default();
+
+        eprintln!(
+            "inline capacity: {}, uuid size: {} bytes",
+            MAX_PRACTICAL_DIMENSION_SIZE,
+            std::mem::size_of::<Uuid>()
+        );
 
         // Test D=7 case: 8 vertices (D+1) should stay on stack
         // MAX_PRACTICAL_DIMENSION_SIZE is 8, so inline capacity is 8

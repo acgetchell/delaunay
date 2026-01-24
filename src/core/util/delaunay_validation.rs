@@ -297,20 +297,53 @@ where
     // Use robust predicates configuration for reliability
     let config = crate::geometry::robust_predicates::config_presets::general_triangulation::<T>();
 
-    // Determine which cells to check
-    let cells_iter: Box<dyn Iterator<Item = CellKey>> = match cells_to_check {
-        Some(keys) => Box::new(keys.iter().copied()),
-        None => Box::new(tds.cell_keys()),
-    };
+    #[cfg(any(test, debug_assertions))]
+    match cells_to_check {
+        Some(keys) => eprintln!(
+            "[Delaunay debug] find_delaunay_violations: checking {} requested cells",
+            keys.len()
+        ),
+        None => eprintln!("[Delaunay debug] find_delaunay_violations: checking all cells"),
+    }
 
-    // For each cell to check using the shared validation helper
-    for cell_key in cells_iter {
+    #[cfg(any(test, debug_assertions))]
+    let mut processed_cells = 0usize;
+
+    // Helper closure to process cells
+    let mut process_cell = |cell_key: CellKey| -> Result<(), DelaunayValidationError> {
+        #[cfg(any(test, debug_assertions))]
+        {
+            processed_cells += 1;
+        }
+
         if let Some(violating_cell) =
             validate_cell_delaunay(tds, cell_key, &mut cell_vertex_points, &config)?
         {
             violating_cells.push(violating_cell);
         }
+        Ok(())
+    };
+
+    // Process cells based on input
+    match cells_to_check {
+        Some(keys) => {
+            for &cell_key in keys {
+                process_cell(cell_key)?;
+            }
+        }
+        None => {
+            for cell_key in tds.cell_keys() {
+                process_cell(cell_key)?;
+            }
+        }
     }
+
+    #[cfg(any(test, debug_assertions))]
+    eprintln!(
+        "[Delaunay debug] find_delaunay_violations: processed {} cells, found {} violating cells",
+        processed_cells,
+        violating_cells.len()
+    );
 
     Ok(violating_cells)
 }

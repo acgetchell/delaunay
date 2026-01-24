@@ -42,7 +42,13 @@ pub type VertexUuidSet = FastHashSet<Uuid>;
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt: DelaunayTriangulation<_, _, _, 3> =
+///     DelaunayTriangulation::new_with_topology_guarantee(
+///         &vertices,
+///         TopologyGuarantee::PLManifold,
+///     )
+///     .unwrap();
+/// println!("Topology guarantee: {:?}", dt.topology_guarantee());
 /// let tds = dt.tds();
 ///
 /// // Get first vertex key and its UUID
@@ -73,7 +79,13 @@ pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt: DelaunayTriangulation<_, _, _, 3> =
+///     DelaunayTriangulation::new_with_topology_guarantee(
+///         &vertices,
+///         TopologyGuarantee::PLManifold,
+///     )
+///     .unwrap();
+/// println!("Topology guarantee: {:?}", dt.topology_guarantee());
 /// let tds = dt.tds();
 ///
 /// // Get first cell key and its UUID

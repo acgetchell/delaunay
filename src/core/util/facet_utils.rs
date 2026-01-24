@@ -229,6 +229,7 @@ where
 mod tests {
     use super::*;
 
+    use crate::core::collections::FastHashSet;
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
     use crate::vertex;
     use std::time::Instant;
@@ -698,17 +699,29 @@ mod tests {
         let facet2 = FacetView::new(tds2, cell2_key, 0).unwrap();
 
         // Check if the UUID generation is deterministic based on coordinates
-        let facet1_vertex_uuids: Vec<_> = match facet1.vertices() {
-            Ok(iter) => iter.map(Vertex::uuid).collect(),
-            Err(_) => return, // Skip test if facet1 is invalid
-        };
-        let facet2_vertex_uuids: Vec<_> = match facet2.vertices() {
-            Ok(iter) => iter.map(Vertex::uuid).collect(),
-            Err(_) => return, // Skip test if facet2 is invalid
-        };
+        let facet1_vertex_uuids: FastHashSet<_> = facet1
+            .vertices()
+            .expect("facet1 should have valid vertices")
+            .map(Vertex::uuid)
+            .collect();
+        let facet2_vertex_uuids: FastHashSet<_> = facet2
+            .vertices()
+            .expect("facet2 should have valid vertices")
+            .map(Vertex::uuid)
+            .collect();
 
         let uuids_are_same = facet1_vertex_uuids == facet2_vertex_uuids;
         let facets_are_adjacent = facet_views_are_adjacent(&facet1, &facet2).unwrap();
+
+        if uuids_are_same != facets_are_adjacent {
+            let mut facet1_uuid_list: Vec<_> = facet1_vertex_uuids.iter().copied().collect();
+            facet1_uuid_list.sort_unstable();
+            let mut facet2_uuid_list: Vec<_> = facet2_vertex_uuids.iter().copied().collect();
+            facet2_uuid_list.sort_unstable();
+            println!(
+                "  ⚠️ UUID mismatch: facet1={facet1_uuid_list:?}, facet2={facet2_uuid_list:?}"
+            );
+        }
 
         // The adjacency should match the UUID equality
         assert_eq!(

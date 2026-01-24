@@ -167,6 +167,9 @@ const MAX_REPAIR_ITERATIONS: usize = 10;
 /// to see whether this recovery path is frequently used.
 static TOPOLOGY_SAFETY_NET_STAR_SPLIT_FALLBACK_SUCCESSES: AtomicU64 = AtomicU64::new(0);
 
+#[cfg(debug_assertions)]
+static VERTEX_TO_CELLS_SPILL_EVENTS: AtomicU64 = AtomicU64::new(0);
+
 /// Errors that can occur during triangulation construction.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -414,6 +417,11 @@ type TryInsertImplOk = ((VertexKey, Option<CellKey>), usize, SuspicionFlags);
 ///
 /// Validation can be expensive (O(N×D²) or worse), so this allows callers to trade
 /// performance for stricter correctness checks during incremental operations.
+///
+/// Note: when [`TopologyGuarantee::PLManifold`] is active, Level 3 topology validation
+/// is forced after each insertion once cells exist, even if [`ValidationPolicy::Never`]
+/// is selected. The policy only governs *additional* validation beyond the mandatory
+/// PL-manifold safety checks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ValidationPolicy {
     /// Never run global validation.
@@ -1527,7 +1535,20 @@ where
                         vertex_key: vk,
                     });
                 }
-                vertex_to_cells.entry(vk).or_default().push(cell_key);
+                let entry = vertex_to_cells.entry(vk).or_default();
+                #[cfg(debug_assertions)]
+                let was_spilled = entry.spilled();
+                entry.push(cell_key);
+                #[cfg(debug_assertions)]
+                if !was_spilled && entry.spilled() {
+                    let spill_count =
+                        VERTEX_TO_CELLS_SPILL_EVENTS.fetch_add(1, Ordering::Relaxed) + 1;
+                    eprintln!(
+                        "VertexToCellsMap spill #{spill_count}: vertex={vk:?} len={} cap={} (MAX_PRACTICAL_DIMENSION_SIZE={MAX_PRACTICAL_DIMENSION_SIZE})",
+                        entry.len(),
+                        entry.capacity()
+                    );
+                }
             }
 
             // Cell → neighbors
@@ -2555,8 +2576,15 @@ where
         }
 
         let must_validate_for_topology = self.topology_guarantee.requires_vertex_links();
-        let should_validate =
-            must_validate_for_topology || self.validation_policy.should_validate(suspicion);
+        let policy_wants_validation = self.validation_policy.should_validate(suspicion);
+        #[cfg(debug_assertions)]
+        if must_validate_for_topology && !policy_wants_validation {
+            eprintln!(
+                "PL-manifold topology guarantee forces Level 3 validation (overriding {policy:?})",
+                policy = self.validation_policy
+            );
+        }
+        let should_validate = must_validate_for_topology || policy_wants_validation;
         if !should_validate {
             return Ok((ok, cells_removed, suspicion));
         }
@@ -3149,7 +3177,14 @@ where
                 ))
             }
             (LocateResult::Outside, None) => {
+                // 2D exterior insertions skip the global conflict-region scan and go straight to
+                // hull extension, which is cheaper and more reliable in 2D. For D>2 we attempt
+                // cavity insertion first using a global conflict scan.
                 if D == 2 {
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "Outside insertion in 2D: skipping global conflict-region scan; using hull extension"
+                    );
                     None
                 } else {
                     let computed = self.find_conflict_region_global(&point)?;

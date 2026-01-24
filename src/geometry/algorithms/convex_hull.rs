@@ -7,7 +7,7 @@ use crate::core::traits::data_type::DataType;
 use crate::core::traits::facet_cache::FacetCacheProvider;
 use crate::core::triangulation::Triangulation;
 use crate::core::triangulation_data_structure::TdsValidationError;
-use crate::core::util::derive_facet_key_from_vertex_keys;
+use crate::core::util::checked_facet_key_from_vertex_keys;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
@@ -932,7 +932,7 @@ where
 
         // Optimization: Derive the facet key directly from vertex keys without materializing Vertex objects.
         // This avoids D vertex fetches and D UUID lookups, improving cache locality.
-        let facet_key = derive_facet_key_from_vertex_keys::<K::Scalar, U, V, D>(&facet_vertex_keys)
+        let facet_key = checked_facet_key_from_vertex_keys::<D>(&facet_vertex_keys)
             .map_err(|source| ConvexHullConstructionError::VisibilityCheckFailed { source })?;
 
         let adjacent_cells = facet_to_cells.get(&facet_key).ok_or_else(|| {
@@ -1564,7 +1564,7 @@ mod tests {
     use crate::core::traits::facet_cache::FacetCacheProvider;
     use crate::core::triangulation::TriangulationConstructionError;
     use crate::core::triangulation_data_structure::TdsValidationError;
-    use crate::core::util::{derive_facet_key_from_vertex_keys, facet_view_to_vertices};
+    use crate::core::util::{checked_facet_key_from_vertex_keys, facet_view_to_vertices};
     use crate::geometry::kernel::FastKernel;
     use crate::vertex;
     use serde::Serialize;
@@ -4137,8 +4137,7 @@ mod tests {
                 .filter_map(|v| dt.as_triangulation().tds.vertex_key_from_uuid(&v.uuid()))
                 .collect();
 
-            let derived_key_result =
-                derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&facet_vertex_keys);
+            let derived_key_result = checked_facet_key_from_vertex_keys::<3>(&facet_vertex_keys);
 
             if let Ok(derived_key) = derived_key_result {
                 if cache.contains_key(&derived_key) {

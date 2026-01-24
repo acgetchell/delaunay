@@ -88,12 +88,18 @@ pub fn small_buffer_with_capacity_8<T>(capacity: usize) -> SmallBuffer<T, 8> {
 }
 
 /// Creates a small buffer optimized for 2 elements (common facet sharing pattern)
+///
+/// # Use Case
+/// Facet-to-cell relationships typically involve exactly 2 cells sharing a facet.
 #[must_use]
 pub fn small_buffer_with_capacity_2<T>(capacity: usize) -> SmallBuffer<T, 2> {
     SmallBuffer::with_capacity(capacity)
 }
 
 /// Creates a small buffer optimized for 16 elements (larger batch operations)
+///
+/// # Use Case
+/// Suitable for batch vertex/cell collections in higher-dimensional operations.
 #[must_use]
 pub fn small_buffer_with_capacity_16<T>(capacity: usize) -> SmallBuffer<T, 16> {
     SmallBuffer::with_capacity(capacity)
@@ -105,6 +111,12 @@ mod tests {
 
     #[test]
     fn test_capacity_helpers() {
+        eprintln!(
+            "small_buffer_with_capacity_2: use case is facet-to-cell relationships (2 cells per facet)"
+        );
+        eprintln!(
+            "small_buffer_with_capacity_16: use case is batch vertex/cell collections in higher-dimensional operations"
+        );
         // Test hash map and set capacity helpers
         let map = fast_hash_map_with_capacity::<u64, usize>(100);
         assert!(map.capacity() >= 100);

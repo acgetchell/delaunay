@@ -2483,7 +2483,13 @@ where
 
     let mut initial_points = Some(points);
 
-    for attempt in 0..=RANDOM_TRIANGULATION_MAX_POINTSET_ATTEMPTS {
+    for attempt in 0..RANDOM_TRIANGULATION_MAX_POINTSET_ATTEMPTS {
+        #[cfg(debug_assertions)]
+        if std::env::var_os("DELAUNAY_DEBUG_RANDOM_POINTSET_RETRIES").is_some() {
+            eprintln!(
+                "random_triangulation: pointset attempt {attempt} of {RANDOM_TRIANGULATION_MAX_POINTSET_ATTEMPTS} (0-based)"
+            );
+        }
         let point_seed = seed.map(|base| {
             if attempt > 0 {
                 base ^ RANDOM_TRIANGULATION_POINTSET_SEED_MIX.wrapping_mul(attempt as u64)
@@ -2656,7 +2662,7 @@ where
     /// Returns `Err` if:
     /// - Random point generation fails (invalid bounds, RNG issues)
     /// - Triangulation construction fails (geometric degeneracy, etc.)
-    /// - Validation fails after robust fallback attempts
+    /// - Construction fails after the configured retry policy (no robust-kernel fallback here)
     pub fn build<U, V, const D: usize>(
         self,
     ) -> Result<DelaunayTriangulation<FastKernel<T>, U, V, D>, DelaunayTriangulationConstructionError>
@@ -2727,6 +2733,13 @@ where
         let vertices = random_triangulation_build_vertices(points, vertex_data);
 
         // Build triangulation with configured options
+        #[cfg(debug_assertions)]
+        if std::env::var_os("DELAUNAY_DEBUG_RANDOM_BUILDER").is_some() {
+            eprintln!(
+                "random_triangulation_builder: single attempt with n_points={}, topology_guarantee={:?}, options={:?}",
+                self.n_points, self.topology_guarantee, self.construction_options
+            );
+        }
         DelaunayTriangulation::with_topology_guarantee_and_options(
             FastKernel::new(),
             &vertices,

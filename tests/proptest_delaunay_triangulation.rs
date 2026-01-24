@@ -409,9 +409,17 @@ macro_rules! gen_incremental_insertion_validity {
                     let mut dt = dt.unwrap();
                     prop_assert_levels_1_to_3_valid!($dim, &dt, "initial triangulation");
 
-                    if dt.insert(additional_vertex).is_ok() {
-                        prop_assert_levels_1_to_3_valid!($dim, &dt, "after insertion");
+                    let insert_result = dt.insert(additional_vertex);
+                    if let Err(e) = &insert_result {
+                        if std::env::var_os("DELAUNAY_PROPTEST_INSERT_ERRORS").is_some() {
+                            eprintln!(
+                                "{}D: incremental insertion error (treated as rejection): {e}",
+                                $dim
+                            );
+                        }
                     }
+                    prop_assume!(insert_result.is_ok());
+                    prop_assert_levels_1_to_3_valid!($dim, &dt, "after insertion");
                 }
             }
         }
@@ -457,9 +465,17 @@ macro_rules! gen_incremental_insertion_validity {
                     let mut dt = dt.unwrap();
                     prop_assert_levels_1_to_3_valid!($dim, &dt, "initial triangulation");
 
-                    if dt.insert(additional_vertex).is_ok() {
-                        prop_assert_levels_1_to_3_valid!($dim, &dt, "after insertion");
+                    let insert_result = dt.insert(additional_vertex);
+                    if let Err(e) = &insert_result {
+                        if std::env::var_os("DELAUNAY_PROPTEST_INSERT_ERRORS").is_some() {
+                            eprintln!(
+                                "{}D: incremental insertion error (treated as rejection): {e}",
+                                $dim
+                            );
+                        }
                     }
+                    prop_assume!(insert_result.is_ok());
+                    prop_assert_levels_1_to_3_valid!($dim, &dt, "after insertion");
                 }
             }
         }
@@ -635,14 +651,19 @@ proptest! {
                     prop_assume!(has_no_coordinate_hyperplane_degeneracy(&vertices));
 
                     // Use DelaunayTriangulation::new_with_topology_guarantee() to triangulate ALL vertices together
-                    let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                    let dt = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
-                    ) else {
-                        // Degenerate geometry or insufficient vertices - skip test
-                        prop_assume!(false);
-                        unreachable!();
-                    };
+                    );
+                    if let Err(err) = &dt {
+                        if std::env::var_os("DELAUNAY_PROPTEST_CONSTRUCTION_ERRORS").is_some() {
+                            eprintln!(
+                                "{}D: empty-circumsphere construction failed (treated as rejection): {err}",
+                                $dim
+                            );
+                        }
+                    }
+                    let dt = dt.prop_assume_ok()?;
 
                     // Verify the triangulation satisfies the Delaunay property (Level 4)
                     // Use fast O(N) flip-based verification instead of O(N×V) brute-force
@@ -680,14 +701,19 @@ proptest! {
                     prop_assume!(has_no_coordinate_hyperplane_degeneracy(&vertices));
 
                     // Use DelaunayTriangulation::new_with_topology_guarantee() to triangulate ALL vertices together
-                    let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                    let dt = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
-                    ) else {
-                        // Degenerate geometry or insufficient vertices - skip test
-                        prop_assume!(false);
-                        unreachable!();
-                    };
+                    );
+                    if let Err(err) = &dt {
+                        if std::env::var_os("DELAUNAY_PROPTEST_CONSTRUCTION_ERRORS").is_some() {
+                            eprintln!(
+                                "{}D: empty-circumsphere construction failed (treated as rejection): {err}",
+                                $dim
+                            );
+                        }
+                    }
+                    let dt = dt.prop_assume_ok()?;
 
                     // Verify the triangulation satisfies the Delaunay property (Level 4)
                     // Use fast O(N) flip-based verification instead of O(N×V) brute-force
@@ -1636,11 +1662,16 @@ macro_rules! gen_duplicate_cloud_test {
 
                     let vertices: Vec<Vertex<f64, (), $dim>> = Vertex::from_points(&points);
 
-                    let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) else {
-                        // Degenerate inputs are skipped
-                        prop_assume!(false);
-                        unreachable!();
-                    };
+                    let dt = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices);
+                    if let Err(err) = &dt {
+                        if std::env::var_os("DELAUNAY_PROPTEST_CONSTRUCTION_ERRORS").is_some() {
+                            eprintln!(
+                                "{}D: duplicate-cloud construction failed (treated as rejection): {err}",
+                                $dim
+                            );
+                        }
+                    }
+                    let dt = dt.prop_assume_ok()?;
 
                     // Structural/topological validity (Levels 1–3) for kept subset
                     prop_assert_levels_1_to_3_valid!($dim, &dt, "triangulation (kept subset)");
@@ -1703,11 +1734,16 @@ macro_rules! gen_duplicate_cloud_test {
 
                     let vertices: Vec<Vertex<f64, (), $dim>> = Vertex::from_points(&points);
 
-                    let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) else {
-                        // Degenerate inputs are skipped
-                        prop_assume!(false);
-                        unreachable!();
-                    };
+                    let dt = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices);
+                    if let Err(err) = &dt {
+                        if std::env::var_os("DELAUNAY_PROPTEST_CONSTRUCTION_ERRORS").is_some() {
+                            eprintln!(
+                                "{}D: duplicate-cloud construction failed (treated as rejection): {err}",
+                                $dim
+                            );
+                        }
+                    }
+                    let dt = dt.prop_assume_ok()?;
 
                     // Structural/topological validity (Levels 1–3) for kept subset
                     prop_assert_levels_1_to_3_valid!($dim, &dt, "triangulation (kept subset)");

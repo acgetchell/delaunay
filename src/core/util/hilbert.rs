@@ -58,6 +58,17 @@ pub fn hilbert_quantize<T: CoordinateScalar, const D: usize>(
     quantized
 }
 
+#[inline]
+fn validate_hilbert_params<const D: usize>(bits: u32) {
+    assert!(bits > 0 && bits <= 31, "bits must be in range [1, 31]");
+    let d_u32 = u32::try_from(D).expect("D should fit in u32 for overflow check");
+    let total_bits = u128::from(d_u32) * u128::from(bits);
+    assert!(
+        total_bits <= 128,
+        "Hilbert index would overflow u128 for D={D} and bits={bits}"
+    );
+}
+
 /// Compute the Hilbert curve index for a point in D-dimensional space.
 ///
 /// Internally, coordinates are quantized to an integer grid and then mapped to a
@@ -72,13 +83,7 @@ pub fn hilbert_index<T: CoordinateScalar, const D: usize>(
     bounds: (T, T),
     bits: u32,
 ) -> u128 {
-    assert!(bits > 0 && bits <= 31, "bits must be in range [1, 31]");
-    let d_u32 = u32::try_from(D).expect("D should fit in u32 for overflow check");
-    let total_bits = u128::from(d_u32) * u128::from(bits);
-    assert!(
-        total_bits <= 128,
-        "Hilbert index would overflow u128 for D={D} and bits={bits}"
-    );
+    validate_hilbert_params::<D>(bits);
 
     if D == 0 {
         return 0;
@@ -169,13 +174,7 @@ fn hilbert_sort_key<T: CoordinateScalar, const D: usize>(
     bits: u32,
 ) -> (u128, [u32; D]) {
     // Keep assertions consistent with `hilbert_index`.
-    assert!(bits > 0 && bits <= 31, "bits must be in range [1, 31]");
-    let d_u32 = u32::try_from(D).expect("D should fit in u32 for overflow check");
-    let total_bits = u128::from(d_u32) * u128::from(bits);
-    assert!(
-        total_bits <= 128,
-        "Hilbert index would overflow u128 for D={D} and bits={bits}"
-    );
+    validate_hilbert_params::<D>(bits);
 
     let q = hilbert_quantize(coords, bounds, bits);
     let idx = hilbert_index_from_quantized(&q, bits);
@@ -203,7 +202,8 @@ pub fn hilbert_sort_by_stable<Item, T, F, const D: usize>(
 /// Unstable sort helper: sort items by Hilbert index + quantized-coordinate tie-break.
 ///
 /// This avoids allocations beyond what the sort implementation may use internally,
-/// but recomputes indices during comparisons.
+/// but recomputes indices during comparisons. Prefer [`hilbert_sort_by_stable`] unless
+/// memory pressure is critical, as the unstable variant recomputes keys O(n log n) times.
 pub fn hilbert_sort_by_unstable<Item, T, F, const D: usize>(
     items: &mut [Item],
     bounds: (T, T),
@@ -318,5 +318,69 @@ mod tests {
         let p: Point<f64, 2> = Point::new([0.25, 0.75]);
         let idx = hilbert_index(p.coords(), (0.0, 1.0), 16);
         assert!(idx > 0);
+    }
+
+    #[test]
+    fn test_hilbert_bits_boundaries() {
+        let origin = hilbert_index(&[0.0_f64, 0.0], (0.0, 1.0), 1);
+        let corner = hilbert_index(&[1.0_f64, 1.0], (0.0, 1.0), 1);
+        eprintln!("bits=1 origin={origin} corner={corner}");
+        assert_eq!(origin, 0, "bits=1 origin should map to 0");
+        assert_ne!(origin, corner, "bits=1 should distinguish corners");
+
+        let origin_31 = hilbert_index(&[0.0_f64, 0.0], (0.0, 1.0), 31);
+        let corner_31 = hilbert_index(&[1.0_f64, 1.0], (0.0, 1.0), 31);
+        eprintln!("bits=31 origin={origin_31} corner={corner_31}");
+        assert_eq!(origin_31, 0, "bits=31 origin should map to 0");
+        assert_ne!(origin_31, corner_31, "bits=31 should distinguish corners");
+    }
+
+    #[test]
+    fn test_hilbert_index_1d_monotonic() {
+        let bounds = (0.0_f64, 1.0_f64);
+        let bits = 8;
+        let a = hilbert_index(&[0.0_f64], bounds, bits);
+        let b = hilbert_index(&[0.25_f64], bounds, bits);
+        let c = hilbert_index(&[0.5_f64], bounds, bits);
+        let d = hilbert_index(&[1.0_f64], bounds, bits);
+        eprintln!("1d indices: a={a} b={b} c={c} d={d}");
+        assert!(
+            a < b && b < c && c < d,
+            "1D Hilbert indices should be monotonic"
+        );
+    }
+
+    #[test]
+    fn test_hilbert_degenerate_bounds_quantize_to_zero() {
+        let bounds = (1.0_f64, 1.0_f64);
+        let coords = [2.0_f64, -2.0_f64];
+        let q = hilbert_quantize(&coords, bounds, 8);
+        let idx = hilbert_index(&coords, bounds, 8);
+        eprintln!("degenerate bounds q={q:?} idx={idx}");
+        assert_eq!(q, [0, 0], "degenerate bounds should quantize to zeros");
+        assert_eq!(idx, 0, "degenerate bounds should map to index 0");
+    }
+
+    #[test]
+    fn test_hilbert_quantize_clamps_out_of_range() {
+        let bounds = (0.0_f64, 1.0_f64);
+        let bits = 4;
+        let coords = [-1.0_f64, 2.0_f64];
+        let q = hilbert_quantize(&coords, bounds, bits);
+        let max_val = (1_u32 << bits) - 1;
+        eprintln!("clamp q={q:?} max={max_val}");
+        assert_eq!(
+            q,
+            [0, max_val],
+            "out-of-range coords should clamp to bounds"
+        );
+
+        let idx = hilbert_index(&coords, bounds, bits);
+        let idx_clamped = hilbert_index(&[0.0_f64, 1.0_f64], bounds, bits);
+        eprintln!("clamp idx={idx} idx_clamped={idx_clamped}");
+        assert_eq!(
+            idx, idx_clamped,
+            "clamped coords should match clamped index"
+        );
     }
 }

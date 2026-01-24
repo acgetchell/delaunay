@@ -29,7 +29,7 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 ///
 /// ```
 /// use delaunay::prelude::*;
-/// use delaunay::core::util::derive_facet_key_from_vertex_keys;
+/// use delaunay::core::util::checked_facet_key_from_vertex_keys;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -44,7 +44,7 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 /// if let Some(cell) = tds.cells().map(|(_, cell)| cell).next() {
 ///     let facet_vertex_keys: Vec<_> = cell.vertices().iter().skip(1).copied().collect(); // Skip 1 vertex to get D vertices
 ///     assert_eq!(facet_vertex_keys.len(), 3); // For 3D triangulation, facet has 3 vertices
-///     let facet_key = derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&facet_vertex_keys).unwrap();
+///     let facet_key = checked_facet_key_from_vertex_keys::<3>(&facet_vertex_keys).unwrap();
 ///     println!("Facet key: {}", facet_key);
 /// }
 /// ```
@@ -58,14 +58,9 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 /// # See Also
 ///
 /// - [`crate::core::facet::facet_key_from_vertices`] - Low-level function that computes the hash from keys
-pub fn derive_facet_key_from_vertex_keys<T, U, V, const D: usize>(
+pub fn checked_facet_key_from_vertex_keys<const D: usize>(
     facet_vertex_keys: &[VertexKey],
-) -> Result<u64, FacetError>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+) -> Result<u64, FacetError> {
     use crate::core::facet::facet_key_from_vertices;
 
     // Validate that the number of vertex keys matches the expected dimension
@@ -147,25 +142,20 @@ where
 ///
 /// - Time Complexity: O(D²) where D is the dimension (iterates over facets and vertices)
 /// - Space Complexity: O(D) for temporary vertex buffers
-pub fn verify_facet_index_consistency<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub fn verify_facet_index_consistency<const D: usize>(
+    tds: &Tds<impl CoordinateScalar, impl DataType, impl DataType, D>,
     cell1_key: CellKey,
     cell2_key: CellKey,
     facet_idx: usize,
-) -> Result<bool, FacetError>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+) -> Result<bool, FacetError> {
     // Get facet views from both cells (validates cells exist)
     let cell1_facets = crate::core::cell::Cell::facet_views_from_tds(tds, cell1_key)?;
     let cell2_facets = crate::core::cell::Cell::facet_views_from_tds(tds, cell2_key)?;
 
     // Check facet index bounds
     if facet_idx >= cell1_facets.len() {
-        // Use consistent error handling with proper overflow detection
-        let idx_u8 = usize_to_u8(facet_idx, cell1_facets.len())?;
+        // Saturate to u8::MAX for error reporting if index overflows u8
+        let idx_u8 = u8::try_from(facet_idx).unwrap_or(u8::MAX);
         return Err(FacetError::InvalidFacetIndex {
             index: idx_u8,
             facet_count: cell1_facets.len(),
@@ -238,8 +228,8 @@ mod tests {
 
     #[test]
     #[expect(clippy::too_many_lines)]
-    fn test_derive_facet_key_from_vertex_keys_comprehensive() {
-        println!("Testing derive_facet_key_from_vertex_keys comprehensively");
+    fn test_checked_facet_key_from_vertex_keys_comprehensive() {
+        println!("Testing checked_facet_key_from_vertex_keys comprehensively");
 
         // Create a triangulation
         let vertices = vec![
@@ -257,7 +247,7 @@ mod tests {
         let cell = tds.cells().map(|(_, cell)| cell).next().unwrap();
         let facet_vertex_keys: Vec<_> = cell.vertices().iter().skip(1).copied().collect();
 
-        let result = derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&facet_vertex_keys);
+        let result = checked_facet_key_from_vertex_keys::<3>(&facet_vertex_keys);
         assert!(
             result.is_ok(),
             "Facet key derivation should succeed for valid vertex keys"
@@ -267,7 +257,7 @@ mod tests {
         println!("    Derived facet key: {facet_key}");
 
         // Test deterministic behavior - same vertex keys produce same key
-        let result2 = derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&facet_vertex_keys);
+        let result2 = checked_facet_key_from_vertex_keys::<3>(&facet_vertex_keys);
         assert!(result2.is_ok(), "Second derivation should also succeed");
         assert_eq!(
             facet_key,
@@ -281,8 +271,7 @@ mod tests {
         if different_facet_vertex_keys.len() == 3
             && different_facet_vertex_keys != facet_vertex_keys
         {
-            let result3 =
-                derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&different_facet_vertex_keys);
+            let result3 = checked_facet_key_from_vertex_keys::<3>(&different_facet_vertex_keys);
             assert!(
                 result3.is_ok(),
                 "Different facet key derivation should succeed"
@@ -300,7 +289,7 @@ mod tests {
 
         // Wrong vertex key count
         let single_key: Vec<VertexKey> = vec![facet_vertex_keys[0]];
-        let result_count = derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&single_key);
+        let result_count = checked_facet_key_from_vertex_keys::<3>(&single_key);
         assert!(
             result_count.is_err(),
             "Should return error for wrong vertex key count"
@@ -322,7 +311,7 @@ mod tests {
 
         // Empty vertex keys
         let empty_keys: Vec<VertexKey> = vec![];
-        let result_empty = derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&empty_keys);
+        let result_empty = checked_facet_key_from_vertex_keys::<3>(&empty_keys);
         assert!(
             result_empty.is_err(),
             "Empty vertex keys should fail validation"
@@ -365,8 +354,7 @@ mod tests {
                     .collect();
 
                 if !facet_vertex_keys.is_empty() {
-                    let key_result =
-                        derive_facet_key_from_vertex_keys::<f64, (), (), 3>(&facet_vertex_keys);
+                    let key_result = checked_facet_key_from_vertex_keys::<3>(&facet_vertex_keys);
                     if let Ok(derived_key) = key_result {
                         keys_tested += 1;
                         if cache.contains_key(&derived_key) {
@@ -400,6 +388,11 @@ mod tests {
         // Error case: facet index out of bounds.
         let err = verify_facet_index_consistency(tds, cell_key, cell_key, 99).unwrap_err();
         assert!(matches!(err, FacetError::InvalidFacetIndex { .. }));
+
+        // Logging: demonstrate behavior for large out-of-bounds facet index
+        let err_large = verify_facet_index_consistency(tds, cell_key, cell_key, 300).unwrap_err();
+        println!("    Large facet_idx=300 error: {err_large:?}");
+        assert!(matches!(err_large, FacetError::InvalidFacetIndex { .. }));
 
         // False case: two disjoint triangles in the same TDS share no facet keys.
         let mut tds2: Tds<f64, (), (), 2> = Tds::empty();
