@@ -1271,11 +1271,16 @@ mod tests {
 
     #[test]
     fn test_max_grid_bytes_safety_cap() {
-        // Test the default value
-        let default_cap = max_grid_bytes_safety_cap();
-        assert!(default_cap > 0);
+        let expected = std::env::var("MAX_GRID_BYTES_SAFETY_CAP")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(MAX_GRID_BYTES_SAFETY_CAP_DEFAULT);
 
-        // Test that it returns a reasonable default (4 GiB)
-        assert_eq!(default_cap, 4_294_967_296);
+        let cap = max_grid_bytes_safety_cap();
+        assert!(cap > 0);
+        assert_eq!(cap, expected);
+
+        // Test that the default constant remains a reasonable value (4 GiB).
+        assert_eq!(MAX_GRID_BYTES_SAFETY_CAP_DEFAULT, 4_294_967_296);
     }
 }

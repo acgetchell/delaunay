@@ -1595,7 +1595,7 @@ where
                 if !was_spilled && entry.spilled() {
                     let spill_count =
                         VERTEX_TO_CELLS_SPILL_EVENTS.fetch_add(1, Ordering::Relaxed) + 1;
-                    eprintln!(
+                    log::debug!(
                         "VertexToCellsMap spill #{spill_count}: vertex={vk:?} len={} cap={} (MAX_PRACTICAL_DIMENSION_SIZE={MAX_PRACTICAL_DIMENSION_SIZE})",
                         entry.len(),
                         entry.capacity()
@@ -2358,7 +2358,7 @@ where
             ) {
                 stats.result = InsertionResult::SkippedDuplicate;
                 #[cfg(debug_assertions)]
-                eprintln!("SKIPPED: {error}");
+                log::debug!("SKIPPED: {error}");
                 return Ok((InsertionOutcome::Skipped { error }, stats));
             }
 
@@ -2384,7 +2384,7 @@ where
                     stats.result = InsertionResult::Inserted;
                     #[cfg(debug_assertions)]
                     if attempt > 0 {
-                        eprintln!(
+                        log::debug!(
                             "Warning: Geometric degeneracy resolved via perturbation (attempt {attempt})"
                         );
                     }
@@ -2406,7 +2406,7 @@ where
                     if matches!(e, InsertionError::DuplicateCoordinates { .. }) {
                         stats.result = InsertionResult::SkippedDuplicate;
                         #[cfg(debug_assertions)]
-                        eprintln!("SKIPPED: {e}");
+                        log::debug!("SKIPPED: {e}");
                         return Ok((InsertionOutcome::Skipped { error: e }, stats));
                     }
 
@@ -2416,14 +2416,14 @@ where
                     if is_retryable && attempt < max_perturbation_attempts {
                         last_retryable_error = Some(e.clone());
                         #[cfg(debug_assertions)]
-                        eprintln!(
+                        log::debug!(
                             "RETRYING: Attempt {} failed with: {e}. Applying perturbation...",
                             attempt + 1
                         );
                     } else if is_retryable {
                         stats.result = InsertionResult::SkippedDegeneracy;
                         #[cfg(debug_assertions)]
-                        eprintln!(
+                        log::debug!(
                             "SKIPPED: Could not insert vertex after {} attempts (perturbations up to {:.1}%). Last error: {e}. Vertex skipped to maintain manifold.",
                             max_perturbation_attempts + 1,
                             match max_perturbation_attempts {
@@ -2501,9 +2501,19 @@ where
         K::Scalar: CoordinateScalar,
     {
         let mut duplicate_found = false;
+        let make_duplicate_error = || {
+            let coord_str = coords
+                .iter()
+                .map(|c| format!("{c:?}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            InsertionError::DuplicateCoordinates {
+                coordinates: format!("[{coord_str}]"),
+            }
+        };
 
-        let used_index = index.is_some_and(|index| {
-            index.for_each_candidate_vertex_key(coords, |vkey| {
+        if let Some(index) = index {
+            let used_index = index.for_each_candidate_vertex_key(coords, |vkey| {
                 let Some(vertex) = self.tds.get_vertex_by_key(vkey) else {
                     return true;
                 };
@@ -2521,38 +2531,36 @@ where
                 }
 
                 true
-            })
-        });
+            });
 
-        if !used_index {
-            for (_, existing_vertex) in self.tds.vertices() {
-                let existing_coords = existing_vertex.point().coords();
-                let mut dist_sq = K::Scalar::zero();
-                for i in 0..D {
-                    let diff = coords[i] - existing_coords[i];
-                    dist_sq += diff * diff;
-                }
+            if duplicate_found {
+                return Some(make_duplicate_error());
+            }
 
-                if dist_sq < tolerance_sq {
-                    duplicate_found = true;
-                    break;
-                }
+            if used_index {
+                return None;
             }
         }
 
-        if !duplicate_found {
-            return None;
+        for (_, existing_vertex) in self.tds.vertices() {
+            let existing_coords = existing_vertex.point().coords();
+            let mut dist_sq = K::Scalar::zero();
+            for i in 0..D {
+                let diff = coords[i] - existing_coords[i];
+                dist_sq += diff * diff;
+            }
+
+            if dist_sq < tolerance_sq {
+                duplicate_found = true;
+                break;
+            }
         }
 
-        let coord_str = coords
-            .iter()
-            .map(|c| format!("{c:?}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        Some(InsertionError::DuplicateCoordinates {
-            coordinates: format!("[{coord_str}]"),
-        })
+        if duplicate_found {
+            Some(make_duplicate_error())
+        } else {
+            None
+        }
     }
 
     /// Estimate a local length scale for perturbation based on nearby vertices.
@@ -2625,7 +2633,7 @@ where
     fn log_validation_trigger_if_enabled(&self, suspicion: SuspicionFlags) {
         #[cfg(debug_assertions)]
         if self.validation_policy.should_validate(suspicion) && suspicion.is_suspicious() {
-            eprintln!("Validation triggered by {suspicion:?}");
+            log::debug!("Validation triggered by {suspicion:?}");
         }
 
         // Keep the parameter "used" in release builds where the debug-only logging
@@ -2738,7 +2746,7 @@ where
                 TOPOLOGY_SAFETY_NET_STAR_SPLIT_FALLBACK_SUCCESSES.fetch_add(1, Ordering::Relaxed);
 
                 #[cfg(debug_assertions)]
-                eprintln!(
+                log::debug!(
                     "Topology safety-net: star-split fallback succeeded (start_cell={start_cell:?})"
                 );
 

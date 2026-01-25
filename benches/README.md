@@ -49,7 +49,7 @@ The CI Performance Suite is the primary benchmarking suite used for automated pe
 - **Vertex counts**: 10, 25, 50 per dimension
 - **Runtime**: ~5–10 minutes (hardware dependent)
 - **Frequency**: Every PR and push to main
-- **Integration**: `.github/workflows/benchmarks.yml` and `.github/workflows/generate-baseline.yml`
+- **Integration**: `.github/workflows/benchmarks.yml` and `.github/workflows/generate-baseline.yml` (GitHub Actions)
 
 ### Circumsphere Containment (`circumsphere_containment.rs`)
 

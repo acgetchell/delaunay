@@ -44,10 +44,15 @@ fn main() {
     // Use a fixed seed + bounds so that `just examples` is reproducible and robust.
     let n_points = 20;
     let bounds = (-3.0, 3.0);
-    let seed_override: Option<u64> = std::env::var("DELAUNAY_EXAMPLE_SEED")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .or(None);
+    let seed_override: Option<u64> =
+        std::env::var("DELAUNAY_EXAMPLE_SEED")
+            .ok()
+            .and_then(|value| {
+                value.parse().ok().or_else(|| {
+                    eprintln!("Invalid DELAUNAY_EXAMPLE_SEED={value:?}; using default seed list.");
+                    None
+                })
+            });
     let seed_candidates: Vec<u64> =
         seed_override.map_or_else(|| SEED_CANDIDATES.to_vec(), |seed| vec![seed]);
 

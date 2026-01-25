@@ -540,7 +540,11 @@ macro_rules! test_quality_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                        FastKernel::default(),
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let tds = dt.tds();
                         let tri = dt.as_triangulation();
                         for cell_key in tds.cell_keys() {

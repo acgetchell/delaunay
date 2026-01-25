@@ -14,6 +14,7 @@
 //! ```
 
 use ::uuid::Uuid;
+use delaunay::core::delaunay_triangulation::{ConstructionOptions, InsertionOrderStrategy};
 use delaunay::prelude::edit::*;
 use delaunay::prelude::*;
 use std::time::Instant;
@@ -104,10 +105,13 @@ fn main() {
 fn build_triangulation() -> Result<Dt4, String> {
     let vertices = stable_vertices();
     let start = Instant::now();
-    let dt: Dt4 = DelaunayTriangulation::with_topology_guarantee(
+    let options =
+        ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
+    let dt: Dt4 = DelaunayTriangulation::with_topology_guarantee_and_options(
         RobustKernel::new(),
         &vertices,
         TopologyGuarantee::PLManifold,
+        options,
     )
     .map_err(|e| format!("construction failed: {e}"))?;
     println!(

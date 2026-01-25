@@ -22,7 +22,10 @@ use super::conversions::{safe_scalar_from_f64, safe_scalar_to_f64};
 /// # Returns
 ///
 /// The computed hypot value using scaled computation
-pub(in crate::geometry::util) fn scaled_hypot_2d<T: CoordinateScalar + Zero>(x: T, y: T) -> T {
+pub(in crate::geometry::util) fn scaled_hypot_2d<T: CoordinateScalar + Zero + Float>(
+    x: T,
+    y: T,
+) -> T {
     let max_abs = Float::abs(x).max(Float::abs(y));
     if max_abs == T::zero() {
         return T::zero();
@@ -114,7 +117,7 @@ where
 /// ```
 pub fn hypot<T, const D: usize>(coords: [T; D]) -> T
 where
-    T: CoordinateScalar + Zero,
+    T: CoordinateScalar + Zero + Float,
 {
     match D {
         0 => T::zero(),

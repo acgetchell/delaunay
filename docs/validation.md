@@ -103,7 +103,8 @@ dt.set_validation_policy(ValidationPolicy::Never);
 
 Level 3 topology validation can be configured to enforce either:
 
-- **PL-manifold** invariants (default, adds strict vertex-link validation), or
+- **PL-manifold** invariants (default, uses ridge-link checks during insertion and
+  requires completion-time vertex-link validation), or
 - **Pseudomanifold / manifold-with-boundary** invariants (relaxed mode).
 
 This is separate from [`ValidationPolicy`](#automatic-validation-during-incremental-insertion-validationpolicy),

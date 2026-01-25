@@ -205,10 +205,12 @@ macro_rules! test_vertex_data {
         #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
         fn $name() {
             let vertices: Vec<_> = $vertices;
-            let dt = DelaunayTriangulation::<FastKernel<f64>, Option<i32>, (), $dim>::with_kernel(
+            let dt = DelaunayTriangulation::<FastKernel<f64>, Option<i32>, (), $dim>::with_topology_guarantee(
                 FastKernel::default(),
-                &vertices
-            ).unwrap();
+                &vertices,
+                TopologyGuarantee::PLManifold,
+            )
+            .unwrap();
             let tds = dt.tds();
 
             for (_key, vertex) in tds.vertices() {
@@ -225,10 +227,12 @@ macro_rules! test_cell_data {
         #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
         fn $name() {
             let vertices: Vec<_> = $vertices;
-            let dt = DelaunayTriangulation::<FastKernel<f64>, (), i32, $dim>::with_kernel(
+            let dt = DelaunayTriangulation::<FastKernel<f64>, (), i32, $dim>::with_topology_guarantee(
                 FastKernel::default(),
-                &vertices
-            ).unwrap();
+                &vertices,
+                TopologyGuarantee::PLManifold,
+            )
+            .unwrap();
             let mut tds = dt.tds().clone();
 
             // Collect cell keys first to avoid borrow checker issues

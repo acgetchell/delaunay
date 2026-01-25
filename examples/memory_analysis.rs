@@ -7,6 +7,7 @@ use delaunay::prelude::query::*;
 use std::time::Instant;
 
 const SEED_CANDIDATES: &[u64] = &[1, 7, 11, 42, 99, 123, 666];
+const POINT_COUNT_CANDIDATES: &[usize] = &[25, 20, 16, 12];
 
 /// Bounds for random triangulation (min, max) - consistent with benchmarks
 const BOUNDS: (f64, f64) = (-100.0, 100.0);
@@ -21,45 +22,51 @@ macro_rules! generate_memory_analysis {
                 reason = "tri_info and hull_info are only used when the count-allocations feature is enabled",
             )
         )]
-        fn $name(n_points: usize, seeds: &[u64]) {
-            println!("  Analyzing {}D triangulation with {} points", $dim, n_points);
+        #[expect(
+            clippy::too_many_lines,
+            reason = "Example keeps analysis flow in one function for readability"
+        )]
+        fn $name(point_counts: &[usize], seeds: &[u64]) {
+            for &n_points in point_counts {
+                println!("  Analyzing {}D triangulation with {} points", $dim, n_points);
 
-            // Measure triangulation construction
-            let start = Instant::now();
-            let mut last_error: Option<String> = None;
-            let mut used_seed: Option<u64> = None;
-            let mut dt_res: Option<_> = None;
-            let mut tri_info = None;
-            for &candidate in seeds {
-                let (candidate_res, candidate_info) = measure_with_result(|| {
-                    generate_random_triangulation::<f64, (), (), $dim>(
-                        n_points,
-                        BOUNDS,
-                        None,
-                        Some(candidate),
-                    )
-                });
-                match candidate_res {
-                    Ok(dt) => {
-                        dt_res = Some(dt);
-                        tri_info = Some(candidate_info);
-                        used_seed = Some(candidate);
-                        break;
-                    }
-                    Err(e) => {
-                        last_error = Some(format!("{e}"));
+                // Measure triangulation construction
+                let start = Instant::now();
+                let mut last_error: Option<String> = None;
+                let mut used_seed: Option<u64> = None;
+                let mut dt_res: Option<_> = None;
+                let mut tri_info = None;
+                for &candidate in seeds {
+                    let (candidate_res, candidate_info) = measure_with_result(|| {
+                        generate_random_triangulation::<f64, (), (), $dim>(
+                            n_points,
+                            BOUNDS,
+                            None,
+                            Some(candidate),
+                        )
+                    });
+                    match candidate_res {
+                        Ok(dt) => {
+                            dt_res = Some(dt);
+                            tri_info = Some(candidate_info);
+                            used_seed = Some(candidate);
+                            break;
+                        }
+                        Err(e) => {
+                            last_error = Some(format!("{e}"));
+                        }
                     }
                 }
-            }
 
-            let (Some(dt), Some(tri_info)) = (dt_res, tri_info) else {
-                eprintln!(
-                    "✗ Failed to build triangulation after trying seeds {seeds:?}: {}",
-                    last_error.unwrap_or_else(|| "unknown error".to_string())
-                );
-                return;
-            };
-            let construction_time = start.elapsed();
+                let (Some(dt), Some(tri_info)) = (dt_res, tri_info) else {
+                    eprintln!(
+                        "✗ Failed to build triangulation after trying seeds {seeds:?} (points={n_points}): {}",
+                        last_error.unwrap_or_else(|| "unknown error".to_string())
+                    );
+                    println!();
+                    continue;
+                };
+                let construction_time = start.elapsed();
 
             let num_vertices = dt.tds().number_of_vertices();
             let num_cells = dt.tds().number_of_cells();
@@ -81,58 +88,65 @@ macro_rules! generate_memory_analysis {
             let hull_facets = hull.number_of_facets();
 
             // Print results
-            println!("    Triangulation: {num_vertices} vertices, {num_cells} cells");
-            println!("    Convex hull: {hull_facets} facets");
-            if let Some(seed) = used_seed {
-                println!("    Seed: {seed}");
-            }
-            println!("    Construction time: {construction_time:?}");
-            println!("    Hull extraction time: {hull_time:?}");
+                println!("    Triangulation: {num_vertices} vertices, {num_cells} cells");
+                println!("    Convex hull: {hull_facets} facets");
+                if let Some(seed) = used_seed {
+                    println!("    Seed: {seed}");
+                }
+                println!("    Construction time: {construction_time:?}");
+                println!("    Hull extraction time: {hull_time:?}");
 
-            #[cfg(feature = "count-allocations")]
-            {
-                #[expect(clippy::cast_precision_loss, reason = "Converting byte counters to floating-point for human-friendly KiB/MiB output")]
+                #[cfg(feature = "count-allocations")]
                 {
-                    let tri_bytes = tri_info.bytes_total as f64;
-                    let hull_bytes = hull_info.bytes_total as f64;
-                    let tri_kb = tri_bytes / 1024.0;
-                    let hull_kb = hull_bytes / 1024.0;
-                    let tri_mib = tri_kb / 1024.0;
-                    let hull_mib = hull_kb / 1024.0;
-                    if tri_info.bytes_total > 0 && num_vertices > 0 {
-                        let bytes_per_vertex = tri_bytes / num_vertices as f64;
-                        let hull_ratio = (hull_bytes / tri_bytes) * 100.0;
-                        if tri_kb >= 1024.0 {
-                            println!("    Triangulation memory: {tri_kb:.1} KiB ({tri_mib:.2} MiB, {bytes_per_vertex:.0} bytes/vertex)");
+                    #[expect(clippy::cast_precision_loss, reason = "Converting byte counters to floating-point for human-friendly KiB/MiB output")]
+                    {
+                        let tri_bytes = tri_info.bytes_total as f64;
+                        let hull_bytes = hull_info.bytes_total as f64;
+                        let tri_kb = tri_bytes / 1024.0;
+                        let hull_kb = hull_bytes / 1024.0;
+                        let tri_mib = tri_kb / 1024.0;
+                        let hull_mib = hull_kb / 1024.0;
+                        if tri_info.bytes_total > 0 && num_vertices > 0 {
+                            let bytes_per_vertex = tri_bytes / num_vertices as f64;
+                            let hull_ratio = (hull_bytes / tri_bytes) * 100.0;
+                            if tri_kb >= 1024.0 {
+                                println!("    Triangulation memory: {tri_kb:.1} KiB ({tri_mib:.2} MiB, {bytes_per_vertex:.0} bytes/vertex)");
+                            } else {
+                                println!("    Triangulation memory: {tri_kb:.1} KiB ({bytes_per_vertex:.0} bytes/vertex)");
+                            }
+                            if hull_kb >= 1024.0 {
+                                println!("    Hull memory: {hull_kb:.1} KiB ({hull_mib:.2} MiB, {hull_ratio:.1}% of triangulation)");
+                            } else {
+                                println!("    Hull memory: {hull_kb:.1} KiB ({hull_ratio:.1}% of triangulation)");
+                            }
                         } else {
-                            println!("    Triangulation memory: {tri_kb:.1} KiB ({bytes_per_vertex:.0} bytes/vertex)");
-                        }
-                        if hull_kb >= 1024.0 {
-                            println!("    Hull memory: {hull_kb:.1} KiB ({hull_mib:.2} MiB, {hull_ratio:.1}% of triangulation)");
-                        } else {
-                            println!("    Hull memory: {hull_kb:.1} KiB ({hull_ratio:.1}% of triangulation)");
-                        }
-                    } else {
-                        if tri_kb >= 1024.0 {
-                            println!("    Triangulation memory: {tri_kb:.1} KiB ({tri_mib:.2} MiB)");
-                        } else {
-                            println!("    Triangulation memory: {tri_kb:.1} KiB");
-                        }
-                        if hull_kb >= 1024.0 {
-                            println!("    Hull memory: {hull_kb:.1} KiB ({hull_mib:.2} MiB)");
-                        } else {
-                            println!("    Hull memory: {hull_kb:.1} KiB");
+                            if tri_kb >= 1024.0 {
+                                println!("    Triangulation memory: {tri_kb:.1} KiB ({tri_mib:.2} MiB)");
+                            } else {
+                                println!("    Triangulation memory: {tri_kb:.1} KiB");
+                            }
+                            if hull_kb >= 1024.0 {
+                                println!("    Hull memory: {hull_kb:.1} KiB ({hull_mib:.2} MiB)");
+                            } else {
+                                println!("    Hull memory: {hull_kb:.1} KiB");
+                            }
                         }
                     }
                 }
+
+                #[cfg(not(feature = "count-allocations"))]
+                println!(
+                    "    (Memory tracking disabled - use --features count-allocations for detailed analysis)"
+                );
+
+                println!();
+                return;
             }
 
-            #[cfg(not(feature = "count-allocations"))]
-            println!(
-                "    (Memory tracking disabled - use --features count-allocations for detailed analysis)"
+            eprintln!(
+                "✗ Unable to build a {}D triangulation after trying point counts {point_counts:?}",
+                $dim
             );
-
-            println!();
         }
     };
 }
@@ -158,27 +172,25 @@ fn main() {
 
     println!();
 
-    // Test with a moderate number of points across all dimensions
-    let n_points = 25;
-
-    println!("=== Memory Analysis with {n_points} Points ===");
+    let primary_points = POINT_COUNT_CANDIDATES.first().copied().unwrap_or(0);
+    println!("=== Memory Analysis with {primary_points} Points ===");
     println!();
 
     // 2D Analysis with seed for reproducibility
     println!("--- 2D Triangulation ---");
-    analyze_triangulation_memory_2d(n_points, SEED_CANDIDATES);
+    analyze_triangulation_memory_2d(POINT_COUNT_CANDIDATES, SEED_CANDIDATES);
 
-    // 3D Analysis with different seed
+    // 3D Analysis
     println!("--- 3D Triangulation ---");
-    analyze_triangulation_memory_3d(n_points, SEED_CANDIDATES);
+    analyze_triangulation_memory_3d(POINT_COUNT_CANDIDATES, SEED_CANDIDATES);
 
-    // 4D Analysis with different seed
+    // 4D Analysis
     println!("--- 4D Triangulation ---");
-    analyze_triangulation_memory_4d(n_points, SEED_CANDIDATES);
+    analyze_triangulation_memory_4d(POINT_COUNT_CANDIDATES, SEED_CANDIDATES);
 
-    // 5D Analysis with different seed
+    // 5D Analysis
     println!("--- 5D Triangulation ---");
-    analyze_triangulation_memory_5d(n_points, SEED_CANDIDATES);
+    analyze_triangulation_memory_5d(POINT_COUNT_CANDIDATES, SEED_CANDIDATES);
 
     println!("=== Key Insights (empirical) ===");
     println!(
