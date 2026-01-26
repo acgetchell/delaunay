@@ -34,14 +34,14 @@ serde = { version = "1.0.228", features = [ "derive" ] }
 serde_json = "1.0.149"
 serde_test = "1.0.177"
 slotmap = { version = "1.1.1", features = [ "serde" ] }
-thiserror = "2.0.17"
-uuid = { version = "1.19.0", features = [ "v4", "serde" ] }
+thiserror = "2.0.18"
+uuid = { version = "1.20.0", features = [ "v4", "serde" ] }
 
 [dev-dependencies]
 criterion = { version = "0.8.1", features = [ "html_reports" ] }
 pastey = "0.2.1"
 proptest = "1.9.0"
-sysinfo = "0.37.2" # Process memory monitoring for benchmarks
+sysinfo = "0.38.0" # Process memory monitoring for benchmarks
 
 [features]
 # Default feature set: prefer DenseSlotMap for better construction + iteration performance.
