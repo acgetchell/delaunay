@@ -43,7 +43,7 @@ criterion = { version = "0.8.1", features = [ "html_reports" ] }
 pastey = "0.2.1"
 proptest = "1.9.0"
 sysinfo = "0.38.0" # Process memory monitoring for benchmarks
-tracing-subscriber = { version = "0.3.18", features = [ "env-filter" ] }
+tracing-subscriber = { version = "0.3.22", features = [ "env-filter" ] }
 
 [features]
 # Default feature set: prefer DenseSlotMap for better construction + iteration performance.

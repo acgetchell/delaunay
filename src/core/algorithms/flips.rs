@@ -161,6 +161,18 @@ where
             prefer_secondary = false;
         }
     }
+    if repair_trace_enabled() {
+        tracing::debug!(
+            "[repair] attempt={} done: checked={} flips={} max_queue={} ambiguous={} predicate_failures={} cycles={}",
+            config.attempt,
+            stats.facets_checked,
+            stats.flips_performed,
+            stats.max_queue_len,
+            diagnostics.ambiguous_predicates,
+            diagnostics.predicate_failures,
+            diagnostics.cycle_detections,
+        );
+    }
 
     Ok(stats)
 }
@@ -413,6 +425,17 @@ fn check_flip_cycle(
         .copied()
         .unwrap_or(0);
     if repeats >= MAX_REPEAT_SIGNATURE {
+        if repair_trace_enabled() {
+            tracing::debug!(
+                "[repair] cycle abort signature={} repeats={} flips={} max_flips={} attempt={} order={:?}",
+                signature,
+                repeats,
+                stats.flips_performed,
+                max_flips,
+                config.attempt,
+                config.queue_order,
+            );
+        }
         diagnostics.record_cycle_abort(signature);
         return Err(non_convergent_error(max_flips, stats, diagnostics, config));
     }
@@ -1692,6 +1715,10 @@ where
 ///
 /// Returns a [`DelaunayRepairError`] if the repair fails to converge or an underlying
 /// flip operation encounters an unrecoverable error.
+#[expect(
+    clippy::too_many_lines,
+    reason = "Repair loop contains inline tracing and queue handling for diagnostics"
+)]
 fn repair_delaunay_with_flips_k2_attempt<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -1724,6 +1751,19 @@ where
             let handle = FacetHandle::new(facet.cell_key(), facet.facet_index());
             enqueue_facet(tds, handle, &mut queue, &mut queued, &mut stats);
         }
+    }
+    if repair_trace_enabled() {
+        let seed_count = seed_cells.map_or(0, <[CellKey]>::len);
+        tracing::debug!(
+            "[repair] attempt={} order={:?} robust={} cells={} max_flips={} seeds={} queues(facet={})",
+            config.attempt,
+            config.queue_order,
+            config.use_robust_on_ambiguous,
+            tds.number_of_cells(),
+            max_flips,
+            seed_count,
+            queue.len(),
+        );
     }
 
     while let Some((facet, key)) = pop_queue(&mut queue, config.queue_order) {
@@ -1778,6 +1818,9 @@ where
                         "k=2 flip skipped in repair_delaunay_with_flips_k2_attempt (facet={facet:?}): {err}"
                     );
                 }
+                if repair_trace_enabled() {
+                    tracing::debug!("[repair] skip k=2 flip (facet={facet:?}) reason={err}");
+                }
                 continue;
             }
             Err(e) => return Err(e.into()),
@@ -1798,6 +1841,18 @@ where
             enqueue_cell_facets(tds, cell_key, &mut queue, &mut queued, &mut stats)?;
         }
     }
+    if repair_trace_enabled() {
+        tracing::debug!(
+            "[repair] attempt={} done: checked={} flips={} max_queue={} ambiguous={} predicate_failures={} cycles={}",
+            config.attempt,
+            stats.facets_checked,
+            stats.flips_performed,
+            stats.max_queue_len,
+            diagnostics.ambiguous_predicates,
+            diagnostics.predicate_failures,
+            diagnostics.cycle_detections,
+        );
+    }
 
     Ok(stats)
 }
@@ -1809,6 +1864,10 @@ where
 ///
 /// Returns a [`DelaunayRepairError`] if the repair fails to converge or an underlying
 /// flip operation encounters an unrecoverable error.
+#[expect(
+    clippy::too_many_lines,
+    reason = "Repair retries and tracing are kept together for clarity"
+)]
 pub(crate) fn repair_delaunay_with_flips_k2_k3<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -1857,6 +1916,11 @@ where
             if verify_repair_postcondition(tds, kernel, seed_cells).is_ok() {
                 return Ok(stats);
             }
+            if repair_trace_enabled() {
+                tracing::debug!(
+                    "[repair] attempt 1 postcondition failed; retrying with robust predicates + full reseed"
+                );
+            }
 
             // Postcondition verification failed: rerun with robust predicates + full reseed.
             *tds = tds_snapshot.clone();
@@ -1872,8 +1936,19 @@ where
                     if verify_repair_postcondition(tds, kernel, retry_seed_cells).is_ok() {
                         return Ok(stats2);
                     }
+                    if repair_trace_enabled() {
+                        tracing::debug!(
+                            "[repair] attempt 2 postcondition failed; retrying with alternate queue order"
+                        );
+                    }
                 }
-                Err(DelaunayRepairError::NonConvergent { .. }) => {}
+                Err(DelaunayRepairError::NonConvergent { .. }) => {
+                    if repair_trace_enabled() {
+                        tracing::debug!(
+                            "[repair] attempt 2 non-convergent; retrying with alternate queue order"
+                        );
+                    }
+                }
                 Err(err) => return Err(err),
             }
 
@@ -1889,6 +1964,11 @@ where
             Ok(stats3)
         }
         Err(DelaunayRepairError::NonConvergent { .. }) => {
+            if repair_trace_enabled() {
+                tracing::debug!(
+                    "[repair] attempt 1 non-convergent; retrying with robust predicates + full reseed"
+                );
+            }
             // Retry with robust predicates + full reseed.
             *tds = tds_snapshot.clone();
             let retry_seed_cells = None;
@@ -1903,8 +1983,19 @@ where
                     if verify_repair_postcondition(tds, kernel, retry_seed_cells).is_ok() {
                         return Ok(stats2);
                     }
+                    if repair_trace_enabled() {
+                        tracing::debug!(
+                            "[repair] attempt 2 postcondition failed; retrying with alternate queue order"
+                        );
+                    }
                 }
-                Err(DelaunayRepairError::NonConvergent { .. }) => {}
+                Err(DelaunayRepairError::NonConvergent { .. }) => {
+                    if repair_trace_enabled() {
+                        tracing::debug!(
+                            "[repair] attempt 2 non-convergent; retrying with alternate queue order"
+                        );
+                    }
+                }
                 Err(err) => return Err(err),
             }
 
@@ -2011,6 +2102,21 @@ where
     let mut diagnostics = RepairDiagnostics::default();
     let mut queues = RepairQueues::new();
     seed_repair_queues(tds, seed_cells, &mut queues, &mut stats)?;
+    if repair_trace_enabled() {
+        let seed_count = seed_cells.map_or(0, <[CellKey]>::len);
+        tracing::debug!(
+            "[repair] attempt={} order={:?} robust={} cells={} seeds={} queues(facet={}, ridge={}, edge={}, tri={})",
+            config.attempt,
+            config.queue_order,
+            config.use_robust_on_ambiguous,
+            tds.number_of_cells(),
+            seed_count,
+            queues.facet_queue.len(),
+            queues.ridge_queue.len(),
+            queues.edge_queue.len(),
+            queues.triangle_queue.len(),
+        );
+    }
 
     verify_postcondition_k2_facets(
         tds,
@@ -2074,6 +2180,11 @@ where
 
         match is_delaunay_violation_k2(tds, kernel, &context, config, diagnostics) {
             Ok(true) => {
+                if repair_trace_enabled() {
+                    tracing::debug!(
+                        "[repair] postcondition k=2 violation remains (facet={facet:?})"
+                    );
+                }
                 let mut message =
                     format!("local k=2 violation remains after repair (facet={facet:?})");
                 if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
@@ -2142,6 +2253,11 @@ where
 
         match is_delaunay_violation_k3(tds, kernel, &context, config, diagnostics) {
             Ok(true) => {
+                if repair_trace_enabled() {
+                    tracing::debug!(
+                        "[repair] postcondition k=3 violation remains (ridge={ridge:?})"
+                    );
+                }
                 return Err(DelaunayRepairError::PostconditionFailed {
                     message: format!("local k=3 violation remains after repair (ridge={ridge:?})"),
                 });
@@ -2215,6 +2331,11 @@ where
         };
 
         if !violates {
+            if repair_trace_enabled() {
+                tracing::debug!(
+                    "[repair] postcondition inverse k=2 flip still applicable (edge={edge:?})"
+                );
+            }
             return Err(DelaunayRepairError::PostconditionFailed {
                 message: format!(
                     "local inverse k=2 flip remains applicable after repair (edge={edge:?})"
@@ -2274,6 +2395,11 @@ where
         };
 
         if !violates {
+            if repair_trace_enabled() {
+                tracing::debug!(
+                    "[repair] postcondition inverse k=3 flip still applicable (triangle={triangle:?})"
+                );
+            }
             return Err(DelaunayRepairError::PostconditionFailed {
                 message: format!(
                     "local inverse k=3 flip remains applicable after repair (triangle={triangle:?})"
@@ -2451,6 +2577,10 @@ where
     }
 }
 
+#[inline]
+fn repair_trace_enabled() -> bool {
+    std::env::var_os("DELAUNAY_REPAIR_TRACE").is_some()
+}
 fn default_max_flips<const D: usize>(cell_count: usize) -> usize {
     let base = cell_count
         .saturating_mul(D.saturating_add(1))
@@ -2687,6 +2817,11 @@ where
             | FlipError::NonManifoldFacet
             | FlipError::CellCreation(_),
         ) => {
+            if repair_trace_enabled() {
+                tracing::debug!(
+                    "[repair] skip k=3 flip (ridge={ridge:?}) reason=non-manifold/degenerate/duplicate"
+                );
+            }
             return Ok(true);
         }
         Err(e) => return Err(e.into()),
@@ -2779,6 +2914,11 @@ where
             | FlipError::NonManifoldFacet
             | FlipError::CellCreation(_),
         ) => {
+            if repair_trace_enabled() {
+                tracing::debug!(
+                    "[repair] skip inverse k=2 flip (edge={edge:?}) reason=non-manifold/degenerate/duplicate"
+                );
+            }
             return Ok(true);
         }
         Err(e) => return Err(e.into()),
@@ -2864,6 +3004,11 @@ where
             | FlipError::NonManifoldFacet
             | FlipError::CellCreation(_),
         ) => {
+            if repair_trace_enabled() {
+                tracing::debug!(
+                    "[repair] skip inverse k=3 flip (triangle={triangle:?}) reason=non-manifold/degenerate/duplicate"
+                );
+            }
             return Ok(true);
         }
         Err(e) => return Err(e.into()),
@@ -2947,6 +3092,9 @@ where
                 tracing::debug!(
                     "k=2 flip skipped in process_facet_queue_step (facet={facet:?}): {err}"
                 );
+            }
+            if repair_trace_enabled() {
+                tracing::debug!("[repair] skip k=2 flip (facet={facet:?}) reason={err}");
             }
             return Ok(true);
         }

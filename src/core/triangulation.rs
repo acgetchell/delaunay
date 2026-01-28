@@ -2665,6 +2665,11 @@ where
         }
 
         if self.topology_guarantee.requires_ridge_links() {
+            // Ridge-link checks assume the pseudomanifold invariants already hold.
+            let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
+            validate_facet_degree(&facet_to_cells).map_err(TriangulationValidationError::from)?;
+            validate_closed_boundary(&self.tds, &facet_to_cells)
+                .map_err(TriangulationValidationError::from)?;
             validate_ridge_links(&self.tds).map_err(TriangulationValidationError::from)?;
         }
 

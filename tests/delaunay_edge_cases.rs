@@ -12,6 +12,17 @@ use delaunay::geometry::kernel::RobustKernel;
 use delaunay::prelude::*;
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
+fn init_tracing() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_test_writer()
+            .try_init();
+    });
+}
 
 // =========================================================================
 // Regression Tests - Known Failing Configurations
@@ -91,6 +102,7 @@ test_regression_config!(
 #[expect(clippy::too_many_lines)]
 #[expect(clippy::unreadable_literal)]
 fn debug_issue_120_empty_circumsphere_5d() {
+    init_tracing();
     let vertices = vec![
         vertex!([
             18.781125710207355,

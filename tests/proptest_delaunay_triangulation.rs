@@ -34,6 +34,17 @@
 use delaunay::prelude::*;
 use proptest::prelude::*;
 
+fn init_tracing() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_test_writer()
+            .try_init();
+    });
+}
 // =============================================================================
 // TEST CONFIGURATION
 // =============================================================================
@@ -739,6 +750,7 @@ proptest! {
                 fn [<prop_empty_circumsphere_ $dim d>](
                     vertices in empty_circumsphere_vertices!($dim, $min_vertices, $max_vertices)
                 ) {
+                    init_tracing();
                     // Build Delaunay triangulation with PL-manifold guarantee, triangulating all vertices together.
                     // This ensures the entire triangulation (including initial simplex) satisfies Delaunay property
 
@@ -790,6 +802,7 @@ proptest! {
                 fn [<prop_empty_circumsphere_ $dim d>](
                     vertices in empty_circumsphere_vertices!($dim, $min_vertices, $max_vertices)
                 ) {
+                    init_tracing();
                     // Build Delaunay triangulation using DelaunayTriangulation::new_with_topology_guarantee() which properly triangulates all vertices
                     // This ensures the entire triangulation (including initial simplex) satisfies Delaunay property
 
@@ -1570,6 +1583,7 @@ macro_rules! gen_duplicate_cloud_test {
                 fn [<prop_cloud_with_duplicates_is_delaunay_ $dim d>](
                     points in [<cloud_with_duplicates_ $dim d>]()
                 ) {
+                    init_tracing();
                     // Require at least D+1 distinct points
                     let unique = count_unique_coords_by_bits(&points);
                     prop_assume!(unique > $min_vertices);
@@ -1646,6 +1660,7 @@ macro_rules! gen_duplicate_cloud_test {
                 fn [<prop_cloud_with_duplicates_is_delaunay_ $dim d>](
                     points in [<cloud_with_duplicates_ $dim d>]()
                 ) {
+                    init_tracing();
                     // Require at least D+1 distinct points
                     let unique = count_unique_coords_by_bits(&points);
                     prop_assume!(unique > $min_vertices);
