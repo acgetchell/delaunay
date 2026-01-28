@@ -46,8 +46,8 @@ use crate::core::triangulation_data_structure::{CellKey, Tds, VertexKey};
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
-use crate::geometry::predicates::InSphere;
-use crate::geometry::robust_predicates::{config_presets, robust_insphere};
+use crate::geometry::predicates::{InSphere, Orientation};
+use crate::geometry::robust_predicates::{config_presets, robust_insphere, robust_orientation};
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use num_traits::Zero;
 
@@ -165,6 +165,10 @@ where
     Ok(stats)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "Keep flip construction, validation, and wiring together for clarity"
+)]
 fn apply_bistellar_flip_with_k<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -255,7 +259,14 @@ where
                 message: format!("orientation failed for flip cell: {e}"),
             })?;
         if orientation == 0 {
-            return Err(FlipError::DegenerateCell);
+            let config = config_presets::high_precision::<K::Scalar>();
+            let robust_orientation =
+                robust_orientation(&points, &config).map_err(|e| FlipError::PredicateFailure {
+                    message: format!("robust orientation failed for flip cell: {e}"),
+                })?;
+            if matches!(robust_orientation, Orientation::DEGENERATE) {
+                return Err(FlipError::DegenerateCell);
+            }
         }
 
         new_cell_vertices.push(vertices);
@@ -387,6 +398,25 @@ impl FlipDirection {
             Self::Inverse => Self::Forward,
         }
     }
+}
+
+fn check_flip_cycle(
+    signature: u64,
+    diagnostics: &mut RepairDiagnostics,
+    stats: &DelaunayRepairStats,
+    max_flips: usize,
+    config: &RepairAttemptConfig,
+) -> Result<(), DelaunayRepairError> {
+    let repeats = diagnostics
+        .flip_signature_counts
+        .get(&signature)
+        .copied()
+        .unwrap_or(0);
+    if repeats >= MAX_REPEAT_SIGNATURE {
+        diagnostics.record_cycle_abort(signature);
+        return Err(non_convergent_error(max_flips, stats, diagnostics, config));
+    }
+    Ok(())
 }
 
 impl BistellarFlipKind {
@@ -1727,25 +1757,33 @@ where
             continue;
         }
 
+        let signature = flip_signature(
+            2,
+            context.direction,
+            &context.removed_face_vertices,
+            &context.inserted_face_vertices,
+        );
+        check_flip_cycle(signature, &mut diagnostics, &stats, max_flips, config)?;
+
         let info = match apply_bistellar_flip_k2(tds, kernel, &context) {
             Ok(info) => info,
             Err(
-                FlipError::DegenerateCell
+                err @ (FlipError::DegenerateCell
                 | FlipError::DuplicateCell
                 | FlipError::NonManifoldFacet
-                | FlipError::CellCreation(_),
+                | FlipError::CellCreation(_)),
             ) => {
+                if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+                    tracing::debug!(
+                        "k=2 flip skipped in repair_delaunay_with_flips_k2_attempt (facet={facet:?}): {err}"
+                    );
+                }
                 continue;
             }
             Err(e) => return Err(e.into()),
         };
         stats.flips_performed += 1;
-        diagnostics.record_flip_signature(flip_signature(
-            2,
-            context.direction,
-            &context.removed_face_vertices,
-            &context.inserted_face_vertices,
-        ));
+        diagnostics.record_flip_signature(signature);
 
         if stats.flips_performed > max_flips {
             return Err(non_convergent_error(
@@ -1800,6 +1838,13 @@ where
         queue_order: RepairQueueOrder::Lifo,
         use_robust_on_ambiguous: true,
     };
+    let attempt3 = RepairAttemptConfig {
+        attempt: 3,
+        queue_order: RepairQueueOrder::Fifo,
+        use_robust_on_ambiguous: true,
+    };
+    // Snapshot the pre-repair state so a failed attempt doesn't poison retries.
+    let tds_snapshot = tds.clone();
 
     let attempt1_result = if D == 2 {
         repair_delaunay_with_flips_k2_attempt(tds, kernel, seed_cells, &attempt1)
@@ -1814,27 +1859,65 @@ where
             }
 
             // Postcondition verification failed: rerun with robust predicates + full reseed.
+            *tds = tds_snapshot.clone();
             let retry_seed_cells = None;
             let stats2 = if D == 2 {
                 repair_delaunay_with_flips_k2_attempt(tds, kernel, retry_seed_cells, &attempt2)
             } else {
                 repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, retry_seed_cells, &attempt2)
+            };
+
+            match stats2 {
+                Ok(stats2) => {
+                    if verify_repair_postcondition(tds, kernel, retry_seed_cells).is_ok() {
+                        return Ok(stats2);
+                    }
+                }
+                Err(DelaunayRepairError::NonConvergent { .. }) => {}
+                Err(err) => return Err(err),
+            }
+
+            // Final attempt with alternate queue order.
+            *tds = tds_snapshot;
+            let stats3 = if D == 2 {
+                repair_delaunay_with_flips_k2_attempt(tds, kernel, retry_seed_cells, &attempt3)
+            } else {
+                repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, retry_seed_cells, &attempt3)
             }?;
 
             verify_repair_postcondition(tds, kernel, retry_seed_cells)?;
-            Ok(stats2)
+            Ok(stats3)
         }
         Err(DelaunayRepairError::NonConvergent { .. }) => {
             // Retry with robust predicates + full reseed.
+            *tds = tds_snapshot.clone();
             let retry_seed_cells = None;
             let stats2 = if D == 2 {
                 repair_delaunay_with_flips_k2_attempt(tds, kernel, retry_seed_cells, &attempt2)
             } else {
                 repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, retry_seed_cells, &attempt2)
+            };
+
+            match stats2 {
+                Ok(stats2) => {
+                    if verify_repair_postcondition(tds, kernel, retry_seed_cells).is_ok() {
+                        return Ok(stats2);
+                    }
+                }
+                Err(DelaunayRepairError::NonConvergent { .. }) => {}
+                Err(err) => return Err(err),
+            }
+
+            // Final attempt with alternate queue order.
+            *tds = tds_snapshot;
+            let stats3 = if D == 2 {
+                repair_delaunay_with_flips_k2_attempt(tds, kernel, retry_seed_cells, &attempt3)
+            } else {
+                repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, retry_seed_cells, &attempt3)
             }?;
 
             verify_repair_postcondition(tds, kernel, retry_seed_cells)?;
-            Ok(stats2)
+            Ok(stats3)
         }
         Err(err) => Err(err),
     }
@@ -1991,9 +2074,30 @@ where
 
         match is_delaunay_violation_k2(tds, kernel, &context, config, diagnostics) {
             Ok(true) => {
-                return Err(DelaunayRepairError::PostconditionFailed {
-                    message: format!("local k=2 violation remains after repair (facet={facet:?})"),
-                });
+                let mut message =
+                    format!("local k=2 violation remains after repair (facet={facet:?})");
+                if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+                    let removed_details: Vec<_> = context
+                        .removed_face_vertices
+                        .iter()
+                        .filter_map(|&vkey| {
+                            tds.get_vertex_by_key(vkey)
+                                .map(|vertex| (vkey, *vertex.point()))
+                        })
+                        .collect();
+                    let inserted_details: Vec<_> = context
+                        .inserted_face_vertices
+                        .iter()
+                        .filter_map(|&vkey| {
+                            tds.get_vertex_by_key(vkey)
+                                .map(|vertex| (vkey, *vertex.point()))
+                        })
+                        .collect();
+                    message = format!(
+                        "{message}; removed_face={removed_details:?}; inserted_face={inserted_details:?}"
+                    );
+                }
+                return Err(DelaunayRepairError::PostconditionFailed { message });
             }
             Ok(false) | Err(FlipError::PredicateFailure { .. }) => {
                 // No violation detected, or inconclusive due to numeric degeneracy.
@@ -2187,6 +2291,7 @@ where
 const AMBIGUOUS_SAMPLE_LIMIT: usize = 16;
 const CYCLE_SAMPLE_LIMIT: usize = 16;
 const FLIP_SIGNATURE_WINDOW: usize = 4096;
+const MAX_REPEAT_SIGNATURE: usize = 4;
 
 #[derive(Debug, Default)]
 struct RepairDiagnostics {
@@ -2232,6 +2337,14 @@ impl RepairDiagnostics {
             if *old_count == 0 {
                 self.flip_signature_counts.remove(&old);
             }
+        }
+    }
+
+    fn record_cycle_abort(&mut self, signature: u64) {
+        self.cycle_detections = self.cycle_detections.saturating_add(1);
+        if self.cycle_samples.len() < CYCLE_SAMPLE_LIMIT && !self.cycle_samples.contains(&signature)
+        {
+            self.cycle_samples.push(signature);
         }
     }
 }
@@ -2326,7 +2439,7 @@ fn robust_insphere_sign<T, const D: usize>(
 where
     T: CoordinateScalar + Sum + Zero,
 {
-    let config = config_presets::high_precision::<T>();
+    let config = config_presets::general_triangulation::<T>();
     match robust_insphere(simplex_points, test_point, &config) {
         Ok(InSphere::INSIDE) => 1,
         Ok(InSphere::OUTSIDE) => -1,
@@ -2558,6 +2671,14 @@ where
         return Ok(true);
     }
 
+    let signature = flip_signature(
+        3,
+        context.direction,
+        &context.removed_face_vertices,
+        &context.inserted_face_vertices,
+    );
+    check_flip_cycle(signature, diagnostics, stats, max_flips, config)?;
+
     let info = match apply_bistellar_flip_k3(tds, kernel, &context) {
         Ok(info) => info,
         Err(
@@ -2571,12 +2692,7 @@ where
         Err(e) => return Err(e.into()),
     };
     stats.flips_performed += 1;
-    diagnostics.record_flip_signature(flip_signature(
-        3,
-        context.direction,
-        &context.removed_face_vertices,
-        &context.inserted_face_vertices,
-    ));
+    diagnostics.record_flip_signature(signature);
 
     if stats.flips_performed > max_flips {
         return Err(non_convergent_error(max_flips, stats, diagnostics, config));
@@ -2647,6 +2763,13 @@ where
     if violates {
         return Ok(true);
     }
+    let signature = flip_signature(
+        D,
+        context.direction,
+        &context.removed_face_vertices,
+        &context.inserted_face_vertices,
+    );
+    check_flip_cycle(signature, diagnostics, stats, max_flips, config)?;
 
     let info = match apply_bistellar_flip_dynamic(tds, kernel, D, &context) {
         Ok(info) => info,
@@ -2661,12 +2784,7 @@ where
         Err(e) => return Err(e.into()),
     };
     stats.flips_performed += 1;
-    diagnostics.record_flip_signature(flip_signature(
-        D,
-        context.direction,
-        &context.removed_face_vertices,
-        &context.inserted_face_vertices,
-    ));
+    diagnostics.record_flip_signature(signature);
 
     if stats.flips_performed > max_flips {
         return Err(non_convergent_error(max_flips, stats, diagnostics, config));
@@ -2730,6 +2848,13 @@ where
     if violates {
         return Ok(true);
     }
+    let signature = flip_signature(
+        D - 1,
+        context.direction,
+        &context.removed_face_vertices,
+        &context.inserted_face_vertices,
+    );
+    check_flip_cycle(signature, diagnostics, stats, max_flips, config)?;
 
     let info = match apply_bistellar_flip_dynamic(tds, kernel, D - 1, &context) {
         Ok(info) => info,
@@ -2744,12 +2869,7 @@ where
         Err(e) => return Err(e.into()),
     };
     stats.flips_performed += 1;
-    diagnostics.record_flip_signature(flip_signature(
-        D - 1,
-        context.direction,
-        &context.removed_face_vertices,
-        &context.inserted_face_vertices,
-    ));
+    diagnostics.record_flip_signature(signature);
 
     if stats.flips_performed > max_flips {
         return Err(non_convergent_error(max_flips, stats, diagnostics, config));
@@ -2807,25 +2927,33 @@ where
         return Ok(true);
     }
 
+    let signature = flip_signature(
+        2,
+        context.direction,
+        &context.removed_face_vertices,
+        &context.inserted_face_vertices,
+    );
+    check_flip_cycle(signature, diagnostics, stats, max_flips, config)?;
+
     let info = match apply_bistellar_flip_k2(tds, kernel, &context) {
         Ok(info) => info,
         Err(
-            FlipError::DegenerateCell
+            err @ (FlipError::DegenerateCell
             | FlipError::DuplicateCell
             | FlipError::NonManifoldFacet
-            | FlipError::CellCreation(_),
+            | FlipError::CellCreation(_)),
         ) => {
+            if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+                tracing::debug!(
+                    "k=2 flip skipped in process_facet_queue_step (facet={facet:?}): {err}"
+                );
+            }
             return Ok(true);
         }
         Err(e) => return Err(e.into()),
     };
     stats.flips_performed += 1;
-    diagnostics.record_flip_signature(flip_signature(
-        2,
-        context.direction,
-        &context.removed_face_vertices,
-        &context.inserted_face_vertices,
-    ));
+    diagnostics.record_flip_signature(signature);
 
     if stats.flips_performed > max_flips {
         return Err(non_convergent_error(max_flips, stats, diagnostics, config));
@@ -3016,6 +3144,11 @@ where
             cell.vertices().iter().copied().collect();
         cell_vertices.sort_unstable();
         if cell_vertices == target {
+            if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+                tracing::debug!(
+                    "k=2 flip would duplicate existing cell {cell_key:?}; target={target:?}; existing={cell_vertices:?}"
+                );
+            }
             return true;
         }
     }
@@ -3305,8 +3438,21 @@ mod tests {
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
     use crate::core::collections::Uuid;
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
-    use crate::geometry::kernel::FastKernel;
+    use crate::geometry::kernel::{FastKernel, RobustKernel};
     use crate::vertex;
+    use rand::{Rng, SeedableRng, rngs::StdRng};
+
+    fn init_tracing() {
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(|| {
+            let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+            let _ = tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_test_writer()
+                .try_init();
+        });
+    }
     fn unit_vector<const D: usize>(index: usize) -> [f64; D] {
         let mut coords = [0.0; D];
         coords[index] = 1.0;
@@ -3322,8 +3468,18 @@ mod tests {
         coords
     }
 
+    fn to_dynamic<const D: usize, const K: usize>(context: FlipContext<D, K>) -> FlipContextDyn<D> {
+        FlipContextDyn {
+            removed_face_vertices: context.removed_face_vertices,
+            inserted_face_vertices: context.inserted_face_vertices,
+            removed_cells: context.removed_cells,
+            direction: context.direction,
+        }
+    }
+
     #[test]
     fn test_repair_diagnostics_cycle_detection_records_repeats() {
+        init_tracing();
         let mut diagnostics = RepairDiagnostics::default();
         diagnostics.record_flip_signature(10);
         diagnostics.record_flip_signature(20);
@@ -3376,6 +3532,7 @@ mod tests {
             pastey::paste! {
                 #[test]
                 fn [<test_bistellar_k1_roundtrip_ $dim d>]() {
+                    init_tracing();
                     let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
 
                     let origin = tds.insert_vertex_with_mapping(vertex!([0.0; $dim])).unwrap();
@@ -3411,6 +3568,7 @@ mod tests {
 
                 #[test]
                 fn [<test_bistellar_k2_roundtrip_ $dim d>]() {
+                    init_tracing();
                     let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
                     let mut shared_vertices = Vec::with_capacity($dim);
                     for i in 0..$dim {
@@ -3493,6 +3651,7 @@ mod tests {
             pastey::paste! {
                 #[test]
                 fn [<test_bistellar_k3_roundtrip_ $dim d>]() {
+                    init_tracing();
                     let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
                     let mut ridge_vertices = Vec::with_capacity($dim - 1);
                     for i in 0..($dim - 1) {
@@ -3599,6 +3758,7 @@ mod tests {
 
     #[test]
     fn test_flip_k2_2d_edge_flip() {
+        init_tracing();
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
@@ -3637,6 +3797,7 @@ mod tests {
 
     #[test]
     fn test_flip_k2_3d_two_to_three() {
+        init_tracing();
         let mut tds: Tds<f64, (), (), 3> = Tds::empty();
         let v_a = tds
             .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
@@ -3674,6 +3835,7 @@ mod tests {
 
     #[test]
     fn test_flip_k3_3d_three_to_two() {
+        init_tracing();
         let mut tds: Tds<f64, (), (), 3> = Tds::empty();
         let r0 = tds
             .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
@@ -3716,6 +3878,7 @@ mod tests {
 
     #[test]
     fn test_flip_k3_4d_three_to_three() {
+        init_tracing();
         let mut tds: Tds<f64, (), (), 4> = Tds::empty();
         let r0 = tds
             .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0]))
@@ -3761,6 +3924,7 @@ mod tests {
 
     #[test]
     fn test_flip_k3_5d_three_to_four() {
+        init_tracing();
         let mut tds: Tds<f64, (), (), 5> = Tds::empty();
         let r0 = tds
             .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 0.0]))
@@ -3806,8 +3970,593 @@ mod tests {
         assert_eq!(info.new_cells.len(), 4);
         assert!(tds.is_valid().is_ok());
     }
+
+    #[test]
+    fn test_flip_k2_boundary_facet_error_2d() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let cell = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+            .unwrap();
+
+        let before = snapshot_topology(&tds);
+        let facet = FacetHandle::new(cell, 0);
+        let err = build_k2_flip_context(&tds, facet).unwrap_err();
+        assert!(matches!(err, FlipError::BoundaryFacet { .. }));
+        assert_eq!(snapshot_topology(&tds), before);
+    }
+
+    #[test]
+    fn test_flip_k3_invalid_ridge_multiplicity_3d() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let a = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .unwrap();
+        let d = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .unwrap();
+        let cell = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, c, d], None).unwrap())
+            .unwrap();
+
+        let ridge = RidgeHandle::new(cell, 0, 1);
+        let err = build_k3_flip_context(&tds, ridge).unwrap_err();
+        assert!(matches!(
+            err,
+            FlipError::InvalidRidgeMultiplicity { found: 1 }
+        ));
+    }
+
+    #[test]
+    fn test_flip_k2_inverse_invalid_edge_multiplicity_4d() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 4> = Tds::empty();
+        let mut shared_vertices = Vec::with_capacity(4);
+        for i in 0..4 {
+            let v = tds
+                .insert_vertex_with_mapping(vertex!(unit_vector::<4>(i)))
+                .unwrap();
+            shared_vertices.push(v);
+        }
+
+        let opposite_a = tds.insert_vertex_with_mapping(vertex!([0.0; 4])).unwrap();
+        let opposite_b = tds.insert_vertex_with_mapping(vertex!([1.0; 4])).unwrap();
+
+        let mut vertices_with_first_opposite = shared_vertices.clone();
+        vertices_with_first_opposite.push(opposite_a);
+        let _cell_a = tds
+            .insert_cell_with_mapping(Cell::new(vertices_with_first_opposite, None).unwrap())
+            .unwrap();
+
+        let mut vertices_with_second_opposite = shared_vertices.clone();
+        vertices_with_second_opposite.push(opposite_b);
+        let _cell_b = tds
+            .insert_cell_with_mapping(Cell::new(vertices_with_second_opposite, None).unwrap())
+            .unwrap();
+
+        let edge = EdgeKey::new(opposite_a, opposite_b);
+        let err = build_k2_flip_context_from_edge(&tds, edge).unwrap_err();
+        assert!(matches!(err, FlipError::InvalidEdgeMultiplicity { .. }));
+    }
+
+    #[test]
+    fn test_flip_k3_inverse_invalid_triangle_multiplicity_5d() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 5> = Tds::empty();
+        let origin = tds.insert_vertex_with_mapping(vertex!([0.0; 5])).unwrap();
+        let mut vertices = Vec::with_capacity(6);
+        vertices.push(origin);
+        for i in 0..5 {
+            let v = tds
+                .insert_vertex_with_mapping(vertex!(unit_vector::<5>(i)))
+                .unwrap();
+            vertices.push(v);
+        }
+        let _cell = tds
+            .insert_cell_with_mapping(Cell::new(vertices.clone(), None).unwrap())
+            .unwrap();
+
+        let triangle = TriangleHandle::new(vertices[0], vertices[1], vertices[2]);
+        let err = build_k3_flip_context_from_triangle(&tds, triangle).unwrap_err();
+        assert!(matches!(
+            err,
+            FlipError::InvalidTriangleMultiplicity {
+                found: 1,
+                expected: 4,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_flip_k1_degenerate_insert_rejected() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+            .unwrap();
+
+        let kernel = FastKernel::<f64>::new();
+        let before = snapshot_topology(&tds);
+        let err =
+            apply_bistellar_flip_k1(&mut tds, &kernel, cell_key, vertex!([0.5, 0.0])).unwrap_err();
+
+        assert!(matches!(err, FlipError::DegenerateCell));
+        assert_eq!(snapshot_topology(&tds), before);
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_dynamic_k2_forward_4d() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 4> = Tds::empty();
+        let mut shared_vertices = Vec::with_capacity(4);
+        for i in 0..4 {
+            let v = tds
+                .insert_vertex_with_mapping(vertex!(unit_vector::<4>(i)))
+                .unwrap();
+            shared_vertices.push(v);
+        }
+
+        let opposite_a = tds.insert_vertex_with_mapping(vertex!([0.0; 4])).unwrap();
+        let opposite_b = tds.insert_vertex_with_mapping(vertex!([1.0; 4])).unwrap();
+
+        let mut vertices_with_first_opposite = shared_vertices.clone();
+        vertices_with_first_opposite.push(opposite_a);
+        let cell_a = tds
+            .insert_cell_with_mapping(Cell::new(vertices_with_first_opposite, None).unwrap())
+            .unwrap();
+
+        let mut vertices_with_second_opposite = shared_vertices.clone();
+        vertices_with_second_opposite.push(opposite_b);
+        let _cell_b = tds
+            .insert_cell_with_mapping(Cell::new(vertices_with_second_opposite, None).unwrap())
+            .unwrap();
+
+        repair_neighbor_pointers(&mut tds).unwrap();
+
+        let facet = FacetHandle::new(cell_a, 4);
+        let context = build_k2_flip_context(&tds, facet).unwrap();
+        let context_dyn = to_dynamic(context);
+        let kernel = FastKernel::<f64>::new();
+        let info = apply_bistellar_flip_dynamic(&mut tds, &kernel, 2, &context_dyn).unwrap();
+
+        assert_eq!(info.kind, BistellarFlipKind::k2(4));
+        assert_eq!(info.removed_cells.len(), 2);
+        assert_eq!(info.new_cells.len(), 4);
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_dynamic_k3_forward_5d() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 5> = Tds::empty();
+        let r0 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 0.0]))
+            .unwrap();
+        let r1 = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0, 0.0, 0.0]))
+            .unwrap();
+        let r2 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0, 0.0, 0.0]))
+            .unwrap();
+        let r3 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0, 0.0, 0.0]))
+            .unwrap();
+        let a = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 1.0, 0.0]))
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 1.0]))
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(vertex!([0.2, 0.2, 0.2, 0.2, 0.5]))
+            .unwrap();
+
+        let c1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, r3, a, b], None).unwrap())
+            .unwrap();
+        let _c2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, r3, b, c], None).unwrap())
+            .unwrap();
+        let _c3 = tds
+            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, r3, c, a], None).unwrap())
+            .unwrap();
+
+        repair_neighbor_pointers(&mut tds).unwrap();
+
+        let ridge = RidgeHandle::new(c1, 4, 5);
+        let context = build_k3_flip_context(&tds, ridge).unwrap();
+        let context_dyn = to_dynamic(context);
+        let kernel = FastKernel::<f64>::new();
+        let info = apply_bistellar_flip_dynamic(&mut tds, &kernel, 3, &context_dyn).unwrap();
+
+        assert_eq!(info.kind, BistellarFlipKind::k3(5));
+        assert_eq!(info.removed_cells.len(), 3);
+        assert_eq!(info.new_cells.len(), 4);
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_k2_roundtrip_randomized_3d() {
+        init_tracing();
+        let mut rng = StdRng::seed_from_u64(0x51f1_7a2b);
+        let kernel = FastKernel::<f64>::new();
+
+        for _ in 0..10 {
+            let mut jitter = |v: [f64; 3]| {
+                let mut out = v;
+                for coord in &mut out {
+                    *coord += rng.random_range(-0.03..0.03);
+                }
+                out
+            };
+
+            let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+            let v_a = tds
+                .insert_vertex_with_mapping(vertex!(jitter([0.0, 0.0, 0.0])))
+                .unwrap();
+            let v_b = tds
+                .insert_vertex_with_mapping(vertex!(jitter([1.0, 0.0, 0.0])))
+                .unwrap();
+            let v_c = tds
+                .insert_vertex_with_mapping(vertex!(jitter([0.0, 1.0, 0.0])))
+                .unwrap();
+            let v_d = tds
+                .insert_vertex_with_mapping(vertex!(jitter([0.2, 0.2, 1.0])))
+                .unwrap();
+            let v_e = tds
+                .insert_vertex_with_mapping(vertex!(jitter([0.3, -0.1, -0.8])))
+                .unwrap();
+
+            let c1 = tds
+                .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c, v_d], None).unwrap())
+                .unwrap();
+            let _c2 = tds
+                .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c, v_e], None).unwrap())
+                .unwrap();
+
+            repair_neighbor_pointers(&mut tds).unwrap();
+
+            let before = snapshot_topology(&tds);
+            let facet = FacetHandle::new(c1, 3);
+            let context = build_k2_flip_context(&tds, facet).unwrap();
+            let info = apply_bistellar_flip_k2(&mut tds, &kernel, &context).unwrap();
+            assert!(tds.is_valid().is_ok());
+
+            let edge = EdgeKey::new(
+                info.inserted_face_vertices[0],
+                info.inserted_face_vertices[1],
+            );
+            let context_back = build_k2_flip_context_from_edge(&tds, edge).unwrap();
+            let _info_back =
+                apply_bistellar_flip_dynamic(&mut tds, &kernel, 3, &context_back).unwrap();
+
+            assert!(tds.is_valid().is_ok());
+            assert_eq!(snapshot_topology(&tds), before);
+        }
+    }
+
+    #[test]
+    fn test_repair_delaunay_flips_non_delaunay_edge_2d() {
+        init_tracing();
+        let kernel = FastKernel::<f64>::new();
+        let a_coords = [0.0, 0.0];
+        let b_coords = [1.0, 1.0];
+        let c_coords = [1.0, 0.0];
+        let d_candidates = [[0.0, 1.2], [0.1, 1.1], [0.2, 0.9], [-0.1, 1.3]];
+
+        let mut tds = None;
+        for d_coords in d_candidates {
+            let mut candidate: Tds<f64, (), (), 2> = Tds::empty();
+            let a = candidate
+                .insert_vertex_with_mapping(vertex!(a_coords))
+                .unwrap();
+            let b = candidate
+                .insert_vertex_with_mapping(vertex!(b_coords))
+                .unwrap();
+            let c = candidate
+                .insert_vertex_with_mapping(vertex!(c_coords))
+                .unwrap();
+            let d = candidate
+                .insert_vertex_with_mapping(vertex!(d_coords))
+                .unwrap();
+
+            let _c1 = candidate
+                .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+                .unwrap();
+            let _c2 = candidate
+                .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
+                .unwrap();
+
+            repair_neighbor_pointers(&mut candidate).unwrap();
+
+            if verify_delaunay_via_flip_predicates(&candidate, &kernel).is_err() {
+                tds = Some(candidate);
+                break;
+            }
+        }
+
+        let mut tds = tds.expect("expected a non-Delaunay configuration from candidates");
+
+        let stats = repair_delaunay_with_flips_k2_k3(
+            &mut tds,
+            &kernel,
+            None,
+            TopologyGuarantee::PLManifold,
+        )
+        .unwrap();
+
+        assert!(stats.flips_performed > 0);
+        assert!(verify_delaunay_via_flip_predicates(&tds, &kernel).is_ok());
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_flip_k2_robust_kernel_near_degenerate_2d() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let d = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 1e-9]))
+            .unwrap();
+
+        let c1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+            .unwrap();
+        let _c2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
+            .unwrap();
+
+        repair_neighbor_pointers(&mut tds).unwrap();
+
+        let facet = FacetHandle::new(c1, 2);
+        let context = build_k2_flip_context(&tds, facet).unwrap();
+        let kernel = RobustKernel::<f64>::new();
+        let _info = apply_bistellar_flip_k2(&mut tds, &kernel, &context).unwrap();
+
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_flip_k4_4d_four_to_two() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 4> = Tds::empty();
+        let mut shared_vertices = Vec::with_capacity(4);
+        for i in 0..4 {
+            let v = tds
+                .insert_vertex_with_mapping(vertex!(unit_vector::<4>(i)))
+                .unwrap();
+            shared_vertices.push(v);
+        }
+
+        let opposite_a = tds.insert_vertex_with_mapping(vertex!([0.0; 4])).unwrap();
+        let opposite_b = tds.insert_vertex_with_mapping(vertex!([1.0; 4])).unwrap();
+
+        let mut vertices_with_first_opposite = shared_vertices.clone();
+        vertices_with_first_opposite.push(opposite_a);
+        let cell_a = tds
+            .insert_cell_with_mapping(Cell::new(vertices_with_first_opposite, None).unwrap())
+            .unwrap();
+
+        let mut vertices_with_second_opposite = shared_vertices.clone();
+        vertices_with_second_opposite.push(opposite_b);
+        let _cell_b = tds
+            .insert_cell_with_mapping(Cell::new(vertices_with_second_opposite, None).unwrap())
+            .unwrap();
+
+        repair_neighbor_pointers(&mut tds).unwrap();
+
+        let facet = FacetHandle::new(cell_a, 4);
+        let context = build_k2_flip_context(&tds, facet).unwrap();
+        let kernel = FastKernel::<f64>::new();
+        let _info = apply_bistellar_flip_k2(&mut tds, &kernel, &context).unwrap();
+
+        let edge = EdgeKey::new(opposite_a, opposite_b);
+        let context_back = build_k2_flip_context_from_edge(&tds, edge).unwrap();
+        let info_back = apply_bistellar_flip_dynamic(&mut tds, &kernel, 4, &context_back).unwrap();
+
+        assert_eq!(info_back.kind.k, 4);
+        assert_eq!(info_back.kind.d, 4);
+        assert_eq!(info_back.removed_cells.len(), 4);
+        assert_eq!(info_back.new_cells.len(), 2);
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_flip_k5_4d_five_to_one() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 4> = Tds::empty();
+        let origin = tds.insert_vertex_with_mapping(vertex!([0.0; 4])).unwrap();
+        let mut vertices = Vec::with_capacity(5);
+        vertices.push(origin);
+        for i in 0..4 {
+            let v = tds
+                .insert_vertex_with_mapping(vertex!(unit_vector::<4>(i)))
+                .unwrap();
+            vertices.push(v);
+        }
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vertices, None).unwrap())
+            .unwrap();
+
+        let kernel = FastKernel::<f64>::new();
+        let new_vertex = vertex!([0.1; 4]);
+        let new_uuid = new_vertex.uuid();
+        let info = apply_bistellar_flip_k1(&mut tds, &kernel, cell_key, new_vertex).unwrap();
+
+        assert_eq!(info.kind.k, 1);
+        assert_eq!(info.new_cells.len(), 5);
+
+        let new_key = tds.vertex_key_from_uuid(&new_uuid).unwrap();
+        let info_back = apply_bistellar_flip_k1_inverse(&mut tds, &kernel, new_key).unwrap();
+
+        assert_eq!(info_back.kind.k, 5);
+        assert_eq!(info_back.kind.d, 4);
+        assert_eq!(info_back.removed_cells.len(), 5);
+        assert_eq!(info_back.new_cells.len(), 1);
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_flip_k4_5d_four_to_three() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 5> = Tds::empty();
+        let r0 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 0.0]))
+            .unwrap();
+        let r1 = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0, 0.0, 0.0]))
+            .unwrap();
+        let r2 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0, 0.0, 0.0]))
+            .unwrap();
+        let r3 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0, 0.0, 0.0]))
+            .unwrap();
+        let a = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 1.0, 0.0]))
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 1.0]))
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(vertex!([0.2, 0.2, 0.2, 0.2, 0.5]))
+            .unwrap();
+
+        let c1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, r3, a, b], None).unwrap())
+            .unwrap();
+        let _c2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, r3, b, c], None).unwrap())
+            .unwrap();
+        let _c3 = tds
+            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, r3, c, a], None).unwrap())
+            .unwrap();
+
+        repair_neighbor_pointers(&mut tds).unwrap();
+
+        let ridge = RidgeHandle::new(c1, 4, 5);
+        let context = build_k3_flip_context(&tds, ridge).unwrap();
+        let kernel = FastKernel::<f64>::new();
+        let info = apply_bistellar_flip_k3(&mut tds, &kernel, &context).unwrap();
+
+        assert_eq!(info.kind.k, 3);
+        assert_eq!(info.inserted_face_vertices.len(), 3);
+
+        let triangle = TriangleHandle::new(
+            info.inserted_face_vertices[0],
+            info.inserted_face_vertices[1],
+            info.inserted_face_vertices[2],
+        );
+        let context_back = build_k3_flip_context_from_triangle(&tds, triangle).unwrap();
+        let info_back = apply_bistellar_flip_dynamic(&mut tds, &kernel, 4, &context_back).unwrap();
+
+        assert_eq!(info_back.kind.k, 4);
+        assert_eq!(info_back.kind.d, 5);
+        assert_eq!(info_back.removed_cells.len(), 4);
+        assert_eq!(info_back.new_cells.len(), 3);
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_flip_k5_5d_five_to_two() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 5> = Tds::empty();
+        let mut shared_vertices = Vec::with_capacity(5);
+        for i in 0..5 {
+            let v = tds
+                .insert_vertex_with_mapping(vertex!(unit_vector::<5>(i)))
+                .unwrap();
+            shared_vertices.push(v);
+        }
+
+        let opposite_a = tds.insert_vertex_with_mapping(vertex!([0.0; 5])).unwrap();
+        let opposite_b = tds.insert_vertex_with_mapping(vertex!([1.0; 5])).unwrap();
+
+        let mut vertices_with_first_opposite = shared_vertices.clone();
+        vertices_with_first_opposite.push(opposite_a);
+        let cell_a = tds
+            .insert_cell_with_mapping(Cell::new(vertices_with_first_opposite, None).unwrap())
+            .unwrap();
+
+        let mut vertices_with_second_opposite = shared_vertices.clone();
+        vertices_with_second_opposite.push(opposite_b);
+        let _cell_b = tds
+            .insert_cell_with_mapping(Cell::new(vertices_with_second_opposite, None).unwrap())
+            .unwrap();
+
+        repair_neighbor_pointers(&mut tds).unwrap();
+
+        let facet = FacetHandle::new(cell_a, 5);
+        let context = build_k2_flip_context(&tds, facet).unwrap();
+        let kernel = FastKernel::<f64>::new();
+        let _info = apply_bistellar_flip_k2(&mut tds, &kernel, &context).unwrap();
+
+        let edge = EdgeKey::new(opposite_a, opposite_b);
+        let context_back = build_k2_flip_context_from_edge(&tds, edge).unwrap();
+        let info_back = apply_bistellar_flip_dynamic(&mut tds, &kernel, 5, &context_back).unwrap();
+
+        assert_eq!(info_back.kind.k, 5);
+        assert_eq!(info_back.kind.d, 5);
+        assert_eq!(info_back.removed_cells.len(), 5);
+        assert_eq!(info_back.new_cells.len(), 2);
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_flip_k6_5d_six_to_one() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 5> = Tds::empty();
+        let origin = tds.insert_vertex_with_mapping(vertex!([0.0; 5])).unwrap();
+        let mut vertices = Vec::with_capacity(6);
+        vertices.push(origin);
+        for i in 0..5 {
+            let v = tds
+                .insert_vertex_with_mapping(vertex!(unit_vector::<5>(i)))
+                .unwrap();
+            vertices.push(v);
+        }
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vertices, None).unwrap())
+            .unwrap();
+
+        let kernel = FastKernel::<f64>::new();
+        let new_vertex = vertex!([0.1; 5]);
+        let new_uuid = new_vertex.uuid();
+        let info = apply_bistellar_flip_k1(&mut tds, &kernel, cell_key, new_vertex).unwrap();
+
+        assert_eq!(info.kind.k, 1);
+        assert_eq!(info.new_cells.len(), 6);
+
+        let new_key = tds.vertex_key_from_uuid(&new_uuid).unwrap();
+        let info_back = apply_bistellar_flip_k1_inverse(&mut tds, &kernel, new_key).unwrap();
+
+        assert_eq!(info_back.kind.k, 6);
+        assert_eq!(info_back.kind.d, 5);
+        assert_eq!(info_back.removed_cells.len(), 6);
+        assert_eq!(info_back.new_cells.len(), 1);
+        assert!(tds.is_valid().is_ok());
+    }
     #[test]
     fn test_flip_k1_2d_roundtrip() {
+        init_tracing();
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
@@ -3838,6 +4587,7 @@ mod tests {
 
     #[test]
     fn test_repair_queue_inverse_k2_smoke_4d() {
+        init_tracing();
         let mut tds: Tds<f64, (), (), 4> = Tds::empty();
         let mut shared_vertices = Vec::with_capacity(4);
         for i in 0..4 {
@@ -3883,6 +4633,7 @@ mod tests {
 
     #[test]
     fn test_repair_queue_inverse_k3_smoke_5d() {
+        init_tracing();
         let mut tds: Tds<f64, (), (), 5> = Tds::empty();
         let r0 = tds
             .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 0.0]))
@@ -3946,6 +4697,7 @@ mod tests {
 
     #[test]
     fn test_repair_queue_k2_local_seed() {
+        init_tracing();
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),

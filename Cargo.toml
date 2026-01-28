@@ -20,10 +20,10 @@ allocation-counter = { version = "0.8.1", optional = true } # for memory profili
 anyhow = "1.0.100"
 arc-swap = "1.8.0"
 approx = "0.5.1"
-clap = { version = "4.5.54", features = [ "derive" ] }
+clap = { version = "4.5.55", features = [ "derive" ] }
 derive_builder = "0.20.2"
 la-stack = "0.1.2"
-log = "0.4.22"
+tracing = "0.1.44"
 rustc-hash = "2.1.1" # Fast non-cryptographic hashing for performance
 smallvec = { version = "1.15.1", features = [
     "serde",
@@ -43,6 +43,7 @@ criterion = { version = "0.8.1", features = [ "html_reports" ] }
 pastey = "0.2.1"
 proptest = "1.9.0"
 sysinfo = "0.38.0" # Process memory monitoring for benchmarks
+tracing-subscriber = { version = "0.3.18", features = [ "env-filter" ] }
 
 [features]
 # Default feature set: prefer DenseSlotMap for better construction + iteration performance.

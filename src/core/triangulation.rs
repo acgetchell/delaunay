@@ -130,7 +130,7 @@ use crate::core::collections::{
     fast_hash_map_with_capacity, fast_hash_set_with_capacity,
 };
 use crate::core::edge::EdgeKey;
-use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter, FacetHandle};
+use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter, FacetHandle, facet_key_from_vertices};
 use crate::core::operations::{
     InsertionOutcome, InsertionResult, InsertionStatistics, SuspicionFlags,
 };
@@ -1595,7 +1595,7 @@ where
                 if !was_spilled && entry.spilled() {
                     let spill_count =
                         VERTEX_TO_CELLS_SPILL_EVENTS.fetch_add(1, Ordering::Relaxed) + 1;
-                    log::debug!(
+                    tracing::debug!(
                         "VertexToCellsMap spill #{spill_count}: vertex={vk:?} len={} cap={} (MAX_PRACTICAL_DIMENSION_SIZE={MAX_PRACTICAL_DIMENSION_SIZE})",
                         entry.len(),
                         entry.capacity()
@@ -2358,7 +2358,7 @@ where
             ) {
                 stats.result = InsertionResult::SkippedDuplicate;
                 #[cfg(debug_assertions)]
-                log::debug!("SKIPPED: {error}");
+                tracing::debug!("SKIPPED: {error}");
                 return Ok((InsertionOutcome::Skipped { error }, stats));
             }
 
@@ -2384,7 +2384,7 @@ where
                     stats.result = InsertionResult::Inserted;
                     #[cfg(debug_assertions)]
                     if attempt > 0 {
-                        log::debug!(
+                        tracing::debug!(
                             "Warning: Geometric degeneracy resolved via perturbation (attempt {attempt})"
                         );
                     }
@@ -2406,7 +2406,7 @@ where
                     if matches!(e, InsertionError::DuplicateCoordinates { .. }) {
                         stats.result = InsertionResult::SkippedDuplicate;
                         #[cfg(debug_assertions)]
-                        log::debug!("SKIPPED: {e}");
+                        tracing::debug!("SKIPPED: {e}");
                         return Ok((InsertionOutcome::Skipped { error: e }, stats));
                     }
 
@@ -2416,14 +2416,14 @@ where
                     if is_retryable && attempt < max_perturbation_attempts {
                         last_retryable_error = Some(e.clone());
                         #[cfg(debug_assertions)]
-                        log::debug!(
+                        tracing::debug!(
                             "RETRYING: Attempt {} failed with: {e}. Applying perturbation...",
                             attempt + 1
                         );
                     } else if is_retryable {
                         stats.result = InsertionResult::SkippedDegeneracy;
                         #[cfg(debug_assertions)]
-                        log::debug!(
+                        tracing::debug!(
                             "SKIPPED: Could not insert vertex after {} attempts (perturbations up to {:.1}%). Last error: {e}. Vertex skipped to maintain manifold.",
                             max_perturbation_attempts + 1,
                             match max_perturbation_attempts {
@@ -2633,7 +2633,7 @@ where
     fn log_validation_trigger_if_enabled(&self, suspicion: SuspicionFlags) {
         #[cfg(debug_assertions)]
         if self.validation_policy.should_validate(suspicion) && suspicion.is_suspicious() {
-            log::debug!("Validation triggered by {suspicion:?}");
+            tracing::debug!("Validation triggered by {suspicion:?}");
         }
 
         // Keep the parameter "used" in release builds where the debug-only logging
@@ -2644,6 +2644,32 @@ where
         }
     }
 
+    /// Runs mandatory link checks required by the topology guarantee.
+    fn validate_required_topology_links(&self) -> Result<(), TriangulationValidationError> {
+        if self.tds.number_of_cells() == 0 {
+            return Ok(());
+        }
+
+        if self
+            .topology_guarantee
+            .requires_vertex_links_during_insertion()
+        {
+            let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
+            validate_facet_degree(&facet_to_cells).map_err(TriangulationValidationError::from)?;
+            validate_closed_boundary(&self.tds, &facet_to_cells)
+                .map_err(TriangulationValidationError::from)?;
+            validate_ridge_links(&self.tds).map_err(TriangulationValidationError::from)?;
+            validate_vertex_links(&self.tds, &facet_to_cells)
+                .map_err(TriangulationValidationError::from)?;
+            return Ok(());
+        }
+
+        if self.topology_guarantee.requires_ridge_links() {
+            validate_ridge_links(&self.tds).map_err(TriangulationValidationError::from)?;
+        }
+
+        Ok(())
+    }
     /// Attempt an insertion, and if Level 3 validation fails, roll back and try a
     /// conservative star-split fallback of the containing cell.
     fn try_insert_with_topology_safety_net(
@@ -2670,13 +2696,22 @@ where
         }
 
         let should_validate = self.validation_policy.should_validate(suspicion);
-        if !should_validate {
+        let requires_link_checks = self.topology_guarantee.requires_ridge_links()
+            || self
+                .topology_guarantee
+                .requires_vertex_links_during_insertion();
+        if !should_validate && !requires_link_checks {
             return Ok((ok, cells_removed, suspicion));
         }
 
         self.log_validation_trigger_if_enabled(suspicion);
+        let validation_result = if should_validate {
+            self.is_valid()
+        } else {
+            self.validate_required_topology_links()
+        };
 
-        if let Err(validation_err) = self.is_valid() {
+        if let Err(validation_err) = validation_result {
             // Roll back to snapshot and attempt a star-split fallback for interior points.
             self.tds = tds_snapshot.clone();
             return self.try_star_split_fallback_after_topology_failure(
@@ -2732,8 +2767,20 @@ where
 
                     let should_validate =
                         self.validation_policy.should_validate(fallback_suspicion);
+                    let requires_link_checks = self.topology_guarantee.requires_ridge_links()
+                        || self
+                            .topology_guarantee
+                            .requires_vertex_links_during_insertion();
 
-                    if should_validate && let Err(fallback_validation_err) = self.is_valid() {
+                    let validation_result = if should_validate {
+                        self.is_valid()
+                    } else if requires_link_checks {
+                        self.validate_required_topology_links()
+                    } else {
+                        Ok(())
+                    };
+
+                    if let Err(fallback_validation_err) = validation_result {
                         return Err(InsertionError::TopologyValidationFailed {
                             message: "Topology invalid after star-split fallback".to_string(),
                             source: fallback_validation_err,
@@ -2746,7 +2793,7 @@ where
                 TOPOLOGY_SAFETY_NET_STAR_SPLIT_FALLBACK_SUCCESSES.fetch_add(1, Ordering::Relaxed);
 
                 #[cfg(debug_assertions)]
-                log::debug!(
+                tracing::debug!(
                     "Topology safety-net: star-split fallback succeeded (start_cell={start_cell:?})"
                 );
 
@@ -2924,6 +2971,61 @@ where
         Ok(conflict_cells)
     }
 
+    /// Returns true if any conflict cell has a facet on the hull boundary.
+    fn conflict_region_touches_boundary(
+        &self,
+        conflict_cells: &CellKeyBuffer,
+    ) -> Result<bool, InsertionError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        if conflict_cells.is_empty() {
+            return Ok(false);
+        }
+
+        let facet_to_cells = self
+            .tds
+            .build_facet_to_cells_map()
+            .map_err(InsertionError::TopologyValidation)?;
+
+        let mut boundary_facets: FastHashSet<u64> =
+            fast_hash_set_with_capacity(facet_to_cells.len());
+        for (facet_key, cell_list) in &facet_to_cells {
+            if cell_list.len() == 1 {
+                boundary_facets.insert(*facet_key);
+            }
+        }
+
+        if boundary_facets.is_empty() {
+            return Ok(false);
+        }
+
+        for &cell_key in conflict_cells {
+            let cell = self.tds.get_cell(cell_key).ok_or_else(|| {
+                InsertionError::TopologyValidation(TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Conflict cell {cell_key:?} not found while checking boundary facets"
+                    ),
+                })
+            })?;
+            for facet_idx in 0..cell.number_of_vertices() {
+                let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                    SmallBuffer::with_capacity(D);
+                for (i, &vkey) in cell.vertices().iter().enumerate() {
+                    if i != facet_idx {
+                        facet_vertices.push(vkey);
+                    }
+                }
+                let facet_key = facet_key_from_vertices(&facet_vertices);
+                if boundary_facets.contains(&facet_key) {
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
+    }
+
     /// Perform cavity insertion given an explicit conflict region.
     #[expect(
         clippy::too_many_lines,
@@ -2971,8 +3073,8 @@ where
                     suspicion.fallback_star_split = true;
 
                     #[cfg(debug_assertions)]
-                    eprintln!(
-                        "WARNING: conflict region degeneracy ({err}); falling back to star-split of cell {start_cell:?}"
+                    tracing::warn!(
+                        "Conflict region degeneracy ({err}); falling back to star-split of cell {start_cell:?}"
                     );
 
                     conflict_cells = {
@@ -3000,8 +3102,8 @@ where
             suspicion.fallback_star_split = true;
 
             #[cfg(debug_assertions)]
-            eprintln!(
-                "WARNING: empty cavity boundary; falling back to splitting containing cell {start_cell:?}"
+            tracing::warn!(
+                "Empty cavity boundary; falling back to splitting containing cell {start_cell:?}"
             );
 
             conflict_cells = {
@@ -3044,7 +3146,7 @@ where
                 suspicion.repair_loop_entered = true;
 
                 #[cfg(debug_assertions)]
-                eprintln!(
+                tracing::debug!(
                     "Repair iteration {}: {} over-shared facets detected, removing cells...",
                     iteration + 1,
                     issues.len()
@@ -3055,7 +3157,7 @@ where
                 // Early exit if repair made no progress
                 if removed == 0 {
                     #[cfg(debug_assertions)]
-                    eprintln!(
+                    tracing::warn!(
                         "No cells removed in iteration {} - repair cannot make progress",
                         iteration + 1
                     );
@@ -3076,7 +3178,7 @@ where
                 }
 
                 #[cfg(debug_assertions)]
-                eprintln!("Removed {removed} cells (total: {total_removed})");
+                tracing::debug!("Removed {removed} cells (total: {total_removed})");
 
                 // Early exit if repair succeeded
                 if self.tds.validate_facet_sharing().is_ok() {
@@ -3090,14 +3192,14 @@ where
 
         // Rebuild neighbor pointers now that topology is manifold
         #[cfg(debug_assertions)]
-        eprintln!("After repair loop: total_removed={total_removed}");
+        tracing::debug!("After repair loop: total_removed={total_removed}");
 
         // After insertion we ALWAYS removed the conflict region, which can leave broken/None neighbor
         // pointers in surviving cells. Even if the subsequent non-manifold repair loop removed 0 cells,
         // we still must repair neighbor pointers to ensure the cavity is glued.
         let facet_valid = self.tds.validate_facet_sharing().is_ok();
         #[cfg(debug_assertions)]
-        eprintln!(
+        tracing::debug!(
             "Before repair_neighbor_pointers: facet_sharing_valid={facet_valid}, cells={}",
             self.tds.number_of_cells()
         );
@@ -3265,7 +3367,7 @@ where
                 // cavity insertion first using a global conflict scan.
                 if D == 2 {
                     #[cfg(debug_assertions)]
-                    eprintln!(
+                    tracing::debug!(
                         "Outside insertion in 2D: skipping global conflict-region scan; using hull extension"
                     );
                     None
@@ -3273,9 +3375,15 @@ where
                     let computed = self.find_conflict_region_global(&point)?;
                     if computed.is_empty() {
                         None
+                    } else if self.conflict_region_touches_boundary(&computed)? {
+                        #[cfg(debug_assertions)]
+                        tracing::debug!(
+                            "Outside insertion (D={D}) conflict region touches hull; skipping cavity insertion"
+                        );
+                        None
                     } else {
                         #[cfg(debug_assertions)]
-                        eprintln!(
+                        tracing::debug!(
                             "Outside insertion (D={D}) using global conflict region with {} cells",
                             computed.len()
                         );
@@ -3321,7 +3429,7 @@ where
                     #[cfg(debug_assertions)]
                     let conflict_len = conflict_cells.len();
                     #[cfg(debug_assertions)]
-                    eprintln!(
+                    tracing::debug!(
                         "Outside insertion attempting cavity insertion with conflict region size {conflict_len}"
                     );
                     let result = self.insert_with_conflict_region(
@@ -3351,12 +3459,12 @@ where
 
                             if should_fallback {
                                 #[cfg(debug_assertions)]
-                                eprintln!(
+                                tracing::warn!(
                                     "Outside insertion conflict boundary degeneracy ({err}) (conflict_cells={conflict_len}); falling back to hull extension"
                                 );
                             } else {
                                 #[cfg(debug_assertions)]
-                                eprintln!("Outside insertion cavity insertion failed: {err}");
+                                tracing::warn!("Outside insertion cavity insertion failed: {err}");
                                 return Err(err);
                             }
                         }
@@ -3389,7 +3497,7 @@ where
                         suspicion.repair_loop_entered = true;
 
                         #[cfg(debug_assertions)]
-                        eprintln!(
+                        tracing::debug!(
                             "Hull extension repair iteration {}: {} over-shared facets detected, removing cells...",
                             iteration + 1,
                             issues.len()
@@ -3400,7 +3508,7 @@ where
                         // Early exit if repair made no progress
                         if removed == 0 {
                             #[cfg(debug_assertions)]
-                            eprintln!(
+                            tracing::warn!(
                                 "No cells removed in iteration {} - repair cannot make progress",
                                 iteration + 1
                             );
@@ -3420,7 +3528,7 @@ where
                         }
 
                         #[cfg(debug_assertions)]
-                        eprintln!("Removed {removed} cells (total: {total_removed})");
+                        tracing::debug!("Removed {removed} cells (total: {total_removed})");
 
                         // Early exit if repair succeeded
                         if self.tds.validate_facet_sharing().is_ok() {
@@ -3437,7 +3545,7 @@ where
                     // Double-check that facet sharing is actually valid
                     let facet_valid = self.tds.validate_facet_sharing().is_ok();
                     #[cfg(debug_assertions)]
-                    eprintln!(
+                    tracing::debug!(
                         "Before repair_neighbor_pointers: facet_sharing_valid={facet_valid}, cells={}",
                         self.tds.number_of_cells()
                     );
@@ -3599,14 +3707,14 @@ where
         // Validate facet topology for newly created cells (O(k*D) localized check)
         if let Some(issues) = self.detect_local_facet_issues(&new_cells)? {
             #[cfg(debug_assertions)]
-            eprintln!(
+            tracing::warn!(
                 "Warning: {} over-shared facets detected after vertex removal, repairing...",
                 issues.len()
             );
             let removed = self.repair_local_facet_issues(&issues)?;
             cells_removed += removed;
             #[cfg(debug_assertions)]
-            eprintln!("Repaired by removing {removed} additional cells");
+            tracing::debug!("Repaired by removing {removed} additional cells");
 
             // Repair neighbor pointers after removing additional cells
             // This ensures neighbor consistency after repair operations
@@ -3961,11 +4069,12 @@ where
 mod tests {
     use super::*;
     use crate::core::collections::NeighborBuffer;
+    use crate::core::collections::spatial_hash_grid::HashGridIndex;
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
     use crate::core::vertex::VertexBuilder;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::point::Point;
-    use crate::geometry::traits::coordinate::Coordinate;
+    use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
     use crate::topology::characteristics::validation::validate_triangulation_euler;
     use crate::vertex;
 
@@ -4077,6 +4186,167 @@ mod tests {
 
         tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
         assert_eq!(tri.topology_guarantee(), TopologyGuarantee::PLManifold);
+    }
+
+    #[test]
+    fn test_validate_at_completion_skips_for_pseudomanifold() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+
+        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+        assert!(tri.validate_at_completion().is_ok());
+    }
+
+    #[test]
+    fn test_validate_at_completion_reports_invalid_vertex_link() {
+        // Two triangles sharing only a single vertex produce a disconnected vertex link.
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 0.0]))
+            .unwrap();
+        let v4 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 1.0]))
+            .unwrap();
+
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v3, v4], None).unwrap())
+            .unwrap();
+
+        tds.assign_incident_cells().unwrap();
+
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
+
+        match tri.validate_at_completion() {
+            Err(TriangulationValidationError::VertexLinkNotManifold { vertex_key, .. }) => {
+                assert_eq!(vertex_key, v0);
+            }
+            other => panic!("Expected VertexLinkNotManifold, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_select_locate_hint_from_hash_grid_returns_incident_cell() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        let cell_key = tri.tds.cell_keys().next().unwrap();
+
+        let mut index: HashGridIndex<f64, 2> = HashGridIndex::new(1.0);
+        for (vkey, vertex) in tri.tds.vertices() {
+            index.insert_vertex(vkey, vertex.point().coords());
+        }
+
+        let hint = tri.select_locate_hint_from_hash_grid(&[0.05, 0.05], &index);
+        assert_eq!(hint, Some(cell_key));
+    }
+
+    #[test]
+    fn test_select_locate_hint_from_hash_grid_skips_missing_cell() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+        let vkey = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+            .unwrap();
+        {
+            let vertex = tri.tds.get_vertex_by_key_mut(vkey).unwrap();
+            vertex.incident_cell = Some(CellKey::default());
+        }
+
+        let mut index: HashGridIndex<f64, 2> = HashGridIndex::new(1.0);
+        index.insert_vertex(vkey, &[0.0, 0.0]);
+
+        let hint = tri.select_locate_hint_from_hash_grid(&[0.0, 0.0], &index);
+        assert!(hint.is_none());
+    }
+
+    #[test]
+    fn test_duplicate_coordinates_error_uses_hash_grid_index() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+        let vkey = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+            .unwrap();
+
+        let mut index: HashGridIndex<f64, 2> = HashGridIndex::new(1.0);
+        index.insert_vertex(vkey, &[0.0, 0.0]);
+
+        let tol = 1e-10_f64;
+        let err = tri.duplicate_coordinates_error(&[0.0, 0.0], tol * tol, Some(&index));
+        assert!(matches!(
+            err,
+            Some(InsertionError::DuplicateCoordinates { .. })
+        ));
+    }
+
+    #[test]
+    fn test_duplicate_coordinates_error_falls_back_when_index_unusable() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+        let _ = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+            .unwrap();
+
+        let index: HashGridIndex<f64, 2> = HashGridIndex::new(0.0); // unusable
+        let tol = 1e-10_f64;
+        let err = tri.duplicate_coordinates_error(&[0.0, 0.0], tol * tol, Some(&index));
+        assert!(matches!(
+            err,
+            Some(InsertionError::DuplicateCoordinates { .. })
+        ));
+    }
+
+    #[test]
+    fn test_estimate_local_perturbation_scale_uses_hint_cell_vertices() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        let cell_key = tri.tds.cell_keys().next().unwrap();
+
+        let scale = tri.estimate_local_perturbation_scale(&[0.1, 0.0], Some(cell_key));
+        assert!((scale - 0.1).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_estimate_local_perturbation_scale_clamps_to_min_scale() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+        let _ = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+            .unwrap();
+
+        let scale = tri.estimate_local_perturbation_scale(&[0.0, 0.0], None);
+        let min_scale = <f64 as CoordinateScalar>::default_tolerance();
+        approx::assert_abs_diff_eq!(scale, min_scale, epsilon = f64::EPSILON);
     }
 
     #[test]

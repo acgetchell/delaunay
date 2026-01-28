@@ -42,7 +42,7 @@ use crate::core::util::{
     dedup_vertices_epsilon, dedup_vertices_exact, hilbert_index, stable_hash_u64_slice,
 };
 use crate::core::vertex::Vertex;
-use crate::geometry::kernel::{FastKernel, Kernel};
+use crate::geometry::kernel::{FastKernel, Kernel, RobustKernel};
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -1255,6 +1255,9 @@ where
                         e @ (DelaunayRepairError::NonConvergent { .. }
                         | DelaunayRepairError::PostconditionFailed { .. }),
                     ) => {
+                        if self.repair_delaunay_with_flips_robust(None).is_ok() {
+                            return Ok(());
+                        }
                         // Deterministic rebuild fallback to avoid rejecting an otherwise-valid
                         // triangulation due to non-convergent global flip repair.
                         let _ = self
@@ -1262,7 +1265,7 @@ where
                             .map_err(|fallback_err| {
                                 TriangulationConstructionError::GeometricDegeneracy {
                                     message: format!(
-                                        "Delaunay repair failed after construction ({e}); heuristic rebuild fallback also failed ({fallback_err})"
+                                        "Delaunay repair failed after construction ({e}); robust repair fallback also failed; heuristic rebuild fallback also failed ({fallback_err})"
                                     ),
                                 }
                             })?;
@@ -1774,6 +1777,19 @@ where
         repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology)
     }
 
+    fn repair_delaunay_with_flips_robust(
+        &mut self,
+        seed_cells: Option<&[CellKey]>,
+    ) -> Result<DelaunayRepairStats, DelaunayRepairError>
+    where
+        K::Scalar: CoordinateScalar + Sum + Zero,
+    {
+        let topology = self.tri.topology_guarantee();
+        let kernel = RobustKernel::<K::Scalar>::new();
+        let (tds, kernel) = (&mut self.tri.tds, &kernel);
+        repair_delaunay_with_flips_k2_k3(tds, kernel, seed_cells, topology)
+    }
+
     /// Runs flip-based Delaunay repair with an optional heuristic rebuild fallback.
     ///
     /// This first attempts the standard two-pass flip repair. If it fails to converge (or if
@@ -1804,6 +1820,12 @@ where
                 DelaunayRepairError::NonConvergent { .. }
                 | DelaunayRepairError::PostconditionFailed { .. },
             ) => {
+                if let Ok(stats) = self.repair_delaunay_with_flips_robust(None) {
+                    return Ok(DelaunayRepairOutcome {
+                        stats,
+                        heuristic: None,
+                    });
+                }
                 let base_seed = self.heuristic_rebuild_base_seed();
                 let seeds = config.resolve_seeds(base_seed);
                 let (candidate, stats) = self.rebuild_with_heuristic(seeds)?;
@@ -2542,11 +2564,9 @@ where
             return Ok(());
         }
 
-        let seed_cells = if D == 2 {
+        let seed_cells = {
             let cells: Vec<CellKey> = self.tri.adjacent_cells(vertex_key).collect();
             (!cells.is_empty()).then_some(cells)
-        } else {
-            None
         };
         let hint_slice = hint.map(|ck| [ck]);
         let seed_ref = seed_cells
@@ -2564,6 +2584,9 @@ where
                 e @ (DelaunayRepairError::NonConvergent { .. }
                 | DelaunayRepairError::PostconditionFailed { .. }),
             ) => {
+                if self.repair_delaunay_with_flips_robust(seed_ref).is_ok() {
+                    return Ok(());
+                }
                 // Deterministic rebuild fallback to avoid committing a non-Delaunay triangulation.
                 //
                 // NOTE: This is intentionally expensive, but is only triggered when local repair
@@ -2572,7 +2595,7 @@ where
                     .repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())
                     .map_err(|fallback_err| InsertionError::CavityFilling {
                         message: format!(
-                            "Delaunay repair failed ({e}); heuristic rebuild fallback also failed ({fallback_err})"
+                            "Delaunay repair failed ({e}); robust repair fallback also failed; heuristic rebuild fallback also failed ({fallback_err})"
                         ),
                     })?;
                 Ok(())
@@ -3223,9 +3246,21 @@ mod tests {
     use crate::geometry::kernel::{FastKernel, RobustKernel};
     use crate::topology::edit::TopologyEdit;
     use crate::vertex;
+    fn init_tracing() {
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(|| {
+            let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+            let _ = tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_test_writer()
+                .try_init();
+        });
+    }
 
     #[test]
     fn test_construction_options_builder_roundtrip() {
+        init_tracing();
         let opts = ConstructionOptions::default()
             .with_insertion_order(InsertionOrderStrategy::Input)
             .with_dedup_policy(DedupPolicy::Exact)
@@ -3238,6 +3273,7 @@ mod tests {
 
     #[test]
     fn test_new_with_options_smoke_3d() {
+        init_tracing();
         let vertices: Vec<Vertex<f64, (), 3>> = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -3263,6 +3299,7 @@ mod tests {
 
     #[test]
     fn test_bulk_construction_skips_near_duplicate_coordinates_3d() {
+        init_tracing();
         // Test that epsilon-based deduplication removes near-duplicates
         let vertices: Vec<Vertex<f64, (), 3>> = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -3290,6 +3327,7 @@ mod tests {
 
     #[test]
     fn test_insertion_order_lexicographic_is_deterministic_across_permutations_3d() {
+        init_tracing();
         let coords: [[f64; 3]; 8] = [
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
@@ -3320,6 +3358,7 @@ mod tests {
 
     #[test]
     fn test_insertion_order_morton_is_deterministic_across_permutations_3d() {
+        init_tracing();
         let coords: [[f64; 3]; 8] = [
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
@@ -3350,6 +3389,7 @@ mod tests {
 
     #[test]
     fn test_insertion_order_hilbert_is_deterministic_across_permutations_3d() {
+        init_tracing();
         let coords: [[f64; 3]; 8] = [
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
@@ -3380,6 +3420,7 @@ mod tests {
 
     #[test]
     fn test_new_with_options_lexicographic_and_morton_smoke_3d() {
+        init_tracing();
         let vertices: Vec<Vertex<f64, (), 3>> = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -3407,6 +3448,7 @@ mod tests {
 
     #[test]
     fn test_new_with_options_shuffled_retry_policy_smoke_3d() {
+        init_tracing();
         let vertices: Vec<Vertex<f64, (), 3>> = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -3431,6 +3473,7 @@ mod tests {
 
     #[test]
     fn test_delaunay_constructors_default_to_pl_manifold_mode() {
+        init_tracing();
         let vertices: Vec<Vertex<f64, (), 2>> = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -3462,6 +3505,7 @@ mod tests {
 
     #[test]
     fn test_set_topology_guarantee_updates_underlying_triangulation() {
+        init_tracing();
         let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
             DelaunayTriangulation::empty();
 
@@ -3475,6 +3519,7 @@ mod tests {
 
     #[test]
     fn test_new_with_topology_guarantee_sets_pl() {
+        init_tracing();
         let vertices: Vec<Vertex<f64, (), 2>> = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -3493,6 +3538,7 @@ mod tests {
 
     #[test]
     fn test_delaunay_check_policy_should_check() {
+        init_tracing();
         assert!(!DelaunayCheckPolicy::EndOnly.should_check(1));
 
         let every_2 = DelaunayCheckPolicy::EveryN(NonZeroUsize::new(2).unwrap());
@@ -3504,6 +3550,7 @@ mod tests {
 
     #[test]
     fn test_set_delaunay_check_policy_updates_state() {
+        init_tracing();
         let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
             DelaunayTriangulation::empty();
         assert_eq!(dt.delaunay_check_policy(), DelaunayCheckPolicy::EndOnly);
@@ -3515,6 +3562,7 @@ mod tests {
 
     #[test]
     fn test_remove_vertex_fast_path_inverse_k1() {
+        init_tracing();
         let vertices: Vec<Vertex<f64, (), 3>> = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -3554,6 +3602,7 @@ mod tests {
 
     #[test]
     fn test_repair_delaunay_with_flips_allows_pl_manifold() {
+        init_tracing();
         let vertices: Vec<Vertex<f64, (), 2>> = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -3590,6 +3639,7 @@ mod tests {
                 // Test 1: Batch construction with incremental insertion
                 #[test]
                 fn [<test_incremental_insertion_ $dim d>]() {
+                    init_tracing();
                     // Build initial simplex (D+1 vertices)
                     let mut vertices: Vec<Vertex<f64, (), $dim>> = vec![
                         $(vertex!($simplex_coords)),+
@@ -3612,6 +3662,7 @@ mod tests {
                 // Test 2: Bootstrap from empty triangulation
                 #[test]
                 fn [<test_bootstrap_from_empty_ $dim d>]() {
+                    init_tracing();
                     // Start with empty triangulation
                     let mut dt: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::empty();
                     assert_eq!(dt.number_of_vertices(), 0);
@@ -3644,6 +3695,7 @@ mod tests {
                 // Test 3: Bootstrap continues with cavity-based insertion
                 #[test]
                 fn [<test_bootstrap_continues_with_cavity_ $dim d>]() {
+                    init_tracing();
                     // Start with empty, bootstrap to initial simplex, then continue with cavity-based
                     let mut dt: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::empty();
 
@@ -3668,6 +3720,7 @@ mod tests {
                 // Test 4: Bootstrap equivalent to batch construction
                 #[test]
                 fn [<test_bootstrap_equivalent_to_batch_ $dim d>]() {
+                    init_tracing();
                     // Compare bootstrap path vs batch construction
                     let vertices = vec![$(vertex!($simplex_coords)),+];
 
@@ -3744,6 +3797,7 @@ mod tests {
 
     #[test]
     fn test_empty_creates_empty_triangulation() {
+        init_tracing();
         let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 
         assert_eq!(dt.number_of_vertices(), 0);
@@ -3754,6 +3808,7 @@ mod tests {
 
     #[test]
     fn test_empty_supports_incremental_insertion() {
+        init_tracing();
         // Verify empty triangulation supports incremental insertion via bootstrap
         let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
         assert_eq!(dt.number_of_vertices(), 0);
@@ -3769,6 +3824,7 @@ mod tests {
 
     #[test]
     fn test_validation_policy_defaults_to_on_suspicion() {
+        init_tracing();
         // empty() -> Triangulation::new_empty() -> ValidationPolicy::default()
         let dt_empty: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
         assert_eq!(dt_empty.validation_policy(), ValidationPolicy::OnSuspicion);
@@ -3806,6 +3862,7 @@ mod tests {
 
     #[test]
     fn test_validation_policy_setter_and_getter_roundtrip() {
+        init_tracing();
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -3838,6 +3895,7 @@ mod tests {
 
     #[test]
     fn test_with_kernel_fast_kernel() {
+        init_tracing();
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -3853,6 +3911,7 @@ mod tests {
 
     #[test]
     fn test_with_kernel_robust_kernel() {
+        init_tracing();
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -3868,6 +3927,7 @@ mod tests {
 
     #[test]
     fn test_with_kernel_insufficient_vertices_2d() {
+        init_tracing();
         let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0])];
 
         let result: Result<DelaunayTriangulation<FastKernel<f64>, (), (), 2>, _> =
@@ -3886,6 +3946,7 @@ mod tests {
 
     #[test]
     fn test_with_kernel_insufficient_vertices_3d() {
+        init_tracing();
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -3908,6 +3969,7 @@ mod tests {
 
     #[test]
     fn test_with_kernel_f32_coordinates() {
+        init_tracing();
         let vertices = vec![
             vertex!([0.0f32, 0.0f32]),
             vertex!([1.0f32, 0.0f32]),
@@ -3927,6 +3989,7 @@ mod tests {
 
     #[test]
     fn test_number_of_vertices_minimal_simplex() {
+        init_tracing();
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -3942,6 +4005,7 @@ mod tests {
 
     #[test]
     fn test_number_of_cells_minimal_simplex() {
+        init_tracing();
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -3958,6 +4022,7 @@ mod tests {
 
     #[test]
     fn test_number_of_cells_after_insertion() {
+        init_tracing();
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -3976,6 +4041,7 @@ mod tests {
 
     #[test]
     fn test_dim_returns_correct_dimension() {
+        init_tracing();
         let vertices_2d = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -4013,6 +4079,7 @@ mod tests {
 
     #[test]
     fn test_insert_single_interior_point_2d() {
+        init_tracing();
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -4037,6 +4104,7 @@ mod tests {
 
     #[test]
     fn test_insert_multiple_sequential_points_2d() {
+        init_tracing();
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -4062,6 +4130,7 @@ mod tests {
 
     #[test]
     fn test_insert_multiple_sequential_points_3d() {
+        init_tracing();
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -4087,6 +4156,7 @@ mod tests {
 
     #[test]
     fn test_insert_updates_last_inserted_cell() {
+        init_tracing();
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -4106,6 +4176,7 @@ mod tests {
 
     #[test]
     fn test_new_with_exact_minimum_vertices() {
+        init_tracing();
         // 2D: exactly 3 vertices (minimum for 2D simplex)
         let vertices_2d = vec![
             vertex!([0.0, 0.0]),
@@ -4132,6 +4203,7 @@ mod tests {
 
     #[test]
     fn test_tds_accessor_provides_readonly_access() {
+        init_tracing();
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -4152,6 +4224,7 @@ mod tests {
 
     #[test]
     fn test_internal_tds_access() {
+        init_tracing();
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -4175,6 +4248,7 @@ mod tests {
 
     #[test]
     fn test_tds_accessor_reflects_insertions() {
+        init_tracing();
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -4196,6 +4270,7 @@ mod tests {
 
     #[test]
     fn test_tds_accessors_maintain_validation_invariants() {
+        init_tracing();
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0, 0.0]),
@@ -4219,6 +4294,7 @@ mod tests {
 
     #[test]
     fn test_bootstrap_with_custom_kernel() {
+        init_tracing();
         // Verify bootstrap works with RobustKernel
         let mut dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
             DelaunayTriangulation::with_empty_kernel(RobustKernel::new());
@@ -4243,6 +4319,7 @@ mod tests {
 
     #[test]
     fn test_with_kernel_aborts_on_duplicate_uuid_in_insertion_loop() {
+        init_tracing();
         let mut vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([2.0, 0.0]),
@@ -4273,6 +4350,7 @@ mod tests {
 
     #[test]
     fn test_validation_report_ok_for_valid_triangulation() {
+        init_tracing();
         let vertices = [
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -4287,6 +4365,7 @@ mod tests {
 
     #[test]
     fn test_validation_report_returns_mapping_failures_only() {
+        init_tracing();
         let vertices = [
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -4321,6 +4400,7 @@ mod tests {
 
     #[test]
     fn test_validation_report_includes_vertex_incidence_violation() {
+        init_tracing();
         let vertices = [
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -4350,6 +4430,7 @@ mod tests {
 
     #[test]
     fn test_serde_roundtrip_uses_custom_deserialize_impl() {
+        init_tracing();
         let vertices = [
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -4378,6 +4459,7 @@ mod tests {
 
     #[test]
     fn test_topology_traversal_methods_are_forwarded() {
+        init_tracing();
         // Single tetrahedron: 4 vertices, 1 cell, 6 unique edges.
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),

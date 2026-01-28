@@ -378,6 +378,10 @@ pub fn generate_grid_points<T: CoordinateScalar, const D: usize>(
 /// In higher dimensions, tight spacing constraints become exponentially more
 /// difficult to satisfy.
 ///
+/// **Complexity**: The current implementation uses O(n²) distance checks per candidate,
+/// which is efficient for typical test/benchmark sizes but may be slow for very large
+/// point sets (e.g., n > 10,000).
+///
 /// # Arguments
 ///
 /// * `n_points` - Target number of points to generate

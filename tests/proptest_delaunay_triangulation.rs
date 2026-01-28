@@ -346,8 +346,18 @@ fn insert_vertices_3d_no_retry_or_skip(
     dt: &mut DelaunayTriangulation<FastKernel<f64>, (), (), 3>,
     vertices: &[Vertex<f64, (), 3>],
 ) -> InsertionOrder3dRunStatus {
-    for v in vertices {
-        let Ok((outcome, stats)) = dt.insert_with_statistics(*v) else {
+    for (idx, v) in vertices.iter().enumerate() {
+        let result = dt.insert_with_statistics(*v);
+        let Ok((outcome, stats)) = result else {
+            if std::env::var_os("DELAUNAY_PROPTEST_INSERT_ERRORS").is_some()
+                && let Err(err) = result
+            {
+                let points: Vec<_> = vertices.iter().map(|vertex| *vertex.point()).collect();
+                eprintln!(
+                    "3D insertion-order: non-retryable insertion error at index {idx}: {err}"
+                );
+                eprintln!("3D insertion-order: insertion order points: {points:?}");
+            }
             return InsertionOrder3dRunStatus::NonRetryableError;
         };
 
@@ -360,6 +370,73 @@ fn insert_vertices_3d_no_retry_or_skip(
         }
     }
     InsertionOrder3dRunStatus::Clean
+}
+
+#[test]
+fn regression_insertion_order_3d_case_001() {
+    let points = vec![
+        Point::new([
+            -44.945_005_120_296_535,
+            99.756_651_886_055_48,
+            -42.335_053_700_056_505,
+        ]),
+        Point::new([
+            73.700_964_567_587_9,
+            -63.612_148_894_577_96,
+            74.105_780_529_266_97,
+        ]),
+        Point::new([
+            17.617_609_442_986_858,
+            82.105_819_037_825_37,
+            96.704_584_226_450_41,
+        ]),
+        Point::new([
+            -84.890_821_270_170_35,
+            -81.870_190_740_455_77,
+            -15.370_417_803_763_095,
+        ]),
+        Point::new([
+            91.801_310_819_317_69,
+            -59.048_589_230_347_44,
+            32.595_036_426_462_01,
+        ]),
+        Point::new([
+            71.577_209_178_042_41,
+            67.758_811_346_527_74,
+            -13.549_441_576_893_503,
+        ]),
+        Point::new([
+            13.014_109_789_682_385,
+            -44.307_776_868_547_734,
+            12.429_638_278_179_98,
+        ]),
+        Point::new([
+            56.289_801_257_128_175,
+            8.701_429_811_815_13,
+            -74.980_558_102_554_71,
+        ]),
+        Point::new([
+            -94.434_209_076_643_74,
+            -18.606_000_110_184_25,
+            4.127_801_687_310_058,
+        ]),
+    ];
+    let vertices = Vertex::from_points(&points);
+    let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+
+    for (idx, v) in vertices.iter().enumerate() {
+        let result = dt.insert_with_statistics(*v);
+        match result {
+            Ok((InsertionOutcome::Inserted { .. }, _stats)) => {}
+            Ok((InsertionOutcome::Skipped { error }, _stats)) => {
+                panic!("insertion skipped at index {idx}: {error}");
+            }
+            Err(err) => {
+                panic!("insertion error at index {idx}: {err}");
+            }
+        }
+    }
 }
 
 // =============================================================================
@@ -755,9 +832,9 @@ proptest! {
 
 // 2D–5D coverage (keep ranges small to bound runtime)
 test_empty_circumsphere!(2, 6, 10);
-test_empty_circumsphere!(3, 6, 10, #[ignore = "Slow (>60s) in test-integration"]);
-test_empty_circumsphere!(4, 6, 12, #[ignore = "Slow (>60s) in test-integration"]);
-test_empty_circumsphere!(5, 7, 12, #[ignore = "Slow (>60s) in test-integration"]);
+test_empty_circumsphere!(3, 6, 10);
+test_empty_circumsphere!(4, 6, 12);
+test_empty_circumsphere!(5, 7, 12);
 
 // =============================================================================
 // INSERTION-ORDER INVARIANCE (2D-5D)
@@ -854,9 +931,9 @@ macro_rules! gen_insertion_order_robustness_test {
                     // point sets, which is expected and valid behavior
 
                     // TODO: Once bistellar flips are implemented to ensure unique canonical triangulations,
-                    // add explicit is_delaunay() checks here:
-                    // prop_assert!(is_delaunay(dt_a.tds()).is_ok(), "{}D: Triangulation A must satisfy Delaunay property", $dim);
-                    // prop_assert!(is_delaunay(dt_b.tds()).is_ok(), "{}D: Triangulation B must satisfy Delaunay property", $dim);
+                    // add explicit Level-4 checks here:
+                    // prop_assert!(dt_a.is_valid().is_ok(), "{}D: Triangulation A must satisfy Delaunay property", $dim);
+                    // prop_assert!(dt_b.is_valid().is_ok(), "{}D: Triangulation B must satisfy Delaunay property", $dim);
                     // Bistellar flips will produce canonical triangulations, making edge-set comparison more meaningful.
                 }
             }
@@ -887,7 +964,6 @@ gen_insertion_order_robustness_test!(2, 6, 10);
 //   to improve the generator or to strengthen the underlying 3D robustness (rather than to
 //   further weaken the property).
 #[test]
-#[ignore = "Insertion order issues; see plan 72755302-2c93-43bb-879c-ef6ed21f5560"]
 #[expect(
     clippy::too_many_lines,
     reason = "Large property-based test with extensive rejection tracking and diagnostics"
@@ -1608,6 +1684,6 @@ macro_rules! gen_duplicate_cloud_test {
 }
 
 gen_duplicate_cloud_test!(2, 2);
-gen_duplicate_cloud_test!(3, 3, #[ignore = "Slow (>60s) in test-integration"]);
-gen_duplicate_cloud_test!(4, 4, #[ignore = "Slow (>60s) in test-integration"]);
-gen_duplicate_cloud_test!(5, 5, #[ignore = "Slow (>60s) in test-integration"]);
+gen_duplicate_cloud_test!(3, 3);
+gen_duplicate_cloud_test!(4, 4);
+gen_duplicate_cloud_test!(5, 5);
