@@ -4,13 +4,43 @@
 //! using the existing allocation counter infrastructure from the tests.
 
 use delaunay::prelude::query::*;
+use std::any::Any;
+use std::backtrace::Backtrace;
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Once;
 use std::time::Instant;
+use tracing::{error, warn};
 
 const SEED_CANDIDATES: &[u64] = &[1, 7, 11, 42, 99, 123, 666];
-const POINT_COUNT_CANDIDATES: &[usize] = &[25, 20, 16, 12];
+const SEED_CANDIDATES_4D: &[u64] = &[777];
+const SEED_CANDIDATES_5D: &[u64] = &[888];
+const POINT_COUNT_CANDIDATES_2D_3D: &[usize] = &[25, 20, 16, 12];
+const POINT_COUNT_CANDIDATES_4D: &[usize] = &[12];
+const POINT_COUNT_CANDIDATES_5D: &[usize] = &[10];
 
 /// Bounds for random triangulation (min, max) - consistent with benchmarks
 const BOUNDS: (f64, f64) = (-100.0, 100.0);
+
+fn init_tracing() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+        let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+    });
+}
+
+fn format_panic_payload(panic: &(dyn Any + Send)) -> String {
+    panic.downcast_ref::<&str>().map_or_else(
+        || {
+            panic
+                .downcast_ref::<String>()
+                .cloned()
+                .unwrap_or_else(|| "unknown panic payload".to_string())
+        },
+        |message| (*message).to_string(),
+    )
+}
 
 /// Macro to generate dimension-specific memory analysis functions
 macro_rules! generate_memory_analysis {
@@ -37,31 +67,58 @@ macro_rules! generate_memory_analysis {
                 let mut dt_res: Option<_> = None;
                 let mut tri_info = None;
                 for &candidate in seeds {
-                    let (candidate_res, candidate_info) = measure_with_result(|| {
-                        generate_random_triangulation::<f64, (), (), $dim>(
-                            n_points,
-                            BOUNDS,
-                            None,
-                            Some(candidate),
-                        )
-                    });
-                    match candidate_res {
-                        Ok(dt) => {
-                            dt_res = Some(dt);
-                            tri_info = Some(candidate_info);
-                            used_seed = Some(candidate);
-                            break;
-                        }
-                        Err(e) => {
-                            last_error = Some(format!("{e}"));
+                    let candidate_result = catch_unwind(AssertUnwindSafe(|| {
+                        measure_with_result(|| {
+                            generate_random_triangulation::<f64, (), (), $dim>(
+                                n_points,
+                                BOUNDS,
+                                None,
+                                Some(candidate),
+                            )
+                        })
+                    }));
+                    match candidate_result {
+                        Ok((candidate_res, candidate_info)) => match candidate_res {
+                            Ok(dt) => {
+                                dt_res = Some(dt);
+                                tri_info = Some(candidate_info);
+                                used_seed = Some(candidate);
+                                break;
+                            }
+                            Err(e) => {
+                                warn!(
+                                    dim = $dim,
+                                    points = n_points,
+                                    seed = candidate,
+                                    error = %e,
+                                    "Seed failed to build triangulation"
+                                );
+                                last_error = Some(format!("{e}"));
+                            }
+                        },
+                        Err(panic) => {
+                            let payload = format_panic_payload(panic.as_ref());
+                            let backtrace = Backtrace::force_capture();
+                            error!(
+                                dim = $dim,
+                                points = n_points,
+                                seed = candidate,
+                                payload = %payload,
+                                backtrace = %backtrace,
+                                "Panic while building triangulation"
+                            );
+                            std::panic::resume_unwind(panic);
                         }
                     }
                 }
 
                 let (Some(dt), Some(tri_info)) = (dt_res, tri_info) else {
-                    eprintln!(
-                        "✗ Failed to build triangulation after trying seeds {seeds:?} (points={n_points}): {}",
-                        last_error.unwrap_or_else(|| "unknown error".to_string())
+                    error!(
+                        dim = $dim,
+                        points = n_points,
+                        seeds = ?seeds,
+                        last_error = %last_error.unwrap_or_else(|| "unknown error".to_string()),
+                        "Failed to build triangulation after trying all seeds"
                     );
                     println!();
                     continue;
@@ -73,13 +130,35 @@ macro_rules! generate_memory_analysis {
 
             // Measure convex hull extraction
             let start = Instant::now();
-            let (hull_res, hull_info) = measure_with_result(|| {
-                ConvexHull::from_triangulation(dt.as_triangulation())
-            });
+            let hull_result = catch_unwind(AssertUnwindSafe(|| {
+                measure_with_result(|| ConvexHull::from_triangulation(dt.as_triangulation()))
+            }));
+            let (hull_res, hull_info) = match hull_result {
+                Ok(result) => result,
+                Err(panic) => {
+                    let payload = format_panic_payload(panic.as_ref());
+                    let backtrace = Backtrace::force_capture();
+                    error!(
+                        dim = $dim,
+                        points = n_points,
+                        seed = used_seed,
+                        payload = %payload,
+                        backtrace = %backtrace,
+                        "Panic while extracting convex hull"
+                    );
+                    std::panic::resume_unwind(panic);
+                }
+            };
             let hull = match hull_res {
                 Ok(h) => h,
                 Err(e) => {
-                    eprintln!("✗ Failed to construct convex hull from triangulation: {e}");
+                    error!(
+                        dim = $dim,
+                        points = n_points,
+                        seed = used_seed,
+                        error = %e,
+                        "Failed to construct convex hull from triangulation"
+                    );
                     return;
                 }
             };
@@ -158,6 +237,7 @@ generate_memory_analysis!(analyze_triangulation_memory_4d, 4);
 generate_memory_analysis!(analyze_triangulation_memory_5d, 5);
 
 fn main() {
+    init_tracing();
     println!("Memory Analysis for Delaunay Triangulations Across Dimensions");
     println!("=============================================================");
 
@@ -172,25 +252,25 @@ fn main() {
 
     println!();
 
-    let primary_points = POINT_COUNT_CANDIDATES.first().copied().unwrap_or(0);
+    let primary_points = POINT_COUNT_CANDIDATES_2D_3D.first().copied().unwrap_or(0);
     println!("=== Memory Analysis with {primary_points} Points ===");
     println!();
 
     // 2D Analysis with seed for reproducibility
     println!("--- 2D Triangulation ---");
-    analyze_triangulation_memory_2d(POINT_COUNT_CANDIDATES, SEED_CANDIDATES);
+    analyze_triangulation_memory_2d(POINT_COUNT_CANDIDATES_2D_3D, SEED_CANDIDATES);
 
     // 3D Analysis
     println!("--- 3D Triangulation ---");
-    analyze_triangulation_memory_3d(POINT_COUNT_CANDIDATES, SEED_CANDIDATES);
+    analyze_triangulation_memory_3d(POINT_COUNT_CANDIDATES_2D_3D, SEED_CANDIDATES);
 
     // 4D Analysis
     println!("--- 4D Triangulation ---");
-    analyze_triangulation_memory_4d(POINT_COUNT_CANDIDATES, SEED_CANDIDATES);
+    analyze_triangulation_memory_4d(POINT_COUNT_CANDIDATES_4D, SEED_CANDIDATES_4D);
 
     // 5D Analysis
     println!("--- 5D Triangulation ---");
-    analyze_triangulation_memory_5d(POINT_COUNT_CANDIDATES, SEED_CANDIDATES);
+    analyze_triangulation_memory_5d(POINT_COUNT_CANDIDATES_5D, SEED_CANDIDATES_5D);
 
     println!("=== Key Insights (empirical) ===");
     println!(

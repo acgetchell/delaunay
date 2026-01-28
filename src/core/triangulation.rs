@@ -715,9 +715,107 @@ where
         self.topology_guarantee
     }
 
-    /// Sets the topology guarantee used for Level 3 topology validation.
+    /// Returns the insertion-time global topology validation policy used by the triangulation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::triangulation::{Triangulation, ValidationPolicy};
+    /// use delaunay::geometry::kernel::FastKernel;
+    ///
+    /// let tri: Triangulation<FastKernel<f64>, (), (), 2> =
+    ///     Triangulation::new_empty(FastKernel::new());
+    ///
+    /// assert_eq!(tri.validation_policy(), ValidationPolicy::OnSuspicion);
+    /// ```
     #[inline]
-    pub const fn set_topology_guarantee(&mut self, guarantee: TopologyGuarantee) {
+    #[must_use]
+    pub const fn validation_policy(&self) -> ValidationPolicy {
+        self.validation_policy
+    }
+
+    /// Sets the insertion-time global topology validation policy used by the triangulation.
+    ///
+    /// If the requested policy is incompatible with the current topology guarantee (for example,
+    /// `ValidationPolicy::Never` with `TopologyGuarantee::PLManifold`), this runs
+    /// [`Triangulation::validate_at_completion`](Self::validate_at_completion) to provide
+    /// immediate feedback and emits a warning. Call `validate_at_completion()` after batch
+    /// construction when using an incompatible combination.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::triangulation::{Triangulation, ValidationPolicy};
+    /// use delaunay::geometry::kernel::FastKernel;
+    ///
+    /// let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+    ///     Triangulation::new_empty(FastKernel::new());
+    ///
+    /// tri.set_validation_policy(ValidationPolicy::Always);
+    /// assert_eq!(tri.validation_policy(), ValidationPolicy::Always);
+    /// ```
+    #[inline]
+    pub fn set_validation_policy(&mut self, policy: ValidationPolicy) {
+        if !self.topology_guarantee.is_compatible_with_policy(policy) {
+            let completion_result = self.validate_at_completion();
+
+            if let Err(err) = completion_result {
+                debug_assert!(
+                    false,
+                    "Validation policy {policy:?} is incompatible with topology guarantee {guarantee:?}; validate_at_completion failed: {err}",
+                    guarantee = self.topology_guarantee
+                );
+                tracing::warn!(
+                    "Validation policy {policy:?} is incompatible with topology guarantee {guarantee:?}; validate_at_completion failed: {err}. Validation policy not updated.",
+                    guarantee = self.topology_guarantee
+                );
+                return;
+            }
+
+            tracing::warn!(
+                "Validation policy {policy:?} is incompatible with topology guarantee {guarantee:?}; call validate_at_completion() after construction to certify PL-manifoldness.",
+                guarantee = self.topology_guarantee
+            );
+        }
+
+        self.validation_policy = policy;
+    }
+
+    /// Sets the topology guarantee used for Level 3 topology validation.
+    ///
+    /// If the requested guarantee is incompatible with the current validation policy (for
+    /// example, `ValidationPolicy::Never` with `TopologyGuarantee::PLManifold`), this runs
+    /// [`Triangulation::validate_at_completion`](Self::validate_at_completion) to provide
+    /// immediate feedback and emits a warning. Call `validate_at_completion()` after batch
+    /// construction when using an incompatible combination.
+    #[inline]
+    pub fn set_topology_guarantee(&mut self, guarantee: TopologyGuarantee) {
+        if !guarantee.is_compatible_with_policy(self.validation_policy) {
+            let previous = self.topology_guarantee;
+            self.topology_guarantee = guarantee;
+            let completion_result = self.validate_at_completion();
+
+            if let Err(err) = completion_result {
+                self.topology_guarantee = previous;
+                debug_assert!(
+                    false,
+                    "Topology guarantee {guarantee:?} is incompatible with validation policy {policy:?}; validate_at_completion failed: {err}",
+                    policy = self.validation_policy
+                );
+                tracing::warn!(
+                    "Topology guarantee {guarantee:?} is incompatible with validation policy {policy:?}; validate_at_completion failed: {err}. Topology guarantee not updated.",
+                    policy = self.validation_policy
+                );
+                return;
+            }
+
+            self.topology_guarantee = previous;
+            tracing::warn!(
+                "Topology guarantee {guarantee:?} is incompatible with validation policy {policy:?}; call validate_at_completion() after construction to certify PL-manifoldness.",
+                policy = self.validation_policy
+            );
+        }
+
         self.topology_guarantee = guarantee;
     }
 

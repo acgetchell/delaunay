@@ -1700,6 +1700,12 @@ where
     /// This affects subsequent incremental insertions. (Construction-time behavior is determined
     /// by the policy active during `new()` / `with_kernel()`.)
     ///
+    /// If the requested policy is incompatible with the current topology guarantee (for example,
+    /// `ValidationPolicy::Never` with `TopologyGuarantee::PLManifold`), this runs
+    /// [`Triangulation::validate_at_completion`](crate::core::triangulation::Triangulation::validate_at_completion)
+    /// to provide immediate feedback and emits a warning. Call `validate_at_completion()` after
+    /// batch construction when using an incompatible combination.
+    ///
     /// # Examples
     ///
     /// ```rust
@@ -1721,8 +1727,8 @@ where
     /// );
     /// ```
     #[inline]
-    pub const fn set_validation_policy(&mut self, policy: ValidationPolicy) {
-        self.tri.validation_policy = policy;
+    pub fn set_validation_policy(&mut self, policy: ValidationPolicy) {
+        self.tri.set_validation_policy(policy);
     }
     /// Returns the automatic Delaunay repair policy.
     #[inline]
@@ -1907,7 +1913,7 @@ where
 
     /// Sets the topology guarantee used for Level 3 topology validation.
     #[inline]
-    pub const fn set_topology_guarantee(&mut self, guarantee: TopologyGuarantee) {
+    pub fn set_topology_guarantee(&mut self, guarantee: TopologyGuarantee) {
         self.tri.set_topology_guarantee(guarantee);
     }
 
