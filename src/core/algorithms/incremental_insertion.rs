@@ -36,92 +36,7 @@ use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use std::hash::{Hash, Hasher};
 
-/// Result of an insertion attempt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum InsertionResult {
-    /// The vertex was successfully inserted.
-    #[default]
-    Inserted,
-    /// The vertex was skipped due to duplicate coordinates.
-    SkippedDuplicate,
-    /// The vertex was skipped due to geometric degeneracy after retries.
-    SkippedDegeneracy,
-}
-
-/// Statistics about a vertex insertion operation.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct InsertionStatistics {
-    /// Number of insertion attempts (1 = success on first try, >1 = needed perturbation)
-    pub attempts: usize,
-    /// Number of cells removed during repair
-    pub cells_removed_during_repair: usize,
-    /// Result of the insertion attempt
-    pub result: InsertionResult,
-}
-
-impl InsertionStatistics {
-    /// Returns true if perturbation was applied (attempts > 1).
-    #[must_use]
-    pub const fn used_perturbation(&self) -> bool {
-        self.attempts > 1
-    }
-
-    /// Returns true if the insertion succeeded.
-    #[must_use]
-    pub const fn success(&self) -> bool {
-        matches!(self.result, InsertionResult::Inserted)
-    }
-
-    /// Returns true if the vertex was skipped (any reason).
-    #[must_use]
-    pub const fn skipped(&self) -> bool {
-        matches!(
-            self.result,
-            InsertionResult::SkippedDuplicate | InsertionResult::SkippedDegeneracy
-        )
-    }
-
-    /// Returns true if the vertex was skipped due to duplicate coordinates.
-    #[must_use]
-    pub const fn skipped_duplicate(&self) -> bool {
-        matches!(self.result, InsertionResult::SkippedDuplicate)
-    }
-}
-
-/// Outcome of a single-vertex insertion attempt.
-///
-/// This distinguishes between:
-/// - A successful insertion (`Inserted`)
-/// - An intentionally skipped insertion (`Skipped`) where the triangulation is left unchanged
-///   for this vertex (transactional rollback). This can happen for example when:
-///   - The input vertex is a duplicate/near-duplicate (skipped immediately)
-///   - A retryable geometric degeneracy exhausts all perturbation attempts
-///
-/// Other non-recoverable structural failures are returned as `Err(InsertionError)` instead
-/// (e.g. duplicate UUID).
-#[derive(Debug, Clone)]
-pub enum InsertionOutcome {
-    /// The vertex was inserted successfully.
-    Inserted {
-        /// Key of the inserted vertex.
-        vertex_key: VertexKey,
-        /// Optional cell key that can be used as a hint for subsequent insertions.
-        hint: Option<CellKey>,
-    },
-    /// The vertex was intentionally not inserted.
-    ///
-    /// This covers both immediate skips (e.g. duplicate/near-duplicate coordinates) and skips
-    /// after exhausting retry attempts for geometric degeneracies.
-    ///
-    /// The triangulation is left unchanged for this vertex (transactional rollback).
-    Skipped {
-        /// The reason the vertex was skipped.
-        ///
-        /// This may be non-retryable (e.g. [`InsertionError::DuplicateCoordinates`]) or, for
-        /// retry-based skips, the last error encountered.
-        error: InsertionError,
-    },
-}
+pub use crate::core::operations::{InsertionOutcome, InsertionResult, InsertionStatistics};
 
 /// Error during incremental insertion.
 #[derive(Debug, Clone, thiserror::Error)]
@@ -174,6 +89,16 @@ pub enum InsertionError {
         message: String,
     },
 
+    /// Global Delaunay validation failed after insertion.
+    ///
+    /// This indicates the triangulation is structurally valid but violates the
+    /// empty-circumsphere property (Level 4).
+    #[error("Delaunay validation failed: {message}")]
+    DelaunayValidationFailed {
+        /// Error message
+        message: String,
+    },
+
     /// Attempted to insert a vertex with coordinates that already exist.
     #[error(
         "Duplicate coordinates: vertex with coordinates {coordinates} already exists in the triangulation"
@@ -217,9 +142,9 @@ impl InsertionError {
     ///
     /// Retryable errors are geometric degeneracies that may be resolved by
     /// slightly perturbing the vertex coordinates:
-    /// - Locate cycles (numerical degeneracy during point location)
     /// - Non-manifold topology (facets shared by >2 cells, ridge fans)
     /// - Topology validation failures during repair
+    /// - Conflict-region boundary degeneracies (disconnected/open boundaries)
     ///
     /// Non-retryable errors are structural failures that won't be fixed by perturbation:
     /// - Duplicate UUIDs
@@ -228,10 +153,6 @@ impl InsertionError {
     #[must_use]
     pub fn is_retryable(&self) -> bool {
         match self {
-            // Locate errors: cycles indicate numerical degeneracy
-            Self::Location(le) => {
-                matches!(le, LocateError::CycleDetected { .. })
-            }
             // Non-manifold topology and topology validation errors are retryable via perturbation
             Self::NonManifoldTopology { .. }
             | Self::TopologyValidation(_)
@@ -249,10 +170,22 @@ impl InsertionError {
                         | ConflictError::OpenBoundary { .. }
                 )
             }
-            // All other errors are not retryable
-            Self::Construction(_)
+            // All other errors are not retryable, except for the specific hull-extension
+            // degeneracy handled below.
+            //
+            // Location errors are treated as non-retryable: `locate()` falls back to a scan when
+            // facet-walking fails to make progress (cycle / step limit). Remaining location errors
+            // are structural (invalid cell references) or predicate failures.
+            Self::HullExtension { message } => {
+                // Hull extension can fail when the query point is nearly coplanar with the hull
+                // surface (no *strictly* visible facets). This is a geometric degeneracy that may
+                // be resolved by a perturbation retry.
+                message.contains("No visible boundary facets")
+            }
+            Self::Location(_)
+            | Self::Construction(_)
             | Self::CavityFilling { .. }
-            | Self::HullExtension { .. }
+            | Self::DelaunayValidationFailed { .. }
             | Self::DuplicateCoordinates { .. }
             | Self::DuplicateUuid { .. } => false,
         }
@@ -1399,10 +1332,6 @@ mod tests {
     fn test_insertion_error_retryable() {
         // Retryable errors
         assert!(
-            InsertionError::Location(LocateError::CycleDetected { steps: 1000 }).is_retryable()
-        );
-
-        assert!(
             InsertionError::NonManifoldTopology {
                 facet_hash: 0x12345,
                 cell_count: 3
@@ -1482,8 +1411,15 @@ mod tests {
         );
 
         assert!(
+            InsertionError::HullExtension {
+                message: "No visible boundary facets found for exterior vertex".to_string()
+            }
+            .is_retryable()
+        );
+
+        assert!(
             !InsertionError::HullExtension {
-                message: "test".to_string()
+                message: "Failed to get boundary facets: test".to_string()
             }
             .is_retryable()
         );

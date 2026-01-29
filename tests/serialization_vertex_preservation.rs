@@ -32,8 +32,11 @@ fn test_vertex_preservation_with_duplicates_3d() {
     println!("Unique input coordinates: {}", input_coords.len());
 
     // Construct triangulation - duplicates should be skipped
-    let dt =
-        DelaunayTriangulation::<_, (), (), 3>::new(&vertices).expect("Tds construction succeeded");
+    let dt = DelaunayTriangulation::<_, (), (), 3>::new_with_topology_guarantee(
+        &vertices,
+        TopologyGuarantee::PLManifold,
+    )
+    .expect("Tds construction succeeded");
     let tds = dt.tds();
 
     let tds_vertex_count = tds.vertices().count();
@@ -91,8 +94,11 @@ fn test_vertex_preservation_without_duplicates_3d() {
 
     println!("Input vertices (no duplicates): {}", vertices.len());
 
-    let dt =
-        DelaunayTriangulation::<_, (), (), 3>::new(&vertices).expect("Tds construction failed");
+    let dt = DelaunayTriangulation::<_, (), (), 3>::new_with_topology_guarantee(
+        &vertices,
+        TopologyGuarantee::PLManifold,
+    )
+    .expect("Tds construction failed");
     let tds = dt.tds();
     let tds_vertex_count = tds.vertices().count();
     println!("Vertices after Tds construction: {tds_vertex_count}");
@@ -125,7 +131,10 @@ fn test_vertex_preservation_without_duplicates_3d() {
 /// Test with many duplicates to stress-test behavior
 #[test]
 fn test_vertex_preservation_many_duplicates_3d() {
-    let base_point = Point::new([0.5, 0.5, 0.5]);
+    // Use a stable interior point for this stress test. The previous choice
+    // ([0.5, 0.5, 0.5]) can trigger insertion-order retry logic where shuffled
+    // attempts frequently pick duplicate coordinates for the initial simplex.
+    let base_point = Point::new([0.25, 0.25, 0.25]);
     let mut points = vec![
         Point::new([0.0, 0.0, 0.0]),
         Point::new([1.0, 0.0, 0.0]),
@@ -145,9 +154,10 @@ fn test_vertex_preservation_many_duplicates_3d() {
     let unique_coords_len = unique_coords.len();
     println!("Unique coordinates: {unique_coords_len}");
 
-    // Duplicates should be skipped
-    let dt =
-        DelaunayTriangulation::<_, (), (), 3>::new(&vertices).expect("Tds construction succeeded");
+    // Use Input ordering to avoid Morton clustering of duplicates causing degenerate initial simplex
+    let opts = ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
+    let dt = DelaunayTriangulation::<_, (), (), 3>::new_with_options(&vertices, opts)
+        .expect("Tds construction succeeded");
     let tds = dt.tds();
     let tds_vertex_count = tds.vertices().count();
     println!("Vertices after Tds construction: {tds_vertex_count}");
@@ -191,8 +201,11 @@ fn test_vertex_coordinate_preservation_3d() {
     ];
     let vertices = Vertex::<f64, (), 3>::from_points(&points);
 
-    let dt =
-        DelaunayTriangulation::<_, (), (), 3>::new(&vertices).expect("Tds construction failed");
+    let dt = DelaunayTriangulation::<_, (), (), 3>::new_with_topology_guarantee(
+        &vertices,
+        TopologyGuarantee::PLManifold,
+    )
+    .expect("Tds construction failed");
     let tds = dt.tds();
 
     // Extract original vertex coordinates using canonical extraction

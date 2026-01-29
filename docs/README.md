@@ -31,6 +31,7 @@ Comprehensive guide to numerical stability in geometric computations
 - Predicates and error analysis
 - Robustness strategies
 - Implementation recommendations
+- Flip-based Delaunay repair strategy (two-pass + optional heuristic rebuild fallback via `repair_delaunay_with_flips_advanced`)
 
 #### **[code_organization.md](./code_organization.md)**
 

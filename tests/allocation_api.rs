@@ -85,7 +85,7 @@ pub mod test_helpers {
     pub fn create_test_tds()
     -> DelaunayTriangulation<delaunay::geometry::kernel::FastKernel<f64>, (), (), 4> {
         // Create an empty triangulation with no vertices
-        DelaunayTriangulation::empty()
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold)
     }
 
     /// Create a triangulation with some test vertices
@@ -102,7 +102,8 @@ pub mod test_helpers {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        DelaunayTriangulation::new(&vertices).expect("Failed to create triangulation with vertices")
+        DelaunayTriangulation::new_with_topology_guarantee(&vertices, TopologyGuarantee::PLManifold)
+            .expect("Failed to create triangulation with vertices")
     }
 
     /// Print memory allocation summary

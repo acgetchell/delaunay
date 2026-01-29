@@ -264,3 +264,10 @@ These references inform the library's performance optimization strategies and me
 - Arge, L., Goodrich, M.T., Nelson, M., and Sitchinava, N. "Fundamental Parallel Algorithms for Private-Cache Chip Multiprocessors."
   *Proceedings of the Twentieth Annual Symposium on Parallelism in Algorithms and Architectures* (2008): 197-206.
   DOI: [10.1145/1378533.1378573](https://doi.org/10.1145/1378533.1378573)
+
+### Bistellar (Pachner) Moves
+
+- Pachner, U. "PL Homeomorphic Manifolds Are Equivalent by Elementary Shellings."
+  *European Journal of Combinatorics* 12, no. 2 (1991): 129-145. DOI: [10.1016/S0195-6698(13)80028-2](https://www.sciencedirect.com/science/article/pii/S0195669813800807)
+- Edelsbrunner, H., and Shah, N.R. "Incremental Topological Flipping Works for Regular Triangulations."
+  *Algorithmica* 15, no. 3 (1996): 223-241. DOI: [10.1007/BF02523408](https://link.springer.com/article/10.1007/BF01975867)

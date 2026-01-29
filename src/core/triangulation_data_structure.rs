@@ -2231,7 +2231,14 @@ where
     ///
     /// assert!(dt.tds().validate().is_ok());
     /// ```
-    pub fn remove_vertex(&mut self, vertex: &Vertex<T, U, D>) -> Result<usize, TdsMutationError> {
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "Keep Result for future mutation validation without changing the API"
+    )]
+    pub(crate) fn remove_vertex(
+        &mut self,
+        vertex: &Vertex<T, U, D>,
+    ) -> Result<usize, TdsMutationError> {
         // Find the vertex key
         let Some(vertex_key) = self.vertex_key_from_uuid(&vertex.uuid()) else {
             return Ok(0); // Vertex not found, nothing to remove
@@ -4499,14 +4506,26 @@ mod tests {
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
-        // Get a vertex to remove and its key
-        let vertex_to_remove = *dt.vertices().nth(4).unwrap().1; // Get the interior vertex
-        let removed_vertex_key = dt
-            .as_triangulation()
-            .tds
-            .vertex_key_from_uuid(&vertex_to_remove.uuid())
-            .unwrap();
-        let removed_vertex_uuid = vertex_to_remove.uuid();
+        // Find the interior vertex by coordinates (order-independent)
+        let interior_coords = [0.2, 0.2, 0.2];
+        let (removed_vertex_key, removed_vertex_uuid) = dt
+            .vertices()
+            .find(|(_, v)| {
+                v.point()
+                    .coords()
+                    .as_slice()
+                    .iter()
+                    .zip(&interior_coords)
+                    .all(|(a, b)| (a - b).abs() < 1e-10)
+            })
+            .map(|(k, v)| (k, v.uuid()))
+            .expect("Interior vertex should exist");
+
+        let vertex_to_remove = *dt
+            .vertices()
+            .find(|(k, _)| *k == removed_vertex_key)
+            .unwrap()
+            .1;
 
         // Remove the vertex
         let cells_removed = dt.remove_vertex(&vertex_to_remove).unwrap();

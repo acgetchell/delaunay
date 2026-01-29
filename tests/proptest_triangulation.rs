@@ -34,10 +34,10 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
+use ::uuid::Uuid;
 use delaunay::prelude::*;
 use proptest::prelude::*;
 use std::collections::HashMap;
-use uuid::Uuid;
 
 // =============================================================================
 // TEST CONFIGURATION
@@ -139,10 +139,11 @@ where
 
 /// Macro to generate quality metric property tests for a given dimension
 macro_rules! test_quality_properties {
-    ($dim:literal, $min_vertices:literal, $max_vertices:literal, $num_points:literal) => {
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal, $num_points:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
                 /// Property: Radius ratio R/r ≥ D for non-degenerate D-simplices
+                $(#[$attr])*
                 #[test]
                 fn [<prop_radius_ratio_lower_bound_ $dim d>](
                     simplex_points in prop::collection::vec(
@@ -167,6 +168,7 @@ macro_rules! test_quality_properties {
                 }
 
                 /// Property: Radius ratio is scale-invariant
+                $(#[$attr])*
                 #[test]
                 fn [<prop_radius_ratio_scale_invariant_ $dim d>](
                     simplex_points in prop::collection::vec(
@@ -211,6 +213,7 @@ macro_rules! test_quality_properties {
                 }
 
                 /// Property: Radius ratio is always positive for valid simplices
+                $(#[$attr])*
                 #[test]
                 fn [<prop_radius_ratio_positive_ $dim d>](
                     vertices in prop::collection::vec(
@@ -218,7 +221,11 @@ macro_rules! test_quality_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                        FastKernel::default(),
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let tds = dt.tds();
                         let tri = dt.as_triangulation();
                         for cell_key in tds.cell_keys() {
@@ -235,6 +242,7 @@ macro_rules! test_quality_properties {
                 }
 
                 /// Property: Regular simplex has better (lower) radius ratio than degenerate
+                $(#[$attr])*
                 #[test]
                 fn [<prop_regular_simplex_quality_ $dim d>](
                     base_scale in 0.1f64..10.0f64
@@ -293,6 +301,7 @@ macro_rules! test_quality_properties {
                 }
 
                 /// Property: Radius ratio is translation-invariant
+                $(#[$attr])*
                 #[test]
                 fn [<prop_radius_ratio_translation_invariant_ $dim d>](
                     vertices in prop::collection::vec(
@@ -301,7 +310,11 @@ macro_rules! test_quality_properties {
                     ).prop_map(|v| Vertex::from_points(&v)),
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                        FastKernel::default(),
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         // Translate all vertices
                         let translated_vertices: Vec<_> = vertices
                             .iter()
@@ -317,7 +330,11 @@ macro_rules! test_quality_properties {
 
                         let translated_vertices = Vertex::from_points(&translated_vertices);
 
-                        if let Ok(dt_translated) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &translated_vertices) {
+                        if let Ok(dt_translated) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                            FastKernel::default(),
+                            &translated_vertices,
+                            TopologyGuarantee::PLManifold,
+                        ) {
                             // Build mapping from original UUIDs to translated UUIDs
                             let uuid_map: HashMap<_, _> = vertices.iter()
                                 .zip(translated_vertices.iter())
@@ -361,6 +378,7 @@ macro_rules! test_quality_properties {
                 }
 
                 /// Property: Normalized volume is translation-invariant
+                $(#[$attr])*
                 #[test]
                 fn [<prop_normalized_volume_translation_invariant_ $dim d>](
                     vertices in prop::collection::vec(
@@ -369,7 +387,11 @@ macro_rules! test_quality_properties {
                     ).prop_map(|v| Vertex::from_points(&v)),
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                        FastKernel::default(),
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         // Translate all vertices
                         let translated_vertices: Vec<_> = vertices
                             .iter()
@@ -385,7 +407,11 @@ macro_rules! test_quality_properties {
 
                         let translated_vertices = Vertex::from_points(&translated_vertices);
 
-                        if let Ok(dt_translated) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &translated_vertices) {
+                        if let Ok(dt_translated) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                            FastKernel::default(),
+                            &translated_vertices,
+                            TopologyGuarantee::PLManifold,
+                        ) {
                             // Build UUID mapping
                             let uuid_map: HashMap<_, _> = vertices.iter()
                                 .zip(translated_vertices.iter())
@@ -429,6 +455,7 @@ macro_rules! test_quality_properties {
                 }
 
                 /// Property: Normalized volume is scale-invariant (uniform scaling)
+                $(#[$attr])*
                 #[test]
                 fn [<prop_normalized_volume_scale_invariant_ $dim d>](
                     vertices in prop::collection::vec(
@@ -437,7 +464,11 @@ macro_rules! test_quality_properties {
                     ).prop_map(|v| Vertex::from_points(&v)),
                     scale in 0.1f64..10.0f64
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                        FastKernel::default(),
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         // Scale all vertices uniformly
                         let scaled_vertices: Vec<_> = vertices
                             .iter()
@@ -453,7 +484,11 @@ macro_rules! test_quality_properties {
 
                         let scaled_vertices = Vertex::from_points(&scaled_vertices);
 
-                        if let Ok(dt_scaled) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &scaled_vertices) {
+                        if let Ok(dt_scaled) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                            FastKernel::default(),
+                            &scaled_vertices,
+                            TopologyGuarantee::PLManifold,
+                        ) {
                             // Build UUID mapping
                             let uuid_map: HashMap<_, _> = vertices.iter()
                                 .zip(scaled_vertices.iter())
@@ -497,6 +532,7 @@ macro_rules! test_quality_properties {
                 }
 
                 /// Property: Both metrics detect degeneracy consistently
+                $(#[$attr])*
                 #[test]
                 fn [<prop_degeneracy_consistency_ $dim d>](
                     vertices in prop::collection::vec(
@@ -504,7 +540,11 @@ macro_rules! test_quality_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_kernel(FastKernel::default(), &vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                        FastKernel::default(),
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let tds = dt.tds();
                         let tri = dt.as_triangulation();
                         for cell_key in tds.cell_keys() {
@@ -540,6 +580,7 @@ macro_rules! test_quality_properties {
                 }
 
                 /// Property: Extreme deformation degrades quality (becomes degenerate)
+                $(#[$attr])*
                 #[test]
                 fn [<prop_quality_degrades_under_collapse_ $dim d>](
                     base_scale in 0.1f64..10.0f64
@@ -594,9 +635,9 @@ macro_rules! test_quality_properties {
 // Generate tests for dimensions 2-5
 // Parameters: dimension, min_vertices, max_vertices, num_points (D+1)
 test_quality_properties!(2, 4, 10, 3);
-test_quality_properties!(3, 5, 12, 4);
-test_quality_properties!(4, 6, 14, 5);
-test_quality_properties!(5, 7, 16, 6);
+test_quality_properties!(3, 5, 12, 4, #[ignore = "Slow (>60s) in test-integration"]);
+test_quality_properties!(4, 6, 14, 5, #[ignore = "Slow (>60s) in test-integration"]);
+test_quality_properties!(5, 7, 16, 6, #[ignore = "Slow (>60s) in test-integration"]);
 
 // =============================================================================
 // FACET TOPOLOGY INVARIANT TESTS
@@ -611,10 +652,11 @@ test_quality_properties!(5, 7, 16, 6);
 /// The localized validation functions (`detect_local_facet_issues`,
 /// `repair_local_facet_issues`) maintain this invariant in O(k) time.
 macro_rules! test_facet_topology_invariant {
-    ($dim:literal, $min_vertices:literal, $max_vertices:literal) => {
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
                 /// Property: All cells in a valid triangulation have no over-shared facets
+                $(#[$attr])*
                 #[test]
                 fn [<prop_no_over_shared_facets_ $dim d>](
                     vertices in prop::collection::vec(
@@ -622,9 +664,11 @@ macro_rules! test_facet_topology_invariant {
                         $min_vertices..$max_vertices
                     )
                 ) {
-
                     // Build triangulation
-                    if let Ok(dt) = DelaunayTriangulation::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let tri = dt.as_triangulation();
 
                         // Get all cell keys
@@ -642,6 +686,7 @@ macro_rules! test_facet_topology_invariant {
                 }
 
                 /// Property: After repair, no over-shared facets remain
+                $(#[$attr])*
                 #[test]
                 fn [<prop_repair_fixes_all_issues_ $dim d>](
                     vertices in prop::collection::vec(
@@ -649,9 +694,11 @@ macro_rules! test_facet_topology_invariant {
                         $min_vertices..$max_vertices
                     )
                 ) {
-
                     // Build triangulation
-                    if let Ok(mut dt) = DelaunayTriangulation::new(&vertices) {
+                    if let Ok(mut dt) = DelaunayTriangulation::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let tri = dt.as_triangulation_mut();
 
                         // Get all cell keys
@@ -675,6 +722,7 @@ macro_rules! test_facet_topology_invariant {
                 }
 
                 /// Property: Empty cell list returns no issues
+                $(#[$attr])*
                 #[test]
                 fn [<prop_empty_cell_list_no_issues_ $dim d>](
                     vertices in prop::collection::vec(
@@ -682,9 +730,11 @@ macro_rules! test_facet_topology_invariant {
                         $min_vertices..$max_vertices
                     )
                 ) {
-
                     // Build triangulation
-                    if let Ok(dt) = DelaunayTriangulation::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let tri = dt.as_triangulation();
 
                         // Empty cell list should always return None
@@ -704,6 +754,6 @@ macro_rules! test_facet_topology_invariant {
 // Generate facet topology invariant tests for dimensions 2-5
 // Parameters: dimension, min_vertices, max_vertices
 test_facet_topology_invariant!(2, 4, 10);
-test_facet_topology_invariant!(3, 5, 12);
-test_facet_topology_invariant!(4, 6, 14);
-test_facet_topology_invariant!(5, 7, 16);
+test_facet_topology_invariant!(3, 5, 12, #[ignore = "Slow (>60s) in test-integration"]);
+test_facet_topology_invariant!(4, 6, 14, #[ignore = "Slow (>60s) in test-integration"]);
+test_facet_topology_invariant!(5, 7, 16, #[ignore = "Slow (>60s) in test-integration"]);

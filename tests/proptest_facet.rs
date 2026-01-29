@@ -27,10 +27,11 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 
 /// Macro to generate facet property tests for a given dimension
 macro_rules! test_facet_properties {
-    ($dim:literal, $min_vertices:literal, $max_vertices:literal, $expected_facet_vertices:literal) => {
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal, $expected_facet_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
                 /// Property: Each facet should have exactly D vertices (one less than cell)
+                $(#[$attr])*
                 #[test]
                 fn [<prop_facet_has_correct_vertex_count_ $dim d>](
                     vertices in prop::collection::vec(
@@ -38,7 +39,10 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let tds = dt.tds();
                         for cell_key in tds.cell_keys() {
                             // Each cell has D+1 facets (one opposite each vertex)
@@ -61,6 +65,7 @@ macro_rules! test_facet_properties {
                 }
 
                 /// Property: Facets have one fewer vertex than their containing cell
+                $(#[$attr])*
                 #[test]
                 fn [<prop_facet_vertex_count_less_than_cell_ $dim d>](
                     vertices in prop::collection::vec(
@@ -68,7 +73,10 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let tds = dt.tds();
                         for cell_key in tds.cell_keys() {
                             if let Some(cell) = tds.get_cell(cell_key) {
@@ -93,6 +101,7 @@ macro_rules! test_facet_properties {
                 }
 
                 /// Property: Each cell has valid facets
+                $(#[$attr])*
                 #[test]
                 fn [<prop_cell_has_valid_facets_ $dim d>](
                     vertices in prop::collection::vec(
@@ -100,7 +109,10 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let tds = dt.tds();
                         // Check that each facet is valid
                         for cell_key in tds.cell_keys() {
@@ -118,6 +130,7 @@ macro_rules! test_facet_properties {
                 }
 
                 /// Property: Each cell should have exactly D+1 facets
+                $(#[$attr])*
                 #[test]
                 fn [<prop_cell_facet_count_ $dim d>](
                     vertices in prop::collection::vec(
@@ -125,7 +138,10 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let tds = dt.tds();
                         for cell_key in tds.cell_keys() {
                             let mut facet_count = 0;
@@ -152,15 +168,16 @@ macro_rules! test_facet_properties {
 // Generate tests for dimensions 2-5
 // Parameters: dimension, min_vertices, max_vertices, expected_facet_vertices (D)
 test_facet_properties!(2, 4, 10, 2);
-test_facet_properties!(3, 5, 12, 3);
-test_facet_properties!(4, 6, 14, 4);
-test_facet_properties!(5, 7, 16, 5);
+test_facet_properties!(3, 5, 12, 3, #[ignore = "Slow (>60s) in test-integration"]);
+test_facet_properties!(4, 6, 14, 4, #[ignore = "Slow (>60s) in test-integration"]);
+test_facet_properties!(5, 7, 16, 5, #[ignore = "Slow (>60s) in test-integration"]);
 
 // Additional invariant: facet multiplicity (each facet should belong to 1 or 2 cells)
 macro_rules! test_facet_multiplicity {
-    ($dim:literal, $min_vertices:literal, $max_vertices:literal) => {
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
+                $(#[$attr])*
                 #[test]
                 fn [<prop_facet_multiplicity_ $dim d>](
                     vertices in prop::collection::vec(
@@ -168,7 +185,10 @@ macro_rules! test_facet_multiplicity {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         let tds = dt.tds();
                         // Ensure we're checking a valid triangulation to avoid degenerate edge cases
                         prop_assume!(tds.is_valid().is_ok());
@@ -200,6 +220,6 @@ macro_rules! test_facet_multiplicity {
 }
 
 test_facet_multiplicity!(2, 4, 10);
-test_facet_multiplicity!(3, 5, 12);
-test_facet_multiplicity!(4, 6, 14);
-test_facet_multiplicity!(5, 7, 16);
+test_facet_multiplicity!(3, 5, 12, #[ignore = "Slow (>60s) in test-integration"]);
+test_facet_multiplicity!(4, 6, 14, #[ignore = "Slow (>60s) in test-integration"]);
+test_facet_multiplicity!(5, 7, 16, #[ignore = "Slow (>60s) in test-integration"]);

@@ -63,7 +63,7 @@ As of version 0.4.3, the delaunay library includes comprehensive robustness impr
 4. **Enhanced Error Handling** (`src/core/algorithms/incremental_insertion.rs`, `src/core/triangulation.rs`)
    - Structured `InsertionError` enum with geometric degeneracy classification
    - `NonManifoldTopology` variant for facet sharing violations (retryable via perturbation)
-   - Automatic retry logic with progressive coordinate perturbation (1e-4 to 5e-2)
+   - Automatic retry logic with a single local-scale perturbation attempt (one retry, two total attempts)
    - Direct error propagation avoiding unnecessary unwrapping
    - Transactional insertion with automatic rollback on failure
    - Detailed error diagnostics with facet hash and cell count information
@@ -202,24 +202,67 @@ match outcome {
 }
 ```
 
-### Progressive Perturbation Schedule
+### Single Local-Scale Perturbation
 
-The retry mechanism uses a progressive perturbation schedule:
+The retry mechanism uses **at most one** perturbation attempt (configured by
+`max_perturbation_attempts = 1` in the public insertion APIs):
 
 1. **Attempt 0**: Original coordinates (no perturbation)
-2. **Attempt 1**: ε = 1e-4 (0.01% perturbation)
-3. **Attempt 2**: ε = 1e-3 (0.1% perturbation)
-4. **Attempt 3**: ε = 1e-2 (1% perturbation)
-5. **Attempt 4**: ε = 2e-2 (2% perturbation)
-6. **Attempt 5**: ε = 5e-2 (5% perturbation)
+2. **Attempt 1**: Deterministic, local-scale offset per coordinate
+   (ε × local scale, with ε = 1e-8 for f64 and 1e-4 for f32)
 
 Each attempt:
 
 - Clones the TDS for rollback (transactional semantics)
-- Applies coordinate perturbation
+- Applies the local-scale perturbation (on the retry attempt only)
 - Attempts insertion
-- On failure: restores TDS from snapshot and increases perturbation
+- On failure: restores TDS from snapshot and (if retryable) returns a skip after the single retry attempt
 - On success: returns result with statistics
+
+### Flip-Based Delaunay Repair Retry Policy
+
+Flip-based repair runs only under `TopologyGuarantee::PLManifold` or
+`TopologyGuarantee::PLManifoldStrict` and is **bounded to two attempts**.
+Automatic repair is gated by `DelaunayRepairPolicy::decide` in `core::operations` and is skipped
+when the policy is disabled or the topology guarantee is not admissible.
+
+1. **Attempt 1**: FIFO queue ordering with fast predicates
+2. **Attempt 2** (if non-convergent): LIFO ordering with robust predicates **only** for ambiguous
+   boundary classifications
+
+If the second attempt still fails, the error includes diagnostics such as counts checked, ambiguous
+predicate samples, and max queue depth.
+
+### Optional Heuristic Rebuild Fallback
+
+For persistent non-convergence, the Delaunay layer exposes an **opt-in** heuristic fallback via
+`repair_delaunay_with_flips_advanced`. It first runs the standard two-pass repair. If that fails, it:
+
+1. Collects the current vertex set
+2. Shuffles insertion order (configurable seed)
+3. Rebuilds with a fresh perturbation seed
+4. Runs a final flip-based repair pass
+
+This fallback is **heuristic** and **non-reproducible by default** when seeds are not provided.
+When used, the returned `DelaunayRepairOutcome` includes the exact seeds so you can replay the run.
+
+```rust
+use delaunay::prelude::*;
+
+let mut dt: DelaunayTriangulation<_, (), (), 3> =
+    DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+
+let outcome = dt.repair_delaunay_with_flips_advanced(
+    DelaunayRepairHeuristicConfig {
+        shuffle_seed: Some(123),
+        perturbation_seed: Some(456),
+    },
+)?;
+
+if let Some(seeds) = outcome.heuristic {
+    println!("Heuristic seeds: {seeds:?}");
+}
+```
 
 ### Retryable Error Detection
 
@@ -228,7 +271,6 @@ The `is_retryable()` method classifies errors:
 ```rust
 // Retryable errors (geometric degeneracies)
 - InsertionError::NonManifoldTopology { .. }        // Facet sharing violation
-- InsertionError::Location(CycleDetected { .. })    // Point location cycle
 - InsertionError::ConflictRegion(NonManifoldFacet { .. })     // Facet shared by >2 conflict cells
 - InsertionError::ConflictRegion(RidgeFan { .. })             // Ridge fan degeneracy
 - InsertionError::TopologyValidation(_)             // Repair failure
@@ -247,7 +289,7 @@ The `is_retryable()` method classifies errors:
 2. **Automatic Recovery**: Retry logic resolves most geometric degeneracies
 3. **Transactional Semantics**: TDS always remains in valid state
 4. **Diagnostic Information**: Detailed error context for debugging
-5. **Progressive Resolution**: Increasing perturbation scales resolve degeneracies
+5. **Bounded Resolution**: One local-scale retry (two total attempts) resolves most degeneracies without large perturbations
 
 ## Robust Predicates
 
@@ -790,7 +832,7 @@ mod performance_tests {
 The robust predicates and algorithms add computational overhead, but provide significant reliability gains:
 
 1. **Adaptive tolerance computation**: ~10-20% overhead per predicate call (RobustKernel only)
-2. **Automatic retry with perturbation**: ~50-100% overhead (only for retryable insertion errors)
+2. **Automatic retry with perturbation**: One additional attempt only for retryable insertion errors
 3. **Matrix conditioning**: ~30-50% overhead for problematic cases (RobustKernel only)
 4. **RobustKernel vs FastKernel**: ~20-40% slower for normal cases, but succeeds on cases that would fail
 5. **Transactional insertion**: Minimal overhead (~5%) for maintaining valid state during errors
@@ -818,7 +860,7 @@ The robust predicates and algorithms add computational overhead, but provide sig
 ### Optimization Strategies
 
 1. **Tiered approach**: Try `FastKernel` first, fall back to `RobustKernel` on failure
-2. **Automatic retry**: Insertion errors trigger automatic retry with random perturbation (built-in)
+2. **Automatic retry**: Insertion errors trigger a single local-scale perturbation retry (built-in)
 3. **Early termination**: Return as soon as a reliable result is found
 4. **Preprocessing**: Remove duplicate and near-duplicate points before triangulation
 5. **Error handling**: Structured error types enable precise error recovery strategies
@@ -844,7 +886,7 @@ The robust predicates and algorithms add computational overhead, but provide sig
 
 - ✅ Consolidated incremental insertion into unified cavity-based algorithm
 - ✅ Integrated robust predicates into kernel architecture (`FastKernel`, `RobustKernel`)
-- ✅ Added automatic retry logic with progressive perturbation for transient errors
+- ✅ Added automatic retry logic with a single local-scale perturbation for transient errors
 - ✅ Implemented structured error types for precise error handling
 - ✅ Demonstrated significant improvement in success rates for problematic cases
 
@@ -897,5 +939,5 @@ The robust predicates and algorithms add computational overhead, but provide sig
 
 The robust predicates system is **production-ready** and integrated into the kernel architecture.
 Users experiencing insertion errors should switch to `RobustKernel` for improved numerical stability.
-The system provides automatic retry logic with progressive perturbation for transient degeneracies,
+The system provides automatic retry logic with a single local-scale perturbation for transient degeneracies,
 combined with kernel-level robust predicates for persistent numerical issues.

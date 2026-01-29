@@ -118,13 +118,13 @@ Tests all Delaunay-specific invariants and properties:
 - **Structural Invariants** (4 property tests, passing):
   - Incremental insertion maintains validity (2D-5D)
   
-- **Delaunay Property** (13 property tests, currently ignored):
-  - Empty circumsphere condition (2D-5D) - under investigation
-  - Insertion-order invariance (2D) - Issue #120
-  - Duplicate coordinate rejection (2D-5D) - edge case failures
-  - Duplicate cloud integration (2D-5D) - related to circumsphere
+- **Delaunay Property** (16 property tests):
+  - Empty circumsphere condition (2D-5D) - enabled (flip repair in place)
+  - Insertion-order invariance (2D-5D) - enabled (Levels 1–3 only; Delaunay property not asserted, Issue #120)
+  - Duplicate coordinate rejection (2D-5D) - ignored (edge case failures)
+  - Duplicate cloud integration (2D-5D) - enabled (duplicate-heavy inputs)
 
-**Test Count**: 17 property tests (4 passing, 13 ignored pending investigation)
+**Test Count**: 20 property tests (4 passing structural, 12 active, 4 ignored pending duplicate-coordinate handling)
 
 ### 3. Documentation Updates
 
@@ -194,7 +194,7 @@ cargo test --test proptest_point -- --nocapture
 
 - **Tds layer** (`proptest_tds.rs`): 32 tests (2D-5D combinatorial invariants)
 - **Triangulation layer** (`proptest_triangulation.rs`): 36 tests (2D-5D geometric quality metrics)
-- **DelaunayTriangulation layer** (`proptest_delaunay_triangulation.rs`): 17 tests (4 passing, 13 ignored)
+- **DelaunayTriangulation layer** (`proptest_delaunay_triangulation.rs`): 20 tests (4 passing structural, 12 active, 4 ignored)
 - **Predicates** (`proptest_predicates.rs`): 11 tests (geometric predicate properties)
 - **Point** (`proptest_point.rs`): 16 tests (Point data structure invariants)
 
@@ -204,7 +204,7 @@ cargo test --test proptest_point -- --nocapture
 
 ### Summary
 
-- **Core architectural tests**: 85 tests (68 passing, 13 ignored, 4 passing structural)
+- **Core architectural tests**: 88 tests (80 passing, 4 ignored, 4 passing structural)
 - **Total property tests** (all modules): ~140+ tests across entire test suite
 - **Execution time**: ~2-3 seconds (core modules)
 - **Coverage**: 2D-5D across all architectural layers

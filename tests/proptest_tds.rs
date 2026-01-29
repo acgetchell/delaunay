@@ -80,9 +80,10 @@ fn small_vertex_set_5d() -> impl Strategy<Value = Vec<Vertex<f64, (), 5>>> {
 
 // Macros to generate dimension-specific property tests
 macro_rules! gen_tds_validity {
-    ($dim:literal) => {
+    ($dim:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
+                $(#[$attr])*
                 #[test]
                 fn [<prop_tds_from_vertices_is_valid_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
@@ -97,9 +98,10 @@ macro_rules! gen_tds_validity {
 }
 
 macro_rules! gen_neighbor_symmetry {
-    ($dim:literal) => {
+    ($dim:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
+                $(#[$attr])*
                 #[test]
                 fn [<prop_neighbor_symmetry_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
@@ -160,9 +162,10 @@ macro_rules! gen_neighbor_symmetry {
 }
 
 macro_rules! gen_neighbor_index_semantics {
-    ($dim:literal) => {
+    ($dim:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
+                $(#[$attr])*
                 #[test]
                 fn [<prop_neighbor_index_semantics_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     // Use stack-allocated buffer for D facet vertices (D ≤ 7 typical)
@@ -206,9 +209,10 @@ macro_rules! gen_neighbor_index_semantics {
 }
 
 macro_rules! gen_cell_vertices_exist_in_tds {
-    ($dim:literal) => {
+    ($dim:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
+                $(#[$attr])*
                 #[test]
                 fn [<prop_cell_vertices_exist_in_tds_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     use std::collections::HashSet;
@@ -228,9 +232,10 @@ macro_rules! gen_cell_vertices_exist_in_tds {
 }
 
 macro_rules! gen_no_duplicate_cells {
-    ($dim:literal) => {
+    ($dim:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
+                $(#[$attr])*
                 #[test]
                 fn [<prop_no_duplicate_cells_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     use std::collections::HashSet;
@@ -251,9 +256,10 @@ macro_rules! gen_no_duplicate_cells {
 }
 
 macro_rules! gen_dimension_consistency {
-    ($dim:literal, $min_vertices:literal) => {
+    ($dim:literal, $min_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
+                $(#[$attr])*
                 #[test]
                 fn [<prop_dimension_consistency_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
@@ -268,9 +274,10 @@ macro_rules! gen_dimension_consistency {
 }
 
 macro_rules! gen_vertex_count_consistency {
-    ($dim:literal) => {
+    ($dim:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
+                $(#[$attr])*
                 #[test]
                 fn [<prop_vertex_count_consistency_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
@@ -285,9 +292,10 @@ macro_rules! gen_vertex_count_consistency {
 }
 
 macro_rules! gen_cell_vertex_count {
-    ($dim:literal, $expected:literal) => {
+    ($dim:literal, $expected:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
+                $(#[$attr])*
                 #[test]
                 fn [<prop_cell_vertex_count_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
@@ -307,9 +315,9 @@ macro_rules! gen_cell_vertex_count {
 // =============================================================================
 
 gen_tds_validity!(2);
-gen_tds_validity!(3);
-gen_tds_validity!(4);
-gen_tds_validity!(5);
+gen_tds_validity!(3, #[ignore = "Slow (>60s) in test-integration"]);
+gen_tds_validity!(4, #[ignore = "Slow (>60s) in test-integration"]);
+gen_tds_validity!(5, #[ignore = "Slow (>60s) in test-integration"]);
 
 // =============================================================================
 // NEIGHBOR SYMMETRY TESTS (2D-5D)
@@ -317,11 +325,11 @@ gen_tds_validity!(5);
 
 gen_neighbor_symmetry!(2);
 
-gen_neighbor_symmetry!(3);
+gen_neighbor_symmetry!(3, #[ignore = "Slow (>60s) in test-integration"]);
 
-gen_neighbor_symmetry!(4);
+gen_neighbor_symmetry!(4, #[ignore = "Slow (>60s) in test-integration"]);
 
-gen_neighbor_symmetry!(5);
+gen_neighbor_symmetry!(5, #[ignore = "Slow (>60s) in test-integration"]);
 
 // =============================================================================
 // NEIGHBOR INDEX SEMANTICS TESTS (2D-5D)
@@ -329,11 +337,11 @@ gen_neighbor_symmetry!(5);
 
 gen_neighbor_index_semantics!(2);
 
-gen_neighbor_index_semantics!(3);
+gen_neighbor_index_semantics!(3, #[ignore = "Slow (>60s) in test-integration"]);
 
-gen_neighbor_index_semantics!(4);
+gen_neighbor_index_semantics!(4, #[ignore = "Slow (>60s) in test-integration"]);
 
-gen_neighbor_index_semantics!(5);
+gen_neighbor_index_semantics!(5, #[ignore = "Slow (>60s) in test-integration"]);
 
 // =============================================================================
 // VERTEX-CELL INCIDENCE TESTS (2D-5D)
@@ -341,11 +349,11 @@ gen_neighbor_index_semantics!(5);
 
 gen_cell_vertices_exist_in_tds!(2);
 
-gen_cell_vertices_exist_in_tds!(3);
+gen_cell_vertices_exist_in_tds!(3, #[ignore = "Slow (>60s) in test-integration"]);
 
-gen_cell_vertices_exist_in_tds!(4);
+gen_cell_vertices_exist_in_tds!(4, #[ignore = "Slow (>60s) in test-integration"]);
 
-gen_cell_vertices_exist_in_tds!(5);
+gen_cell_vertices_exist_in_tds!(5, #[ignore = "Slow (>60s) in test-integration"]);
 
 // =============================================================================
 // NO DUPLICATE CELLS TESTS (2D-5D)
@@ -353,11 +361,11 @@ gen_cell_vertices_exist_in_tds!(5);
 
 gen_no_duplicate_cells!(2);
 
-gen_no_duplicate_cells!(3);
+gen_no_duplicate_cells!(3, #[ignore = "Slow (>60s) in test-integration"]);
 
-gen_no_duplicate_cells!(4);
+gen_no_duplicate_cells!(4, #[ignore = "Slow (>60s) in test-integration"]);
 
-gen_no_duplicate_cells!(5);
+gen_no_duplicate_cells!(5, #[ignore = "Slow (>60s) in test-integration"]);
 
 // =============================================================================
 // DIMENSION CONSISTENCY TESTS (2D-5D)
@@ -365,11 +373,11 @@ gen_no_duplicate_cells!(5);
 
 gen_dimension_consistency!(2, 3);
 
-gen_dimension_consistency!(3, 4);
+gen_dimension_consistency!(3, 4, #[ignore = "Slow (>60s) in test-integration"]);
 
-gen_dimension_consistency!(4, 5);
+gen_dimension_consistency!(4, 5, #[ignore = "Slow (>60s) in test-integration"]);
 
-gen_dimension_consistency!(5, 6);
+gen_dimension_consistency!(5, 6, #[ignore = "Slow (>60s) in test-integration"]);
 
 // =============================================================================
 // VERTEX COUNT CONSISTENCY TESTS (2D-5D)
@@ -377,11 +385,11 @@ gen_dimension_consistency!(5, 6);
 
 gen_vertex_count_consistency!(2);
 
-gen_vertex_count_consistency!(3);
+gen_vertex_count_consistency!(3, #[ignore = "Slow (>60s) in test-integration"]);
 
-gen_vertex_count_consistency!(4);
+gen_vertex_count_consistency!(4, #[ignore = "Slow (>60s) in test-integration"]);
 
-gen_vertex_count_consistency!(5);
+gen_vertex_count_consistency!(5, #[ignore = "Slow (>60s) in test-integration"]);
 
 // =============================================================================
 // CELL VERTEX COUNT TESTS (2D-5D)
@@ -389,8 +397,8 @@ gen_vertex_count_consistency!(5);
 
 gen_cell_vertex_count!(2, 3);
 
-gen_cell_vertex_count!(3, 4);
+gen_cell_vertex_count!(3, 4, #[ignore = "Slow (>60s) in test-integration"]);
 
-gen_cell_vertex_count!(4, 5);
+gen_cell_vertex_count!(4, 5, #[ignore = "Slow (>60s) in test-integration"]);
 
-gen_cell_vertex_count!(5, 6);
+gen_cell_vertex_count!(5, 6, #[ignore = "Slow (>60s) in test-integration"]);

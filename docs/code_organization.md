@@ -61,7 +61,7 @@ delaunay/
 │   ├── large_scale_performance.rs
 │   ├── microbenchmarks.rs
 │   ├── profiling_suite.rs
-│   └── triangulation_creation.rs
+│   └── topology_guarantee_construction.rs
 ├── docs/
 │   ├── archive/
 │   │   ├── fix-delaunay.md
@@ -80,6 +80,7 @@ delaunay/
 │   ├── OPTIMIZATION_ROADMAP.md
 │   ├── README.md
 │   ├── RELEASING.md
+│   ├── api_design.md
 │   ├── code_organization.md
 │   ├── issue_120_investigation.md
 │   ├── numerical_robustness_guide.md
@@ -91,7 +92,9 @@ delaunay/
 │   ├── convex_hull_3d_20_points.rs
 │   ├── into_from_conversions.rs
 │   ├── memory_analysis.rs
+│   ├── pachner_roundtrip_4d.rs
 │   ├── point_comparison_and_hashing.rs
+│   ├── topology_editing_2d_3d.rs
 │   ├── triangulation_3d_20_points.rs
 │   └── zero_allocation_iterator_demo.rs
 ├── scripts/
@@ -124,20 +127,37 @@ delaunay/
 │   │   │   ├── flips.rs
 │   │   │   ├── incremental_insertion.rs
 │   │   │   └── locate.rs
+│   │   ├── collections/
+│   │   │   ├── aliases.rs
+│   │   │   ├── buffers.rs
+│   │   │   ├── helpers.rs
+│   │   │   ├── key_maps.rs
+│   │   │   ├── secondary_maps.rs
+│   │   │   ├── spatial_hash_grid.rs
+│   │   │   └── triangulation_maps.rs
 │   │   ├── traits/
 │   │   │   ├── boundary_analysis.rs
 │   │   │   ├── data_type.rs
 │   │   │   └── facet_cache.rs
+│   │   ├── util/
+│   │   │   ├── deduplication.rs
+│   │   │   ├── delaunay_validation.rs
+│   │   │   ├── facet_keys.rs
+│   │   │   ├── facet_utils.rs
+│   │   │   ├── hashing.rs
+│   │   │   ├── hilbert.rs
+│   │   │   ├── jaccard.rs
+│   │   │   ├── measurement.rs
+│   │   │   └── uuid.rs
 │   │   ├── adjacency.rs
 │   │   ├── boundary.rs
 │   │   ├── cell.rs
-│   │   ├── collections.rs
 │   │   ├── delaunay_triangulation.rs
 │   │   ├── edge.rs
 │   │   ├── facet.rs
+│   │   ├── operations.rs
 │   │   ├── triangulation.rs
 │   │   ├── triangulation_data_structure.rs
-│   │   ├── util.rs
 │   │   └── vertex.rs
 │   ├── geometry/
 │   │   ├── algorithms/
@@ -161,6 +181,7 @@ delaunay/
 │   │   │   └── toroidal.rs
 │   │   ├── traits/
 │   │   │   └── topological_space.rs
+│   │   ├── edit.rs
 │   │   └── manifold.rs
 │   └── lib.rs
 ├── tests/
@@ -172,13 +193,13 @@ delaunay/
 │   ├── coordinate_conversion_errors.rs
 │   ├── delaunay_edge_cases.rs
 │   ├── delaunay_incremental_insertion.rs
+│   ├── delaunay_repair_fallback.rs
 │   ├── euler_characteristic.rs
 │   ├── insert_with_statistics.rs
 │   ├── proptest_cell.rs
 │   ├── proptest_convex_hull.rs
 │   ├── proptest_delaunay_triangulation.proptest-regressions
 │   ├── proptest_delaunay_triangulation.rs
-│   ├── proptest_euler_characteristic.proptest-regressions
 │   ├── proptest_euler_characteristic.rs
 │   ├── proptest_facet.rs
 │   ├── proptest_geometry.rs
@@ -187,10 +208,10 @@ delaunay/
 │   ├── proptest_safe_conversions.rs
 │   ├── proptest_serialization.rs
 │   ├── proptest_tds.rs
-│   ├── proptest_triangulation.proptest-regressions
 │   ├── proptest_triangulation.rs
 │   ├── proptest_vertex.rs
 │   ├── public_topology_api.rs
+│   ├── regression_delaunay_2d.rs
 │   ├── serialization_vertex_preservation.rs
 │   └── storage_backend_compatibility.rs
 ├── .auto-changelog
@@ -217,11 +238,13 @@ delaunay/
 ├── clippy.toml
 ├── cspell.json
 ├── justfile
+├── proptest.toml
 ├── pyproject.toml
 ├── rust-toolchain.toml
 ├── rustfmt.toml
 ├── ty.toml
 └── uv.lock
+
 ```
 
 **Note**: `tests/circumsphere_debug_tools.rs` contains interactive debugging test functions that can be run with:
@@ -309,10 +332,22 @@ with convenient `just` shortcuts for common workflows.
 - `vertex.rs`, `cell.rs`, `facet.rs` - Core geometric primitives
 - `edge.rs` - Canonical `EdgeKey` for topology traversal
 - `adjacency.rs` - Optional `AdjacencyIndex` builder outputs (opt-in)
-- `collections.rs` - Optimized collection types and utilities
+- `collections/` - Optimized collection types and spatial acceleration structures
+  - `spatial_hash_grid.rs` - Hash-grid spatial index for duplicate detection and locate-hint selection (Phase 4)
 - `boundary.rs` - Boundary detection and analysis
 - `algorithms/` - Core algorithms (incremental insertion, flips, point location)
 - `traits/` - Core trait definitions including FacetCacheProvider for performance optimization
+- `util/` - General utility functions organized by functionality (replaced single `util.rs` file)
+  - `uuid.rs` - UUID generation and validation
+  - `hashing.rs` - Stable, deterministic hash primitives
+  - `deduplication.rs` - Vertex deduplication utilities
+  - `measurement.rs` - Allocation measurement helper (feature-gated)
+  - `facet_utils.rs` - Facet helpers (adjacency, vertex extraction, combination generation)
+  - `facet_keys.rs` - Facet key derivation and consistency helpers
+  - `jaccard.rs` - Set similarity utilities and diagnostics macro
+  - `delaunay_validation.rs` - Delaunay property validation helpers (expensive; debug-oriented)
+  - `hilbert.rs` - Hilbert ordering utilities (pure; triangulation-agnostic)
+- `operations.rs` - Semantic classification and telemetry for topological operations
 
 **`src/geometry/`** - Geometric algorithms and predicates:
 
@@ -324,6 +359,13 @@ with convenient `just` shortcuts for common workflows.
 - `matrix.rs` - Linear algebra support
 - `algorithms/convex_hull.rs` - Hull extraction
 - `traits/coordinate.rs` - Coordinate abstractions
+- `util/` - Geometric utility functions organized by functionality (refactored from monolithic `util.rs` in v0.7.0)
+  - `conversions.rs` - Safe coordinate type conversions with finite-value checking
+  - `norms.rs` - Vector norms and distance computations (squared_norm, hypot)
+  - `circumsphere.rs` - Circumcenter and circumradius calculations for simplices
+  - `measures.rs` - Simplex volume, inradius, facet measure, surface measure computations
+  - `point_generation.rs` - Random point generation (uniform, grid, Poisson disk sampling)
+  - `triangulation_generation.rs` - Random triangulation generation with topology guarantees
 
 **`src/topology/`** - Topology analysis and validation:
 
@@ -338,7 +380,8 @@ with convenient `just` shortcuts for common workflows.
 #### Development Infrastructure
 
 - **`examples/`** - Usage demos and trait examples, including memory profiling
-  (see: [examples/memory_analysis.rs](../examples/README.md#5-memory-analysis-across-dimensions-memory_analysisrs)) and zero-allocation iterator demonstrations
+  (see: [examples/memory_analysis.rs](../examples/README.md#5-memory-analysis-across-dimensions-memory_analysisrs)), Pachner move roundtrips
+  (see: [examples/pachner_roundtrip_4d.rs](../examples/pachner_roundtrip_4d.rs)), and zero-allocation iterator demonstrations
 - **`benches/`** - Performance benchmarks with automated baseline management (2D-5D coverage) and memory allocation tracking
   (see: [benches/profiling_suite.rs](../benches/README.md#profiling-suite-comprehensive))
 - **`tests/`** - Integration tests including basic TDS validation (creation, neighbor assignment, boundary analysis),
@@ -397,6 +440,10 @@ Version 0.4.4+ completes Phase 1-2 of the comprehensive optimization roadmap:
 
 - **Collection Optimization** (Phase 1): FxHasher-based collections for 2-3x faster hash operations
 - **Key-Based Internal APIs** (Phase 2): Direct SlotMap key operations eliminating UUID lookups
+- **Spatial Index Acceleration** (Phase 4): Hash-grid spatial index for O(3^D) duplicate detection and locate-hint selection
+  - Accelerates fixed-radius neighbor queries during bulk construction and incremental insertion
+  - Maintains rollback safety with transactional semantics
+  - Dimension-aware (optimized for D ≤ 5)
 - **FacetCacheProvider**: 50-90% reduction in facet mapping computation time
 - **Zero-Allocation Iterators**: 1.86x faster iteration with `vertex_uuid_iter()`
 - **Enhanced Collections**: 15-30% additional gains from FastHashSet/SmallBuffer optimizations
@@ -896,22 +943,21 @@ mod tests {
 - Performance benchmarking
 - Integration with TDS
 
-#### `util.rs` (large module)
+#### `util/` (utility modules)
 
 - Function-focused (not struct-focused)
-- UUID generation and validation utilities with comprehensive error handling
-- Extreme coordinate finding functions for SlotMap-based vertex collections
-- Supercell simplex creation for triangulation initialization
-- Hash utilities for stable, deterministic hash computation
-- Facet adjacency checking and geometric utilities
-- Combination generation for k-simplex vertex combinations
-- **Jaccard similarity testing utilities** (v0.5.4+):
-  - Set extraction helpers: `extract_vertex_coordinate_set()`, `extract_edge_set()`, `extract_hull_facet_set()`
-  - Comparison utilities: `jaccard_index()`, `jaccard_distance()`, `format_jaccard_report()`
-  - Assertion macro: `assert_jaccard_gte!` for automatic diagnostics on failure
-  - Safe f64 conversion with overflow detection (2^53 limit)
-- Multi-dimensional testing across 1D-5D with both f32 and f64 coordinate types
-- Extensive edge case testing and error handling validation with systematic test organization
+- Split into dedicated modules under `src/core/util/` and wired explicitly in `src/lib.rs`.
+- Major submodules:
+  - `uuid.rs`: UUID generation and validation
+  - `hashing.rs`: stable, deterministic hash primitives
+  - `deduplication.rs`: vertex deduplication utilities
+  - `measurement.rs`: allocation measurement helper (feature-gated)
+  - `facet_utils.rs`: facet helpers (adjacency, vertex extraction, combination generation)
+  - `facet_keys.rs`: facet key derivation + facet index consistency helpers
+  - `jaccard.rs`: set similarity utilities + diagnostics macro `assert_jaccard_gte!`
+  - `delaunay_validation.rs`: Delaunay property validation helpers (expensive; debug-oriented)
+  - `hilbert.rs`: Hilbert ordering utilities (pure; triangulation-agnostic)
+- Unit tests live alongside each submodule for cohesion (instead of a single giant util test module).
 
 ### Key Conventions
 

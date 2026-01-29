@@ -28,39 +28,70 @@
 //! - Validation results
 //! - Performance metrics
 
+use delaunay::geometry::util::generate_random_triangulation;
 use delaunay::prelude::query::*;
 use num_traits::cast::cast;
 use std::time::Instant;
+
+const SEED_CANDIDATES: &[u64] = &[1, 7, 11, 42, 99, 123, 666];
 
 fn main() {
     println!("=================================================================");
     println!("3D Convex Hull Example - 20 Random Points");
     println!("=================================================================\\n");
 
-    // Create Delaunay triangulation with timing using the utility function.
-    // NOTE: The (n_points, bounds, seed) triple matches a configuration covered by
-    // `test_generate_random_triangulation_dimensions` in `geometry::util` to avoid
-    // pathological Delaunay-repair failures in CI while still exercising a nontrivial 3D hull.
+    // Create Delaunay triangulation with timing.
+    // Use a fixed seed + bounds so that `just examples` is reproducible and robust.
+    let n_points = 20;
+    let bounds = (-3.0, 3.0);
+    let seed_override: Option<u64> =
+        std::env::var("DELAUNAY_EXAMPLE_SEED")
+            .ok()
+            .and_then(|value| {
+                value.parse().ok().or_else(|| {
+                    eprintln!("Invalid DELAUNAY_EXAMPLE_SEED={value:?}; using default seed list.");
+                    None
+                })
+            });
+    let seed_candidates: Vec<u64> =
+        seed_override.map_or_else(|| SEED_CANDIDATES.to_vec(), |seed| vec![seed]);
+
     println!(
-        "Creating 3D Delaunay triangulation with 20 random points in [-3, 3]^3 (seed = 666)..."
+        "Creating 3D Delaunay triangulation with {n_points} random points in [{:.1}, {:.1}]^3 (seed candidates={seed_candidates:?})...",
+        bounds.0, bounds.1
     );
     let start = Instant::now();
 
-    let dt = match generate_random_triangulation(
-        20,          // Number of points
-        (-3.0, 3.0), // Coordinate bounds
-        None,        // No vertex data
-        Some(666),   // Fixed seed for reproducibility (matches tested configuration)
-    ) {
-        Ok(dt) => {
-            let construction_time = start.elapsed();
+    let mut last_error: Option<String> = None;
+    let mut used_seed: Option<u64> = None;
+    let mut dt: Option<DelaunayTriangulation<FastKernel<f64>, (), (), 3>> = None;
+    for &candidate in &seed_candidates {
+        match generate_random_triangulation(n_points, bounds, None, Some(candidate)) {
+            Ok(candidate_dt) => {
+                dt = Some(candidate_dt);
+                used_seed = Some(candidate);
+                break;
+            }
+            Err(e) => {
+                last_error = Some(format!("{e}"));
+            }
+        }
+    }
+
+    let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> = if let Some(dt) = dt {
+        let construction_time = start.elapsed();
+        if let Some(seed) = used_seed {
+            println!("✓ Triangulation created successfully in {construction_time:?} (seed={seed})");
+        } else {
             println!("✓ Triangulation created successfully in {construction_time:?}");
-            dt
         }
-        Err(e) => {
-            println!("✗ Failed to create triangulation: {e}");
-            return;
-        }
+        dt
+    } else {
+        println!(
+            "✗ Failed to create triangulation after trying seeds {seed_candidates:?}: {}",
+            last_error.unwrap_or_else(|| "unknown error".to_string())
+        );
+        return;
     };
 
     // Display some vertex information
@@ -393,6 +424,14 @@ fn analyze_visible_facets(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>
 fn performance_analysis(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>) {
     println!("Performance Analysis:");
     println!("====================");
+    let hull = match ConvexHull::from_triangulation(dt.as_triangulation()) {
+        Ok(hull) => hull,
+        Err(e) => {
+            println!("✗ Failed to extract convex hull for performance analysis: {e}");
+            println!();
+            return;
+        }
+    };
 
     // Benchmark convex hull extraction
     let extraction_times: Vec<_> = (0..5)
@@ -415,7 +454,6 @@ fn performance_analysis(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>) 
     println!("    • Max time:     {max_extraction_time:?}");
 
     // Benchmark point containment queries
-    let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
     let test_point = Point::new([5.0, 5.0, 5.0]);
 
     let containment_times: Vec<_> = (0..10)

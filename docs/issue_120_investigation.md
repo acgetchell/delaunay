@@ -6,9 +6,24 @@
 
 ## Summary
 
-The property tests for Delaunay empty circumsphere validation cannot be stabilized
-without implementing bistellar flip operations. The tests are correctly identifying
-algorithmic limitations rather than test configuration issues.
+The property tests for Delaunay empty circumsphere validation originally could not
+be stabilized without implementing bistellar flip operations. As of 2026-01-17,
+k=2 facet flips, k=3 ridge flips, and inverse edge/triangle queues for 4D/5D repair
+are implemented; empty-circumsphere tests are enabled while duplicate-cloud and
+duplicate-coordinate suites remain ignored pending stronger duplicate handling.
+
+## Update (2026-01-17)
+
+- Implemented k=2 facet flips and k=3 ridge flips in `src/core/algorithms/flips.rs`, with queue-based repair.
+- Introduced inverse edge/triangle queues for 4D/5D repair to avoid reliance on forward-only flips.
+- Introduced `DelaunayRepairPolicy` and automatic repair after insertion (default: every insertion).
+- Exposed a manual repair entrypoint: `DelaunayTriangulation::repair_delaunay_with_flips`.
+- Re-enabled `prop_empty_circumsphere_{2d,3d,4d,5d}`.
+- Duplicate-cloud integration and duplicate-coordinate rejection tests remain ignored pending
+  stronger duplicate handling.
+
+> Note: The sections below capture the original investigation and plan. Where they
+> conflict with the update above, the update is authoritative.
 
 ## Root Cause
 
@@ -21,12 +36,13 @@ These violations occur even with:
 - ✅ Robust geometric predicates (`robust_insphere`)
 - ✅ Global repair loops (removes violated cells but cannot fix topology)
 
-## Failing Tests
+## Test Status
 
-All tests in `tests/proptest_delaunay_triangulation.rs`:
+Current status in `tests/proptest_delaunay_triangulation.rs`:
 
-- `prop_empty_circumsphere_{2d,3d,4d,5d}` - Empty circumsphere property validation
-- `prop_cloud_with_duplicates_is_delaunay_{2d,3d,4d,5d}` - Duplicate cloud integration tests
+- **Enabled**: `prop_empty_circumsphere_{2d,3d,4d,5d}`
+- **Ignored**: `prop_cloud_with_duplicates_is_delaunay_{2d,3d,4d,5d}` (duplicate-heavy inputs)
+- **Ignored**: `prop_duplicate_coordinates_rejected_{2d,3d,4d,5d}` (edge-case failures)
 
 ## Example Failure Case (2D)
 
@@ -81,6 +97,9 @@ But it cannot **flip edges** or change topology, which is required to fix certai
 
 Topology-preserving transformations that restore the Delaunay property by reconfiguring cell adjacencies without changing the vertex set.
 
+**Status (2026-01-17)**: Implemented k=2 facet flips, k=3 ridge flips, and inverse edge/triangle queues for 4D/5D repair.
+Remaining gaps focus on degenerate/duplicate-heavy inputs and long-run convergence validation.
+
 ### Required Implementations
 
 #### 2D: Edge Flip (2-to-2)
@@ -134,11 +153,10 @@ General bistellar flip operations based on i-to-j transformations.
 
 ### Current State
 
-- **Stub implementation**: `src/core/algorithms/flips.rs` (placeholder with TODOs, no functional
-  implementation)
-- **Failing tests**: `tests/proptest_delaunay_triangulation.rs` (empty circumsphere and duplicate
-  cloud test sections)
-- **Documentation**: `tests/README.md` (updated to reflect bistellar flip dependency)
+- **Flip implementation**: `src/core/algorithms/flips.rs` (k=2 facet + k=3 ridge flips; inverse edge/triangle queues in 4D/5D repair)
+- **Repair integration**: `src/core/delaunay_triangulation.rs` (`DelaunayRepairPolicy`, auto repair)
+- **Tests**: `tests/proptest_delaunay_triangulation.rs` (empty-circumsphere enabled; duplicate-cloud + duplicate-coordinate suites ignored)
+- **Documentation**: `tests/README.md` (notes duplicate-cloud + duplicate-coordinate limitations)
 
 ### References
 
@@ -187,17 +205,15 @@ General bistellar flip operations based on i-to-j transformations.
 
 - Issue #120: Stabilize property tests (this investigation)
 - Issue #98: Topology and Euler characteristic (can proceed independently)
-- Stub file: `src/core/algorithms/flips.rs` (ready for implementation)
+- Flip implementation: `src/core/algorithms/flips.rs` (k=2 facet flips + repair queue)
 
 ## Conclusion
 
-The property tests are **working as intended**—they correctly identify that the
-current algorithm cannot guarantee the Delaunay property without bistellar flips.
-This is a known limitation of incremental algorithms without post-processing.
-
-The tests should remain ignored until bistellar flips are implemented, as they
-represent a fundamental algorithmic capability gap rather than a test configuration
-issue.
+The property tests were **working as intended**—they identified that the
+incremental algorithm could not guarantee the Delaunay property without flips.
+With k=2 facet + k=3 ridge flips and inverse queues now implemented, empty-circumsphere
+tests are re-enabled in 2D–5D. Duplicate-cloud and duplicate-coordinate tests stay
+ignored until duplicate handling is improved.
 
 ## Proposed Resolution
 
@@ -329,11 +345,11 @@ Current state in `tests/proptest_delaunay_triangulation.rs`:
 |--------------|-------|---------|--------|
 | Incremental insertion validity | 4 (2D-5D) | ✅ Passing | Structural invariants OK |
 | Insertion-order robustness | 4 (2D-5D) | ✅ Passing | Valid triangulations produced |
-| Empty circumsphere | 4 (2D-5D) | ⏸️ Ignored | Requires bistellar flips |
-| Duplicate cloud integration | 4 (2D-5D) | ⏸️ Ignored | Requires bistellar flips |
+| Empty circumsphere | 4 (2D-5D) | ✅ Passing | Flip repair enabled |
+| Duplicate cloud integration | 4 (2D-5D) | ⏸️ Ignored | Duplicate-heavy inputs |
 | Duplicate coordinate rejection | 4 (2D-5D) | ⏸️ Ignored | Separate issue |
 
-**Total**: 8 passing, 12 ignored (8 for bistellar flips, 4 for duplicate rejection)
+**Total**: 12 passing, 8 ignored (4 duplicate-cloud, 4 duplicate rejection)
 
 ## Resolution
 

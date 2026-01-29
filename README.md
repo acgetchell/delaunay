@@ -29,26 +29,58 @@ lightweight alternative to [CGAL] for the [Rust] ecosystem.
 - [x]  Geometry quality metrics for simplices: radius ratio and normalized volume (dimension-agnostic)
 - [x]  Serialization/Deserialization of all data structures to/from [JSON]
 - [x]  Tested for 2-, 3-, 4-, and 5-dimensional triangulations
-- [x]  Local topology validation ([Pseudomanifold] default, [PL-manifold] opt-in)
+- [x]  Local topology validation ([PL-manifold] default, [Pseudomanifold] opt-out)
+- [x]  [Bistellar k-flips] for k = 1, 2, 3 plus inverse moves (repair uses k=2/k=3; inverse edge/triangle queues in 4D/5D)
 
 See [CHANGELOG.md](CHANGELOG.md) for details.
 
-## ⚠️ Known Limitations
+## ⚠️ Delaunay Property
 
-<!-- TODO: Remove this entire section once Issue #120 is resolved (bistellar flips implemented) -->
+The triangulation uses flip-based [Delaunay repair] (k=2 facet queues, k=3 ridge queues,
+and inverse edge/triangle queues in 4D/5D) after insertion by default via
+`DelaunayRepairPolicy`.
 
-### Delaunay Property
+The default topology guarantee is `TopologyGuarantee::PLManifold` (ridge-link validation during
+insertion, vertex-link validation at completion), which is the recommended mode for Delaunay
+triangulations. For strict per-insertion vertex-link checks, use `TopologyGuarantee::PLManifoldStrict`.
 
-The incremental Bowyer-Watson algorithm produces structurally valid triangulations but may
-contain local violations of the Delaunay empty circumsphere property in rare cases. These
-violations typically occur with:
+You can relax to `TopologyGuarantee::Pseudomanifold` for speed, but bistellar flip convergence is not
+guaranteed and the Delaunay property may not hold on construction for near-degenerate inputs (or if
+repair is disabled/non-convergent). Use `dt.is_valid()` / `dt.validate()` to verify.
 
-- Near-degenerate point configurations
-- Specific geometric arrangements of input points
+Repair is **bounded to two attempts**: attempt 1 uses FIFO ordering with fast predicates;
+on non-convergence it retries once with LIFO ordering and robust predicates **only for
+ambiguous boundary classifications**. If it still fails, the error includes diagnostics
+(checked counts, ambiguous predicate samples, max queue depth, etc.). Highly degenerate
+inputs or duplicate-handling edge cases can still require additional filtering.
+For persistent failures, an **optional heuristic fallback** is available via
+`repair_delaunay_with_flips_advanced`. This runs the standard two-pass repair, and
+if it still fails, rebuilds the triangulation from the current vertex set using a
+shuffled insertion order and a fresh perturbation seed, then runs a final flip-repair
+pass. This fallback is heuristic and **non-reproducible by default**; the returned
+`DelaunayRepairOutcome` includes the seeds used so you can replay the exact run.
 
-Most triangulations satisfy the Delaunay property, and all structural invariants (TDS validity)
-are maintained. Full Delaunay property guarantees will require a future bistellar flip implementation,
-currently planned for v0.7.0+.
+```rust
+use delaunay::prelude::*;
+let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+
+// Default topology guarantee for Delaunay triangulations:
+assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
+
+// Insert some vertices to build an initial triangulation.
+// dt.insert(vertex!([0.0, 0.0, 0.0]))?;
+// dt.insert(vertex!([1.0, 0.0, 0.0]))?;
+// dt.insert(vertex!([0.0, 1.0, 0.0]))?;
+// dt.insert(vertex!([0.0, 0.0, 1.0]))?;
+
+let outcome = dt.repair_delaunay_with_flips_advanced(
+    DelaunayRepairHeuristicConfig::default(),
+)?;
+
+if outcome.used_heuristic() {
+    eprintln!("Heuristic rebuild used: {:?}", outcome.heuristic);
+}
+```
 
 For details, see: [Issue #120 Investigation](docs/issue_120_investigation.md)
 
@@ -57,11 +89,12 @@ For details, see: [Issue #120 Investigation](docs/issue_120_investigation.md)
 
 - **Level 2** (`dt.tds().is_valid()`) - Structural correctness (expected to pass when using public APIs; not affected by Issue #120)
 - **Level 3** (`dt.as_triangulation().is_valid()`) - Manifold topology + Euler characteristic
-- **Level 4** (`dt.is_valid()`) - Delaunay property only (may fail in rare cases per Issue #120)
+- **Level 4** (`dt.is_valid()`) - Delaunay property only (may fail if repair is disabled or non-convergent)
 - **All levels (1–4)** (`dt.validate()`) - Elements + structure + topology + Delaunay property
 
-Level 3 topology validation is parameterized by `TopologyGuarantee` (default: `Pseudomanifold`).
-To enable stricter PL-manifold checks, set `TopologyGuarantee::PLManifold` (adds vertex-link validation).
+Level 3 topology validation is parameterized by `TopologyGuarantee` (default: `PLManifold`).
+To relax topology checks for speed, set `TopologyGuarantee::Pseudomanifold` (skips vertex-link validation).
+For strict per-insertion vertex-link checks, use `TopologyGuarantee::PLManifoldStrict`.
 
 During incremental insertion, the automatic Level 3 validation pass is controlled by
 `ValidationPolicy` (default: `OnSuspicion`).
@@ -71,8 +104,8 @@ use delaunay::prelude::*;
 
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 
-// Strictest topology checks (adds vertex-link validation):
-dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+// Optional: relax topology checks for speed (skips vertex-link validation).
+dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
 
 // In tests/debugging, validate Level 3 after every insertion:
 dt.set_validation_policy(ValidationPolicy::Always);
@@ -80,10 +113,11 @@ dt.set_validation_policy(ValidationPolicy::Always);
 
 For applications requiring strict Delaunay guarantees:
 
-- Use `dt.is_valid()` (Level 4 only) or `dt.validate()` (Levels 1–4) to check your specific triangulation
-- Use smaller point sets (violations are rarer)
+- Keep `DelaunayRepairPolicy::EveryInsertion` (default) or call `repair_delaunay_with_flips()` after batch edits
+- If standard repair does not converge, consider `repair_delaunay_with_flips_advanced()` for the heuristic rebuild fallback
+- Use `dt.is_valid()` (Level 4 only) or `dt.validate()` (Levels 1–4) to check your triangulation
 - Filter degenerate configurations when possible
-- Monitor for updates in future releases
+- Monitor for additional flip types in future releases
 
 ## 🚧 Project History
 
@@ -198,3 +232,5 @@ Portions of this library were developed with the assistance of these AI tools:
 [WARP]: https://www.warp.dev
 [Pseudomanifold]: https://grokipedia.com/page/Pseudomanifold
 [PL-manifold]: https://grokipedia.com/page/Piecewise_linear_manifold
+[Delaunay repair]: https://link.springer.com/article/10.1007/BF01975867
+[Bistellar k-flips]: https://grokipedia.com/page/Bistellar_flip

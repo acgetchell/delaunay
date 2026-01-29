@@ -90,6 +90,7 @@ jobs:
           echo "::endgroup::"
         env:
           RUST_BACKTRACE: 1
+          DELAUNAY_PROPTEST_COVERAGE_LOGS: 1
 
       - name: Upload coverage to Codecov
         if: ${{ success() && hashFiles('coverage/cobertura.xml') != '' }}

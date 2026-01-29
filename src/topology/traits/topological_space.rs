@@ -135,9 +135,30 @@ pub trait TopologicalSpace {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// // Future usage when trait is implemented
-    /// let space = EuclideanSpace::<3>::new();
+    /// ```rust
+    /// use delaunay::topology::traits::topological_space::{TopologicalSpace, TopologyKind};
+    ///
+    /// struct DummySpace;
+    ///
+    /// impl TopologicalSpace for DummySpace {
+    ///     const DIM: usize = 3;
+    ///
+    ///     fn kind(&self) -> TopologyKind {
+    ///         TopologyKind::Euclidean
+    ///     }
+    ///
+    ///     fn allows_boundary(&self) -> bool {
+    ///         true
+    ///     }
+    ///
+    ///     fn canonicalize_point(&self, _coords: &mut [f64]) {}
+    ///
+    ///     fn fundamental_domain(&self) -> Option<&[f64]> {
+    ///         None
+    ///     }
+    /// }
+    ///
+    /// let space = DummySpace;
     /// assert_eq!(space.kind(), TopologyKind::Euclidean);
     /// ```
     fn kind(&self) -> TopologyKind;
@@ -151,12 +172,38 @@ pub trait TopologicalSpace {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// // Future usage
-    /// let euclidean = EuclideanSpace::<2>::new();
-    /// assert!(euclidean.allows_boundary());
+    /// ```rust
+    /// use delaunay::topology::traits::topological_space::{TopologicalSpace, TopologyKind};
     ///
-    /// let toroidal = ToroidalSpace::<2>::new([1.0, 1.0]);
+    /// struct DummySpace {
+    ///     allows: bool,
+    /// }
+    ///
+    /// impl TopologicalSpace for DummySpace {
+    ///     const DIM: usize = 2;
+    ///
+    ///     fn kind(&self) -> TopologyKind {
+    ///         if self.allows {
+    ///             TopologyKind::Euclidean
+    ///         } else {
+    ///             TopologyKind::Toroidal
+    ///         }
+    ///     }
+    ///
+    ///     fn allows_boundary(&self) -> bool {
+    ///         self.allows
+    ///     }
+    ///
+    ///     fn canonicalize_point(&self, _coords: &mut [f64]) {}
+    ///
+    ///     fn fundamental_domain(&self) -> Option<&[f64]> {
+    ///         None
+    ///     }
+    /// }
+    ///
+    /// let euclidean = DummySpace { allows: true };
+    /// let toroidal = DummySpace { allows: false };
+    /// assert!(euclidean.allows_boundary());
     /// assert!(!toroidal.allows_boundary());
     /// ```
     fn allows_boundary(&self) -> bool;
@@ -181,9 +228,36 @@ pub trait TopologicalSpace {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// // Future usage for toroidal space
-    /// let space = ToroidalSpace::<2>::new([1.0, 1.0]);
+    /// ```rust
+    /// use delaunay::topology::traits::topological_space::{TopologicalSpace, TopologyKind};
+    ///
+    /// struct ToroidalSpace {
+    ///     domain: [f64; 2],
+    /// }
+    ///
+    /// impl TopologicalSpace for ToroidalSpace {
+    ///     const DIM: usize = 2;
+    ///
+    ///     fn kind(&self) -> TopologyKind {
+    ///         TopologyKind::Toroidal
+    ///     }
+    ///
+    ///     fn allows_boundary(&self) -> bool {
+    ///         false
+    ///     }
+    ///
+    ///     fn canonicalize_point(&self, coords: &mut [f64]) {
+    ///         for (coord, domain) in coords.iter_mut().zip(self.domain) {
+    ///             *coord = coord.rem_euclid(domain);
+    ///         }
+    ///     }
+    ///
+    ///     fn fundamental_domain(&self) -> Option<&[f64]> {
+    ///         Some(&self.domain)
+    ///     }
+    /// }
+    ///
+    /// let space = ToroidalSpace { domain: [1.0, 1.0] };
     /// let mut point = [1.5, -0.3];
     /// space.canonicalize_point(&mut point);
     /// assert_eq!(point, [0.5, 0.7]); // Wrapped into [0, 1)
@@ -208,12 +282,41 @@ pub trait TopologicalSpace {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// // Future usage
-    /// let toroidal = ToroidalSpace::<2>::new([2.0, 3.0]);
+    /// ```rust
+    /// use delaunay::topology::traits::topological_space::{TopologicalSpace, TopologyKind};
+    ///
+    /// struct DummySpace {
+    ///     domain: Option<[f64; 2]>,
+    /// }
+    ///
+    /// impl TopologicalSpace for DummySpace {
+    ///     const DIM: usize = 2;
+    ///
+    ///     fn kind(&self) -> TopologyKind {
+    ///         if self.domain.is_some() {
+    ///             TopologyKind::Toroidal
+    ///         } else {
+    ///             TopologyKind::Euclidean
+    ///         }
+    ///     }
+    ///
+    ///     fn allows_boundary(&self) -> bool {
+    ///         self.domain.is_none()
+    ///     }
+    ///
+    ///     fn canonicalize_point(&self, _coords: &mut [f64]) {}
+    ///
+    ///     fn fundamental_domain(&self) -> Option<&[f64]> {
+    ///         self.domain.as_ref().map(|domain| &domain[..])
+    ///     }
+    /// }
+    ///
+    /// let toroidal = DummySpace {
+    ///     domain: Some([2.0, 3.0]),
+    /// };
     /// assert_eq!(toroidal.fundamental_domain(), Some(&[2.0, 3.0][..]));
     ///
-    /// let euclidean = EuclideanSpace::<2>::new();
+    /// let euclidean = DummySpace { domain: None };
     /// assert_eq!(euclidean.fundamental_domain(), None);
     /// ```
     ///
