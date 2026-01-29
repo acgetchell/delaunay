@@ -462,7 +462,11 @@ mod tests {
     use super::*;
     use crate::core::cell::Cell;
     use crate::core::triangulation::Triangulation;
+    use crate::core::util::make_uuid;
+    use crate::core::vertex::Vertex;
     use crate::geometry::kernel::FastKernel;
+    use crate::geometry::point::Point;
+    use crate::geometry::traits::coordinate::{Coordinate, CoordinateConversionError};
 
     use crate::vertex;
 
@@ -509,6 +513,26 @@ mod tests {
                 .with_test_writer()
                 .try_init();
         });
+    }
+
+    fn build_non_delaunay_quad_2d() -> (Tds<f64, (), (), 2>, CellKey, CellKey) {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let d = tds.insert_vertex_with_mapping(vertex!([0.8, 0.8])).unwrap();
+
+        let cell_1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+            .unwrap();
+        let cell_2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, c, d], None).unwrap())
+            .unwrap();
+
+        tds.assign_incident_cells().unwrap();
+
+        (tds, cell_1, cell_2)
     }
 
     #[test]
@@ -559,6 +583,86 @@ mod tests {
             find_delaunay_violations(&tds, Some(&[cell_1, CellKey::default()])).unwrap();
         assert_eq!(violations.len(), 1);
         assert!(violations.contains(&cell_1));
+    }
+
+    #[test]
+    fn delaunay_validation_handles_empty_tds() {
+        init_tracing();
+        let tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        assert!(is_delaunay_property_only(&tds).is_ok());
+        let violations = find_delaunay_violations(&tds, None).unwrap();
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn find_delaunay_violations_subset_filters_non_violating_cell() {
+        init_tracing();
+        let (tds, cell_1, cell_2) = build_non_delaunay_quad_2d();
+
+        let violations = find_delaunay_violations(&tds, None).unwrap();
+        assert_eq!(violations.len(), 1);
+        let violating_cell = violations[0];
+        let non_violating_cell = if violating_cell == cell_1 {
+            cell_2
+        } else {
+            cell_1
+        };
+
+        let subset = find_delaunay_violations(&tds, Some(&[non_violating_cell])).unwrap();
+        assert!(subset.is_empty());
+    }
+
+    #[test]
+    fn delaunay_property_only_handles_non_finite_vertex_without_error() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        tds.insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+            .unwrap();
+
+        let invalid_vertex: Vertex<f64, (), 2> =
+            Vertex::new_with_uuid(Point::new([f64::NAN, 0.0]), make_uuid(), None);
+        tds.insert_vertex_with_mapping(invalid_vertex).unwrap();
+
+        assert!(
+            is_delaunay_property_only(&tds).is_ok(),
+            "Delaunay property-only checks do not validate vertex coordinates"
+        );
+    }
+
+    #[test]
+    fn numeric_predicate_error_display_includes_context() {
+        let cell_key = CellKey::from(slotmap::KeyData::from_ffi(1));
+        let vertex_key = VertexKey::from(slotmap::KeyData::from_ffi(2));
+        let source = CoordinateConversionError::NonFiniteValue {
+            coordinate_index: 0,
+            coordinate_value: "NaN".to_string(),
+        };
+        let err = DelaunayValidationError::NumericPredicateError {
+            cell_key,
+            vertex_key,
+            source,
+        };
+        let message = err.to_string();
+
+        assert!(message.contains("Numeric predicate failure"));
+        assert!(message.contains("cell"));
+        assert!(message.contains("vertex"));
+        assert!(message.contains("Non-finite value"));
+    }
+
+    #[test]
+    fn debug_print_first_delaunay_violation_handles_violations() {
+        init_tracing();
+        let (tds, _, _) = build_non_delaunay_quad_2d();
+
+        #[cfg(any(test, debug_assertions))]
+        debug_print_first_delaunay_violation(&tds, None);
     }
 
     #[test]

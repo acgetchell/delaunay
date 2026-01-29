@@ -63,6 +63,11 @@ where
 mod tests {
     use super::*;
 
+    #[cfg(feature = "count-allocations")]
+    fn non_negative(value: i64) -> u64 {
+        u64::try_from(value.max(0)).unwrap_or(0)
+    }
+
     #[test]
     fn test_measure_with_result_comprehensive() {
         // Test basic functionality - returns correct result
@@ -109,6 +114,33 @@ mod tests {
         assert_eq!(sum_result, 6);
     }
 
+    #[test]
+    fn test_measure_with_result_executes_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let calls = AtomicUsize::new(0);
+        let (result, _alloc_info) = measure_with_result(|| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            123
+        });
+
+        assert_eq!(result, 123);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_measure_with_result_panics_propagate() {
+        let should_panic = std::hint::black_box(true);
+        let result = std::panic::catch_unwind(|| {
+            let _ = measure_with_result(|| -> i32 {
+                assert!(!should_panic, "boom");
+                0
+            });
+        });
+
+        assert!(result.is_err());
+    }
+
     #[cfg(feature = "count-allocations")]
     #[test]
     fn test_measure_with_result_allocation_info_structure() {
@@ -133,6 +165,52 @@ mod tests {
         assert!(
             alloc_info.bytes_total > 0,
             "Should have allocated memory for the vector"
+        );
+
+        let bytes_current = non_negative(alloc_info.bytes_current);
+        let count_current = non_negative(alloc_info.count_current);
+
+        assert!(
+            alloc_info.bytes_total >= bytes_current,
+            "Total bytes should be >= current bytes"
+        );
+        assert!(
+            alloc_info.bytes_max >= bytes_current,
+            "Max bytes should be >= current bytes"
+        );
+        assert!(
+            alloc_info.count_total >= count_current,
+            "Total allocations should be >= current allocations"
+        );
+        assert!(
+            alloc_info.count_max >= count_current,
+            "Max allocation count should be >= current allocation count"
+        );
+    }
+
+    #[cfg(feature = "count-allocations")]
+    #[test]
+    fn test_measure_with_result_no_allocation_invariants() {
+        let (_result, alloc_info) = measure_with_result(|| 7usize);
+
+        let bytes_current = non_negative(alloc_info.bytes_current);
+        let count_current = non_negative(alloc_info.count_current);
+
+        assert!(
+            alloc_info.bytes_total >= bytes_current,
+            "Total bytes should be >= current bytes"
+        );
+        assert!(
+            alloc_info.bytes_max >= bytes_current,
+            "Max bytes should be >= current bytes"
+        );
+        assert!(
+            alloc_info.count_total >= count_current,
+            "Total allocations should be >= current allocations"
+        );
+        assert!(
+            alloc_info.count_max >= count_current,
+            "Max allocation count should be >= current allocation count"
         );
     }
 

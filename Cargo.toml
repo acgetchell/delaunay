@@ -43,6 +43,7 @@ criterion = { version = "0.8.1", features = [ "html_reports" ] }
 pastey = "0.2.1"
 proptest = "1.9.0"
 sysinfo = "0.38.0" # Process memory monitoring for benchmarks
+tracing = "0.1"
 tracing-subscriber = { version = "0.3.22", features = [ "env-filter" ] }
 
 [features]
@@ -52,6 +53,7 @@ default = [ "dense-slotmap" ]
 
 count-allocations = [ "allocation-counter" ]
 bench = [  ] # Enable benchmark-style tests and performance analysis
+bench-logging = [  ] # Enable extra benchmark logging for CI diagnostics
 test-debug = [  ] # Enable verbose debug output in tests for development
 dense-slotmap = [  ] # Use DenseSlotMap-backed internal storage (default)
 slow-tests = [

@@ -108,7 +108,7 @@ macro_rules! generate_memory_analysis {
                                 backtrace = %backtrace,
                                 "Panic while building triangulation"
                             );
-                            std::panic::resume_unwind(panic);
+                            last_error = Some(format!("panic: {payload}"));
                         }
                     }
                 }
@@ -165,7 +165,13 @@ macro_rules! generate_memory_analysis {
                         error = %e,
                         "Failed to construct convex hull from triangulation"
                     );
-                    return;
+                    warn!(
+                        dim = $dim,
+                        points = n_points,
+                        seed = used_seed,
+                        "Skipping point count after hull construction failure"
+                    );
+                    continue;
                 }
             };
             let hull_time = start.elapsed();
