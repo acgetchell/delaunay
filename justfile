@@ -190,7 +190,7 @@ coverage:
 
 # Coverage analysis for CI (XML output for codecov/codacy)
 coverage-ci:
-    cargo tarpaulin {{_coverage_base_args}} --out Xml --output-dir coverage
+    cargo tarpaulin {{_coverage_base_args}} --out Xml --output-dir coverage -- --skip prop_
 
 # Default recipe shows available commands
 default:

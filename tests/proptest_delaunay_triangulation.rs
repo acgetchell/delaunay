@@ -1584,16 +1584,20 @@ macro_rules! gen_duplicate_cloud_test {
                     points in [<cloud_with_duplicates_ $dim d>]()
                 ) {
                     init_tracing();
+                    let log_coverage = std::env::var_os("DELAUNAY_PROPTEST_COVERAGE_LOGS").is_some()
+                        && $dim >= 4;
                     // Require at least D+1 distinct points
                     let unique = count_unique_coords_by_bits(&points);
                     prop_assume!(unique > $min_vertices);
 
                     let vertices: Vec<Vertex<f64, (), $dim>> = Vertex::from_points(&points);
 
+                    let build_start = std::time::Instant::now();
                     let dt = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     );
+                    let build_elapsed = build_start.elapsed();
                     if let Err(err) = &dt {
                         if std::env::var_os("DELAUNAY_PROPTEST_CONSTRUCTION_ERRORS").is_some() {
                             eprintln!(
@@ -1603,12 +1607,31 @@ macro_rules! gen_duplicate_cloud_test {
                         }
                     }
                     let dt = dt.prop_assume_ok()?;
+                    if log_coverage {
+                        tracing::info!(
+                            dim = $dim,
+                            points = points.len(),
+                            unique = unique,
+                            kept_vertices = dt.number_of_vertices(),
+                            build_elapsed = ?build_elapsed,
+                            "prop_cloud_with_duplicates_is_delaunay build complete"
+                        );
+                    }
 
                     // Structural/topological validity (Levels 1–3) for kept subset
                     prop_assert_levels_1_to_3_valid!($dim, &dt, "triangulation (kept subset)");
 
                     // Delaunay validity (Level 4) for kept subset
+                    let validate_start = std::time::Instant::now();
                     let delaunay = dt.is_valid();
+                    let validate_elapsed = validate_start.elapsed();
+                    if log_coverage {
+                        tracing::info!(
+                            dim = $dim,
+                            validate_elapsed = ?validate_elapsed,
+                            "prop_cloud_with_duplicates_is_delaunay is_valid complete"
+                        );
+                    }
                     prop_assert!(
                         delaunay.is_ok(),
                         "{}D triangulation should satisfy Delaunay property: {:?}",
@@ -1661,16 +1684,20 @@ macro_rules! gen_duplicate_cloud_test {
                     points in [<cloud_with_duplicates_ $dim d>]()
                 ) {
                     init_tracing();
+                    let log_coverage = std::env::var_os("DELAUNAY_PROPTEST_COVERAGE_LOGS").is_some()
+                        && $dim >= 4;
                     // Require at least D+1 distinct points
                     let unique = count_unique_coords_by_bits(&points);
                     prop_assume!(unique > $min_vertices);
 
                     let vertices: Vec<Vertex<f64, (), $dim>> = Vertex::from_points(&points);
 
+                    let build_start = std::time::Instant::now();
                     let dt = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     );
+                    let build_elapsed = build_start.elapsed();
                     if let Err(err) = &dt {
                         if std::env::var_os("DELAUNAY_PROPTEST_CONSTRUCTION_ERRORS").is_some() {
                             eprintln!(
@@ -1680,12 +1707,31 @@ macro_rules! gen_duplicate_cloud_test {
                         }
                     }
                     let dt = dt.prop_assume_ok()?;
+                    if log_coverage {
+                        tracing::info!(
+                            dim = $dim,
+                            points = points.len(),
+                            unique = unique,
+                            kept_vertices = dt.number_of_vertices(),
+                            build_elapsed = ?build_elapsed,
+                            "prop_cloud_with_duplicates_is_delaunay build complete"
+                        );
+                    }
 
                     // Structural/topological validity (Levels 1–3) for kept subset
                     prop_assert_levels_1_to_3_valid!($dim, &dt, "triangulation (kept subset)");
 
                     // Delaunay validity (Level 4) for kept subset
+                    let validate_start = std::time::Instant::now();
                     let delaunay = dt.is_valid();
+                    let validate_elapsed = validate_start.elapsed();
+                    if log_coverage {
+                        tracing::info!(
+                            dim = $dim,
+                            validate_elapsed = ?validate_elapsed,
+                            "prop_cloud_with_duplicates_is_delaunay is_valid complete"
+                        );
+                    }
                     prop_assert!(
                         delaunay.is_ok(),
                         "{}D triangulation should satisfy Delaunay property: {:?}",

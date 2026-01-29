@@ -57,6 +57,7 @@ macro_rules! generate_memory_analysis {
             reason = "Example keeps analysis flow in one function for readability"
         )]
         fn $name(point_counts: &[usize], seeds: &[u64]) {
+            let mut any_success = false;
             for &n_points in point_counts {
                 println!("  Analyzing {}D triangulation with {} points", $dim, n_points);
 
@@ -119,6 +120,11 @@ macro_rules! generate_memory_analysis {
                         seeds = ?seeds,
                         last_error = %last_error.unwrap_or_else(|| "unknown error".to_string()),
                         "Failed to build triangulation after trying all seeds"
+                    );
+                    println!(
+                        "    ✗ Skipping {}D analysis for {} points; trying next point count",
+                        $dim,
+                        n_points
                     );
                     println!();
                     continue;
@@ -219,13 +225,21 @@ macro_rules! generate_memory_analysis {
                 );
 
                 println!();
-                return;
+                any_success = true;
+                println!(
+                    "    ✓ Completed {}D analysis for {} points; continuing",
+                    $dim,
+                    n_points
+                );
+                println!();
             }
 
-            eprintln!(
-                "✗ Unable to build a {}D triangulation after trying point counts {point_counts:?}",
-                $dim
-            );
+            if !any_success {
+                eprintln!(
+                    "✗ Unable to build a {}D triangulation after trying point counts {point_counts:?}",
+                    $dim
+                );
+            }
         }
     };
 }

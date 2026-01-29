@@ -31,6 +31,7 @@ use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::prelude::DelaunayTriangulation;
 use delaunay::vertex;
 use std::hint::black_box;
+use tracing::error;
 
 /// Common sample sizes used across all CI performance benchmarks
 const COUNTS: &[usize] = &[10, 25, 50];
@@ -69,17 +70,27 @@ macro_rules! benchmark_tds_new_dimension {
                                 "D"
                             ));
                     let vertices = points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>();
+                    let sample_points = points.iter().take(5).collect::<Vec<_>>();
 
                     b.iter(|| {
-                        black_box(
-                            DelaunayTriangulation::<_, (), (), $dim>::new(&vertices).expect(
-                                concat!(
-                                    "DelaunayTriangulation::new failed for ",
-                                    stringify!($dim),
-                                    "D"
-                                ),
-                            ),
-                        );
+                        match DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                            Ok(dt) => {
+                                black_box(dt);
+                            }
+                            Err(err) => {
+                                let error = format!("{err:?}");
+                                error!(
+                                    dim = $dim,
+                                    count,
+                                    seed = $seed,
+                                    bounds = ?(-100.0, 100.0),
+                                    sample_points = ?sample_points,
+                                    error = %error,
+                                    "DelaunayTriangulation::new failed"
+                                );
+                                panic!("DelaunayTriangulation::new failed for {}D: {error}", $dim);
+                            }
+                        }
                     });
                 });
             }
