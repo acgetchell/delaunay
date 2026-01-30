@@ -741,7 +741,29 @@ where
     let ridge_to_star = build_ridge_star_map(tds)?;
     for (ridge_key, star) in ridge_to_star {
         let link_edges = ridge_link_edges_from_star(tds, &star.ridge_vertices, &star.star_cells)?;
-        validate_ridge_link_graph(ridge_key, &link_edges)?;
+        if let Err(err) = validate_ridge_link_graph(ridge_key, &link_edges) {
+            #[cfg(debug_assertions)]
+            if std::env::var_os("DELAUNAY_DEBUG_RIDGE_LINK").is_some() {
+                let mut star_cell_vertices: Vec<(CellKey, VertexKeyBuffer)> =
+                    Vec::with_capacity(star.star_cells.len());
+                for &cell_key in &star.star_cells {
+                    match tds.get_cell_vertices(cell_key) {
+                        Ok(vertices) => star_cell_vertices.push((cell_key, vertices)),
+                        Err(_) => star_cell_vertices.push((cell_key, VertexKeyBuffer::new())),
+                    }
+                }
+
+                tracing::warn!(
+                    ridge_key = ridge_key,
+                    ridge_vertices = ?star.ridge_vertices,
+                    star_cells = ?star.star_cells,
+                    star_cell_vertices = ?star_cell_vertices,
+                    link_edges = ?link_edges,
+                    "validate_ridge_links: ridge link validation failed"
+                );
+            }
+            return Err(err);
+        }
     }
 
     Ok(())

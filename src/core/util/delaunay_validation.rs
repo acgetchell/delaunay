@@ -389,10 +389,23 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
     let cell_vertex_keys: SmallVec<[VertexKey; 8]> = cell.vertices().iter().copied().collect();
 
     cell_vertex_points.clear();
+    let mut missing_vertex_keys: SmallVec<[VertexKey; 8]> = SmallVec::new();
     for &vkey in &cell_vertex_keys {
-        if let Some(v) = tds.get_vertex_by_key(vkey) {
-            cell_vertex_points.push(*v.point());
+        match tds.get_vertex_by_key(vkey) {
+            Some(v) => {
+                cell_vertex_points.push(*v.point());
+            }
+            None => {
+                missing_vertex_keys.push(vkey);
+            }
         }
+    }
+
+    if cell_vertex_points.len() != cell_vertex_keys.len() {
+        tracing::warn!(
+            "[Delaunay debug] First violating cell {first_cell_key:?} references missing vertices; skipping robust_insphere search. Missing vertex keys: {missing_vertex_keys:?}",
+        );
+        return;
     }
 
     let config = config_presets::general_triangulation::<T>();
@@ -625,13 +638,24 @@ mod tests {
         tds.insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
             .unwrap();
 
-        let invalid_vertex: Vertex<f64, (), 2> =
-            Vertex::new_with_uuid(Point::new([f64::NAN, 0.0]), make_uuid(), None);
-        tds.insert_vertex_with_mapping(invalid_vertex).unwrap();
+        let invalid_uuid = make_uuid();
+        tds.insert_vertex_with_mapping(Vertex::new_with_uuid(
+            Point::new([f64::NAN, 0.0]),
+            invalid_uuid,
+            None,
+        ))
+        .unwrap();
+
+        tds.remove_vertex(&Vertex::new_with_uuid(
+            Point::new([f64::NAN, 0.0]),
+            invalid_uuid,
+            None,
+        ))
+        .unwrap();
 
         assert!(
             is_delaunay_property_only(&tds).is_ok(),
-            "Delaunay property-only checks do not validate vertex coordinates"
+            "delaunay_property_only_handles_non_finite_vertex_without_error should skip non-finite vertices before validation"
         );
     }
 

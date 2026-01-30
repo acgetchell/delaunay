@@ -14,16 +14,18 @@
 //! *visible* boundary facets using orientation tests:
 //! - A facet is **strictly visible** if the new point and the opposite vertex
 //!   have opposite orientations relative to the facet's supporting hyperplane.
-//! - **Coplanar cases** (orientation == 0) are conservatively treated as non-visible
-//!   to avoid numerical instability. This may cause "no visible facets" errors for
-//!   points nearly on the hull surface.
-//! - For "weakly visible" behavior, a threshold-based approach would be needed
-//!   (not currently implemented).
+//! - **Coplanar cases** for the *query point* (orientation == 0) are treated as
+//!   **weakly visible** to avoid missing horizon facets when the point lies on the
+//!   hull plane. This still treats degeneracies of the hull facet itself
+//!   (orientation_with_opposite == 0) as non-visible.
+//! - For numerically robust weak visibility beyond coplanar cases, a threshold-based
+//!   approach would be needed (not currently implemented).
 
 use crate::core::algorithms::locate::{ConflictError, LocateError};
 use crate::core::cell::Cell;
 use crate::core::collections::{
     CellKeyBuffer, FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
+    VertexKeyBuffer,
 };
 use crate::core::facet::FacetHandle;
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
@@ -181,6 +183,7 @@ impl InsertionError {
                 // surface (no *strictly* visible facets). This is a geometric degeneracy that may
                 // be resolved by a perturbation retry.
                 message.contains("No visible boundary facets")
+                    || message.contains("Visible boundary facets are not a valid patch")
             }
             Self::Location(_)
             | Self::Construction(_)
@@ -228,6 +231,10 @@ impl InsertionError {
 /// boundary facets and logs warnings if found. Duplicate facets will create
 /// overlapping cells, which will be detected and repaired by subsequent topology
 /// validation passes (see `detect_local_facet_issues` / `repair_local_facet_issues`).
+#[expect(
+    clippy::too_many_lines,
+    reason = "Cavity filling includes detailed debug instrumentation and error handling"
+)]
 pub fn fill_cavity<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
     new_vertex_key: VertexKey,
@@ -240,6 +247,7 @@ where
 {
     #[cfg(debug_assertions)]
     {
+        let log_enabled = std::env::var_os("DELAUNAY_DEBUG_CAVITY").is_some();
         // Check for duplicate boundary facets
         let mut seen_facets: FastHashMap<u64, Vec<FacetHandle>> = FastHashMap::default();
         for facet_handle in boundary_facets {
@@ -264,17 +272,102 @@ where
             .filter(|(_, handles)| handles.len() > 1)
             .collect();
         if !duplicates.is_empty() {
-            eprintln!(
-                "WARNING: {} duplicate boundary facets will create overlapping cells!",
-                duplicates.len()
+            tracing::warn!(
+                duplicate_facets = duplicates.len(),
+                "fill_cavity: duplicate boundary facets will create overlapping cells"
             );
             for (hash, handles) in &duplicates {
-                eprintln!(
-                    "  Facet hash {}: {} instances: {:?}",
-                    hash,
-                    handles.len(),
-                    handles
+                tracing::warn!(
+                    facet_hash = *hash,
+                    instances = handles.len(),
+                    handles = ?handles,
+                    "fill_cavity: duplicate boundary facet"
                 );
+            }
+        } else if log_enabled {
+            tracing::debug!(
+                boundary_facets = boundary_facets.len(),
+                "fill_cavity: no duplicate boundary facet hashes"
+            );
+        }
+
+        if log_enabled {
+            let mut ridge_counts: FastHashMap<u64, usize> = FastHashMap::default();
+            let mut ridge_vertices_map: FastHashMap<u64, VertexKeyBuffer> = FastHashMap::default();
+
+            for facet_handle in boundary_facets {
+                let Some(boundary_cell) = tds.get_cell(facet_handle.cell_key()) else {
+                    tracing::warn!(
+                        cell_key = ?facet_handle.cell_key(),
+                        "fill_cavity: missing boundary cell while building ridge incidence"
+                    );
+                    continue;
+                };
+                let facet_idx = usize::from(facet_handle.facet_index());
+                let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+                for (i, &vertex_key) in boundary_cell.vertices().iter().enumerate() {
+                    if i != facet_idx {
+                        facet_vkeys.push(vertex_key);
+                    }
+                }
+
+                if facet_vkeys.len() < 2 {
+                    continue;
+                }
+
+                for omit in 0..facet_vkeys.len() {
+                    let mut ridge_vertices =
+                        SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+                    for (j, &vkey) in facet_vkeys.iter().enumerate() {
+                        if j != omit {
+                            ridge_vertices.push(vkey);
+                        }
+                    }
+                    ridge_vertices.sort_unstable();
+                    let ridge_hash = compute_facet_hash(&ridge_vertices);
+                    *ridge_counts.entry(ridge_hash).or_insert(0) += 1;
+                    ridge_vertices_map
+                        .entry(ridge_hash)
+                        .or_insert_with(|| ridge_vertices.iter().copied().collect());
+                }
+            }
+
+            let mut ridge_boundary = 0usize;
+            let mut ridge_internal = 0usize;
+            let mut ridge_over_shared = 0usize;
+            for count in ridge_counts.values() {
+                match *count {
+                    1 => ridge_boundary += 1,
+                    2 => ridge_internal += 1,
+                    _ => ridge_over_shared += 1,
+                }
+            }
+
+            tracing::debug!(
+                boundary_facets = boundary_facets.len(),
+                ridge_boundary,
+                ridge_internal,
+                ridge_over_shared,
+                "fill_cavity: boundary ridge incidence summary"
+            );
+
+            if ridge_over_shared > 0 {
+                let mut logged = 0usize;
+                for (&ridge_hash, &count) in &ridge_counts {
+                    if count <= 2 {
+                        continue;
+                    }
+                    if logged >= 10 {
+                        break;
+                    }
+                    tracing::debug!(
+                        ridge_hash,
+                        ridge_count = count,
+                        ridge_vertices = ?ridge_vertices_map.get(&ridge_hash),
+                        "fill_cavity: ridge shared by >2 boundary facets"
+                    );
+                    logged += 1;
+                }
             }
         }
     }
@@ -366,6 +459,10 @@ where
 ///
 /// # Errors
 /// Returns error if neighbor wiring fails or cells cannot be found.
+#[expect(
+    clippy::too_many_lines,
+    reason = "Neighbor wiring keeps cohesive logic and debug accounting together"
+)]
 pub fn wire_cavity_neighbors<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
     new_cells: &CellKeyBuffer,
@@ -380,6 +477,15 @@ where
     // This approach works for both interior cavity filling and hull extension
     type FacetMap = FastHashMap<u64, Vec<(CellKey, u8)>>;
     let mut facet_map: FacetMap = FastHashMap::default();
+
+    #[cfg(debug_assertions)]
+    let log_enabled = std::env::var_os("DELAUNAY_DEBUG_CAVITY").is_some();
+    #[cfg(debug_assertions)]
+    let ridge_link_debug = std::env::var_os("DELAUNAY_DEBUG_RIDGE_LINK").is_some();
+    #[cfg(debug_assertions)]
+    let mut skipped_existing_matches: Vec<(u64, CellKey, usize)> = Vec::new();
+    #[cfg(debug_assertions)]
+    let mut skipped_existing_count = 0usize;
 
     // Note: We don't assert new_cells.len() == boundary_facets.len() here because:
     // 1. boundary_facets is not available in this function (only passed to fill_cavity)
@@ -474,6 +580,15 @@ where
                         })?;
 
                     existing_facet_cells.push((existing_cell_key, facet_idx_u8));
+                } else if ridge_link_debug {
+                    skipped_existing_count = skipped_existing_count.saturating_add(1);
+                    if skipped_existing_matches.len() < 10 {
+                        skipped_existing_matches.push((
+                            facet_key,
+                            existing_cell_key,
+                            existing_facet_cells.len(),
+                        ));
+                    }
                 }
             }
         }
@@ -506,9 +621,11 @@ where
                         }
                     })
                     .collect();
-                eprintln!(
-                    "Non-manifold topology during wiring: facet {facet_key:#x} shared by {} cells (expected ≤2). Cell types: {cell_types:?}",
-                    cells.len()
+                tracing::warn!(
+                    facet_hash = *facet_key,
+                    cell_count = cells.len(),
+                    cell_types = ?cell_types,
+                    "wire_cavity_neighbors: non-manifold facet shared by >2 cells"
                 );
             }
             return Err(InsertionError::NonManifoldTopology {
@@ -517,6 +634,185 @@ where
             });
         }
         // cells.len() == 1 means it's a boundary facet (no neighbor)
+    }
+
+    #[cfg(debug_assertions)]
+    if log_enabled {
+        let mut boundary_facets = 0usize;
+        let mut internal_facets = 0usize;
+        let mut over_shared_facets = 0usize;
+        for cells in facet_map.values() {
+            match cells.len() {
+                1 => boundary_facets += 1,
+                2 => internal_facets += 1,
+                _ => over_shared_facets += 1,
+            }
+        }
+        tracing::debug!(
+            new_cells = new_cells.len(),
+            conflict_cells = conflict_cells.map_or(0, CellKeyBuffer::len),
+            internal_facets,
+            boundary_facets,
+            over_shared_facets,
+            "wire_cavity_neighbors: facet summary"
+        );
+
+        if over_shared_facets > 0 {
+            let mut logged = 0usize;
+            for (facet_key, cells) in &facet_map {
+                if cells.len() <= 2 {
+                    continue;
+                }
+                if logged >= 10 {
+                    break;
+                }
+                tracing::debug!(
+                    facet_hash = *facet_key,
+                    cell_count = cells.len(),
+                    cells = ?cells,
+                    "wire_cavity_neighbors: facet shared by >2 cells in map"
+                );
+                logged += 1;
+            }
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    if std::env::var_os("DELAUNAY_DEBUG_NEIGHBORS").is_some() {
+        let mut mismatches = 0usize;
+        for &cell_key in new_cells {
+            let Some(cell) = tds.get_cell(cell_key) else {
+                continue;
+            };
+            let Some(neighbors) = cell.neighbors() else {
+                continue;
+            };
+            for (facet_idx, neighbor_opt) in neighbors.iter().enumerate() {
+                let Some(neighbor_key) = neighbor_opt else {
+                    continue;
+                };
+                let Some(neighbor_cell) = tds.get_cell(*neighbor_key) else {
+                    continue;
+                };
+                let Some(mirror_idx) = cell.mirror_facet_index(facet_idx, neighbor_cell) else {
+                    mismatches += 1;
+                    tracing::warn!(
+                        cell = ?cell_key,
+                        facet_idx,
+                        neighbor = ?neighbor_key,
+                        "wire_cavity_neighbors: missing mirror facet index"
+                    );
+                    continue;
+                };
+                let neighbor_back = neighbor_cell
+                    .neighbors()
+                    .and_then(|ns| ns.get(mirror_idx).copied().flatten());
+                if neighbor_back != Some(cell_key) {
+                    mismatches += 1;
+                    tracing::warn!(
+                        cell = ?cell_key,
+                        facet_idx,
+                        neighbor = ?neighbor_key,
+                        mirror_idx,
+                        neighbor_back = ?neighbor_back,
+                        "wire_cavity_neighbors: asymmetric neighbor pointer"
+                    );
+                }
+            }
+        }
+
+        tracing::debug!(
+            mismatches,
+            "wire_cavity_neighbors: neighbor symmetry check complete"
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    if ridge_link_debug {
+        if skipped_existing_count > 0 {
+            tracing::debug!(
+                skipped_existing_count,
+                skipped_existing_matches = ?skipped_existing_matches,
+                "wire_cavity_neighbors: skipped existing-cell matches (facet already shared by >1 new cell)"
+            );
+        }
+
+        let mut total_slots = 0usize;
+        let mut neighbor_new = 0usize;
+        let mut neighbor_existing = 0usize;
+        let mut neighbor_conflict = 0usize;
+        let mut neighbor_missing = 0usize;
+        let mut neighbor_none = 0usize;
+        let mut anomaly_samples: Vec<(CellKey, usize, Option<CellKey>, String)> = Vec::new();
+
+        for &cell_key in new_cells {
+            let Some(cell) = tds.get_cell(cell_key) else {
+                continue;
+            };
+
+            let vertex_count = cell.number_of_vertices();
+            total_slots = total_slots.saturating_add(vertex_count);
+
+            let Some(neighbors) = cell.neighbors() else {
+                neighbor_none = neighbor_none.saturating_add(vertex_count);
+                continue;
+            };
+
+            for (facet_idx, neighbor_opt) in neighbors.iter().enumerate() {
+                match neighbor_opt {
+                    None => {
+                        neighbor_none = neighbor_none.saturating_add(1);
+                    }
+                    Some(neighbor_key) => {
+                        if new_cells_set.contains(neighbor_key) {
+                            neighbor_new = neighbor_new.saturating_add(1);
+                        } else if conflict_set.contains(neighbor_key) {
+                            neighbor_conflict = neighbor_conflict.saturating_add(1);
+                            if anomaly_samples.len() < 10 {
+                                anomaly_samples.push((
+                                    cell_key,
+                                    facet_idx,
+                                    Some(*neighbor_key),
+                                    "CONFLICT".to_string(),
+                                ));
+                            }
+                        } else if tds.contains_cell(*neighbor_key) {
+                            neighbor_existing = neighbor_existing.saturating_add(1);
+                        } else {
+                            neighbor_missing = neighbor_missing.saturating_add(1);
+                            if anomaly_samples.len() < 10 {
+                                anomaly_samples.push((
+                                    cell_key,
+                                    facet_idx,
+                                    Some(*neighbor_key),
+                                    "MISSING".to_string(),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        tracing::debug!(
+            new_cells = new_cells.len(),
+            total_slots,
+            neighbor_new,
+            neighbor_existing,
+            neighbor_conflict,
+            neighbor_missing,
+            neighbor_none,
+            "wire_cavity_neighbors: new-cell neighbor classification summary"
+        );
+
+        if neighbor_conflict > 0 || neighbor_missing > 0 {
+            tracing::warn!(
+                neighbor_conflict,
+                neighbor_missing,
+                anomaly_samples = ?anomaly_samples,
+                "wire_cavity_neighbors: unexpected neighbor classifications for new cells"
+            );
+        }
     }
 
     Ok(())
@@ -898,6 +1194,17 @@ where
     // Find visible boundary facets
     let visible_facets = find_visible_boundary_facets(tds, kernel, point)?;
 
+    #[cfg(debug_assertions)]
+    if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
+        let total_boundary = tds.boundary_facets().map_or(0, Iterator::count);
+        tracing::debug!(
+            point = ?point,
+            visible_facets = visible_facets.len(),
+            total_boundary,
+            "extend_hull: visibility summary"
+        );
+    }
+
     if visible_facets.is_empty() {
         return Err(InsertionError::HullExtension {
             message: "No visible boundary facets found for exterior vertex (may be coplanar with hull surface)".to_string(),
@@ -921,10 +1228,11 @@ where
 ///
 /// **Visibility criterion:**
 /// - **Strictly visible**: Opposite orientations (orientation signs differ)
-/// - **Coplanar** (orientation == 0): Currently treated as non-visible to avoid
-///   numerical instability. For "weakly visible" behavior that includes nearly
-///   coplanar facets, the orientation test logic would need an epsilon-based
-///   threshold (not currently implemented).
+/// - **Coplanar** (query orientation == 0): Treated as **weakly visible** to avoid
+///   missing horizon facets when the point lies on the hull plane.
+/// - **Facet degeneracy** (opposite orientation == 0): Treated as non-visible.
+/// - For numerically robust weak visibility beyond coplanar cases, the orientation
+///   test logic would need an epsilon-based threshold (not currently implemented).
 ///
 /// # Arguments
 /// - `tds` - The triangulation data structure
@@ -939,6 +1247,10 @@ where
 /// - Boundary facets cannot be retrieved
 /// - Orientation tests fail
 /// - Cell/vertex lookups fail
+#[expect(
+    clippy::too_many_lines,
+    reason = "Visibility checks and diagnostic summaries are kept in a single routine"
+)]
 fn find_visible_boundary_facets<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -951,6 +1263,27 @@ where
 {
     let mut visible_facets = Vec::new();
 
+    #[cfg(debug_assertions)]
+    let detail_enabled = std::env::var_os("DELAUNAY_DEBUG_HULL_DETAIL").is_some();
+    #[cfg(debug_assertions)]
+    let mut boundary_facets_count = 0usize;
+    #[cfg(debug_assertions)]
+    let mut orientation_opposite_positive = 0usize;
+    #[cfg(debug_assertions)]
+    let mut orientation_opposite_negative = 0usize;
+    #[cfg(debug_assertions)]
+    let mut orientation_opposite_zero = 0usize;
+    #[cfg(debug_assertions)]
+    let mut orientation_point_positive = 0usize;
+    #[cfg(debug_assertions)]
+    let mut orientation_point_negative = 0usize;
+    #[cfg(debug_assertions)]
+    let mut orientation_point_zero = 0usize;
+    #[cfg(debug_assertions)]
+    let mut visible_facets_strict = 0usize;
+    #[cfg(debug_assertions)]
+    let mut visible_facets_weak = 0usize;
+
     // Get all boundary facets
     let boundary_facets = tds
         .boundary_facets()
@@ -960,6 +1293,10 @@ where
 
     // Test each boundary facet for visibility
     for facet_view in boundary_facets {
+        #[cfg(debug_assertions)]
+        if detail_enabled {
+            boundary_facets_count += 1;
+        }
         let cell_key = facet_view.cell_key();
         let facet_index = facet_view.facet_index();
 
@@ -970,23 +1307,36 @@ where
                 message: format!("Boundary facet cell {cell_key:?} not found"),
             })?;
 
-        // Collect points for the simplex: facet vertices + opposite vertex
+        // Collect points for the simplex in canonical order: facet vertices + opposite vertex.
         let mut simplex_points =
             SmallBuffer::<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+        let mut opposite_point: Option<Point<K::Scalar, D>> = None;
 
-        for &vkey in cell.vertices() {
+        for (i, &vkey) in cell.vertices().iter().enumerate() {
             let vertex =
                 tds.get_vertex_by_key(vkey)
                     .ok_or_else(|| InsertionError::HullExtension {
                         message: format!("Vertex {vkey:?} not found in TDS"),
                     })?;
-            simplex_points.push(*vertex.point());
+            if i == usize::from(facet_index) {
+                opposite_point = Some(*vertex.point());
+            } else {
+                simplex_points.push(*vertex.point());
+            }
         }
 
-        // Test orientation: if point is on same side as inside of hull, facet is visible
+        let opposite_point = opposite_point.ok_or_else(|| InsertionError::HullExtension {
+            message: format!(
+                "Opposite vertex missing for facet {facet_index} in cell {cell_key:?}"
+            ),
+        })?;
+
+        // Append opposite vertex in canonical order.
+        simplex_points.push(opposite_point);
+
+        // Test orientation: if point is on same side as inside of hull, facet is visible.
         // For a boundary facet, we want to know if the new point is on the "outside" side
-        // The facet vertices are ordered such that the opposite vertex (at facet_index) is "inside"
-        // So we test if replacing the opposite vertex with our point gives opposite orientation
+        // relative to the opposite vertex.
         let orientation_with_opposite =
             kernel
                 .orientation(&simplex_points)
@@ -994,8 +1344,9 @@ where
                     message: format!("Orientation test failed: {e}"),
                 })?;
 
-        // Replace opposite vertex with query point
-        simplex_points[usize::from(facet_index)] = *point;
+        // Replace opposite vertex with query point (last entry in canonical order).
+        let last_index = simplex_points.len() - 1;
+        simplex_points[last_index] = *point;
         let orientation_with_point =
             kernel
                 .orientation(&simplex_points)
@@ -1003,27 +1354,291 @@ where
                     message: format!("Orientation test failed: {e}"),
                 })?;
 
-        // Facet is visible if orientations have opposite sign (point is on opposite side)
-        // orientation() returns i32: positive, negative, or zero
+        // Facet is visible if the point lies on the opposite side of the facet
+        // relative to the opposite vertex. This avoids assuming consistent facet
+        // orientations across the boundary.
         //
-        // Note: Coplanar cases (either orientation == 0) are treated as non-visible.
-        // This conservative approach avoids numerical instability but may cause
-        // "no visible facets" errors for points nearly on the hull surface.
-        // For "weakly visible" behavior, use: orientation_with_opposite * orientation_with_point < 0
-        // (but this requires careful epsilon-based handling to avoid degenerate cases)
-        //
-        // TODO: Investigate threshold-based approaches for weakly visible behavior.
-        // This would allow treating nearly coplanar facets as visible, reducing failures
-        // for points close to the hull surface. Implementation would need:
-        // - Configurable epsilon threshold based on coordinate type and scale
-        // - Careful handling of edge cases to avoid creating degenerate cells
-        // - Testing with various numerical precision scenarios (f32 vs f64)
-        let is_visible = (orientation_with_opposite > 0 && orientation_with_point < 0)
-            || (orientation_with_opposite < 0 && orientation_with_point > 0);
+        // Weak visibility: treat query-point coplanarity as visible (orientation == 0).
+        // Hull-facet degeneracy (orientation_with_opposite == 0) is still treated as
+        // non-visible to avoid propagating degenerate facets.
+        let is_strict_visible = orientation_with_opposite != 0
+            && orientation_with_point != 0
+            && orientation_with_opposite.signum() != orientation_with_point.signum();
+        let is_weak_visible = orientation_with_opposite != 0 && orientation_with_point == 0;
+        let is_visible = is_strict_visible || is_weak_visible;
+
+        #[cfg(debug_assertions)]
+        if detail_enabled {
+            match orientation_with_opposite.cmp(&0) {
+                std::cmp::Ordering::Greater => orientation_opposite_positive += 1,
+                std::cmp::Ordering::Less => orientation_opposite_negative += 1,
+                std::cmp::Ordering::Equal => orientation_opposite_zero += 1,
+            }
+            match orientation_with_point.cmp(&0) {
+                std::cmp::Ordering::Greater => orientation_point_positive += 1,
+                std::cmp::Ordering::Less => orientation_point_negative += 1,
+                std::cmp::Ordering::Equal => orientation_point_zero += 1,
+            }
+            if is_strict_visible {
+                visible_facets_strict += 1;
+            }
+            if is_weak_visible {
+                visible_facets_weak += 1;
+            }
+            tracing::trace!(
+                cell_key = ?cell_key,
+                facet_index = usize::from(facet_index),
+                orientation_with_opposite,
+                orientation_with_point,
+                is_strict_visible,
+                is_weak_visible,
+                "find_visible_boundary_facets: facet orientation"
+            );
+        }
 
         if is_visible {
             visible_facets.push(FacetHandle::new(cell_key, facet_index));
         }
+    }
+
+    if D >= 2 && !visible_facets.is_empty() {
+        let mut ridge_to_facets: FastHashMap<u64, Vec<usize>> = FastHashMap::default();
+        let mut ridge_counts: FastHashMap<u64, usize> = FastHashMap::default();
+        let mut ridge_vertices_map: FastHashMap<u64, VertexKeyBuffer> = FastHashMap::default();
+
+        for (facet_idx, facet_handle) in visible_facets.iter().enumerate() {
+            let Some(cell) = tds.get_cell(facet_handle.cell_key()) else {
+                #[cfg(debug_assertions)]
+                tracing::warn!(
+                    cell_key = ?facet_handle.cell_key(),
+                    "find_visible_boundary_facets: missing cell while summarizing ridges"
+                );
+                continue;
+            };
+            let facet_index = usize::from(facet_handle.facet_index());
+            let mut facet_vertices = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+            for (i, &vkey) in cell.vertices().iter().enumerate() {
+                if i != facet_index {
+                    facet_vertices.push(vkey);
+                }
+            }
+
+            if facet_vertices.len() < 2 {
+                continue;
+            }
+
+            for omit in 0..facet_vertices.len() {
+                let mut ridge_vertices =
+                    SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+                for (j, &vkey) in facet_vertices.iter().enumerate() {
+                    if j != omit {
+                        ridge_vertices.push(vkey);
+                    }
+                }
+                ridge_vertices.sort_unstable();
+                let ridge_hash = compute_facet_hash(&ridge_vertices);
+                ridge_to_facets
+                    .entry(ridge_hash)
+                    .or_default()
+                    .push(facet_idx);
+                *ridge_counts.entry(ridge_hash).or_insert(0) += 1;
+                ridge_vertices_map
+                    .entry(ridge_hash)
+                    .or_insert_with(|| ridge_vertices.clone());
+            }
+        }
+
+        let mut boundary_ridges = 0usize;
+        let mut internal_ridges = 0usize;
+        let mut over_shared_ridges = 0usize;
+        for count in ridge_counts.values() {
+            match *count {
+                1 => boundary_ridges += 1,
+                2 => internal_ridges += 1,
+                _ => over_shared_ridges += 1,
+            }
+        }
+
+        let mut boundary_components = 0usize;
+        let mut boundary_subface_nonmanifold = 0usize;
+        if D >= 3 && boundary_ridges > 0 {
+            let mut boundary_ridge_keys: Vec<u64> = Vec::with_capacity(boundary_ridges);
+            for (ridge_hash, count) in &ridge_counts {
+                if *count == 1 {
+                    boundary_ridge_keys.push(*ridge_hash);
+                }
+            }
+
+            let mut face_to_ridges: FastHashMap<u64, Vec<usize>> = FastHashMap::default();
+            let mut subface_vertices: VertexKeyBuffer = VertexKeyBuffer::new();
+
+            for (idx, ridge_hash) in boundary_ridge_keys.iter().enumerate() {
+                let Some(ridge_vertices) = ridge_vertices_map.get(ridge_hash) else {
+                    continue;
+                };
+                if ridge_vertices.len() < 2 {
+                    continue;
+                }
+                for omit in 0..ridge_vertices.len() {
+                    subface_vertices.clear();
+                    for (j, &vk) in ridge_vertices.iter().enumerate() {
+                        if j != omit {
+                            subface_vertices.push(vk);
+                        }
+                    }
+                    subface_vertices.sort_unstable();
+                    let subface_hash = compute_facet_hash(&subface_vertices);
+                    face_to_ridges.entry(subface_hash).or_default().push(idx);
+                }
+            }
+
+            let mut ridge_adjacency: Vec<Vec<usize>> = vec![Vec::new(); boundary_ridge_keys.len()];
+            for ridges in face_to_ridges.values() {
+                if ridges.len() != 2 {
+                    boundary_subface_nonmanifold += 1;
+                }
+                if ridges.len() < 2 {
+                    continue;
+                }
+                for i in 0..ridges.len() {
+                    for j in (i + 1)..ridges.len() {
+                        let a = ridges[i];
+                        let b = ridges[j];
+                        ridge_adjacency[a].push(b);
+                        ridge_adjacency[b].push(a);
+                    }
+                }
+            }
+
+            let mut visited = vec![false; boundary_ridge_keys.len()];
+            for start in 0..boundary_ridge_keys.len() {
+                if visited[start] {
+                    continue;
+                }
+                boundary_components += 1;
+                let mut stack = vec![start];
+                visited[start] = true;
+                while let Some(r) = stack.pop() {
+                    for &n in &ridge_adjacency[r] {
+                        if !visited[n] {
+                            visited[n] = true;
+                            stack.push(n);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut adjacency: Vec<Vec<usize>> = vec![Vec::new(); visible_facets.len()];
+        for facets in ridge_to_facets.values() {
+            if facets.len() < 2 {
+                continue;
+            }
+            for i in 0..facets.len() {
+                for j in (i + 1)..facets.len() {
+                    let a = facets[i];
+                    let b = facets[j];
+                    adjacency[a].push(b);
+                    adjacency[b].push(a);
+                }
+            }
+        }
+
+        let mut visited = vec![false; visible_facets.len()];
+        let mut components = 0usize;
+        for start in 0..visible_facets.len() {
+            if visited[start] {
+                continue;
+            }
+            components += 1;
+            let mut stack = vec![start];
+            visited[start] = true;
+            while let Some(f) = stack.pop() {
+                for &n in &adjacency[f] {
+                    if !visited[n] {
+                        visited[n] = true;
+                        stack.push(n);
+                    }
+                }
+            }
+        }
+
+        if over_shared_ridges > 0
+            || components > 1
+            || boundary_ridges == 0
+            || (D >= 3 && boundary_components > 1)
+            || (D >= 3 && boundary_subface_nonmanifold > 0)
+        {
+            #[cfg(debug_assertions)]
+            if detail_enabled {
+                tracing::debug!(
+                    visible_facets = visible_facets.len(),
+                    ridge_boundary = boundary_ridges,
+                    ridge_internal = internal_ridges,
+                    ridge_over_shared = over_shared_ridges,
+                    components,
+                    boundary_components,
+                    boundary_subface_nonmanifold,
+                    orientation_opposite_zero,
+                    orientation_point_zero,
+                    "find_visible_boundary_facets: invalid patch"
+                );
+            }
+            return Err(InsertionError::HullExtension {
+                message: format!(
+                    "Visible boundary facets are not a valid patch: boundary_ridges={boundary_ridges}, ridge_fans={over_shared_ridges}, components={components}, boundary_components={boundary_components}, boundary_subface_nonmanifold={boundary_subface_nonmanifold}",
+                ),
+            });
+        }
+
+        #[cfg(debug_assertions)]
+        if detail_enabled {
+            tracing::debug!(
+                visible_facets = visible_facets.len(),
+                ridge_boundary = boundary_ridges,
+                ridge_internal = internal_ridges,
+                ridge_over_shared = over_shared_ridges,
+                components,
+                boundary_components,
+                boundary_subface_nonmanifold,
+                orientation_opposite_zero,
+                orientation_point_zero,
+                "find_visible_boundary_facets: ridge connectivity summary"
+            );
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    if detail_enabled {
+        let mixed_orientation =
+            orientation_opposite_positive > 0 && orientation_opposite_negative > 0;
+        tracing::debug!(
+            boundary_facets = boundary_facets_count,
+            visible_facets = visible_facets.len(),
+            visible_facets_strict,
+            visible_facets_weak,
+            orientation_opposite_positive,
+            orientation_opposite_negative,
+            orientation_opposite_zero,
+            orientation_point_positive,
+            orientation_point_negative,
+            orientation_point_zero,
+            mixed_orientation,
+            "find_visible_boundary_facets: boundary facet orientation consistency"
+        );
+        tracing::debug!(
+            boundary_facets = boundary_facets_count,
+            visible_facets = visible_facets.len(),
+            visible_facets_strict,
+            visible_facets_weak,
+            orientation_opposite_positive,
+            orientation_opposite_negative,
+            orientation_opposite_zero,
+            orientation_point_positive,
+            orientation_point_negative,
+            orientation_point_zero,
+            "find_visible_boundary_facets: orientation summary"
+        );
     }
 
     Ok(visible_facets)

@@ -3332,8 +3332,37 @@ where
                 message: format!("Failed to assign incident cells after insertion: {e}"),
             })?;
 
+        #[cfg(debug_assertions)]
+        if std::env::var_os("DELAUNAY_DEBUG_RIDGE_LINK").is_some() {
+            match validate_ridge_links(&self.tds) {
+                Ok(()) => {
+                    tracing::debug!(
+                        "insert_with_conflict_region: ridge-link validation passed after insertion"
+                    );
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        error = ?err,
+                        "insert_with_conflict_region: ridge-link validation failed after insertion"
+                    );
+                }
+            }
+        }
+
         // If any vertex is not incident to a cell, topology is not a pure ball anymore.
-        if self.tds.vertices().any(|(_, v)| v.incident_cell.is_none()) {
+        let isolated_count = self
+            .tds
+            .vertices()
+            .filter(|(_, v)| v.incident_cell.is_none())
+            .count();
+        if isolated_count > 0 {
+            #[cfg(debug_assertions)]
+            if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
+                tracing::warn!(
+                    isolated_count,
+                    "insert_with_conflict_region: isolated vertices detected after insertion"
+                );
+            }
             return Err(InsertionError::TopologyValidation(
                 TdsValidationError::InconsistentDataStructure {
                     message: "Isolated vertex detected after insertion (vertex not in any cell)"
@@ -3422,6 +3451,14 @@ where
 
         // 3. Locate containing cell (for vertex D+2 and beyond)
         let location = locate(&self.tds, &self.kernel, &point, hint)?;
+        #[cfg(debug_assertions)]
+        if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
+            tracing::debug!(
+                point = ?point,
+                location = ?location,
+                "try_insert_impl: locate result"
+            );
+        }
 
         // 4. Determine conflict cells (for interior points)
         let conflict_cells = match (location, conflict_cells) {
@@ -3475,29 +3512,54 @@ where
                     );
                     None
                 } else {
+                    #[cfg(debug_assertions)]
+                    if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
+                        tracing::debug!("Outside insertion: starting global conflict-region scan");
+                    }
                     let computed = self.find_conflict_region_global(&point)?;
                     if computed.is_empty() {
-                        None
-                    } else if self.conflict_region_touches_boundary(&computed)? {
                         #[cfg(debug_assertions)]
-                        tracing::debug!(
-                            "Outside insertion (D={D}) conflict region touches hull; skipping cavity insertion"
-                        );
+                        if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
+                            tracing::debug!(
+                                "Outside insertion: global conflict region empty; will use hull extension"
+                            );
+                        }
                         None
                     } else {
+                        if self.conflict_region_touches_boundary(&computed)? {
+                            #[cfg(debug_assertions)]
+                            tracing::debug!(
+                                "Outside insertion (D={D}) conflict region touches hull; attempting cavity insertion with fallback"
+                            );
+                        } else {
+                            #[cfg(debug_assertions)]
+                            tracing::debug!(
+                                "Outside insertion (D={D}) using global conflict region with {} cells",
+                                computed.len()
+                            );
+                        }
                         #[cfg(debug_assertions)]
-                        tracing::debug!(
-                            "Outside insertion (D={D}) using global conflict region with {} cells",
-                            computed.len()
-                        );
                         Some(Cow::Owned(computed))
                     }
                 }
             }
             (LocateResult::Outside, Some(cells)) => {
                 if cells.is_empty() {
+                    #[cfg(debug_assertions)]
+                    if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
+                        tracing::debug!(
+                            "Outside insertion: caller provided empty conflict region; will use hull extension"
+                        );
+                    }
                     None
                 } else {
+                    #[cfg(debug_assertions)]
+                    if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
+                        tracing::debug!(
+                            conflict_cells = cells.len(),
+                            "Outside insertion: using caller-provided conflict region"
+                        );
+                    }
                     Some(Cow::Borrowed(cells))
                 }
             }
@@ -3550,6 +3612,12 @@ where
                             // For exterior points, a "global" conflict region can intersect the hull,
                             // producing an open/disconnected cavity boundary. In these cases we fall back
                             // to hull extension instead of surfacing an insertion error.
+                            let fallback_on_isolated_vertex = matches!(
+                                &err,
+                                InsertionError::TopologyValidation(
+                                    TdsValidationError::InconsistentDataStructure { message }
+                                ) if message.contains("Isolated vertex detected after insertion")
+                            );
                             let should_fallback = matches!(
                                 &err,
                                 InsertionError::ConflictRegion(
@@ -3558,13 +3626,21 @@ where
                                         | ConflictError::DisconnectedBoundary { .. }
                                         | ConflictError::OpenBoundary { .. }
                                 )
-                            );
+                            ) || fallback_on_isolated_vertex;
 
                             if should_fallback {
                                 #[cfg(debug_assertions)]
                                 tracing::warn!(
                                     "Outside insertion conflict boundary degeneracy ({err}) (conflict_cells={conflict_len}); falling back to hull extension"
                                 );
+                                #[cfg(debug_assertions)]
+                                if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
+                                    tracing::debug!(
+                                        error = %err,
+                                        fallback_on_isolated_vertex,
+                                        "Outside insertion: cavity insertion failed; using hull extension"
+                                    );
+                                }
                             } else {
                                 #[cfg(debug_assertions)]
                                 tracing::warn!("Outside insertion cavity insertion failed: {err}");
@@ -3574,7 +3650,32 @@ where
                     }
                 }
                 // Exterior vertex: extend convex hull
-                let new_cells = extend_hull(&mut self.tds, &self.kernel, v_key, &point)?;
+                #[cfg(debug_assertions)]
+                if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
+                    tracing::debug!(
+                        point = ?point,
+                        "Outside insertion: proceeding to hull extension"
+                    );
+                }
+                let new_cells =
+                    extend_hull(&mut self.tds, &self.kernel, v_key, &point).map_err(|err| {
+                        #[cfg(debug_assertions)]
+                        if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
+                            tracing::warn!(
+                                point = ?point,
+                                error = %err,
+                                "Outside insertion: hull extension failed"
+                            );
+                        }
+                        err
+                    })?;
+                #[cfg(debug_assertions)]
+                if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
+                    tracing::debug!(
+                        new_cells = new_cells.len(),
+                        "Outside insertion: hull extension succeeded"
+                    );
+                }
 
                 // Iteratively repair non-manifold topology until facet sharing is valid
                 let mut total_removed = 0;
@@ -3675,6 +3776,23 @@ where
                     .map_err(|e| InsertionError::CavityFilling {
                         message: format!("Failed to assign incident cells after insertion: {e}"),
                     })?;
+
+                #[cfg(debug_assertions)]
+                if std::env::var_os("DELAUNAY_DEBUG_RIDGE_LINK").is_some() {
+                    match validate_ridge_links(&self.tds) {
+                        Ok(()) => {
+                            tracing::debug!(
+                                "extend_hull: ridge-link validation passed after insertion"
+                            );
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                error = ?err,
+                                "extend_hull: ridge-link validation failed after insertion"
+                            );
+                        }
+                    }
+                }
 
                 // Detect isolated vertices and treat as retryable degeneracy.
                 if self.tds.vertices().any(|(_, v)| v.incident_cell.is_none()) {

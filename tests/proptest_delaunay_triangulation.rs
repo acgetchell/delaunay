@@ -465,6 +465,7 @@ macro_rules! gen_incremental_insertion_validity {
                     initial_points in prop::collection::vec([<vertex_ $dim d>](), $min..=$max),
                     additional_point in [<vertex_ $dim d>](),
                 ) {
+                    init_tracing();
                     // Dedup exact duplicates to avoid pathological degeneracies during shrinking.
                     let initial_vertices =
                         dedup_vertices_by_coords::<$dim>(Vertex::from_points(&initial_points));
@@ -529,6 +530,7 @@ macro_rules! gen_incremental_insertion_validity {
                     initial_points in prop::collection::vec([<vertex_ $dim d>](), $min..=$max),
                     additional_point in [<vertex_ $dim d>](),
                 ) {
+                    init_tracing();
                     // Dedup exact duplicates to avoid pathological degeneracies during shrinking.
                     let initial_vertices =
                         dedup_vertices_by_coords::<$dim>(Vertex::from_points(&initial_points));
@@ -593,6 +595,7 @@ proptest! {
         initial_points in prop::collection::vec(vertex_3d(), 4..=6),
         additional_point in vertex_3d(),
     ) {
+        init_tracing();
         // Dedup exact duplicates to avoid pathological degeneracies during shrinking.
         let initial_vertices =
             dedup_vertices_by_coords::<3>(Vertex::from_points(&initial_points));

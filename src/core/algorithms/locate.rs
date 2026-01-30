@@ -536,7 +536,7 @@ where
 /// Find all cells whose circumspheres contain the query point (conflict region).
 ///
 /// Uses BFS traversal starting from a located cell to find all cells in conflict.
-/// A cell is in conflict if the query point lies strictly inside its circumsphere.
+/// A cell is in conflict if the query point lies inside **or on** its circumsphere.
 ///
 /// # Arguments
 ///
@@ -560,7 +560,7 @@ where
 ///
 /// 1. Start BFS from the located cell
 /// 2. For each cell, test `kernel.in_sphere()`
-/// 3. If point is inside circumsphere (sign > 0), add to conflict region
+/// 3. If point is inside or on circumsphere (sign >= 0), add to conflict region
 /// 4. Expand search to neighbors of conflicting cells
 /// 5. Track visited cells with `CellSecondaryMap` for O(1) lookups
 ///
@@ -651,11 +651,11 @@ where
             });
         }
 
-        // Test if point is inside circumsphere
+        // Test if point is inside/on circumsphere
         let sign = kernel.in_sphere(&simplex_points, point)?;
 
-        if sign > 0 {
-            // Point is inside circumsphere - cell is in conflict
+        if sign >= 0 {
+            // Point is inside or on circumsphere - cell is in conflict
             conflict_cells.push(cell_key);
 
             // Add neighbors to queue for exploration
@@ -757,6 +757,9 @@ where
     if conflict_cells.is_empty() {
         return Ok(CavityBoundaryBuffer::new());
     }
+
+    #[cfg(debug_assertions)]
+    let detail_enabled = std::env::var_os("DELAUNAY_DEBUG_CAVITY").is_some();
 
     // IMPORTANT:
     // We intentionally do NOT rely on neighbor pointers to classify boundary facets here.
@@ -895,6 +898,38 @@ where
         }
     }
 
+    #[cfg(debug_assertions)]
+    if detail_enabled {
+        let mut ridge_facet_one = 0usize;
+        let mut ridge_facet_two = 0usize;
+        let mut ridge_facet_many = 0usize;
+        let mut ridge_vertex_count_min = usize::MAX;
+        let mut ridge_vertex_count_max = 0usize;
+        for info in ridge_map.values() {
+            ridge_vertex_count_min = ridge_vertex_count_min.min(info.ridge_vertex_count);
+            ridge_vertex_count_max = ridge_vertex_count_max.max(info.ridge_vertex_count);
+            match info.facet_count {
+                1 => ridge_facet_one += 1,
+                2 => ridge_facet_two += 1,
+                _ => ridge_facet_many += 1,
+            }
+        }
+        if ridge_map.is_empty() {
+            ridge_vertex_count_min = 0;
+        }
+        tracing::debug!(
+            conflict_cells = conflict_cells.len(),
+            boundary_facets = boundary_facets.len(),
+            ridge_count = ridge_map.len(),
+            ridge_facet_one,
+            ridge_facet_two,
+            ridge_facet_many,
+            ridge_vertex_count_min,
+            ridge_vertex_count_max,
+            "extract_cavity_boundary: ridge summary"
+        );
+    }
+
     // Build boundary facet adjacency via ridges and validate manifold properties of the boundary.
     if !boundary_facets.is_empty() {
         let boundary_len = boundary_facets.len();
@@ -965,6 +1000,14 @@ where
                 total: boundary_len,
             });
         }
+    }
+
+    #[cfg(debug_assertions)]
+    if detail_enabled {
+        tracing::debug!(
+            boundary_facets = boundary_facets.len(),
+            "extract_cavity_boundary: boundary connectivity validated"
+        );
     }
 
     Ok(boundary_facets)
