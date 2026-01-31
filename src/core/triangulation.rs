@@ -117,7 +117,8 @@ use uuid::Uuid;
 
 use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
 use crate::core::algorithms::incremental_insertion::{
-    InsertionError, extend_hull, fill_cavity, repair_neighbor_pointers, wire_cavity_neighbors,
+    HullExtensionReason, InsertionError, extend_hull, fill_cavity, repair_neighbor_pointers,
+    wire_cavity_neighbors,
 };
 #[cfg(debug_assertions)]
 use crate::core::algorithms::locate::locate_with_stats;
@@ -3751,8 +3752,9 @@ where
                     Err(err) => {
                         let retry_inside = matches!(
                             &err,
-                            InsertionError::HullExtension { message }
-                                if message.contains("No visible boundary facets")
+                            InsertionError::HullExtension {
+                                reason: HullExtensionReason::NoVisibleFacets
+                            }
                         );
                         if retry_inside {
                             let fallback_location =

@@ -688,7 +688,8 @@ where
             tracing::debug!(
                 cell_key = ?cell_key,
                 sign,
-                "find_conflict_region: in_sphere sign"
+                in_conflict = sign >= 0,
+                "find_conflict_region: in_sphere classification"
             );
         }
 
@@ -707,7 +708,7 @@ where
                 }
             }
         }
-        // If sign <= 0, cell is not in conflict, don't explore further in this direction
+        // If sign < 0, cell is not in conflict, don't explore further in this direction
     }
 
     Ok(conflict_cells)

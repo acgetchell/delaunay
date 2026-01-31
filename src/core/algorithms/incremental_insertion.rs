@@ -43,6 +43,38 @@ use std::hash::{Hash, Hasher};
 
 pub use crate::core::operations::{InsertionOutcome, InsertionResult, InsertionStatistics};
 
+/// Reason for hull extension failure.
+#[derive(Debug, Clone)]
+pub enum HullExtensionReason {
+    /// No visible boundary facets (coplanar with hull surface).
+    NoVisibleFacets,
+    /// Visible facets form an invalid patch.
+    InvalidPatch {
+        /// Details about why the patch was invalid.
+        details: String,
+    },
+    /// Other failure.
+    Other {
+        /// Underlying error message.
+        message: String,
+    },
+}
+
+impl std::fmt::Display for HullExtensionReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoVisibleFacets => f.write_str(
+                "No visible boundary facets found for exterior vertex (may be coplanar with hull surface)",
+            ),
+            Self::InvalidPatch { details } => write!(
+                f,
+                "Visible boundary facets are not a valid patch: {details}"
+            ),
+            Self::Other { message } => f.write_str(message),
+        }
+    }
+}
+
 /// Error during incremental insertion.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum InsertionError {
@@ -87,11 +119,11 @@ pub enum InsertionError {
         cell_count: usize,
     },
 
-    /// Hull extension failed (finding visible boundary facets)
-    #[error("Hull extension failed: {message}")]
+    /// Hull extension failed (finding visible boundary facets).
+    #[error("Hull extension failed: {reason}")]
     HullExtension {
-        /// Error message
-        message: String,
+        /// Structured reason for failure.
+        reason: HullExtensionReason,
     },
 
     /// Global Delaunay validation failed after insertion.
@@ -181,12 +213,14 @@ impl InsertionError {
             // Location errors are treated as non-retryable: `locate()` falls back to a scan when
             // facet-walking fails to make progress (cycle / step limit). Remaining location errors
             // are structural (invalid cell references) or predicate failures.
-            Self::HullExtension { message } => {
+            Self::HullExtension { reason } => {
                 // Hull extension can fail when the query point is nearly coplanar with the hull
                 // surface (no *strictly* visible facets). This is a geometric degeneracy that may
                 // be resolved by a perturbation retry.
-                message.contains("No visible boundary facets")
-                    || message.contains("Visible boundary facets are not a valid patch")
+                matches!(
+                    reason,
+                    HullExtensionReason::NoVisibleFacets | HullExtensionReason::InvalidPatch { .. }
+                )
             }
             Self::Location(_)
             | Self::Construction(_)
@@ -1224,10 +1258,12 @@ where
 
         if boundary_facets.len() != 2 {
             return Err(InsertionError::HullExtension {
-                message: format!(
-                    "2D boundary edge split expected 2 facets, got {}",
-                    boundary_facets.len()
-                ),
+                reason: HullExtensionReason::Other {
+                    message: format!(
+                        "2D boundary edge split expected 2 facets, got {}",
+                        boundary_facets.len()
+                    ),
+                },
             });
         }
 
@@ -1263,7 +1299,7 @@ where
 
     if visible_facets.is_empty() {
         return Err(InsertionError::HullExtension {
-            message: "No visible boundary facets found for exterior vertex (may be coplanar with hull surface)".to_string(),
+            reason: HullExtensionReason::NoVisibleFacets,
         });
     }
 
@@ -1277,6 +1313,10 @@ where
     Ok(new_cells)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "Visibility and edge-split checks are kept together for clarity"
+)]
 fn find_boundary_edge_split_facet<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -1297,7 +1337,9 @@ where
     let boundary_facets = tds
         .boundary_facets()
         .map_err(|e| InsertionError::HullExtension {
-            message: format!("Failed to get boundary facets: {e}"),
+            reason: HullExtensionReason::Other {
+                message: format!("Failed to get boundary facets: {e}"),
+            },
         })?;
 
     for facet_view in boundary_facets {
@@ -1306,7 +1348,9 @@ where
         let cell = tds
             .get_cell(cell_key)
             .ok_or_else(|| InsertionError::HullExtension {
-                message: format!("Boundary facet cell {cell_key:?} not found"),
+                reason: HullExtensionReason::Other {
+                    message: format!("Boundary facet cell {cell_key:?} not found"),
+                },
             })?;
 
         let mut edge_points =
@@ -1317,7 +1361,9 @@ where
             let vertex =
                 tds.get_vertex_by_key(vkey)
                     .ok_or_else(|| InsertionError::HullExtension {
-                        message: format!("Vertex {vkey:?} not found in TDS"),
+                        reason: HullExtensionReason::Other {
+                            message: format!("Vertex {vkey:?} not found in TDS"),
+                        },
                     })?;
             if i == usize::from(facet_index) {
                 opposite_point = Some(*vertex.point());
@@ -1331,9 +1377,11 @@ where
         }
 
         let opposite_point = opposite_point.ok_or_else(|| InsertionError::HullExtension {
-            message: format!(
-                "Opposite vertex missing for facet {facet_index} in cell {cell_key:?}"
-            ),
+            reason: HullExtensionReason::Other {
+                message: format!(
+                    "Opposite vertex missing for facet {facet_index} in cell {cell_key:?}"
+                ),
+            },
         })?;
 
         let mut simplex_points =
@@ -1344,7 +1392,9 @@ where
             kernel
                 .orientation(&simplex_points)
                 .map_err(|e| InsertionError::HullExtension {
-                    message: format!("Orientation test failed: {e}"),
+                    reason: HullExtensionReason::Other {
+                        message: format!("Orientation test failed: {e}"),
+                    },
                 })?;
 
         if orientation_with_opposite == 0 {
@@ -1358,7 +1408,9 @@ where
             kernel
                 .orientation(&edge_line)
                 .map_err(|e| InsertionError::HullExtension {
-                    message: format!("Orientation test failed: {e}"),
+                    reason: HullExtensionReason::Other {
+                        message: format!("Orientation test failed: {e}"),
+                    },
                 })?;
 
         if orientation_with_point != 0 {
@@ -1387,7 +1439,9 @@ where
             let handle = FacetHandle::new(cell_key, facet_index);
             if match_facet.is_some() {
                 return Err(InsertionError::HullExtension {
-                    message: "2D boundary edge split matched multiple facets".to_string(),
+                    reason: HullExtensionReason::Other {
+                        message: "2D boundary edge split matched multiple facets".to_string(),
+                    },
                 });
             }
             match_facet = Some(handle);
@@ -1470,7 +1524,9 @@ where
     let boundary_facets = tds
         .boundary_facets()
         .map_err(|e| InsertionError::HullExtension {
-            message: format!("Failed to get boundary facets: {e}"),
+            reason: HullExtensionReason::Other {
+                message: format!("Failed to get boundary facets: {e}"),
+            },
         })?;
 
     // Test each boundary facet for visibility
@@ -1486,7 +1542,9 @@ where
         let cell = tds
             .get_cell(cell_key)
             .ok_or_else(|| InsertionError::HullExtension {
-                message: format!("Boundary facet cell {cell_key:?} not found"),
+                reason: HullExtensionReason::Other {
+                    message: format!("Boundary facet cell {cell_key:?} not found"),
+                },
             })?;
 
         // Collect points for the simplex in canonical order: facet vertices + opposite vertex.
@@ -1498,7 +1556,9 @@ where
             let vertex =
                 tds.get_vertex_by_key(vkey)
                     .ok_or_else(|| InsertionError::HullExtension {
-                        message: format!("Vertex {vkey:?} not found in TDS"),
+                        reason: HullExtensionReason::Other {
+                            message: format!("Vertex {vkey:?} not found in TDS"),
+                        },
                     })?;
             if i == usize::from(facet_index) {
                 opposite_point = Some(*vertex.point());
@@ -1508,9 +1568,11 @@ where
         }
 
         let opposite_point = opposite_point.ok_or_else(|| InsertionError::HullExtension {
-            message: format!(
-                "Opposite vertex missing for facet {facet_index} in cell {cell_key:?}"
-            ),
+            reason: HullExtensionReason::Other {
+                message: format!(
+                    "Opposite vertex missing for facet {facet_index} in cell {cell_key:?}"
+                ),
+            },
         })?;
 
         // Append opposite vertex in canonical order.
@@ -1523,7 +1585,9 @@ where
             kernel
                 .orientation(&simplex_points)
                 .map_err(|e| InsertionError::HullExtension {
-                    message: format!("Orientation test failed: {e}"),
+                    reason: HullExtensionReason::Other {
+                        message: format!("Orientation test failed: {e}"),
+                    },
                 })?;
 
         // Replace opposite vertex with query point (last entry in canonical order).
@@ -1533,7 +1597,9 @@ where
             kernel
                 .orientation(&simplex_points)
                 .map_err(|e| InsertionError::HullExtension {
-                    message: format!("Orientation test failed: {e}"),
+                    reason: HullExtensionReason::Other {
+                        message: format!("Orientation test failed: {e}"),
+                    },
                 })?;
 
         #[cfg(debug_assertions)]
@@ -1917,9 +1983,11 @@ where
                 );
             }
             return Err(InsertionError::HullExtension {
-                message: format!(
-                    "Visible boundary facets are not a valid patch: boundary_ridges={boundary_ridges}, ridge_fans={over_shared_ridges}, components={components}, boundary_components={boundary_components}, boundary_subface_nonmanifold={boundary_subface_nonmanifold}",
-                ),
+                reason: HullExtensionReason::InvalidPatch {
+                    details: format!(
+                        "boundary_ridges={boundary_ridges}, ridge_fans={over_shared_ridges}, components={components}, boundary_components={boundary_components}, boundary_subface_nonmanifold={boundary_subface_nonmanifold}",
+                    ),
+                },
             });
         }
 
@@ -2367,14 +2435,16 @@ mod tests {
 
         assert!(
             InsertionError::HullExtension {
-                message: "No visible boundary facets found for exterior vertex".to_string()
+                reason: HullExtensionReason::NoVisibleFacets
             }
             .is_retryable()
         );
 
         assert!(
             !InsertionError::HullExtension {
-                message: "Failed to get boundary facets: test".to_string()
+                reason: HullExtensionReason::Other {
+                    message: "Failed to get boundary facets: test".to_string()
+                }
             }
             .is_retryable()
         );
@@ -2540,7 +2610,9 @@ mod tests {
         let err = extend_hull(tds, &kernel, new_vkey, &p).unwrap_err();
         assert!(matches!(
             err,
-            InsertionError::HullExtension { message } if message.contains("No visible boundary facets")
+            InsertionError::HullExtension {
+                reason: HullExtensionReason::NoVisibleFacets
+            }
         ));
     }
 }
