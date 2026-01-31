@@ -168,6 +168,7 @@ impl From<crate::geometry::matrix::StackMatrixDispatchError> for CellValidationE
 ///
 /// Since cells now store keys, you need a `&Tds` reference to access vertex data:
 /// ```rust
+/// use delaunay::core::collections::Uuid;
 /// use delaunay::prelude::*;
 ///
 /// // Create a triangulation with some vertices
@@ -184,7 +185,7 @@ impl From<crate::geometry::matrix::StackMatrixDispatchError> for CellValidationE
 /// for &vertex_key in cell.vertices() {
 ///     let vertex = &tds.get_vertex_by_key(vertex_key).unwrap();
 ///     // use vertex...
-///     assert!(vertex.uuid() != uuid::Uuid::nil());
+///     assert!(vertex.uuid() != Uuid::nil());
 /// }
 /// ```
 pub struct Cell<T, U, V, const D: usize>
@@ -574,6 +575,7 @@ where
     ///
     /// This method returns keys (not full vertex objects). Use the TDS to resolve keys:
     /// ```rust
+    /// use delaunay::core::collections::Uuid;
     /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
@@ -588,7 +590,7 @@ where
     /// for &vkey in cell.vertices() {
     ///     let vertex = &tds.get_vertex_by_key(vkey).unwrap();
     ///     // use vertex data...
-    ///     assert!(vertex.uuid() != uuid::Uuid::nil());
+    ///     assert!(vertex.uuid() != Uuid::nil());
     /// }
     /// ```
     ///
@@ -753,8 +755,8 @@ where
     /// # Example
     ///
     /// ```
+    /// use delaunay::core::collections::Uuid;
     /// use delaunay::prelude::*;
-    /// use uuid::Uuid;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 1.0]),
@@ -1737,13 +1739,31 @@ mod tests {
         assert!(cell.data.is_none());
         assert!(!cell.uuid().is_nil());
 
-        // Verify vertices match what we put in - need TDS to resolve keys
-        for (original, &vkey) in vertices.iter().zip(cell.vertices().iter()) {
-            let result = &dt.tds().get_vertex_by_key(vkey).unwrap();
-            assert_relative_eq!(
-                original.point().coords().as_slice(),
-                result.point().coords().as_slice(),
-                epsilon = f64::EPSILON
+        // Verify all input vertices exist in the triangulation (order-independent)
+        let cell_coords: Vec<Vec<f64>> = cell
+            .vertices()
+            .iter()
+            .map(|&vkey| {
+                dt.tds()
+                    .get_vertex_by_key(vkey)
+                    .unwrap()
+                    .point()
+                    .coords()
+                    .as_slice()
+                    .to_vec()
+            })
+            .collect();
+
+        for original in &vertices {
+            let original_coords = original.point().coords().as_slice();
+            assert!(
+                cell_coords.iter().any(|coords| {
+                    coords
+                        .iter()
+                        .zip(original_coords)
+                        .all(|(a, b)| (a - b).abs() < f64::EPSILON)
+                }),
+                "Input vertex {original_coords:?} not found in cell"
             );
         }
 
@@ -1819,13 +1839,31 @@ mod tests {
         assert_eq!(cell.data.unwrap(), 42);
         assert!(!cell.uuid().is_nil());
 
-        // Verify against the same DT instance
-        for (original, &vkey) in vertices.iter().zip(cell.vertices().iter()) {
-            let result = &dt.tds().get_vertex_by_key(vkey).unwrap();
-            assert_relative_eq!(
-                original.point().coords().as_slice(),
-                result.point().coords().as_slice(),
-                epsilon = f64::EPSILON
+        // Verify all input vertices exist in the cell (order-independent)
+        let cell_coords: Vec<Vec<f64>> = cell
+            .vertices()
+            .iter()
+            .map(|&vkey| {
+                dt.tds()
+                    .get_vertex_by_key(vkey)
+                    .unwrap()
+                    .point()
+                    .coords()
+                    .as_slice()
+                    .to_vec()
+            })
+            .collect();
+
+        for original in &vertices {
+            let original_coords = original.point().coords().as_slice();
+            assert!(
+                cell_coords.iter().any(|coords| {
+                    coords
+                        .iter()
+                        .zip(original_coords)
+                        .all(|(a, b)| (a - b).abs() < f64::EPSILON)
+                }),
+                "Input vertex {original_coords:?} not found in cell"
             );
         }
 
@@ -1852,10 +1890,18 @@ mod tests {
         assert_eq!(cell.number_of_vertices(), 4);
         assert_eq!(cell.dim(), 3);
 
-        // Check vertex data through DT - vertices() returns keys
-        for (expected_data, &vkey) in [1, 2, 3, 4].iter().zip(cell.vertices().iter()) {
-            let vertex = &dt.tds().get_vertex_by_key(vkey).unwrap();
-            assert_eq!(vertex.data.unwrap(), *expected_data);
+        // Check that all expected vertex data values exist (order-independent)
+        let cell_data: Vec<i32> = cell
+            .vertices()
+            .iter()
+            .map(|&vkey| dt.tds().get_vertex_by_key(vkey).unwrap().data.unwrap())
+            .collect();
+
+        for expected in &[1, 2, 3, 4] {
+            assert!(
+                cell_data.contains(expected),
+                "Expected vertex data {expected} not found in cell"
+            );
         }
     }
 
@@ -2315,10 +2361,18 @@ mod tests {
         let unique_uuids: std::collections::HashSet<_> = vertex_uuids.iter().collect();
         assert_eq!(unique_uuids.len(), vertex_uuids.len());
 
-        // Verify vertex data integrity alongside UUIDs
-        for (i, vertex_key) in cell.vertices().iter().enumerate() {
-            let vertex = &dt.tds().get_vertex_by_key(*vertex_key).unwrap();
-            assert_eq!(vertex.data, Some(i32::try_from(i + 1).unwrap()));
+        // Verify all expected vertex data values exist (order-independent)
+        let vertex_data: Vec<i32> = cell
+            .vertices()
+            .iter()
+            .map(|&vkey| dt.tds().get_vertex_by_key(vkey).unwrap().data.unwrap())
+            .collect();
+
+        for expected in 1..=5 {
+            assert!(
+                vertex_data.contains(&expected),
+                "Expected vertex data {expected} not found"
+            );
         }
 
         // Verify no nil UUIDs using iterator
@@ -3012,39 +3066,19 @@ mod tests {
 
         let cell = &dt.tds().get_cell(cell_key).unwrap();
 
-        // Resolve VertexKeys to vertices to check data using the key-based API
-        assert_eq!(
-            dt.tds()
-                .get_vertex_by_key(cell.vertices()[0])
-                .unwrap()
-                .data
-                .unwrap(),
-            1
-        );
-        assert_eq!(
-            dt.tds()
-                .get_vertex_by_key(cell.vertices()[1])
-                .unwrap()
-                .data
-                .unwrap(),
-            2
-        );
-        assert_eq!(
-            dt.tds()
-                .get_vertex_by_key(cell.vertices()[2])
-                .unwrap()
-                .data
-                .unwrap(),
-            3
-        );
-        assert_eq!(
-            dt.tds()
-                .get_vertex_by_key(cell.vertices()[3])
-                .unwrap()
-                .data
-                .unwrap(),
-            4
-        );
+        // Verify all expected vertex data values exist (order-independent)
+        let vertex_data: Vec<i32> = cell
+            .vertices()
+            .iter()
+            .map(|&vkey| dt.tds().get_vertex_by_key(vkey).unwrap().data.unwrap())
+            .collect();
+
+        for expected in 1..=4 {
+            assert!(
+                vertex_data.contains(&expected),
+                "Expected vertex data {expected} not found"
+            );
+        }
         assert_eq!(cell.data.unwrap(), 42u32);
 
         // Also verify we can access vertex data through facet_views

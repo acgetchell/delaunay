@@ -1,8 +1,9 @@
 //! Comprehensive tests for `insert_with_statistics` methods.
 //!
-//! This module tests both:
+//! This module tests:
 //! - `DelaunayTriangulation::insert_with_statistics`
-//! - `Triangulation::insert_with_statistics`
+//!
+//! Triangulation-layer insertion tests live in `core::triangulation` unit tests.
 //!
 //! Coverage includes:
 //! - Basic insertion and statistics tracking
@@ -21,7 +22,8 @@ use delaunay::prelude::*;
 
 #[test]
 fn delaunay_insert_with_statistics_basic_2d() {
-    let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 2> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     // Insert first vertex
     let (outcome, stats) = dt
@@ -60,7 +62,8 @@ fn delaunay_insert_with_statistics_basic_2d() {
 
 #[test]
 fn delaunay_insert_with_statistics_hint_caching_3d() {
-    let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     // Build initial simplex
     dt.insert_with_statistics(vertex!([0.0, 0.0, 0.0])).unwrap();
@@ -91,7 +94,8 @@ fn delaunay_insert_with_statistics_hint_caching_3d() {
 
 #[test]
 fn delaunay_insert_with_statistics_multiple_vertices_4d() {
-    let mut dt: DelaunayTriangulation<_, (), (), 4> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 4> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -133,8 +137,33 @@ fn delaunay_insert_with_statistics_multiple_vertices_4d() {
 }
 
 #[test]
+fn delaunay_insert_with_statistics_handles_degenerate_k2_flips_4d() {
+    let mut dt: DelaunayTriangulation<_, (), (), 4> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 0.0, 1.0]),
+        vertex!([0.2, 0.2, 0.2, 0.2]),
+        vertex!([0.8, 0.1, 0.1, 0.1]),
+    ];
+
+    for v in vertices {
+        let result = dt.insert_with_statistics(v);
+        assert!(result.is_ok(), "4D insertion failed: {result:?}");
+    }
+
+    assert_eq!(dt.number_of_vertices(), 7);
+    assert!(dt.tds().validate().is_ok());
+}
+
+#[test]
 fn delaunay_insert_with_statistics_duplicate_coordinates_2d() {
-    let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 2> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     // Insert first vertex
     dt.insert_with_statistics(vertex!([1.0, 2.0]))
@@ -166,7 +195,8 @@ fn delaunay_insert_with_statistics_duplicate_coordinates_2d() {
 #[test]
 fn delaunay_insert_with_statistics_bootstrap_happy_path_3d() {
     // Happy path: inserting D+1 well-separated vertices should succeed without retries.
-    let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     // Build simplex with well-separated points
     let vertices = vec![
@@ -187,7 +217,8 @@ fn delaunay_insert_with_statistics_bootstrap_happy_path_3d() {
 
 #[test]
 fn delaunay_insert_with_statistics_statistics_fields_3d() {
-    let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     // Bootstrap phase
     for i in 0..4 {
@@ -213,207 +244,14 @@ fn delaunay_insert_with_statistics_statistics_fields_3d() {
     assert_eq!(dt.number_of_vertices(), 4);
     assert_eq!(dt.number_of_cells(), 1);
 }
-
-// =============================================================================
-// TRIANGULATION TESTS
-// =============================================================================
-
-#[test]
-fn triangulation_insert_with_statistics_basic_2d() {
-    let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
-        Triangulation::new_empty(FastKernel::new());
-
-    // Insert first vertex
-    let (outcome, stats) = tri
-        .insert_with_statistics(vertex!([0.0, 0.0]), None, None)
-        .expect("insertion should succeed");
-
-    assert!(matches!(
-        outcome,
-        InsertionOutcome::Inserted { hint: None, .. }
-    ));
-    assert_eq!(stats.attempts, 1);
-    assert!(!stats.used_perturbation());
-    assert!(!stats.skipped());
-    assert!(stats.success());
-    assert_eq!(tri.number_of_vertices(), 1);
-}
-
-#[test]
-fn triangulation_insert_with_statistics_bootstrap_3d() {
-    let mut tri: Triangulation<FastKernel<f64>, (), (), 3> =
-        Triangulation::new_empty(FastKernel::new());
-
-    // Insert D+1 vertices to create initial simplex
-    let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
-    ];
-
-    for (i, v) in vertices.into_iter().enumerate() {
-        let (outcome, stats) = tri.insert_with_statistics(v, None, None).unwrap();
-
-        assert!(matches!(outcome, InsertionOutcome::Inserted { .. }));
-        assert_eq!(stats.attempts, 1);
-
-        if i < 3 {
-            // Bootstrap phase - no hint yet
-            assert!(matches!(
-                outcome,
-                InsertionOutcome::Inserted { hint: None, .. }
-            ));
-        } else {
-            // After D+1 vertices, hint should be available
-            assert!(matches!(
-                outcome,
-                InsertionOutcome::Inserted { hint: Some(_), .. }
-            ));
-        }
-    }
-
-    assert_eq!(tri.number_of_vertices(), 4);
-    assert_eq!(tri.number_of_cells(), 1);
-}
-
-#[test]
-fn triangulation_insert_with_statistics_hint_usage_4d() {
-    let mut tri: Triangulation<FastKernel<f64>, (), (), 4> =
-        Triangulation::new_empty(FastKernel::new());
-
-    // Build initial simplex
-    for i in 0..5 {
-        let mut coords = [0.0; 4];
-        if i > 0 {
-            coords[i - 1] = 1.0;
-        }
-        tri.insert_with_statistics(vertex!(coords), None, None)
-            .unwrap();
-    }
-
-    // Insert with explicit hint
-    let hint_cell = tri.cells().next().map(|(key, _)| key);
-    let (outcome, stats) = tri
-        .insert_with_statistics(vertex!([0.2, 0.2, 0.2, 0.2]), None, hint_cell)
-        .unwrap();
-
-    assert!(matches!(
-        outcome,
-        InsertionOutcome::Inserted { hint: Some(_), .. }
-    ));
-    assert_eq!(stats.attempts, 1);
-    assert!(stats.success());
-}
-
-#[test]
-fn triangulation_insert_with_statistics_duplicate_coordinates_3d() {
-    let mut tri: Triangulation<FastKernel<f64>, (), (), 3> =
-        Triangulation::new_empty(FastKernel::new());
-
-    // Insert first vertex
-    tri.insert_with_statistics(vertex!([1.0, 2.0, 3.0]), None, None)
-        .unwrap();
-
-    // Try duplicate - should be skipped
-    let result = tri.insert_with_statistics(vertex!([1.0, 2.0, 3.0]), None, None);
-
-    assert!(matches!(
-        result,
-        Ok((
-            InsertionOutcome::Skipped {
-                error: InsertionError::DuplicateCoordinates { .. }
-            },
-            _
-        ))
-    ));
-}
-
-#[test]
-fn triangulation_insert_with_statistics_multiple_insertions_2d() {
-    let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
-        Triangulation::new_empty(FastKernel::new());
-
-    let points = vec![
-        vertex!([0.0, 0.0]),
-        vertex!([1.0, 0.0]),
-        vertex!([0.5, 1.0]),
-        vertex!([0.3, 0.3]),
-        vertex!([0.7, 0.3]),
-    ];
-
-    let mut all_succeeded = true;
-    let mut max_attempts = 0;
-
-    for point in points {
-        match tri.insert_with_statistics(point, None, None) {
-            Ok((InsertionOutcome::Inserted { .. }, stats)) => {
-                max_attempts = max_attempts.max(stats.attempts);
-                assert!(stats.success());
-            }
-            Ok((InsertionOutcome::Skipped { .. }, _)) | Err(_) => {
-                all_succeeded = false;
-            }
-        }
-    }
-
-    assert!(all_succeeded, "all insertions should succeed");
-    assert!(max_attempts >= 1);
-    assert_eq!(tri.number_of_vertices(), 5);
-}
-
-#[test]
-fn triangulation_insert_with_statistics_outcome_types() {
-    let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
-        Triangulation::new_empty(FastKernel::new());
-
-    // Test Inserted variant
-    let (outcome, _) = tri
-        .insert_with_statistics(vertex!([0.0, 0.0]), None, None)
-        .unwrap();
-
-    match outcome {
-        InsertionOutcome::Inserted { vertex_key, hint } => {
-            // Verify we can access the fields
-            assert!(tri.vertices().any(|(k, _)| k == vertex_key));
-            assert_eq!(hint, None); // No hint during bootstrap
-        }
-        InsertionOutcome::Skipped { .. } => panic!("expected Inserted, got Skipped"),
-    }
-}
-
-#[test]
-fn triangulation_insert_with_statistics_sequential_5d() {
-    let mut tri: Triangulation<FastKernel<f64>, (), (), 5> =
-        Triangulation::new_empty(FastKernel::new());
-
-    // Insert 6 vertices to form initial simplex
-    for i in 0..6 {
-        let mut coords = [0.0; 5];
-        if i > 0 {
-            coords[i - 1] = 1.0;
-        }
-
-        let (outcome, stats) = tri
-            .insert_with_statistics(vertex!(coords), None, None)
-            .unwrap();
-
-        assert!(matches!(outcome, InsertionOutcome::Inserted { .. }));
-        assert_eq!(stats.attempts, 1);
-        assert!(stats.success());
-    }
-
-    assert_eq!(tri.number_of_vertices(), 6);
-    assert_eq!(tri.number_of_cells(), 1);
-}
-
 // =============================================================================
 // PROPERTY TESTS (STATISTICS INVARIANTS)
 // =============================================================================
 
 #[test]
 fn statistics_invariants() {
-    let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     // Build simplex
     let vertices = vec![
@@ -465,46 +303,14 @@ fn statistics_invariants() {
         }
     }
 }
-
-#[test]
-fn statistics_cells_removed_during_repair() {
-    let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
-        Triangulation::new_empty(FastKernel::new());
-
-    // Build simplex
-    tri.insert_with_statistics(vertex!([0.0, 0.0]), None, None)
-        .unwrap();
-    tri.insert_with_statistics(vertex!([1.0, 0.0]), None, None)
-        .unwrap();
-    tri.insert_with_statistics(vertex!([0.5, 1.0]), None, None)
-        .unwrap();
-
-    let cells_before = tri.number_of_cells();
-
-    // Insert interior point - might trigger repair
-    let (_outcome, stats) = tri
-        .insert_with_statistics(vertex!([0.5, 0.3]), None, None)
-        .unwrap();
-
-    let cells_after = tri.number_of_cells();
-
-    // Basic sanity: repair can't remove more cells than existed before insertion.
-    assert!(
-        stats.cells_removed_during_repair <= cells_before,
-        "cells_removed_during_repair ({}) should not exceed cell count before insertion ({}); cells after insertion: {}",
-        stats.cells_removed_during_repair,
-        cells_before,
-        cells_after
-    );
-}
-
 // =============================================================================
 // DIMENSIONAL COVERAGE
 // =============================================================================
 
 #[test]
 fn insert_with_statistics_2d_coverage() {
-    let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 2> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let vertices = vec![
         vertex!([0.0, 0.0]),
@@ -523,7 +329,8 @@ fn insert_with_statistics_2d_coverage() {
 
 #[test]
 fn insert_with_statistics_3d_coverage() {
-    let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
@@ -543,7 +350,8 @@ fn insert_with_statistics_3d_coverage() {
 
 #[test]
 fn insert_with_statistics_4d_coverage() {
-    let mut dt: DelaunayTriangulation<_, (), (), 4> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 4> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -564,7 +372,8 @@ fn insert_with_statistics_4d_coverage() {
 
 #[test]
 fn insert_with_statistics_5d_coverage() {
-    let mut dt: DelaunayTriangulation<_, (), (), 5> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 5> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),

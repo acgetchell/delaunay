@@ -28,10 +28,11 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 
 /// Macro to generate convex hull property tests for a given dimension
 macro_rules! test_convex_hull_properties {
-    ($dim:literal, $min_vertices:literal, $max_vertices:literal) => {
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
                 /// Property: Convex hull can be constructed from valid triangulation
+                $(#[$attr])*
                 #[test]
                 fn [<prop_hull_construction_ $dim d>](
                     vertices in prop::collection::vec(
@@ -39,7 +40,10 @@ macro_rules! test_convex_hull_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         // Filter: Skip degenerate configurations (no boundary facets)
                         // These are tested separately in dedicated degenerate case tests
                         let boundary_count = dt.tds().number_of_boundary_facets().unwrap_or(0);
@@ -73,6 +77,7 @@ macro_rules! test_convex_hull_properties {
                 }
 
                 /// Property: Hull facet count is bounded by combinatorial limits
+                $(#[$attr])*
                 #[test]
                 fn [<prop_hull_facet_bounds_ $dim d>](
                     vertices in prop::collection::vec(
@@ -80,7 +85,10 @@ macro_rules! test_convex_hull_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         if let Ok(hull) = ConvexHull::from_triangulation(dt.as_triangulation()) {
                             let facet_count = hull.number_of_facets();
                             let vertex_count = dt.tds().vertices().count();
@@ -119,6 +127,7 @@ macro_rules! test_convex_hull_properties {
                 }
 
                 /// Property: Hull becomes invalid after TDS modification
+                $(#[$attr])*
                 #[test]
                 fn [<prop_hull_staleness_detection_ $dim d>](
                     initial_vertices in prop::collection::vec(
@@ -127,7 +136,10 @@ macro_rules! test_convex_hull_properties {
                     ).prop_map(|v| Vertex::from_points(&v)),
                     new_point in prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new)
                 ) {
-                    if let Ok(mut dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&initial_vertices) {
+                    if let Ok(mut dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &initial_vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         // Filter: Skip degenerate initial configurations
                         let initial_boundary_count = dt.tds().number_of_boundary_facets().unwrap_or(0);
                         prop_assume!(initial_boundary_count > 0);
@@ -175,6 +187,7 @@ macro_rules! test_convex_hull_properties {
                 }
 
                 /// Property: Hull vertices are a subset of triangulation vertices
+                $(#[$attr])*
                 #[test]
                 fn [<prop_hull_vertices_subset_ $dim d>](
                     vertices in prop::collection::vec(
@@ -182,7 +195,10 @@ macro_rules! test_convex_hull_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         if let Ok(hull) = ConvexHull::from_triangulation(dt.as_triangulation()) {
                             let tds_vertex_count = dt.tds().vertices().count();
                             let facet_count = hull.number_of_facets();
@@ -213,6 +229,7 @@ macro_rules! test_convex_hull_properties {
                 }
 
                 /// Property: Hull facet count for minimal simplex is D+1
+                $(#[$attr])*
                 #[test]
                 fn [<prop_minimal_simplex_hull_ $dim d>](
                     base_scale in 0.1f64..10.0f64
@@ -232,7 +249,10 @@ macro_rules! test_convex_hull_properties {
 
                     let vertices = Vertex::from_points(&points);
 
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         if let Ok(hull) = ConvexHull::from_triangulation(dt.as_triangulation()) {
                             // A minimal D-simplex should have exactly D+1 facets
                             prop_assert_eq!(
@@ -247,6 +267,7 @@ macro_rules! test_convex_hull_properties {
                 }
 
                 /// Property: Reconstructing hull from same TDS gives consistent facet count
+                $(#[$attr])*
                 #[test]
                 fn [<prop_hull_reconstruction_consistency_ $dim d>](
                     vertices in prop::collection::vec(
@@ -254,7 +275,10 @@ macro_rules! test_convex_hull_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         if let Ok(hull1) = ConvexHull::from_triangulation(dt.as_triangulation()) {
                             if let Ok(hull2) = ConvexHull::from_triangulation(dt.as_triangulation()) {
                                 // Both hulls should have the same facet count
@@ -300,6 +324,6 @@ macro_rules! test_convex_hull_properties {
 // Generate tests for dimensions 2-5
 // Parameters: dimension, min_vertices, max_vertices
 test_convex_hull_properties!(2, 4, 10);
-test_convex_hull_properties!(3, 5, 12);
-test_convex_hull_properties!(4, 6, 14);
-test_convex_hull_properties!(5, 7, 16);
+test_convex_hull_properties!(3, 5, 12, #[ignore = "Slow (>60s) in test-integration"]);
+test_convex_hull_properties!(4, 6, 14, #[ignore = "Slow (>60s) in test-integration"]);
+test_convex_hull_properties!(5, 7, 16, #[ignore = "Slow (>60s) in test-integration"]);

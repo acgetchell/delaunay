@@ -1,75 +1,76 @@
-//! Temporary test to check if perturbation actually helps
+//! Regression: in `TopologyGuarantee::PLManifold` mode, incremental insertion must
+//! never commit a triangulation with invalid vertex links, independent of
+//! `ValidationPolicy`.
 
 use delaunay::core::vertex::VertexBuilder;
 use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::prelude::*;
 
 #[test]
-fn check_perturbation_effectiveness() {
+fn pl_manifold_insertion_is_non_negotiable_under_validation_policy_never() {
     // Generate 50 random points with seed 123 (known problematic case)
     let points = generate_random_points_seeded::<f64, 3>(50, (-100.0, 100.0), 123).unwrap();
 
-    let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
-    let mut total_attempts_successful = 0usize;
-    let mut first_try_success = 0usize;
-    let mut perturbation_success = 0usize;
-    let mut skipped = 0usize;
-    let mut errored = 0usize;
+    // Default policy is OnSuspicion.
+    assert_eq!(dt.validation_policy(), ValidationPolicy::OnSuspicion);
+
+    // Even if the user disables global validation, PL-manifold insertion must still refuse to
+    // commit invalid topology (vertex-link violations).
+    dt.set_validation_policy(ValidationPolicy::Never);
+
+    // Disable Delaunay repair to keep the test focused on topology guarantees.
+    dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
 
     for point in points {
         let vertex = VertexBuilder::default().point(point).build().unwrap();
 
-        // Access statistics via triangulation_mut()
-        match dt
-            .as_triangulation_mut()
-            .insert_with_statistics(vertex, None, None)
-        {
-            Ok((InsertionOutcome::Inserted { .. }, stats)) => {
-                total_attempts_successful += stats.attempts;
-                if stats.attempts == 1 {
-                    first_try_success += 1;
-                } else if stats.used_perturbation() {
-                    perturbation_success += 1;
-                    println!(
-                        "SUCCESS after {} attempts with perturbation",
-                        stats.attempts
-                    );
+        match dt.insert_with_statistics(vertex) {
+            Ok((InsertionOutcome::Inserted { .. }, _stats)) => {
+                // Bootstrap phase inserts vertices without creating cells.
+                // Level 3 topology validation is not meaningful until cells exist.
+                if dt.number_of_cells() > 0 {
+                    dt.as_triangulation().is_valid().unwrap();
                 }
             }
-            Ok((InsertionOutcome::Skipped { error }, stats)) => {
+            Ok((InsertionOutcome::Skipped { .. }, stats)) => {
                 debug_assert!(stats.skipped());
-                skipped += 1;
-                println!("SKIPPED: {error:?}");
             }
-            Err(e) => {
-                errored += 1;
-                println!("ERROR (non-retryable): {e:?}");
-            }
+            Err(e) => panic!("unexpected non-retryable insertion error: {e}"),
         }
     }
 
-    println!("\n=== Perturbation Effectiveness (seed 123, 50 points) ===");
-    println!("First try success:                      {first_try_success}");
-    println!("Perturbation success:                   {perturbation_success}");
-    println!("Skipped:                                {skipped}");
-    println!("Non-retryable errors:                   {errored}");
-    println!("Total attempts (successful insertions): {total_attempts_successful}");
+    // Final verification: Levels 1–3 (elements + structure + topology).
+    dt.as_triangulation().validate().unwrap();
+}
 
-    let successful = first_try_success + perturbation_success;
-    if successful > 0 {
-        use num_traits::NumCast;
-        let attempts_f64: f64 =
-            NumCast::from(total_attempts_successful).expect("usize should always fit in f64");
-        let successful_f64: f64 =
-            NumCast::from(successful).expect("usize should always fit in f64");
-        let avg_attempts = attempts_f64 / successful_f64;
-        println!("Average attempts (per successful insertion): {avg_attempts:.2}");
-    } else {
-        println!("Average attempts (per successful insertion): N/A (no successful insertions)");
+#[test]
+fn pl_manifold_insertion_never_commits_invalid_topology_after_bootstrap() {
+    // Smaller/faster variant: once the initial simplex exists, every successful insertion
+    // must leave Level 3 topology valid.
+    let points = generate_random_points_seeded::<f64, 3>(25, (-100.0, 100.0), 123).unwrap();
+
+    let mut dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+    dt.set_validation_policy(ValidationPolicy::Never);
+    dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
+
+    for point in points {
+        let vertex = VertexBuilder::default().point(point).build().unwrap();
+        let Ok((outcome, _stats)) = dt.insert_with_statistics(vertex) else {
+            panic!("unexpected non-retryable insertion error");
+        };
+
+        if dt.number_of_cells() == 0 {
+            continue;
+        }
+
+        if matches!(outcome, InsertionOutcome::Inserted { .. }) {
+            dt.as_triangulation().is_valid().unwrap();
+        }
     }
 
-    // Verify the triangulation is valid (Levels 1–3: elements + structure + topology)
     dt.as_triangulation().validate().unwrap();
-    println!("Final vertex count:    {}", dt.number_of_vertices());
 }

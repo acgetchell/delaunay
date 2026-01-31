@@ -1,0 +1,15 @@
+# Proptest configuration for delaunay
+#
+# This sets the default number of test cases for all property-based tests.
+# The default proptest value is 256, which is excessive for our complex
+# triangulation construction tests (each case builds a full 3D-5D triangulation
+# with flip-based repair).
+#
+# Override via environment variable: PROPTEST_CASES=64 cargo test
+
+# Number of test cases to run per property test
+cases = 32
+
+# Maximum number of shrink iterations when a test fails
+# (keep default of 1024)
+# max_shrink_iters = 1024

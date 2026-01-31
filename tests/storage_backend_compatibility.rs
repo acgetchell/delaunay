@@ -62,7 +62,10 @@ macro_rules! test_construction {
         #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
         fn $name() {
             let vertices: Vec<_> = $vertices;
-            let dt = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ).unwrap();
             let tds = dt.tds();
 
             assert_eq!(tds.number_of_vertices(), vertices.len());
@@ -78,7 +81,10 @@ macro_rules! test_vertex_iteration {
         #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
         fn $name() {
             let vertices: Vec<_> = $vertices;
-            let dt = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ).unwrap();
             let tds = dt.tds();
 
             let vertex_count = tds.vertices().count();
@@ -98,7 +104,10 @@ macro_rules! test_cell_iteration {
         #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
         fn $name() {
             let vertices: Vec<_> = $vertices;
-            let dt = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ).unwrap();
             let tds = dt.tds();
 
             let cell_count = tds.cells().count();
@@ -119,7 +128,10 @@ macro_rules! test_neighbor_access {
         #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
         fn $name() {
             let vertices: Vec<_> = $vertices;
-            let dt = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ).unwrap();
             let tds = dt.tds();
 
             for (_key, cell) in tds.cells() {
@@ -154,7 +166,10 @@ macro_rules! test_serialization {
         #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
         fn $name() {
             let vertices: Vec<_> = $vertices;
-            let dt = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ).unwrap();
             let tds = dt.tds();
 
             // Extract edge topology before serialization
@@ -190,10 +205,12 @@ macro_rules! test_vertex_data {
         #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
         fn $name() {
             let vertices: Vec<_> = $vertices;
-            let dt = DelaunayTriangulation::<FastKernel<f64>, Option<i32>, (), $dim>::with_kernel(
+            let dt = DelaunayTriangulation::<FastKernel<f64>, Option<i32>, (), $dim>::with_topology_guarantee(
                 FastKernel::default(),
-                &vertices
-            ).unwrap();
+                &vertices,
+                TopologyGuarantee::PLManifold,
+            )
+            .unwrap();
             let tds = dt.tds();
 
             for (_key, vertex) in tds.vertices() {
@@ -210,10 +227,12 @@ macro_rules! test_cell_data {
         #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
         fn $name() {
             let vertices: Vec<_> = $vertices;
-            let dt = DelaunayTriangulation::<FastKernel<f64>, (), i32, $dim>::with_kernel(
+            let dt = DelaunayTriangulation::<FastKernel<f64>, (), i32, $dim>::with_topology_guarantee(
                 FastKernel::default(),
-                &vertices
-            ).unwrap();
+                &vertices,
+                TopologyGuarantee::PLManifold,
+            )
+            .unwrap();
             let mut tds = dt.tds().clone();
 
             // Collect cell keys first to avoid borrow checker issues
@@ -415,7 +434,11 @@ fn test_storage_backend_large_scale_2d() {
         }
     }
 
-    let dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
+    let dt = DelaunayTriangulation::<_, (), (), 2>::new_with_topology_guarantee(
+        &vertices,
+        TopologyGuarantee::PLManifold,
+    )
+    .unwrap();
     let tds = dt.tds();
 
     assert_eq!(tds.number_of_vertices(), 900);
@@ -448,7 +471,11 @@ fn test_storage_backend_large_scale_3d() {
         }
     }
 
-    let dt = DelaunayTriangulation::<_, (), (), 3>::new(&vertices).unwrap();
+    let dt = DelaunayTriangulation::<_, (), (), 3>::new_with_topology_guarantee(
+        &vertices,
+        TopologyGuarantee::PLManifold,
+    )
+    .unwrap();
     let tds = dt.tds();
 
     assert_eq!(tds.number_of_vertices(), 900);
@@ -482,7 +509,11 @@ fn test_storage_backend_large_scale_4d() {
         }
     }
 
-    let dt = DelaunayTriangulation::<_, (), (), 4>::new(&vertices).unwrap();
+    let dt = DelaunayTriangulation::<_, (), (), 4>::new_with_topology_guarantee(
+        &vertices,
+        TopologyGuarantee::PLManifold,
+    )
+    .unwrap();
     let tds = dt.tds();
 
     assert_eq!(tds.number_of_vertices(), 500);
@@ -517,7 +548,11 @@ fn test_storage_backend_large_scale_5d() {
         }
     }
 
-    let dt = DelaunayTriangulation::<_, (), (), 5>::new(&vertices).unwrap();
+    let dt = DelaunayTriangulation::<_, (), (), 5>::new_with_topology_guarantee(
+        &vertices,
+        TopologyGuarantee::PLManifold,
+    )
+    .unwrap();
     let tds = dt.tds();
 
     assert_eq!(tds.number_of_vertices(), 256);
@@ -689,7 +724,11 @@ fn test_dense_slotmap_backend_active() {
         vertex!([0.0, 0.0, 0.0, 1.0]),
     ];
 
-    let dt = DelaunayTriangulation::<_, (), (), 4>::new(&vertices).unwrap();
+    let dt = DelaunayTriangulation::<_, (), (), 4>::new_with_topology_guarantee(
+        &vertices,
+        TopologyGuarantee::PLManifold,
+    )
+    .unwrap();
     let tds = dt.tds();
 
     assert_eq!(tds.number_of_vertices(), 5);
@@ -710,7 +749,11 @@ fn test_slotmap_backend_active() {
         vertex!([0.0, 0.0, 0.0, 1.0]),
     ];
 
-    let dt = DelaunayTriangulation::<_, (), (), 4>::new(&vertices).unwrap();
+    let dt = DelaunayTriangulation::<_, (), (), 4>::new_with_topology_guarantee(
+        &vertices,
+        TopologyGuarantee::PLManifold,
+    )
+    .unwrap();
     let tds = dt.tds();
 
     assert_eq!(tds.number_of_vertices(), 5);

@@ -741,7 +741,29 @@ where
     let ridge_to_star = build_ridge_star_map(tds)?;
     for (ridge_key, star) in ridge_to_star {
         let link_edges = ridge_link_edges_from_star(tds, &star.ridge_vertices, &star.star_cells)?;
-        validate_ridge_link_graph(ridge_key, &link_edges)?;
+        if let Err(err) = validate_ridge_link_graph(ridge_key, &link_edges) {
+            #[cfg(debug_assertions)]
+            if std::env::var_os("DELAUNAY_DEBUG_RIDGE_LINK").is_some() {
+                let mut star_cell_vertices: Vec<(CellKey, VertexKeyBuffer)> =
+                    Vec::with_capacity(star.star_cells.len());
+                for &cell_key in &star.star_cells {
+                    match tds.get_cell_vertices(cell_key) {
+                        Ok(vertices) => star_cell_vertices.push((cell_key, vertices)),
+                        Err(_) => star_cell_vertices.push((cell_key, VertexKeyBuffer::new())),
+                    }
+                }
+
+                tracing::warn!(
+                    ridge_key = ridge_key,
+                    ridge_vertices = ?star.ridge_vertices,
+                    star_cells = ?star.star_cells,
+                    star_cell_vertices = ?star_cell_vertices,
+                    link_edges = ?link_edges,
+                    "validate_ridge_links: ridge link validation failed"
+                );
+            }
+            return Err(err);
+        }
     }
 
     Ok(())
@@ -2225,8 +2247,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_validate_vertex_links_rejects_cone_on_torus_in_3d() {
+    fn build_cone_on_torus_tds() -> (Tds<f64, (), (), 3>, VertexKey) {
         // Construct a 3D simplicial complex that is a cone over a triangulated 2-torus.
         //
         // This is a pseudomanifold and passes ridge-link validation, but is NOT a PL 3-manifold:
@@ -2274,6 +2295,39 @@ mod tests {
                 }
             }
         }
+
+        (tds, apex)
+    }
+
+    #[test]
+    fn test_ridge_links_insufficient_for_pl_manifold() {
+        let (tds, apex) = build_cone_on_torus_tds();
+
+        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+        validate_facet_degree(&facet_to_cells).unwrap();
+        validate_closed_boundary(&tds, &facet_to_cells).unwrap();
+
+        // Ridge-link validation should *not* detect this singularity.
+        assert!(validate_ridge_links(&tds).is_ok());
+
+        // Vertex-link validation MUST reject it: apex link is T^2, not S^2.
+        match validate_vertex_links(&tds, &facet_to_cells) {
+            Err(ManifoldError::VertexLinkNotManifold {
+                vertex_key,
+                interior_vertex,
+                ..
+            }) => {
+                assert_eq!(vertex_key, apex);
+                assert!(interior_vertex);
+            }
+            Ok(()) => panic!("Expected VertexLinkNotManifold for cone apex, got Ok(())"),
+            other => panic!("Expected VertexLinkNotManifold for cone apex, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_vertex_links_rejects_cone_on_torus_in_3d() {
+        let (tds, apex) = build_cone_on_torus_tds();
 
         // Sanity: pseudomanifold checks pass
         let facet_to_cells = tds.build_facet_to_cells_map().unwrap();

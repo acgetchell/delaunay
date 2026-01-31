@@ -40,11 +40,12 @@ looks “off”.
 ### What is validated automatically?
 
 Only **Level 3** (`Triangulation::is_valid()`), using the triangulation’s current
-`TopologyGuarantee` (default: `Pseudomanifold`):
+`TopologyGuarantee` (default: `PLManifold`):
 
 - Codimension-1 manifoldness (facet degree: 1 or 2 incident cells per facet)
 - Codimension-2 boundary manifoldness (the boundary is closed; "no boundary of boundary")
-- (Optional) PL-manifold vertex-link condition (when `TopologyGuarantee::PLManifold`)
+- Ridge-link validation (when `TopologyGuarantee::PLManifold` or `TopologyGuarantee::PLManifoldStrict`)
+- Vertex-link validation during insertion (when `TopologyGuarantee::PLManifoldStrict`)
 - Connectedness (single component)
 - No isolated vertices
 - Euler characteristic
@@ -102,13 +103,19 @@ dt.set_validation_policy(ValidationPolicy::Never);
 
 Level 3 topology validation can be configured to enforce either:
 
-- **Pseudomanifold / manifold-with-boundary** invariants (default), or
-- **PL-manifold** invariants (strict mode, adds vertex-link validation).
+- **PL-manifold** invariants (default, uses ridge-link checks during insertion and
+  requires completion-time vertex-link validation), or
+- **Pseudomanifold / manifold-with-boundary** invariants (relaxed mode).
 
 This is separate from [`ValidationPolicy`](#automatic-validation-during-incremental-insertion-validationpolicy),
 which controls *when* Level 3 is run automatically during incremental insertion.
 
-### Default: `Pseudomanifold`
+### Default: `PLManifold`
+
+`PLManifold` uses fast ridge-link validation during insertion and requires a
+vertex-link validation pass at construction completion to certify full
+PL-manifoldness. You can trigger that final certification via
+`Triangulation::validate_at_completion()` (or `Triangulation::validate()`).
 
 ```rust
 use delaunay::prelude::*;
@@ -121,14 +128,19 @@ let vertices = vec![
 ];
 
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
 
-// Opt into stricter PL-manifold validation.
-dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+// Optional: relax topology checks for speed (weaker guarantees).
+dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
 
-// Now Level 3 includes vertex-link validation.
+// Now Level 3 skips vertex-link validation entirely.
 dt.as_triangulation().is_valid().unwrap();
 ```
+
+### Strict: `PLManifoldStrict`
+
+`PLManifoldStrict` runs full vertex-link validation after every insertion. This
+matches the legacy `PLManifold` behavior (slowest, maximum safety).
 
 ---
 
@@ -357,8 +369,14 @@ Validates the geometric optimality of the triangulation.
 - **Empty Circumsphere Property**: For every D-dimensional cell, no vertex lies strictly inside its circumsphere
 - Uses geometric predicates from the kernel (`insphere` test)
 - **Independent of Levels 1-3**: Checks geometric property, not structural/topological
-- **Known limitation (Issue #120)**: Construction is designed to satisfy this property, but rare local
-  violations have been observed for near-degenerate inputs. See [Issue #120 Investigation](issue_120_investigation.md).
+- **Flip-based repair**: Insertions run k=2/k=3 flip repairs with inverse edge/triangle queues in
+  higher dimensions by default. Delaunay validation can still fail if repair is disabled, if repair
+  fails to converge, or if inputs are highly degenerate/duplicate-heavy. See
+  [Issue #120 Investigation](issue_120_investigation.md).
+- **Heuristic fallback**: If flip-based repair does not converge, you can opt into a heuristic
+  rebuild fallback via `DelaunayTriangulation::repair_delaunay_with_flips_advanced`.
+  This requires `TopologyGuarantee::PLManifold` and records the shuffle/perturbation seeds used.
+  See [Numerical Robustness Guide](numerical_robustness_guide.md).
 
 ### Complexity
 
@@ -530,8 +548,11 @@ ensure no isolated vertices, and verify the cell neighbor graph is connected
 ### Validation Passes Level 3, Fails at Level 4
 
 **Problem**: Delaunay property violated (vertex inside circumsphere)
-**Likely Cause**: Geometric degeneracy, numerical precision, or flipping not implemented
-**Fix**: Check for near-coplanar/collinear points, consider using RobustKernel instead of FastKernel
+**Likely Cause**: Repair disabled or non-convergent, geometric degeneracy, numerical precision,
+or missing higher-dimensional flip coverage
+**Fix**: Keep flip repair enabled, handle insertion errors, check for near-coplanar/collinear points,
+and consider using RobustKernel instead of FastKernel. If repair fails to converge, consider the
+opt-in heuristic rebuild fallback via `dt.repair_delaunay_with_flips_advanced(...)` (PL-manifold only).
 
 ---
 
