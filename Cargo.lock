@@ -498,9 +498,9 @@ dependencies = [
 
 [[package]]
 name = "la-stack"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e99e9dd25b64d6f37e1acee2f8c08e71f3a76234e4cd69c3bb224fd06d9e471c"
+checksum = "9c3b7c7033c7756d49559f77f0310a2db4c766300a8a968c73c65ec69e0bd834"
 
 [[package]]
 name = "lazy_static"
