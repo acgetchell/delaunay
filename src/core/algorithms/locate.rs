@@ -48,30 +48,23 @@ pub enum LocateResult {
 /// Error during point location.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum LocateError {
-    /// Triangulation has no cells
+    /// Triangulation has no cells.
     #[error("Cannot locate in empty triangulation")]
     EmptyTriangulation,
 
-    /// Cell reference is invalid
+    /// Cell reference is invalid.
     #[error("Invalid cell reference: {cell_key:?}")]
     InvalidCell {
-        /// The invalid cell key
+        /// The invalid cell key.
         cell_key: CellKey,
     },
 
-    /// Geometric predicate failed
+    /// Geometric predicate failed.
     #[error("Predicate error: {source}")]
     PredicateError {
         #[from]
-        /// The underlying coordinate conversion error
+        /// The underlying coordinate conversion error.
         source: CoordinateConversionError,
-    },
-
-    /// Cycle detected during walking (numerical issues)
-    #[error("Cycle detected after {steps} steps - possible numerical degeneracy")]
-    CycleDetected {
-        /// Number of steps before cycle detection
-        steps: usize,
     },
 }
 
@@ -164,7 +157,56 @@ struct RidgeInfo {
     second_facet: Option<usize>,
 }
 
-/// Locate a point in the triangulation using facet walking.
+/// Indicates why facet-walking fell back to a brute-force scan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocateFallbackReason {
+    /// The facet-walking traversal revisited a previously seen cell.
+    CycleDetected,
+    /// The facet-walking traversal exceeded the maximum step budget.
+    StepLimit,
+}
+
+/// Information about a facet-walking fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocateFallback {
+    /// Why the fallback was triggered.
+    pub reason: LocateFallbackReason,
+    /// Number of facet-walking steps taken before falling back.
+    pub steps: usize,
+}
+
+/// Statistics describing how point location was performed.
+///
+/// The primary purpose of this type is **observability**: callers can detect when the fast
+/// facet-walking path failed to make progress (cycle/step-limit) and a scan fallback was used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocateStats {
+    /// The start cell used for the facet-walking phase.
+    pub start_cell: CellKey,
+    /// Whether the caller-provided hint was used as the start cell.
+    pub used_hint: bool,
+    /// Number of facet-walking steps taken.
+    pub walk_steps: usize,
+    /// Fallback information, if facet walking did not converge and a scan was used.
+    pub fallback: Option<LocateFallback>,
+}
+
+impl LocateStats {
+    /// Returns `true` if point location fell back to a brute-force scan.
+    #[must_use]
+    pub const fn fell_back_to_scan(&self) -> bool {
+        self.fallback.is_some()
+    }
+}
+
+/// Locate a point in the triangulation using facet walking (correctness-first).
+///
+/// This function attempts a fast facet-walking traversal starting from `hint` (when provided).
+/// If a cycle or step limit is detected, it falls back to a brute-force scan to guarantee
+/// termination.
+///
+/// If you need to detect when the fast path did not behave (cycle/step limit), use
+/// [`locate_with_stats`].
 ///
 /// # Arguments
 ///
@@ -181,8 +223,8 @@ struct RidgeInfo {
 ///
 /// Returns `LocateError` if:
 /// - The triangulation is empty
+/// - Cell references are invalid
 /// - Geometric predicates fail
-/// - A cycle is detected (numerical degeneracy)
 ///
 /// # Examples
 ///
@@ -256,45 +298,98 @@ where
     U: DataType,
     V: DataType,
 {
-    const MAX_STEPS: usize = 10000; // Safety limit for cycle detection
+    locate_with_stats(tds, kernel, point, hint).map(|(result, _stats)| result)
+}
 
-    // Check if triangulation has any cells
+/// Locate a point and return diagnostics about the facet-walking traversal.
+///
+/// This performs the same algorithm as [`locate`], but returns a [`LocateStats`] struct
+/// that indicates whether the caller-provided hint was used and whether a scan fallback was
+/// required (cycle detected / step limit).
+///
+/// # Errors
+///
+/// Returns `LocateError` only for structural/predicate failures. Cycles and step limits are not
+/// treated as errors; they trigger the scan fallback and are recorded in the returned stats.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::*;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0]),
+///     vertex!([1.0, 0.0]),
+///     vertex!([0.0, 1.0]),
+/// ];
+/// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let kernel = FastKernel::<f64>::new();
+///
+/// let query_point = Point::new([0.3, 0.3]);
+/// let (_result, stats) = locate_with_stats(dt.tds(), &kernel, &query_point, None).unwrap();
+///
+/// // In well-conditioned cases, the facet-walk should converge without falling back.
+/// assert!(!stats.fell_back_to_scan());
+/// ```
+pub fn locate_with_stats<K, U, V, const D: usize>(
+    tds: &Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    point: &Point<K::Scalar, D>,
+    hint: Option<CellKey>,
+) -> Result<(LocateResult, LocateStats), LocateError>
+where
+    K: Kernel<D>,
+    K::Scalar: std::iter::Sum,
+    U: DataType,
+    V: DataType,
+{
+    const MAX_STEPS: usize = 10000; // Safety limit; cycles/step limits fall back to a scan
+
     if tds.number_of_cells() == 0 {
         return Err(LocateError::EmptyTriangulation);
     }
 
-    // Start from hint or arbitrary first cell
-    let mut current_cell = match hint {
-        Some(key) if tds.contains_cell(key) => key,
-        _ => tds
-            .cell_keys()
-            .next()
-            .ok_or(LocateError::EmptyTriangulation)?,
+    let (start_cell, used_hint) = match hint {
+        Some(key) if tds.contains_cell(key) => (key, true),
+        _ => (
+            tds.cell_keys()
+                .next()
+                .ok_or(LocateError::EmptyTriangulation)?,
+            false,
+        ),
     };
 
-    // Track visited cells to detect cycles
-    let mut visited = FastHashSet::default();
+    let mut stats = LocateStats {
+        start_cell,
+        used_hint,
+        walk_steps: 0,
+        fallback: None,
+    };
 
-    // Walk toward the query point
+    let mut current_cell = start_cell;
+    let mut visited: FastHashSet<CellKey> = FastHashSet::default();
+
     for step in 0..MAX_STEPS {
-        // Detect cycles
+        stats.walk_steps = step + 1;
+
         if !visited.insert(current_cell) {
-            return Err(LocateError::CycleDetected { steps: step });
+            stats.fallback = Some(LocateFallback {
+                reason: LocateFallbackReason::CycleDetected,
+                steps: stats.walk_steps,
+            });
+            let result = locate_by_scan(tds, kernel, point)?;
+            return Ok((result, stats));
         }
 
-        // Get current cell
         let cell = tds.get_cell(current_cell).ok_or(LocateError::InvalidCell {
             cell_key: current_cell,
         })?;
 
-        // Test orientation relative to each facet
         let facet_count = cell.number_of_vertices();
         let mut found_outside_facet = false;
 
         for facet_idx in 0..facet_count {
-            // Check if we should cross this facet
             if is_point_outside_facet(tds, kernel, current_cell, facet_idx, point)? == Some(true) {
-                // Try to cross to neighbor
                 if let Some(neighbor_key) = cell
                     .neighbors()
                     .and_then(|neighbors| neighbors.get(facet_idx))
@@ -302,21 +397,53 @@ where
                 {
                     current_cell = neighbor_key;
                     found_outside_facet = true;
-                    break; // Move to next cell
+                    break;
                 }
-                // No neighbor = boundary facet = outside hull
-                return Ok(LocateResult::Outside);
+                return Ok((LocateResult::Outside, stats));
             }
         }
 
-        // If we didn't cross any facet, point is in this cell
         if !found_outside_facet {
-            return Ok(LocateResult::InsideCell(current_cell));
+            return Ok((LocateResult::InsideCell(current_cell), stats));
         }
     }
 
-    // Reached step limit - treat as cycle
-    Err(LocateError::CycleDetected { steps: MAX_STEPS })
+    stats.fallback = Some(LocateFallback {
+        reason: LocateFallbackReason::StepLimit,
+        steps: stats.walk_steps,
+    });
+    let result = locate_by_scan(tds, kernel, point)?;
+    Ok((result, stats))
+}
+
+pub(crate) fn locate_by_scan<K, U, V, const D: usize>(
+    tds: &Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    point: &Point<K::Scalar, D>,
+) -> Result<LocateResult, LocateError>
+where
+    K: Kernel<D>,
+    K::Scalar: std::iter::Sum,
+    U: DataType,
+    V: DataType,
+{
+    for (cell_key, cell) in tds.cells() {
+        let mut found_outside_facet = false;
+        let facet_count = cell.number_of_vertices();
+
+        for facet_idx in 0..facet_count {
+            if is_point_outside_facet(tds, kernel, cell_key, facet_idx, point)? == Some(true) {
+                found_outside_facet = true;
+                break;
+            }
+        }
+
+        if !found_outside_facet {
+            return Ok(LocateResult::InsideCell(cell_key));
+        }
+    }
+
+    Ok(LocateResult::Outside)
 }
 
 /// Test if a point is on the outside of a cell's facet.
@@ -409,7 +536,7 @@ where
 /// Find all cells whose circumspheres contain the query point (conflict region).
 ///
 /// Uses BFS traversal starting from a located cell to find all cells in conflict.
-/// A cell is in conflict if the query point lies strictly inside its circumsphere.
+/// A cell is in conflict if the query point lies inside **or on** its circumsphere.
 ///
 /// # Arguments
 ///
@@ -433,7 +560,7 @@ where
 ///
 /// 1. Start BFS from the located cell
 /// 2. For each cell, test `kernel.in_sphere()`
-/// 3. If point is inside circumsphere (sign > 0), add to conflict region
+/// 3. If point is inside or on circumsphere (sign >= 0), add to conflict region
 /// 4. Expand search to neighbors of conflicting cells
 /// 5. Track visited cells with `CellSecondaryMap` for O(1) lookups
 ///
@@ -481,6 +608,9 @@ where
     U: DataType,
     V: DataType,
 {
+    #[cfg(debug_assertions)]
+    let log_conflict = std::env::var_os("DELAUNAY_DEBUG_CONFLICT").is_some();
+
     // Validate start cell exists
     if !tds.contains_cell(start_cell) {
         return Err(ConflictError::InvalidStartCell {
@@ -524,11 +654,47 @@ where
             });
         }
 
-        // Test if point is inside circumsphere
-        let sign = kernel.in_sphere(&simplex_points, point)?;
+        #[cfg(debug_assertions)]
+        if log_conflict {
+            tracing::debug!(
+                cell_key = ?cell_key,
+                vertex_keys = ?cell.vertices(),
+                simplex_len = simplex_points.len(),
+                query_point = ?point,
+                "find_conflict_region: in_sphere input"
+            );
+        }
 
-        if sign > 0 {
-            // Point is inside circumsphere - cell is in conflict
+        // Test if point is inside/on circumsphere
+        let sign = match kernel.in_sphere(&simplex_points, point) {
+            Ok(value) => value,
+            Err(err) => {
+                #[cfg(debug_assertions)]
+                if log_conflict {
+                    tracing::debug!(
+                        cell_key = ?cell_key,
+                        vertex_keys = ?cell.vertices(),
+                        query_point = ?point,
+                        error = ?err,
+                        "find_conflict_region: in_sphere failed"
+                    );
+                }
+                return Err(err.into());
+            }
+        };
+
+        #[cfg(debug_assertions)]
+        if log_conflict {
+            tracing::debug!(
+                cell_key = ?cell_key,
+                sign,
+                in_conflict = sign >= 0,
+                "find_conflict_region: in_sphere classification"
+            );
+        }
+
+        if sign >= 0 {
+            // Point is inside or on circumsphere - cell is in conflict
             conflict_cells.push(cell_key);
 
             // Add neighbors to queue for exploration
@@ -542,7 +708,7 @@ where
                 }
             }
         }
-        // If sign <= 0, cell is not in conflict, don't explore further in this direction
+        // If sign < 0, cell is not in conflict, don't explore further in this direction
     }
 
     Ok(conflict_cells)
@@ -630,6 +796,9 @@ where
     if conflict_cells.is_empty() {
         return Ok(CavityBoundaryBuffer::new());
     }
+
+    #[cfg(debug_assertions)]
+    let detail_enabled = std::env::var_os("DELAUNAY_DEBUG_CAVITY").is_some();
 
     // IMPORTANT:
     // We intentionally do NOT rely on neighbor pointers to classify boundary facets here.
@@ -768,6 +937,38 @@ where
         }
     }
 
+    #[cfg(debug_assertions)]
+    if detail_enabled {
+        let mut ridge_facet_one = 0usize;
+        let mut ridge_facet_two = 0usize;
+        let mut ridge_facet_many = 0usize;
+        let mut ridge_vertex_count_min = usize::MAX;
+        let mut ridge_vertex_count_max = 0usize;
+        for info in ridge_map.values() {
+            ridge_vertex_count_min = ridge_vertex_count_min.min(info.ridge_vertex_count);
+            ridge_vertex_count_max = ridge_vertex_count_max.max(info.ridge_vertex_count);
+            match info.facet_count {
+                1 => ridge_facet_one += 1,
+                2 => ridge_facet_two += 1,
+                _ => ridge_facet_many += 1,
+            }
+        }
+        if ridge_map.is_empty() {
+            ridge_vertex_count_min = 0;
+        }
+        tracing::debug!(
+            conflict_cells = conflict_cells.len(),
+            boundary_facets = boundary_facets.len(),
+            ridge_count = ridge_map.len(),
+            ridge_facet_one,
+            ridge_facet_two,
+            ridge_facet_many,
+            ridge_vertex_count_min,
+            ridge_vertex_count_max,
+            "extract_cavity_boundary: ridge summary"
+        );
+    }
+
     // Build boundary facet adjacency via ridges and validate manifold properties of the boundary.
     if !boundary_facets.is_empty() {
         let boundary_len = boundary_facets.len();
@@ -838,6 +1039,14 @@ where
                 total: boundary_len,
             });
         }
+    }
+
+    #[cfg(debug_assertions)]
+    if detail_enabled {
+        tracing::debug!(
+            boundary_facets = boundary_facets.len(),
+            "extract_cavity_boundary: boundary connectivity validated"
+        );
     }
 
     Ok(boundary_facets)
@@ -1046,6 +1255,47 @@ mod tests {
         let result = locate(dt.tds(), &kernel, &point, None);
 
         assert!(matches!(result, Ok(LocateResult::InsideCell(_))));
+    }
+
+    #[test]
+    fn test_locate_with_stats_falls_back_on_cycle() {
+        // Construct a valid single-cell triangulation, then intentionally corrupt the neighbor
+        // pointers to create a self-loop. This forces facet walking to revisit a cell, exercising
+        // the cycle-detection fallback path deterministically.
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let kernel = FastKernel::<f64>::new();
+
+        let cell_key = dt.tds().cell_keys().next().unwrap();
+
+        // ⚠️ Dangerous test-only mutation: create a neighbor self-loop on every facet.
+        let cell = dt.tds_mut().get_cell_by_key_mut(cell_key).unwrap();
+        let mut neighbors = crate::core::collections::NeighborBuffer::<Option<CellKey>>::new();
+        neighbors.resize(3, Some(cell_key));
+        cell.neighbors = Some(neighbors);
+
+        // Point outside the simplex: walking will attempt to cross a facet, hit the self-loop,
+        // detect a cycle, and fall back to scan.
+        let point = Point::new([10.0, 10.0]);
+        let (result, stats) = locate_with_stats(dt.tds(), &kernel, &point, None).unwrap();
+
+        assert!(matches!(result, LocateResult::Outside));
+        assert!(stats.fell_back_to_scan());
+        assert!(!stats.used_hint);
+        assert_eq!(stats.start_cell, cell_key);
+        assert_eq!(stats.walk_steps, 2);
+        assert!(matches!(
+            stats.fallback,
+            Some(LocateFallback {
+                reason: LocateFallbackReason::CycleDetected,
+                steps: 2,
+            })
+        ));
     }
 
     #[test]

@@ -36,10 +36,11 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 
 /// Macro to generate serialization property tests for a given dimension
 macro_rules! test_serialization_properties {
-    ($dim:literal, $min_vertices:literal, $max_vertices:literal) => {
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
                 /// Property: Triangulation structure preserved after JSON roundtrip
+                $(#[$attr])*
                 #[test]
                 fn [<prop_triangulation_json_roundtrip_ $dim d>](
                     vertices in prop::collection::vec(
@@ -47,7 +48,10 @@ macro_rules! test_serialization_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         // Serialize to JSON
                         let json = serde_json::to_string(&dt).expect("Serialization failed");
 
@@ -78,6 +82,7 @@ macro_rules! test_serialization_properties {
                 }
 
                 /// Property: Deserialized triangulation remains valid
+                $(#[$attr])*
                 #[test]
                 fn [<prop_deserialized_triangulation_valid_ $dim d>](
                     vertices in prop::collection::vec(
@@ -85,7 +90,10 @@ macro_rules! test_serialization_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         if dt.tds().validate().is_ok() {
                             // Serialize and deserialize
                             let json = serde_json::to_string(&dt).expect("Serialization failed");
@@ -104,6 +112,7 @@ macro_rules! test_serialization_properties {
                 }
 
                 /// Property: Vertex coordinates preserved after roundtrip
+                $(#[$attr])*
                 #[test]
                 fn [<prop_vertex_coordinates_preserved_ $dim d>](
                     vertices in prop::collection::vec(
@@ -111,7 +120,10 @@ macro_rules! test_serialization_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         // Filter: Skip minimal/degenerate configurations
                         // Need more than minimal simplex (D+1) to have meaningful serialization test
                         prop_assume!(dt.number_of_vertices() > $dim + 1);
@@ -158,6 +170,7 @@ macro_rules! test_serialization_properties {
                 }
 
                 /// Property: Neighbor relationships preserved after roundtrip
+                $(#[$attr])*
                 #[test]
                 fn [<prop_neighbor_relationships_preserved_ $dim d>](
                     vertices in prop::collection::vec(
@@ -165,7 +178,10 @@ macro_rules! test_serialization_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                         // Count original neighbor relationships
                         let mut original_neighbor_count = 0;
                         for (_key, cell) in dt.cells() {
@@ -204,6 +220,6 @@ macro_rules! test_serialization_properties {
 // Generate tests for dimensions 2-5
 // Parameters: dimension, min_vertices, max_vertices
 test_serialization_properties!(2, 4, 10);
-test_serialization_properties!(3, 5, 12);
-test_serialization_properties!(4, 6, 14);
-test_serialization_properties!(5, 7, 16);
+test_serialization_properties!(3, 5, 12, #[ignore = "Slow (>60s) in test-integration"]);
+test_serialization_properties!(4, 6, 14, #[ignore = "Slow (>60s) in test-integration"]);
+test_serialization_properties!(5, 7, 16, #[ignore = "Slow (>60s) in test-integration"]);

@@ -6,6 +6,7 @@
 //! - Cell neighborhood traversal via [`DelaunayTriangulation::cell_neighbors`]
 //! - Building and validating the opt-in [`AdjacencyIndex`]
 
+use delaunay::prelude::TopologyGuarantee;
 use delaunay::prelude::query::*;
 
 #[test]
@@ -18,7 +19,12 @@ fn edges_and_incident_edges_on_single_tetrahedron() {
         vertex!([0.0, 0.0, 1.0]),
     ];
 
-    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    let dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::new_with_topology_guarantee(
+            &vertices,
+            TopologyGuarantee::PLManifold,
+        )
+        .unwrap();
     let tri = dt.as_triangulation();
 
     assert_eq!(dt.number_of_vertices(), 4);
@@ -69,7 +75,12 @@ fn adjacency_index_on_double_tetrahedron() {
         vertex!([1.0, 0.7, -1.5]),
     ];
 
-    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    let dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::new_with_topology_guarantee(
+            &vertices,
+            TopologyGuarantee::PLManifold,
+        )
+        .unwrap();
     let tri = dt.as_triangulation();
 
     assert_eq!(tri.number_of_vertices(), 5);

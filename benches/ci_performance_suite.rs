@@ -31,9 +31,16 @@ use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::prelude::DelaunayTriangulation;
 use delaunay::vertex;
 use std::hint::black_box;
+use tracing::error;
 
 /// Common sample sizes used across all CI performance benchmarks
 const COUNTS: &[usize] = &[10, 25, 50];
+
+fn bench_logging_enabled() -> bool {
+    std::env::var("DELAUNAY_BENCH_LOG")
+        .map(|value| value != "0")
+        .unwrap_or(false)
+}
 
 /// Fixed seeds for deterministic triangulation generation across benchmark runs.
 /// Using seeded random number generation reduces variance in performance measurements
@@ -69,17 +76,36 @@ macro_rules! benchmark_tds_new_dimension {
                                 "D"
                             ));
                     let vertices = points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>();
+                    let sample_points = points.iter().take(5).collect::<Vec<_>>();
 
                     b.iter(|| {
-                        black_box(
-                            DelaunayTriangulation::<_, (), (), $dim>::new(&vertices).expect(
-                                concat!(
-                                    "DelaunayTriangulation::new failed for ",
-                                    stringify!($dim),
-                                    "D"
-                                ),
-                            ),
-                        );
+                        match DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                            Ok(dt) => {
+                                black_box(dt);
+                            }
+                            Err(err) => {
+                                let error = format!("{err:?}");
+                                if bench_logging_enabled() {
+                                    error!(
+                                        dim = $dim,
+                                        count,
+                                        seed = $seed,
+                                        bounds = ?(-100.0, 100.0),
+                                        sample_points = ?sample_points,
+                                        error = %error,
+                                        "DelaunayTriangulation::new failed"
+                                    );
+                                }
+                                panic!(
+                                    "DelaunayTriangulation::new failed for {}D: {error}; dim={}; count={}; seed={}; bounds={:?}; sample_points={sample_points:?}",
+                                    $dim,
+                                    $dim,
+                                    count,
+                                    $seed,
+                                    (-100.0, 100.0)
+                                );
+                            }
+                        }
                     });
                 });
             }
