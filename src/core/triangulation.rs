@@ -119,8 +119,11 @@ use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
 use crate::core::algorithms::incremental_insertion::{
     InsertionError, extend_hull, fill_cavity, repair_neighbor_pointers, wire_cavity_neighbors,
 };
+#[cfg(debug_assertions)]
+use crate::core::algorithms::locate::locate_with_stats;
 use crate::core::algorithms::locate::{
     ConflictError, LocateResult, extract_cavity_boundary, find_conflict_region, locate,
+    locate_by_scan,
 };
 use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
@@ -3049,9 +3052,25 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
+        #[cfg(debug_assertions)]
+        let log_enabled = std::env::var_os("DELAUNAY_DEBUG_HULL").is_some()
+            || std::env::var_os("DELAUNAY_DEBUG_CONFLICT").is_some();
+        #[cfg(debug_assertions)]
+        let mut cells_scanned = 0usize;
+        #[cfg(debug_assertions)]
+        let mut sign_positive = 0usize;
+        #[cfg(debug_assertions)]
+        let mut sign_zero = 0usize;
+        #[cfg(debug_assertions)]
+        let mut sign_negative = 0usize;
+
         let mut conflict_cells = CellKeyBuffer::new();
 
         for (cell_key, cell) in self.tds.cells() {
+            #[cfg(debug_assertions)]
+            {
+                cells_scanned = cells_scanned.saturating_add(1);
+            }
             let simplex_points: SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
                 cell.vertices()
                     .iter()
@@ -3066,9 +3085,43 @@ where
             }
 
             let sign = self.kernel.in_sphere(&simplex_points, point)?;
+            #[cfg(debug_assertions)]
+            {
+                if log_enabled {
+                    tracing::debug!(
+                        cell_key = ?cell_key,
+                        sign,
+                        "find_conflict_region_global: in_sphere sign"
+                    );
+                }
+                match sign.cmp(&0) {
+                    CmpOrdering::Greater => {
+                        sign_positive = sign_positive.saturating_add(1);
+                    }
+                    CmpOrdering::Equal => {
+                        sign_zero = sign_zero.saturating_add(1);
+                    }
+                    CmpOrdering::Less => {
+                        sign_negative = sign_negative.saturating_add(1);
+                    }
+                }
+            }
             if sign > 0 {
                 conflict_cells.push(cell_key);
             }
+        }
+
+        #[cfg(debug_assertions)]
+        if log_enabled {
+            tracing::debug!(
+                point = ?point,
+                cells_scanned,
+                conflict_cells = conflict_cells.len(),
+                sign_positive,
+                sign_zero,
+                sign_negative,
+                "find_conflict_region_global: summary"
+            );
         }
 
         Ok(conflict_cells)
@@ -3450,14 +3503,50 @@ where
         }
 
         // 3. Locate containing cell (for vertex D+2 and beyond)
-        let location = locate(&self.tds, &self.kernel, &point, hint)?;
         #[cfg(debug_assertions)]
-        if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
-            tracing::debug!(
-                point = ?point,
-                location = ?location,
-                "try_insert_impl: locate result"
-            );
+        let (location, locate_stats) = {
+            #[cfg(debug_assertions)]
+            {
+                let log_locate = std::env::var_os("DELAUNAY_DEBUG_HULL").is_some()
+                    || std::env::var_os("DELAUNAY_DEBUG_LOCATE").is_some();
+                if log_locate {
+                    let (location, stats) =
+                        locate_with_stats(&self.tds, &self.kernel, &point, hint)?;
+                    (location, Some(stats))
+                } else {
+                    (locate(&self.tds, &self.kernel, &point, hint)?, None)
+                }
+            }
+            #[cfg(not(debug_assertions))]
+            {
+                (locate(&self.tds, &self.kernel, &point, hint)?, None)
+            }
+        };
+
+        #[cfg(not(debug_assertions))]
+        let location = locate(&self.tds, &self.kernel, &point, hint)?;
+
+        #[cfg(debug_assertions)]
+        if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some()
+            || std::env::var_os("DELAUNAY_DEBUG_LOCATE").is_some()
+        {
+            if let Some(stats) = locate_stats {
+                tracing::debug!(
+                    point = ?point,
+                    location = ?location,
+                    start_cell = ?stats.start_cell,
+                    used_hint = stats.used_hint,
+                    walk_steps = stats.walk_steps,
+                    fallback = ?stats.fallback,
+                    "try_insert_impl: locate stats"
+                );
+            } else {
+                tracing::debug!(
+                    point = ?point,
+                    location = ?location,
+                    "try_insert_impl: locate result"
+                );
+            }
         }
 
         // 4. Determine conflict cells (for interior points)
@@ -3525,20 +3614,20 @@ where
                             );
                         }
                         None
-                    } else {
-                        if self.conflict_region_touches_boundary(&computed)? {
-                            #[cfg(debug_assertions)]
-                            tracing::debug!(
-                                "Outside insertion (D={D}) conflict region touches hull; attempting cavity insertion with fallback"
-                            );
-                        } else {
-                            #[cfg(debug_assertions)]
-                            tracing::debug!(
-                                "Outside insertion (D={D}) using global conflict region with {} cells",
-                                computed.len()
-                            );
-                        }
+                    } else if self.conflict_region_touches_boundary(&computed)? {
                         #[cfg(debug_assertions)]
+                        tracing::debug!(
+                            "Outside insertion (D={D}) conflict region touches hull; skipping cavity insertion"
+                        );
+                        // Avoid cavity insertion when the conflict region touches the hull.
+                        // These mixed boundaries can yield ridge-link singularities in higher dimensions.
+                        None
+                    } else {
+                        #[cfg(debug_assertions)]
+                        tracing::debug!(
+                            "Outside insertion (D={D}) using global conflict region with {} cells",
+                            computed.len()
+                        );
                         Some(Cow::Owned(computed))
                     }
                 }
@@ -3657,8 +3746,39 @@ where
                         "Outside insertion: proceeding to hull extension"
                     );
                 }
-                let new_cells =
-                    extend_hull(&mut self.tds, &self.kernel, v_key, &point).map_err(|err| {
+                let new_cells = match extend_hull(&mut self.tds, &self.kernel, v_key, &point) {
+                    Ok(cells) => cells,
+                    Err(err) => {
+                        let retry_inside = matches!(
+                            &err,
+                            InsertionError::HullExtension { message }
+                                if message.contains("No visible boundary facets")
+                        );
+                        if retry_inside {
+                            let fallback_location =
+                                locate_by_scan(&self.tds, &self.kernel, &point)?;
+                            if let LocateResult::InsideCell(start_cell) = fallback_location {
+                                #[cfg(debug_assertions)]
+                                if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
+                                    tracing::warn!(
+                                        point = ?point,
+                                        start_cell = ?start_cell,
+                                        "Outside insertion: no visible facets; retrying as interior with star-split"
+                                    );
+                                }
+                                suspicion.fallback_star_split = true;
+                                let mut star_conflict = CellKeyBuffer::new();
+                                star_conflict.push(start_cell);
+                                let (hint, total_removed) = self.insert_with_conflict_region(
+                                    v_key,
+                                    &point,
+                                    star_conflict,
+                                    Some(start_cell),
+                                    &mut suspicion,
+                                )?;
+                                return Ok(((v_key, hint), total_removed, suspicion));
+                            }
+                        }
                         #[cfg(debug_assertions)]
                         if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
                             tracing::warn!(
@@ -3667,13 +3787,64 @@ where
                                 "Outside insertion: hull extension failed"
                             );
                         }
-                        err
-                    })?;
+                        return Err(err);
+                    }
+                };
                 #[cfg(debug_assertions)]
                 if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
                     tracing::debug!(
                         new_cells = new_cells.len(),
                         "Outside insertion: hull extension succeeded"
+                    );
+                }
+
+                #[cfg(debug_assertions)]
+                if std::env::var_os("DELAUNAY_DEBUG_NEIGHBORS").is_some() {
+                    let mut total_slots = 0usize;
+                    let mut neighbor_none = 0usize;
+                    let mut neighbor_missing = 0usize;
+                    let mut neighbor_mutual = 0usize;
+                    let mut neighbor_non_mutual = 0usize;
+
+                    for &cell_key in &new_cells {
+                        let Some(cell) = self.tds.get_cell(cell_key) else {
+                            continue;
+                        };
+                        let Some(neighbors) = cell.neighbors() else {
+                            continue;
+                        };
+                        for &neighbor_opt in neighbors {
+                            total_slots = total_slots.saturating_add(1);
+                            match neighbor_opt {
+                                None => {
+                                    neighbor_none = neighbor_none.saturating_add(1);
+                                }
+                                Some(neighbor_key) => {
+                                    if !self.tds.contains_cell(neighbor_key) {
+                                        neighbor_missing = neighbor_missing.saturating_add(1);
+                                    } else if self
+                                        .tds
+                                        .get_cell(neighbor_key)
+                                        .and_then(|neighbor_cell| neighbor_cell.neighbors())
+                                        .is_some_and(|ns| ns.contains(&Some(cell_key)))
+                                    {
+                                        neighbor_mutual = neighbor_mutual.saturating_add(1);
+                                    } else {
+                                        neighbor_non_mutual = neighbor_non_mutual.saturating_add(1);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    tracing::debug!(
+                        new_cells = new_cells.len(),
+                        total_slots,
+                        neighbor_none,
+                        neighbor_missing,
+                        neighbor_mutual,
+                        neighbor_non_mutual,
+                        "Outside insertion: hull extension neighbor-pointer summary"
                     );
                 }
 

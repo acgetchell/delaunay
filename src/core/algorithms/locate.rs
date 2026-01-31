@@ -416,7 +416,7 @@ where
     Ok((result, stats))
 }
 
-fn locate_by_scan<K, U, V, const D: usize>(
+pub(crate) fn locate_by_scan<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
     point: &Point<K::Scalar, D>,
@@ -608,6 +608,9 @@ where
     U: DataType,
     V: DataType,
 {
+    #[cfg(debug_assertions)]
+    let log_conflict = std::env::var_os("DELAUNAY_DEBUG_CONFLICT").is_some();
+
     // Validate start cell exists
     if !tds.contains_cell(start_cell) {
         return Err(ConflictError::InvalidStartCell {
@@ -651,8 +654,43 @@ where
             });
         }
 
+        #[cfg(debug_assertions)]
+        if log_conflict {
+            tracing::debug!(
+                cell_key = ?cell_key,
+                vertex_keys = ?cell.vertices(),
+                simplex_len = simplex_points.len(),
+                query_point = ?point,
+                "find_conflict_region: in_sphere input"
+            );
+        }
+
         // Test if point is inside/on circumsphere
-        let sign = kernel.in_sphere(&simplex_points, point)?;
+        let sign = match kernel.in_sphere(&simplex_points, point) {
+            Ok(value) => value,
+            Err(err) => {
+                #[cfg(debug_assertions)]
+                if log_conflict {
+                    tracing::debug!(
+                        cell_key = ?cell_key,
+                        vertex_keys = ?cell.vertices(),
+                        query_point = ?point,
+                        error = ?err,
+                        "find_conflict_region: in_sphere failed"
+                    );
+                }
+                return Err(err.into());
+            }
+        };
+
+        #[cfg(debug_assertions)]
+        if log_conflict {
+            tracing::debug!(
+                cell_key = ?cell_key,
+                sign,
+                "find_conflict_region: in_sphere sign"
+            );
+        }
 
         if sign >= 0 {
             // Point is inside or on circumsphere - cell is in conflict

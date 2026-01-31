@@ -277,6 +277,11 @@ where
                     message: format!("robust orientation failed for flip cell: {e}"),
                 })?;
             if matches!(robust_orientation, Orientation::DEGENERATE) {
+                if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+                    eprintln!(
+                        "[repair] flip degenerate cell: k={k_move} direction={direction:?} removed_face={removed_face_vertices:?} inserted_face={inserted_face_vertices:?} vertices={vertices:?} points={points:?}"
+                    );
+                }
                 return Err(FlipError::DegenerateCell);
             }
         }
@@ -1187,6 +1192,7 @@ where
     })
 }
 
+#[allow(clippy::too_many_lines)]
 fn delaunay_violation_k2_for_facet<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -1264,6 +1270,9 @@ where
         }
     };
 
+    let fast_sign_a = in_a;
+    let fast_sign_b = in_b;
+
     // Always record ambiguous sites when the fast predicate returns boundary/uncertain.
     if in_a == 0 {
         let key = predicate_key_from_vertices(&cell_vertices[0], opposite_b);
@@ -1285,7 +1294,90 @@ where
         in_b = robust_insphere_sign(&points_b, opposite_point_a, diagnostics);
     }
 
-    Ok(in_a > 0 || in_b > 0)
+    let violates = in_a > 0 || in_b > 0;
+    if std::env::var_os("DELAUNAY_REPAIR_DEBUG_PREDICATES").is_some()
+        && (violates || fast_sign_a == 0 || fast_sign_b == 0 || in_a == 0 || in_b == 0)
+    {
+        eprintln!(
+            "[repair] k2 predicate facet={:?} opposite_a={:?} opposite_b={:?} in_a_fast={} in_b_fast={} in_a={} in_b={} violates={} attempt={} robust={}",
+            facet_vertices,
+            opposite_a,
+            opposite_b,
+            fast_sign_a,
+            fast_sign_b,
+            in_a,
+            in_b,
+            violates,
+            config.attempt,
+            config.use_robust_on_ambiguous
+        );
+        tracing::debug!(
+            facet_vertices = ?facet_vertices,
+            opposite_a = ?opposite_a,
+            opposite_b = ?opposite_b,
+            in_a_fast = fast_sign_a,
+            in_b_fast = fast_sign_b,
+            in_a,
+            in_b,
+            violates,
+            attempt = config.attempt,
+            use_robust = config.use_robust_on_ambiguous,
+            "delaunay_violation_k2_for_facet: insphere classification"
+        );
+    }
+
+    Ok(violates)
+}
+
+fn k2_flip_would_create_degenerate_cell<K, U, V, const D: usize>(
+    tds: &Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    context: &FlipContext<D, 2>,
+) -> Result<bool, FlipError>
+where
+    K: Kernel<D>,
+    K::Scalar: CoordinateScalar + Sum + Zero,
+    U: DataType,
+    V: DataType,
+{
+    if context.inserted_face_vertices.len() != 2 {
+        return Err(FlipError::InvalidFlipContext {
+            message: format!(
+                "k=2 inserted-face must have 2 vertices, got {}",
+                context.inserted_face_vertices.len()
+            ),
+        });
+    }
+
+    for &omit in &context.removed_face_vertices {
+        let mut vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(D + 1);
+        vertices.extend_from_slice(&context.inserted_face_vertices);
+        for &v in &context.removed_face_vertices {
+            if v != omit {
+                vertices.push(v);
+            }
+        }
+
+        let points = vertices_to_points(tds, &vertices)?;
+        let orientation = kernel
+            .orientation(&points)
+            .map_err(|e| FlipError::PredicateFailure {
+                message: format!("orientation failed for k=2 postcondition: {e}"),
+            })?;
+        if orientation == 0 {
+            let config = config_presets::high_precision::<K::Scalar>();
+            let robust_orientation =
+                robust_orientation(&points, &config).map_err(|e| FlipError::PredicateFailure {
+                    message: format!("robust orientation failed for k=2 postcondition: {e}"),
+                })?;
+            if matches!(robust_orientation, Orientation::DEGENERATE) {
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
 }
 /// Check whether a k=2 facet violates the local Delaunay condition.
 ///
@@ -1820,6 +1912,12 @@ where
                 }
                 if repair_trace_enabled() {
                     tracing::debug!("[repair] skip k=2 flip (facet={facet:?}) reason={err}");
+                    tracing::debug!(
+                        "[repair] skip k=2 flip context removed_face={:?} inserted_face={:?} removed_cells={:?}",
+                        context.removed_face_vertices,
+                        context.inserted_face_vertices,
+                        context.removed_cells,
+                    );
                 }
                 continue;
             }
@@ -2180,6 +2278,28 @@ where
 
         match is_delaunay_violation_k2(tds, kernel, &context, config, diagnostics) {
             Ok(true) => {
+                let flip_degenerate =
+                    match k2_flip_would_create_degenerate_cell(tds, kernel, &context) {
+                        Ok(degenerate) => degenerate,
+                        Err(FlipError::PredicateFailure { .. }) => {
+                            // Inconclusive due to numeric degeneracy; skip.
+                            continue;
+                        }
+                        Err(e) => {
+                            return Err(DelaunayRepairError::PostconditionFailed {
+                                message: format!("local k=2 verification failed after repair: {e}"),
+                            });
+                        }
+                    };
+
+                if flip_degenerate {
+                    if repair_trace_enabled() {
+                        tracing::debug!(
+                            "[repair] postcondition k=2 violation unresolved due to degenerate flip (facet={facet:?})"
+                        );
+                    }
+                    continue;
+                }
                 if repair_trace_enabled() {
                     tracing::debug!(
                         "[repair] postcondition k=2 violation remains (facet={facet:?})"
@@ -2640,7 +2760,17 @@ where
     V: DataType,
 {
     if let Some(seeds) = seed_cells {
+        let mut present = 0usize;
+        let mut missing = 0usize;
         for &cell_key in seeds {
+            if !tds.contains_cell(cell_key) {
+                missing = missing.saturating_add(1);
+                if repair_trace_enabled() {
+                    tracing::debug!("[repair] seed_repair_queues: missing seed cell={cell_key:?}");
+                }
+                continue;
+            }
+            present = present.saturating_add(1);
             enqueue_cell_facets(
                 tds,
                 cell_key,
@@ -2670,6 +2800,24 @@ where
                 stats,
             );
             stats.max_queue_len = stats.max_queue_len.max(queues.total_len());
+        }
+        if repair_trace_enabled() {
+            let seed_sample: Vec<CellKey> = seeds.iter().copied().take(8).collect();
+            tracing::debug!(
+                "[repair] seed_repair_queues: seeds={} present={} missing={}",
+                seeds.len(),
+                present,
+                missing,
+            );
+            tracing::debug!("[repair] seed_repair_queues: sample={seed_sample:?}");
+        }
+        if present == 0 {
+            if repair_trace_enabled() {
+                tracing::debug!(
+                    "[repair] seed_repair_queues: no valid seed cells; falling back to global seeding"
+                );
+            }
+            seed_repair_queues(tds, None, queues, stats)?;
         }
     } else {
         for facet in AllFacetsIter::new(tds) {
@@ -2779,11 +2927,14 @@ where
     let context = match build_k3_flip_context(tds, ridge) {
         Ok(ctx) => ctx,
         Err(
-            FlipError::InvalidRidgeIndex { .. }
+            err @ (FlipError::InvalidRidgeIndex { .. }
             | FlipError::InvalidRidgeAdjacency { .. }
             | FlipError::InvalidRidgeMultiplicity { .. }
-            | FlipError::MissingCell { .. },
+            | FlipError::MissingCell { .. }),
         ) => {
+            if repair_trace_enabled() {
+                tracing::debug!("[repair] skip k=3 ridge (ridge={ridge:?}) reason={err}");
+            }
             return Ok(true);
         }
         Err(e) => return Err(e.into()),
@@ -2812,20 +2963,35 @@ where
     let info = match apply_bistellar_flip_k3(tds, kernel, &context) {
         Ok(info) => info,
         Err(
-            FlipError::DegenerateCell
+            err @ (FlipError::DegenerateCell
             | FlipError::DuplicateCell
             | FlipError::NonManifoldFacet
-            | FlipError::CellCreation(_),
+            | FlipError::CellCreation(_)),
         ) => {
             if repair_trace_enabled() {
+                tracing::debug!("[repair] skip k=3 flip (ridge={ridge:?}) reason={err}");
                 tracing::debug!(
-                    "[repair] skip k=3 flip (ridge={ridge:?}) reason=non-manifold/degenerate/duplicate"
+                    "[repair] skip k=3 flip context removed_face={:?} inserted_face={:?} removed_cells={:?}",
+                    context.removed_face_vertices,
+                    context.inserted_face_vertices,
+                    context.removed_cells,
                 );
             }
             return Ok(true);
         }
         Err(e) => return Err(e.into()),
     };
+    if repair_trace_enabled() {
+        tracing::debug!(
+            "[repair] apply k=3 flip: kind={:?} direction={:?} removed_face={:?} inserted_face={:?} removed_cells={:?} new_cells={:?}",
+            info.kind,
+            info.direction,
+            info.removed_face_vertices,
+            info.inserted_face_vertices,
+            info.removed_cells,
+            info.new_cells,
+        );
+    }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
 
@@ -2862,11 +3028,14 @@ where
     let context = match build_k2_flip_context_from_edge(tds, edge) {
         Ok(ctx) => ctx,
         Err(
-            FlipError::InvalidEdgeMultiplicity { .. }
+            err @ (FlipError::InvalidEdgeMultiplicity { .. }
             | FlipError::InvalidEdgeAdjacency { .. }
             | FlipError::MissingCell { .. }
-            | FlipError::MissingVertex { .. },
+            | FlipError::MissingVertex { .. }),
         ) => {
+            if repair_trace_enabled() {
+                tracing::debug!("[repair] skip inverse k=2 edge (edge={edge:?}) reason={err}");
+            }
             return Ok(true);
         }
         Err(e) => return Err(e.into()),
@@ -2909,20 +3078,35 @@ where
     let info = match apply_bistellar_flip_dynamic(tds, kernel, D, &context) {
         Ok(info) => info,
         Err(
-            FlipError::DegenerateCell
+            err @ (FlipError::DegenerateCell
             | FlipError::DuplicateCell
             | FlipError::NonManifoldFacet
-            | FlipError::CellCreation(_),
+            | FlipError::CellCreation(_)),
         ) => {
             if repair_trace_enabled() {
+                tracing::debug!("[repair] skip inverse k=2 flip (edge={edge:?}) reason={err}");
                 tracing::debug!(
-                    "[repair] skip inverse k=2 flip (edge={edge:?}) reason=non-manifold/degenerate/duplicate"
+                    "[repair] skip inverse k=2 flip context removed_face={:?} inserted_face={:?} removed_cells={:?}",
+                    context.removed_face_vertices,
+                    context.inserted_face_vertices,
+                    context.removed_cells,
                 );
             }
             return Ok(true);
         }
         Err(e) => return Err(e.into()),
     };
+    if repair_trace_enabled() {
+        tracing::debug!(
+            "[repair] apply inverse k=2 flip: kind={:?} direction={:?} removed_face={:?} inserted_face={:?} removed_cells={:?} new_cells={:?}",
+            info.kind,
+            info.direction,
+            info.removed_face_vertices,
+            info.inserted_face_vertices,
+            info.removed_cells,
+            info.new_cells,
+        );
+    }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
 
@@ -2959,11 +3143,16 @@ where
     let context = match build_k3_flip_context_from_triangle(tds, triangle) {
         Ok(ctx) => ctx,
         Err(
-            FlipError::InvalidTriangleMultiplicity { .. }
+            err @ (FlipError::InvalidTriangleMultiplicity { .. }
             | FlipError::InvalidTriangleAdjacency { .. }
             | FlipError::MissingCell { .. }
-            | FlipError::MissingVertex { .. },
+            | FlipError::MissingVertex { .. }),
         ) => {
+            if repair_trace_enabled() {
+                tracing::debug!(
+                    "[repair] skip inverse k=3 triangle (triangle={triangle:?}) reason={err}"
+                );
+            }
             return Ok(true);
         }
         Err(e) => return Err(e.into()),
@@ -2999,20 +3188,37 @@ where
     let info = match apply_bistellar_flip_dynamic(tds, kernel, D - 1, &context) {
         Ok(info) => info,
         Err(
-            FlipError::DegenerateCell
+            err @ (FlipError::DegenerateCell
             | FlipError::DuplicateCell
             | FlipError::NonManifoldFacet
-            | FlipError::CellCreation(_),
+            | FlipError::CellCreation(_)),
         ) => {
             if repair_trace_enabled() {
                 tracing::debug!(
-                    "[repair] skip inverse k=3 flip (triangle={triangle:?}) reason=non-manifold/degenerate/duplicate"
+                    "[repair] skip inverse k=3 flip (triangle={triangle:?}) reason={err}"
+                );
+                tracing::debug!(
+                    "[repair] skip inverse k=3 flip context removed_face={:?} inserted_face={:?} removed_cells={:?}",
+                    context.removed_face_vertices,
+                    context.inserted_face_vertices,
+                    context.removed_cells,
                 );
             }
             return Ok(true);
         }
         Err(e) => return Err(e.into()),
     };
+    if repair_trace_enabled() {
+        tracing::debug!(
+            "[repair] apply inverse k=3 flip: kind={:?} direction={:?} removed_face={:?} inserted_face={:?} removed_cells={:?} new_cells={:?}",
+            info.kind,
+            info.direction,
+            info.removed_face_vertices,
+            info.inserted_face_vertices,
+            info.removed_cells,
+            info.new_cells,
+        );
+    }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
 
@@ -3049,12 +3255,15 @@ where
     let context = match build_k2_flip_context(tds, facet) {
         Ok(ctx) => ctx,
         Err(
-            FlipError::BoundaryFacet { .. }
+            err @ (FlipError::BoundaryFacet { .. }
             | FlipError::MissingCell { .. }
             | FlipError::MissingNeighbor { .. }
             | FlipError::InvalidFacetAdjacency { .. }
-            | FlipError::InvalidFacetIndex { .. },
+            | FlipError::InvalidFacetIndex { .. }),
         ) => {
+            if repair_trace_enabled() {
+                tracing::debug!("[repair] skip k=2 facet (facet={facet:?}) reason={err}");
+            }
             return Ok(true);
         }
         Err(e) => return Err(e.into()),
@@ -3089,17 +3298,42 @@ where
             | FlipError::CellCreation(_)),
         ) => {
             if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+                eprintln!(
+                    "[repair] skip k=2 flip (facet={facet:?}) reason={err}; removed_face={:?} inserted_face={:?} removed_cells={:?}",
+                    context.removed_face_vertices,
+                    context.inserted_face_vertices,
+                    context.removed_cells,
+                );
+            }
+            if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
                 tracing::debug!(
                     "k=2 flip skipped in process_facet_queue_step (facet={facet:?}): {err}"
                 );
             }
             if repair_trace_enabled() {
                 tracing::debug!("[repair] skip k=2 flip (facet={facet:?}) reason={err}");
+                tracing::debug!(
+                    "[repair] skip k=2 flip context removed_face={:?} inserted_face={:?} removed_cells={:?}",
+                    context.removed_face_vertices,
+                    context.inserted_face_vertices,
+                    context.removed_cells,
+                );
             }
             return Ok(true);
         }
         Err(e) => return Err(e.into()),
     };
+    if repair_trace_enabled() {
+        tracing::debug!(
+            "[repair] apply k=2 flip: kind={:?} direction={:?} removed_face={:?} inserted_face={:?} removed_cells={:?} new_cells={:?}",
+            info.kind,
+            info.direction,
+            info.removed_face_vertices,
+            info.inserted_face_vertices,
+            info.removed_cells,
+            info.new_cells,
+        );
+    }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
 
@@ -3297,6 +3531,11 @@ where
                     "k=2 flip would duplicate existing cell {cell_key:?}; target={target:?}; existing={cell_vertices:?}"
                 );
             }
+            if repair_trace_enabled() {
+                tracing::debug!(
+                    "[repair] flip would duplicate existing cell {cell_key:?}; target={target:?}; existing={cell_vertices:?}"
+                );
+            }
             return true;
         }
     }
@@ -3331,6 +3570,13 @@ where
             if facet_vertices.iter().all(|v| cell.contains_vertex(*v)) {
                 shared_count += 1;
                 if shared_count > 1 {
+                    if repair_trace_enabled() {
+                        tracing::debug!(
+                            "[repair] flip would create non-manifold facet: facet={:?} shared_count={} last_cell={cell_key:?}",
+                            facet_vertices,
+                            shared_count,
+                        );
+                    }
                     return true;
                 }
             }
@@ -3338,6 +3584,13 @@ where
 
         let internal_facet = opposite_vertices.iter().all(|v| facet_vertices.contains(v));
         if internal_facet && shared_count > 0 {
+            if repair_trace_enabled() {
+                tracing::debug!(
+                    "[repair] flip would create non-manifold internal facet: facet={:?} shared_count={}",
+                    facet_vertices,
+                    shared_count,
+                );
+            }
             return true;
         }
     }

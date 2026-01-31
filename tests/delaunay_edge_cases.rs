@@ -665,6 +665,7 @@ fn test_multiple_interior_points_3d() {
 
 #[test]
 fn test_square_with_center_2d() {
+    init_tracing();
     // Square vertices with center point
     let vertices = vec![
         vertex!([0.0, 0.0]),

@@ -647,7 +647,7 @@ proptest! {
         }
     }
 }
-gen_incremental_insertion_validity!(4, 5, 7, #[ignore = "Slow (>60s) in test-integration"]);
+gen_incremental_insertion_validity!(4, 5, 7);
 gen_incremental_insertion_validity!(
     5,
     6,
@@ -1523,7 +1523,7 @@ macro_rules! gen_insertion_order_robustness_high_dim {
     };
 }
 
-gen_insertion_order_robustness_high_dim!(4, 6, 12, ignore);
+gen_insertion_order_robustness_high_dim!(4, 6, 12);
 gen_insertion_order_robustness_high_dim!(5, 7, 12, #[ignore = "Slow (>60s) in test-integration"]);
 
 // =============================================================================

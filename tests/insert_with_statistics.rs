@@ -137,6 +137,30 @@ fn delaunay_insert_with_statistics_multiple_vertices_4d() {
 }
 
 #[test]
+fn delaunay_insert_with_statistics_handles_degenerate_k2_flips_4d() {
+    let mut dt: DelaunayTriangulation<_, (), (), 4> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 0.0, 1.0]),
+        vertex!([0.2, 0.2, 0.2, 0.2]),
+        vertex!([0.8, 0.1, 0.1, 0.1]),
+    ];
+
+    for v in vertices {
+        let result = dt.insert_with_statistics(v);
+        assert!(result.is_ok(), "4D insertion failed: {result:?}");
+    }
+
+    assert_eq!(dt.number_of_vertices(), 7);
+    assert!(dt.tds().validate().is_ok());
+}
+
+#[test]
 fn delaunay_insert_with_statistics_duplicate_coordinates_2d() {
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
         DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);

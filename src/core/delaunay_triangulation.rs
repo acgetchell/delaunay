@@ -922,6 +922,7 @@ where
         Ok(owned_vertices)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn build_with_shuffled_retries(
         kernel: &K,
         vertices: &[Vertex<K::Scalar, U, D>],
@@ -933,6 +934,19 @@ where
         K::Scalar: CoordinateScalar + Sum + Zero,
     {
         let base_seed = base_seed.unwrap_or_else(|| Self::construction_shuffle_seed(vertices));
+
+        #[cfg(debug_assertions)]
+        let log_shuffle = std::env::var_os("DELAUNAY_DEBUG_SHUFFLE").is_some();
+
+        #[cfg(debug_assertions)]
+        if log_shuffle {
+            tracing::debug!(
+                base_seed,
+                attempts = attempts.get(),
+                vertex_count = vertices.len(),
+                "build_with_shuffled_retries: starting"
+            );
+        }
 
         // Attempt 0: original order, no extra perturbation salt.
         let mut last_error: String = match Self::build_with_kernel_inner_seeded(
@@ -964,6 +978,16 @@ where
             }
         };
 
+        #[cfg(debug_assertions)]
+        if log_shuffle {
+            tracing::debug!(
+                attempt = 0,
+                perturbation_seed = 0_u64,
+                last_error = %last_error,
+                "build_with_shuffled_retries: initial attempt failed: {last_error}"
+            );
+        }
+
         // Shuffled retries (total iterations: attempts shuffled).
         for attempt in 1..=attempts.get() {
             let mut shuffled = vertices.to_vec();
@@ -978,6 +1002,16 @@ where
 
             // Vary the deterministic perturbation pattern across retry attempts.
             let perturbation_seed = attempt_seed ^ 0xD1B5_4A32_D192_ED03;
+
+            #[cfg(debug_assertions)]
+            if log_shuffle {
+                tracing::debug!(
+                    attempt,
+                    attempt_seed,
+                    perturbation_seed,
+                    "build_with_shuffled_retries: shuffled attempt starting"
+                );
+            }
 
             match Self::build_with_kernel_inner_seeded(
                 <K as Clone>::clone(kernel),
@@ -1008,6 +1042,17 @@ where
                     }
                     last_error = err.to_string();
                 }
+            }
+
+            #[cfg(debug_assertions)]
+            if log_shuffle {
+                tracing::debug!(
+                    attempt,
+                    attempt_seed,
+                    perturbation_seed,
+                    last_error = %last_error,
+                    "build_with_shuffled_retries: attempt failed: {last_error}"
+                );
             }
         }
 
@@ -2574,7 +2619,28 @@ where
             let cells: Vec<CellKey> = self.tri.adjacent_cells(vertex_key).collect();
             (!cells.is_empty()).then_some(cells)
         };
-        let hint_slice = hint.map(|ck| [ck]);
+        let hint_seed = hint.filter(|&ck| {
+            if !self.tri.tds.contains_cell(ck) {
+                if std::env::var_os("DELAUNAY_REPAIR_TRACE").is_some() {
+                    tracing::debug!(
+                        "[repair] insertion seed hint missing (cell={ck:?}, vertex={vertex_key:?})"
+                    );
+                }
+                return false;
+            }
+            let contains_vertex = self
+                .tri
+                .tds
+                .get_cell(ck)
+                .is_some_and(|cell| cell.contains_vertex(vertex_key));
+            if !contains_vertex && std::env::var_os("DELAUNAY_REPAIR_TRACE").is_some() {
+                tracing::debug!(
+                    "[repair] insertion seed hint does not contain vertex (cell={ck:?}, vertex={vertex_key:?})"
+                );
+            }
+            contains_vertex
+        });
+        let hint_slice = hint_seed.map(|ck| [ck]);
         let seed_ref = seed_cells
             .as_deref()
             .or_else(|| hint_slice.as_ref().map(<[CellKey; 1]>::as_slice));
