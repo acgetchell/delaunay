@@ -72,7 +72,7 @@ just examples         # Run all examples
 
 ## Project Context
 
-- **Rust** d-dimensional Delaunay triangulation library (MSRV 1.92.0, Edition 2024)
+- **Rust** d-dimensional Delaunay triangulation library (MSRV 1.93.0, Edition 2024)
 - **No unsafe code**: `#![forbid(unsafe_code)]`
 - **Architecture**: Generic with `const D: usize` for dimension (tested 2D-5D)
 - **Modules**: `src/core/` (data structures), `src/geometry/` (predicates)

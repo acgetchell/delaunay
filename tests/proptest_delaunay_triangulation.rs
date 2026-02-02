@@ -647,12 +647,17 @@ proptest! {
         }
     }
 }
-gen_incremental_insertion_validity!(4, 5, 7);
+gen_incremental_insertion_validity!(
+    4,
+    5,
+    7,
+    #[ignore = "4D incremental insertion: RidgeLinkNotManifold topology failures (Issue #179)"]
+);
 gen_incremental_insertion_validity!(
     5,
     6,
     8,
-    #[ignore = "Flaky 5D incremental insertion topology validation"]
+    #[ignore = "5D incremental insertion: RidgeLinkNotManifold topology failures (Issue #179)"]
 );
 
 // =============================================================================

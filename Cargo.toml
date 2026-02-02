@@ -2,7 +2,7 @@
 name = "delaunay"
 version = "0.7.0"
 edition = "2024"
-rust-version = "1.92.0"
+rust-version = "1.93.0"
 authors = [ "Adam Getchell <adam@adamgetchell.org>" ]
 homepage = "https://github.com/acgetchell/delaunay"
 documentation = "https://docs.rs/delaunay"
@@ -22,7 +22,7 @@ arc-swap = "1.8.0"
 approx = "0.5.1"
 clap = { version = "4.5.56", features = [ "derive" ] }
 derive_builder = "0.20.2"
-la-stack = "0.1.2"
+la-stack = "0.1.3"
 tracing = "0.1.44"
 rustc-hash = "2.1.1" # Fast non-cryptographic hashing for performance
 smallvec = { version = "1.15.1", features = [
