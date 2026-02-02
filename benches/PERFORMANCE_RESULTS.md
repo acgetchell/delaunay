@@ -9,7 +9,7 @@ The results are automatically generated and updated by the benchmark infrastruct
 **Hardware**: Apple M4 Max (16 cores)
 **Memory**: 64.0 GB
 **OS**: macOS
-**Rust**: rustc 1.92.0 (ded5c06cf 2025-12-08)
+**Rust**: rustc 1.93.0 (254b59607 2026-01-19)
 
 ## Performance Results Summary
 

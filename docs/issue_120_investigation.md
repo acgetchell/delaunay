@@ -19,7 +19,7 @@
 
 ### 📋 Separate Issues (Not Part of Issue #120)
 
-- **4D/5D incremental insertion topology**: `RidgeLinkNotManifold` errors (tracked in new plan d2a2ea8a)
+- **4D/5D incremental insertion topology**: `RidgeLinkNotManifold` errors (tracked separately)
 - **Duplicate coordinate rejection**: Separate implementation concern
 
 ## Historical Context
@@ -61,8 +61,8 @@ Current status in `tests/proptest_delaunay_triangulation.rs`:
 - ✅ **Enabled & Passing**: `prop_empty_circumsphere_{2d,3d,4d,5d}` - All dimensions passing
 - ✅ **Enabled & Passing**: `prop_cloud_with_duplicates_is_delaunay_{2d,3d,4d,5d}` - All dimensions passing
 - ✅ **Enabled & Passing**: `debug_issue_120_empty_circumsphere_5d` - Previously failing 5D case now passing
-- ⚠️ **Ignored (separate issue)**: `prop_duplicate_coordinates_rejected_{3d,4d,5d}` - Slow tests (>60s), performance-gated
-- ⚠️ **Ignored (new plan)**: `prop_incremental_insertion_maintains_validity_{4d,5d}` - RidgeLinkNotManifold topology (plan d2a2ea8a)
+- ⚠️ **Ignored (separate issue)**: `prop_duplicate_coordinates_rejected_{3d,4d,5d}` - Slow (>60s) in test-integration
+- ⚠️ **Ignored (separate issue)**: `prop_incremental_insertion_maintains_validity_{4d,5d}` - RidgeLinkNotManifold topology failures (Issue #179)
 
 ## Example Failure Case (2D)
 
@@ -363,13 +363,13 @@ Current state in `tests/proptest_delaunay_triangulation.rs`:
 
 | Test Category | Count | Status | Reason |
 |--------------|-------|---------|--------|
-| Incremental insertion validity | 4 (2D-5D) | ✅ Passing | Structural invariants OK |
-| Insertion-order robustness | 4 (2D-5D) | ✅ Passing | Valid triangulations produced |
+| Incremental insertion validity | 4 (2D-5D) | ⚠️ 2 passing, 2 ignored | 4D/5D ignored (RidgeLinkNotManifold, Issue #179) |
+| Insertion-order robustness | 4 (2D-5D) | ⚠️ 3 passing, 1 ignored | 5D ignored (Slow (>60s) in test-integration) |
 | Empty circumsphere | 4 (2D-5D) | ✅ Passing | Flip repair enabled |
-| Duplicate cloud integration | 4 (2D-5D) | ⏸️ Ignored | Duplicate-heavy inputs |
-| Duplicate coordinate rejection | 4 (2D-5D) | ⏸️ Ignored | Separate issue |
+| Duplicate cloud integration | 4 (2D-5D) | ✅ Passing | Enabled in all dimensions |
+| Duplicate coordinate rejection | 4 (2D-5D) | ⚠️ 1 passing, 3 ignored | 3D-5D ignored (Slow (>60s) in test-integration) |
 
-**Total**: 12 passing, 8 ignored (4 duplicate-cloud, 4 duplicate rejection)
+**Total**: 14 passing, 6 ignored (2 incremental insertion, 1 insertion-order, 3 duplicate rejection)
 
 ## Resolution
 
