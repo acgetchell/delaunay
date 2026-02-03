@@ -44,6 +44,7 @@ use crate::core::util::{
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{FastKernel, Kernel, RobustKernel};
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
+use crate::topology::manifold::validate_ridge_links_for_cells;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
@@ -2651,31 +2652,54 @@ where
         };
 
         match repair_result {
-            Ok(()) => Ok(()),
+            Ok(()) => {}
             Err(
                 e @ (DelaunayRepairError::NonConvergent { .. }
                 | DelaunayRepairError::PostconditionFailed { .. }),
             ) => {
                 if self.repair_delaunay_with_flips_robust(seed_ref).is_ok() {
-                    return Ok(());
+                    // Robust fallback succeeded.
+                } else {
+                    // Deterministic rebuild fallback to avoid committing a non-Delaunay triangulation.
+                    //
+                    // NOTE: This is intentionally expensive, but is only triggered when local repair
+                    // fails to converge or leaves a detectable Delaunay violation.
+                    let _ = self
+                        .repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())
+                        .map_err(|fallback_err| InsertionError::CavityFilling {
+                            message: format!(
+                                "Delaunay repair failed ({e}); robust repair fallback also failed; heuristic rebuild fallback also failed ({fallback_err})"
+                            ),
+                        })?;
                 }
-                // Deterministic rebuild fallback to avoid committing a non-Delaunay triangulation.
-                //
-                // NOTE: This is intentionally expensive, but is only triggered when local repair
-                // fails to converge or leaves a detectable Delaunay violation.
-                let _ = self
-                    .repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())
-                    .map_err(|fallback_err| InsertionError::CavityFilling {
-                        message: format!(
-                            "Delaunay repair failed ({e}); robust repair fallback also failed; heuristic rebuild fallback also failed ({fallback_err})"
-                        ),
-                    })?;
-                Ok(())
             }
-            Err(e) => Err(InsertionError::CavityFilling {
-                message: format!("Delaunay repair failed: {e}"),
-            }),
+            Err(e) => {
+                return Err(InsertionError::CavityFilling {
+                    message: format!("Delaunay repair failed: {e}"),
+                });
+            }
         }
+
+        // Topology safety-net: flip-based repair is a topological operation and must not
+        // violate the requested topology guarantee.
+        //
+        // In practice, higher-dimensional flip sequences can transiently (or permanently)
+        // introduce PL-manifold violations (e.g., disconnected ridge links). Catch those
+        // locally and surface an insertion error so the outer transactional guard can roll
+        // back the insertion.
+        if topology.requires_ridge_links() {
+            let local_cells: Vec<CellKey> = self.tri.adjacent_cells(vertex_key).collect();
+            if !local_cells.is_empty()
+                && let Err(err) = validate_ridge_links_for_cells(&self.tri.tds, &local_cells)
+            {
+                return Err(InsertionError::TopologyValidationFailed {
+                    message: "Topology invalid after Delaunay repair".to_string(),
+                    source: TriangulationValidationError::from(err),
+                });
+            }
+        }
+
+        Ok(())
     }
 
     fn maybe_check_after_insertion(&self) -> Result<(), InsertionError>
