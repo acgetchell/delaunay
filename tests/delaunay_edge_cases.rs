@@ -97,7 +97,6 @@ test_regression_config!(
 );
 
 #[test]
-#[ignore = "Issue #120 debug helper for 5D empty-circumsphere violation"]
 #[expect(clippy::collapsible_if)]
 #[expect(clippy::too_many_lines)]
 #[expect(clippy::unreadable_literal)]

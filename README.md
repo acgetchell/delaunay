@@ -30,7 +30,8 @@ lightweight alternative to [CGAL] for the [Rust] ecosystem.
 - [x]  Serialization/Deserialization of all data structures to/from [JSON]
 - [x]  Tested for 2-, 3-, 4-, and 5-dimensional triangulations
 - [x]  Local topology validation ([PL-manifold] default, [Pseudomanifold] opt-out)
-- [x]  [Bistellar k-flips] for k = 1, 2, 3 plus inverse moves (repair uses k=2/k=3; inverse edge/triangle queues in 4D/5D)
+- [x]  The complete set of [Pachner moves] up to 5D implemented as bistellar k-flips for k = 1, 2, 3 plus inverse moves
+- [x]  Delaunay repair using bistellar flips for k=2/k=3 with inverse edge/triangle queues in 4D/5D
 
 See [CHANGELOG.md](CHANGELOG.md) for details.
 
@@ -82,12 +83,12 @@ if outcome.used_heuristic() {
 }
 ```
 
-For details, see: [Issue #120 Investigation](docs/issue_120_investigation.md)
+For details, see: [Issue #120 Investigation (RESOLVED)](docs/issue_120_investigation.md)
 
 **Validation**: You can verify your triangulation meets your requirements using the library's
 [4-level validation hierarchy](docs/validation.md):
 
-- **Level 2** (`dt.tds().is_valid()`) - Structural correctness (expected to pass when using public APIs; not affected by Issue #120)
+- **Level 2** (`dt.tds().is_valid()`) - Structural correctness (expected to pass when using public APIs)
 - **Level 3** (`dt.as_triangulation().is_valid()`) - Manifold topology + Euler characteristic
 - **Level 4** (`dt.is_valid()`) - Delaunay property only (may fail if repair is disabled or non-convergent)
 - **All levels (1–4)** (`dt.validate()`) - Elements + structure + topology + Delaunay property
@@ -190,7 +191,7 @@ This includes information about:
 - **[Code Organization](docs/code_organization.md)** - Project structure and module patterns
 - **[Topology integration design](docs/topology.md)** - Design notes on topology integration (includes historical sections)
 - **[Validation Guide](docs/validation.md)** - Comprehensive 4-level validation hierarchy guide (element → structural → manifold → Delaunay)
-- **[Issue #120 Investigation](docs/issue_120_investigation.md)** - Known Delaunay property limitations
+- **[Issue #120 Investigation (RESOLVED)](docs/issue_120_investigation.md)** - Bistellar flip-based Delaunay repair (completed v0.7.0+)
 
 ## 📚 References
 
@@ -233,4 +234,4 @@ Portions of this library were developed with the assistance of these AI tools:
 [Pseudomanifold]: https://grokipedia.com/page/Pseudomanifold
 [PL-manifold]: https://grokipedia.com/page/Piecewise_linear_manifold
 [Delaunay repair]: https://link.springer.com/article/10.1007/BF01975867
-[Bistellar k-flips]: https://grokipedia.com/page/Bistellar_flip
+[Pachner moves]: https://grokipedia.com/page/pachner_moves
