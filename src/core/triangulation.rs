@@ -2777,6 +2777,33 @@ where
 
         Ok(())
     }
+
+    fn validate_after_insertion(
+        &self,
+        suspicion: SuspicionFlags,
+    ) -> Result<(), TriangulationValidationError> {
+        if self.tds.number_of_cells() == 0 {
+            return Ok(());
+        }
+
+        let should_validate = self.validation_policy.should_validate(suspicion);
+        let requires_link_checks = self.topology_guarantee.requires_ridge_links()
+            || self
+                .topology_guarantee
+                .requires_vertex_links_during_insertion();
+
+        if !should_validate && !requires_link_checks {
+            return Ok(());
+        }
+
+        self.log_validation_trigger_if_enabled(suspicion);
+        if should_validate {
+            self.is_valid()
+        } else {
+            self.validate_required_topology_links()
+        }
+    }
+
     /// Attempt an insertion, and if Level 3 validation fails, roll back and try a
     /// conservative star-split fallback of the containing cell.
     fn try_insert_with_topology_safety_net(
@@ -2802,23 +2829,7 @@ where
             return Ok((ok, cells_removed, suspicion));
         }
 
-        let should_validate = self.validation_policy.should_validate(suspicion);
-        let requires_link_checks = self.topology_guarantee.requires_ridge_links()
-            || self
-                .topology_guarantee
-                .requires_vertex_links_during_insertion();
-        if !should_validate && !requires_link_checks {
-            return Ok((ok, cells_removed, suspicion));
-        }
-
-        self.log_validation_trigger_if_enabled(suspicion);
-        let validation_result = if should_validate {
-            self.is_valid()
-        } else {
-            self.validate_required_topology_links()
-        };
-
-        if let Err(validation_err) = validation_result {
+        if let Err(validation_err) = self.validate_after_insertion(suspicion) {
             // Roll back to snapshot and attempt a star-split fallback for interior points.
             self.tds = tds_snapshot.clone();
             return self.try_star_split_fallback_after_topology_failure(
@@ -2869,30 +2880,13 @@ where
                     fallback_suspicion.perturbation_used = true;
                 }
 
-                if self.tds.number_of_cells() > 0 {
-                    self.log_validation_trigger_if_enabled(fallback_suspicion);
-
-                    let should_validate =
-                        self.validation_policy.should_validate(fallback_suspicion);
-                    let requires_link_checks = self.topology_guarantee.requires_ridge_links()
-                        || self
-                            .topology_guarantee
-                            .requires_vertex_links_during_insertion();
-
-                    let validation_result = if should_validate {
-                        self.is_valid()
-                    } else if requires_link_checks {
-                        self.validate_required_topology_links()
-                    } else {
-                        Ok(())
-                    };
-
-                    if let Err(fallback_validation_err) = validation_result {
-                        return Err(InsertionError::TopologyValidationFailed {
-                            message: "Topology invalid after star-split fallback".to_string(),
-                            source: fallback_validation_err,
-                        });
-                    }
+                if let Err(fallback_validation_err) =
+                    self.validate_after_insertion(fallback_suspicion)
+                {
+                    return Err(InsertionError::TopologyValidationFailed {
+                        message: "Topology invalid after star-split fallback".to_string(),
+                        source: fallback_validation_err,
+                    });
                 }
 
                 // Telemetry: the fallback succeeded, meaning we recovered from a topology

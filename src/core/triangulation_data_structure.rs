@@ -4116,6 +4116,15 @@ mod tests {
         vertex
     }
 
+    fn initial_simplex_vertices_3d() -> [Vertex<f64, (), 3>; 4] {
+        [
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ]
+    }
+
     // =============================================================================
     // VERTEX ADDITION TESTS - CONSOLIDATED
     // =============================================================================
@@ -4181,139 +4190,111 @@ mod tests {
     }
 
     #[test]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "Coverage-oriented test that exercises many edge cases"
-    )]
-    fn test_add_vertex_comprehensive() {
-        // Test successful vertex addition into existing triangulation
-        {
-            // Need at least D+1 vertices for a valid triangulation before inserting
-            let initial_vertices = [
-                vertex!([0.0, 0.0, 0.0]),
-                vertex!([1.0, 0.0, 0.0]),
-                vertex!([0.0, 1.0, 0.0]),
-                vertex!([0.0, 0.0, 1.0]),
-            ];
-            let mut dt = DelaunayTriangulation::new(&initial_vertices).unwrap();
-            let vertex = vertex!([1.0, 2.0, 3.0]);
-            let result = dt.insert(vertex);
-            assert!(result.is_ok(), "Basic vertex addition should succeed");
-            assert_eq!(dt.number_of_vertices(), 5);
-        }
+    fn test_add_vertex_basic_insertion_succeeds() {
+        let initial_vertices = initial_simplex_vertices_3d();
+        let mut dt = DelaunayTriangulation::new(&initial_vertices).unwrap();
 
-        // Test duplicate coordinates error
-        {
-            let initial_vertices = [
-                vertex!([0.0, 0.0, 0.0]),
-                vertex!([1.0, 0.0, 0.0]),
-                vertex!([0.0, 1.0, 0.0]),
-                vertex!([0.0, 0.0, 1.0]),
-            ];
-            let mut dt = DelaunayTriangulation::new(&initial_vertices).unwrap();
-            let vertex = vertex!([1.0, 2.0, 3.0]);
-            dt.insert(vertex).unwrap();
+        let vertex = vertex!([1.0, 2.0, 3.0]);
+        let result = dt.insert(vertex);
 
-            let result = dt.insert(vertex); // Same vertex again (same coordinates AND UUID)
-            assert!(
-                matches!(result, Err(InsertionError::DuplicateCoordinates { .. })),
-                "Adding same vertex object should fail with DuplicateCoordinates (checked before UUID), got: {result:?}"
-            );
-        }
+        assert!(result.is_ok(), "Basic vertex addition should succeed");
+        assert_eq!(dt.number_of_vertices(), 5);
+    }
 
-        // Test duplicate UUID with different coordinates
-        {
-            let initial_vertices = [
-                vertex!([0.0, 0.0, 0.0]),
-                vertex!([1.0, 0.0, 0.0]),
-                vertex!([0.0, 1.0, 0.0]),
-                vertex!([0.0, 0.0, 1.0]),
-            ];
-            let mut dt = DelaunayTriangulation::new(&initial_vertices).unwrap();
-            let vertex1 = vertex!([1.0, 2.0, 3.0]);
-            let uuid1 = vertex1.uuid();
-            dt.insert(vertex1).unwrap();
+    #[test]
+    fn test_add_vertex_duplicate_coordinates_rejected() {
+        let initial_vertices = initial_simplex_vertices_3d();
+        let mut dt = DelaunayTriangulation::new(&initial_vertices).unwrap();
 
-            let vertex2 = create_vertex_with_uuid(Point::new([4.0, 5.0, 6.0]), uuid1, None);
-            let result = dt.insert(vertex2);
-            assert!(
-                matches!(
-                    result,
-                    Err(InsertionError::Construction(
-                        crate::core::triangulation::TriangulationConstructionError::Tds(
-                            TdsConstructionError::DuplicateUuid {
-                                entity: EntityKind::Vertex,
-                                ..
-                            },
-                        ),
-                    ))
-                ),
-                "Same UUID with different coordinates should fail with DuplicateUuid"
-            );
-        }
+        let vertex = vertex!([1.0, 2.0, 3.0]);
+        dt.insert(vertex).unwrap();
 
-        // Test vertex addition increasing counts
-        {
-            let initial_vertices = [
-                vertex!([0.0, 0.0, 0.0]),
-                vertex!([1.0, 0.0, 0.0]),
-                vertex!([0.0, 1.0, 0.0]),
-                vertex!([0.0, 0.0, 1.0]),
-            ];
-            let mut dt = DelaunayTriangulation::new(&initial_vertices).unwrap();
-            let initial_cell_count = dt.number_of_cells();
+        // Same vertex again (same coordinates AND UUID)
+        let result = dt.insert(vertex);
+        assert!(
+            matches!(result, Err(InsertionError::DuplicateCoordinates { .. })),
+            "Adding same vertex object should fail with DuplicateCoordinates (checked before UUID), got: {result:?}"
+        );
+    }
 
-            // Add another vertex
-            let new_vertex = vertex!([0.5, 0.5, 0.5]);
-            dt.insert(new_vertex).unwrap();
+    #[test]
+    fn test_add_vertex_duplicate_uuid_rejected() {
+        let initial_vertices = initial_simplex_vertices_3d();
+        let mut dt = DelaunayTriangulation::new(&initial_vertices).unwrap();
 
-            assert_eq!(dt.number_of_vertices(), 5);
-            assert!(
-                dt.number_of_cells() >= initial_cell_count,
-                "Cell count should not decrease"
-            );
-            assert!(
-                dt.as_triangulation().tds.is_valid().is_ok(),
-                "TDS should remain valid"
-            );
-        }
+        let vertex1 = vertex!([1.0, 2.0, 3.0]);
+        let uuid1 = vertex1.uuid();
+        dt.insert(vertex1).unwrap();
 
-        // Test that added vertices are properly accessible
-        {
-            let initial_vertices = [
-                vertex!([0.0, 0.0, 0.0]),
-                vertex!([1.0, 0.0, 0.0]),
-                vertex!([0.0, 1.0, 0.0]),
-                vertex!([0.0, 0.0, 1.0]),
-            ];
-            let mut dt = DelaunayTriangulation::new(&initial_vertices).unwrap();
-            let vertex = vertex!([1.0, 2.0, 3.0]);
-            let uuid = vertex.uuid();
-            dt.insert(vertex).unwrap();
+        let vertex2 = create_vertex_with_uuid(Point::new([4.0, 5.0, 6.0]), uuid1, None);
+        let result = dt.insert(vertex2);
+        assert!(
+            matches!(
+                result,
+                Err(InsertionError::Construction(
+                    crate::core::triangulation::TriangulationConstructionError::Tds(
+                        TdsConstructionError::DuplicateUuid {
+                            entity: EntityKind::Vertex,
+                            ..
+                        },
+                    ),
+                ))
+            ),
+            "Same UUID with different coordinates should fail with DuplicateUuid"
+        );
+    }
 
-            // Vertex should be findable by UUID
-            let vertex_key = dt.as_triangulation().tds.vertex_key_from_uuid(&uuid);
-            assert!(
-                vertex_key.is_some(),
-                "Added vertex should be findable by UUID"
-            );
+    #[test]
+    fn test_add_vertex_increases_counts_and_leaves_tds_valid() {
+        let initial_vertices = initial_simplex_vertices_3d();
+        let mut dt = DelaunayTriangulation::new(&initial_vertices).unwrap();
+        let initial_cell_count = dt.number_of_cells();
 
-            // Vertex should be in the vertices collection
-            let stored_vertex = dt
-                .as_triangulation()
-                .tds
-                .get_vertex_by_key(vertex_key.unwrap())
-                .unwrap();
-            let coords: [f64; 3] = stored_vertex.into();
-            let expected = [1.0, 2.0, 3.0];
-            assert!(
-                coords
-                    .iter()
-                    .zip(expected.iter())
-                    .all(|(a, b)| (a - b).abs() < 1e-10),
-                "Stored coordinates should match: got {coords:?}, expected {expected:?}"
-            );
-        }
+        let new_vertex = vertex!([0.5, 0.5, 0.5]);
+        dt.insert(new_vertex).unwrap();
+
+        assert_eq!(dt.number_of_vertices(), 5);
+        assert!(
+            dt.number_of_cells() >= initial_cell_count,
+            "Cell count should not decrease"
+        );
+        assert!(
+            dt.as_triangulation().tds.is_valid().is_ok(),
+            "TDS should remain valid"
+        );
+    }
+
+    #[test]
+    fn test_add_vertex_is_accessible_by_uuid_and_coordinates() {
+        let initial_vertices = initial_simplex_vertices_3d();
+        let mut dt = DelaunayTriangulation::new(&initial_vertices).unwrap();
+
+        let vertex = vertex!([1.0, 2.0, 3.0]);
+        let uuid = vertex.uuid();
+        dt.insert(vertex).unwrap();
+
+        // Vertex should be findable by UUID.
+        let vertex_key = dt.as_triangulation().tds.vertex_key_from_uuid(&uuid);
+        assert!(
+            vertex_key.is_some(),
+            "Added vertex should be findable by UUID"
+        );
+
+        // Vertex should be in the vertices collection.
+        let stored_vertex = dt
+            .as_triangulation()
+            .tds
+            .get_vertex_by_key(vertex_key.unwrap())
+            .unwrap();
+        let coords: [f64; 3] = stored_vertex.into();
+        let expected = [1.0, 2.0, 3.0];
+        assert!(
+            coords
+                .iter()
+                .zip(expected.iter())
+                .all(|(a, b)| (a - b).abs() < 1e-10),
+            "Stored coordinates should match: got {coords:?}, expected {expected:?}"
+        );
     }
 
     // DELETED: test_add_vertex_rollback_on_algorithm_failure and test_add_vertex_atomic_rollback_on_topology_failure

@@ -1278,58 +1278,40 @@ where
         // Restore policies after batch construction.
         self.tri.validation_policy = original_validation_policy;
         self.insertion_state.delaunay_repair_policy = original_repair_policy;
-        if run_final_repair
-            && D >= 2
-            && self.insertion_state.delaunay_repair_policy != DelaunayRepairPolicy::Never
-            && self.tri.tds.number_of_cells() > 0
-        {
-            let topology = self.tri.topology_guarantee();
-            let decision = self.insertion_state.delaunay_repair_policy.decide(
-                0,
-                topology,
-                TopologicalOperation::FacetFlip,
-            );
-            if matches!(decision, RepairDecision::Proceed) {
-                let repair_result = {
-                    let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-                    repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology).map(|_| ())
-                };
 
-                match repair_result {
-                    Ok(()) => {}
-                    Err(
-                        e @ (DelaunayRepairError::NonConvergent { .. }
-                        | DelaunayRepairError::PostconditionFailed { .. }),
-                    ) => {
-                        if self.repair_delaunay_with_flips_robust(None).is_ok() {
-                            return Ok(());
+        let topology = self.tri.topology_guarantee();
+        if run_final_repair && self.should_run_delaunay_repair_for(topology, 0) {
+            let repair_result = {
+                let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
+                repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology).map(|_| ())
+            };
+
+            match repair_result {
+                Ok(()) => {}
+                Err(
+                    e @ (DelaunayRepairError::NonConvergent { .. }
+                    | DelaunayRepairError::PostconditionFailed { .. }),
+                ) => {
+                    // Deterministic rebuild fallback to avoid rejecting an otherwise-valid
+                    // triangulation due to non-convergent global flip repair.
+                    self.run_flip_repair_fallbacks(None).map_err(|fallback_err| {
+                        TriangulationConstructionError::GeometricDegeneracy {
+                            message: format!(
+                                "Delaunay repair failed after construction ({e}); robust repair fallback also failed; heuristic rebuild fallback also failed ({fallback_err})"
+                            ),
                         }
-                        // Deterministic rebuild fallback to avoid rejecting an otherwise-valid
-                        // triangulation due to non-convergent global flip repair.
-                        let _ = self
-                            .repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())
-                            .map_err(|fallback_err| {
-                                TriangulationConstructionError::GeometricDegeneracy {
-                                    message: format!(
-                                        "Delaunay repair failed after construction ({e}); robust repair fallback also failed; heuristic rebuild fallback also failed ({fallback_err})"
-                                    ),
-                                }
-                            })?;
+                    })?;
+                }
+                Err(e) => {
+                    return Err(TriangulationConstructionError::GeometricDegeneracy {
+                        message: format!("Delaunay repair failed after construction: {e}"),
                     }
-                    Err(e) => {
-                        return Err(TriangulationConstructionError::GeometricDegeneracy {
-                            message: format!("Delaunay repair failed after construction: {e}"),
-                        }
-                        .into());
-                    }
+                    .into());
                 }
             }
         }
 
-        if self
-            .tri
-            .topology_guarantee
-            .requires_vertex_links_at_completion()
+        if topology.requires_vertex_links_at_completion()
             && let Err(err) = self.tri.validate()
         {
             return Err(TriangulationConstructionError::GeometricDegeneracy {
@@ -1840,6 +1822,44 @@ where
         let kernel = RobustKernel::<K::Scalar>::new();
         let (tds, kernel) = (&mut self.tri.tds, &kernel);
         repair_delaunay_with_flips_k2_k3(tds, kernel, seed_cells, topology)
+    }
+
+    fn should_run_delaunay_repair_for(
+        &self,
+        topology: TopologyGuarantee,
+        insertion_count: usize,
+    ) -> bool {
+        if D < 2 {
+            return false;
+        }
+        if self.tri.tds.number_of_cells() == 0 {
+            return false;
+        }
+
+        let policy = self.insertion_state.delaunay_repair_policy;
+        if policy == DelaunayRepairPolicy::Never {
+            return false;
+        }
+
+        matches!(
+            policy.decide(insertion_count, topology, TopologicalOperation::FacetFlip),
+            RepairDecision::Proceed
+        )
+    }
+
+    fn run_flip_repair_fallbacks(
+        &mut self,
+        seed_cells: Option<&[CellKey]>,
+    ) -> Result<(), DelaunayRepairError>
+    where
+        K::Scalar: CoordinateScalar + Sum + Zero,
+    {
+        if self.repair_delaunay_with_flips_robust(seed_cells).is_ok() {
+            return Ok(());
+        }
+
+        self.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())
+            .map(|_| ())
     }
 
     /// Runs flip-based Delaunay repair with an optional heuristic rebuild fallback.
@@ -2596,39 +2616,25 @@ where
     where
         K::Scalar: CoordinateScalar + Sum + Zero,
     {
-        if D < 2 {
-            return Ok(());
-        }
-        if self.tri.tds.number_of_cells() == 0 {
-            return Ok(());
-        }
-        if self.insertion_state.delaunay_repair_policy == DelaunayRepairPolicy::Never {
-            return Ok(());
-        }
-
         let topology = self.tri.topology_guarantee();
-        let decision = self.insertion_state.delaunay_repair_policy.decide(
-            self.insertion_state.delaunay_repair_insertion_count,
+        if !self.should_run_delaunay_repair_for(
             topology,
-            TopologicalOperation::FacetFlip,
-        );
-        if !matches!(decision, RepairDecision::Proceed) {
+            self.insertion_state.delaunay_repair_insertion_count,
+        ) {
             return Ok(());
         }
 
-        let seed_cells = {
-            let cells: Vec<CellKey> = self.tri.adjacent_cells(vertex_key).collect();
-            (!cells.is_empty()).then_some(cells)
-        };
-        let hint_seed = hint.filter(|&ck| {
+        let seed_cells: Vec<CellKey> = self.tri.adjacent_cells(vertex_key).collect();
+        let hint_seed = hint.and_then(|ck| {
             if !self.tri.tds.contains_cell(ck) {
                 if std::env::var_os("DELAUNAY_REPAIR_TRACE").is_some() {
                     tracing::debug!(
                         "[repair] insertion seed hint missing (cell={ck:?}, vertex={vertex_key:?})"
                     );
                 }
-                return false;
+                return None;
             }
+
             let contains_vertex = self
                 .tri
                 .tds
@@ -2639,12 +2645,15 @@ where
                     "[repair] insertion seed hint does not contain vertex (cell={ck:?}, vertex={vertex_key:?})"
                 );
             }
-            contains_vertex
+
+            contains_vertex.then_some(ck)
         });
-        let hint_slice = hint_seed.map(|ck| [ck]);
-        let seed_ref = seed_cells
-            .as_deref()
-            .or_else(|| hint_slice.as_ref().map(<[CellKey; 1]>::as_slice));
+
+        let seed_ref = if seed_cells.is_empty() {
+            hint_seed.as_ref().map(std::slice::from_ref)
+        } else {
+            Some(seed_cells.as_slice())
+        };
 
         let repair_result = {
             let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
@@ -2657,21 +2666,16 @@ where
                 e @ (DelaunayRepairError::NonConvergent { .. }
                 | DelaunayRepairError::PostconditionFailed { .. }),
             ) => {
-                if self.repair_delaunay_with_flips_robust(seed_ref).is_ok() {
-                    // Robust fallback succeeded.
-                } else {
-                    // Deterministic rebuild fallback to avoid committing a non-Delaunay triangulation.
-                    //
-                    // NOTE: This is intentionally expensive, but is only triggered when local repair
-                    // fails to converge or leaves a detectable Delaunay violation.
-                    let _ = self
-                        .repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())
-                        .map_err(|fallback_err| InsertionError::CavityFilling {
-                            message: format!(
-                                "Delaunay repair failed ({e}); robust repair fallback also failed; heuristic rebuild fallback also failed ({fallback_err})"
-                            ),
-                        })?;
-                }
+                // Deterministic rebuild fallback to avoid committing a non-Delaunay triangulation.
+                //
+                // NOTE: This is intentionally expensive, but is only triggered when local repair
+                // fails to converge or leaves a detectable Delaunay violation.
+                self.run_flip_repair_fallbacks(seed_ref)
+                    .map_err(|fallback_err| InsertionError::CavityFilling {
+                        message: format!(
+                            "Delaunay repair failed ({e}); robust repair fallback also failed; heuristic rebuild fallback also failed ({fallback_err})"
+                        ),
+                    })?;
             }
             Err(e) => {
                 return Err(InsertionError::CavityFilling {
@@ -2815,19 +2819,8 @@ where
                 .map_err(TriangulationValidationError::from)?,
         };
 
-        if self.insertion_state.delaunay_repair_policy != DelaunayRepairPolicy::Never
-            && D >= 2
-            && self.tri.tds.number_of_cells() > 0
-        {
-            let topology = self.tri.topology_guarantee();
-            let decision = self.insertion_state.delaunay_repair_policy.decide(
-                0,
-                topology,
-                TopologicalOperation::FacetFlip,
-            );
-            if !matches!(decision, RepairDecision::Proceed) {
-                return Ok(cells_removed);
-            }
+        let topology = self.tri.topology_guarantee();
+        if self.should_run_delaunay_repair_for(topology, 0) {
             let seed_ref = seed_cells.as_deref();
             let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
             repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology).map_err(|e| {
