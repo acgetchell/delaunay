@@ -1237,11 +1237,13 @@ where
                         .insertion_state
                         .delaunay_repair_insertion_count
                         .saturating_add(1);
-                    if let Err(e) = self.maybe_repair_after_insertion(v_key, hint) {
-                        return Err(TriangulationConstructionError::GeometricDegeneracy {
-                            message: e.to_string(),
-                        }
-                        .into());
+                    let (_v_key, used_heuristic) =
+                        self.maybe_repair_after_insertion(v_key, hint)
+                            .map_err(|e| TriangulationConstructionError::GeometricDegeneracy {
+                                message: e.to_string(),
+                            })?;
+                    if used_heuristic {
+                        self.insertion_state.last_inserted_cell = None;
                     }
                 }
                 Ok((InsertionOutcome::Skipped { error }, stats)) => {
@@ -2531,7 +2533,10 @@ where
                         .insertion_state
                         .delaunay_repair_insertion_count
                         .saturating_add(1);
-                    let v_key = self.maybe_repair_after_insertion(v_key, hint)?;
+                    let (v_key, used_heuristic) = self.maybe_repair_after_insertion(v_key, hint)?;
+                    if used_heuristic {
+                        self.insertion_state.last_inserted_cell = None;
+                    }
                     self.maybe_check_after_insertion()?;
                     Ok(v_key)
                 }
@@ -2628,7 +2633,11 @@ where
                         .insertion_state
                         .delaunay_repair_insertion_count
                         .saturating_add(1);
-                    let vertex_key = self.maybe_repair_after_insertion(vertex_key, hint)?;
+                    let (vertex_key, used_heuristic) =
+                        self.maybe_repair_after_insertion(vertex_key, hint)?;
+                    if used_heuristic {
+                        self.insertion_state.last_inserted_cell = None;
+                    }
                     self.maybe_check_after_insertion()?;
                     InsertionOutcome::Inserted { vertex_key, hint }
                 }
@@ -2655,7 +2664,7 @@ where
         &mut self,
         mut vertex_key: VertexKey,
         hint: Option<CellKey>,
-    ) -> Result<VertexKey, InsertionError>
+    ) -> Result<(VertexKey, bool), InsertionError>
     where
         K::Scalar: CoordinateScalar + Sum + Zero,
     {
@@ -2664,7 +2673,7 @@ where
             topology,
             self.insertion_state.delaunay_repair_insertion_count,
         ) {
-            return Ok(vertex_key);
+            return Ok((vertex_key, false));
         }
 
         let vertex_uuid = self
@@ -2706,8 +2715,9 @@ where
             Some(seed_cells.as_slice())
         };
 
+        let mut used_heuristic = false;
         if Self::force_heuristic_rebuild_enabled() {
-            let used_heuristic = self
+            used_heuristic = self
                 .run_flip_repair_fallbacks(seed_ref)
                 .map_err(|fallback_err| InsertionError::CavityFilling {
                     message: format!(
@@ -2733,7 +2743,7 @@ where
                     //
                     // NOTE: This is intentionally expensive, but is only triggered when local repair
                     // fails to converge or leaves a detectable Delaunay violation.
-                    let used_heuristic = self
+                    used_heuristic = self
                         .run_flip_repair_fallbacks(seed_ref)
                         .map_err(|fallback_err| InsertionError::CavityFilling {
                             message: format!(
@@ -2770,7 +2780,7 @@ where
                 });
             }
         }
-        Ok(vertex_key)
+        Ok((vertex_key, used_heuristic))
     }
 
     fn maybe_check_after_insertion(&self) -> Result<(), InsertionError>
@@ -3857,6 +3867,10 @@ mod tests {
             .expect("Inserted vertex UUID missing after forced heuristic rebuild");
 
         assert_eq!(vertex_key, remapped);
+        assert!(
+            dt.insertion_state.last_inserted_cell.is_none(),
+            "Heuristic rebuild should clear locate hint"
+        );
     }
 
     /// Slow search helper to find a natural stale-key repro case.
