@@ -53,6 +53,10 @@ use uuid::Uuid;
 #[cfg(any(test, debug_assertions))]
 const DELAUNAY_SHUFFLE_ATTEMPTS: usize = 6;
 const DELAUNAY_SHUFFLE_SEED_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
+#[cfg(test)]
+thread_local! {
+    static FORCE_HEURISTIC_REBUILD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 
 /// Errors that can occur during Delaunay triangulation construction.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -1244,9 +1248,10 @@ where
                     // Keep going: this vertex was intentionally skipped (e.g. duplicate/near-duplicate
                     // coordinates, or an unsalvageable geometric degeneracy after retries).
                     #[cfg(debug_assertions)]
-                    eprintln!(
-                        "SKIPPED: vertex insertion after {} attempts during construction: {error}",
-                        stats.attempts
+                    tracing::debug!(
+                        attempts = stats.attempts,
+                        error = %error,
+                        "SKIPPED: vertex insertion during construction"
                     );
                     #[cfg(not(debug_assertions))]
                     {
@@ -1294,7 +1299,7 @@ where
                 ) => {
                     // Deterministic rebuild fallback to avoid rejecting an otherwise-valid
                     // triangulation due to non-convergent global flip repair.
-                    self.run_flip_repair_fallbacks(None).map_err(|fallback_err| {
+                    let _ = self.run_flip_repair_fallbacks(None).map_err(|fallback_err| {
                         TriangulationConstructionError::GeometricDegeneracy {
                             message: format!(
                                 "Delaunay repair failed after construction ({e}); robust repair fallback also failed; heuristic rebuild fallback also failed ({fallback_err})"
@@ -1846,20 +1851,44 @@ where
             RepairDecision::Proceed
         )
     }
+    fn remap_vertex_key_by_uuid(&self, vertex_uuid: Uuid) -> Result<VertexKey, InsertionError> {
+        self.tri
+            .tds
+            .vertex_key_from_uuid(&vertex_uuid)
+            .ok_or_else(|| InsertionError::CavityFilling {
+                message: format!(
+                    "Inserted vertex with uuid {vertex_uuid} missing after heuristic rebuild"
+                ),
+            })
+    }
+    #[allow(clippy::missing_const_for_fn)]
+    fn force_heuristic_rebuild_enabled() -> bool {
+        #[cfg(test)]
+        {
+            FORCE_HEURISTIC_REBUILD.with(std::cell::Cell::get)
+        }
+        #[cfg(not(test))]
+        {
+            false
+        }
+    }
 
     fn run_flip_repair_fallbacks(
         &mut self,
         seed_cells: Option<&[CellKey]>,
-    ) -> Result<(), DelaunayRepairError>
+    ) -> Result<bool, DelaunayRepairError>
     where
         K::Scalar: CoordinateScalar + Sum + Zero,
     {
-        if self.repair_delaunay_with_flips_robust(seed_cells).is_ok() {
-            return Ok(());
+        if !Self::force_heuristic_rebuild_enabled()
+            && self.repair_delaunay_with_flips_robust(seed_cells).is_ok()
+        {
+            return Ok(false);
         }
 
-        self.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())
-            .map(|_| ())
+        let outcome =
+            self.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())?;
+        Ok(outcome.used_heuristic())
     }
 
     /// Runs flip-based Delaunay repair with an optional heuristic rebuild fallback.
@@ -1883,6 +1912,16 @@ where
     where
         K::Scalar: CoordinateScalar + Sum + Zero,
     {
+        if Self::force_heuristic_rebuild_enabled() {
+            let base_seed = self.heuristic_rebuild_base_seed();
+            let seeds = config.resolve_seeds(base_seed);
+            let (candidate, stats) = self.rebuild_with_heuristic(seeds)?;
+            *self = candidate;
+            return Ok(DelaunayRepairOutcome {
+                stats,
+                heuristic: Some(seeds),
+            });
+        }
         match self.repair_delaunay_with_flips() {
             Ok(stats) => Ok(DelaunayRepairOutcome {
                 stats,
@@ -2492,7 +2531,7 @@ where
                         .insertion_state
                         .delaunay_repair_insertion_count
                         .saturating_add(1);
-                    self.maybe_repair_after_insertion(v_key, hint)?;
+                    let v_key = self.maybe_repair_after_insertion(v_key, hint)?;
                     self.maybe_check_after_insertion()?;
                     Ok(v_key)
                 }
@@ -2582,15 +2621,19 @@ where
                 )?
             };
 
-            if let InsertionOutcome::Inserted { vertex_key, hint } = &outcome {
-                self.insertion_state.last_inserted_cell = *hint;
-                self.insertion_state.delaunay_repair_insertion_count = self
-                    .insertion_state
-                    .delaunay_repair_insertion_count
-                    .saturating_add(1);
-                self.maybe_repair_after_insertion(*vertex_key, *hint)?;
-                self.maybe_check_after_insertion()?;
-            }
+            let outcome = match outcome {
+                InsertionOutcome::Inserted { vertex_key, hint } => {
+                    self.insertion_state.last_inserted_cell = hint;
+                    self.insertion_state.delaunay_repair_insertion_count = self
+                        .insertion_state
+                        .delaunay_repair_insertion_count
+                        .saturating_add(1);
+                    let vertex_key = self.maybe_repair_after_insertion(vertex_key, hint)?;
+                    self.maybe_check_after_insertion()?;
+                    InsertionOutcome::Inserted { vertex_key, hint }
+                }
+                other @ InsertionOutcome::Skipped { .. } => other,
+            };
 
             Ok((outcome, stats))
         })();
@@ -2610,9 +2653,9 @@ where
 
     fn maybe_repair_after_insertion(
         &mut self,
-        vertex_key: VertexKey,
+        mut vertex_key: VertexKey,
         hint: Option<CellKey>,
-    ) -> Result<(), InsertionError>
+    ) -> Result<VertexKey, InsertionError>
     where
         K::Scalar: CoordinateScalar + Sum + Zero,
     {
@@ -2621,9 +2664,17 @@ where
             topology,
             self.insertion_state.delaunay_repair_insertion_count,
         ) {
-            return Ok(());
+            return Ok(vertex_key);
         }
 
+        let vertex_uuid = self
+            .tri
+            .tds
+            .get_vertex_by_key(vertex_key)
+            .map(Vertex::uuid)
+            .ok_or_else(|| InsertionError::CavityFilling {
+                message: format!("Inserted vertex {vertex_key:?} missing before Delaunay repair"),
+            })?;
         let seed_cells: Vec<CellKey> = self.tri.adjacent_cells(vertex_key).collect();
         let hint_seed = hint.and_then(|ck| {
             if !self.tri.tds.contains_cell(ck) {
@@ -2655,32 +2706,49 @@ where
             Some(seed_cells.as_slice())
         };
 
-        let repair_result = {
-            let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-            repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology).map(|_| ())
-        };
-
-        match repair_result {
-            Ok(()) => {}
-            Err(
-                e @ (DelaunayRepairError::NonConvergent { .. }
-                | DelaunayRepairError::PostconditionFailed { .. }),
-            ) => {
-                // Deterministic rebuild fallback to avoid committing a non-Delaunay triangulation.
-                //
-                // NOTE: This is intentionally expensive, but is only triggered when local repair
-                // fails to converge or leaves a detectable Delaunay violation.
-                self.run_flip_repair_fallbacks(seed_ref)
-                    .map_err(|fallback_err| InsertionError::CavityFilling {
-                        message: format!(
-                            "Delaunay repair failed ({e}); robust repair fallback also failed; heuristic rebuild fallback also failed ({fallback_err})"
-                        ),
-                    })?;
+        if Self::force_heuristic_rebuild_enabled() {
+            let used_heuristic = self
+                .run_flip_repair_fallbacks(seed_ref)
+                .map_err(|fallback_err| InsertionError::CavityFilling {
+                    message: format!(
+                        "Delaunay repair failed (forced heuristic rebuild); robust repair fallback also failed; heuristic rebuild fallback also failed ({fallback_err})"
+                    ),
+                })?;
+            if used_heuristic {
+                vertex_key = self.remap_vertex_key_by_uuid(vertex_uuid)?;
             }
-            Err(e) => {
-                return Err(InsertionError::CavityFilling {
-                    message: format!("Delaunay repair failed: {e}"),
-                });
+        } else {
+            let repair_result = {
+                let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
+                repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology).map(|_| ())
+            };
+
+            match repair_result {
+                Ok(()) => {}
+                Err(
+                    e @ (DelaunayRepairError::NonConvergent { .. }
+                    | DelaunayRepairError::PostconditionFailed { .. }),
+                ) => {
+                    // Deterministic rebuild fallback to avoid committing a non-Delaunay triangulation.
+                    //
+                    // NOTE: This is intentionally expensive, but is only triggered when local repair
+                    // fails to converge or leaves a detectable Delaunay violation.
+                    let used_heuristic = self
+                        .run_flip_repair_fallbacks(seed_ref)
+                        .map_err(|fallback_err| InsertionError::CavityFilling {
+                            message: format!(
+                                "Delaunay repair failed ({e}); robust repair fallback also failed; heuristic rebuild fallback also failed ({fallback_err})"
+                            ),
+                        })?;
+                    if used_heuristic {
+                        vertex_key = self.remap_vertex_key_by_uuid(vertex_uuid)?;
+                    }
+                }
+                Err(e) => {
+                    return Err(InsertionError::CavityFilling {
+                        message: format!("Delaunay repair failed: {e}"),
+                    });
+                }
             }
         }
 
@@ -2702,8 +2770,7 @@ where
                 });
             }
         }
-
-        Ok(())
+        Ok(vertex_key)
     }
 
     fn maybe_check_after_insertion(&self) -> Result<(), InsertionError>
@@ -3335,6 +3402,7 @@ mod tests {
     use crate::geometry::kernel::{FastKernel, RobustKernel};
     use crate::topology::edit::TopologyEdit;
     use crate::vertex;
+    use rand::{Rng, SeedableRng};
     fn init_tracing() {
         static INIT: std::sync::Once = std::sync::Once::new();
         INIT.call_once(|| {
@@ -3345,6 +3413,27 @@ mod tests {
                 .with_test_writer()
                 .try_init();
         });
+    }
+
+    struct ForceHeuristicRebuildGuard {
+        prior: bool,
+    }
+
+    impl ForceHeuristicRebuildGuard {
+        fn enable() -> Self {
+            let prior = FORCE_HEURISTIC_REBUILD.with(|flag| {
+                let prior = flag.get();
+                flag.set(true);
+                prior
+            });
+            Self { prior }
+        }
+    }
+
+    impl Drop for ForceHeuristicRebuildGuard {
+        fn drop(&mut self) {
+            FORCE_HEURISTIC_REBUILD.with(|flag| flag.set(self.prior));
+        }
     }
 
     #[test]
@@ -3647,6 +3736,196 @@ mod tests {
         let policy = DelaunayCheckPolicy::EveryN(NonZeroUsize::new(3).unwrap());
         dt.set_delaunay_check_policy(policy);
         assert_eq!(dt.delaunay_check_policy(), policy);
+    }
+
+    // =========================================================================
+    // Delaunay repair helper methods
+    // =========================================================================
+
+    #[test]
+    fn test_should_run_delaunay_repair_for_skips_for_dimension_lt_2() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 1>> = vec![vertex!([0.0]), vertex!([1.0])];
+        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 1> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        assert_eq!(dt.number_of_cells(), 1);
+        assert_eq!(
+            dt.delaunay_repair_policy(),
+            DelaunayRepairPolicy::EveryInsertion
+        );
+        assert!(!dt.should_run_delaunay_repair_for(dt.topology_guarantee(), 1));
+    }
+
+    #[test]
+    fn test_should_run_delaunay_repair_for_skips_when_no_cells() {
+        init_tracing();
+        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> = DelaunayTriangulation::empty();
+
+        assert_eq!(dt.number_of_cells(), 0);
+        assert_eq!(
+            dt.delaunay_repair_policy(),
+            DelaunayRepairPolicy::EveryInsertion
+        );
+        assert!(!dt.should_run_delaunay_repair_for(dt.topology_guarantee(), 1));
+    }
+
+    #[test]
+    fn test_should_run_delaunay_repair_for_skips_when_policy_never() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        assert_eq!(dt.number_of_cells(), 1);
+        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
+        assert!(!dt.should_run_delaunay_repair_for(dt.topology_guarantee(), 1));
+    }
+
+    #[test]
+    fn test_should_run_delaunay_repair_for_respects_every_n_schedule() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::EveryN(NonZeroUsize::new(2).unwrap()));
+        let topology = dt.topology_guarantee();
+
+        assert!(!dt.should_run_delaunay_repair_for(topology, 1));
+        assert!(dt.should_run_delaunay_repair_for(topology, 2));
+    }
+
+    #[test]
+    fn test_run_flip_repair_fallbacks_smoke_ok_with_local_seed() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 0.2]),
+        ];
+        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let before_vertices = dt.number_of_vertices();
+        let before_cells = dt.number_of_cells();
+
+        let seed_cell = dt.cells().next().unwrap().0;
+        let seeds = [seed_cell];
+
+        let _ = dt.run_flip_repair_fallbacks(Some(&seeds)).unwrap();
+
+        assert_eq!(dt.number_of_vertices(), before_vertices);
+        assert_eq!(dt.number_of_cells(), before_cells);
+        assert!(dt.validate().is_ok());
+    }
+
+    #[test]
+    fn test_insert_remaps_vertex_key_after_forced_heuristic_rebuild() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let inserted = vertex!([0.25, 0.25]);
+        let inserted_uuid = inserted.uuid();
+        let _guard = ForceHeuristicRebuildGuard::enable();
+
+        let (outcome, _stats) = dt.insert_with_statistics(inserted).unwrap();
+        let InsertionOutcome::Inserted { vertex_key, .. } = outcome else {
+            panic!("Expected successful insertion outcome");
+        };
+
+        let remapped = dt
+            .tri
+            .tds
+            .vertex_key_from_uuid(&inserted_uuid)
+            .expect("Inserted vertex UUID missing after forced heuristic rebuild");
+
+        assert_eq!(vertex_key, remapped);
+    }
+
+    /// Slow search helper to find a natural stale-key repro case.
+    ///
+    /// This remains ignored by default because it is nondeterministic and expensive.
+    /// For deterministic coverage, see `test_insert_remaps_vertex_key_after_forced_heuristic_rebuild`.
+    #[test]
+    #[ignore = "manual search helper; run explicitly to discover natural repro cases"]
+    fn find_stale_vertex_key_after_heuristic_rebuild_repro_case() {
+        const DIM: usize = 4;
+        const INITIAL_COUNT: usize = 12;
+        const CASES: usize = 2_000;
+
+        init_tracing();
+
+        // This probes for a configuration that triggers a heuristic rebuild during automatic
+        // flip-repair after insertion, which historically could invalidate the returned VertexKey.
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0xD3_1A_7A_1C_0A_17_u64);
+
+        for case in 0..CASES {
+            let mut vertices: Vec<Vertex<f64, (), DIM>> = Vec::with_capacity(INITIAL_COUNT);
+            for _ in 0..INITIAL_COUNT {
+                // Use a coarse lattice + tiny noise to encourage near-degenerate configurations.
+                let mut coords = [0.0_f64; DIM];
+                for c in &mut coords {
+                    let base: i32 = rng.random_range(-3..=3);
+                    let noise: f64 = rng.random_range(-1.0e-6..=1.0e-6);
+                    *c = <f64 as std::convert::From<i32>>::from(base) + noise;
+                }
+                vertices.push(vertex!(coords));
+            }
+
+            let Ok(mut dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), DIM>::new(&vertices)
+            else {
+                continue;
+            };
+
+            let mut inserted_coords = [0.0_f64; DIM];
+            for c in &mut inserted_coords {
+                let base: i32 = rng.random_range(-3..=3);
+                let noise: f64 = rng.random_range(-1.0e-6..=1.0e-6);
+                *c = <f64 as std::convert::From<i32>>::from(base) + noise;
+            }
+            let inserted = vertex!(inserted_coords);
+            let inserted_uuid = inserted.uuid();
+
+            let Ok(vertex_key) = dt.insert(inserted) else {
+                continue;
+            };
+
+            let found = dt
+                .tri
+                .tds
+                .get_vertex_by_key(vertex_key)
+                .is_some_and(|v| v.uuid() == inserted_uuid);
+
+            if !found {
+                tracing::debug!(case, "FOUND stale key after insertion");
+                tracing::debug!(vertex_key = ?vertex_key, inserted_uuid = %inserted_uuid);
+                tracing::debug!("initial vertices:");
+                for v in &vertices {
+                    tracing::debug!(coords = ?v.point().coords(), "  vertex");
+                }
+                tracing::debug!("inserted vertex coords: {inserted_coords:?}");
+                panic!("stale VertexKey returned from insert() after heuristic rebuild");
+            }
+        }
+
+        panic!("no stale-key case found after {CASES} attempts");
     }
 
     #[test]

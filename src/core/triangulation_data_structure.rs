@@ -4207,13 +4207,14 @@ mod tests {
         let mut dt = DelaunayTriangulation::new(&initial_vertices).unwrap();
 
         let vertex = vertex!([1.0, 2.0, 3.0]);
+        let duplicate = vertex!([1.0, 2.0, 3.0]);
         dt.insert(vertex).unwrap();
 
-        // Same vertex again (same coordinates AND UUID)
-        let result = dt.insert(vertex);
+        // Same coordinates again (distinct UUID, constructed via vertex! macro)
+        let result = dt.insert(duplicate);
         assert!(
             matches!(result, Err(InsertionError::DuplicateCoordinates { .. })),
-            "Adding same vertex object should fail with DuplicateCoordinates (checked before UUID), got: {result:?}"
+            "insert() should reject duplicate coordinates created via vertex! (before UUID), got: {result:?}"
         );
     }
 
