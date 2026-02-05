@@ -60,13 +60,13 @@ use num_traits::Zero;
 ///
 /// let kind = BistellarFlipKind::k2(3);
 /// let inverse = kind.inverse();
-/// assert_eq!(kind.k, 2);
-/// assert_eq!(inverse.k, 3);
+/// assert_eq!(kind.k(), 2);
+/// assert_eq!(inverse.k(), 3);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BistellarFlipKind {
     /// Number of simplices being replaced on the current side (k).
-    pub k: usize,
+    k: usize,
     /// Dimension of the triangulation (D).
     pub d: usize,
 }
@@ -467,6 +467,11 @@ fn check_flip_cycle(
 }
 
 impl BistellarFlipKind {
+    /// Number of simplices being replaced on the current side (k).
+    #[must_use]
+    pub const fn k(self) -> usize {
+        self.k
+    }
     /// Construct a k=1 flip kind for the given dimension.
     #[must_use]
     pub const fn k1(d: usize) -> Self {
@@ -732,14 +737,14 @@ pub enum FlipError {
 /// inserted_face_vertices.push(VertexKey::from(KeyData::from_ffi(4)));
 ///
 /// let info: FlipInfo<3> = FlipInfo {
-///     kind: BistellarFlipKind { k: 2, d: 3 },
+///     kind: BistellarFlipKind::k2(3),
 ///     direction: FlipDirection::Forward,
 ///     removed_cells,
 ///     new_cells,
 ///     removed_face_vertices,
 ///     inserted_face_vertices,
 /// };
-/// assert_eq!(info.kind.k, 2);
+/// assert_eq!(info.kind.k(), 2);
 /// ```
 #[derive(Debug, Clone)]
 pub struct FlipInfo<const D: usize> {
