@@ -2777,6 +2777,33 @@ where
 
         Ok(())
     }
+
+    fn validate_after_insertion(
+        &self,
+        suspicion: SuspicionFlags,
+    ) -> Result<(), TriangulationValidationError> {
+        if self.tds.number_of_cells() == 0 {
+            return Ok(());
+        }
+
+        let should_validate = self.validation_policy.should_validate(suspicion);
+        let requires_link_checks = self.topology_guarantee.requires_ridge_links()
+            || self
+                .topology_guarantee
+                .requires_vertex_links_during_insertion();
+
+        if !should_validate && !requires_link_checks {
+            return Ok(());
+        }
+
+        self.log_validation_trigger_if_enabled(suspicion);
+        if should_validate {
+            self.is_valid()
+        } else {
+            self.validate_required_topology_links()
+        }
+    }
+
     /// Attempt an insertion, and if Level 3 validation fails, roll back and try a
     /// conservative star-split fallback of the containing cell.
     fn try_insert_with_topology_safety_net(
@@ -2802,23 +2829,7 @@ where
             return Ok((ok, cells_removed, suspicion));
         }
 
-        let should_validate = self.validation_policy.should_validate(suspicion);
-        let requires_link_checks = self.topology_guarantee.requires_ridge_links()
-            || self
-                .topology_guarantee
-                .requires_vertex_links_during_insertion();
-        if !should_validate && !requires_link_checks {
-            return Ok((ok, cells_removed, suspicion));
-        }
-
-        self.log_validation_trigger_if_enabled(suspicion);
-        let validation_result = if should_validate {
-            self.is_valid()
-        } else {
-            self.validate_required_topology_links()
-        };
-
-        if let Err(validation_err) = validation_result {
+        if let Err(validation_err) = self.validate_after_insertion(suspicion) {
             // Roll back to snapshot and attempt a star-split fallback for interior points.
             self.tds = tds_snapshot.clone();
             return self.try_star_split_fallback_after_topology_failure(
@@ -2869,30 +2880,13 @@ where
                     fallback_suspicion.perturbation_used = true;
                 }
 
-                if self.tds.number_of_cells() > 0 {
-                    self.log_validation_trigger_if_enabled(fallback_suspicion);
-
-                    let should_validate =
-                        self.validation_policy.should_validate(fallback_suspicion);
-                    let requires_link_checks = self.topology_guarantee.requires_ridge_links()
-                        || self
-                            .topology_guarantee
-                            .requires_vertex_links_during_insertion();
-
-                    let validation_result = if should_validate {
-                        self.is_valid()
-                    } else if requires_link_checks {
-                        self.validate_required_topology_links()
-                    } else {
-                        Ok(())
-                    };
-
-                    if let Err(fallback_validation_err) = validation_result {
-                        return Err(InsertionError::TopologyValidationFailed {
-                            message: "Topology invalid after star-split fallback".to_string(),
-                            source: fallback_validation_err,
-                        });
-                    }
+                if let Err(fallback_validation_err) =
+                    self.validate_after_insertion(fallback_suspicion)
+                {
+                    return Err(InsertionError::TopologyValidationFailed {
+                        message: "Topology invalid after star-split fallback".to_string(),
+                        source: fallback_validation_err,
+                    });
                 }
 
                 // Telemetry: the fallback succeeded, meaning we recovered from a topology
@@ -4632,6 +4626,145 @@ mod tests {
             }
             other => panic!("Expected VertexLinkNotManifold, got {other:?}"),
         }
+    }
+
+    fn build_disconnected_two_triangles_tds_2d() -> Tds<f64, (), (), 2> {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let a0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let a1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let a2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let b0 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 0.0]))
+            .unwrap();
+        let b1 = tds
+            .insert_vertex_with_mapping(vertex!([11.0, 0.0]))
+            .unwrap();
+        let b2 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 1.0]))
+            .unwrap();
+
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![a0, a1, a2], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![b0, b1, b2], None).unwrap())
+            .unwrap();
+
+        tds
+    }
+
+    fn build_three_triangles_sharing_edge_tds_2d() -> Tds<f64, (), (), 2> {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0]))
+            .unwrap();
+        let v4 = tds.insert_vertex_with_mapping(vertex!([2.0, 0.0])).unwrap();
+
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v3], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v4], None).unwrap())
+            .unwrap();
+
+        tds
+    }
+
+    #[test]
+    fn test_validate_after_insertion_skips_when_no_cells() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+
+        // Force validation to be enabled if there were any cells.
+        tri.set_validation_policy(ValidationPolicy::Always);
+
+        // Insert a vertex without creating any cells (bootstrap phase).
+        let _ = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+            .unwrap();
+        assert_eq!(tri.number_of_cells(), 0);
+
+        tri.validate_after_insertion(SuspicionFlags::default())
+            .unwrap();
+    }
+
+    #[test]
+    fn test_validate_after_insertion_calls_is_valid_when_policy_triggers() {
+        let tds = build_disconnected_two_triangles_tds_2d();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+
+        tri.set_validation_policy(ValidationPolicy::Always);
+
+        match tri.validate_after_insertion(SuspicionFlags::default()) {
+            Err(TriangulationValidationError::Tds(
+                TdsValidationError::InconsistentDataStructure { message },
+            )) => {
+                assert!(
+                    message.contains("Disconnected triangulation"),
+                    "Unexpected message: {message}"
+                );
+            }
+            other => panic!("Expected disconnectedness error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_after_insertion_only_checks_required_links_when_policy_does_not_trigger() {
+        let tds = build_disconnected_two_triangles_tds_2d();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+
+        tri.set_validation_policy(ValidationPolicy::OnSuspicion);
+        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
+
+        // The triangulation is invalid (disconnected), but the required PL-manifold link
+        // checks are still satisfied.
+        assert!(tri.is_valid().is_err());
+        tri.validate_after_insertion(SuspicionFlags::default())
+            .unwrap();
+    }
+
+    #[test]
+    fn test_validate_after_insertion_does_not_skip_required_link_checks_in_pl_manifold_mode() {
+        let tds = build_three_triangles_sharing_edge_tds_2d();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+
+        tri.set_validation_policy(ValidationPolicy::OnSuspicion);
+        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
+
+        match tri.validate_after_insertion(SuspicionFlags::default()) {
+            Err(TriangulationValidationError::ManifoldFacetMultiplicity { cell_count, .. }) => {
+                assert_eq!(cell_count, 3);
+            }
+            other => panic!("Expected ManifoldFacetMultiplicity, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_after_insertion_skips_when_policy_does_not_trigger_and_no_required_link_checks()
+     {
+        let tds = build_disconnected_two_triangles_tds_2d();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+
+        tri.set_validation_policy(ValidationPolicy::OnSuspicion);
+        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+
+        assert!(tri.is_valid().is_err());
+        tri.validate_after_insertion(SuspicionFlags::default())
+            .unwrap();
     }
 
     #[test]
