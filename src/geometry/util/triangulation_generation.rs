@@ -29,6 +29,23 @@ const RANDOM_TRIANGULATION_MAX_SHUFFLE_ATTEMPTS: usize = 6;
 const RANDOM_TRIANGULATION_MAX_POINTSET_ATTEMPTS: usize = 6;
 const RANDOM_TRIANGULATION_POINTSET_SEED_MIX: u64 = 0x9E37_79B9_7F4A_7C15;
 
+fn validate_random_triangulation<K, U, V, const D: usize>(
+    dt: DelaunayTriangulation<K, U, V, D>,
+) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
+where
+    K: crate::geometry::kernel::Kernel<D>,
+    K::Scalar: CoordinateScalar + AddAssign + SubAssign + Sum + num_traits::cast::NumCast,
+    U: DataType,
+    V: DataType,
+{
+    dt.as_triangulation().validate().map_err(|e| {
+        TriangulationConstructionError::GeometricDegeneracy {
+            message: format!("Random triangulation failed topology/Euler validation: {e}"),
+        }
+    })?;
+    Ok(dt)
+}
+
 fn random_triangulation_is_acceptable<K, U, V, const D: usize>(
     dt: &DelaunayTriangulation<K, U, V, D>,
     min_vertices: usize,
@@ -39,7 +56,7 @@ where
     U: DataType,
     V: DataType,
 {
-    dt.as_triangulation().validate().is_ok() && dt.number_of_vertices() >= min_vertices
+    dt.number_of_vertices() >= min_vertices
 }
 
 fn random_triangulation_try_build<K, T, U, V, const D: usize>(
@@ -67,6 +84,7 @@ where
         options,
     )
     .ok()?;
+    let dt = validate_random_triangulation(dt).ok()?;
 
     random_triangulation_is_acceptable(&dt, min_vertices).then_some(dt)
 }
@@ -225,6 +243,7 @@ where
 /// **Geometric degeneracy** (`GeometricDegeneracy`):
 /// - Points form a degenerate configuration (all collinear, coplanar, etc.)
 /// - Numerical instability during construction
+/// - Topology/Euler validation failure after robust fallback attempts
 ///
 /// **Other construction failures** (various variants):
 /// - Vertex/cell construction errors
@@ -674,12 +693,13 @@ where
                 self.construction_options.retry_policy(),
             );
         }
-        DelaunayTriangulation::with_topology_guarantee_and_options(
+        let dt = DelaunayTriangulation::with_topology_guarantee_and_options(
             FastKernel::new(),
             &vertices,
             self.topology_guarantee,
             self.construction_options,
-        )
+        )?;
+        validate_random_triangulation(dt)
     }
 }
 
