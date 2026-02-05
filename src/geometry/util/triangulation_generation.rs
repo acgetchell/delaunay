@@ -368,6 +368,23 @@ where
 ///
 /// Panics if internal point-set bookkeeping is inconsistent (this indicates a bug). In
 /// particular, it will panic if the initial point set is unexpectedly consumed.
+///
+/// # Examples
+///
+/// ```no_run
+/// use delaunay::geometry::util::generate_random_triangulation_with_topology_guarantee;
+/// use delaunay::core::triangulation::TopologyGuarantee;
+///
+/// let dt = generate_random_triangulation_with_topology_guarantee::<f64, (), (), 3>(
+///     20,
+///     (-1.0, 1.0),
+///     None,
+///     Some(123),
+///     TopologyGuarantee::Pseudomanifold,
+/// )
+/// .unwrap();
+/// assert_eq!(dt.dim(), 3);
+/// ```
 #[allow(clippy::too_many_lines)]
 pub fn generate_random_triangulation_with_topology_guarantee<T, U, V, const D: usize>(
     n_points: usize,
@@ -540,6 +557,15 @@ where
     /// - Default topology guarantee (None)
     /// - `Hilbert` insertion order (improves spatial locality during bulk insertion)
     /// - Default construction options (no deduplication, debug-only retries)
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use delaunay::geometry::util::RandomTriangulationBuilder;
+    ///
+    /// let builder = RandomTriangulationBuilder::new(10, (-1.0, 1.0)).seed(42);
+    /// let _ = builder;
+    /// ```
     #[must_use]
     pub fn new(n_points: usize, bounds: (T, T)) -> Self {
         Self {
@@ -612,6 +638,18 @@ where
     /// - Insufficient vertices for the requested dimension (`n_points < D + 1`)
     /// - Triangulation construction fails (geometric degeneracy, etc.)
     /// - Construction fails after the configured retry policy (no robust-kernel fallback here)
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use delaunay::geometry::util::RandomTriangulationBuilder;
+    ///
+    /// let dt = RandomTriangulationBuilder::new(12, (-2.0, 2.0))
+    ///     .seed(7)
+    ///     .build::<(), (), 3>()
+    ///     .unwrap();
+    /// assert_eq!(dt.dim(), 3);
+    /// ```
     pub fn build<U, V, const D: usize>(
         self,
     ) -> Result<DelaunayTriangulation<FastKernel<T>, U, V, D>, DelaunayTriangulationConstructionError>
@@ -631,6 +669,18 @@ where
     /// # Errors
     ///
     /// Returns `Err` if construction fails (see [`build`](Self::build) for details).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use delaunay::geometry::util::RandomTriangulationBuilder;
+    ///
+    /// let dt = RandomTriangulationBuilder::new(12, (-2.0, 2.0))
+    ///     .seed(7)
+    ///     .build_with_vertex_data::<(), (), 3>(None)
+    ///     .unwrap();
+    /// assert_eq!(dt.dim(), 3);
+    /// ```
     pub fn build_with_vertex_data<U, V, const D: usize>(
         self,
         vertex_data: Option<U>,

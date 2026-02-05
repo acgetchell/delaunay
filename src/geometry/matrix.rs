@@ -19,6 +19,15 @@ pub const MAX_STACK_MATRIX_DIM: usize = 18;
 pub type Matrix<const D: usize> = LaMatrix<D>;
 
 /// Error type for matrix operations.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::geometry::matrix::MatrixError;
+///
+/// let err = MatrixError::SingularMatrix;
+/// assert!(matches!(err, MatrixError::SingularMatrix));
+/// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum MatrixError {
     /// Matrix is singular.
@@ -178,6 +187,15 @@ pub(crate) fn matrix_set<const D: usize>(m: &mut Matrix<D>, r: usize, c: usize, 
 }
 
 /// Compute an LU-based determinant, returning 0.0 for singular matrices.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::geometry::matrix::{determinant, Matrix};
+///
+/// let m = Matrix::<2>::zero();
+/// assert_eq!(determinant(m), 0.0);
+/// ```
 #[inline]
 #[must_use]
 pub fn determinant<const D: usize>(m: Matrix<D>) -> f64 {
@@ -194,6 +212,18 @@ pub fn determinant<const D: usize>(m: Matrix<D>) -> f64 {
 /// absolute row sum. If the last column is (approximately) all ones, it is
 /// excluded from the magnitude estimate to avoid over-inflating tolerance on
 /// small simplices (common in orientation/insphere matrices).
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::geometry::matrix::{adaptive_tolerance, Matrix};
+///
+/// let mut m = Matrix::<2>::zero();
+/// m.set(0, 0, 1.0);
+/// m.set(1, 1, 1.0);
+/// let tol = adaptive_tolerance(&m, 1e-12);
+/// assert!(tol >= 1e-12);
+/// ```
 #[must_use]
 pub fn adaptive_tolerance<const D: usize>(matrix: &Matrix<D>, base_tol: f64) -> f64 {
     let nrows = D;

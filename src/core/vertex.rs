@@ -59,6 +59,18 @@ use uuid::Uuid;
 // =============================================================================
 
 /// Errors that can occur during vertex validation.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::util::UuidValidationError;
+/// use delaunay::core::vertex::VertexValidationError;
+///
+/// let err = VertexValidationError::InvalidUuid {
+///     source: UuidValidationError::NilUuid,
+/// };
+/// assert!(matches!(err, VertexValidationError::InvalidUuid { .. }));
+/// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum VertexValidationError {
     /// The vertex has an invalid point.

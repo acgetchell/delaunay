@@ -35,6 +35,18 @@ use crate::geometry::predicates::Orientation;
 // =============================================================================
 
 /// Errors that can occur during convex hull validation.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::geometry::algorithms::convex_hull::ConvexHullValidationError;
+///
+/// let err = ConvexHullValidationError::StaleHull {
+///     hull_generation: 1,
+///     tds_generation: 2,
+/// };
+/// assert!(matches!(err, ConvexHullValidationError::StaleHull { .. }));
+/// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum ConvexHullValidationError {
     /// A facet has invalid structure.
@@ -68,6 +80,17 @@ pub enum ConvexHullValidationError {
 }
 
 /// Errors that can occur during convex hull construction.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::geometry::algorithms::convex_hull::ConvexHullConstructionError;
+///
+/// let err = ConvexHullConstructionError::InvalidTriangulation {
+///     message: "empty".to_string(),
+/// };
+/// assert!(matches!(err, ConvexHullConstructionError::InvalidTriangulation { .. }));
+/// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum ConvexHullConstructionError {
     /// Failed to extract boundary facets from the triangulation due to a TDS validation failure.

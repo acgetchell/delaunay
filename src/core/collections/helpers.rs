@@ -91,6 +91,17 @@ pub fn small_buffer_with_capacity_8<T>(capacity: usize) -> SmallBuffer<T, 8> {
 ///
 /// # Use Case
 /// Facet-to-cell relationships typically involve exactly 2 cells sharing a facet.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::small_buffer_with_capacity_2;
+///
+/// let mut buf = small_buffer_with_capacity_2::<i32>(2);
+/// buf.push(1);
+/// buf.push(2);
+/// assert_eq!(buf.len(), 2);
+/// ```
 #[must_use]
 pub fn small_buffer_with_capacity_2<T>(capacity: usize) -> SmallBuffer<T, 2> {
     SmallBuffer::with_capacity(capacity)
@@ -100,6 +111,16 @@ pub fn small_buffer_with_capacity_2<T>(capacity: usize) -> SmallBuffer<T, 2> {
 ///
 /// # Use Case
 /// Suitable for batch vertex/cell collections in higher-dimensional operations.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::collections::small_buffer_with_capacity_16;
+///
+/// let mut buf = small_buffer_with_capacity_16::<i32>(4);
+/// buf.extend([1, 2, 3, 4]);
+/// assert_eq!(buf.len(), 4);
+/// ```
 #[must_use]
 pub fn small_buffer_with_capacity_16<T>(capacity: usize) -> SmallBuffer<T, 16> {
     SmallBuffer::with_capacity(capacity)

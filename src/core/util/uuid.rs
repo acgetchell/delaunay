@@ -4,6 +4,15 @@ use thiserror::Error;
 use uuid::Uuid;
 
 /// Errors that can occur during UUID validation.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::util::UuidValidationError;
+///
+/// let err = UuidValidationError::NilUuid;
+/// assert!(matches!(err, UuidValidationError::NilUuid));
+/// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum UuidValidationError {
     /// The UUID is nil (all zeros), which is not allowed.

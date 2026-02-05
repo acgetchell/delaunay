@@ -13,6 +13,15 @@ use crate::topology::traits::topological_space::{TopologicalSpace, TopologyKind}
 ///
 /// The dimension `D` is a const generic parameter that must match the
 /// dimension of the associated triangulation.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::topology::spaces::ToroidalSpace;
+///
+/// let space = ToroidalSpace::<2>::new([1.0, 2.0]);
+/// assert_eq!(space.domain, [1.0, 2.0]);
+/// ```
 #[derive(Debug, Clone)]
 pub struct ToroidalSpace<const D: usize> {
     /// The fundamental domain defining the period of each dimension.

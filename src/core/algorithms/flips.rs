@@ -52,6 +52,17 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 use num_traits::Zero;
 
 /// Bistellar flip kind descriptor.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::flips::BistellarFlipKind;
+///
+/// let kind = BistellarFlipKind::k2(3);
+/// let inverse = kind.inverse();
+/// assert_eq!(kind.k, 2);
+/// assert_eq!(inverse.k, 3);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BistellarFlipKind {
     /// Number of simplices being replaced on the current side (k).
@@ -398,6 +409,14 @@ where
 }
 
 /// Direction of a bistellar flip.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::flips::FlipDirection;
+///
+/// assert_eq!(FlipDirection::Forward.inverse(), FlipDirection::Inverse);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlipDirection {
     /// Forward (k → D+2−k).
@@ -476,10 +495,34 @@ impl BistellarFlipKind {
 }
 
 /// Const-generic move marker for Pachner k-moves.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::flips::{BistellarMove, ConstK};
+///
+/// fn move_k<const D: usize, M: BistellarMove<D>>() -> usize {
+///     M::K
+/// }
+///
+/// assert_eq!(move_k::<3, ConstK<2>>(), 2);
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct ConstK<const K: usize>;
 
 /// Const-generic descriptor for a Pachner move in dimension `D`.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::flips::{BistellarMove, ConstK};
+///
+/// fn move_k<const D: usize, M: BistellarMove<D>>() -> usize {
+///     M::K
+/// }
+///
+/// assert_eq!(move_k::<4, ConstK<3>>(), 3);
+/// ```
 pub trait BistellarMove<const D: usize> {
     /// Number of removed D-simplices (k).
     const K: usize;
@@ -490,6 +533,15 @@ impl<const D: usize, const K: usize> BistellarMove<D> for ConstK<K> {
 }
 
 /// Errors that can occur during bistellar flips or repair.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::flips::FlipError;
+///
+/// let err = FlipError::UnsupportedDimension { dimension: 1 };
+/// assert!(matches!(err, FlipError::UnsupportedDimension { .. }));
+/// ```
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum FlipError {
@@ -658,6 +710,37 @@ pub enum FlipError {
 }
 
 /// Information about a successful flip.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::flips::{BistellarFlipKind, FlipDirection, FlipInfo};
+/// use delaunay::core::collections::{CellKeyBuffer, SmallBuffer, MAX_PRACTICAL_DIMENSION_SIZE};
+/// use delaunay::core::triangulation_data_structure::{CellKey, VertexKey};
+/// use slotmap::KeyData;
+///
+/// let mut removed_cells = CellKeyBuffer::new();
+/// removed_cells.push(CellKey::from(KeyData::from_ffi(1)));
+/// let mut new_cells = CellKeyBuffer::new();
+/// new_cells.push(CellKey::from(KeyData::from_ffi(2)));
+///
+/// let mut removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+///     SmallBuffer::new();
+/// removed_face_vertices.push(VertexKey::from(KeyData::from_ffi(3)));
+/// let mut inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+///     SmallBuffer::new();
+/// inserted_face_vertices.push(VertexKey::from(KeyData::from_ffi(4)));
+///
+/// let info: FlipInfo<3> = FlipInfo {
+///     kind: BistellarFlipKind { k: 2, d: 3 },
+///     direction: FlipDirection::Forward,
+///     removed_cells,
+///     new_cells,
+///     removed_face_vertices,
+///     inserted_face_vertices,
+/// };
+/// assert_eq!(info.kind.k, 2);
+/// ```
 #[derive(Debug, Clone)]
 pub struct FlipInfo<const D: usize> {
     /// Flip kind (k, d).
@@ -701,6 +784,21 @@ pub(crate) struct FlipContextDyn<const D: usize> {
 }
 
 /// Canonical handle to a triangle (three vertices).
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::flips::TriangleHandle;
+/// use delaunay::core::triangulation_data_structure::VertexKey;
+/// use slotmap::KeyData;
+///
+/// let a = VertexKey::from(KeyData::from_ffi(1));
+/// let b = VertexKey::from(KeyData::from_ffi(2));
+/// let c = VertexKey::from(KeyData::from_ffi(3));
+///
+/// let handle = TriangleHandle::new(b, a, c);
+/// assert_eq!(handle.vertices().len(), 3);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TriangleHandle {
     v0: VertexKey,
@@ -711,6 +809,21 @@ pub struct TriangleHandle {
 impl TriangleHandle {
     /// Create a canonical triangle handle with ordered vertex keys.
     #[must_use]
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::algorithms::flips::TriangleHandle;
+    /// use delaunay::core::triangulation_data_structure::VertexKey;
+    /// use slotmap::KeyData;
+    ///
+    /// let a = VertexKey::from(KeyData::from_ffi(10));
+    /// let b = VertexKey::from(KeyData::from_ffi(20));
+    /// let c = VertexKey::from(KeyData::from_ffi(30));
+    ///
+    /// let handle = TriangleHandle::new(a, b, c);
+    /// assert_eq!(handle.vertices(), [a, b, c]);
+    /// ```
     pub fn new(a: VertexKey, b: VertexKey, c: VertexKey) -> Self {
         let mut verts = [a, b, c];
         verts.sort_unstable_by_key(|v| v.data().as_ffi());
@@ -729,6 +842,19 @@ impl TriangleHandle {
 }
 
 /// Lightweight handle to a ridge (codimension-2 face) within a cell.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::flips::RidgeHandle;
+/// use delaunay::core::triangulation_data_structure::CellKey;
+/// use slotmap::KeyData;
+///
+/// let cell_key = CellKey::from(KeyData::from_ffi(7));
+/// let handle = RidgeHandle::new(cell_key, 2, 0);
+/// assert_eq!(handle.omit_a(), 0);
+/// assert_eq!(handle.omit_b(), 2);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RidgeHandle {
     cell_key: CellKey,
@@ -775,6 +901,15 @@ impl RidgeHandle {
 }
 
 /// Statistics for flip-based Delaunay repair.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::flips::DelaunayRepairStats;
+///
+/// let stats = DelaunayRepairStats::default();
+/// assert_eq!(stats.flips_performed, 0);
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct DelaunayRepairStats {
     /// Number of queued items checked (facets, ridges, edges, triangles).
@@ -785,6 +920,15 @@ pub struct DelaunayRepairStats {
     pub max_queue_len: usize,
 }
 /// Queue ordering policy for flip repair attempts.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::flips::RepairQueueOrder;
+///
+/// let order = RepairQueueOrder::Fifo;
+/// assert_eq!(order, RepairQueueOrder::Fifo);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepairQueueOrder {
     /// FIFO (breadth-like) ordering.
@@ -794,6 +938,27 @@ pub enum RepairQueueOrder {
 }
 
 /// Diagnostics captured when flip-based repair fails to converge.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::flips::{DelaunayRepairDiagnostics, RepairQueueOrder};
+///
+/// let diagnostics = DelaunayRepairDiagnostics {
+///     facets_checked: 0,
+///     flips_performed: 0,
+///     max_queue_len: 0,
+///     ambiguous_predicates: 0,
+///     ambiguous_predicate_samples: Vec::new(),
+///     predicate_failures: 0,
+///     cycle_detections: 0,
+///     cycle_signature_samples: Vec::new(),
+///     attempt: 1,
+///     queue_order: RepairQueueOrder::Fifo,
+///     used_robust_predicates: false,
+/// };
+/// assert!(diagnostics.to_string().contains("checked"));
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DelaunayRepairDiagnostics {
     /// Number of queued items checked.
@@ -840,6 +1005,20 @@ impl fmt::Display for DelaunayRepairDiagnostics {
 }
 
 /// Errors that can occur during flip-based Delaunay repair.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::flips::DelaunayRepairError;
+/// use delaunay::core::triangulation::TopologyGuarantee;
+///
+/// let err = DelaunayRepairError::InvalidTopology {
+///     required: TopologyGuarantee::PLManifold,
+///     found: TopologyGuarantee::Pseudomanifold,
+///     message: "requires manifold",
+/// };
+/// assert!(matches!(err, DelaunayRepairError::InvalidTopology { .. }));
+/// ```
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum DelaunayRepairError {

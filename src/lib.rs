@@ -678,6 +678,20 @@ pub mod geometry {
         // Error types defined here and re-exported from submodules
 
         /// Errors that can occur during value type conversions.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// use delaunay::geometry::util::ValueConversionError;
+        ///
+        /// let err = ValueConversionError::ConversionFailed {
+        ///     value: "1.0".to_string(),
+        ///     from_type: "f64",
+        ///     to_type: "u32",
+        ///     details: "out of range".to_string(),
+        /// };
+        /// assert!(matches!(err, ValueConversionError::ConversionFailed { .. }));
+        /// ```
         #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
         pub enum ValueConversionError {
             /// Failed to convert a value from one type to another
@@ -695,6 +709,18 @@ pub mod geometry {
         }
 
         /// Errors that can occur during random point generation.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// use delaunay::geometry::util::RandomPointGenerationError;
+        ///
+        /// let err = RandomPointGenerationError::InvalidRange {
+        ///     min: "1.0".to_string(),
+        ///     max: "0.0".to_string(),
+        /// };
+        /// assert!(matches!(err, RandomPointGenerationError::InvalidRange { .. }));
+        /// ```
         #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
         pub enum RandomPointGenerationError {
             /// Invalid coordinate range provided
@@ -726,6 +752,15 @@ pub mod geometry {
         }
 
         /// Errors that can occur during circumcenter calculation.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// use delaunay::geometry::util::CircumcenterError;
+        ///
+        /// let err = CircumcenterError::EmptyPointSet;
+        /// assert!(matches!(err, CircumcenterError::EmptyPointSet));
+        /// ```
         #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
         pub enum CircumcenterError {
             /// Empty point set provided
@@ -788,6 +823,15 @@ pub mod geometry {
         }
 
         /// Error type for surface measure computation operations.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// use delaunay::geometry::util::{CircumcenterError, SurfaceMeasureError};
+        ///
+        /// let err = SurfaceMeasureError::GeometryError(CircumcenterError::EmptyPointSet);
+        /// assert!(matches!(err, SurfaceMeasureError::GeometryError(_)));
+        /// ```
         #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
         pub enum SurfaceMeasureError {
             /// Error retrieving vertices from a facet.

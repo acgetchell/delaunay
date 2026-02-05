@@ -17,6 +17,19 @@ use crate::core::triangulation_data_structure::{CellKey, VertexKey};
 use thiserror::Error;
 
 /// Errors that can occur while building an [`AdjacencyIndex`].
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::adjacency::AdjacencyIndexBuildError;
+/// use delaunay::core::triangulation_data_structure::{CellKey, VertexKey};
+/// use slotmap::KeyData;
+///
+/// let cell_key = CellKey::from(KeyData::from_ffi(1));
+/// let vertex_key = VertexKey::from(KeyData::from_ffi(2));
+/// let err = AdjacencyIndexBuildError::MissingVertexKey { cell_key, vertex_key };
+/// assert!(matches!(err, AdjacencyIndexBuildError::MissingVertexKey { .. }));
+/// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AdjacencyIndexBuildError {

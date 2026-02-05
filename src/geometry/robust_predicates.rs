@@ -17,6 +17,15 @@ use crate::geometry::traits::coordinate::{
 };
 
 /// Result of consistency verification between different insphere methods.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::geometry::robust_predicates::ConsistencyResult;
+///
+/// let result = ConsistencyResult::Consistent;
+/// assert!(result.is_consistent());
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConsistencyResult {
     /// The two methods agree on the result
@@ -48,6 +57,15 @@ impl std::fmt::Display for ConsistencyResult {
 ///
 /// This structure allows fine-tuning of numerical robustness parameters
 /// based on the specific requirements of the triangulation algorithm.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::geometry::robust_predicates::RobustPredicateConfig;
+///
+/// let config = RobustPredicateConfig::<f64>::default();
+/// assert!(config.max_refinement_iterations > 0);
+/// ```
 #[derive(Debug, Clone)]
 pub struct RobustPredicateConfig<T> {
     /// Base tolerance for degenerate case detection
@@ -370,6 +388,24 @@ where
 ///
 /// Returns an error if the input is invalid (wrong number of points) or if
 /// the geometric computation fails.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::predicates::Orientation;
+/// use delaunay::geometry::robust_predicates::{robust_orientation, RobustPredicateConfig};
+/// use delaunay::geometry::traits::coordinate::Coordinate;
+///
+/// let tri = vec![
+///     Point::new([0.0, 0.0]),
+///     Point::new([1.0, 0.0]),
+///     Point::new([0.0, 1.0]),
+/// ];
+/// let config = RobustPredicateConfig::<f64>::default();
+/// let orientation = robust_orientation(&tri, &config).unwrap();
+/// assert_eq!(orientation, Orientation::POSITIVE);
+/// ```
 pub fn robust_orientation<T, const D: usize>(
     simplex_points: &[Point<T, D>],
     config: &RobustPredicateConfig<T>,

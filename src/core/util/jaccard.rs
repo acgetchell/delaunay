@@ -12,6 +12,18 @@ use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 
 /// Errors that can occur during Jaccard similarity computation.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::util::JaccardComputationError;
+///
+/// let err = JaccardComputationError::SetSizeTooLarge {
+///     intersection: 1,
+///     union: 2,
+/// };
+/// assert!(matches!(err, JaccardComputationError::SetSizeTooLarge { .. }));
+/// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum JaccardComputationError {
     /// Set sizes too large for safe f64 conversion.

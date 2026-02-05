@@ -267,6 +267,21 @@ use super::{
 // =============================================================================
 
 /// Represents the construction state of a triangulation.
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::prelude::*;
+///
+/// let state = TriangulationConstructionState::Incomplete(2);
+/// assert!(matches!(state, TriangulationConstructionState::Incomplete(2)));
+///
+/// let default_state = TriangulationConstructionState::default();
+/// assert!(matches!(
+///     default_state,
+///     TriangulationConstructionState::Incomplete(0)
+/// ));
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TriangulationConstructionState {
     /// The triangulation has insufficient vertices to form a complete D-dimensional triangulation.
@@ -287,6 +302,19 @@ impl Default for TriangulationConstructionState {
 // =============================================================================
 
 /// Errors that can occur during TDS construction operations.
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::prelude::*;
+/// use uuid::Uuid;
+///
+/// let err = TdsConstructionError::DuplicateUuid {
+///     entity: EntityKind::Vertex,
+///     uuid: Uuid::nil(),
+/// };
+/// assert!(matches!(err, TdsConstructionError::DuplicateUuid { .. }));
+/// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TdsConstructionError {
@@ -304,6 +332,15 @@ pub enum TdsConstructionError {
 }
 
 /// Represents the type of entity in the triangulation.
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::prelude::*;
+///
+/// let kind = EntityKind::Cell;
+/// assert_eq!(kind, EntityKind::Cell);
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntityKind {
     /// A vertex entity.
@@ -449,6 +486,19 @@ pub enum TdsValidationError {
 /// Callers that want to preserve potential future mutation-specific details should avoid
 /// converting back to [`TdsValidationError`] and instead propagate/handle `TdsMutationError`
 /// directly.
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::prelude::*;
+///
+/// let validation = TdsValidationError::InvalidNeighbors {
+///     message: "bad neighbors".to_string(),
+/// };
+/// let mutation: TdsMutationError = validation.clone().into();
+/// let round_trip: TdsValidationError = mutation.clone().into();
+/// assert_eq!(round_trip, validation);
+/// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[error(transparent)]
 pub struct TdsMutationError(pub TdsValidationError);
@@ -470,6 +520,15 @@ impl From<TdsMutationError> for TdsValidationError {
 type TdsError = TdsValidationError;
 
 /// Classifies the kind of triangulation invariant that failed during validation.
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::prelude::*;
+///
+/// let kind = InvariantKind::Topology;
+/// assert_eq!(kind, InvariantKind::Topology);
+/// ```
 ///
 /// This is used by [`TriangulationValidationReport`] to group related errors.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -500,6 +559,17 @@ pub enum InvariantKind {
 
 /// A union error type that can represent any layer's validation failure.
 ///
+/// # Examples
+///
+/// ```
+/// use delaunay::prelude::*;
+///
+/// let err = InvariantError::Tds(TdsValidationError::InvalidNeighbors {
+///     message: "bad neighbors".to_string(),
+/// });
+/// assert!(matches!(err, InvariantError::Tds(_)));
+/// ```
+///
 /// This is used by [`TriangulationValidationReport`] so that diagnostic reporting can
 /// preserve structured errors from each layer (TDS / topology / Delaunay) without
 /// stringification.
@@ -520,6 +590,20 @@ pub enum InvariantError {
 }
 
 /// A single invariant violation recorded during validation diagnostics.
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::prelude::*;
+///
+/// let violation = InvariantViolation {
+///     kind: InvariantKind::Topology,
+///     error: InvariantError::Tds(TdsValidationError::InvalidNeighbors {
+///         message: "bad neighbors".to_string(),
+///     }),
+/// };
+/// assert_eq!(violation.kind, InvariantKind::Topology);
+/// ```
 #[derive(Clone, Debug)]
 pub struct InvariantViolation {
     /// The kind of invariant that failed.
@@ -535,6 +619,15 @@ pub struct InvariantViolation {
 /// to surface all failed invariants at once for debugging and test diagnostics.
 ///
 /// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::triangulation_data_structure::TriangulationValidationReport;
+///
+/// let report = TriangulationValidationReport { violations: Vec::new() };
+/// assert!(report.is_empty());
+/// ```
 #[derive(Clone, Debug)]
 pub struct TriangulationValidationReport {
     /// The ordered list of invariant violations that occurred.
@@ -563,6 +656,16 @@ new_key_type! {
     /// triangulation's vertex storage. Each VertexKey corresponds to exactly
     /// one vertex and provides efficient, stable access even as vertices are
     /// added or removed from the triangulation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::*;
+    /// use slotmap::KeyData;
+    ///
+    /// let key = VertexKey::from(KeyData::from_ffi(1));
+    /// let _ = key;
+    /// ```
     pub struct VertexKey;
 }
 
@@ -573,6 +676,16 @@ new_key_type! {
     /// triangulation's cell storage. Each CellKey corresponds to exactly
     /// one cell and provides efficient, stable access even as cells are
     /// added or removed during triangulation operations.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::*;
+    /// use slotmap::KeyData;
+    ///
+    /// let key = CellKey::from(KeyData::from_ffi(1));
+    /// let _ = key;
+    /// ```
     pub struct CellKey;
 }
 
@@ -939,6 +1052,21 @@ where
     /// # Returns
     ///
     /// An iterator over `VertexKey` values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let keys: Vec<_> = dt.tds().vertex_keys().collect();
+    /// assert_eq!(keys.len(), 3);
+    /// ```
     pub fn vertex_keys(&self) -> impl Iterator<Item = VertexKey> + '_ {
         self.vertices.keys()
     }
@@ -948,6 +1076,21 @@ where
     /// # Returns
     ///
     /// An iterator over `CellKey` values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let keys: Vec<_> = dt.tds().cell_keys().collect();
+    /// assert_eq!(keys.len(), 1);
+    /// ```
     pub fn cell_keys(&self) -> impl Iterator<Item = CellKey> + '_ {
         self.cells.keys()
     }
@@ -957,6 +1100,23 @@ where
     /// # Returns
     ///
     /// `Some(&Cell)` if the key exists, `None` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tds = dt.tds();
+    /// let cell_key = tds.cell_keys().next().unwrap();
+    /// let cell = tds.get_cell(cell_key).unwrap();
+    /// assert_eq!(cell.number_of_vertices(), 3);
+    /// ```
     #[must_use]
     pub fn get_cell(&self, key: CellKey) -> Option<&Cell<T, U, V, D>> {
         self.cells.get(key)
@@ -967,6 +1127,22 @@ where
     /// # Returns
     ///
     /// `true` if the key exists, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tds = dt.tds();
+    /// let cell_key = tds.cell_keys().next().unwrap();
+    /// assert!(tds.contains_cell(cell_key));
+    /// ```
     #[must_use]
     pub fn contains_cell(&self, key: CellKey) -> bool {
         self.cells.contains_key(key)
@@ -1190,6 +1366,15 @@ where
     /// # Returns
     ///
     /// The current generation counter value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    ///
+    /// let tds: Tds<f64, (), (), 2> = Tds::empty();
+    /// assert_eq!(tds.generation(), 0);
+    /// ```
     #[inline]
     #[must_use]
     pub fn generation(&self) -> u64 {
@@ -1390,6 +1575,23 @@ where
     /// This uses direct storage map access with O(1) key lookup for the cell and O(D)
     /// validation for vertex keys. Uses stack-allocated buffer for D ≤ 7 to avoid heap
     /// allocation in the hot path.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tds = dt.tds();
+    /// let cell_key = tds.cell_keys().next().unwrap();
+    /// let keys = tds.get_cell_vertices(cell_key).unwrap();
+    /// assert_eq!(keys.len(), 3);
+    /// ```
     #[inline]
     pub fn get_cell_vertices(
         &self,
@@ -1706,6 +1908,23 @@ where
     /// # Returns
     ///
     /// An `Option` containing a mutable reference to the cell if it exists.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let mut tds = dt.tds().clone();
+    /// let cell_key = tds.cell_keys().next().unwrap();
+    /// let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+    /// assert_eq!(cell.number_of_vertices(), 3);
+    /// ```
     #[inline]
     #[must_use]
     pub fn get_cell_by_key_mut(&mut self, cell_key: CellKey) -> Option<&mut Cell<T, U, V, D>> {
@@ -1724,6 +1943,22 @@ where
     /// # Returns
     ///
     /// An `Option` containing a reference to the vertex if it exists.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tds = dt.tds();
+    /// let vertex_key = tds.vertex_keys().next().unwrap();
+    /// assert!(tds.get_vertex_by_key(vertex_key).is_some());
+    /// ```
     #[inline]
     #[must_use]
     pub fn get_vertex_by_key(&self, vertex_key: VertexKey) -> Option<&Vertex<T, U, D>> {
@@ -1739,6 +1974,22 @@ where
     /// # Returns
     ///
     /// An `Option` containing a mutable reference to the vertex if it exists.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let mut tds = dt.tds().clone();
+    /// let vertex_key = tds.vertex_keys().next().unwrap();
+    /// assert!(tds.get_vertex_by_key_mut(vertex_key).is_some());
+    /// ```
     #[inline]
     #[must_use]
     pub fn get_vertex_by_key_mut(&mut self, vertex_key: VertexKey) -> Option<&mut Vertex<T, U, D>> {
@@ -1754,6 +2005,22 @@ where
     /// # Returns
     ///
     /// `true` if the cell exists, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tds = dt.tds();
+    /// let cell_key = tds.cell_keys().next().unwrap();
+    /// assert!(tds.contains_cell_key(cell_key));
+    /// ```
     #[inline]
     #[must_use]
     pub fn contains_cell_key(&self, cell_key: CellKey) -> bool {
@@ -1769,6 +2036,22 @@ where
     /// # Returns
     ///
     /// `true` if the vertex exists, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tds = dt.tds();
+    /// let vertex_key = tds.vertex_keys().next().unwrap();
+    /// assert!(tds.contains_vertex_key(vertex_key));
+    /// ```
     #[inline]
     #[must_use]
     pub fn contains_vertex_key(&self, vertex_key: VertexKey) -> bool {
@@ -1795,6 +2078,23 @@ where
     /// # Returns
     ///
     /// The removed cell if it existed, `None` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let mut tds = dt.tds().clone();
+    /// let cell_key = tds.cell_keys().next().unwrap();
+    /// assert!(tds.remove_cell_by_key(cell_key).is_some());
+    /// assert_eq!(tds.number_of_cells(), 0);
+    /// ```
     pub fn remove_cell_by_key(&mut self, cell_key: CellKey) -> Option<Cell<T, U, V, D>> {
         if let Some(removed_cell) = self.cells.remove(cell_key) {
             // Also remove from UUID mapping
@@ -1833,6 +2133,24 @@ where
     /// # Returns
     ///
     /// The number of cells successfully removed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let mut tds = dt.tds().clone();
+    /// let cell_key = tds.cell_keys().next().unwrap();
+    /// let removed = tds.remove_cells_by_keys(&[cell_key]);
+    /// assert_eq!(removed, 1);
+    /// assert_eq!(tds.number_of_cells(), 0);
+    /// ```
     pub fn remove_cells_by_keys(&mut self, cell_keys: &[CellKey]) -> usize {
         if cell_keys.is_empty() {
             return 0;
@@ -2458,6 +2776,24 @@ where
     /// - The neighbor vector length is not D+1
     /// - Any neighbor key references a non-existent cell
     /// - **The topological invariant is violated** (neighbor\[i\] not opposite vertex\[i\])
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let mut tds = dt.tds().clone();
+    /// let cell_key = tds.cell_keys().next().unwrap();
+    /// let neighbors = vec![None; 3];
+    /// tds.set_neighbors_by_key(cell_key, &neighbors).unwrap();
+    /// assert!(tds.get_cell(cell_key).unwrap().neighbors().is_none());
+    /// ```
     pub fn set_neighbors_by_key(
         &mut self,
         cell_key: CellKey,
@@ -2504,6 +2840,23 @@ where
     /// # Returns
     ///
     /// A set of cell keys that contain the given vertex.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tds = dt.tds();
+    /// let vertex_key = tds.vertex_keys().next().unwrap();
+    /// let cells = tds.find_cells_containing_vertex_by_key(vertex_key);
+    /// assert_eq!(cells.len(), 1);
+    /// ```
     #[must_use]
     pub fn find_cells_containing_vertex_by_key(&self, vertex_key: VertexKey) -> CellKeySet {
         if self.get_vertex_by_key(vertex_key).is_none() {
@@ -2548,6 +2901,23 @@ where
     ///
     /// It is intended for repair/validation paths after bulk topology changes, not as a per-step
     /// hot-path update.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let mut tds = dt.tds().clone();
+    /// tds.assign_incident_cells().unwrap();
+    /// let all_assigned = tds.vertices().all(|(_, v)| v.incident_cell.is_some());
+    /// assert!(all_assigned);
+    /// ```
     pub fn assign_incident_cells(&mut self) -> Result<(), TdsMutationError> {
         if self.cells.is_empty() {
             // No cells remain; all vertices must have incident_cell cleared to avoid
@@ -2688,6 +3058,22 @@ where
     ///
     /// O(N×F) time complexity where N is the number of cells and F is the
     /// number of facets per cell (typically D+1 for D-dimensional cells).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tds = dt.tds();
+    /// let facet_map = tds.build_facet_to_cells_map().unwrap();
+    /// assert!(!facet_map.is_empty());
+    /// ```
     pub fn build_facet_to_cells_map(&self) -> Result<FacetToCellsMap, TdsValidationError> {
         // Ensure facet indices fit in u8 range
         debug_assert!(
@@ -2747,6 +3133,16 @@ where
     /// - Vertex keys cannot be retrieved for any cell (data structure corruption)
     /// - Neighbor assignment fails after cell removal
     /// - Incident cell assignment fails after cell removal
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    ///
+    /// let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+    /// let removed = tds.remove_duplicate_cells().unwrap();
+    /// assert_eq!(removed, 0);
+    /// ```
     pub fn remove_duplicate_cells(&mut self) -> Result<usize, TdsMutationError> {
         let mut unique_cells = FastHashMap::default();
         let mut cells_to_remove = CellRemovalBuffer::new();
@@ -2820,9 +3216,7 @@ where
     ///
     /// This corresponds to [`InvariantKind::VertexMappings`], which is included in
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
-    /// [`DelaunayTriangulation::validation_report()`].
-    ///
-    /// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
+    /// [`DelaunayTriangulation::validation_report()`](crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report).
     ///
     /// # Errors
     ///

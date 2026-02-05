@@ -16,6 +16,16 @@ use crate::core::triangulation_data_structure::CellKey;
 ///
 /// These correspond to bistellar (Pachner) move classes, but are not required
 /// to be implemented as single atomic flips.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::operations::TopologicalOperation;
+/// use delaunay::core::triangulation::TopologyGuarantee;
+///
+/// let op = TopologicalOperation::FacetFlip;
+/// assert!(op.is_admissible_under(TopologyGuarantee::Pseudomanifold));
+/// ```
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum TopologicalOperation {
     /// k = 1 forward: vertex insertion (1 → d+1).
@@ -29,6 +39,22 @@ pub enum TopologicalOperation {
 }
 
 /// Decision outcome for a flip-based Delaunay repair attempt.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::operations::{RepairDecision, RepairSkipReason, TopologicalOperation};
+/// use delaunay::core::triangulation::TopologyGuarantee;
+///
+/// let decision = RepairDecision::Skip {
+///     reason: RepairSkipReason::Inadmissible {
+///         operation: TopologicalOperation::CavityFlip,
+///         required: TopologyGuarantee::PLManifold,
+///         found: TopologyGuarantee::Pseudomanifold,
+///     },
+/// };
+/// assert!(matches!(decision, RepairDecision::Skip { .. }));
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepairDecision {
     /// Proceed with flip-based repair.
@@ -41,6 +67,15 @@ pub enum RepairDecision {
 }
 
 /// Reason why flip-based repair was skipped.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::operations::RepairSkipReason;
+///
+/// let reason = RepairSkipReason::PolicyDisabled;
+/// assert!(matches!(reason, RepairSkipReason::PolicyDisabled));
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepairSkipReason {
     /// Repair policy is disabled for this insertion count.
@@ -118,6 +153,15 @@ impl TopologicalOperation {
 }
 
 /// Result of an insertion attempt.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::operations::InsertionResult;
+///
+/// let result = InsertionResult::default();
+/// assert_eq!(result, InsertionResult::Inserted);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InsertionResult {
     /// The vertex was successfully inserted.
@@ -130,6 +174,21 @@ pub enum InsertionResult {
 }
 
 /// Statistics about a vertex insertion operation.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::operations::{InsertionResult, InsertionStatistics};
+///
+/// let stats = InsertionStatistics {
+///     attempts: 2,
+///     cells_removed_during_repair: 1,
+///     result: InsertionResult::Inserted,
+/// };
+/// assert!(stats.used_perturbation());
+/// assert!(stats.success());
+/// assert!(!stats.skipped());
+/// ```
 #[derive(Debug, Clone, Copy, Default)]
 pub struct InsertionStatistics {
     /// Number of insertion attempts (1 = success on first try, >1 = needed perturbation)
@@ -206,6 +265,20 @@ impl DelaunayInsertionState {
 ///
 /// Other non-recoverable structural failures are returned as `Err(InsertionError)` instead
 /// (e.g. duplicate UUID).
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::incremental_insertion::InsertionError;
+/// use delaunay::core::operations::InsertionOutcome;
+///
+/// let outcome = InsertionOutcome::Skipped {
+///     error: InsertionError::DuplicateCoordinates {
+///         coordinates: "[0.0, 0.0, 0.0]".to_string(),
+///     },
+/// };
+/// assert!(matches!(outcome, InsertionOutcome::Skipped { .. }));
+/// ```
 #[derive(Debug, Clone)]
 pub enum InsertionOutcome {
     /// The vertex was inserted successfully.
@@ -231,6 +304,20 @@ pub enum InsertionOutcome {
 }
 
 /// Adaptive error-checking on suspicious operations.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::operations::SuspicionFlags;
+///
+/// let flags = SuspicionFlags {
+///     perturbation_used: true,
+///     neighbor_pointers_rebuilt: true,
+///     ..SuspicionFlags::default()
+/// };
+/// assert!(flags.perturbation_used);
+/// assert!(flags.neighbor_pointers_rebuilt);
+/// ```
 #[derive(Clone, Copy, Debug, Default)]
 #[expect(
     clippy::struct_excessive_bools,
