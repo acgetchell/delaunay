@@ -2628,6 +2628,7 @@ where
 
             let outcome = match outcome {
                 InsertionOutcome::Inserted { vertex_key, hint } => {
+                    let mut hint = hint;
                     self.insertion_state.last_inserted_cell = hint;
                     self.insertion_state.delaunay_repair_insertion_count = self
                         .insertion_state
@@ -2637,6 +2638,7 @@ where
                         self.maybe_repair_after_insertion(vertex_key, hint)?;
                     if used_heuristic {
                         self.insertion_state.last_inserted_cell = None;
+                        hint = None;
                     }
                     self.maybe_check_after_insertion()?;
                     InsertionOutcome::Inserted { vertex_key, hint }
