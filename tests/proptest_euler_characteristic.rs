@@ -9,15 +9,14 @@
 //! 2. **Simplex Count Validity**: Vertex and cell counts match Tds counts
 //! 3. **Classification Consistency**: Expected χ for classification matches computed χ  
 //!
-//! ## Known Limitations
+//! ## Notes
 //!
-//! Some tests are currently disabled due to a known issue with topology classification.
-//! Certain triangulations are misclassified as Ball when they are actually `ClosedSphere`,
-//! causing Level 3 topology validation (`Triangulation::is_valid`) to reject triangulations
-//! that are topologically valid.
+//! Random triangulations are expected to satisfy Euler characteristic validation; any
+//! mismatch indicates a bug in construction or validation.
 //!
 //! For deterministic tests with known configurations, see `euler_characteristic.rs`.
 
+use delaunay::geometry::util::generate_random_triangulation_with_topology_guarantee;
 use delaunay::prelude::*;
 use delaunay::topology::characteristics::{euler, validation};
 use proptest::prelude::*;
@@ -74,15 +73,10 @@ macro_rules! test_euler_properties {
                         // Validate Euler characteristic
                         let result = validation::validate_triangulation_euler(dt.tds())?;
 
-                        // TODO: Remove this skip once bistellar flips are implemented
-                        // Skip validation if not valid (known issue with numerical degeneracies)
-                        if !result.is_valid() {
-                            return Ok(());
-                        }
 
                         // Core property: χ must match expected value for the topology
                         // The validation checks this internally via is_valid()
-                        prop_assert!( result.is_valid(),
+                        prop_assert!(result.is_valid(),
                             "{}D triangulation Euler characteristic doesn't match classification: \
                             χ={}, expected={:?}, classification={:?}, V={}, cells={}",
                             $dim,
@@ -152,18 +146,6 @@ macro_rules! test_euler_properties {
 
                         // If we have an expected χ, computed χ must match
                         if let Some(expected_chi) = result.expected {
-                            // TODO: Remove this skip once bistellar flips are implemented
-                            // Skip validation if computed χ doesn't match expected (known issue with
-                            // numerical degeneracies in random property tests - triangulation construction
-                            // may succeed but produce incomplete or incorrectly classified complexes due to
-                            // insertion failures from ridge fans and other degenerate configurations that
-                            // will be handled by bistellar flips)
-                            if result.chi != expected_chi {
-                                // Skip known degenerate cases:
-                                // - χ=0 when expecting 1 (incomplete complex)
-                                // - χ=2 when expecting 1 (boundary-only, missing interior)
-                                return Ok(());
-                            }
                             prop_assert_eq!(
                                 result.chi,
                                 expected_chi,
@@ -181,6 +163,46 @@ macro_rules! test_euler_properties {
     };
 }
 
+#[test]
+fn test_seeded_random_generator_euler_consistent() {
+    let dt_2d = generate_random_triangulation_with_topology_guarantee::<f64, (), (), 2>(
+        15,
+        (0.0, 10.0),
+        None,
+        Some(555),
+        TopologyGuarantee::PLManifold,
+    )
+    .unwrap();
+    let result_2d = validation::validate_triangulation_euler(dt_2d.tds()).unwrap();
+    assert!(
+        result_2d.is_valid(),
+        "2D seeded random triangulation Euler mismatch: χ={}, expected={:?}, classification={:?}, V={}, cells={}",
+        result_2d.chi,
+        result_2d.expected,
+        result_2d.classification,
+        result_2d.counts.count(0),
+        result_2d.counts.count(2),
+    );
+
+    let dt_3d = generate_random_triangulation_with_topology_guarantee::<f64, (), (), 3>(
+        20,
+        (-3.0, 3.0),
+        None,
+        Some(666),
+        TopologyGuarantee::PLManifold,
+    )
+    .unwrap();
+    let result_3d = validation::validate_triangulation_euler(dt_3d.tds()).unwrap();
+    assert!(
+        result_3d.is_valid(),
+        "3D seeded random triangulation Euler mismatch: χ={}, expected={:?}, classification={:?}, V={}, cells={}",
+        result_3d.chi,
+        result_3d.expected,
+        result_3d.classification,
+        result_3d.counts.count(0),
+        result_3d.counts.count(3),
+    );
+}
 // Generate property tests for dimensions 2-5
 // Parameters: dimension, min_vertices, max_vertices
 //
