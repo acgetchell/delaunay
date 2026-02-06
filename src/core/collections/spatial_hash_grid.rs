@@ -64,23 +64,24 @@ where
     }
 }
 
-/// A simple spatial hash grid mapping grid cells to nearby vertices.
+/// A simple spatial hash grid mapping grid cells to nearby keys.
 ///
 /// The grid uses a fixed `cell_size` and indexes vertices by the floored cell
 /// coordinates `floor(coord / cell_size)`.
 #[derive(Clone, Debug)]
-pub(in crate::core) struct HashGridIndex<T, const D: usize>
+pub(in crate::core) struct HashGridIndex<T, const D: usize, K = VertexKey>
 where
     T: CoordinateScalar,
 {
     cell_size: T,
     usable: bool,
-    cells: FastHashMap<GridKey<T, D>, SmallBuffer<VertexKey, BUCKET_INLINE_CAPACITY>>,
+    cells: FastHashMap<GridKey<T, D>, SmallBuffer<K, BUCKET_INLINE_CAPACITY>>,
 }
 
-impl<T, const D: usize> HashGridIndex<T, D>
+impl<T, const D: usize, K> HashGridIndex<T, D, K>
 where
     T: CoordinateScalar,
+    K: Copy,
 {
     /// Create a new grid index with the given cell size.
     pub(in crate::core) fn new(cell_size: T) -> Self {
@@ -91,16 +92,32 @@ where
             cells: FastHashMap::default(),
         }
     }
+    pub(in crate::core) const fn is_usable(&self) -> bool {
+        self.usable
+    }
+    pub(in crate::core) const fn cell_size(&self) -> T
+    where
+        T: Copy,
+    {
+        self.cell_size
+    }
+
+    pub(in crate::core) fn clear(&mut self) {
+        self.cells.clear();
+    }
 
     const fn disable(&mut self) {
         self.usable = false;
+    }
+    pub(in crate::core) fn can_key_coords(&self, coords: &[T; D]) -> bool {
+        self.key_for_coords(coords).is_some()
     }
 
     /// Insert a vertex into the appropriate grid cell.
     ///
     /// If the index is not usable, or the point cannot be keyed robustly, the
     /// index is disabled (so callers can fall back to linear scans).
-    pub(in crate::core) fn insert_vertex(&mut self, vertex_key: VertexKey, coords: &[T; D]) {
+    pub(in crate::core) fn insert_vertex(&mut self, vertex_key: K, coords: &[T; D]) {
         if !self.usable {
             return;
         }
@@ -123,7 +140,7 @@ where
         mut f: F,
     ) -> bool
     where
-        F: FnMut(VertexKey) -> bool,
+        F: FnMut(K) -> bool,
     {
         if !self.usable {
             return false;

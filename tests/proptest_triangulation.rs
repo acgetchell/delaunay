@@ -222,7 +222,10 @@ macro_rules! test_quality_properties {
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
-                        FastKernel::default(),
+                        &FastKernel::default(),
+
+
+
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -311,7 +314,10 @@ macro_rules! test_quality_properties {
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
-                        FastKernel::default(),
+                        &FastKernel::default(),
+
+
+
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -331,7 +337,8 @@ macro_rules! test_quality_properties {
                         let translated_vertices = Vertex::from_points(&translated_vertices);
 
                         if let Ok(dt_translated) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
-                            FastKernel::default(),
+                            &FastKernel::default(),
+
                             &translated_vertices,
                             TopologyGuarantee::PLManifold,
                         ) {
@@ -388,7 +395,14 @@ macro_rules! test_quality_properties {
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
-                        FastKernel::default(),
+                        &FastKernel::default(),
+
+
+
+
+
+
+
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -408,7 +422,7 @@ macro_rules! test_quality_properties {
                         let translated_vertices = Vertex::from_points(&translated_vertices);
 
                         if let Ok(dt_translated) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
-                            FastKernel::default(),
+                            &FastKernel::default(),
                             &translated_vertices,
                             TopologyGuarantee::PLManifold,
                         ) {
@@ -465,7 +479,9 @@ macro_rules! test_quality_properties {
                     scale in 0.1f64..10.0f64
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
-                        FastKernel::default(),
+                        &FastKernel::default(),
+
+
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -484,11 +500,11 @@ macro_rules! test_quality_properties {
 
                         let scaled_vertices = Vertex::from_points(&scaled_vertices);
 
-                        if let Ok(dt_scaled) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
-                            FastKernel::default(),
-                            &scaled_vertices,
-                            TopologyGuarantee::PLManifold,
-                        ) {
+                    if let Ok(dt_scaled) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                        &FastKernel::default(),
+                        &scaled_vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
                             // Build UUID mapping
                             let uuid_map: HashMap<_, _> = vertices.iter()
                                 .zip(scaled_vertices.iter())
@@ -541,7 +557,7 @@ macro_rules! test_quality_properties {
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
-                        FastKernel::default(),
+                        &FastKernel::default(),
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {

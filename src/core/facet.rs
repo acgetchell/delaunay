@@ -1388,7 +1388,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0], 4),
         ];
         let dt: DelaunayTriangulation<FastKernel<f64>, i32, (), 3> =
-            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
 
         // Create facet view for facet 0 (excludes vertex 0)

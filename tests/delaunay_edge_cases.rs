@@ -794,7 +794,7 @@ fn test_robust_kernel_with_edge_case() {
 
     let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 2> =
         DelaunayTriangulation::with_topology_guarantee(
-            RobustKernel::new(),
+            &RobustKernel::new(),
             &vertices,
             TopologyGuarantee::PLManifold,
         )

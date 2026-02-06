@@ -60,7 +60,7 @@ where
 }
 
 fn random_triangulation_try_build<K, T, U, V, const D: usize>(
-    kernel: K,
+    kernel: &K,
     vertices: &[Vertex<T, U, D>],
     min_vertices: usize,
     topology_guarantee: TopologyGuarantee,
@@ -148,7 +148,7 @@ where
     V: DataType,
 {
     if let Some(dt) = random_triangulation_try_build(
-        FastKernel::new(),
+        &FastKernel::new(),
         vertices,
         min_vertices,
         topology_guarantee,
@@ -159,12 +159,9 @@ where
     let robust_config = config_presets::degenerate_robust::<T>();
     let robust_kernel = RobustKernel::with_config(robust_config);
 
-    if let Some(dt) = random_triangulation_try_build(
-        robust_kernel.clone(),
-        vertices,
-        min_vertices,
-        topology_guarantee,
-    ) {
+    if let Some(dt) =
+        random_triangulation_try_build(&robust_kernel, vertices, min_vertices, topology_guarantee)
+    {
         return Some(random_triangulation_to_fast_kernel(&dt, topology_guarantee));
     }
 
@@ -180,7 +177,7 @@ where
         }
 
         if let Some(dt) = random_triangulation_try_build(
-            robust_kernel.clone(),
+            &robust_kernel,
             &shuffled,
             min_vertices,
             topology_guarantee,
@@ -744,7 +741,7 @@ where
             );
         }
         let dt = DelaunayTriangulation::with_topology_guarantee_and_options(
-            FastKernel::new(),
+            &FastKernel::new(),
             &vertices,
             self.topology_guarantee,
             self.construction_options,

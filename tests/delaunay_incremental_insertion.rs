@@ -194,7 +194,7 @@ fn test_fast_kernel_vs_robust_kernel_2d() {
 
     let dt_fast: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
         DelaunayTriangulation::with_topology_guarantee(
-            FastKernel::new(),
+            &FastKernel::new(),
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -202,7 +202,7 @@ fn test_fast_kernel_vs_robust_kernel_2d() {
 
     let dt_robust: DelaunayTriangulation<RobustKernel<f64>, (), (), 2> =
         DelaunayTriangulation::with_topology_guarantee(
-            RobustKernel::new(),
+            &RobustKernel::new(),
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -229,7 +229,7 @@ fn test_robust_kernel_incremental_insertion() {
 
     let mut dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 2> =
         DelaunayTriangulation::with_topology_guarantee(
-            RobustKernel::new(),
+            &RobustKernel::new(),
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -438,7 +438,7 @@ fn test_f32_coordinates() {
 
     let mut dt: DelaunayTriangulation<FastKernel<f32>, (), (), 2> =
         DelaunayTriangulation::with_topology_guarantee(
-            FastKernel::new(),
+            &FastKernel::new(),
             &vertices,
             TopologyGuarantee::PLManifold,
         )

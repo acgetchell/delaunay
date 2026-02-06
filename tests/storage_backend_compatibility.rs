@@ -206,7 +206,7 @@ macro_rules! test_vertex_data {
         fn $name() {
             let vertices: Vec<_> = $vertices;
             let dt = DelaunayTriangulation::<FastKernel<f64>, Option<i32>, (), $dim>::with_topology_guarantee(
-                FastKernel::default(),
+                &FastKernel::default(),
                 &vertices,
                 TopologyGuarantee::PLManifold,
             )
@@ -228,7 +228,7 @@ macro_rules! test_cell_data {
         fn $name() {
             let vertices: Vec<_> = $vertices;
             let dt = DelaunayTriangulation::<FastKernel<f64>, (), i32, $dim>::with_topology_guarantee(
-                FastKernel::default(),
+                &FastKernel::default(),
                 &vertices,
                 TopologyGuarantee::PLManifold,
             )

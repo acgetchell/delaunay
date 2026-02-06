@@ -109,7 +109,10 @@ use core::ops::{AddAssign, Div, SubAssign};
 use std::borrow::Cow;
 use std::cmp::Ordering as CmpOrdering;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+    OnceLock,
+    atomic::{AtomicU64, Ordering},
+};
 
 use num_traits::{NumCast, One, Zero};
 use thiserror::Error;
@@ -171,9 +174,49 @@ const MAX_REPAIR_ITERATIONS: usize = 10;
 /// This counter is intentionally lightweight and can be polled by production workloads
 /// to see whether this recovery path is frequently used.
 static TOPOLOGY_SAFETY_NET_STAR_SPLIT_FALLBACK_SUCCESSES: AtomicU64 = AtomicU64::new(0);
+static DUPLICATE_DETECTION_TOTAL: AtomicU64 = AtomicU64::new(0);
+static DUPLICATE_DETECTION_GRID_USED: AtomicU64 = AtomicU64::new(0);
+static DUPLICATE_DETECTION_GRID_FALLBACKS: AtomicU64 = AtomicU64::new(0);
+static DUPLICATE_DETECTION_GRID_CANDIDATES: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(debug_assertions)]
 static VERTEX_TO_CELLS_SPILL_EVENTS: AtomicU64 = AtomicU64::new(0);
+
+fn duplicate_detection_metrics_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("DELAUNAY_DUPLICATE_METRICS").is_some())
+}
+
+/// Telemetry counters for duplicate-coordinate detection.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DuplicateDetectionMetrics {
+    /// Total number of duplicate-coordinate checks executed.
+    pub total_checks: u64,
+    /// Number of checks that successfully used the hash grid.
+    pub grid_used: u64,
+    /// Number of checks that fell back to a non-grid scan.
+    pub grid_fallbacks: u64,
+    /// Total candidate vertices inspected during grid-based checks.
+    pub grid_candidates: u64,
+}
+
+pub(crate) fn record_duplicate_detection_metrics(
+    used_grid: bool,
+    candidate_count: usize,
+    fell_back: bool,
+) {
+    if !duplicate_detection_metrics_enabled() {
+        return;
+    }
+    DUPLICATE_DETECTION_TOTAL.fetch_add(1, Ordering::Relaxed);
+    if used_grid {
+        DUPLICATE_DETECTION_GRID_USED.fetch_add(1, Ordering::Relaxed);
+        DUPLICATE_DETECTION_GRID_CANDIDATES.fetch_add(candidate_count as u64, Ordering::Relaxed);
+    }
+    if fell_back {
+        DUPLICATE_DETECTION_GRID_FALLBACKS.fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 /// Errors that can occur during triangulation construction.
 ///
@@ -911,6 +954,34 @@ where
     #[must_use]
     pub fn topology_safety_net_star_split_fallback_successes() -> u64 {
         TOPOLOGY_SAFETY_NET_STAR_SPLIT_FALLBACK_SUCCESSES.load(Ordering::Relaxed)
+    }
+
+    /// Returns duplicate-detection telemetry if enabled via `DELAUNAY_DUPLICATE_METRICS`.
+    ///
+    /// This is a process-wide counter (across all triangulation instances). It reports how often
+    /// duplicate checks used the hash grid versus falling back to linear scans, along with the
+    /// total candidate count inspected during grid queries.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::triangulation::{DuplicateDetectionMetrics, Triangulation};
+    ///
+    /// let metrics = Triangulation::<delaunay::geometry::kernel::FastKernel<f64>, (), (), 3>
+    ///     ::duplicate_detection_metrics();
+    /// let _ = metrics; // None unless DELAUNAY_DUPLICATE_METRICS is set
+    /// ```
+    #[must_use]
+    pub fn duplicate_detection_metrics() -> Option<DuplicateDetectionMetrics> {
+        if !duplicate_detection_metrics_enabled() {
+            return None;
+        }
+        Some(DuplicateDetectionMetrics {
+            total_checks: DUPLICATE_DETECTION_TOTAL.load(Ordering::Relaxed),
+            grid_used: DUPLICATE_DETECTION_GRID_USED.load(Ordering::Relaxed),
+            grid_fallbacks: DUPLICATE_DETECTION_GRID_FALLBACKS.load(Ordering::Relaxed),
+            grid_candidates: DUPLICATE_DETECTION_GRID_CANDIDATES.load(Ordering::Relaxed),
+        })
     }
 
     #[cfg(test)]
@@ -2713,7 +2784,9 @@ where
         };
 
         if let Some(index) = index {
+            let mut candidate_count = 0usize;
             let used_index = index.for_each_candidate_vertex_key(coords, |vkey| {
+                candidate_count = candidate_count.saturating_add(1);
                 let Some(vertex) = self.tds.get_vertex_by_key(vkey) else {
                     return true;
                 };
@@ -2732,6 +2805,7 @@ where
 
                 true
             });
+            record_duplicate_detection_metrics(used_index, candidate_count, !used_index);
 
             if duplicate_found {
                 return Some(make_duplicate_error());
@@ -2740,6 +2814,8 @@ where
             if used_index {
                 return None;
             }
+        } else {
+            record_duplicate_detection_metrics(false, 0, true);
         }
 
         for (_, existing_vertex) in self.tds.vertices() {

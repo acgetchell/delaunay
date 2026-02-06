@@ -68,7 +68,7 @@ macro_rules! generate_dimensional_benchmarks {
                                     let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), seed).unwrap();
                                     points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                                 },
-                                |vertices| black_box(DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(RobustKernel::new(), &vertices).unwrap()),
+                                |vertices| black_box(DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(&RobustKernel::new(), &vertices).unwrap()),
                                 BatchSize::LargeInput,
                             );
                         },
@@ -107,7 +107,7 @@ macro_rules! generate_memory_usage_benchmarks {
                                 // Measure complete triangulation creation and destruction
                                 let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), seed).unwrap();
                                 let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                                let dt = DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(RobustKernel::new(), &vertices).unwrap();
+                                let dt = DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(&RobustKernel::new(), &vertices).unwrap();
                                 black_box((dt.tds().number_of_vertices(), dt.tds().number_of_cells()))
                             });
                         },
@@ -149,7 +149,8 @@ macro_rules! generate_validation_benchmarks {
                                 || {
                                     let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), seed).unwrap();
                                     let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                                    DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(RobustKernel::new(), &vertices).unwrap()
+                                    DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(&RobustKernel::new(), &vertices).unwrap()
+
                                 },
                                 |dt| {
                                     dt.validate().unwrap();
@@ -168,7 +169,7 @@ macro_rules! generate_validation_benchmarks {
                                 || {
                                     let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), seed).unwrap();
                                     let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                                    DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(RobustKernel::new(), &vertices).unwrap()
+                                    DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(&RobustKernel::new(), &vertices).unwrap()
                                 },
                                 |dt| {
                                     dt.is_valid().unwrap();
@@ -189,7 +190,7 @@ macro_rules! generate_validation_benchmarks {
                 let n_points = if $dim <= 3 { 50 } else { 25 }; // Fixed size for component benchmarks
                 let points: Vec<Point<f64, $dim>> = generate_random_points_seeded(n_points, (-100.0, 100.0), seed).unwrap();
                 let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                let dt = DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(RobustKernel::new(), &vertices).unwrap();
+                let dt = DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(&RobustKernel::new(), &vertices).unwrap();
 
                 let mut group = c.benchmark_group(&format!("validation_components_{}d", $dim));
 
@@ -273,7 +274,7 @@ macro_rules! generate_incremental_construction_benchmarks {
 
                 group.bench_function("single_vertex_addition", |b| {
                     b.iter_batched(
-                        || DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(RobustKernel::new(), &initial_vertices).unwrap(),
+                        || DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(&RobustKernel::new(), &initial_vertices).unwrap(),
                         |mut dt| {
                             dt.insert(additional_vertex).unwrap();
                             black_box(dt);
@@ -291,7 +292,7 @@ macro_rules! generate_incremental_construction_benchmarks {
                         |b, &count| {
                             b.iter_batched(
                                 || {
-                                    let dt = DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(RobustKernel::new(), &initial_vertices).unwrap();
+                                    let dt = DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::with_kernel(&RobustKernel::new(), &initial_vertices).unwrap();
                                     let additional_points: Vec<Point<f64, $dim>> = generate_random_points_seeded(count, (-100.0, 100.0), seed).unwrap();
                                     let additional_vertices: Vec<_> =
                                         additional_points.iter().map(|p| vertex!(*p)).collect();

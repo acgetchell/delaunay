@@ -686,9 +686,14 @@ new_key_type! {
     ///
     /// ```
     /// use delaunay::prelude::*;
-    /// use slotmap::KeyData;
     ///
-    /// let key = CellKey::from(KeyData::from_ffi(1));
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let key = dt.tds().cell_keys().next().unwrap();
     /// let _ = key;
     /// ```
     pub struct CellKey;
