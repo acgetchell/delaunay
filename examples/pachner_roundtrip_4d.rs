@@ -108,7 +108,7 @@ fn build_triangulation() -> Result<Dt4, String> {
     let options =
         ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
     let dt: Dt4 = DelaunayTriangulation::with_topology_guarantee_and_options(
-        RobustKernel::new(),
+        &RobustKernel::new(),
         &vertices,
         TopologyGuarantee::PLManifold,
         options,

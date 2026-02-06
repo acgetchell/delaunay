@@ -2635,7 +2635,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0], 4i32),
         ];
         let dt_int = DelaunayTriangulation::<FastKernel<f64>, i32, (), 3>::with_kernel(
-            FastKernel::new(),
+            &FastKernel::new(),
             &vertices_int,
         )
         .unwrap();
@@ -2653,7 +2653,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0], 'D'),
         ];
         let dt_char = DelaunayTriangulation::<FastKernel<f64>, char, (), 3>::with_kernel(
-            FastKernel::new(),
+            &FastKernel::new(),
             &vertices_char,
         )
         .unwrap();
@@ -2993,7 +2993,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0], 4i32),
         ];
         let dt_int = DelaunayTriangulation::<FastKernel<f64>, i32, (), 3>::with_kernel(
-            FastKernel::new(),
+            &FastKernel::new(),
             &vertices_int,
         )
         .unwrap();
@@ -3011,7 +3011,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0], 'D'),
         ];
         let dt_char = DelaunayTriangulation::<FastKernel<f64>, char, (), 3>::with_kernel(
-            FastKernel::new(),
+            &FastKernel::new(),
             &vertices_char,
         )
         .unwrap();
@@ -3030,7 +3030,7 @@ mod tests {
         ];
         let dt_with_data =
             DelaunayTriangulation::<FastKernel<f64>, Option<i32>, (), 3>::with_kernel(
-                FastKernel::new(),
+                &FastKernel::new(),
                 &vertices_with_data,
             )
             .unwrap();

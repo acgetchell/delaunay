@@ -1606,7 +1606,8 @@ mod tests {
                         // Test cell with data - need generic constructor for non-() cell data
                         let vertices = $vertices;
                         let dt: DelaunayTriangulation<FastKernel<f64>, (), i32, $dim> =
-                            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+                            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
+
                         let (_, cell_ref) = dt.cells().next().unwrap();
                         let mut cell = cell_ref.clone();
                         cell.data = Some(42);
@@ -1619,7 +1620,7 @@ mod tests {
                         // Test serialization with Some data - use generic constructor
                         let vertices = $vertices;
                         let dt: DelaunayTriangulation<FastKernel<f64>, (), i32, $dim> =
-                            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+                            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
                         let (_, cell) = dt.cells().next().unwrap();
                         let mut cell = cell.clone();
                         cell.data = Some(99);
@@ -1838,7 +1839,8 @@ mod tests {
 
         // Build DT with integer cell data type
         let dt: DelaunayTriangulation<FastKernel<f64>, (), i32, 3> =
-            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
+
         let (_, cell_ref) = dt.cells().next().unwrap();
         let mut cell = cell_ref.clone();
         cell.data = Some(42);
@@ -1893,7 +1895,8 @@ mod tests {
 
         // Create DT with vertex data - simple constructor works since cell data is ()
         let dt: DelaunayTriangulation<FastKernel<f64>, i32, (), 3> =
-            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
+
         let (_, cell) = dt.cells().next().unwrap();
 
         assert_eq!(cell.number_of_vertices(), 4);
@@ -2000,7 +2003,7 @@ mod tests {
             vertex!([1.0, 1.0, 1.0], 2),
         ];
         let dt: DelaunayTriangulation<FastKernel<f64>, i32, i32, 3> =
-            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
         let (_, cell_ref) = dt.cells().next().unwrap();
         let mut cell1 = cell_ref.clone();
         cell1.data = Some(42);
@@ -2195,7 +2198,8 @@ mod tests {
         // Create DT to get VertexKeys - use generic constructor for vertex data
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let dt: DelaunayTriangulation<FastKernel<f64>, i32, (), 3> =
-            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
+
         let cell_key = dt.cells().next().unwrap().0;
         let cell = &dt.tds().get_cell(cell_key).unwrap();
 
@@ -2221,7 +2225,7 @@ mod tests {
             vertex!([1.0, 1.0, 1.0], 2),
         ];
         let tds1: DelaunayTriangulation<FastKernel<f64>, i32, i32, 3> =
-            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices1).unwrap();
+            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices1).unwrap();
         let (_, cell_ref) = tds1.cells().next().unwrap();
         let mut cell = cell_ref.clone();
         cell.data = Some(42);
@@ -2233,7 +2237,7 @@ mod tests {
             vertex!([0.0, 0.0, 0.0], 0),
         ];
         let tds2: DelaunayTriangulation<FastKernel<f64>, i32, i32, 3> =
-            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices2).unwrap();
+            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices2).unwrap();
         let (_, cell2_ref) = tds2.cells().next().unwrap();
         let mut cell2 = cell2_ref.clone();
         cell2.data = Some(43);
@@ -2261,7 +2265,8 @@ mod tests {
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let dt: DelaunayTriangulation<FastKernel<f64>, i32, (), 3> =
-            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
+
         let cell_key = dt.cells().next().unwrap().0;
         let cell = &dt.tds().get_cell(cell_key).unwrap();
 
@@ -2312,7 +2317,7 @@ mod tests {
 
         let vertices = vec![vertex1, vertex2, vertex3];
         let dt: DelaunayTriangulation<FastKernel<f64>, i32, (), 2> =
-            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
         let cell = &dt.tds().get_cell(cell_key).unwrap();
 
@@ -2351,7 +2356,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<FastKernel<f64>, i32, (), 4> =
-            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
         let cell = &dt.tds().get_cell(cell_key).unwrap();
 
@@ -2405,7 +2410,7 @@ mod tests {
         // Note: DelaunayTriangulation::new() creates FastKernel<f64> by default
         // We need to use with_kernel to get FastKernel<f32> for f32 vertices
         let dt: DelaunayTriangulation<FastKernel<f32>, (), (), 3> =
-            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
         let cell = &dt.tds().get_cell(cell_key).unwrap();
 
@@ -2467,7 +2472,7 @@ mod tests {
             vertex!([0.0f32, 1.0f32]),
         ];
         let dt: DelaunayTriangulation<FastKernel<f32>, (), (), 2> =
-            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
         let (_, cell) = dt.cells().next().unwrap();
 
         assert_eq!(cell.number_of_vertices(), 3);
@@ -2527,7 +2532,8 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let dt: DelaunayTriangulation<FastKernel<f64>, (), i32, 3> =
-            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
+
         let (_, cell_ref) = dt.cells().next().unwrap();
         let mut cell = cell_ref.clone();
         cell.data = Some(42);
@@ -2578,7 +2584,8 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let dt: DelaunayTriangulation<FastKernel<f64>, (), i32, 3> =
-            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
+
         let (_, cell_ref) = dt.cells().next().unwrap();
         let mut cell = cell_ref.clone();
         cell.data = Some(42);
@@ -2701,7 +2708,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let dt: DelaunayTriangulation<FastKernel<f64>, (), i32, 3> =
-            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
         let (_, cell_ref) = dt.cells().next().unwrap();
         let mut cell_with_data = cell_ref.clone();
         cell_with_data.data = Some(42);
@@ -2832,7 +2839,7 @@ mod tests {
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let dt: DelaunayTriangulation<FastKernel<f64>, i32, (), 3> =
-            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
         let cell = &dt.tds().get_cell(cell_key).unwrap();
 
@@ -3065,7 +3072,7 @@ mod tests {
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let mut dt: DelaunayTriangulation<FastKernel<f64>, i32, u32, 3> =
-            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices).unwrap();
+            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
 
         // Set the cell data to a known value

@@ -1046,7 +1046,7 @@ let cell_key = dt.cells().next().unwrap().0;
             vertex!([0.5f32, 0.866f32]),
         ];
         let dt_f32: DelaunayTriangulation<FastKernel<f32>, (), (), 2> =
-            DelaunayTriangulation::with_kernel(FastKernel::new(), &vertices_f32).unwrap();
+            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices_f32).unwrap();
         let key_f32 = dt_f32.cells().next().unwrap().0;
 
         let vertices_f64 = vec![

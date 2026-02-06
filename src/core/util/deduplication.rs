@@ -226,7 +226,10 @@ where
 /// Uses `OrderedEq` which provides NaN-aware equality comparison.
 /// For f32/f64, this ensures consistent comparison including special values.
 #[inline]
-fn coords_equal_exact<T: CoordinateScalar, const D: usize>(a: &[T; D], b: &[T; D]) -> bool {
+pub(crate) fn coords_equal_exact<T: CoordinateScalar, const D: usize>(
+    a: &[T; D],
+    b: &[T; D],
+) -> bool {
     // OrderedEq is already in scope via CoordinateScalar bound
     a.iter().zip(b.iter()).all(|(x, y)| x.ordered_eq(y))
 }
@@ -235,7 +238,7 @@ fn coords_equal_exact<T: CoordinateScalar, const D: usize>(a: &[T; D], b: &[T; D
 ///
 /// Returns true if Euclidean distance is strictly less than epsilon (distance < epsilon).
 #[inline]
-fn coords_within_epsilon<T: CoordinateScalar, const D: usize>(
+pub(crate) fn coords_within_epsilon<T: CoordinateScalar, const D: usize>(
     a: &[T; D],
     b: &[T; D],
     epsilon: T,

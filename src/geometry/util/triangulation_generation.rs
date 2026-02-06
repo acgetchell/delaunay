@@ -60,7 +60,7 @@ where
 }
 
 fn random_triangulation_try_build<K, T, U, V, const D: usize>(
-    kernel: K,
+    kernel: &K,
     vertices: &[Vertex<T, U, D>],
     min_vertices: usize,
     topology_guarantee: TopologyGuarantee,
@@ -148,7 +148,7 @@ where
     V: DataType,
 {
     if let Some(dt) = random_triangulation_try_build(
-        FastKernel::new(),
+        &FastKernel::new(),
         vertices,
         min_vertices,
         topology_guarantee,
@@ -159,12 +159,9 @@ where
     let robust_config = config_presets::degenerate_robust::<T>();
     let robust_kernel = RobustKernel::with_config(robust_config);
 
-    if let Some(dt) = random_triangulation_try_build(
-        robust_kernel.clone(),
-        vertices,
-        min_vertices,
-        topology_guarantee,
-    ) {
+    if let Some(dt) =
+        random_triangulation_try_build(&robust_kernel, vertices, min_vertices, topology_guarantee)
+    {
         return Some(random_triangulation_to_fast_kernel(&dt, topology_guarantee));
     }
 
@@ -180,7 +177,7 @@ where
         }
 
         if let Some(dt) = random_triangulation_try_build(
-            robust_kernel.clone(),
+            &robust_kernel,
             &shuffled,
             min_vertices,
             topology_guarantee,
@@ -744,7 +741,7 @@ where
             );
         }
         let dt = DelaunayTriangulation::with_topology_guarantee_and_options(
-            FastKernel::new(),
+            &FastKernel::new(),
             &vertices,
             self.topology_guarantee,
             self.construction_options,
@@ -756,6 +753,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vertex;
     // =============================================================================
     // RANDOM TRIANGULATION GENERATION TESTS
     // =============================================================================
@@ -870,6 +868,25 @@ mod tests {
             triangulation2.number_of_cells()
         );
         assert_eq!(triangulation1.dim(), triangulation2.dim());
+    }
+
+    #[test]
+    fn test_random_triangulation_try_with_vertices_exercises_fallbacks() {
+        // Use a valid 2D simplex, but require more vertices than provided to force retries.
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+
+        let result = random_triangulation_try_with_vertices::<f64, (), (), 2>(
+            &vertices,
+            vertices.len() + 1,
+            Some(7),
+            TopologyGuarantee::PLManifold,
+        );
+
+        assert!(result.is_none());
     }
 
     #[test]

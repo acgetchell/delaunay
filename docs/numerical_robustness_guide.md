@@ -466,7 +466,7 @@ if dt_result.is_err() {
     
     // Use robust kernel for numerical stability
     let dt = DelaunayTriangulation::with_kernel(
-        RobustKernel::new(),
+        &RobustKernel::new(),
         &vertices
     ).expect("Robust triangulation failed");
     
@@ -541,11 +541,11 @@ let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
 // For high-precision scientific computing - use robust kernel
 let dt_precise: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
-    DelaunayTriangulation::with_kernel(RobustKernel::new(), &vertices).unwrap();
+    DelaunayTriangulation::with_kernel(&RobustKernel::new(), &vertices).unwrap();
 
 // For problematic/degenerate inputs - use robust kernel
 let dt_robust: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
-    DelaunayTriangulation::with_kernel(RobustKernel::new(), &vertices).unwrap();
+    DelaunayTriangulation::with_kernel(&RobustKernel::new(), &vertices).unwrap();
 ```
 
 ### Error Recovery in Applications
@@ -570,13 +570,13 @@ pub fn create_triangulation_with_fallback(
     if fast_result.is_ok() {
         println!("Fast kernel succeeded");
         // Convert to robust kernel type for uniform return type
-        return DelaunayTriangulation::with_kernel(RobustKernel::new(), vertices);
+        return DelaunayTriangulation::with_kernel(&RobustKernel::new(), vertices);
     }
     
     println!("Fast kernel failed, trying robust kernel");
     
     // Strategy 2: Try robust kernel with automatic retry logic
-    match DelaunayTriangulation::with_kernel(RobustKernel::new(), vertices) {
+    match DelaunayTriangulation::with_kernel(&RobustKernel::new(), vertices) {
         Ok(dt) => {
             println!("Robust kernel succeeded");
             Ok(dt)
@@ -585,7 +585,7 @@ pub fn create_triangulation_with_fallback(
             // Strategy 3: Preprocess points and retry with robust kernel
             println!("Robust kernel failed, trying with filtered vertices");
             let filtered_vertices = remove_duplicate_and_near_duplicate_points(vertices);
-            DelaunayTriangulation::with_kernel(RobustKernel::new(), &filtered_vertices)
+            DelaunayTriangulation::with_kernel(&RobustKernel::new(), &filtered_vertices)
         }
     }
 }
@@ -902,7 +902,7 @@ The robust predicates and algorithms add computational overhead, but provide sig
    
    // Replace failed standard triangulations
    let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
-       DelaunayTriangulation::with_kernel(RobustKernel::new(), &vertices)?;
+       DelaunayTriangulation::with_kernel(&RobustKernel::new(), &vertices)?;
    ```
 
 2. **Short-term**: Implement tiered approach for new applications
@@ -915,7 +915,7 @@ The robust predicates and algorithms add computational overhead, but provide sig
    let dt = DelaunayTriangulation::new(&vertices)
        .or_else(|_| {
            println!("Fast kernel failed, using robust kernel");
-           DelaunayTriangulation::with_kernel(RobustKernel::new(), &vertices)
+           DelaunayTriangulation::with_kernel(&RobustKernel::new(), &vertices)
        })?;
    ```
 

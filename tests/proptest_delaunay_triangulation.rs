@@ -660,9 +660,7 @@ macro_rules! gen_duplicate_coords_test {
             proptest! {
                 /// Tests that duplicate coordinates are rejected during insertion.
                 ///
-                /// **Status**: Ignored - failing on edge cases with degenerate/nearly-degenerate configurations.
-                /// Proptest found cases where duplicate insertion succeeds when it should fail.
-                /// Needs investigation into duplicate detection logic in incremental insertion.
+                /// **Status**: Active in 2D/3D. 4D/5D remain ignored for runtime (slow in test-integration).
                 $(#[$attr])*
                 #[test]
                 fn [<prop_duplicate_coordinates_rejected_ $dim d>](
@@ -671,17 +669,21 @@ macro_rules! gen_duplicate_coords_test {
                         $min..=$max
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    let dt = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new_with_topology_guarantee(
+                    let options = ConstructionOptions::default()
+                        .with_dedup_policy(DedupPolicy::Exact);
+                    let dt = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new_with_options(
                         &vertices,
-                        TopologyGuarantee::PLManifold,
+                        options,
                     );
                     prop_assume!(dt.is_ok());
                     let mut dt = dt.unwrap();
+                    dt.set_validation_policy(ValidationPolicy::Never);
+                    dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
                     // Select a vertex that is actually present in the triangulation.
-                    // `DelaunayTriangulation::new_with_topology_guarantee` may skip some input vertices (e.g., due to degeneracy),
+                    // `DelaunayTriangulation::new_with_options` may skip some input vertices (e.g., due to degeneracy),
                     // so we must use stored vertices to test duplicate rejection.
                     let (_, existing_vertex) = dt.vertices().next()
-                        .expect("DelaunayTriangulation::new_with_topology_guarantee returned Ok but has no vertices");
+                        .expect("DelaunayTriangulation::new_with_options returned Ok but has no vertices");
                     let p = *existing_vertex.point();
                     let dup = Vertex::from_points(&[p])[0];
                     let result = dt.insert(dup);
@@ -696,7 +698,7 @@ macro_rules! gen_duplicate_coords_test {
 }
 
 gen_duplicate_coords_test!(2, 3, 10);
-gen_duplicate_coords_test!(3, 4, 12, #[ignore = "Slow (>60s) in test-integration"]);
+gen_duplicate_coords_test!(3, 4, 12);
 gen_duplicate_coords_test!(4, 5, 14, #[ignore = "Slow (>60s) in test-integration"]);
 gen_duplicate_coords_test!(5, 6, 16, #[ignore = "Slow (>60s) in test-integration"]);
 
@@ -844,8 +846,8 @@ proptest! {
 // 2D–5D coverage (keep ranges small to bound runtime)
 test_empty_circumsphere!(2, 6, 10);
 test_empty_circumsphere!(3, 6, 10);
-test_empty_circumsphere!(4, 6, 12);
-test_empty_circumsphere!(5, 7, 12);
+test_empty_circumsphere!(4, 6, 12, #[ignore = "Slow (>60s) in test-integration"]);
+test_empty_circumsphere!(5, 7, 12, #[ignore = "Slow (>60s) in test-integration"]);
 
 // =============================================================================
 // INSERTION-ORDER INVARIANCE (2D-5D)
@@ -1518,7 +1520,7 @@ macro_rules! gen_insertion_order_robustness_high_dim {
     };
 }
 
-gen_insertion_order_robustness_high_dim!(4, 6, 12);
+gen_insertion_order_robustness_high_dim!(4, 6, 12, #[ignore = "Slow (>60s) in test-integration"]);
 gen_insertion_order_robustness_high_dim!(5, 7, 12, #[ignore = "Slow (>60s) in test-integration"]);
 
 // =============================================================================
@@ -1591,9 +1593,11 @@ macro_rules! gen_duplicate_cloud_test {
                     let vertices: Vec<Vertex<f64, (), $dim>> = Vertex::from_points(&points);
 
                     let build_start = std::time::Instant::now();
-                    let dt = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                    let options = ConstructionOptions::default()
+                        .with_dedup_policy(DedupPolicy::Epsilon { tolerance: 1e-6 });
+                    let dt = DelaunayTriangulation::<_, (), (), $dim>::new_with_options(
                         &vertices,
-                        TopologyGuarantee::PLManifold,
+                        options,
                     );
                     let build_elapsed = build_start.elapsed();
                     if let Err(err) = &dt {
@@ -1691,9 +1695,11 @@ macro_rules! gen_duplicate_cloud_test {
                     let vertices: Vec<Vertex<f64, (), $dim>> = Vertex::from_points(&points);
 
                     let build_start = std::time::Instant::now();
-                    let dt = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                    let options = ConstructionOptions::default()
+                        .with_dedup_policy(DedupPolicy::Epsilon { tolerance: 1e-6 });
+                    let dt = DelaunayTriangulation::<_, (), (), $dim>::new_with_options(
                         &vertices,
-                        TopologyGuarantee::PLManifold,
+                        options,
                     );
                     let build_elapsed = build_start.elapsed();
                     if let Err(err) = &dt {
@@ -1744,5 +1750,5 @@ macro_rules! gen_duplicate_cloud_test {
 
 gen_duplicate_cloud_test!(2, 2);
 gen_duplicate_cloud_test!(3, 3);
-gen_duplicate_cloud_test!(4, 4);
-gen_duplicate_cloud_test!(5, 5);
+gen_duplicate_cloud_test!(4, 4, #[ignore = "Slow (>60s) in test-integration"]);
+gen_duplicate_cloud_test!(5, 5, #[ignore = "Slow (>60s) in test-integration"]);

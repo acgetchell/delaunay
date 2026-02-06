@@ -137,9 +137,9 @@ where
 // DIMENSIONAL TEST GENERATION MACROS
 // =============================================================================
 
-/// Macro to generate quality metric property tests for a given dimension
-macro_rules! test_quality_properties {
-    ($dim:literal, $min_vertices:literal, $max_vertices:literal, $num_points:literal $(, #[$attr:meta])*) => {
+/// Macro to generate simplex-only quality metric property tests for a given dimension
+macro_rules! test_simplex_quality_properties {
+    ($dim:literal, $num_points:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
                 /// Property: Radius ratio R/r ≥ D for non-degenerate D-simplices
@@ -212,35 +212,6 @@ macro_rules! test_quality_properties {
                     }
                 }
 
-                /// Property: Radius ratio is always positive for valid simplices
-                $(#[$attr])*
-                #[test]
-                fn [<prop_radius_ratio_positive_ $dim d>](
-                    vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
-                        $min_vertices..=$max_vertices
-                    ).prop_map(|v| Vertex::from_points(&v))
-                ) {
-                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
-                        FastKernel::default(),
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
-                        let tds = dt.tds();
-                        let tri = dt.as_triangulation();
-                        for cell_key in tds.cell_keys() {
-                            if let Ok(ratio) = radius_ratio(tri, cell_key) {
-                                prop_assert!(
-                                    ratio > 0.0,
-                                    "{}D radius ratio should be positive, got {}",
-                                    $dim,
-                                    ratio
-                                );
-                            }
-                        }
-                    }
-                }
-
                 /// Property: Regular simplex has better (lower) radius ratio than degenerate
                 $(#[$attr])*
                 #[test]
@@ -300,6 +271,95 @@ macro_rules! test_quality_properties {
                     }
                 }
 
+                /// Property: Extreme deformation degrades quality (becomes degenerate)
+                $(#[$attr])*
+                #[test]
+                fn [<prop_quality_degrades_under_collapse_ $dim d>](
+                    base_scale in 0.1f64..10.0f64
+                ) {
+                    // Create a regular simplex
+                    let mut regular_points = Vec::new();
+                    regular_points.push(Point::new([0.0f64; $dim]));
+                    for i in 0..$dim {
+                        let mut coords = [0.0f64; $dim];
+                        coords[i] = base_scale;
+                        regular_points.push(Point::new(coords));
+                    }
+
+                    // Create a nearly-degenerate version (collapse last vertex toward origin)
+                    let mut degenerate_points = regular_points.clone();
+                    if let Some(last) = degenerate_points.last_mut() {
+                        let coords: [f64; $dim] = (*last).into();
+                        let mut collapsed_coords = coords;
+                        // Collapse to nearly coincident with first vertex
+                        for i in 0..$dim {
+                            collapsed_coords[i] *= 0.01; // Move 99% toward origin
+                        }
+                        *last = Point::new(collapsed_coords);
+                    }
+
+                    // Compare quality metrics - collapsed should be much worse
+                    if let (Ok(r_reg), Ok(r_inner_reg)) = (circumradius(&regular_points), inradius(&regular_points)) {
+                        if let (Ok(r_coll), Ok(r_inner_coll)) = (circumradius(&degenerate_points), inradius(&degenerate_points)) {
+                            if r_reg > 1e-6 && r_inner_reg > 1e-9 && r_coll > 1e-6 && r_inner_coll > 1e-9 {
+                                let ratio_reg = r_reg / r_inner_reg;
+                                let ratio_coll = r_coll / r_inner_coll;
+
+                                if ratio_reg.is_finite() && ratio_coll.is_finite() {
+                                    // Collapsed simplex should have significantly worse quality
+                                    prop_assert!(
+                                        ratio_coll > ratio_reg * 1.5,
+                                        "{}D: Collapsed simplex should have worse quality: regular={}, collapsed={}",
+                                        $dim,
+                                        ratio_reg,
+                                        ratio_coll
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+}
+
+/// Macro to generate quality metric property tests for a given dimension
+macro_rules! test_quality_properties {
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
+        pastey::paste! {
+            proptest! {
+
+                /// Property: Radius ratio is always positive for valid simplices
+                $(#[$attr])*
+                #[test]
+                fn [<prop_radius_ratio_positive_ $dim d>](
+                    vertices in prop::collection::vec(
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        $min_vertices..=$max_vertices
+                    ).prop_map(|v| Vertex::from_points(&v))
+                ) {
+                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                        &FastKernel::default(),
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
+                        let tds = dt.tds();
+                        let tri = dt.as_triangulation();
+                        for cell_key in tds.cell_keys() {
+                            if let Ok(ratio) = radius_ratio(tri, cell_key) {
+                                prop_assert!(
+                                    ratio > 0.0,
+                                    "{}D radius ratio should be positive, got {}",
+                                    $dim,
+                                    ratio
+                                );
+                            }
+                        }
+                    }
+                }
+
+
                 /// Property: Radius ratio is translation-invariant
                 $(#[$attr])*
                 #[test]
@@ -311,7 +371,7 @@ macro_rules! test_quality_properties {
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
-                        FastKernel::default(),
+                        &FastKernel::default(),
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -331,7 +391,7 @@ macro_rules! test_quality_properties {
                         let translated_vertices = Vertex::from_points(&translated_vertices);
 
                         if let Ok(dt_translated) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
-                            FastKernel::default(),
+                            &FastKernel::default(),
                             &translated_vertices,
                             TopologyGuarantee::PLManifold,
                         ) {
@@ -388,7 +448,7 @@ macro_rules! test_quality_properties {
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
-                        FastKernel::default(),
+                        &FastKernel::default(),
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -408,7 +468,7 @@ macro_rules! test_quality_properties {
                         let translated_vertices = Vertex::from_points(&translated_vertices);
 
                         if let Ok(dt_translated) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
-                            FastKernel::default(),
+                            &FastKernel::default(),
                             &translated_vertices,
                             TopologyGuarantee::PLManifold,
                         ) {
@@ -465,7 +525,7 @@ macro_rules! test_quality_properties {
                     scale in 0.1f64..10.0f64
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
-                        FastKernel::default(),
+                        &FastKernel::default(),
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -485,7 +545,7 @@ macro_rules! test_quality_properties {
                         let scaled_vertices = Vertex::from_points(&scaled_vertices);
 
                         if let Ok(dt_scaled) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
-                            FastKernel::default(),
+                            &FastKernel::default(),
                             &scaled_vertices,
                             TopologyGuarantee::PLManifold,
                         ) {
@@ -541,7 +601,7 @@ macro_rules! test_quality_properties {
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::with_topology_guarantee(
-                        FastKernel::default(),
+                        &FastKernel::default(),
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -579,65 +639,22 @@ macro_rules! test_quality_properties {
                     }
                 }
 
-                /// Property: Extreme deformation degrades quality (becomes degenerate)
-                $(#[$attr])*
-                #[test]
-                fn [<prop_quality_degrades_under_collapse_ $dim d>](
-                    base_scale in 0.1f64..10.0f64
-                ) {
-                    // Create a regular simplex
-                    let mut regular_points = Vec::new();
-                    regular_points.push(Point::new([0.0f64; $dim]));
-                    for i in 0..$dim {
-                        let mut coords = [0.0f64; $dim];
-                        coords[i] = base_scale;
-                        regular_points.push(Point::new(coords));
-                    }
-
-                    // Create a nearly-degenerate version (collapse last vertex toward origin)
-                    let mut degenerate_points = regular_points.clone();
-                    if let Some(last) = degenerate_points.last_mut() {
-                        let coords: [f64; $dim] = (*last).into();
-                        let mut collapsed_coords = coords;
-                        // Collapse to nearly coincident with first vertex
-                        for i in 0..$dim {
-                            collapsed_coords[i] *= 0.01; // Move 99% toward origin
-                        }
-                        *last = Point::new(collapsed_coords);
-                    }
-
-                    // Compare quality metrics - collapsed should be much worse
-                    if let (Ok(r_reg), Ok(r_inner_reg)) = (circumradius(&regular_points), inradius(&regular_points)) {
-                        if let (Ok(r_coll), Ok(r_inner_coll)) = (circumradius(&degenerate_points), inradius(&degenerate_points)) {
-                            if r_reg > 1e-6 && r_inner_reg > 1e-9 && r_coll > 1e-6 && r_inner_coll > 1e-9 {
-                                let ratio_reg = r_reg / r_inner_reg;
-                                let ratio_coll = r_coll / r_inner_coll;
-
-                                if ratio_reg.is_finite() && ratio_coll.is_finite() {
-                                    // Collapsed simplex should have significantly worse quality
-                                    prop_assert!(
-                                        ratio_coll > ratio_reg * 1.5,
-                                        "{}D: Collapsed simplex should have worse quality: regular={}, collapsed={}",
-                                        $dim,
-                                        ratio_reg,
-                                        ratio_coll
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
             }
         }
     };
 }
 
 // Generate tests for dimensions 2-5
-// Parameters: dimension, min_vertices, max_vertices, num_points (D+1)
-test_quality_properties!(2, 4, 10, 3);
-test_quality_properties!(3, 5, 12, 4, #[ignore = "Slow (>60s) in test-integration"]);
-test_quality_properties!(4, 6, 14, 5, #[ignore = "Slow (>60s) in test-integration"]);
-test_quality_properties!(5, 7, 16, 6, #[ignore = "Slow (>60s) in test-integration"]);
+// Simplex-only quality metrics (D+1 points)
+test_simplex_quality_properties!(2, 3);
+test_simplex_quality_properties!(3, 4);
+test_simplex_quality_properties!(4, 5);
+test_simplex_quality_properties!(5, 6);
+// Parameters: dimension, min_vertices, max_vertices
+test_quality_properties!(2, 4, 10);
+test_quality_properties!(3, 5, 12);
+test_quality_properties!(4, 6, 14, #[ignore = "Slow (>60s) in test-integration"]);
+test_quality_properties!(5, 7, 16, #[ignore = "Slow (>60s) in test-integration"]);
 
 // =============================================================================
 // FACET TOPOLOGY INVARIANT TESTS
@@ -754,6 +771,6 @@ macro_rules! test_facet_topology_invariant {
 // Generate facet topology invariant tests for dimensions 2-5
 // Parameters: dimension, min_vertices, max_vertices
 test_facet_topology_invariant!(2, 4, 10);
-test_facet_topology_invariant!(3, 5, 12, #[ignore = "Slow (>60s) in test-integration"]);
+test_facet_topology_invariant!(3, 5, 12);
 test_facet_topology_invariant!(4, 6, 14, #[ignore = "Slow (>60s) in test-integration"]);
 test_facet_topology_invariant!(5, 7, 16, #[ignore = "Slow (>60s) in test-integration"]);
