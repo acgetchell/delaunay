@@ -16,6 +16,16 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 ///
 /// # Panics
 /// Panics if `bits == 0` or `bits > 31`.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::util::hilbert::hilbert_quantize;
+///
+/// let coords = [0.5_f64, 0.25];
+/// let q = hilbert_quantize(&coords, (0.0, 1.0), 2);
+/// assert!(q[0] <= 3 && q[1] <= 3);
+/// ```
 #[must_use]
 pub fn hilbert_quantize<T: CoordinateScalar, const D: usize>(
     coords: &[T; D],
@@ -88,6 +98,15 @@ fn validate_hilbert_params<const D: usize>(bits: u32) {
 /// # Panics
 /// - Panics if `bits == 0` or `bits > 31`.
 /// - Panics if `D * bits > 128` (index would not fit in `u128`).
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::util::hilbert::hilbert_index;
+///
+/// let idx = hilbert_index(&[0.0_f64, 0.0], (0.0, 1.0), 4);
+/// assert_eq!(idx, 0);
+/// ```
 #[must_use]
 pub fn hilbert_index<T: CoordinateScalar, const D: usize>(
     coords: &[T; D],
@@ -199,6 +218,16 @@ fn hilbert_sort_key<T: CoordinateScalar, const D: usize>(
 /// # Panics
 /// - Panics if `bits == 0` or `bits > 31`.
 /// - Panics if `D * bits > 128` (index would not fit in `u128`).
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::util::hilbert::hilbert_sort_by_stable;
+///
+/// let mut points = vec![[0.9_f64, 0.9], [0.1, 0.1], [0.5, 0.5]];
+/// hilbert_sort_by_stable(&mut points, (0.0, 1.0), 8, |p| *p);
+/// assert_eq!(points[0], [0.1, 0.1]);
+/// ```
 pub fn hilbert_sort_by_stable<Item, T, F, const D: usize>(
     items: &mut [Item],
     bounds: (T, T),
@@ -223,6 +252,16 @@ pub fn hilbert_sort_by_stable<Item, T, F, const D: usize>(
 /// # Panics
 /// - Panics if `bits == 0` or `bits > 31`.
 /// - Panics if `D * bits > 128` (index would not fit in `u128`).
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::util::hilbert::hilbert_sort_by_unstable;
+///
+/// let mut points = vec![[0.9_f64, 0.9], [0.1, 0.1], [0.5, 0.5]];
+/// hilbert_sort_by_unstable(&mut points, (0.0, 1.0), 8, |p| *p);
+/// assert_eq!(points[0], [0.1, 0.1]);
+/// ```
 pub fn hilbert_sort_by_unstable<Item, T, F, const D: usize>(
     items: &mut [Item],
     bounds: (T, T),
@@ -244,6 +283,16 @@ pub fn hilbert_sort_by_unstable<Item, T, F, const D: usize>(
 /// # Panics
 /// - Panics if `bits == 0` or `bits > 31`.
 /// - Panics if `D * bits > 128` (index would not fit in `u128`).
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::util::hilbert::hilbert_sorted_indices;
+///
+/// let coords = vec![[0.9_f64, 0.9], [0.1, 0.1], [0.5, 0.5]];
+/// let order = hilbert_sorted_indices(&coords, (0.0, 1.0), 8);
+/// assert_eq!(order.len(), coords.len());
+/// ```
 #[must_use]
 pub fn hilbert_sorted_indices<T: CoordinateScalar, const D: usize>(
     coords: &[[T; D]],

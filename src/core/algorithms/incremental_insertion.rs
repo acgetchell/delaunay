@@ -44,6 +44,15 @@ use std::hash::{Hash, Hasher};
 pub use crate::core::operations::{InsertionOutcome, InsertionResult, InsertionStatistics};
 
 /// Reason for hull extension failure.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::incremental_insertion::HullExtensionReason;
+///
+/// let reason = HullExtensionReason::NoVisibleFacets;
+/// assert!(matches!(reason, HullExtensionReason::NoVisibleFacets));
+/// ```
 #[derive(Debug, Clone)]
 pub enum HullExtensionReason {
     /// No visible boundary facets (coplanar with hull surface).
@@ -76,6 +85,17 @@ impl std::fmt::Display for HullExtensionReason {
 }
 
 /// Error during incremental insertion.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::incremental_insertion::InsertionError;
+///
+/// let err = InsertionError::DuplicateCoordinates {
+///     coordinates: "[0.0, 0.0, 0.0]".to_string(),
+/// };
+/// assert!(matches!(err, InsertionError::DuplicateCoordinates { .. }));
+/// ```
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum InsertionError {
     /// Conflict region finding failed
@@ -187,6 +207,28 @@ impl InsertionError {
     /// - Duplicate UUIDs
     /// - Duplicate coordinates
     /// - Generic construction or wiring failures
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::algorithms::incremental_insertion::{HullExtensionReason, InsertionError};
+    ///
+    /// let retryable = InsertionError::NonManifoldTopology {
+    ///     facet_hash: 1,
+    ///     cell_count: 3,
+    /// };
+    /// assert!(retryable.is_retryable());
+    ///
+    /// let not_retryable = InsertionError::DuplicateCoordinates {
+    ///     coordinates: "[0.0, 0.0, 0.0]".to_string(),
+    /// };
+    /// assert!(!not_retryable.is_retryable());
+    ///
+    /// let hull = InsertionError::HullExtension {
+    ///     reason: HullExtensionReason::NoVisibleFacets,
+    /// };
+    /// assert!(hull.is_retryable());
+    /// ```
     #[must_use]
     pub fn is_retryable(&self) -> bool {
         match self {
@@ -268,6 +310,28 @@ impl InsertionError {
 /// boundary facets and logs warnings if found. Duplicate facets will create
 /// overlapping cells, which will be detected and repaired by subsequent topology
 /// validation passes (see `detect_local_facet_issues` / `repair_local_facet_issues`).
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::incremental_insertion::fill_cavity;
+/// use delaunay::core::facet::FacetHandle;
+/// use delaunay::prelude::*;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let mut tds = dt.tds().clone();
+/// let vkey = tds.vertex_keys().next().unwrap();
+/// let boundary_facets: Vec<FacetHandle> = Vec::new();
+///
+/// let new_cells = fill_cavity(&mut tds, vkey, &boundary_facets).unwrap();
+/// assert!(new_cells.is_empty());
+/// ```
 #[expect(
     clippy::too_many_lines,
     reason = "Cavity filling includes detailed debug instrumentation and error handling"
@@ -496,6 +560,19 @@ where
 ///
 /// # Errors
 /// Returns error if neighbor wiring fails or cells cannot be found.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::incremental_insertion::wire_cavity_neighbors;
+/// use delaunay::core::collections::CellKeyBuffer;
+/// use delaunay::core::triangulation_data_structure::Tds;
+///
+/// let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+/// let new_cells = CellKeyBuffer::new();
+///
+/// wire_cavity_neighbors(&mut tds, &new_cells, None).unwrap();
+/// ```
 #[expect(
     clippy::too_many_lines,
     reason = "Neighbor wiring keeps cohesive logic and debug accounting together"
@@ -930,6 +1007,17 @@ fn compute_facet_hash(sorted_vkeys: &[VertexKey]) -> u64 {
 /// In debug builds, this function performs additional cycle detection via BFS
 /// (see `validate_no_neighbor_cycles`). This adds overhead but helps catch
 /// neighbor graph corruption early during development.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::incremental_insertion::repair_neighbor_pointers;
+/// use delaunay::core::triangulation_data_structure::Tds;
+///
+/// let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+/// let repaired = repair_neighbor_pointers(&mut tds).unwrap();
+/// assert_eq!(repaired, 0);
+/// ```
 #[expect(
     clippy::too_many_lines,
     reason = "Long function; keep the repair algorithm in one place for clarity"
@@ -1220,6 +1308,26 @@ where
 /// Returns error if:
 /// - Finding visible facets fails
 /// - Cavity filling or neighbor wiring fails
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::incremental_insertion::extend_hull;
+/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::core::triangulation_data_structure::VertexKey;
+/// use delaunay::geometry::kernel::FastKernel;
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use slotmap::Key;
+///
+/// let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+/// let vkey = VertexKey::null();
+/// let kernel = FastKernel::<f64>::new();
+/// let point = Point::new([2.0, 2.0, 2.0]);
+///
+/// let result = extend_hull(&mut tds, &kernel, vkey, &point);
+/// assert!(result.is_err());
+/// ```
 pub fn extend_hull<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,

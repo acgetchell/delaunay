@@ -59,6 +59,16 @@ use std::marker::PhantomData;
 ///
 /// Points are intended to be immutable once created, so the `coords` field is
 /// private to prevent modification after instantiation.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::traits::coordinate::Coordinate;
+///
+/// let p = Point::new([1.0, 2.0]);
+/// assert_eq!(p.coords(), &[1.0, 2.0]);
+/// ```
 pub struct Point<T, const D: usize>
 where
     T: CoordinateScalar,

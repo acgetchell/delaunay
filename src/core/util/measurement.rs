@@ -51,6 +51,16 @@ where
 /// Memory measurement helper (no-op version when count-allocations feature is disabled).
 ///
 /// See [`measure_with_result`] for full documentation.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::util::measure_with_result;
+///
+/// let (value, alloc) = measure_with_result(|| 7u64);
+/// assert_eq!(value, 7);
+/// let _ = alloc; // () when feature is disabled
+/// ```
 #[cfg(not(feature = "count-allocations"))]
 pub fn measure_with_result<F, R>(f: F) -> (R, ())
 where

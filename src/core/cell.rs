@@ -70,6 +70,15 @@ use uuid::Uuid;
 // =============================================================================
 
 /// Errors that can occur during cell validation.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::cell::CellValidationError;
+///
+/// let err = CellValidationError::DuplicateVertices;
+/// assert!(matches!(err, CellValidationError::DuplicateVertices));
+/// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum CellValidationError {
     /// The cell has an invalid vertex.

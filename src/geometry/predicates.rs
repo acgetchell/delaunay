@@ -18,6 +18,15 @@ use crate::geometry::util::{
 use crate::prelude::CircumcenterError;
 
 /// Represents the position of a point relative to a circumsphere.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::geometry::predicates::InSphere;
+///
+/// let status = InSphere::INSIDE;
+/// assert_eq!(status.to_string(), "INSIDE");
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InSphere {
     /// The point is outside the circumsphere
@@ -39,6 +48,15 @@ impl std::fmt::Display for InSphere {
 }
 
 /// Represents the orientation of a simplex.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::geometry::predicates::Orientation;
+///
+/// let orientation = Orientation::POSITIVE;
+/// assert_eq!(orientation.to_string(), "POSITIVE");
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Orientation {
     /// The simplex has negative orientation (determinant < 0)

@@ -101,6 +101,18 @@ use crate::topology::characteristics::euler::{
 };
 
 /// Errors that can occur during manifold (topology) validation.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::topology::manifold::ManifoldError;
+///
+/// let err = ManifoldError::BoundaryRidgeMultiplicity {
+///     ridge_key: 1,
+///     boundary_facet_count: 3,
+/// };
+/// assert!(matches!(err, ManifoldError::BoundaryRidgeMultiplicity { .. }));
+/// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ManifoldError {

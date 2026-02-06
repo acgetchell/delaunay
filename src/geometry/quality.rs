@@ -51,6 +51,17 @@ use std::{
 use thiserror::Error;
 
 /// Errors that can occur during quality metric computation.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::geometry::quality::QualityError;
+///
+/// let err = QualityError::NumericalError {
+///     message: "overflow".to_string(),
+/// };
+/// assert!(matches!(err, QualityError::NumericalError { .. }));
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum QualityError {
     /// Cell has invalid or missing vertex keys

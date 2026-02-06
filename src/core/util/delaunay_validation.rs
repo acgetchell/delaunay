@@ -16,6 +16,18 @@ use crate::geometry::robust_predicates::robust_insphere;
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
 
 /// Errors that can occur during Delaunay property validation.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::triangulation_data_structure::CellKey;
+/// use delaunay::core::util::DelaunayValidationError;
+/// use slotmap::KeyData;
+///
+/// let cell_key = CellKey::from(KeyData::from_ffi(1));
+/// let err = DelaunayValidationError::DelaunayViolation { cell_key };
+/// assert!(matches!(err, DelaunayValidationError::DelaunayViolation { .. }));
+/// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum DelaunayValidationError {
     /// A cell violates the Delaunay property (has an external vertex inside its circumsphere).
@@ -288,6 +300,16 @@ where
 /// - For the first violating cell:
 ///   - At least one offending external vertex (if found)
 ///   - Neighbor information for each facet
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::core::util::debug_print_first_delaunay_violation;
+///
+/// let tds: Tds<f64, (), (), 3> = Tds::empty();
+/// debug_print_first_delaunay_violation(&tds, None);
+/// ```
 #[cfg(any(test, debug_assertions))]
 #[expect(
     clippy::too_many_lines,

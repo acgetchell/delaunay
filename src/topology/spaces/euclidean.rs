@@ -12,6 +12,16 @@ use crate::topology::traits::topological_space::{TopologicalSpace, TopologyKind}
 ///
 /// The dimension `D` is a const generic parameter that must match the
 /// dimension of the associated triangulation.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::topology::spaces::EuclideanSpace;
+/// use delaunay::topology::traits::topological_space::TopologicalSpace;
+///
+/// let space = EuclideanSpace::<3>::new();
+/// assert!(space.allows_boundary());
+/// ```
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EuclideanSpace<const D: usize>;
 

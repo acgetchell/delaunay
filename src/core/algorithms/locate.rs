@@ -31,6 +31,18 @@ use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
 
 /// Result of point location query.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::locate::LocateResult;
+/// use delaunay::core::triangulation_data_structure::VertexKey;
+/// use slotmap::KeyData;
+///
+/// let vertex = VertexKey::from(KeyData::from_ffi(2));
+/// let result = LocateResult::OnVertex(vertex);
+/// assert!(matches!(result, LocateResult::OnVertex(_)));
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LocateResult {
     /// Point is strictly inside the cell
@@ -46,6 +58,15 @@ pub enum LocateResult {
 }
 
 /// Error during point location.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::locate::LocateError;
+///
+/// let err = LocateError::EmptyTriangulation;
+/// assert!(matches!(err, LocateError::EmptyTriangulation));
+/// ```
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum LocateError {
     /// Triangulation has no cells.
@@ -69,6 +90,18 @@ pub enum LocateError {
 }
 
 /// Error during conflict region finding.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::locate::ConflictError;
+/// use delaunay::core::triangulation_data_structure::CellKey;
+/// use slotmap::KeyData;
+///
+/// let cell_key = CellKey::from(KeyData::from_ffi(5));
+/// let err = ConflictError::InvalidStartCell { cell_key };
+/// assert!(matches!(err, ConflictError::InvalidStartCell { .. }));
+/// ```
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ConflictError {
     /// Starting cell is invalid
@@ -158,6 +191,15 @@ struct RidgeInfo {
 }
 
 /// Indicates why facet-walking fell back to a brute-force scan.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::locate::LocateFallbackReason;
+///
+/// let reason = LocateFallbackReason::StepLimit;
+/// assert_eq!(reason, LocateFallbackReason::StepLimit);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LocateFallbackReason {
     /// The facet-walking traversal revisited a previously seen cell.
@@ -167,6 +209,18 @@ pub enum LocateFallbackReason {
 }
 
 /// Information about a facet-walking fallback.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::locate::{LocateFallback, LocateFallbackReason};
+///
+/// let fallback = LocateFallback {
+///     reason: LocateFallbackReason::CycleDetected,
+///     steps: 12,
+/// };
+/// assert_eq!(fallback.steps, 12);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LocateFallback {
     /// Why the fallback was triggered.
@@ -179,6 +233,22 @@ pub struct LocateFallback {
 ///
 /// The primary purpose of this type is **observability**: callers can detect when the fast
 /// facet-walking path failed to make progress (cycle/step-limit) and a scan fallback was used.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::locate::LocateStats;
+/// use delaunay::core::triangulation_data_structure::CellKey;
+/// use slotmap::KeyData;
+///
+/// let stats = LocateStats {
+///     start_cell: CellKey::from(KeyData::from_ffi(9)),
+///     used_hint: false,
+///     walk_steps: 0,
+///     fallback: None,
+/// };
+/// assert!(!stats.fell_back_to_scan());
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LocateStats {
     /// The start cell used for the facet-walking phase.
@@ -745,6 +815,17 @@ where
 /// 3. Return all boundary facets as `FacetHandle`s
 ///
 /// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::locate::extract_cavity_boundary;
+/// use delaunay::core::collections::CellKeyBuffer;
+/// use delaunay::core::triangulation_data_structure::Tds;
+///
+/// let tds: Tds<f64, (), (), 3> = Tds::empty();
+/// let boundary = extract_cavity_boundary(&tds, &CellKeyBuffer::new()).unwrap();
+/// assert!(boundary.is_empty());
+/// ```
+///
 ///
 /// ```rust
 /// use delaunay::core::algorithms::locate::{locate, find_conflict_region, extract_cavity_boundary, LocateResult};

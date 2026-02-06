@@ -176,6 +176,23 @@ static TOPOLOGY_SAFETY_NET_STAR_SPLIT_FALLBACK_SUCCESSES: AtomicU64 = AtomicU64:
 static VERTEX_TO_CELLS_SPILL_EVENTS: AtomicU64 = AtomicU64::new(0);
 
 /// Errors that can occur during triangulation construction.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::triangulation::{Triangulation, TriangulationConstructionError};
+/// use delaunay::geometry::kernel::FastKernel;
+/// use delaunay::vertex;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0]),
+///     vertex!([1.0, 0.0]),
+///     vertex!([0.0, 1.0]),
+/// ];
+/// let result: Result<_, TriangulationConstructionError> =
+///     Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices);
+/// assert!(result.is_ok());
+/// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TriangulationConstructionError {
@@ -224,6 +241,24 @@ pub enum TriangulationConstructionError {
 }
 
 /// Errors that can occur during triangulation topology validation (Level 3).
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::triangulation::TriangulationValidationError;
+/// use delaunay::prelude::*;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+///
+/// let result: Result<(), TriangulationValidationError> = dt.as_triangulation().validate();
+/// assert!(result.is_ok());
+/// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TriangulationValidationError {
@@ -427,6 +462,17 @@ type TryInsertImplOk = ((VertexKey, Option<CellKey>), usize, SuspicionFlags);
 /// `PLManifold` requires at least end-of-construction validation to certify full
 /// PL-manifoldness. Use [`ValidationPolicy::OnSuspicion`] (default) for best performance,
 /// or [`ValidationPolicy::Always`] for maximum safety during incremental operations.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::operations::SuspicionFlags;
+/// use delaunay::core::triangulation::ValidationPolicy;
+///
+/// let policy = ValidationPolicy::OnSuspicion;
+/// let suspicion = SuspicionFlags { perturbation_used: true, ..SuspicionFlags::default() };
+/// assert!(policy.should_validate(suspicion));
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ValidationPolicy {
     /// Never run global validation.
@@ -592,6 +638,17 @@ impl TopologyGuarantee {
 ///
 /// # Phase 2 TODO
 /// Add geometric operations that use the kernel for predicates.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::triangulation::Triangulation;
+/// use delaunay::geometry::kernel::FastKernel;
+///
+/// let tri: Triangulation<FastKernel<f64>, (), (), 3> =
+///     Triangulation::new_empty(FastKernel::new());
+/// assert_eq!(tri.number_of_vertices(), 0);
+/// ```
 #[derive(Clone, Debug)]
 pub struct Triangulation<K, U, V, const D: usize>
 where
@@ -792,6 +849,18 @@ where
     /// [`Triangulation::validate_at_completion`](Self::validate_at_completion) to provide
     /// immediate feedback and emits a warning. Call `validate_at_completion()` after batch
     /// construction when using an incompatible combination.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::triangulation::{TopologyGuarantee, Triangulation};
+    /// use delaunay::geometry::kernel::FastKernel;
+    ///
+    /// let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+    ///     Triangulation::new_empty(FastKernel::new());
+    /// tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+    /// assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+    /// ```
     #[inline]
     pub fn set_topology_guarantee(&mut self, guarantee: TopologyGuarantee) {
         if !guarantee.is_compatible_with_policy(self.validation_policy) {
@@ -829,6 +898,16 @@ where
     /// This is a process-wide counter (across all triangulation instances) intended for
     /// production telemetry. A high value suggests the cavity-based insertion frequently
     /// creates transient invalid topology that is being masked by the fallback.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::triangulation::Triangulation;
+    ///
+    /// let count = Triangulation::<delaunay::geometry::kernel::FastKernel<f64>, (), (), 3>
+    ///     ::topology_safety_net_star_split_fallback_successes();
+    /// assert!(count >= 0);
+    /// ```
     #[must_use]
     pub fn topology_safety_net_star_split_fallback_successes() -> u64 {
         TOPOLOGY_SAFETY_NET_STAR_SPLIT_FALLBACK_SUCCESSES.load(Ordering::Relaxed)
@@ -1904,6 +1983,21 @@ where
     /// # Errors
     ///
     /// Returns a [`TriangulationValidationError`] if vertex-link validation fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// assert!(dt.as_triangulation().validate_at_completion().is_ok());
+    /// ```
     pub fn validate_at_completion(&self) -> Result<(), TriangulationValidationError> {
         if !self
             .topology_guarantee
@@ -2453,6 +2547,8 @@ where
                     Vertex::new_with_uuid(Point::new(perturbed_coords), original_uuid, vertex.data);
             }
 
+            // Duplicate coordinate detection uses the hash grid when available; otherwise it
+            // falls back to a linear scan (O(n·D) per insertion, O(n²·D) worst-case).
             if let Some(error) = self.duplicate_coordinates_error(
                 current_vertex.point().coords(),
                 duplicate_tolerance_sq,
@@ -2593,6 +2689,8 @@ where
         best.map(|(_, cell_key)| cell_key)
     }
 
+    /// Check for near-duplicate coordinates using the hash grid when available, with a
+    /// linear-scan fallback (O(n·D) per insertion) if the index is unavailable/unusable.
     fn duplicate_coordinates_error(
         &self,
         coords: &[K::Scalar; D],

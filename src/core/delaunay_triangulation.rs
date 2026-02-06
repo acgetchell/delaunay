@@ -59,6 +59,24 @@ thread_local! {
 }
 
 /// Errors that can occur during Delaunay triangulation construction.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::delaunay_triangulation::DelaunayTriangulationConstructionError;
+/// use delaunay::prelude::*;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+///
+/// let result: Result<_, DelaunayTriangulationConstructionError> =
+///     DelaunayTriangulation::new(&vertices);
+/// assert!(result.is_ok());
+/// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DelaunayTriangulationConstructionError {
@@ -68,6 +86,24 @@ pub enum DelaunayTriangulationConstructionError {
 }
 
 /// Errors that can occur during Delaunay triangulation validation (Level 4).
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::delaunay_triangulation::DelaunayTriangulationValidationError;
+/// use delaunay::prelude::*;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+///
+/// let result: Result<(), DelaunayTriangulationValidationError> = dt.validate();
+/// assert!(result.is_ok());
+/// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DelaunayTriangulationValidationError {
@@ -117,6 +153,25 @@ pub enum DelaunayTriangulationValidationError {
 ///
 /// Note: Morton ordering can improve spatial locality, but it may cause flip cycle issues during
 /// Delaunay repair with certain point distributions.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::delaunay_triangulation::{ConstructionOptions, InsertionOrderStrategy};
+/// use delaunay::prelude::*;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+///
+/// let options = ConstructionOptions::default()
+///     .with_insertion_order(InsertionOrderStrategy::Input);
+/// let dt = DelaunayTriangulation::new_with_options(&vertices, options).unwrap();
+/// assert_eq!(dt.number_of_vertices(), 4);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum InsertionOrderStrategy {
@@ -150,6 +205,24 @@ pub enum InsertionOrderStrategy {
 ///
 /// This is intended as an *explicit* opt-in for callers who want a predictable preprocessing step.
 /// The default is [`DedupPolicy::Off`].
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::delaunay_triangulation::{ConstructionOptions, DedupPolicy};
+/// use delaunay::prelude::*;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+///
+/// let options = ConstructionOptions::default().with_dedup_policy(DedupPolicy::Exact);
+/// let dt = DelaunayTriangulation::new_with_options(&vertices, options).unwrap();
+/// assert_eq!(dt.number_of_vertices(), 4);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[non_exhaustive]
 pub enum DedupPolicy {
@@ -173,6 +246,24 @@ pub enum DedupPolicy {
 ///
 /// If enabled, the constructor deterministically retries construction with alternative insertion
 /// orders (shuffles) when the final Delaunay property check fails.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::delaunay_triangulation::{ConstructionOptions, RetryPolicy};
+/// use delaunay::prelude::*;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+///
+/// let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Disabled);
+/// let dt = DelaunayTriangulation::new_with_options(&vertices, options).unwrap();
+/// assert_eq!(dt.number_of_vertices(), 4);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RetryPolicy {
@@ -221,6 +312,21 @@ impl Default for RetryPolicy {
 ///
 /// Higher-level constructors delegate to the options-based constructor using
 /// [`ConstructionOptions::default`].
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::delaunay_triangulation::{
+///     ConstructionOptions, DedupPolicy, InsertionOrderStrategy, RetryPolicy,
+/// };
+///
+/// let options = ConstructionOptions::default()
+///     .with_insertion_order(InsertionOrderStrategy::Hilbert)
+///     .with_dedup_policy(DedupPolicy::Off)
+///     .with_retry_policy(RetryPolicy::Disabled);
+///
+/// assert_eq!(options.insertion_order(), InsertionOrderStrategy::Hilbert);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[non_exhaustive]
 pub struct ConstructionOptions {
@@ -532,6 +638,22 @@ where
 /// [`fill_cavity`]: crate::core::algorithms::incremental_insertion::fill_cavity
 /// [`wire_cavity_neighbors`]: crate::core::algorithms::incremental_insertion::wire_cavity_neighbors
 /// [`extend_hull`]: crate::core::algorithms::incremental_insertion::extend_hull
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::*;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+///
+/// assert_eq!(dt.number_of_cells(), 1);
+/// ```
 #[derive(Clone, Debug)]
 pub struct DelaunayTriangulation<K, U, V, const D: usize>
 where
@@ -595,6 +717,29 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
     ///
     /// # Errors
     /// Returns an error if construction fails, or if the selected options are invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::delaunay_triangulation::{
+    ///     ConstructionOptions, DedupPolicy, InsertionOrderStrategy,
+    /// };
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// let options = ConstructionOptions::default()
+    ///     .with_insertion_order(InsertionOrderStrategy::Hilbert)
+    ///     .with_dedup_policy(DedupPolicy::Exact);
+    ///
+    /// let dt = DelaunayTriangulation::new_with_options(&vertices, options).unwrap();
+    /// assert_eq!(dt.number_of_vertices(), 4);
+    /// ```
     pub fn new_with_options(
         vertices: &[Vertex<f64, (), D>],
         options: ConstructionOptions,
@@ -616,6 +761,27 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
     /// # Errors
     /// Returns error if construction fails or if the requested topology guarantee
     /// cannot be satisfied.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::triangulation::TopologyGuarantee;
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// let dt = DelaunayTriangulation::new_with_topology_guarantee(
+    ///     &vertices,
+    ///     TopologyGuarantee::Pseudomanifold,
+    /// )
+    /// .unwrap();
+    /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+    /// ```
     pub fn new_with_topology_guarantee(
         vertices: &[Vertex<f64, (), D>],
         topology_guarantee: TopologyGuarantee,
@@ -658,6 +824,19 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
     /// The default topology guarantee is [`TopologyGuarantee::PLManifold`]. Use this
     /// constructor to override it (e.g. relax to [`TopologyGuarantee::Pseudomanifold`]
     /// for speed at the cost of weaker topology guarantees).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::triangulation::TopologyGuarantee;
+    /// use delaunay::prelude::*;
+    ///
+    /// let dt: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+    ///
+    /// assert_eq!(dt.number_of_vertices(), 0);
+    /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+    /// ```
     #[must_use]
     pub fn empty_with_topology_guarantee(topology_guarantee: TopologyGuarantee) -> Self {
         Self::with_empty_kernel_and_topology_guarantee(FastKernel::<f64>::new(), topology_guarantee)
@@ -717,6 +896,22 @@ where
     ///
     /// This is the kernel-parameterized variant of
     /// [`DelaunayTriangulation::empty_with_topology_guarantee`].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::triangulation::TopologyGuarantee;
+    /// use delaunay::geometry::kernel::RobustKernel;
+    /// use delaunay::prelude::*;
+    ///
+    /// let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
+    ///     DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
+    ///         RobustKernel::new(),
+    ///         TopologyGuarantee::PLManifold,
+    ///     );
+    ///
+    /// assert_eq!(dt.number_of_vertices(), 0);
+    /// ```
     #[must_use]
     pub fn with_empty_kernel_and_topology_guarantee(
         kernel: K,
@@ -796,6 +991,30 @@ where
     /// # Errors
     /// Returns error if construction fails or if the requested topology guarantee
     /// cannot be satisfied.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::triangulation::TopologyGuarantee;
+    /// use delaunay::geometry::kernel::RobustKernel;
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
+    ///     DelaunayTriangulation::with_topology_guarantee(
+    ///         RobustKernel::new(),
+    ///         &vertices,
+    ///         TopologyGuarantee::PLManifold,
+    ///     )
+    ///     .unwrap();
+    /// assert_eq!(dt.number_of_vertices(), 4);
+    /// ```
     pub fn with_topology_guarantee(
         kernel: K,
         vertices: &[Vertex<K::Scalar, U, D>],
@@ -821,6 +1040,38 @@ where
     /// Returns an error if:
     /// - construction fails or the requested topology guarantee cannot be satisfied, or
     /// - the selected preprocessing options are invalid (e.g. a negative / non-finite epsilon tolerance).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::delaunay_triangulation::{
+    ///     ConstructionOptions, DedupPolicy, InsertionOrderStrategy,
+    /// };
+    /// use delaunay::core::triangulation::TopologyGuarantee;
+    /// use delaunay::geometry::kernel::RobustKernel;
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// let options = ConstructionOptions::default()
+    ///     .with_insertion_order(InsertionOrderStrategy::Hilbert)
+    ///     .with_dedup_policy(DedupPolicy::Off);
+    ///
+    /// let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
+    ///     DelaunayTriangulation::with_topology_guarantee_and_options(
+    ///         RobustKernel::new(),
+    ///         &vertices,
+    ///         TopologyGuarantee::PLManifold,
+    ///         options,
+    ///     )
+    ///     .unwrap();
+    /// assert_eq!(dt.number_of_cells(), 1);
+    /// ```
     pub fn with_topology_guarantee_and_options(
         kernel: K,
         vertices: &[Vertex<K::Scalar, U, D>],
@@ -1801,6 +2052,23 @@ where
     ///
     /// Returns a [`DelaunayRepairError`] if the repair fails to converge or an underlying
     /// flip operation fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// let stats = dt.repair_delaunay_with_flips().unwrap();
+    /// assert!(stats.facets_checked >= stats.flips_performed);
+    /// ```
     pub fn repair_delaunay_with_flips(&mut self) -> Result<DelaunayRepairStats, DelaunayRepairError>
     where
         K::Scalar: CoordinateScalar + Sum + Zero,
@@ -1907,6 +2175,26 @@ where
     ///
     /// Returns [`DelaunayRepairError`] if the flip-based repair fails or if the heuristic
     /// rebuild fallback cannot construct a valid triangulation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::delaunay_triangulation::DelaunayRepairHeuristicConfig;
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// let outcome = dt
+    ///     .repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())
+    ///     .unwrap();
+    /// assert!(outcome.stats.facets_checked >= outcome.stats.flips_performed);
+    /// ```
     pub fn repair_delaunay_with_flips_advanced(
         &mut self,
         config: DelaunayRepairHeuristicConfig,
@@ -2019,6 +2307,18 @@ where
     }
 
     /// Sets the topology guarantee used for Level 3 topology validation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::triangulation::TopologyGuarantee;
+    /// use delaunay::prelude::*;
+    ///
+    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    /// dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+    ///
+    /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+    /// ```
     #[inline]
     pub fn set_topology_guarantee(&mut self, guarantee: TopologyGuarantee) {
         self.tri.set_topology_guarantee(guarantee);
@@ -3279,6 +3579,17 @@ where
 /// (and removals that modify topology).
 /// It is separate from any *validation-only* policy to allow checking the Delaunay
 /// property without mutating topology when needed.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::delaunay_triangulation::DelaunayRepairPolicy;
+/// use std::num::NonZeroUsize;
+///
+/// let policy = DelaunayRepairPolicy::EveryN(NonZeroUsize::new(4).unwrap());
+/// assert!(!policy.should_repair(3));
+/// assert!(policy.should_repair(4));
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DelaunayRepairPolicy {
     /// Disable automatic Delaunay repairs.
@@ -3309,6 +3620,18 @@ impl DelaunayRepairPolicy {
     }
 }
 /// Configuration for the optional heuristic rebuild fallback in Delaunay repair.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::delaunay_triangulation::DelaunayRepairHeuristicConfig;
+///
+/// let config = DelaunayRepairHeuristicConfig {
+///     shuffle_seed: Some(7),
+///     perturbation_seed: Some(11),
+/// };
+/// assert_eq!(config.shuffle_seed, Some(7));
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DelaunayRepairHeuristicConfig {
     /// Optional RNG seed used to shuffle vertex insertion order.
@@ -3348,6 +3671,18 @@ impl DelaunayRepairHeuristicConfig {
 ///
 /// If the caller does not provide explicit seeds, deterministic defaults are derived from a stable
 /// hash of the current vertex set.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::delaunay_triangulation::DelaunayRepairHeuristicSeeds;
+///
+/// let seeds = DelaunayRepairHeuristicSeeds {
+///     shuffle_seed: 1,
+///     perturbation_seed: 2,
+/// };
+/// assert_eq!(seeds.shuffle_seed, 1);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DelaunayRepairHeuristicSeeds {
     /// RNG seed used to shuffle vertex insertion order.
@@ -3357,6 +3692,19 @@ pub struct DelaunayRepairHeuristicSeeds {
 }
 
 /// Result of a flip-based repair attempt, including heuristic fallback metadata.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::flips::DelaunayRepairStats;
+/// use delaunay::core::delaunay_triangulation::DelaunayRepairOutcome;
+///
+/// let outcome = DelaunayRepairOutcome {
+///     stats: DelaunayRepairStats::default(),
+///     heuristic: None,
+/// };
+/// assert!(!outcome.used_heuristic());
+/// ```
 #[derive(Debug, Clone)]
 pub struct DelaunayRepairOutcome {
     /// Statistics from the final flip-based repair pass.
@@ -3382,6 +3730,17 @@ impl DelaunayRepairOutcome {
 ///
 /// Global Delaunay validation is **extremely expensive**: O(cells × vertices). Use this policy
 /// primarily when you need correctness guarantees and are willing to pay the cost.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::delaunay_triangulation::DelaunayCheckPolicy;
+/// use std::num::NonZeroUsize;
+///
+/// let policy = DelaunayCheckPolicy::EveryN(NonZeroUsize::new(3).unwrap());
+/// assert!(!policy.should_check(2));
+/// assert!(policy.should_check(3));
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DelaunayCheckPolicy {
     /// Run global Delaunay validation once after batch construction (e.g. `new()` / `with_kernel()`).

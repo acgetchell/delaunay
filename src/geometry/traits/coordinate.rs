@@ -69,6 +69,20 @@ use std::{
 };
 
 /// Errors that can occur during coordinate conversion in geometric predicates.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::geometry::traits::coordinate::CoordinateConversionError;
+///
+/// let err = CoordinateConversionError::ConversionFailed {
+///     coordinate_index: 0,
+///     coordinate_value: "NaN".to_string(),
+///     from_type: "f64",
+///     to_type: "f32",
+/// };
+/// assert!(matches!(err, CoordinateConversionError::ConversionFailed { .. }));
+/// ```
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CoordinateConversionError {
     /// Coordinate conversion failed during matrix operations
@@ -125,6 +139,19 @@ impl From<crate::geometry::matrix::StackMatrixDispatchError> for CoordinateConve
 }
 
 /// Errors that can occur during coordinate validation.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::geometry::traits::coordinate::CoordinateValidationError;
+///
+/// let err = CoordinateValidationError::InvalidCoordinate {
+///     coordinate_index: 1,
+///     coordinate_value: "NaN".to_string(),
+///     dimension: 3,
+/// };
+/// assert!(matches!(err, CoordinateValidationError::InvalidCoordinate { .. }));
+/// ```
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CoordinateValidationError {
     /// A coordinate value is invalid (NaN or infinite).

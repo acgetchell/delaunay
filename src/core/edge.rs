@@ -18,6 +18,19 @@ use crate::core::triangulation_data_structure::VertexKey;
 use slotmap::Key;
 
 /// Canonical identifier for an (undirected) edge.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::edge::EdgeKey;
+/// use delaunay::core::triangulation_data_structure::VertexKey;
+/// use slotmap::KeyData;
+///
+/// let a = VertexKey::from(KeyData::from_ffi(1));
+/// let b = VertexKey::from(KeyData::from_ffi(2));
+/// let edge = EdgeKey::new(a, b);
+/// assert_eq!(edge.endpoints(), (edge.v0(), edge.v1()));
+/// ```
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct EdgeKey {
     v0: VertexKey,

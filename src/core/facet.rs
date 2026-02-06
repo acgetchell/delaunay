@@ -76,6 +76,15 @@ use thiserror::Error;
 // =============================================================================
 
 /// Error type for facet operations.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::facet::FacetError;
+///
+/// let err = FacetError::FacetNotFoundInTriangulation;
+/// assert!(matches!(err, FacetError::FacetNotFoundInTriangulation));
+/// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FacetError {
@@ -429,6 +438,24 @@ where
     /// Returns `FacetError` if:
     /// - `cell_key` is not found in the TDS
     /// - `facet_index` is out of bounds (>= D+1)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// let (cell_key, _) = dt.cells().next().unwrap();
+    /// let facet = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+    /// assert_eq!(facet.facet_index(), 0);
+    /// ```
     pub fn new(
         tds: &'tds Tds<T, U, V, D>,
         cell_key: CellKey,
@@ -476,7 +503,7 @@ where
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust
     /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
@@ -526,6 +553,25 @@ where
     /// # Errors
     ///
     /// Returns `FacetError::CellNotFoundInTriangulation` if the cell is no longer in the TDS.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let (cell_key, _) = dt.cells().next().unwrap();
+    ///
+    /// let facet = FacetView::new(dt.tds(), cell_key, 1).unwrap();
+    /// let opposite = facet.opposite_vertex().unwrap();
+    /// assert_eq!(opposite.point().coords().len(), 3);
+    /// ```
     pub fn opposite_vertex(&self) -> Result<&'tds Vertex<T, U, D>, FacetError> {
         let cell = self
             .tds
@@ -558,6 +604,25 @@ where
     /// # Errors
     ///
     /// Returns `FacetError::CellNotFoundInTriangulation` if the cell is no longer in the TDS.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let (cell_key, _) = dt.cells().next().unwrap();
+    ///
+    /// let facet = FacetView::new(dt.tds(), cell_key, 2).unwrap();
+    /// let cell = facet.cell().unwrap();
+    /// assert_eq!(cell.number_of_vertices(), 4);
+    /// ```
     pub fn cell(&self) -> Result<&'tds Cell<T, U, V, D>, FacetError> {
         self.tds
             .get_cell(self.cell_key)
@@ -577,6 +642,26 @@ where
     /// # Errors
     ///
     /// Returns `FacetError` if vertex keys cannot be retrieved.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let (cell_key, _) = dt.cells().next().unwrap();
+    ///
+    /// let facet = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+    /// let facet_key = facet.key().unwrap();
+    /// let map = dt.tds().build_facet_to_cells_map().unwrap();
+    /// assert!(map.contains_key(&facet_key));
+    /// ```
     pub fn key(&self) -> Result<u64, FacetError> {
         // Get vertex keys for the facet vertices
         let cell_vertices = self.tds.get_cell_vertices(self.cell_key).map_err(|e| {
@@ -684,6 +769,25 @@ where
 ///
 /// Removed unnecessary numeric bounds (`AddAssign`, `SubAssign`, `Sum`, `NumCast`, `Div`)
 /// since this function doesn't perform any arithmetic operations.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::*;
+/// use delaunay::core::facet::all_facets_for_cell;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let (cell_key, _) = dt.cells().next().unwrap();
+///
+/// let facets = all_facets_for_cell(dt.tds(), cell_key).unwrap();
+/// assert_eq!(facets.len(), 4);
+/// ```
 pub fn all_facets_for_cell<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cell_key: CellKey,
@@ -714,6 +818,24 @@ where
 /// This iterator provides efficient access to all facets without allocating
 /// a vector. It's particularly useful for performance-critical operations
 /// like boundary detection and cavity analysis in triangulation insertion.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::facet::AllFacetsIter;
+/// use delaunay::prelude::*;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+///
+/// let count = AllFacetsIter::new(dt.tds()).count();
+/// assert_eq!(count, 4);
+/// ```
 #[derive(Clone)]
 pub struct AllFacetsIter<'tds, T, U, V, const D: usize>
 where
@@ -740,6 +862,24 @@ where
     ///
     /// Panics if `D > 255`, since facet indices are stored as `u8`.
     /// This check is performed at runtime but optimizes away since `D` is a compile-time constant.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::facet::AllFacetsIter;
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// let mut iter = AllFacetsIter::new(dt.tds());
+    /// assert!(iter.next().is_some());
+    /// ```
     #[must_use]
     pub fn new(tds: &'tds Tds<T, U, V, D>) -> Self {
         // Dimension check: facets per cell = D+1, so D must be <= 255
@@ -811,6 +951,25 @@ where
 ///
 /// This iterator efficiently identifies and yields only the boundary facets
 /// (facets that belong to only one cell) without pre-computing all facets.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::facet::BoundaryFacetsIter;
+/// use delaunay::prelude::*;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let facet_map = dt.tds().build_facet_to_cells_map().unwrap();
+///
+/// let count = BoundaryFacetsIter::new(dt.tds(), facet_map).count();
+/// assert_eq!(count, 4);
+/// ```
 #[derive(Clone)]
 pub struct BoundaryFacetsIter<'tds, T, U, V, const D: usize>
 where
@@ -829,6 +988,25 @@ where
     V: DataType,
 {
     /// Creates a new iterator over boundary facets.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::facet::BoundaryFacetsIter;
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let facet_map = dt.tds().build_facet_to_cells_map().unwrap();
+    ///
+    /// let mut iter = BoundaryFacetsIter::new(dt.tds(), facet_map);
+    /// assert!(iter.next().is_some());
+    /// ```
     #[must_use]
     pub fn new(
         tds: &'tds Tds<T, U, V, D>,
