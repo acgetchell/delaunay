@@ -418,7 +418,7 @@ where
 {
     primary: Option<VertexBuffer<T, U, D>>,
     fallback: Option<VertexBuffer<T, U, D>>,
-    dedup_grid: Option<HashGridIndex<T, D, usize>>,
+    grid_cell_size: Option<T>,
 }
 
 impl<T, U, const D: usize> PreprocessVertices<T, U, D>
@@ -434,11 +434,11 @@ where
         self.fallback.as_deref()
     }
 
-    fn grid_cell_size(&self) -> Option<T>
+    const fn grid_cell_size(&self) -> Option<T>
     where
         T: Copy,
     {
-        self.dedup_grid.as_ref().map(HashGridIndex::cell_size)
+        self.grid_cell_size
     }
 }
 
@@ -789,11 +789,18 @@ where
         SmallBuffer<usize, BATCH_DEDUP_BUCKET_INLINE_CAPACITY>,
     > = FastHashMap::default();
     let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(vertices.len());
-
-    for v in vertices {
+    let mut iter = vertices.into_iter();
+    while let Some(v) = iter.next() {
         let coords = v.point().coords();
         let Some(base_key) = quantize_coords(coords, inv_cell) else {
-            return dedup_vertices_epsilon_n2(unique.into_iter().chain([v]).collect(), epsilon);
+            return dedup_vertices_epsilon_n2(
+                unique
+                    .into_iter()
+                    .chain(std::iter::once(v))
+                    .chain(iter)
+                    .collect(),
+                epsilon,
+            );
         };
 
         let mut duplicate = false;
@@ -1365,8 +1372,7 @@ where
     /// ```
     #[must_use]
     pub fn with_empty_kernel(kernel: K) -> Self {
-        let duplicate_tolerance: K::Scalar =
-            <K::Scalar as NumCast>::from(1e-10_f64).unwrap_or_else(K::Scalar::default_tolerance);
+        let duplicate_tolerance = default_duplicate_tolerance::<K::Scalar>();
 
         Self {
             tri: Triangulation::new_empty(kernel),
@@ -1400,8 +1406,7 @@ where
         kernel: K,
         topology_guarantee: TopologyGuarantee,
     ) -> Self {
-        let duplicate_tolerance: K::Scalar =
-            <K::Scalar as NumCast>::from(1e-10_f64).unwrap_or_else(K::Scalar::default_tolerance);
+        let duplicate_tolerance = default_duplicate_tolerance::<K::Scalar>();
 
         let mut tri = Triangulation::new_empty(kernel);
         tri.set_topology_guarantee(topology_guarantee);
@@ -1669,7 +1674,7 @@ where
             epsilon = Some(epsilon_value);
         }
 
-        let grid_cell_size =
+        let grid_cell_size_value =
             if let (DedupPolicy::Epsilon { .. }, Some(eps)) = (dedup_policy, epsilon) {
                 if eps > K::Scalar::zero() {
                     eps
@@ -1679,7 +1684,7 @@ where
             } else {
                 default_tolerance
             };
-        let mut grid: HashGridIndex<K::Scalar, D, usize> = HashGridIndex::new(grid_cell_size);
+        let mut grid: HashGridIndex<K::Scalar, D, usize> = HashGridIndex::new(grid_cell_size_value);
 
         // Deduplicate first to reduce work for ordering strategies.
         let mut owned_vertices: Option<Vec<Vertex<K::Scalar, U, D>>> = match dedup_policy {
@@ -1730,19 +1735,16 @@ where
         };
 
         let final_slice = primary.as_deref().unwrap_or(vertices);
-        let mut dedup_grid = None;
-        if hash_grid_usable_for_vertices(&grid, final_slice) {
-            grid.clear();
-            for (idx, vertex) in final_slice.iter().enumerate() {
-                grid.insert_vertex(idx, vertex.point().coords());
-            }
-            dedup_grid = Some(grid);
-        }
+        let grid_cell_size = if hash_grid_usable_for_vertices(&grid, final_slice) {
+            Some(grid.cell_size())
+        } else {
+            None
+        };
 
         Ok(PreprocessVertices {
             primary,
             fallback,
-            dedup_grid,
+            grid_cell_size,
         })
     }
 

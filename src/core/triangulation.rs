@@ -4761,6 +4761,15 @@ mod tests {
 
     #[test]
     fn test_duplicate_detection_metrics_force_enable() {
+        struct DuplicateDetectionGuard;
+
+        impl Drop for DuplicateDetectionGuard {
+            fn drop(&mut self) {
+                DUPLICATE_DETECTION_FORCE_ENABLED.store(false, Ordering::Relaxed);
+            }
+        }
+
+        let _guard = DuplicateDetectionGuard;
         DUPLICATE_DETECTION_FORCE_ENABLED.store(true, Ordering::Relaxed);
 
         let before = Triangulation::<FastKernel<f64>, (), (), 2>::duplicate_detection_metrics()

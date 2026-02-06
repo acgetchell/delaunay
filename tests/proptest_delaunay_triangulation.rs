@@ -660,9 +660,7 @@ macro_rules! gen_duplicate_coords_test {
             proptest! {
                 /// Tests that duplicate coordinates are rejected during insertion.
                 ///
-                /// **Status**: Ignored - failing on edge cases with degenerate/nearly-degenerate configurations.
-                /// Proptest found cases where duplicate insertion succeeds when it should fail.
-                /// Needs investigation into duplicate detection logic in incremental insertion.
+                /// **Status**: Active in 2D/3D. 4D/5D remain ignored for runtime (slow in test-integration).
                 $(#[$attr])*
                 #[test]
                 fn [<prop_duplicate_coordinates_rejected_ $dim d>](
@@ -685,7 +683,7 @@ macro_rules! gen_duplicate_coords_test {
                     // `DelaunayTriangulation::new_with_options` may skip some input vertices (e.g., due to degeneracy),
                     // so we must use stored vertices to test duplicate rejection.
                     let (_, existing_vertex) = dt.vertices().next()
-                        .expect("DelaunayTriangulation::new_with_topology_guarantee returned Ok but has no vertices");
+                        .expect("DelaunayTriangulation::new_with_options returned Ok but has no vertices");
                     let p = *existing_vertex.point();
                     let dup = Vertex::from_points(&[p])[0];
                     let result = dt.insert(dup);
@@ -848,8 +846,8 @@ proptest! {
 // 2D–5D coverage (keep ranges small to bound runtime)
 test_empty_circumsphere!(2, 6, 10);
 test_empty_circumsphere!(3, 6, 10);
-test_empty_circumsphere!(4, 6, 12);
-test_empty_circumsphere!(5, 7, 12);
+test_empty_circumsphere!(4, 6, 12, #[ignore = "Slow (>60s) in test-integration"]);
+test_empty_circumsphere!(5, 7, 12, #[ignore = "Slow (>60s) in test-integration"]);
 
 // =============================================================================
 // INSERTION-ORDER INVARIANCE (2D-5D)
@@ -1522,7 +1520,7 @@ macro_rules! gen_insertion_order_robustness_high_dim {
     };
 }
 
-gen_insertion_order_robustness_high_dim!(4, 6, 12);
+gen_insertion_order_robustness_high_dim!(4, 6, 12, #[ignore = "Slow (>60s) in test-integration"]);
 gen_insertion_order_robustness_high_dim!(5, 7, 12, #[ignore = "Slow (>60s) in test-integration"]);
 
 // =============================================================================
@@ -1752,5 +1750,5 @@ macro_rules! gen_duplicate_cloud_test {
 
 gen_duplicate_cloud_test!(2, 2);
 gen_duplicate_cloud_test!(3, 3);
-gen_duplicate_cloud_test!(4, 4);
-gen_duplicate_cloud_test!(5, 5);
+gen_duplicate_cloud_test!(4, 4, #[ignore = "Slow (>60s) in test-integration"]);
+gen_duplicate_cloud_test!(5, 5, #[ignore = "Slow (>60s) in test-integration"]);

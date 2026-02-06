@@ -141,6 +141,6 @@ macro_rules! test_cell_properties {
 // Generate tests for dimensions 2-5
 // Parameters: dimension, min_vertices, max_vertices, expected_vertices (D+1), max_neighbors (D+1)
 test_cell_properties!(2, 4, 10, 3, 3);
-test_cell_properties!(3, 5, 12, 4, 4, #[ignore = "Slow (>60s) in test-integration"]);
+test_cell_properties!(3, 5, 12, 4, 4);
 test_cell_properties!(4, 6, 14, 5, 5, #[ignore = "Slow (>60s) in test-integration"]);
 test_cell_properties!(5, 7, 16, 6, 6, #[ignore = "Slow (>60s) in test-integration"]);

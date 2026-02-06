@@ -337,6 +337,6 @@ test_minimal_simplex_hull!(3);
 test_minimal_simplex_hull!(4);
 test_minimal_simplex_hull!(5);
 test_convex_hull_properties!(2, 4, 10);
-test_convex_hull_properties!(3, 5, 12, #[ignore = "Slow (>60s) in test-integration"]);
+test_convex_hull_properties!(3, 5, 12);
 test_convex_hull_properties!(4, 6, 14, #[ignore = "Slow (>60s) in test-integration"]);
 test_convex_hull_properties!(5, 7, 16, #[ignore = "Slow (>60s) in test-integration"]);

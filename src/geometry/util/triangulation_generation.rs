@@ -869,6 +869,7 @@ mod tests {
         );
         assert_eq!(triangulation1.dim(), triangulation2.dim());
     }
+
     #[test]
     fn test_random_triangulation_try_with_vertices_exercises_fallbacks() {
         // Use a valid 2D simplex, but require more vertices than provided to force retries.

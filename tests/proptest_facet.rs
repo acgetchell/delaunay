@@ -168,7 +168,7 @@ macro_rules! test_facet_properties {
 // Generate tests for dimensions 2-5
 // Parameters: dimension, min_vertices, max_vertices, expected_facet_vertices (D)
 test_facet_properties!(2, 4, 10, 2);
-test_facet_properties!(3, 5, 12, 3, #[ignore = "Slow (>60s) in test-integration"]);
+test_facet_properties!(3, 5, 12, 3);
 test_facet_properties!(4, 6, 14, 4, #[ignore = "Slow (>60s) in test-integration"]);
 test_facet_properties!(5, 7, 16, 5, #[ignore = "Slow (>60s) in test-integration"]);
 
@@ -220,6 +220,6 @@ macro_rules! test_facet_multiplicity {
 }
 
 test_facet_multiplicity!(2, 4, 10);
-test_facet_multiplicity!(3, 5, 12, #[ignore = "Slow (>60s) in test-integration"]);
+test_facet_multiplicity!(3, 5, 12);
 test_facet_multiplicity!(4, 6, 14, #[ignore = "Slow (>60s) in test-integration"]);
 test_facet_multiplicity!(5, 7, 16, #[ignore = "Slow (>60s) in test-integration"]);

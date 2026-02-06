@@ -220,6 +220,6 @@ macro_rules! test_serialization_properties {
 // Generate tests for dimensions 2-5
 // Parameters: dimension, min_vertices, max_vertices
 test_serialization_properties!(2, 4, 10);
-test_serialization_properties!(3, 5, 12, #[ignore = "Slow (>60s) in test-integration"]);
+test_serialization_properties!(3, 5, 12);
 test_serialization_properties!(4, 6, 14, #[ignore = "Slow (>60s) in test-integration"]);
 test_serialization_properties!(5, 7, 16, #[ignore = "Slow (>60s) in test-integration"]);
