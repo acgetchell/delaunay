@@ -178,13 +178,22 @@ static DUPLICATE_DETECTION_TOTAL: AtomicU64 = AtomicU64::new(0);
 static DUPLICATE_DETECTION_GRID_USED: AtomicU64 = AtomicU64::new(0);
 static DUPLICATE_DETECTION_GRID_FALLBACKS: AtomicU64 = AtomicU64::new(0);
 static DUPLICATE_DETECTION_GRID_CANDIDATES: AtomicU64 = AtomicU64::new(0);
+static DUPLICATE_DETECTION_ENABLED: OnceLock<bool> = OnceLock::new();
+
+#[cfg(test)]
+static DUPLICATE_DETECTION_FORCE_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(debug_assertions)]
 static VERTEX_TO_CELLS_SPILL_EVENTS: AtomicU64 = AtomicU64::new(0);
 
 fn duplicate_detection_metrics_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("DELAUNAY_DUPLICATE_METRICS").is_some())
+    #[cfg(test)]
+    if DUPLICATE_DETECTION_FORCE_ENABLED.load(Ordering::Relaxed) {
+        return true;
+    }
+    *DUPLICATE_DETECTION_ENABLED
+        .get_or_init(|| std::env::var_os("DELAUNAY_DUPLICATE_METRICS").is_some())
 }
 
 /// Telemetry counters for duplicate-coordinate detection.
@@ -4748,6 +4757,25 @@ mod tests {
 
         tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
         assert_eq!(tri.topology_guarantee(), TopologyGuarantee::PLManifold);
+    }
+
+    #[test]
+    fn test_duplicate_detection_metrics_force_enable() {
+        DUPLICATE_DETECTION_FORCE_ENABLED.store(true, Ordering::Relaxed);
+
+        let before = Triangulation::<FastKernel<f64>, (), (), 2>::duplicate_detection_metrics()
+            .expect("duplicate detection metrics should be enabled");
+
+        record_duplicate_detection_metrics(true, 3, false);
+        record_duplicate_detection_metrics(false, 0, true);
+
+        let after = Triangulation::<FastKernel<f64>, (), (), 2>::duplicate_detection_metrics()
+            .expect("duplicate detection metrics should be enabled");
+
+        assert!(after.total_checks > before.total_checks);
+        assert!(after.grid_used > before.grid_used);
+        assert!(after.grid_fallbacks > before.grid_fallbacks);
+        assert!(after.grid_candidates >= before.grid_candidates + 3);
     }
 
     #[test]

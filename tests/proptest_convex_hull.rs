@@ -26,6 +26,53 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 // DIMENSIONAL TEST GENERATION MACROS
 // =============================================================================
 
+/// Macro to generate minimal simplex hull property tests for a given dimension
+macro_rules! test_minimal_simplex_hull {
+    ($dim:literal $(, #[$attr:meta])*) => {
+        pastey::paste! {
+            proptest! {
+                /// Property: Hull facet count for minimal simplex is D+1
+                $(#[$attr])*
+                #[test]
+                fn [<prop_minimal_simplex_hull_ $dim d>](
+                    base_scale in 0.1f64..10.0f64
+                ) {
+                    // Create a minimal simplex (D+1 vertices in D dimensions)
+                    let mut points = Vec::new();
+
+                    // Origin
+                    points.push(Point::new([0.0f64; $dim]));
+
+                    // D more points along coordinate axes
+                    for i in 0..$dim {
+                        let mut coords = [0.0f64; $dim];
+                        coords[i] = base_scale;
+                        points.push(Point::new(coords));
+                    }
+
+                    let vertices = Vertex::from_points(&points);
+
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
+                        if let Ok(hull) = ConvexHull::from_triangulation(dt.as_triangulation()) {
+                            // A minimal D-simplex should have exactly D+1 facets
+                            prop_assert_eq!(
+                                hull.number_of_facets(),
+                                $dim + 1,
+                                "{}D minimal simplex hull should have exactly {} facets",
+                                $dim,
+                                $dim + 1
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    };
+}
+
 /// Macro to generate convex hull property tests for a given dimension
 macro_rules! test_convex_hull_properties {
     ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
@@ -228,44 +275,6 @@ macro_rules! test_convex_hull_properties {
                     }
                 }
 
-                /// Property: Hull facet count for minimal simplex is D+1
-                $(#[$attr])*
-                #[test]
-                fn [<prop_minimal_simplex_hull_ $dim d>](
-                    base_scale in 0.1f64..10.0f64
-                ) {
-                    // Create a minimal simplex (D+1 vertices in D dimensions)
-                    let mut points = Vec::new();
-
-                    // Origin
-                    points.push(Point::new([0.0f64; $dim]));
-
-                    // D more points along coordinate axes
-                    for i in 0..$dim {
-                        let mut coords = [0.0f64; $dim];
-                        coords[i] = base_scale;
-                        points.push(Point::new(coords));
-                    }
-
-                    let vertices = Vertex::from_points(&points);
-
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
-                        if let Ok(hull) = ConvexHull::from_triangulation(dt.as_triangulation()) {
-                            // A minimal D-simplex should have exactly D+1 facets
-                            prop_assert_eq!(
-                                hull.number_of_facets(),
-                                $dim + 1,
-                                "{}D minimal simplex hull should have exactly {} facets",
-                                $dim,
-                                $dim + 1
-                            );
-                        }
-                    }
-                }
-
                 /// Property: Reconstructing hull from same TDS gives consistent facet count
                 $(#[$attr])*
                 #[test]
@@ -323,6 +332,10 @@ macro_rules! test_convex_hull_properties {
 
 // Generate tests for dimensions 2-5
 // Parameters: dimension, min_vertices, max_vertices
+test_minimal_simplex_hull!(2);
+test_minimal_simplex_hull!(3);
+test_minimal_simplex_hull!(4);
+test_minimal_simplex_hull!(5);
 test_convex_hull_properties!(2, 4, 10);
 test_convex_hull_properties!(3, 5, 12, #[ignore = "Slow (>60s) in test-integration"]);
 test_convex_hull_properties!(4, 6, 14, #[ignore = "Slow (>60s) in test-integration"]);

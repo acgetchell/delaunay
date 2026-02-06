@@ -682,7 +682,7 @@ macro_rules! gen_duplicate_coords_test {
                     dt.set_validation_policy(ValidationPolicy::Never);
                     dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
                     // Select a vertex that is actually present in the triangulation.
-                    // `DelaunayTriangulation::new_with_topology_guarantee` may skip some input vertices (e.g., due to degeneracy),
+                    // `DelaunayTriangulation::new_with_options` may skip some input vertices (e.g., due to degeneracy),
                     // so we must use stored vertices to test duplicate rejection.
                     let (_, existing_vertex) = dt.vertices().next()
                         .expect("DelaunayTriangulation::new_with_topology_guarantee returned Ok but has no vertices");

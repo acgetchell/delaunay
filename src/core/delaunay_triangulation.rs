@@ -4357,6 +4357,7 @@ mod tests {
     use super::*;
     use crate::core::algorithms::flips::DelaunayRepairError;
     use crate::geometry::kernel::{FastKernel, RobustKernel};
+    use crate::geometry::traits::coordinate::Coordinate;
     use crate::topology::edit::TopologyEdit;
     use crate::vertex;
     use rand::{Rng, SeedableRng};
@@ -4423,6 +4424,121 @@ mod tests {
         assert_eq!(dt.number_of_vertices(), 4);
         assert_eq!(dt.number_of_cells(), 1);
         assert!(dt.validate().is_ok());
+    }
+
+    #[test]
+    fn test_select_balanced_simplex_indices_insufficient_vertices() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+        ];
+
+        let result = select_balanced_simplex_indices(&vertices);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_select_balanced_simplex_indices_rejects_non_finite_coords() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            Vertex::new_with_uuid(
+                crate::geometry::point::Point::new([f64::NAN, 0.0, 0.0]),
+                Uuid::new_v4(),
+                None,
+            ),
+        ];
+
+        let result = select_balanced_simplex_indices(&vertices);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_reorder_vertices_for_simplex_valid_and_invalid() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([2.0, 2.0, 2.0]),
+        ];
+
+        let indices = [2_usize, 0, 3, 1];
+        let reordered =
+            reorder_vertices_for_simplex(&vertices, &indices).expect("expected valid reorder");
+
+        let expected_first: Vec<[f64; 3]> =
+            indices.iter().map(|&i| (&vertices[i]).into()).collect();
+        let actual_first: Vec<[f64; 3]> = reordered.iter().take(4).map(Into::into).collect();
+        assert_eq!(actual_first, expected_first);
+
+        let remaining_expected: Vec<[f64; 3]> = vertices
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| !indices.contains(idx))
+            .map(|(_, v)| (*v).into())
+            .collect();
+        let remaining_actual: Vec<[f64; 3]> = reordered.iter().skip(4).map(Into::into).collect();
+        assert_eq!(remaining_actual, remaining_expected);
+
+        assert!(reorder_vertices_for_simplex(&vertices, &[0, 1, 2]).is_none());
+        assert!(reorder_vertices_for_simplex(&vertices, &[0, 1, 1, 2]).is_none());
+        assert!(reorder_vertices_for_simplex(&vertices, &[0, 1, 2, 99]).is_none());
+    }
+
+    #[test]
+    fn test_preprocess_vertices_for_construction_balanced_sets_fallback() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([2.0, 2.0, 2.0]),
+        ];
+
+        let preprocess = DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::preprocess_vertices_for_construction(
+            &vertices,
+            DedupPolicy::Off,
+            InsertionOrderStrategy::Input,
+            InitialSimplexStrategy::Balanced,
+        )
+        .expect("preprocess failed");
+
+        assert!(preprocess.fallback_slice().is_some());
+        assert_eq!(preprocess.primary_slice(&vertices).len(), vertices.len());
+        assert_eq!(preprocess.fallback_slice().unwrap().len(), vertices.len());
+        assert!(preprocess.grid_cell_size().is_some());
+    }
+
+    #[test]
+    fn test_preprocess_vertices_rejects_invalid_epsilon_tolerance() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let result = DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::preprocess_vertices_for_construction(
+            &vertices,
+            DedupPolicy::Epsilon { tolerance: -1.0 },
+            InsertionOrderStrategy::Input,
+            InitialSimplexStrategy::First,
+        );
+
+        assert!(matches!(
+            result,
+            Err(DelaunayTriangulationConstructionError::Triangulation(
+                TriangulationConstructionError::GeometricDegeneracy { .. }
+            ))
+        ));
     }
 
     fn vertices_from_coords_permutation_3d(
