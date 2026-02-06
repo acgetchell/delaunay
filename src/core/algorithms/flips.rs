@@ -53,6 +53,8 @@ use num_traits::Zero;
 
 /// Bistellar flip kind descriptor.
 ///
+/// Access the move size with [`BistellarFlipKind::k`].
+///
 /// # Examples
 ///
 /// ```rust
@@ -70,7 +72,7 @@ pub struct BistellarFlipKind {
     /// Dimension of the triangulation (D).
     pub d: usize,
 }
-
+/// Run a single flip-repair attempt using k=2 (and k=3 in 3D+).
 fn repair_delaunay_with_flips_k2_k3_attempt<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -188,6 +190,7 @@ where
     Ok(stats)
 }
 
+/// Apply a bistellar flip using explicit k and vertex/cell slices.
 #[expect(
     clippy::too_many_lines,
     reason = "Keep flip construction, validation, and wiring together for clarity"
@@ -385,6 +388,13 @@ where
     )
 }
 
+/// Apply a generic k-move with runtime k (no Delaunay check).
+///
+/// # Errors
+///
+/// Returns a [`FlipError`] if the flip would be degenerate, duplicate an existing cell,
+/// create non-manifold topology, if predicate evaluation fails, or if underlying TDS
+/// mutations fail.
 pub(crate) fn apply_bistellar_flip_dynamic<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -435,7 +445,7 @@ impl FlipDirection {
         }
     }
 }
-
+/// Detect repeated flip signatures and abort on cycles.
 fn check_flip_cycle(
     signature: u64,
     diagnostics: &mut RepairDiagnostics,
@@ -469,7 +479,7 @@ fn check_flip_cycle(
 impl BistellarFlipKind {
     /// Number of simplices being replaced on the current side (k).
     #[must_use]
-    pub const fn k(self) -> usize {
+    pub const fn k(&self) -> usize {
         self.k
     }
     /// Construct a k=1 flip kind for the given dimension.
@@ -991,6 +1001,7 @@ pub struct DelaunayRepairDiagnostics {
 }
 
 impl fmt::Display for DelaunayRepairDiagnostics {
+    /// Format a concise diagnostics summary.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -1261,7 +1272,7 @@ where
         direction: FlipDirection::Inverse,
     })
 }
-
+/// Build a forward k=1 flip context from a cell and inserted vertex.
 fn build_k1_forward_context_from_cell<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cell_key: CellKey,
@@ -1377,6 +1388,7 @@ where
 }
 
 #[allow(clippy::too_many_lines)]
+/// Evaluate the k=2 facet flip predicate for a local Delaunay violation.
 fn delaunay_violation_k2_for_facet<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -1512,7 +1524,7 @@ where
 
     Ok(violates)
 }
-
+/// Check whether a k=2 flip would create a degenerate cell.
 fn k2_flip_would_create_degenerate_cell<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -1813,7 +1825,7 @@ where
         direction: FlipDirection::Inverse,
     })
 }
-
+/// Evaluate the k=3 ridge flip predicate for a local Delaunay violation.
 fn delaunay_violation_k3_for_ridge<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
