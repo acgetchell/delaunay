@@ -45,7 +45,7 @@ use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::simplex_orientation;
 use crate::geometry::traits::coordinate::{
-    Coordinate, CoordinateConversionError, CoordinateScalar,
+    Coordinate, CoordinateConversionError, CoordinateScalar, ScalarAccumulative,
 };
 use crate::geometry::util::{safe_usize_to_scalar, squared_norm};
 use arc_swap::ArcSwapOption;
@@ -1569,7 +1569,7 @@ where
 impl<K, U, V, const D: usize> FacetCacheProvider<K::Scalar, U, V, D> for ConvexHull<K, U, V, D>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + AddAssign + SubAssign + std::iter::Sum,
+    K::Scalar: ScalarAccumulative,
     U: DataType,
     V: DataType,
 {

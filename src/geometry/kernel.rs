@@ -11,8 +11,9 @@ use crate::geometry::predicates::{InSphere, Orientation, insphere, simplex_orien
 use crate::geometry::robust_predicates::{
     RobustPredicateConfig, config_presets, robust_insphere, robust_orientation,
 };
-use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
-use core::iter::Sum;
+use crate::geometry::traits::coordinate::{
+    CoordinateConversionError, CoordinateScalar, ScalarSummable,
+};
 use core::marker::PhantomData;
 
 /// Geometric kernel trait defining predicates for triangulation algorithms.
@@ -211,7 +212,7 @@ impl<T: CoordinateScalar> FastKernel<T> {
 
 impl<T, const D: usize> Kernel<D> for FastKernel<T>
 where
-    T: CoordinateScalar + Sum,
+    T: ScalarSummable,
 {
     type Scalar = T;
 
@@ -357,7 +358,7 @@ impl<T: CoordinateScalar> Default for RobustKernel<T> {
 
 impl<T, const D: usize> Kernel<D> for RobustKernel<T>
 where
-    T: CoordinateScalar + Sum,
+    T: ScalarSummable,
 {
     type Scalar = T;
 

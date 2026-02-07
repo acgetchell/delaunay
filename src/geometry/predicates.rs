@@ -9,14 +9,13 @@
 use crate::core::cell::CellValidationError;
 use crate::geometry::matrix::{determinant, matrix_set};
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
+use crate::geometry::traits::coordinate::{CoordinateConversionError, ScalarSummable};
 use crate::geometry::util::{
     circumcenter, circumradius_with_center, hypot, safe_coords_to_f64, safe_scalar_to_f64,
     squared_norm,
 };
 use crate::prelude::CircumcenterError;
 use num_traits::Float;
-use std::iter::Sum;
 
 /// Represents the position of a point relative to a circumsphere.
 ///
@@ -131,7 +130,7 @@ pub fn simplex_orientation<T, const D: usize>(
     simplex_points: &[Point<T, D>],
 ) -> Result<Orientation, CoordinateConversionError>
 where
-    T: CoordinateScalar + Sum,
+    T: ScalarSummable,
 {
     if simplex_points.len() != D + 1 {
         return Err(CoordinateConversionError::ConversionFailed {
@@ -234,7 +233,7 @@ pub fn insphere_distance<T, const D: usize>(
     test_point: Point<T, D>,
 ) -> Result<InSphere, CircumcenterError>
 where
-    T: CoordinateScalar + Sum,
+    T: ScalarSummable,
 {
     let circumcenter = circumcenter(simplex_points)?;
     let circumradius = circumradius_with_center(simplex_points, &circumcenter)?;
@@ -372,7 +371,7 @@ pub fn insphere<T, const D: usize>(
     test_point: Point<T, D>,
 ) -> Result<InSphere, CoordinateConversionError>
 where
-    T: CoordinateScalar + Sum,
+    T: ScalarSummable,
 {
     if simplex_points.len() != D + 1 {
         return Err(CoordinateConversionError::ConversionFailed {
@@ -540,7 +539,7 @@ pub fn insphere_lifted<T, const D: usize>(
     test_point: Point<T, D>,
 ) -> Result<InSphere, CellValidationError>
 where
-    T: CoordinateScalar + Sum,
+    T: ScalarSummable,
 {
     if simplex_points.len() != D + 1 {
         return Err(CellValidationError::InsufficientVertices {

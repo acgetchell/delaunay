@@ -11,11 +11,10 @@ use crate::core::facet::FacetView;
 use crate::core::traits::data_type::DataType;
 use crate::geometry::matrix::{Matrix, matrix_get, matrix_set};
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
+use crate::geometry::traits::coordinate::{Coordinate, ScalarAccumulative, ScalarSummable};
 use la_stack::{DEFAULT_SINGULAR_TOL, LaError};
 use num_traits::Float;
-use std::iter::Sum;
-use std::ops::{AddAssign, SubAssign};
+use std::ops::AddAssign;
 
 // Re-export error types
 pub use super::{CircumcenterError, SurfaceMeasureError, ValueConversionError};
@@ -78,7 +77,7 @@ pub use super::{CircumcenterError, SurfaceMeasureError, ValueConversionError};
 /// ```
 pub fn simplex_volume<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
 where
-    T: CoordinateScalar + Sum,
+    T: ScalarSummable,
 {
     #[cfg(debug_assertions)]
     if std::env::var_os("DELAUNAY_DEBUG_UNUSED_IMPORTS").is_some() {
@@ -275,7 +274,7 @@ fn simplex_volume_gram_matrix<T, const D: usize>(
     points: &[Point<T, D>],
 ) -> Result<T, CircumcenterError>
 where
-    T: CoordinateScalar + Sum,
+    T: ScalarSummable,
 {
     // Convert points to f64 and create edge vectors from first point to all others
     let p0_coords = points[0].coords();
@@ -370,7 +369,7 @@ where
 /// ```
 pub fn inradius<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
 where
-    T: CoordinateScalar + Sum + AddAssign<T>,
+    T: ScalarSummable + AddAssign<T>,
 {
     if points.len() != D + 1 {
         return Err(CircumcenterError::InvalidSimplex {
@@ -497,7 +496,7 @@ where
 /// ```
 pub fn facet_measure<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
 where
-    T: CoordinateScalar + Sum,
+    T: ScalarSummable,
 {
     if points.len() != D {
         return Err(CircumcenterError::InvalidSimplex {
@@ -626,7 +625,7 @@ fn facet_measure_gram_matrix<T, const D: usize>(
     points: &[Point<T, D>],
 ) -> Result<T, CircumcenterError>
 where
-    T: CoordinateScalar + Sum,
+    T: ScalarSummable,
 {
     // Convert points to f64.
     let mut coords_f64 = [[0.0f64; D]; D];
@@ -725,7 +724,7 @@ pub fn surface_measure<T, U, V, const D: usize>(
     facets: &[FacetView<'_, T, U, V, D>],
 ) -> Result<T, SurfaceMeasureError>
 where
-    T: CoordinateScalar + Sum + AddAssign<T> + SubAssign<T>,
+    T: ScalarAccumulative,
     U: DataType,
     V: DataType,
 {

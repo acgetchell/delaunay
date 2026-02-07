@@ -9,15 +9,11 @@ use crate::core::{
     collections::FacetToCellsMap,
     triangulation_data_structure::{Tds, TdsValidationError},
 };
-use crate::geometry::traits::coordinate::CoordinateScalar;
+use crate::geometry::traits::coordinate::ScalarAccumulative;
 use arc_swap::ArcSwapOption;
-use std::{
-    iter::Sum,
-    ops::{AddAssign, SubAssign},
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
 };
 
 /// Trait for components that provide cached facet-to-cells mappings.
@@ -39,12 +35,10 @@ use std::{
 /// ```
 /// use delaunay::core::traits::facet_cache::FacetCacheProvider;
 /// use delaunay::core::triangulation_data_structure::Tds;
-/// use delaunay::geometry::traits::coordinate::CoordinateScalar;
+/// use delaunay::geometry::traits::coordinate::ScalarAccumulative;
 /// use delaunay::core::traits::data_type::DataType;
 /// use std::sync::Arc;
 /// use std::sync::atomic::{AtomicU64, Ordering};
-/// use std::ops::{AddAssign, SubAssign};
-/// use std::iter::Sum;
 /// use serde::de::DeserializeOwned;
 /// use arc_swap::ArcSwapOption;
 ///
@@ -64,7 +58,7 @@ use std::{
 ///
 /// impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for MyAlgorithm
 /// where
-///     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum,
+///     T: ScalarAccumulative,
 ///     U: DataType,
 ///     V: DataType,
 /// {
@@ -79,7 +73,7 @@ use std::{
 /// ```
 pub trait FacetCacheProvider<T, U, V, const D: usize>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum,
+    T: ScalarAccumulative,
     U: DataType,
     V: DataType,
 {

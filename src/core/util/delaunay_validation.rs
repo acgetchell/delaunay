@@ -9,9 +9,8 @@ use crate::core::triangulation_data_structure::{CellKey, Tds, TdsValidationError
 use crate::geometry::point::Point;
 use crate::geometry::predicates::InSphere;
 use crate::geometry::robust_predicates::robust_insphere;
-use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
+use crate::geometry::traits::coordinate::{CoordinateConversionError, ScalarAccumulative};
 use smallvec::SmallVec;
-use std::ops::{AddAssign, SubAssign};
 use thiserror::Error;
 
 /// Errors that can occur during Delaunay property validation.
@@ -82,7 +81,7 @@ fn validate_cell_delaunay<T, U, V, const D: usize>(
     config: &crate::geometry::robust_predicates::RobustPredicateConfig<T>,
 ) -> Result<Option<CellKey>, DelaunayValidationError>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + std::iter::Sum,
+    T: ScalarAccumulative,
     U: DataType,
     V: DataType,
 {
@@ -150,7 +149,7 @@ pub(crate) fn is_delaunay_property_only<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
 ) -> Result<(), DelaunayValidationError>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + std::iter::Sum,
+    T: ScalarAccumulative,
     U: DataType,
     V: DataType,
 {
@@ -225,7 +224,7 @@ pub fn find_delaunay_violations<T, U, V, const D: usize>(
     cells_to_check: Option<&[CellKey]>,
 ) -> Result<ViolationBuffer, DelaunayValidationError>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + std::iter::Sum,
+    T: ScalarAccumulative,
     U: DataType,
     V: DataType,
 {
@@ -318,7 +317,7 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cells_subset: Option<&[CellKey]>,
 ) where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + std::iter::Sum,
+    T: ScalarAccumulative,
     U: DataType,
     V: DataType,
 {
