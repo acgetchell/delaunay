@@ -51,7 +51,7 @@ use crate::geometry::util::{safe_usize_to_scalar, squared_norm};
 use arc_swap::ArcSwapOption;
 use num_traits::Zero;
 use std::marker::PhantomData;
-use std::ops::{AddAssign, DivAssign, Sub, SubAssign};
+use std::ops::{DivAssign, Sub};
 use std::sync::{
     Arc, OnceLock,
     atomic::{AtomicU64, Ordering},
@@ -671,13 +671,7 @@ where
 impl<K, U, V, const D: usize> ConvexHull<K, U, V, D>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar
-        + AddAssign
-        + SubAssign
-        + Sub<Output = K::Scalar>
-        + DivAssign
-        + Copy
-        + std::iter::Sum,
+    K::Scalar: ScalarAccumulative + Sub<Output = K::Scalar> + DivAssign + Copy,
     U: DataType,
     V: DataType,
     [K::Scalar; D]: Copy + Sized,

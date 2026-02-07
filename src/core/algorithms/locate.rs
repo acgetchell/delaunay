@@ -26,7 +26,9 @@ use crate::core::traits::data_type::DataType;
 use crate::core::triangulation_data_structure::{CellKey, Tds, VertexKey};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
+use crate::geometry::traits::coordinate::{
+    CoordinateConversionError, CoordinateScalar, ScalarSummable,
+};
 use std::hash::{Hash, Hasher};
 
 /// Result of point location query.
@@ -363,7 +365,7 @@ pub fn locate<K, U, V, const D: usize>(
 ) -> Result<LocateResult, LocateError>
 where
     K: Kernel<D>,
-    K::Scalar: std::iter::Sum,
+    K::Scalar: ScalarSummable,
     U: DataType,
     V: DataType,
 {
@@ -408,7 +410,7 @@ pub fn locate_with_stats<K, U, V, const D: usize>(
 ) -> Result<(LocateResult, LocateStats), LocateError>
 where
     K: Kernel<D>,
-    K::Scalar: std::iter::Sum,
+    K::Scalar: ScalarSummable,
     U: DataType,
     V: DataType,
 {
@@ -492,7 +494,7 @@ pub(crate) fn locate_by_scan<K, U, V, const D: usize>(
 ) -> Result<LocateResult, LocateError>
 where
     K: Kernel<D>,
-    K::Scalar: std::iter::Sum,
+    K::Scalar: ScalarSummable,
     U: DataType,
     V: DataType,
 {
@@ -550,7 +552,7 @@ fn is_point_outside_facet<K, U, V, const D: usize>(
 ) -> Result<Option<bool>, LocateError>
 where
     K: Kernel<D>,
-    K::Scalar: std::iter::Sum,
+    K::Scalar: ScalarSummable,
     U: DataType,
     V: DataType,
 {
@@ -673,7 +675,7 @@ pub fn find_conflict_region<K, U, V, const D: usize>(
 ) -> Result<CellKeyBuffer, ConflictError>
 where
     K: Kernel<D>,
-    K::Scalar: std::iter::Sum,
+    K::Scalar: ScalarSummable,
     U: DataType,
     V: DataType,
 {

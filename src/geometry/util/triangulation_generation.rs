@@ -197,7 +197,7 @@ where
 ///
 /// # Type Parameters
 ///
-/// * `T` - Coordinate scalar type (must implement `CoordinateScalar + SampleUniform`)
+/// * `T` - Coordinate scalar type (must implement `ScalarAccumulative + SampleUniform`)
 /// * `U` - Vertex data type (must implement `DataType`)
 /// * `V` - Cell data type (must implement `DataType`)
 /// * `D` - Dimensionality (const generic parameter)
