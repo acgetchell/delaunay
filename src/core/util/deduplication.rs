@@ -20,7 +20,7 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 ///
 /// # Arguments
 ///
-/// * `vertices` - Vector of vertices to deduplicate
+/// * `vertices` - Slice of vertices to deduplicate
 ///
 /// # Returns
 ///
@@ -43,12 +43,12 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 ///     .into_iter().next().unwrap();
 ///
 /// let vertices = vec![v1, v2, v3];
-/// let unique = dedup_vertices_exact(vertices);
+/// let unique = dedup_vertices_exact(&vertices);
 /// assert_eq!(unique.len(), 2); // Only v1 and v3
 /// ```
 #[must_use]
 pub fn dedup_vertices_exact<T, U, const D: usize>(
-    vertices: Vec<Vertex<T, U, D>>,
+    vertices: &[Vertex<T, U, D>],
 ) -> Vec<Vertex<T, U, D>>
 where
     T: CoordinateScalar,
@@ -56,7 +56,7 @@ where
 {
     let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(vertices.len());
 
-    'outer: for v in vertices {
+    'outer: for &v in vertices {
         for u in &unique {
             // Exact floating-point equality (NaN-aware, treats +0.0 == -0.0)
             if coords_equal_exact(v.point().coords(), u.point().coords()) {
@@ -84,7 +84,7 @@ where
 ///
 /// # Arguments
 ///
-/// * `vertices` - Vector of vertices to deduplicate
+/// * `vertices` - Slice of vertices to deduplicate
 /// * `epsilon` - Distance threshold below which vertices are considered duplicates
 ///
 /// # Returns
@@ -112,11 +112,11 @@ where
 ///     .into_iter().next().unwrap();
 ///
 /// let vertices = vec![v1, v2, v3];
-/// let unique = dedup_vertices_epsilon(vertices, 1e-10);
+/// let unique = dedup_vertices_epsilon(&vertices, 1e-10);
 /// assert_eq!(unique.len(), 2); // v2 filtered as near-duplicate of v1
 /// ```
 pub fn dedup_vertices_epsilon<T, U, const D: usize>(
-    vertices: Vec<Vertex<T, U, D>>,
+    vertices: &[Vertex<T, U, D>],
     epsilon: T,
 ) -> Vec<Vertex<T, U, D>>
 where
@@ -133,7 +133,7 @@ where
 
     let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(vertices.len());
 
-    'outer: for v in vertices {
+    'outer: for &v in vertices {
         for u in &unique {
             // Euclidean distance check
             if coords_within_epsilon(v.point().coords(), u.point().coords(), epsilon) {
@@ -160,7 +160,7 @@ where
 ///
 /// # Arguments
 ///
-/// * `vertices` - Vector of vertices to filter
+/// * `vertices` - Slice of vertices to filter
 /// * `reference` - Reference vertices to exclude matches against
 ///
 /// # Returns
@@ -184,11 +184,11 @@ where
 /// let reference = vec![v1]; // Exclude origin
 /// let vertices = vec![v1, v2];
 ///
-/// let filtered = filter_vertices_excluding(vertices, &reference);
+/// let filtered = filter_vertices_excluding(&vertices, &reference);
 /// assert_eq!(filtered.len(), 1); // Only v2 remains
 /// ```
 pub fn filter_vertices_excluding<T, U, const D: usize>(
-    vertices: Vec<Vertex<T, U, D>>,
+    vertices: &[Vertex<T, U, D>],
     reference: &[Vertex<T, U, D>],
 ) -> Vec<Vertex<T, U, D>>
 where
@@ -197,7 +197,7 @@ where
 {
     let mut filtered = Vec::with_capacity(vertices.len());
 
-    'outer: for v in vertices {
+    'outer: for &v in vertices {
         // Check against all reference vertices
         for ref_v in reference {
             if coords_equal_exact(v.point().coords(), ref_v.point().coords()) {
@@ -274,7 +274,7 @@ mod tests {
             .next()
             .unwrap();
         let vertices = vec![v1, v2, v3];
-        let unique = dedup_vertices_exact(vertices);
+        let unique = dedup_vertices_exact(&vertices);
         assert_eq!(unique.len(), 2, "Should remove exact duplicate");
 
         // Sub-test: NaN handling - NaN should equal NaN
@@ -291,7 +291,7 @@ mod tests {
             .next()
             .unwrap();
         let vertices_nan = vec![v1_nan, v2_nan, v3_regular];
-        let unique_nan = dedup_vertices_exact(vertices_nan);
+        let unique_nan = dedup_vertices_exact(&vertices_nan);
         assert_eq!(
             unique_nan.len(),
             2,
@@ -312,7 +312,7 @@ mod tests {
             .next()
             .unwrap();
         let vertices_zero = vec![v1_pos_zero, v2_neg_zero, v3_one];
-        let unique_zero = dedup_vertices_exact(vertices_zero);
+        let unique_zero = dedup_vertices_exact(&vertices_zero);
         assert_eq!(
             unique_zero.len(),
             2,
@@ -337,7 +337,7 @@ mod tests {
             .unwrap();
 
         let vertices = vec![v1, v2, v3];
-        let unique = dedup_vertices_epsilon(vertices, 1e-10);
+        let unique = dedup_vertices_epsilon(&vertices, 1e-10);
         assert_eq!(
             unique.len(),
             2,
@@ -364,7 +364,7 @@ mod tests {
             .unwrap();
 
         let vertices = vec![v1, v2, v3];
-        let unique = dedup_vertices_epsilon(vertices, 1e-10);
+        let unique = dedup_vertices_epsilon(&vertices, 1e-10);
         // v1 kept, v3 filtered (< epsilon), v2 kept (= epsilon, not < epsilon)
         assert_eq!(
             unique.len(),
@@ -384,7 +384,7 @@ mod tests {
         ];
         let vertices: Vec<Vertex<f64, (), 2>> = Vertex::from_points(&points);
 
-        let unique = dedup_vertices_epsilon(vertices, 1e-10);
+        let unique = dedup_vertices_epsilon(&vertices, 1e-10);
         assert_eq!(unique.len(), 2, "Should keep first of each cluster");
 
         // Verify first occurrences are kept
@@ -415,7 +415,7 @@ mod tests {
             .unwrap();
         let reference_basic = vec![v1];
         let vertices_basic = vec![v1, v2, v3];
-        let filtered_basic = filter_vertices_excluding(vertices_basic, &reference_basic);
+        let filtered_basic = filter_vertices_excluding(&vertices_basic, &reference_basic);
         assert_eq!(
             filtered_basic.len(),
             2,
@@ -430,7 +430,7 @@ mod tests {
         let reference_nan = vec![v_nan];
         let vertices_with_nan: Vec<Vertex<f64, (), 2>> =
             Vertex::from_points(&[Point::new([f64::NAN, f64::NAN]), Point::new([1.0, 1.0])]);
-        let filtered_nan = filter_vertices_excluding(vertices_with_nan, &reference_nan);
+        let filtered_nan = filter_vertices_excluding(&vertices_with_nan, &reference_nan);
         assert_eq!(
             filtered_nan.len(),
             1,
@@ -445,7 +445,7 @@ mod tests {
         let reference_zero = vec![v_pos_zero];
         let vertices_with_neg_zero: Vec<Vertex<f64, (), 2>> =
             Vertex::from_points(&[Point::new([-0.0, -0.0]), Point::new([1.0, 1.0])]);
-        let filtered_zero = filter_vertices_excluding(vertices_with_neg_zero, &reference_zero);
+        let filtered_zero = filter_vertices_excluding(&vertices_with_neg_zero, &reference_zero);
         assert_eq!(
             filtered_zero.len(),
             1,
@@ -463,7 +463,7 @@ mod tests {
         let vertices: Vec<Vertex<f64, (), 2>> = Vertex::from_points(&points);
 
         let reference = vec![vertices[0], vertices[2]]; // Exclude first and third
-        let filtered = filter_vertices_excluding(vertices, &reference);
+        let filtered = filter_vertices_excluding(&vertices, &reference);
 
         assert_eq!(filtered.len(), 2, "Should exclude both reference vertices");
 
@@ -483,7 +483,7 @@ mod tests {
         let vertices: Vec<Vertex<f64, (), 1>> =
             vec![vertex!([0.0]), vertex!([1.0]), vertex!([2.0])];
         let reference: Vec<Vertex<f64, (), 1>> = vec![];
-        let filtered = filter_vertices_excluding(vertices.clone(), &reference);
+        let filtered = filter_vertices_excluding(&vertices, &reference);
         assert_eq!(filtered.len(), vertices.len());
     }
 }

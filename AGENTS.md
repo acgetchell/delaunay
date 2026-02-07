@@ -42,6 +42,9 @@ When user requests commit message generation:
 
 ### Rust
 
+- Prefer borrowed APIs by default:
+  take references (`&T`, `&mut T`, `&[T]`) as arguments and return borrowed views (`&T`, `&[T]`) when possible.
+  Only take ownership or return `Vec`/allocated data when required.
 - Integration tests in `tests/*.rs` are separate crates; add a crate-level doc comment (`//! ...`) at the top to satisfy clippy `missing_docs` (CI uses `-D warnings`).
 
 ### Python

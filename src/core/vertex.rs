@@ -433,12 +433,12 @@ where
             .collect()
     }
 
-    /// The function `into_hashmap` converts a vector of vertices into a
+    /// The function `into_hashmap` converts a collection of vertices into a
     /// [`HashMap`], using the vertices [Uuid] as the key.
     ///
     /// # Arguments
     ///
-    /// * `vertices`: `vertices` is a vector of `Vertex<T, U, D>`.
+    /// * `vertices`: Vertices to be converted into a `HashMap`.
     ///
     /// # Returns
     ///
@@ -450,17 +450,21 @@ where
     /// ```
     /// use std::collections::HashMap;
     /// use delaunay::core::vertex::Vertex;
-    /// use delaunay::geometry::point::Point;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
-    /// let points = vec![Point::new([1.0, 2.0]), Point::new([3.0, 4.0])];
-    /// let vertices = Vertex::<f64, (), 2>::from_points(&points);
-    /// let map: HashMap<_, _> = Vertex::into_hashmap(vertices);
+    /// use delaunay::vertex;
+    ///
+    /// let v1: Vertex<f64, (), 2> = vertex!([1.0, 2.0]);
+    /// let v2: Vertex<f64, (), 2> = vertex!([3.0, 4.0]);
+    ///
+    /// let map: HashMap<_, _> = Vertex::into_hashmap([v1, v2]);
     /// assert_eq!(map.len(), 2);
     /// assert!(map.values().all(|v| v.dim() == 2));
     /// ```
     #[inline]
     #[must_use]
-    pub fn into_hashmap(vertices: Vec<Self>) -> HashMap<Uuid, Self> {
+    pub fn into_hashmap<I>(vertices: I) -> HashMap<Uuid, Self>
+    where
+        I: IntoIterator<Item = Self>,
+    {
         vertices.into_iter().map(|v| (v.uuid(), v)).collect()
     }
 
@@ -930,7 +934,7 @@ mod tests {
             Point::new([4.0, 5.0, 6.0]),
             Point::new([7.0, 8.0, 9.0]),
         ];
-        let vertices: Vec<Vertex<f64, (), 3>> = Vertex::from_points(&points);
+        let mut vertices: Vec<Vertex<f64, (), 3>> = Vertex::from_points(&points);
 
         assert_eq!(vertices.len(), 3);
         assert_relative_eq!(
@@ -970,27 +974,24 @@ mod tests {
         assert!(!single_vertices[0].uuid().is_nil());
 
         // Test Vertex::into_hashmap() with multiple vertices
-        let mut vertices_clone: Vec<Vertex<f64, (), 3>> = Vertex::from_points(&points);
-        let hashmap = Vertex::into_hashmap(vertices_clone.clone());
+        let hashmap = Vertex::into_hashmap(vertices.iter().copied());
         let mut values: Vec<Vertex<f64, (), 3>> = hashmap.into_values().collect();
 
         assert_eq!(values.len(), 3);
 
         values.sort_by_key(super::Vertex::uuid);
-        vertices_clone.sort_by_key(super::Vertex::uuid);
+        vertices.sort_by_key(super::Vertex::uuid);
 
-        assert_eq!(values, vertices_clone);
+        assert_eq!(values, vertices);
 
-        // Test Vertex::into_hashmap() with empty vector
-        let empty_vertices_vec: Vec<Vertex<f64, (), 3>> = Vec::new();
-        let empty_hashmap = Vertex::into_hashmap(empty_vertices_vec);
+        // Test Vertex::into_hashmap() with empty input
+        let empty_hashmap = Vertex::<f64, (), 3>::into_hashmap([]);
         assert!(empty_hashmap.is_empty());
 
         // Test Vertex::into_hashmap() with single vertex
         let single_vertex: Vertex<f64, (), 3> = vertex!([1.0, 2.0, 3.0]);
         let uuid = single_vertex.uuid();
-        let single_vertices_vec = vec![single_vertex];
-        let single_hashmap = Vertex::into_hashmap(single_vertices_vec);
+        let single_hashmap = Vertex::into_hashmap([single_vertex]);
 
         assert_eq!(single_hashmap.len(), 1);
         assert!(single_hashmap.contains_key(&uuid));
@@ -1008,7 +1009,6 @@ mod tests {
         println!("{empty_vertex:?}");
         println!("{vertices:?}");
         println!("values = {values:?}");
-        println!("vertices = {vertices_clone:?}");
     }
 
     #[test]
