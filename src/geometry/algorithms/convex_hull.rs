@@ -1,3 +1,35 @@
+//! Convex hull extraction and visibility tests for d-dimensional triangulations.
+//!
+//! This module exposes the [`ConvexHull`] snapshot type, which derives hull facets
+//! from a triangulation’s boundary and provides point-in-hull and visibility
+//! predicates. Hulls are **logically immutable** snapshots: facet handles are valid
+//! only for the triangulation state they were created from, and staleness is
+//! detected via generation counters.
+//!
+//! # Key capabilities
+//! - Extract hull facets from a triangulation
+//! - Test whether a point lies outside the hull
+//! - Find visible facets from an external point (useful for incremental hull algorithms)
+//!
+//! # Example
+//! ```rust
+//! use delaunay::prelude::*;
+//! use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+//!
+//! let vertices = vec![
+//!     vertex!([0.0, 0.0, 0.0]),
+//!     vertex!([1.0, 0.0, 0.0]),
+//!     vertex!([0.0, 1.0, 0.0]),
+//!     vertex!([0.0, 0.0, 1.0]),
+//! ];
+//! let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+//! let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+//! let outside = Point::new([2.0, 2.0, 2.0]);
+//! assert!(hull.is_point_outside(&outside, dt.as_triangulation()).unwrap());
+//! ```
+
+#![forbid(unsafe_code)]
+
 use crate::core::collections::{
     FacetToCellsMap, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
 };
@@ -17,7 +49,6 @@ use crate::geometry::traits::coordinate::{
 };
 use crate::geometry::util::{safe_usize_to_scalar, squared_norm};
 use arc_swap::ArcSwapOption;
-use num_traits::NumCast;
 use num_traits::Zero;
 use std::marker::PhantomData;
 use std::ops::{AddAssign, DivAssign, Sub, SubAssign};
@@ -29,6 +60,8 @@ use thiserror::Error;
 
 // Import Orientation for predicates
 use crate::geometry::predicates::Orientation;
+#[cfg(test)]
+use num_traits::NumCast;
 
 // =============================================================================
 // ERROR TYPES
@@ -643,8 +676,6 @@ where
         + SubAssign
         + Sub<Output = K::Scalar>
         + DivAssign
-        + Zero
-        + NumCast
         + Copy
         + std::iter::Sum,
     U: DataType,
@@ -1117,7 +1148,7 @@ where
         // Calculate facet centroid
         let mut centroid_coords = [K::Scalar::zero(); D];
         for vertex_point in &vertex_points {
-            let coords: [K::Scalar; D] = vertex_point.into();
+            let coords = vertex_point.coords();
             for (i, &coord) in coords.iter().enumerate() {
                 centroid_coords[i] += coord;
             }
@@ -1129,25 +1160,25 @@ where
         }
 
         // Simple heuristic: if point is far from centroid, it's likely visible
-        let point_coords: [K::Scalar; D] = point.into();
+        let point_coords = point.coords();
         let mut diff_coords = [K::Scalar::zero(); D];
         for i in 0..D {
             diff_coords[i] = point_coords[i] - centroid_coords[i];
         }
-        let distance_squared = squared_norm(diff_coords);
+        let distance_squared = squared_norm(&diff_coords);
 
         // Use a threshold to determine visibility - this is a simple heuristic
         // Scale-aware threshold: use the facet diameter squared (max pairwise edge length squared)
         let mut max_edge_sq = K::Scalar::zero();
         for (i, vertex_a) in vertex_points.iter().enumerate() {
-            let ai: [K::Scalar; D] = vertex_a.into();
+            let ai = vertex_a.coords();
             for vertex_b in vertex_points.iter().skip(i + 1) {
-                let bj: [K::Scalar; D] = vertex_b.into();
+                let bj = vertex_b.coords();
                 let mut diff = [K::Scalar::zero(); D];
                 for k in 0..D {
                     diff[k] = ai[k] - bj[k];
                 }
-                let edge_sq = squared_norm(diff);
+                let edge_sq = squared_norm(&diff);
                 if max_edge_sq.is_zero() || edge_sq > max_edge_sq {
                     max_edge_sq = edge_sq;
                 }
@@ -1333,7 +1364,7 @@ where
                 .map_err(ConvexHullConstructionError::CoordinateConversion)?;
 
             for vertex_point in &facet_points {
-                let coords: [K::Scalar; D] = (*vertex_point).into();
+                let coords = vertex_point.coords();
                 for (i, &coord) in coords.iter().enumerate() {
                     centroid_coords[i] += coord;
                 }
@@ -1346,16 +1377,16 @@ where
             let centroid = Point::new(centroid_coords);
 
             // Calculate squared distance using squared_norm
-            let point_coords: [K::Scalar; D] = point.into();
-            let centroid_coords: [K::Scalar; D] = (&centroid).into();
+            let point_coords = point.coords();
+            let centroid_coords = centroid.coords();
             let mut diff_coords = [K::Scalar::zero(); D];
             for i in 0..D {
                 diff_coords[i] = point_coords[i] - centroid_coords[i];
             }
-            let distance = squared_norm(diff_coords);
+            let dist_sq = squared_norm(&diff_coords);
 
-            if min_distance.is_none_or(|min_dist| distance < min_dist) {
-                min_distance = Some(distance);
+            if min_distance.is_none_or(|min_dist| dist_sq < min_dist) {
+                min_distance = Some(dist_sq);
                 nearest_facet = Some(facet_index);
             }
         }
@@ -1538,7 +1569,7 @@ where
 impl<K, U, V, const D: usize> FacetCacheProvider<K::Scalar, U, V, D> for ConvexHull<K, U, V, D>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + AddAssign + SubAssign + std::iter::Sum + num_traits::NumCast,
+    K::Scalar: CoordinateScalar + AddAssign + SubAssign + std::iter::Sum,
     U: DataType,
     V: DataType,
 {
@@ -2211,7 +2242,7 @@ mod tests {
             >::fallback_visibility_test(&test_facet_vertices, point)
             .unwrap();
             visibility_results.push(is_visible);
-            let coords: [f64; 3] = (*point).into();
+            let coords = point.coords();
             println!("    Point {coords:?} ({description}) - Visible: {is_visible}");
         }
 
@@ -2299,7 +2330,7 @@ mod tests {
                 result.is_ok(),
                 "High precision coordinates should not cause errors"
             );
-            let coords: [f64; 3] = point.into();
+            let coords = point.coords();
             println!(
                 "    High precision Point {coords:?} - Visible: {:?}",
                 result.unwrap()
@@ -3636,7 +3667,7 @@ mod tests {
                 "Degenerate orientation handling should not crash"
             );
 
-            let coords: [f64; 3] = point.into();
+            let coords = point.coords();
             println!(
                 "  Degenerate point {coords:?} - Outside: {:?}",
                 result.unwrap()
@@ -3772,7 +3803,7 @@ mod tests {
                 "Edge case points should not cause numeric cast failures"
             );
 
-            let coords: [f64; 3] = point.into();
+            let coords = point.coords();
             let result_val = result.unwrap();
             println!("  Edge point {coords:?} - Result: {result_val:?}");
         }

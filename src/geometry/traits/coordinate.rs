@@ -60,6 +60,8 @@
 //! `Cell`, etc.) to work consistently across different scalar types and storage
 //! mechanisms while maintaining mathematical correctness and type safety.
 
+#![forbid(unsafe_code)]
+
 use num_traits::{Float, Zero};
 use ordered_float::OrderedFloat;
 use serde::{Serialize, de::DeserializeOwned};
@@ -504,6 +506,7 @@ impl_hash_coordinate!(float: f32, f64);
 /// # Required Traits
 ///
 /// - `Float`: Floating-point arithmetic operations
+/// - `Zero`: Zero value construction
 /// - `OrderedEq`: NaN-aware equality comparison
 /// - `HashCoordinate`: Consistent hashing of floating-point values
 /// - `FiniteCheck`: Validation of coordinate values
@@ -524,6 +527,7 @@ impl_hash_coordinate!(float: f32, f64);
 /// ```
 pub trait CoordinateScalar:
     Float
+    + Zero
     + OrderedEq
     + OrderedCmp
     + HashCoordinate

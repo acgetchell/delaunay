@@ -3,17 +3,15 @@
 //! This module provides functions for computing the circumcenter and circumradius
 //! of simplices in d-dimensional space.
 
-use num_traits::Zero;
-use std::iter::Sum;
-
-use la_stack::{DEFAULT_PIVOT_TOL, LaError, Vector as LaVector};
-
-use crate::geometry::matrix::matrix_set;
-use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
+#![forbid(unsafe_code)]
 
 use super::conversions::{safe_coords_to_f64, safe_scalar_from_f64, safe_scalar_to_f64};
 use super::norms::{hypot, squared_norm};
+use crate::geometry::matrix::matrix_set;
+use crate::geometry::point::Point;
+use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
+use la_stack::{DEFAULT_PIVOT_TOL, LaError, Vector as LaVector};
+use std::iter::Sum;
 
 // Re-export error type
 pub use super::CircumcenterError;
@@ -87,7 +85,7 @@ pub fn circumcenter<T, const D: usize>(
     points: &[Point<T, D>],
 ) -> Result<Point<T, D>, CircumcenterError>
 where
-    T: CoordinateScalar + Sum + Zero,
+    T: CoordinateScalar + Sum,
 {
     #[cfg(debug_assertions)]
     if std::env::var_os("DELAUNAY_DEBUG_UNUSED_IMPORTS").is_some() {
@@ -113,7 +111,7 @@ where
     // Build matrix A and vector b for the linear system A * x = b.
     //
     // Here, A is D×D and b is length D, so we can solve with stack-allocated la-stack types.
-    let coords_0: [T; D] = (&points[0]).into();
+    let coords_0 = points[0].coords();
 
     // Use safe coordinate conversion
     let coords_0_f64: [f64; D] = safe_coords_to_f64(coords_0)?;
@@ -122,7 +120,7 @@ where
     let mut b_arr = [0.0f64; D];
 
     for i in 0..D {
-        let coords_point: [T; D] = (&points[i + 1]).into();
+        let coords_point = points[i + 1].coords();
 
         // Use safe coordinate conversion
         let coords_point_f64: [f64; D] = safe_coords_to_f64(coords_point)?;
@@ -137,7 +135,7 @@ where
         for j in 0..D {
             diff_coords[j] = coords_point[j] - coords_0[j];
         }
-        let squared_distance = squared_norm(diff_coords);
+        let squared_distance = squared_norm(&diff_coords);
 
         // Use safe coordinate conversion for squared distance
         let squared_distance_f64: f64 = safe_scalar_to_f64(squared_distance)?;
@@ -223,7 +221,7 @@ where
 /// ```
 pub fn circumradius<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
 where
-    T: CoordinateScalar + Sum + Zero,
+    T: CoordinateScalar + Sum,
 {
     let circumcenter = circumcenter(points)?;
     circumradius_with_center(points, &circumcenter)
@@ -272,21 +270,21 @@ pub fn circumradius_with_center<T, const D: usize>(
     circumcenter: &Point<T, D>,
 ) -> Result<T, CircumcenterError>
 where
-    T: CoordinateScalar + Sum + Zero,
+    T: CoordinateScalar + Sum,
 {
     if points.is_empty() {
         return Err(CircumcenterError::EmptyPointSet);
     }
 
-    let point_coords: [T; D] = (&points[0]).into();
-    let circumcenter_coords: [T; D] = *circumcenter.coords();
+    let point_coords = points[0].coords();
+    let circumcenter_coords = circumcenter.coords();
 
     // Calculate distance using hypot for numerical stability
     let mut diff_coords = [T::zero(); D];
     for i in 0..D {
         diff_coords[i] = circumcenter_coords[i] - point_coords[i];
     }
-    let distance = hypot(diff_coords);
+    let distance = hypot(&diff_coords);
     Ok(distance)
 }
 
@@ -404,13 +402,13 @@ mod tests {
         let distances: Vec<f64> = points
             .iter()
             .map(|p| {
-                let p_coords: [f64; 3] = p.into();
+                let p_coords = *p.coords();
                 let diff = [
                     p_coords[0] - center_coords[0],
                     p_coords[1] - center_coords[1],
                     p_coords[2] - center_coords[2],
                 ];
-                hypot(diff)
+                hypot(&diff)
             })
             .collect();
 
@@ -623,12 +621,12 @@ mod tests {
         let distances: Vec<f64> = points
             .iter()
             .map(|p| {
-                let p_coords: [f64; 2] = p.into();
+                let p_coords = *p.coords();
                 let diff = [
                     p_coords[0] - center_coords[0],
                     p_coords[1] - center_coords[1],
                 ];
-                hypot(diff)
+                hypot(&diff)
             })
             .collect();
 
@@ -704,7 +702,7 @@ mod tests {
         let distances: Vec<f64> = points
             .iter()
             .map(|p| {
-                let p_coords: [f64; 5] = p.into();
+                let p_coords = *p.coords();
                 let diff = [
                     p_coords[0] - center_coords[0],
                     p_coords[1] - center_coords[1],
@@ -712,7 +710,7 @@ mod tests {
                     p_coords[3] - center_coords[3],
                     p_coords[4] - center_coords[4],
                 ];
-                hypot(diff)
+                hypot(&diff)
             })
             .collect();
 

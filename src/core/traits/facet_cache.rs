@@ -64,7 +64,7 @@ use std::{
 ///
 /// impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for MyAlgorithm
 /// where
-///     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+///     T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum,
 ///     U: DataType,
 ///     V: DataType,
 /// {
@@ -79,7 +79,7 @@ use std::{
 /// ```
 pub trait FacetCacheProvider<T, U, V, const D: usize>
 where
-    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum + num_traits::NumCast,
+    T: CoordinateScalar + AddAssign<T> + SubAssign<T> + Sum,
     U: DataType,
     V: DataType,
 {

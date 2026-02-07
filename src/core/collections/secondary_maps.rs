@@ -1,6 +1,5 @@
-use slotmap::SparseSecondaryMap;
-
 use crate::core::triangulation_data_structure::{CellKey, VertexKey};
+use slotmap::SparseSecondaryMap;
 
 // =============================================================================
 // SLOTMAP SECONDARY MAPS FOR AUXILIARY DATA

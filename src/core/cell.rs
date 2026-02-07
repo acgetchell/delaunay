@@ -36,11 +36,13 @@
 //! ```
 
 #![allow(clippy::similar_names)]
+#![forbid(unsafe_code)]
 
 // =============================================================================
 // IMPORTS
 // =============================================================================
 
+use super::vertex::Vertex;
 use super::{
     facet::FacetError,
     traits::DataType,
@@ -48,8 +50,6 @@ use super::{
     util::{UuidValidationError, make_uuid, validate_uuid},
     vertex::VertexValidationError,
 };
-
-use super::vertex::Vertex;
 use crate::core::collections::{CellVertexBuffer, FastHashMap, FastHashSet, NeighborBuffer};
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
 use serde::{
@@ -1099,7 +1099,7 @@ where
 // Advanced implementation block for Cell methods
 impl<T, U, V, const D: usize> Cell<T, U, V, D>
 where
-    T: CoordinateScalar + Clone + PartialEq + PartialOrd,
+    T: CoordinateScalar + PartialEq + PartialOrd,
     U: DataType,
     V: DataType,
 {

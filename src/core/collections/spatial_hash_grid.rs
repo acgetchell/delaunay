@@ -16,11 +16,10 @@
 //! the triangulation's vertex set (e.g. by snapshot/restore on outer rollbacks, or
 //! by updating the index only after the full higher-level operation commits).
 
+use super::{FastHashMap, SmallBuffer};
 use crate::core::triangulation_data_structure::VertexKey;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use std::hash::{Hash, Hasher};
-
-use super::{FastHashMap, SmallBuffer};
 
 /// Maximum dimension supported by the hash-grid neighborhood walk.
 ///

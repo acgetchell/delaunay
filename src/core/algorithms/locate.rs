@@ -17,8 +17,6 @@
 //!   International Journal of Foundations of Computer Science, 2001.
 //! - CGAL Triangulation_3 documentation
 
-use std::hash::{Hash, Hasher};
-
 use crate::core::collections::{
     CavityBoundaryBuffer, CellKeyBuffer, CellSecondaryMap, FacetToCellsMap, FastHashMap,
     FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
@@ -29,6 +27,7 @@ use crate::core::triangulation_data_structure::{CellKey, Tds, VertexKey};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
+use std::hash::{Hash, Hasher};
 
 /// Result of point location query.
 ///

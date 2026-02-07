@@ -1,5 +1,7 @@
 //! Hashing utilities.
 
+#![forbid(unsafe_code)]
+
 /// Applies a stable hash function to a slice of sorted u64 values.
 ///
 /// This function uses an FNV-based polynomial rolling hash with an avalanche step

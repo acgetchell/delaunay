@@ -3,20 +3,19 @@
 //! This module provides functions for computing volumes, surface measures,
 //! and quality metrics of simplices.
 
-use num_traits::{Float, Zero};
-use std::iter::Sum;
-use std::ops::{AddAssign, SubAssign};
+#![forbid(unsafe_code)]
 
-use la_stack::{DEFAULT_SINGULAR_TOL, LaError};
-
+use super::conversions::{safe_coords_to_f64, safe_scalar_from_f64, safe_usize_to_scalar};
+use super::norms::hypot;
 use crate::core::facet::FacetView;
 use crate::core::traits::data_type::DataType;
 use crate::geometry::matrix::{Matrix, matrix_get, matrix_set};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
-
-use super::conversions::{safe_coords_to_f64, safe_scalar_from_f64, safe_usize_to_scalar};
-use super::norms::hypot;
+use la_stack::{DEFAULT_SINGULAR_TOL, LaError};
+use num_traits::Float;
+use std::iter::Sum;
+use std::ops::{AddAssign, SubAssign};
 
 // Re-export error types
 pub use super::{CircumcenterError, SurfaceMeasureError, ValueConversionError};
@@ -79,7 +78,7 @@ pub use super::{CircumcenterError, SurfaceMeasureError, ValueConversionError};
 /// ```
 pub fn simplex_volume<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
 where
-    T: CoordinateScalar + Sum + Zero,
+    T: CoordinateScalar + Sum,
 {
     #[cfg(debug_assertions)]
     if std::env::var_os("DELAUNAY_DEBUG_UNUSED_IMPORTS").is_some() {
@@ -276,15 +275,15 @@ fn simplex_volume_gram_matrix<T, const D: usize>(
     points: &[Point<T, D>],
 ) -> Result<T, CircumcenterError>
 where
-    T: CoordinateScalar + Sum + Zero,
+    T: CoordinateScalar + Sum,
 {
     // Convert points to f64 and create edge vectors from first point to all others
     let p0_coords = points[0].coords();
-    let p0_f64 = safe_coords_to_f64(*p0_coords)?;
+    let p0_f64 = safe_coords_to_f64(p0_coords)?;
 
     let mut edge_matrix = crate::geometry::matrix::Matrix::<D>::zero();
     for (row, point) in points.iter().skip(1).enumerate() {
-        let point_f64 = safe_coords_to_f64(*point.coords())?;
+        let point_f64 = safe_coords_to_f64(point.coords())?;
 
         for (j, (&p, &p0)) in point_f64.iter().zip(p0_f64.iter()).enumerate() {
             matrix_set(&mut edge_matrix, row, j, p - p0);
@@ -371,7 +370,7 @@ where
 /// ```
 pub fn inradius<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
 where
-    T: CoordinateScalar + Sum + Zero + AddAssign<T>,
+    T: CoordinateScalar + Sum + AddAssign<T>,
 {
     if points.len() != D + 1 {
         return Err(CircumcenterError::InvalidSimplex {
@@ -498,7 +497,7 @@ where
 /// ```
 pub fn facet_measure<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
 where
-    T: CoordinateScalar + Sum + Zero,
+    T: CoordinateScalar + Sum,
 {
     if points.len() != D {
         return Err(CircumcenterError::InvalidSimplex {
@@ -527,7 +526,7 @@ where
             let p1 = points[1].coords();
 
             let diff = [p1[0] - p0[0], p1[1] - p0[1]];
-            let length = hypot(diff);
+            let length = hypot(&diff);
 
             // Check for degeneracy (coincident points)
             let epsilon = T::from(1e-12).unwrap_or_else(T::zero);
@@ -557,7 +556,7 @@ where
             ];
 
             // Area is |cross product| / 2
-            let cross_magnitude = hypot(cross);
+            let cross_magnitude = hypot(&cross);
             let area = cross_magnitude / (T::one() + T::one()); // Divide by 2
 
             // Check for degeneracy (collinear points)
@@ -627,12 +626,12 @@ fn facet_measure_gram_matrix<T, const D: usize>(
     points: &[Point<T, D>],
 ) -> Result<T, CircumcenterError>
 where
-    T: CoordinateScalar + Sum + Zero,
+    T: CoordinateScalar + Sum,
 {
     // Convert points to f64.
     let mut coords_f64 = [[0.0f64; D]; D];
     for (dst, p) in coords_f64.iter_mut().zip(points.iter()) {
-        *dst = safe_coords_to_f64(*p.coords())?;
+        *dst = safe_coords_to_f64(p.coords())?;
     }
 
     // Compute Gram determinant with clamping.
@@ -726,7 +725,7 @@ pub fn surface_measure<T, U, V, const D: usize>(
     facets: &[FacetView<'_, T, U, V, D>],
 ) -> Result<T, SurfaceMeasureError>
 where
-    T: CoordinateScalar + Sum + Zero + AddAssign<T> + SubAssign<T> + num_traits::NumCast,
+    T: CoordinateScalar + Sum + AddAssign<T> + SubAssign<T>,
     U: DataType,
     V: DataType,
 {
@@ -739,7 +738,7 @@ where
         let points: Vec<Point<T, D>> = facet_vertices
             .map_err(SurfaceMeasureError::FacetError)?
             .map(|v| {
-                let coords: [T; D] = (*v.point()).into();
+                let coords = *v.point().coords();
                 Point::new(coords)
             })
             .collect();
@@ -1273,15 +1272,15 @@ mod tests {
                 let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
                 facet_vertices.len() == 3
                     && facet_vertices.iter().any(|v| {
-                        let coords: [f64; 3] = (*v.point()).into();
+                        let coords = *v.point().coords();
                         coords == [0.0, 0.0, 0.0]
                     })
                     && facet_vertices.iter().any(|v| {
-                        let coords: [f64; 3] = (*v.point()).into();
+                        let coords = *v.point().coords();
                         coords == [3.0, 0.0, 0.0]
                     })
                     && facet_vertices.iter().any(|v| {
-                        let coords: [f64; 3] = (*v.point()).into();
+                        let coords = *v.point().coords();
                         coords == [0.0, 4.0, 0.0]
                     })
             })
@@ -1322,7 +1321,7 @@ mod tests {
             .vertices()
             .unwrap()
             .map(|v| {
-                let coords: [f64; 3] = (*v.point()).into();
+                let coords = *v.point().coords();
                 Point::new(coords)
             })
             .collect();
@@ -1330,7 +1329,7 @@ mod tests {
             .vertices()
             .unwrap()
             .map(|v| {
-                let coords: [f64; 3] = (*v.point()).into();
+                let coords = *v.point().coords();
                 Point::new(coords)
             })
             .collect();
@@ -1654,15 +1653,15 @@ mod tests {
                 let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
                 facet_vertices.len() == 3
                     && facet_vertices.iter().any(|v| {
-                        let coords: [f64; 3] = (*v.point()).into();
+                        let coords = *v.point().coords();
                         coords == [0.0, 0.0, 0.0]
                     })
                     && facet_vertices.iter().any(|v| {
-                        let coords: [f64; 3] = (*v.point()).into();
+                        let coords = *v.point().coords();
                         coords == [1.0, 0.0, 0.0]
                     })
                     && facet_vertices.iter().any(|v| {
-                        let coords: [f64; 3] = (*v.point()).into();
+                        let coords = *v.point().coords();
                         coords == [0.0, 1.0, 0.0]
                     })
             })
@@ -1686,15 +1685,15 @@ mod tests {
                 let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
                 facet_vertices.len() == 3
                     && facet_vertices.iter().any(|v| {
-                        let coords: [f64; 3] = (*v.point()).into();
+                        let coords = *v.point().coords();
                         coords == [0.0, 0.0, 0.0]
                     })
                     && facet_vertices.iter().any(|v| {
-                        let coords: [f64; 3] = (*v.point()).into();
+                        let coords = *v.point().coords();
                         coords == [6.0, 0.0, 0.0]
                     })
                     && facet_vertices.iter().any(|v| {
-                        let coords: [f64; 3] = (*v.point()).into();
+                        let coords = *v.point().coords();
                         coords == [0.0, 8.0, 0.0]
                     })
             })

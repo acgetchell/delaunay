@@ -7,6 +7,8 @@
 //! - No triangulation types (no `Vertex`, no keys, no TDS access)
 //! - Pure ordering primitives suitable for reuse across the crate
 
+#![forbid(unsafe_code)]
+
 use crate::geometry::traits::coordinate::CoordinateScalar;
 
 /// Quantize D-dimensional coordinates into integer grid coordinates in `[0, 2^bits)`.

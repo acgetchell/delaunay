@@ -9,6 +9,8 @@
 //! - built from the current triangulation snapshot
 //! - never stored inside the triangulation (no interior mutability)
 
+#![forbid(unsafe_code)]
+
 use crate::core::collections::{
     FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, VertexToCellsMap,
 };

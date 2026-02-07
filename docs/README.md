@@ -60,6 +60,7 @@ Completed optimization work and historical references:
 - `phase2_bowyer_watson_optimization.md` - FacetCacheProvider implementation (✅ v0.4.4)
 - `phase2_uuid_iter_optimization.md` - Zero-allocation UUID iteration (✅ v0.4.4)
 - `optimization_recommendations_historical.md` - Historical optimization analysis
+- `issue_120_investigation.md` - Bistellar flip-based Delaunay repair investigation (✅ Resolved 2026-01-31)
 
 #### **[property_testing_summary.md](./property_testing_summary.md)**
 

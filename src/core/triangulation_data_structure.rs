@@ -219,11 +219,28 @@
 //! - Watson, D.F. "Computing the n-dimensional Delaunay tessellation with application to Voronoi polytopes." The Computer Journal 24.2 (1981): 167-172
 //! - de Berg, M., et al. "Computational Geometry: Algorithms and Applications." 3rd ed. Springer-Verlag, 2008
 
-// =============================================================================
-// IMPORTS
-// =============================================================================
+#![forbid(unsafe_code)]
 
-// Standard library imports
+use super::{
+    cell::{Cell, CellValidationError},
+    facet::{FacetHandle, facet_key_from_vertices},
+    traits::data_type::DataType,
+    util::usize_to_u8,
+    vertex::{Vertex, VertexValidationError},
+};
+use crate::core::collections::{
+    CellKeySet, CellRemovalBuffer, CellVertexUuidBuffer, CellVerticesMap, Entry, FacetToCellsMap,
+    FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, SmallBuffer, StorageMap,
+    UuidToCellKeyMap, UuidToVertexKeyMap, VertexKeyBuffer, VertexKeySet,
+    fast_hash_map_with_capacity,
+};
+use crate::core::triangulation::TriangulationValidationError;
+use crate::geometry::traits::coordinate::CoordinateScalar;
+use serde::{
+    Deserialize, Deserializer, Serialize,
+    de::{self, MapAccess, Visitor},
+};
+use slotmap::new_key_type;
 use std::{
     cmp::Ordering as CmpOrdering,
     fmt::{self, Debug},
@@ -233,34 +250,8 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
 };
-
-// External crate imports
-use serde::{
-    Deserialize, Deserializer, Serialize,
-    de::{self, MapAccess, Visitor},
-};
-use slotmap::new_key_type;
 use thiserror::Error;
 use uuid::Uuid;
-
-// Crate-internal imports
-use crate::core::collections::{
-    CellKeySet, CellRemovalBuffer, CellVertexUuidBuffer, CellVerticesMap, Entry, FacetToCellsMap,
-    FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, SmallBuffer, StorageMap,
-    UuidToCellKeyMap, UuidToVertexKeyMap, VertexKeyBuffer, VertexKeySet,
-    fast_hash_map_with_capacity,
-};
-use crate::core::triangulation::TriangulationValidationError;
-use crate::geometry::traits::coordinate::CoordinateScalar;
-
-// Parent module imports
-use super::{
-    cell::{Cell, CellValidationError},
-    facet::{FacetHandle, facet_key_from_vertices},
-    traits::data_type::DataType,
-    util::usize_to_u8,
-    vertex::{Vertex, VertexValidationError},
-};
 
 // =============================================================================
 // CONSTRUCTION STATE TYPES
@@ -4204,16 +4195,16 @@ where
         // Sort vertices by their coordinates for consistent comparison
         // CoordinateScalar guarantees PartialOrd; NaN validation occurs at construction time
         self_vertices.sort_by(|a, b| {
-            let a_coords: [T; D] = (*a).into();
-            let b_coords: [T; D] = (*b).into();
+            let a_coords = *a.point().coords();
+            let b_coords = *b.point().coords();
             a_coords
                 .partial_cmp(&b_coords)
                 .unwrap_or(CmpOrdering::Equal)
         });
 
         other_vertices.sort_by(|a, b| {
-            let a_coords: [T; D] = (*a).into();
-            let b_coords: [T; D] = (*b).into();
+            let a_coords = *a.point().coords();
+            let b_coords = *b.point().coords();
             a_coords
                 .partial_cmp(&b_coords)
                 .unwrap_or(CmpOrdering::Equal)
@@ -4691,7 +4682,7 @@ mod tests {
             .tds
             .get_vertex_by_key(vertex_key.unwrap())
             .unwrap();
-        let coords: [f64; 3] = stored_vertex.into();
+        let coords = *stored_vertex.point().coords();
         let expected = [1.0, 2.0, 3.0];
         assert!(
             coords

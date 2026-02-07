@@ -1,6 +1,5 @@
-use crate::core::triangulation_data_structure::{CellKey, VertexKey};
-
 use super::{FastHashMap, FastHashSet, Uuid};
+use crate::core::triangulation_data_structure::{CellKey, VertexKey};
 
 // =============================================================================
 // GEOMETRIC ALGORITHM TYPES

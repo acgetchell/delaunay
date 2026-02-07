@@ -66,6 +66,7 @@ delaunay/
 │   ├── archive/
 │   │   ├── fix-delaunay.md
 │   │   ├── invariant_validation_plan.md
+│   │   ├── issue_120_investigation.md
 │   │   ├── jaccard.md
 │   │   ├── optimization_recommendations_historical.md
 │   │   ├── phase2_bowyer_watson_optimization.md
@@ -82,7 +83,6 @@ delaunay/
 │   ├── RELEASING.md
 │   ├── api_design.md
 │   ├── code_organization.md
-│   ├── issue_120_investigation.md
 │   ├── numerical_robustness_guide.md
 │   ├── property_testing_summary.md
 │   ├── topology.md

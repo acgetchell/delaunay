@@ -3,6 +3,8 @@
 //! This module provides topological analysis for triangulations
 //! on toroidal manifolds with periodic boundary conditions.
 
+#![forbid(unsafe_code)]
+
 use crate::topology::traits::topological_space::{TopologicalSpace, TopologyKind};
 
 /// Represents toroidal topological space with periodic boundaries.

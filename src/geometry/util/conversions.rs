@@ -4,9 +4,10 @@
 //! between different numeric types with proper error handling and finite-value
 //! checking.
 
-use num_traits::cast;
+#![forbid(unsafe_code)]
 
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
+use num_traits::cast;
 
 // Re-export error type
 pub use super::ValueConversionError;
@@ -95,7 +96,7 @@ pub(in crate::geometry::util) fn safe_cast_from_f64<T: CoordinateScalar>(
 ///
 /// # Arguments
 ///
-/// * `coords` - Array of coordinates to convert
+/// * `coords` - Reference to array of coordinates to convert
 ///
 /// # Returns
 ///
@@ -112,16 +113,16 @@ pub(in crate::geometry::util) fn safe_cast_from_f64<T: CoordinateScalar>(
 ///
 /// // Convert f32 coordinates to f64
 /// let coords_f32 = [1.5f32, 2.5f32, 3.5f32];
-/// let coords_f64 = safe_coords_to_f64(coords_f32).unwrap();
+/// let coords_f64 = safe_coords_to_f64(&coords_f32).unwrap();
 /// assert_eq!(coords_f64, [1.5f64, 2.5f64, 3.5f64]);
 ///
 /// // Works with different array sizes - 4D example
 /// let coords_4d = [1.0f32, 2.0f32, 3.0f32, 4.0f32];
-/// let result_4d = safe_coords_to_f64(coords_4d).unwrap();
+/// let result_4d = safe_coords_to_f64(&coords_4d).unwrap();
 /// assert_eq!(result_4d, [1.0f64, 2.0f64, 3.0f64, 4.0f64]);
 /// ```
 pub fn safe_coords_to_f64<T: CoordinateScalar, const D: usize>(
-    coords: [T; D],
+    coords: &[T; D],
 ) -> Result<[f64; D], CoordinateConversionError> {
     let mut result = [0.0_f64; D];
     for (i, &coord) in coords.iter().enumerate() {
@@ -137,7 +138,7 @@ pub fn safe_coords_to_f64<T: CoordinateScalar, const D: usize>(
 ///
 /// # Arguments
 ///
-/// * `coords` - Array of f64 coordinates to convert
+/// * `coords` - Reference to array of f64 coordinates to convert
 ///
 /// # Returns
 ///
@@ -154,16 +155,16 @@ pub fn safe_coords_to_f64<T: CoordinateScalar, const D: usize>(
 ///
 /// // Convert f64 coordinates to f32
 /// let coords_f64 = [1.5f64, 2.5f64, 3.5f64];
-/// let coords_f32: [f32; 3] = safe_coords_from_f64(coords_f64).unwrap();
+/// let coords_f32: [f32; 3] = safe_coords_from_f64(&coords_f64).unwrap();
 /// assert_eq!(coords_f32, [1.5f32, 2.5f32, 3.5f32]);
 ///
 /// // Works with different array sizes - 4D example
 /// let coords_4d = [1.0f64, 2.0f64, 3.0f64, 4.0f64];
-/// let result_4d: [f32; 4] = safe_coords_from_f64(coords_4d).unwrap();
+/// let result_4d: [f32; 4] = safe_coords_from_f64(&coords_4d).unwrap();
 /// assert_eq!(result_4d, [1.0f32, 2.0f32, 3.0f32, 4.0f32]);
 /// ```
 pub fn safe_coords_from_f64<T: CoordinateScalar, const D: usize>(
-    coords: [f64; D],
+    coords: &[f64; D],
 ) -> Result<[T; D], CoordinateConversionError> {
     let mut result = [T::zero(); D];
     for (i, &coord) in coords.iter().enumerate() {
@@ -608,7 +609,7 @@ mod tests {
     fn test_safe_coords_conversion_with_non_finite() {
         // Test array with NaN
         let coords_nan = [1.0f32, f32::NAN, 3.0f32];
-        let result = safe_coords_to_f64(coords_nan);
+        let result = safe_coords_to_f64(&coords_nan);
         assert!(matches!(
             result,
             Err(CoordinateConversionError::NonFiniteValue { .. })
@@ -616,7 +617,7 @@ mod tests {
 
         // Test array with infinity
         let coords_inf = [1.0f32, 2.0f32, f32::INFINITY];
-        let result = safe_coords_to_f64(coords_inf);
+        let result = safe_coords_to_f64(&coords_inf);
         assert!(matches!(
             result,
             Err(CoordinateConversionError::NonFiniteValue { .. })
@@ -624,7 +625,7 @@ mod tests {
 
         // Test successful conversion
         let coords_valid = [1.0f32, 2.0f32, 3.0f32];
-        let result = safe_coords_to_f64(coords_valid);
+        let result = safe_coords_to_f64(&coords_valid);
         assert!(result.is_ok());
         assert_relative_eq!(
             result.unwrap().as_slice(),
@@ -636,7 +637,7 @@ mod tests {
     fn test_safe_coords_from_f64_with_non_finite() {
         // Test array with NaN
         let coords_nan = [1.0f64, f64::NAN, 3.0f64];
-        let result: Result<[f32; 3], _> = safe_coords_from_f64(coords_nan);
+        let result: Result<[f32; 3], _> = safe_coords_from_f64(&coords_nan);
         assert!(matches!(
             result,
             Err(CoordinateConversionError::NonFiniteValue { .. })
@@ -644,7 +645,7 @@ mod tests {
 
         // Test array with infinity
         let coords_inf = [1.0f64, 2.0f64, f64::INFINITY];
-        let result: Result<[f32; 3], _> = safe_coords_from_f64(coords_inf);
+        let result: Result<[f32; 3], _> = safe_coords_from_f64(&coords_inf);
         assert!(matches!(
             result,
             Err(CoordinateConversionError::NonFiniteValue { .. })
@@ -652,7 +653,7 @@ mod tests {
 
         // Test successful conversion
         let coords_valid = [1.0f64, 2.0f64, 3.0f64];
-        let result: Result<[f32; 3], _> = safe_coords_from_f64(coords_valid);
+        let result: Result<[f32; 3], _> = safe_coords_from_f64(&coords_valid);
         assert!(result.is_ok());
     }
 

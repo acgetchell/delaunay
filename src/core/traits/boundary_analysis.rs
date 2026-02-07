@@ -6,7 +6,6 @@ use crate::core::{
     triangulation_data_structure::TdsValidationError,
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
-use num_traits::NumCast;
 
 /// Trait for boundary analysis operations on triangulations.
 ///
@@ -39,7 +38,7 @@ use num_traits::NumCast;
 /// ```
 pub trait BoundaryAnalysis<T, U, V, const D: usize>
 where
-    T: CoordinateScalar + NumCast,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {

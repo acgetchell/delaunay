@@ -3,6 +3,8 @@
 //! This module provides small, stack-allocated linear algebra helpers used by
 //! geometric predicates and utilities.
 
+#![forbid(unsafe_code)]
+
 use la_stack::{LaError, Matrix as LaMatrix};
 use thiserror::Error;
 

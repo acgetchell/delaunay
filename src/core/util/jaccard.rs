@@ -1,8 +1,6 @@
 //! Set similarity utilities (Jaccard index/distance) and canonical extraction helpers.
 
-use std::collections::HashSet;
-
-use thiserror::Error;
+#![forbid(unsafe_code)]
 
 use crate::core::facet::{FacetError, FacetView};
 use crate::core::traits::data_type::DataType;
@@ -10,6 +8,8 @@ use crate::core::triangulation_data_structure::Tds;
 use crate::geometry::algorithms::convex_hull::ConvexHull;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateScalar;
+use std::collections::HashSet;
+use thiserror::Error;
 
 /// Errors that can occur during Jaccard similarity computation.
 ///

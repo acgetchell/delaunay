@@ -1,7 +1,6 @@
+use super::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, Uuid};
 use crate::core::facet::FacetHandle;
 use crate::core::triangulation_data_structure::{CellKey, VertexKey};
-
-use super::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, Uuid};
 
 // =============================================================================
 // ALGORITHM-SPECIFIC BUFFER TYPES

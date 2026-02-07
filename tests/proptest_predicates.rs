@@ -144,12 +144,12 @@ macro_rules! gen_insphere_inward_scaling_inside {
                     simplex in prop::collection::vec([<point_ $dim d>](), $dim + 1)
                 ) {
                     if let Ok(center) = circumcenter(&simplex) {
-                        let center_coords: [f64; $dim] = center.into();
+                        let center_coords = *center.coords();
 
                         // Compute centroid
                         let mut centroid = [0.0_f64; $dim];
                         for p in &simplex {
-                            let c: [f64; $dim] = (*p).into();
+                            let c = *p.coords();
                             for i in 0..$dim { centroid[i] += c[i]; }
                         }
                         let inv_len: f64 = 1.0 / f64::from($dim + 1);
@@ -190,7 +190,7 @@ macro_rules! gen_insphere_distant_point_outside_by_radius {
                         if radius < 1e-6 || !radius.is_finite() {
                             return Ok(());
                         }
-                        let center_coords: [f64; $dim] = center.into();
+                        let center_coords = *center.coords();
                         // Build a direction: normalize center if nonzero; else use e0
                         let mut norm_sq = 0.0;
                         for i in 0..$dim { norm_sq += center_coords[i] * center_coords[i]; }
@@ -227,7 +227,7 @@ macro_rules! gen_insphere_scale_center_outside {
                     simplex in prop::collection::vec([<point_ $dim d>](), $dim + 1)
                 ) {
                     if let Ok(center) = circumcenter(&simplex) {
-                        let center_coords: [f64; $dim] = center.into();
+                        let center_coords = *center.coords();
                         let scale = 10000.0;
                         let mut far = [0.0_f64; $dim];
                         for i in 0..$dim { far[i] = center_coords[i] * scale; }
@@ -289,7 +289,7 @@ proptest! {
         scale in 0.0..1.0,  // Small scale to create near-degenerate simplices
     ) {
         // Create a nearly degenerate simplex (three nearly collinear points)
-        let coords0: [f64; 2] = p0.into();
+        let coords0 = *p0.coords();
         let p1 = Point::new([coords0[0] + 1.0, coords0[1]]);
         let p2 = Point::new([coords0[0] + 2.0, f64::mul_add(scale, 0.01, coords0[1])]);  // Very small y offset
 

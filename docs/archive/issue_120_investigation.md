@@ -323,7 +323,7 @@ and typically occur with:
 
 Full Delaunay property guarantee requires bistellar flip implementation (planned for v0.7.0+).
 
-See: [Issue #120 Investigation](docs/issue_120_investigation.md)
+See: [Issue #120 Investigation](docs/archive/issue_120_investigation.md)
 ```
 
 ### API Documentation
@@ -354,7 +354,7 @@ Add entry:
   - Structural TDS invariants are maintained
   - Most triangulations satisfy Delaunay property
   - Full guarantee requires bistellar flips (planned for v0.7.0+)
-  - See docs/issue_120_investigation.md for details
+  - See docs/archive/issue_120_investigation.md for details
 ```
 
 ## Test Status Summary

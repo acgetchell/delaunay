@@ -3,6 +3,8 @@
 //! This module provides high-level validation functions that combine
 //! simplex counting, classification, and Euler characteristic checking.
 
+#![forbid(unsafe_code)]
+
 use crate::core::{
     collections::FacetToCellsMap, traits::DataType, triangulation_data_structure::Tds,
 };

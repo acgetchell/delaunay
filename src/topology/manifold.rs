@@ -83,7 +83,7 @@
 //! Causal Dynamical Triangulations (CDT), where curvature and local neighborhood
 //! structure are only well-defined for simplicial PL-manifolds.
 
-use thiserror::Error;
+#![forbid(unsafe_code)]
 
 use crate::core::{
     collections::{
@@ -99,6 +99,7 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::topology::characteristics::euler::{
     triangulated_surface_boundary_component_count, triangulated_surface_euler_characteristic,
 };
+use thiserror::Error;
 
 /// Errors that can occur during manifold (topology) validation.
 ///

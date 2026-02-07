@@ -99,6 +99,17 @@
 //! The crate is organized as a small **validation stack**, where each layer adds additional
 //! invariants on top of the preceding one:
 //!
+//! - [`Vertex`](crate::core::vertex::Vertex) and [`Cell`](crate::core::cell::Cell) provide
+//!   **element validity** checks.
+//!   Level 1 (elements) validation checks invariants such as:
+//!   - **Vertex coordinates** – finite (no NaN/∞) and UUID is non-nil.
+//!   - **Cell shape** – exactly D+1 distinct vertex keys, valid UUID, and neighbor buffer length
+//!     (if present) is D+1.
+//!
+//!   These checks are surfaced via [`Vertex::is_valid`](crate::core::vertex::Vertex::is_valid) and
+//!   [`Cell::is_valid`](crate::core::cell::Cell::is_valid), and are automatically run by
+//!   [`Tds::validate`](crate::core::triangulation_data_structure::Tds::validate) (Levels 1–2).
+//!
 //! - [`Tds`](crate::core::triangulation_data_structure::Tds) (Triangulation Data Structure)
 //!   stores the **combinatorial / structural** representation.
 //!   Level 2 (structural) validation checks invariants such as:
@@ -138,6 +149,8 @@
 //! <https://github.com/acgetchell/delaunay/blob/main/docs/validation.md>
 //!
 //! In brief:
+//! - Level 1 (elements / `Vertex` + `Cell`): `Vertex::is_valid()` / `Cell::is_valid()` for element
+//!   checks, or `dt.tds().validate()` for Levels 1–2.
 //! - Level 2 (structural / `Tds`): `dt.tds().is_valid()` for a quick check, or `dt.tds().validate()` for
 //!   Levels 1–2.
 //! - Level 3 (topology / `Triangulation`): `dt.as_triangulation().is_valid()` for topology-only checks, or

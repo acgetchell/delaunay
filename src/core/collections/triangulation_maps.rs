@@ -1,10 +1,9 @@
-use crate::core::facet::FacetHandle;
-use crate::core::triangulation_data_structure::{CellKey, VertexKey};
-
 use super::{
     CellVertexBuffer, CellVertexUuidBuffer, FacetIndex, FastHashMap, FastHashSet,
     MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, SmallBuffer, Uuid, VertexUuidSet,
 };
+use crate::core::facet::FacetHandle;
+use crate::core::triangulation_data_structure::{CellKey, VertexKey};
 
 // =============================================================================
 // TRIANGULATION-SPECIFIC OPTIMIZED TYPES

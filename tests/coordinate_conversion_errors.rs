@@ -160,7 +160,7 @@ fn test_hypot_distance_with_mixed_problematic_coordinates() {
 
     // The hypot function should handle problematic coordinates properly
     // Since hypot returns T directly (not a Result), we expect it to return NaN or infinity
-    let result = hypot(diff_coords);
+    let result = hypot(&diff_coords);
 
     // Verify that the result contains non-finite values
     assert!(
@@ -172,7 +172,7 @@ fn test_hypot_distance_with_mixed_problematic_coordinates() {
 #[test]
 fn test_hypot_with_nan_values() {
     // Test hypot with NaN values
-    let result = hypot([f64::NAN, 1.0]);
+    let result = hypot(&[f64::NAN, 1.0]);
 
     // hypot returns T directly, so we check that the result is NaN
     assert!(
@@ -184,7 +184,7 @@ fn test_hypot_with_nan_values() {
 #[test]
 fn test_hypot_with_infinity_values() {
     // Test hypot with infinity values
-    let result = hypot([f64::INFINITY, 1.0]);
+    let result = hypot(&[f64::INFINITY, 1.0]);
 
     // With our new safe conversion, hypot falls back to general algorithm when conversion fails
     // The result should still be infinity due to the general algorithm handling infinity properly

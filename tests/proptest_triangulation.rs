@@ -186,7 +186,7 @@ macro_rules! test_simplex_quality_properties {
                             let scaled_points: Vec<Point<f64, $dim>> = simplex_points
                                 .iter()
                                 .map(|p| {
-                                    let coords: [f64; $dim] = (*p).into();
+                                    let coords = *p.coords();
                                     let mut scaled = [0.0f64; $dim];
                                     for i in 0..$dim {
                                         scaled[i] = coords[i] * scale;
@@ -289,7 +289,7 @@ macro_rules! test_simplex_quality_properties {
                     // Create a nearly-degenerate version (collapse last vertex toward origin)
                     let mut degenerate_points = regular_points.clone();
                     if let Some(last) = degenerate_points.last_mut() {
-                        let coords: [f64; $dim] = (*last).into();
+                        let coords = *last.coords();
                         let mut collapsed_coords = coords;
                         // Collapse to nearly coincident with first vertex
                         for i in 0..$dim {
@@ -379,7 +379,7 @@ macro_rules! test_quality_properties {
                         let translated_vertices: Vec<_> = vertices
                             .iter()
                             .map(|v| {
-                                let coords: [f64; $dim] = (*v.point()).into();
+                                let coords = *v.point().coords();
                                 let mut translated = [0.0f64; $dim];
                                 for i in 0..$dim {
                                     translated[i] = coords[i] + translation[i];
@@ -456,7 +456,7 @@ macro_rules! test_quality_properties {
                         let translated_vertices: Vec<_> = vertices
                             .iter()
                             .map(|v| {
-                                let coords: [f64; $dim] = (*v.point()).into();
+                                let coords = *v.point().coords();
                                 let mut translated = [0.0f64; $dim];
                                 for i in 0..$dim {
                                     translated[i] = coords[i] + translation[i];
@@ -533,7 +533,7 @@ macro_rules! test_quality_properties {
                         let scaled_vertices: Vec<_> = vertices
                             .iter()
                             .map(|v| {
-                                let coords: [f64; $dim] = (*v.point()).into();
+                                let coords = *v.point().coords();
                                 let mut scaled = [0.0f64; $dim];
                                 for i in 0..$dim {
                                     scaled[i] = coords[i] * scale;

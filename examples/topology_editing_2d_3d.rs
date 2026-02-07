@@ -142,7 +142,7 @@ fn edit_api_2d_k1() {
                 coords[0] - circumcenter_coords[0],
                 coords[1] - circumcenter_coords[1],
             ];
-            hypot(diff)
+            hypot(&diff)
         })
         .collect();
     println!("  Circumcenter distances to vertices: {distances:?}");
@@ -331,7 +331,7 @@ fn edit_api_3d_k1() {
                 coords[1] - circumcenter_coords[1],
                 coords[2] - circumcenter_coords[2],
             ];
-            hypot(diff)
+            hypot(&diff)
         })
         .collect();
     println!("  Circumcenter distances to vertices: {distances:?}");

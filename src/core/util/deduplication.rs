@@ -1,5 +1,7 @@
 //! Vertex deduplication utilities.
 
+#![forbid(unsafe_code)]
+
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::geometry::traits::coordinate::CoordinateScalar;
@@ -55,13 +57,9 @@ where
     let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(vertices.len());
 
     'outer: for v in vertices {
-        let vc: [T; D] = (&v).into();
-
         for u in &unique {
-            let uc: [T; D] = u.into();
-
             // Exact floating-point equality (NaN-aware, treats +0.0 == -0.0)
-            if coords_equal_exact(&vc, &uc) {
+            if coords_equal_exact(v.point().coords(), u.point().coords()) {
                 continue 'outer; // Skip exact duplicate
             }
         }
@@ -136,13 +134,9 @@ where
     let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(vertices.len());
 
     'outer: for v in vertices {
-        let vc: [T; D] = (&v).into();
-
         for u in &unique {
-            let uc: [T; D] = u.into();
-
             // Euclidean distance check
-            if coords_within_epsilon(&vc, &uc, epsilon) {
+            if coords_within_epsilon(v.point().coords(), u.point().coords(), epsilon) {
                 continue 'outer; // Skip near-duplicate
             }
         }
@@ -204,13 +198,9 @@ where
     let mut filtered = Vec::with_capacity(vertices.len());
 
     'outer: for v in vertices {
-        let vc: [T; D] = (&v).into();
-
         // Check against all reference vertices
         for ref_v in reference {
-            let ref_c: [T; D] = ref_v.into();
-
-            if coords_equal_exact(&vc, &ref_c) {
+            if coords_equal_exact(v.point().coords(), ref_v.point().coords()) {
                 continue 'outer; // Skip matching vertex
             }
         }

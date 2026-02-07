@@ -38,7 +38,7 @@ fn regression_empty_circumsphere_2d_minimal_case() {
 
 #[test]
 fn regression_issue_120_minimal_failing_input_2d() {
-    // From docs/issue_120_investigation.md (Example Failure Case (2D)).
+    // From docs/archive/issue_120_investigation.md (Example Failure Case (2D)).
     let vertices = vec![
         vertex!([0.0, 0.0]),
         vertex!([-54.687, 0.0]),

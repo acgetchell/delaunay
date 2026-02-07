@@ -31,6 +31,8 @@
 //!   *SIAM Journal on Scientific Computing* 23, no. 1 (2001): 193-218.
 //!   DOI: [10.1137/S1064827500371499](https://doi.org/10.1137/S1064827500371499)
 
+#![forbid(unsafe_code)]
+
 use crate::core::{
     collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer},
     traits::data_type::DataType,
@@ -43,7 +45,7 @@ use crate::geometry::{
     traits::coordinate::CoordinateScalar,
     util::{circumradius, hypot, inradius as simplex_inradius, simplex_volume},
 };
-use num_traits::{Float, NumCast, One};
+use num_traits::{NumCast, One};
 use std::{
     iter::Sum,
     ops::{AddAssign, Div, SubAssign},
@@ -94,7 +96,7 @@ fn cell_points<K, U, V, const D: usize>(
 ) -> Result<SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>, QualityError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + AddAssign + SubAssign + Sum + NumCast,
+    K::Scalar: CoordinateScalar + AddAssign + SubAssign + Sum,
     U: DataType,
     V: DataType,
 {
@@ -142,7 +144,7 @@ fn compute_scale_aware_epsilon<T, const D: usize>(
     points: &SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>,
 ) -> Result<(T, T), QualityError>
 where
-    T: CoordinateScalar + AddAssign<T> + Sum + NumCast,
+    T: CoordinateScalar + AddAssign<T> + Sum,
 {
     let mut total_edge_length = T::zero();
     let mut edge_count = 0;
@@ -153,7 +155,7 @@ where
             for (idx, diff) in diff_coords.iter_mut().enumerate() {
                 *diff = points[i].coords()[idx] - points[j].coords()[idx];
             }
-            let dist = hypot(diff_coords);
+            let dist = hypot(&diff_coords);
             total_edge_length += dist;
             edge_count += 1;
         }
@@ -241,7 +243,6 @@ where
         + AddAssign<K::Scalar>
         + SubAssign<K::Scalar>
         + Sum
-        + NumCast
         + Div<Output = K::Scalar>,
     U: DataType,
     V: DataType,
@@ -342,10 +343,7 @@ where
         + AddAssign<K::Scalar>
         + SubAssign<K::Scalar>
         + Sum
-        + NumCast
-        + Div<Output = K::Scalar>
-        + Float
-        + One,
+        + Div<Output = K::Scalar>,
     U: DataType,
     V: DataType,
 {
