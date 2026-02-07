@@ -53,9 +53,7 @@
 //! assert_eq!(facet.vertices().unwrap().count(), 3);  // Facet (triangle) in 3D has 3 vertices
 //! ```
 
-// =============================================================================
-// IMPORTS
-// =============================================================================
+#![forbid(unsafe_code)]
 
 use super::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use super::traits::data_type::DataType;

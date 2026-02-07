@@ -219,11 +219,28 @@
 //! - Watson, D.F. "Computing the n-dimensional Delaunay tessellation with application to Voronoi polytopes." The Computer Journal 24.2 (1981): 167-172
 //! - de Berg, M., et al. "Computational Geometry: Algorithms and Applications." 3rd ed. Springer-Verlag, 2008
 
-// =============================================================================
-// IMPORTS
-// =============================================================================
+#![forbid(unsafe_code)]
 
-// Standard library imports
+use super::{
+    cell::{Cell, CellValidationError},
+    facet::{FacetHandle, facet_key_from_vertices},
+    traits::data_type::DataType,
+    util::usize_to_u8,
+    vertex::{Vertex, VertexValidationError},
+};
+use crate::core::collections::{
+    CellKeySet, CellRemovalBuffer, CellVertexUuidBuffer, CellVerticesMap, Entry, FacetToCellsMap,
+    FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, SmallBuffer, StorageMap,
+    UuidToCellKeyMap, UuidToVertexKeyMap, VertexKeyBuffer, VertexKeySet,
+    fast_hash_map_with_capacity,
+};
+use crate::core::triangulation::TriangulationValidationError;
+use crate::geometry::traits::coordinate::CoordinateScalar;
+use serde::{
+    Deserialize, Deserializer, Serialize,
+    de::{self, MapAccess, Visitor},
+};
+use slotmap::new_key_type;
 use std::{
     cmp::Ordering as CmpOrdering,
     fmt::{self, Debug},
@@ -233,34 +250,8 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
 };
-
-// External crate imports
-use serde::{
-    Deserialize, Deserializer, Serialize,
-    de::{self, MapAccess, Visitor},
-};
-use slotmap::new_key_type;
 use thiserror::Error;
 use uuid::Uuid;
-
-// Crate-internal imports
-use crate::core::collections::{
-    CellKeySet, CellRemovalBuffer, CellVertexUuidBuffer, CellVerticesMap, Entry, FacetToCellsMap,
-    FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, SmallBuffer, StorageMap,
-    UuidToCellKeyMap, UuidToVertexKeyMap, VertexKeyBuffer, VertexKeySet,
-    fast_hash_map_with_capacity,
-};
-use crate::core::triangulation::TriangulationValidationError;
-use crate::geometry::traits::coordinate::CoordinateScalar;
-
-// Parent module imports
-use super::{
-    cell::{Cell, CellValidationError},
-    facet::{FacetHandle, facet_key_from_vertices},
-    traits::data_type::DataType,
-    util::usize_to_u8,
-    vertex::{Vertex, VertexValidationError},
-};
 
 // =============================================================================
 // CONSTRUCTION STATE TYPES

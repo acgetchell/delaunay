@@ -4,15 +4,14 @@
 //! higher-level triangulation algorithms. This separation allows swapping
 //! between fast floating-point and robust exact-arithmetic implementations.
 
-use core::iter::Sum;
-use core::marker::PhantomData;
-
 use crate::geometry::point::Point;
 use crate::geometry::predicates::{InSphere, Orientation, insphere, simplex_orientation};
 use crate::geometry::robust_predicates::{
     RobustPredicateConfig, config_presets, robust_insphere, robust_orientation,
 };
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
+use core::iter::Sum;
+use core::marker::PhantomData;
 
 /// Geometric kernel trait defining predicates for triangulation algorithms.
 ///

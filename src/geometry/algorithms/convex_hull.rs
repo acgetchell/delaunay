@@ -1,3 +1,35 @@
+//! Convex hull extraction and visibility tests for d-dimensional triangulations.
+//!
+//! This module exposes the [`ConvexHull`] snapshot type, which derives hull facets
+//! from a triangulation’s boundary and provides point-in-hull and visibility
+//! predicates. Hulls are **logically immutable** snapshots: facet handles are valid
+//! only for the triangulation state they were created from, and staleness is
+//! detected via generation counters.
+//!
+//! # Key capabilities
+//! - Extract hull facets from a triangulation
+//! - Test whether a point lies outside the hull
+//! - Find visible facets from an external point (useful for incremental hull algorithms)
+//!
+//! # Example
+//! ```rust
+//! use delaunay::prelude::*;
+//! use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+//!
+//! let vertices = vec![
+//!     vertex!([0.0, 0.0, 0.0]),
+//!     vertex!([1.0, 0.0, 0.0]),
+//!     vertex!([0.0, 1.0, 0.0]),
+//!     vertex!([0.0, 0.0, 1.0]),
+//! ];
+//! let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+//! let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+//! let outside = Point::new([2.0, 2.0, 2.0]);
+//! assert!(hull.is_point_outside(&outside, dt.as_triangulation()).unwrap());
+//! ```
+
+#![forbid(unsafe_code)]
+
 use crate::core::collections::{
     FacetToCellsMap, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
 };

@@ -16,16 +16,13 @@
 //! directly instead of using Point equality.
 
 #![allow(clippy::similar_names)]
-
-// =============================================================================
-// IMPORTS
-// =============================================================================
+#![forbid(unsafe_code)]
 
 use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar, CoordinateValidationError,
 };
 use num_traits::cast;
-use serde::de::{DeserializeOwned, Error, SeqAccess, Visitor};
+use serde::de::{Error, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use std::any;
 use std::cmp::Ordering;
@@ -222,7 +219,7 @@ where
 // Implement Default manually
 impl<T, const D: usize> Default for Point<T, D>
 where
-    T: CoordinateScalar + Default,
+    T: CoordinateScalar,
 {
     fn default() -> Self {
         Self {
@@ -234,7 +231,7 @@ where
 // Implement Serialize manually
 impl<T, const D: usize> Serialize for Point<T, D>
 where
-    T: CoordinateScalar + Serialize,
+    T: CoordinateScalar,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -282,7 +279,7 @@ enum CoordRepr<T> {
 // Implement Deserialize manually with null -> NaN mapping
 impl<'de, T, const D: usize> Deserialize<'de> for Point<T, D>
 where
-    T: CoordinateScalar + DeserializeOwned,
+    T: CoordinateScalar,
 {
     fn deserialize<DE>(deserializer: DE) -> Result<Self, DE::Error>
     where
@@ -292,7 +289,7 @@ where
 
         impl<'de, T, const D: usize> Visitor<'de> for ArrayVisitor<T, D>
         where
-            T: CoordinateScalar + DeserializeOwned,
+            T: CoordinateScalar,
         {
             type Value = Point<T, D>;
 

@@ -4,11 +4,10 @@
 //! that operate on points and simplices, including circumcenter and circumradius
 //! calculations.
 
-use crate::geometry::matrix::{determinant, matrix_set};
-use num_traits::Float;
-use std::iter::Sum;
+#![forbid(unsafe_code)]
 
 use crate::core::cell::CellValidationError;
+use crate::geometry::matrix::{determinant, matrix_set};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
 use crate::geometry::util::{
@@ -16,6 +15,8 @@ use crate::geometry::util::{
     squared_norm,
 };
 use crate::prelude::CircumcenterError;
+use num_traits::Float;
+use std::iter::Sum;
 
 /// Represents the position of a point relative to a circumsphere.
 ///

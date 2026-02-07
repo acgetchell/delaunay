@@ -7,6 +7,8 @@
 //!
 //! The actual algorithms live under `core::algorithms`.
 
+#![forbid(unsafe_code)]
+
 use crate::core::algorithms::incremental_insertion::InsertionError;
 use crate::core::delaunay_triangulation::{DelaunayCheckPolicy, DelaunayRepairPolicy};
 use crate::core::triangulation::TopologyGuarantee;

@@ -31,6 +31,8 @@
 //!   *SIAM Journal on Scientific Computing* 23, no. 1 (2001): 193-218.
 //!   DOI: [10.1137/S1064827500371499](https://doi.org/10.1137/S1064827500371499)
 
+#![forbid(unsafe_code)]
+
 use crate::core::{
     collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer},
     traits::data_type::DataType,

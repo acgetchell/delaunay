@@ -14,6 +14,8 @@
 //! serialization round-trips, because [`VertexKey`] ordering is derived from internal
 //! slotmap keys. If you need a deterministic order, sort using stable vertex UUIDs.
 
+#![forbid(unsafe_code)]
+
 use crate::core::triangulation_data_structure::VertexKey;
 use slotmap::Key;
 

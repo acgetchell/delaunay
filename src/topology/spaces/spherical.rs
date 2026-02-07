@@ -3,6 +3,8 @@
 //! This module provides topological analysis for triangulations
 //! embedded on spherical manifolds (e.g., triangulations on S²).
 
+#![forbid(unsafe_code)]
+
 use crate::topology::traits::topological_space::{TopologicalSpace, TopologyKind};
 
 /// Represents spherical topological space.

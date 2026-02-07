@@ -1,9 +1,6 @@
 //! Delaunay empty-circumsphere property validation utilities.
 
-use std::ops::{AddAssign, SubAssign};
-
-use smallvec::SmallVec;
-use thiserror::Error;
+#![forbid(unsafe_code)]
 
 use crate::core::cell::CellValidationError;
 use crate::core::collections::ViolationBuffer;
@@ -13,6 +10,9 @@ use crate::geometry::point::Point;
 use crate::geometry::predicates::InSphere;
 use crate::geometry::robust_predicates::robust_insphere;
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
+use smallvec::SmallVec;
+use std::ops::{AddAssign, SubAssign};
+use thiserror::Error;
 
 /// Errors that can occur during Delaunay property validation.
 ///

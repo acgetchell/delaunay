@@ -3,16 +3,7 @@
 //! This layer adds Delaunay-specific operations on top of the generic
 //! `Triangulation` struct, following CGAL's architecture.
 
-use core::cmp::Ordering;
-use core::iter::Sum;
-use core::ops::{AddAssign, SubAssign};
-use std::hash::{Hash, Hasher};
-use std::num::NonZeroUsize;
-
-use num_traits::{NumCast, ToPrimitive, Zero};
-use rand::SeedableRng;
-use rand::rngs::StdRng;
-use rand::seq::SliceRandom;
+#![forbid(unsafe_code)]
 
 use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
 use crate::core::algorithms::flips::{
@@ -45,8 +36,16 @@ use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{FastKernel, Kernel, RobustKernel};
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
 use crate::topology::manifold::validate_ridge_links_for_cells;
-
+use core::cmp::Ordering;
+use core::iter::Sum;
+use core::ops::{AddAssign, SubAssign};
+use num_traits::{NumCast, ToPrimitive, Zero};
+use rand::SeedableRng;
+use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::hash::{Hash, Hasher};
+use std::num::NonZeroUsize;
 use thiserror::Error;
 use uuid::Uuid;
 

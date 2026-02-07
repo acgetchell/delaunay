@@ -1,5 +1,7 @@
 //! Memory/allocation measurement utilities.
 
+#![forbid(unsafe_code)]
+
 /// Memory measurement helper for allocation tracking in examples, tests, and benchmarks.
 ///
 /// This utility function provides a consistent interface for measuring memory allocations

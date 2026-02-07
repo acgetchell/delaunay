@@ -22,6 +22,8 @@
 //! assert_eq!(chi, 1);  // Single tetrahedron has χ = 1
 //! ```
 
+#![forbid(unsafe_code)]
+
 use crate::core::{
     collections::{
         FacetToCellsMap, FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,

@@ -5,8 +5,7 @@
 //! address the "No cavity boundary facets found" error by making the predicates
 //! more reliable when dealing with degenerate or near-degenerate point configurations.
 
-use num_traits::cast;
-use std::fmt::Debug;
+#![forbid(unsafe_code)]
 
 use super::predicates::{InSphere, Orientation};
 use super::util::{safe_coords_to_f64, safe_scalar_to_f64, squared_norm};
@@ -15,6 +14,8 @@ use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar,
 };
+use num_traits::cast;
+use std::fmt::Debug;
 
 /// Result of consistency verification between different insphere methods.
 ///

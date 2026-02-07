@@ -1,5 +1,7 @@
 //! Vertex deduplication utilities.
 
+#![forbid(unsafe_code)]
+
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::geometry::traits::coordinate::CoordinateScalar;

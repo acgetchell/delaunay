@@ -6,6 +6,8 @@
 //! [`crate::core::delaunay_triangulation::DelaunayTriangulation::insert`] and
 //! [`crate::core::delaunay_triangulation::DelaunayTriangulation::remove_vertex`].
 
+#![forbid(unsafe_code)]
+
 pub use crate::core::algorithms::flips::{
     BistellarFlipKind, FlipDirection, FlipError, FlipInfo, RidgeHandle, TriangleHandle,
 };

@@ -104,19 +104,8 @@
 //! with the correct boundary behavior (a necessary condition), but does not attempt to
 //! distinguish spheres/balls from other manifolds (not sufficient in general).
 //!
-use core::iter::Sum;
-use core::ops::{AddAssign, Div, SubAssign};
-use std::borrow::Cow;
-use std::cmp::Ordering as CmpOrdering;
-use std::hash::{Hash, Hasher};
-use std::sync::{
-    OnceLock,
-    atomic::{AtomicU64, Ordering},
-};
 
-use num_traits::{NumCast, One, Zero};
-use thiserror::Error;
-use uuid::Uuid;
+#![forbid(unsafe_code)]
 
 use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
 use crate::core::algorithms::incremental_insertion::{
@@ -159,6 +148,18 @@ use crate::topology::manifold::{
     validate_vertex_links,
 };
 use crate::topology::traits::topological_space::TopologyError;
+use core::iter::Sum;
+use core::ops::{AddAssign, Div, SubAssign};
+use num_traits::{NumCast, One, Zero};
+use std::borrow::Cow;
+use std::cmp::Ordering as CmpOrdering;
+use std::hash::{Hash, Hasher};
+use std::sync::{
+    OnceLock,
+    atomic::{AtomicU64, Ordering},
+};
+use thiserror::Error;
+use uuid::Uuid;
 
 /// Maximum number of repair iterations for fixing non-manifold topology after insertion.
 ///

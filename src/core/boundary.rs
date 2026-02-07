@@ -3,12 +3,13 @@
 //! This module implements the `BoundaryAnalysis` trait for triangulation data structures,
 //! providing methods to identify and analyze boundary facets in d-dimensional triangulations.
 
+#![forbid(unsafe_code)]
+
 use super::{
     facet::{BoundaryFacetsIter, FacetView},
     traits::{boundary_analysis::BoundaryAnalysis, data_type::DataType},
     triangulation_data_structure::{Tds, TdsValidationError},
 };
-
 use crate::prelude::CoordinateScalar;
 
 /// Implementation of `BoundaryAnalysis` trait for `Tds`.

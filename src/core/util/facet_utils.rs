@@ -1,5 +1,7 @@
 //! Facet-related utility helpers.
 
+#![forbid(unsafe_code)]
+
 use crate::core::facet::{FacetError, FacetView};
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;

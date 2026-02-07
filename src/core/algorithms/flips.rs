@@ -25,14 +25,6 @@
 //! - Edelsbrunner & Shah (1996) - "Incremental Topological Flipping Works for Regular Triangulations"
 //! - Bistellar flips implementation notebook (Warp Drive)
 
-use core::iter::Sum;
-use slotmap::Key;
-use std::collections::VecDeque;
-use std::fmt;
-use std::hash::{Hash, Hasher};
-
-use thiserror::Error;
-
 use crate::core::algorithms::incremental_insertion::wire_cavity_neighbors;
 use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::{
@@ -49,6 +41,12 @@ use crate::geometry::point::Point;
 use crate::geometry::predicates::{InSphere, Orientation};
 use crate::geometry::robust_predicates::{config_presets, robust_insphere, robust_orientation};
 use crate::geometry::traits::coordinate::CoordinateScalar;
+use core::iter::Sum;
+use slotmap::Key;
+use std::collections::VecDeque;
+use std::fmt;
+use std::hash::{Hash, Hasher};
+use thiserror::Error;
 
 /// Bistellar flip kind descriptor.
 ///

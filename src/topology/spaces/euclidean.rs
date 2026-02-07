@@ -3,6 +3,8 @@
 //! This module provides topological analysis for triangulations
 //! embedded in flat Euclidean space.
 
+#![forbid(unsafe_code)]
+
 use crate::topology::traits::topological_space::{TopologicalSpace, TopologyKind};
 
 /// Represents Euclidean (flat) topological space.
