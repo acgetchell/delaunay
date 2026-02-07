@@ -4204,16 +4204,16 @@ where
         // Sort vertices by their coordinates for consistent comparison
         // CoordinateScalar guarantees PartialOrd; NaN validation occurs at construction time
         self_vertices.sort_by(|a, b| {
-            let a_coords: [T; D] = (*a).into();
-            let b_coords: [T; D] = (*b).into();
+            let a_coords = *a.point().coords();
+            let b_coords = *b.point().coords();
             a_coords
                 .partial_cmp(&b_coords)
                 .unwrap_or(CmpOrdering::Equal)
         });
 
         other_vertices.sort_by(|a, b| {
-            let a_coords: [T; D] = (*a).into();
-            let b_coords: [T; D] = (*b).into();
+            let a_coords = *a.point().coords();
+            let b_coords = *b.point().coords();
             a_coords
                 .partial_cmp(&b_coords)
                 .unwrap_or(CmpOrdering::Equal)
@@ -4691,7 +4691,7 @@ mod tests {
             .tds
             .get_vertex_by_key(vertex_key.unwrap())
             .unwrap();
-        let coords: [f64; 3] = stored_vertex.into();
+        let coords = *stored_vertex.point().coords();
         let expected = [1.0, 2.0, 3.0];
         assert!(
             coords

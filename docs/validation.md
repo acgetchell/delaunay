@@ -372,7 +372,7 @@ Validates the geometric optimality of the triangulation.
 - **Flip-based repair**: Insertions run k=2/k=3 flip repairs with inverse edge/triangle queues in
   higher dimensions by default. Delaunay validation can still fail if repair is disabled, if repair
   fails to converge, or if inputs are highly degenerate/duplicate-heavy. See
-  [Issue #120 Investigation](issue_120_investigation.md).
+  [Issue #120 Investigation](archive/issue_120_investigation.md).
 - **Heuristic fallback**: If flip-based repair does not converge, you can opt into a heuristic
   rebuild fallback via `DelaunayTriangulation::repair_delaunay_with_flips_advanced`.
   This requires `TopologyGuarantee::PLManifold` and records the shuffle/perturbation seeds used.

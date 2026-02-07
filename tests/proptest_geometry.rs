@@ -39,10 +39,10 @@ macro_rules! test_geometry_properties {
                     )
                 ) {
                     if let Ok(center) = circumcenter(&simplex_points) {
-                        let center_coords: [f64; $dim] = center.into();
+                        let center_coords = *center.coords();
                         let mut distances = Vec::new();
                         for point in &simplex_points {
-                            let point_coords: [f64; $dim] = (*point).into();
+                            let point_coords = *point.coords();
                             let mut diff = [0.0; $dim];
                             for i in 0..$dim {
                                 diff[i] = point_coords[i] - center_coords[i];
@@ -68,9 +68,9 @@ macro_rules! test_geometry_properties {
                     )
                 ) {
                     if let (Ok(center), Ok(radius)) = (circumcenter(&simplex_points), circumradius(&simplex_points)) {
-                        let center_coords: [f64; $dim] = center.into();
+                        let center_coords = *center.coords();
                         if let Some(first_point) = simplex_points.first() {
-                            let point_coords: [f64; $dim] = (*first_point).into();
+                            let point_coords = *first_point.coords();
                             let mut diff = [0.0; $dim];
                             for i in 0..$dim {
                                 diff[i] = point_coords[i] - center_coords[i];

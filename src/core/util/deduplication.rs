@@ -55,10 +55,10 @@ where
     let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(vertices.len());
 
     'outer: for v in vertices {
-        let vc: [T; D] = (&v).into();
+        let vc = *v.point().coords();
 
         for u in &unique {
-            let uc: [T; D] = u.into();
+            let uc = *u.point().coords();
 
             // Exact floating-point equality (NaN-aware, treats +0.0 == -0.0)
             if coords_equal_exact(&vc, &uc) {
@@ -136,10 +136,10 @@ where
     let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(vertices.len());
 
     'outer: for v in vertices {
-        let vc: [T; D] = (&v).into();
+        let vc = *v.point().coords();
 
         for u in &unique {
-            let uc: [T; D] = u.into();
+            let uc = *u.point().coords();
 
             // Euclidean distance check
             if coords_within_epsilon(&vc, &uc, epsilon) {
@@ -204,11 +204,11 @@ where
     let mut filtered = Vec::with_capacity(vertices.len());
 
     'outer: for v in vertices {
-        let vc: [T; D] = (&v).into();
+        let vc = *v.point().coords();
 
         // Check against all reference vertices
         for ref_v in reference {
-            let ref_c: [T; D] = ref_v.into();
+            let ref_c = *ref_v.point().coords();
 
             if coords_equal_exact(&vc, &ref_c) {
                 continue 'outer; // Skip matching vertex

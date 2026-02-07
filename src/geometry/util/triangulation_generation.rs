@@ -501,6 +501,7 @@ where
 /// - Insertion order strategy (`Input`, `Lexicographic`, `Morton`, `Hilbert`)
 /// - Topology guarantee (`None`, `PLManifold`)
 /// - Construction options (deduplication, retry policy)
+/// - Topology/Euler validation (the final triangulation must pass Level-3 checks)
 ///
 /// # Examples
 ///

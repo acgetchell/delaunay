@@ -113,7 +113,7 @@ where
     // Build matrix A and vector b for the linear system A * x = b.
     //
     // Here, A is D×D and b is length D, so we can solve with stack-allocated la-stack types.
-    let coords_0: [T; D] = (&points[0]).into();
+    let coords_0 = *points[0].coords();
 
     // Use safe coordinate conversion
     let coords_0_f64: [f64; D] = safe_coords_to_f64(coords_0)?;
@@ -122,7 +122,7 @@ where
     let mut b_arr = [0.0f64; D];
 
     for i in 0..D {
-        let coords_point: [T; D] = (&points[i + 1]).into();
+        let coords_point = *points[i + 1].coords();
 
         // Use safe coordinate conversion
         let coords_point_f64: [f64; D] = safe_coords_to_f64(coords_point)?;
@@ -278,7 +278,7 @@ where
         return Err(CircumcenterError::EmptyPointSet);
     }
 
-    let point_coords: [T; D] = (&points[0]).into();
+    let point_coords = *points[0].coords();
     let circumcenter_coords: [T; D] = *circumcenter.coords();
 
     // Calculate distance using hypot for numerical stability
@@ -404,7 +404,7 @@ mod tests {
         let distances: Vec<f64> = points
             .iter()
             .map(|p| {
-                let p_coords: [f64; 3] = p.into();
+                let p_coords = *p.coords();
                 let diff = [
                     p_coords[0] - center_coords[0],
                     p_coords[1] - center_coords[1],
@@ -623,7 +623,7 @@ mod tests {
         let distances: Vec<f64> = points
             .iter()
             .map(|p| {
-                let p_coords: [f64; 2] = p.into();
+                let p_coords = *p.coords();
                 let diff = [
                     p_coords[0] - center_coords[0],
                     p_coords[1] - center_coords[1],
@@ -704,7 +704,7 @@ mod tests {
         let distances: Vec<f64> = points
             .iter()
             .map(|p| {
-                let p_coords: [f64; 5] = p.into();
+                let p_coords = *p.coords();
                 let diff = [
                     p_coords[0] - center_coords[0],
                     p_coords[1] - center_coords[1],

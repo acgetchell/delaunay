@@ -739,7 +739,7 @@ where
         let points: Vec<Point<T, D>> = facet_vertices
             .map_err(SurfaceMeasureError::FacetError)?
             .map(|v| {
-                let coords: [T; D] = (*v.point()).into();
+                let coords = *v.point().coords();
                 Point::new(coords)
             })
             .collect();
@@ -1273,15 +1273,15 @@ mod tests {
                 let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
                 facet_vertices.len() == 3
                     && facet_vertices.iter().any(|v| {
-                        let coords: [f64; 3] = (*v.point()).into();
+                        let coords = *v.point().coords();
                         coords == [0.0, 0.0, 0.0]
                     })
                     && facet_vertices.iter().any(|v| {
-                        let coords: [f64; 3] = (*v.point()).into();
+                        let coords = *v.point().coords();
                         coords == [3.0, 0.0, 0.0]
                     })
                     && facet_vertices.iter().any(|v| {
-                        let coords: [f64; 3] = (*v.point()).into();
+                        let coords = *v.point().coords();
                         coords == [0.0, 4.0, 0.0]
                     })
             })
@@ -1322,7 +1322,7 @@ mod tests {
             .vertices()
             .unwrap()
             .map(|v| {
-                let coords: [f64; 3] = (*v.point()).into();
+                let coords = *v.point().coords();
                 Point::new(coords)
             })
             .collect();
@@ -1330,7 +1330,7 @@ mod tests {
             .vertices()
             .unwrap()
             .map(|v| {
-                let coords: [f64; 3] = (*v.point()).into();
+                let coords = *v.point().coords();
                 Point::new(coords)
             })
             .collect();
@@ -1654,15 +1654,15 @@ mod tests {
                 let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
                 facet_vertices.len() == 3
                     && facet_vertices.iter().any(|v| {
-                        let coords: [f64; 3] = (*v.point()).into();
+                        let coords = *v.point().coords();
                         coords == [0.0, 0.0, 0.0]
                     })
                     && facet_vertices.iter().any(|v| {
-                        let coords: [f64; 3] = (*v.point()).into();
+                        let coords = *v.point().coords();
                         coords == [1.0, 0.0, 0.0]
                     })
                     && facet_vertices.iter().any(|v| {
-                        let coords: [f64; 3] = (*v.point()).into();
+                        let coords = *v.point().coords();
                         coords == [0.0, 1.0, 0.0]
                     })
             })
@@ -1686,15 +1686,15 @@ mod tests {
                 let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
                 facet_vertices.len() == 3
                     && facet_vertices.iter().any(|v| {
-                        let coords: [f64; 3] = (*v.point()).into();
+                        let coords = *v.point().coords();
                         coords == [0.0, 0.0, 0.0]
                     })
                     && facet_vertices.iter().any(|v| {
-                        let coords: [f64; 3] = (*v.point()).into();
+                        let coords = *v.point().coords();
                         coords == [6.0, 0.0, 0.0]
                     })
                     && facet_vertices.iter().any(|v| {
-                        let coords: [f64; 3] = (*v.point()).into();
+                        let coords = *v.point().coords();
                         coords == [0.0, 8.0, 0.0]
                     })
             })

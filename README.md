@@ -83,11 +83,12 @@ if outcome.used_heuristic() {
 }
 ```
 
-For details, see: [Issue #120 Investigation (RESOLVED)](docs/issue_120_investigation.md)
+For details, see: [Issue #120 Investigation (RESOLVED)](docs/archive/issue_120_investigation.md)
 
 **Validation**: You can verify your triangulation meets your requirements using the library's
 [4-level validation hierarchy](docs/validation.md):
 
+- **Level 1** (`Vertex::is_valid()` / `Cell::is_valid()`) - Element validity (finite coordinates, non-nil UUIDs, D+1 distinct vertices)
 - **Level 2** (`dt.tds().is_valid()`) - Structural correctness (expected to pass when using public APIs)
 - **Level 3** (`dt.as_triangulation().is_valid()`) - Manifold topology + Euler characteristic
 - **Level 4** (`dt.is_valid()`) - Delaunay property only (may fail if repair is disabled or non-convergent)
@@ -191,7 +192,7 @@ This includes information about:
 - **[Code Organization](docs/code_organization.md)** - Project structure and module patterns
 - **[Topology integration design](docs/topology.md)** - Design notes on topology integration (includes historical sections)
 - **[Validation Guide](docs/validation.md)** - Comprehensive 4-level validation hierarchy guide (element → structural → manifold → Delaunay)
-- **[Issue #120 Investigation (RESOLVED)](docs/issue_120_investigation.md)** - Bistellar flip-based Delaunay repair (completed v0.7.0+)
+- **[Issue #120 Investigation (RESOLVED)](docs/archive/issue_120_investigation.md)** - Bistellar flip-based Delaunay repair (completed v0.7.0+)
 
 ## 📚 References
 

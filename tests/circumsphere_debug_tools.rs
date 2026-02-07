@@ -218,7 +218,7 @@ fn test_circumsphere_generic<const D: usize>(
     // Print vertices
     println!("{dimension_name} vertices:");
     for (i, vertex) in vertices.iter().enumerate() {
-        let coords: [f64; D] = vertex.into();
+        let coords = *vertex.point().coords();
         println!("  v{i}: {coords:?}");
     }
     println!();
@@ -442,7 +442,7 @@ fn test_circumsphere_containment() {
 
     println!("4D simplex vertices:");
     for (i, vertex) in vertices.iter().enumerate() {
-        let coords: [f64; 4] = vertex.into();
+        let coords = *vertex.point().coords();
         println!(
             "  v{}: [{}, {}, {}, {}]",
             i, coords[0], coords[1], coords[2], coords[3]
@@ -471,7 +471,7 @@ fn test_circumsphere_containment() {
 
     println!("Testing points that should be INSIDE the circumsphere:");
     for point in test_points_inside {
-        let coords: [f64; 4] = point.into();
+        let coords = *point.point().coords();
         test_point_generic(&vertices, coords, "inside", &center.to_array(), radius);
     }
     println!();
@@ -493,7 +493,7 @@ fn test_circumsphere_containment() {
         let vertex_points: Vec<Point<f64, 4>> = vertices.iter().map(Point::from).collect();
         let result_determinant = insphere(&vertex_points, Point::from(point));
         let result_distance = insphere_distance(&vertex_points, Point::from(point));
-        let coords: [f64; 4] = point.into();
+        let coords = *point.point().coords();
         println!(
             "  Point {}: [{}, {}, {}, {}] -> Det: {}, Dist: {}",
             i,
@@ -523,7 +523,7 @@ fn test_circumsphere_containment() {
     for (i, vertex) in vertices.iter().enumerate() {
         let vertex_points: Vec<Point<f64, 4>> = vertices.iter().map(Point::from).collect();
         let result = insphere(&vertex_points, Point::from(vertex));
-        let coords: [f64; 4] = vertex.into();
+        let coords = *vertex.point().coords();
         println!(
             "  Vertex {}: [{}, {}, {}, {}] -> {}",
             i,
@@ -556,7 +556,7 @@ fn test_circumsphere_containment() {
     for (i, point) in boundary_points.iter().enumerate() {
         let vertex_points: Vec<Point<f64, 4>> = vertices.iter().map(Point::from).collect();
         let result = insphere(&vertex_points, Point::from(point));
-        let coords: [f64; 4] = point.into();
+        let coords = *point.point().coords();
         println!(
             "  Point {}: [{}, {}, {}, {}] -> {}",
             i,
@@ -1311,7 +1311,7 @@ fn test_single_2d_point() {
         (Ok(center), Ok(radius)) => {
             println!("Triangle vertices:");
             for (i, vertex) in vertices.iter().enumerate() {
-                let coords: [f64; 2] = vertex.into();
+                let coords = *vertex.point().coords();
                 println!("  v{i}: {coords:?}");
             }
             println!();
@@ -1354,7 +1354,7 @@ fn test_single_3d_point() {
         (Ok(center), Ok(radius)) => {
             println!("Tetrahedron vertices:");
             for (i, vertex) in vertices.iter().enumerate() {
-                let coords: [f64; 3] = vertex.into();
+                let coords = *vertex.point().coords();
                 println!("  v{i}: {coords:?}");
             }
             println!();
@@ -1398,7 +1398,7 @@ fn test_single_4d_point() {
         (Ok(center), Ok(radius)) => {
             println!("4D simplex vertices:");
             for (i, vertex) in vertices.iter().enumerate() {
-                let coords: [f64; 4] = vertex.into();
+                let coords = *vertex.point().coords();
                 println!("  v{i}: {coords:?}");
             }
             println!();

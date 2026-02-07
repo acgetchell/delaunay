@@ -216,7 +216,7 @@ macro_rules! test_vertex_properties {
                 fn [<prop_vertex_point_access_ $dim d>](coords in prop::array::[<uniform $dim>](finite_coordinate())) {
                     let vertex: Vertex<f64, (), $dim> = vertex!(coords);
                     let point = vertex.point();
-                    let point_coords: [f64; $dim] = point.into();
+                    let point_coords = *point.coords();
 
                     for (i, (&coord, &point_coord)) in coords.iter().zip(point_coords.iter()).enumerate() {
                         prop_assert!(

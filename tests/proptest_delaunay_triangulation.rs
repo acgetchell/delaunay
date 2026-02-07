@@ -103,9 +103,9 @@ fn dedup_vertices_by_coords<const D: usize>(
 ) -> Vec<Vertex<f64, (), D>> {
     let mut unique: Vec<Vertex<f64, (), D>> = Vec::with_capacity(vertices.len());
     'outer: for v in vertices {
-        let vc: [f64; D] = (&v).into();
+        let vc = *v.point().coords();
         for u in &unique {
-            let uc: [f64; D] = u.into();
+            let uc = *u.point().coords();
             // Compare using bit representation to avoid float_cmp lint and match exact duplicates
             if vc
                 .iter()
@@ -133,7 +133,7 @@ fn has_no_coordinate_hyperplane_degeneracy<const D: usize>(
     let mut axis_counts = [0usize; D];
 
     for v in vertices {
-        let coords: [f64; D] = v.into();
+        let coords = *v.point().coords();
         for a in 0..D {
             if coords[a] == 0.0 {
                 axis_counts[a] += 1;
@@ -189,10 +189,10 @@ fn has_no_nearly_coplanar_tetrahedra_3d(vertices: &[Vertex<f64, (), 3>]) -> bool
         for j in (i + 1)..vertex_count {
             for k in (j + 1)..vertex_count {
                 for l in (k + 1)..vertex_count {
-                    let point_a: [f64; 3] = (&vertices[i]).into();
-                    let point_b: [f64; 3] = (&vertices[j]).into();
-                    let point_c: [f64; 3] = (&vertices[k]).into();
-                    let point_d: [f64; 3] = (&vertices[l]).into();
+                    let point_a = *vertices[i].point().coords();
+                    let point_b = *vertices[j].point().coords();
+                    let point_c = *vertices[k].point().coords();
+                    let point_d = *vertices[l].point().coords();
 
                     let ab = sub(point_b, point_a);
                     let ac = sub(point_c, point_a);
@@ -481,9 +481,9 @@ macro_rules! gen_incremental_insertion_validity {
                     let additional_vertex = vertex!(additional_point);
 
                     // Avoid duplicate insertion cases here; duplicate-handling is tested in dedicated suites.
-                    let add_coords: [f64; $dim] = (&additional_vertex).into();
+                    let add_coords = *additional_vertex.point().coords();
                     let is_dup = initial_vertices.iter().any(|u| {
-                        let uc: [f64; $dim] = u.into();
+                        let uc = *u.point().coords();
                         add_coords
                             .iter()
                             .zip(uc.iter())
@@ -546,9 +546,9 @@ macro_rules! gen_incremental_insertion_validity {
                     let additional_vertex = vertex!(additional_point);
 
                     // Avoid duplicate insertion cases here; duplicate-handling is tested in dedicated suites.
-                    let add_coords: [f64; $dim] = (&additional_vertex).into();
+                    let add_coords = *additional_vertex.point().coords();
                     let is_dup = initial_vertices.iter().any(|u| {
-                        let uc: [f64; $dim] = u.into();
+                        let uc = *u.point().coords();
                         add_coords
                             .iter()
                             .zip(uc.iter())
@@ -613,9 +613,9 @@ proptest! {
         let additional_vertex = vertex!(additional_point);
 
         // Avoid duplicate insertion cases here; duplicate-handling is tested in dedicated suites.
-        let add_coords: [f64; 3] = (&additional_vertex).into();
+        let add_coords = *additional_vertex.point().coords();
         let is_dup = initial_vertices.iter().any(|u| {
-            let uc: [f64; 3] = u.into();
+            let uc = *u.point().coords();
             add_coords
                 .iter()
                 .zip(uc.iter())
@@ -1533,7 +1533,7 @@ fn count_unique_coords_by_bits<const D: usize>(pts: &[Point<f64, D>]) -> usize {
     use std::collections::HashSet;
     let mut set: HashSet<Vec<u64>> = HashSet::with_capacity(pts.len());
     for p in pts {
-        let coords: [f64; D] = (*p).into();
+        let coords = *p.coords();
         let key: Vec<u64> = coords.iter().map(|x| x.to_bits()).collect();
         set.insert(key);
     }
@@ -1557,7 +1557,7 @@ macro_rules! gen_duplicate_cloud_test {
                         pts.push(dup);
 
                         // Jittered near-duplicate of the second point
-                        let mut coords: [f64; $dim] = pts[1].into();
+                        let mut coords = *pts[1].coords();
                         for c in &mut coords {
                             *c += 1e-7;
                         }
@@ -1660,7 +1660,7 @@ macro_rules! gen_duplicate_cloud_test {
                         pts.push(dup);
 
                         // Jittered near-duplicate of the second point
-                        let mut coords: [f64; $dim] = pts[1].into();
+                        let mut coords = *pts[1].coords();
                         for c in &mut coords {
                             *c += 1e-7;
                         }

@@ -147,7 +147,7 @@ where
         // Populate rows with the coordinates of the points of the simplex.
         for (i, p) in simplex_points.iter().enumerate() {
             // Use implicit conversion from point to coordinates
-            let point_coords: [T; D] = p.into();
+            let point_coords = *p.coords();
             let point_coords_f64 = safe_coords_to_f64(point_coords)?;
 
             // Add coordinates
@@ -240,7 +240,7 @@ where
     let circumradius = circumradius_with_center(simplex_points, &circumcenter)?;
 
     // Calculate distance using hypot for numerical stability
-    let point_coords: [T; D] = (&test_point).into();
+    let point_coords = *test_point.coords();
     let circumcenter_coords: [T; D] = *circumcenter.coords();
 
     let mut diff_coords = [T::zero(); D];
@@ -392,7 +392,7 @@ where
 
     try_with_la_stack_matrix!(k, |matrix| {
         for (i, p) in simplex_points.iter().enumerate() {
-            let point_coords: [T; D] = p.into();
+            let point_coords = *p.coords();
             let point_coords_f64 = safe_coords_to_f64(point_coords)?;
 
             for (j, &v) in point_coords_f64.iter().enumerate() {
@@ -404,7 +404,7 @@ where
             matrix_set(&mut matrix, i, D + 1, 1.0);
         }
 
-        let test_point_coords: [T; D] = (&test_point).into();
+        let test_point_coords = *test_point.coords();
         let test_point_coords_f64 = safe_coords_to_f64(test_point_coords)?;
         for (j, &v) in test_point_coords_f64.iter().enumerate() {
             matrix_set(&mut matrix, D + 1, j, v);
@@ -551,14 +551,14 @@ where
     }
 
     // Get the reference point (first point of the simplex)
-    let ref_point_coords: [T; D] = (&simplex_points[0]).into();
+    let ref_point_coords = *simplex_points[0].coords();
 
     let k = D + 1;
 
     try_with_la_stack_matrix!(k, |matrix| {
         // Populate rows with the coordinates relative to the reference point.
         for (row, point) in simplex_points.iter().skip(1).enumerate() {
-            let point_coords: [T; D] = point.into();
+            let point_coords = *point.coords();
 
             // Calculate relative coordinates using generic arithmetic on T
             let mut relative_coords_t: [T; D] = [T::zero(); D];
@@ -588,7 +588,7 @@ where
         }
 
         // Add the test point to the last row
-        let test_point_coords: [T; D] = (&test_point).into();
+        let test_point_coords = *test_point.coords();
 
         // Calculate relative coordinates for test point using generic arithmetic on T
         let mut test_relative_coords_t: [T; D] = [T::zero(); D];

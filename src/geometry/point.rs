@@ -91,6 +91,9 @@ where
     /// without copying. For owned coordinates, use the `Into<[T; D]>` trait
     /// implementation via `.into()`.
     ///
+    /// Note: In highly generic code (e.g., `K::Scalar`, const `D`), prefer
+    /// `coords()` or `to_array()` over `into()` to avoid type inference ambiguity.
+    ///
     /// # Example
     ///
     /// ```rust

@@ -224,7 +224,7 @@ where
 
     // Add simplex points
     for (i, point) in simplex_points.iter().enumerate() {
-        let coords: [T; D] = point.into();
+        let coords = *point.coords();
 
         // Coordinates - use safe conversion
         let coords_f64 = safe_coords_to_f64(coords)?;
@@ -242,7 +242,7 @@ where
     }
 
     // Add test point
-    let test_coords: [T; D] = (*test_point).into();
+    let test_coords = *test_point.coords();
 
     let test_coords_f64 = safe_coords_to_f64(test_coords)?;
     for (j, &v) in test_coords_f64.iter().enumerate() {
@@ -427,7 +427,7 @@ where
 
     try_with_la_stack_matrix!(k, |matrix| {
         for (i, point) in simplex_points.iter().enumerate() {
-            let coords: [T; D] = point.into();
+            let coords = *point.coords();
 
             // Add coordinates using safe conversion
             let coords_f64 = safe_coords_to_f64(coords)?;
@@ -559,7 +559,7 @@ where
     T: CoordinateScalar,
     [T; D]: Copy + Sized,
 {
-    let mut coords: [T; D] = (*point).into();
+    let mut coords = *point.coords();
 
     for i in 0..D {
         coords[i] = coords[i] + direction[i] * scale;
@@ -605,7 +605,7 @@ where
     let mut perturbed_simplex: Vec<Point<T, D>> = Vec::with_capacity(simplex_points.len());
 
     for (i, point) in simplex_points.iter().enumerate() {
-        let mut coords: [T; D] = (*point).into();
+        let mut coords = *point.coords();
 
         // Apply perturbation with magnitude ε^(i+1) in the first coordinate
         // This maintains the SoS property while being computationally feasible
@@ -616,7 +616,7 @@ where
     }
 
     // Perturb test point with unique index
-    let mut test_coords: [T; D] = (*test_point).into();
+    let mut test_coords = *test_point.coords();
     let test_perturbation =
         perturbation_scale / T::from(simplex_points.len() + 1).unwrap_or_else(T::one);
     test_coords[0] = test_coords[0] + test_perturbation;
@@ -647,7 +647,7 @@ where
     // Calculate simplex centroid
     let mut centroid_coords = [T::zero(); D];
     for point in simplex_points {
-        let coords: [T; D] = (*point).into();
+        let coords = *point.coords();
         for i in 0..D {
             centroid_coords[i] = centroid_coords[i] + coords[i];
         }
@@ -659,7 +659,7 @@ where
     }
 
     // Calculate test point distance to centroid
-    let test_coords: [T; D] = (*test_point).into();
+    let test_coords = *test_point.coords();
     let mut test_dist_sq = T::zero();
     for i in 0..D {
         let diff = test_coords[i] - centroid_coords[i];
@@ -669,7 +669,7 @@ where
     // Calculate average simplex point distance to centroid
     let mut avg_simplex_dist_sq = T::zero();
     for point in simplex_points {
-        let coords: [T; D] = (*point).into();
+        let coords = *point.coords();
         let mut dist_sq = T::zero();
         for i in 0..D {
             let diff = coords[i] - centroid_coords[i];
@@ -1553,7 +1553,7 @@ mod tests {
         let scale = 0.001;
 
         let perturbed = apply_perturbation(&original_point, direction, scale);
-        let perturbed_coords: [f64; 3] = perturbed.into();
+        let perturbed_coords = *perturbed.coords();
 
         assert_relative_eq!(
             perturbed_coords[0],
@@ -1574,7 +1574,7 @@ mod tests {
         // Test with zero perturbation
         let zero_direction = [0.0, 0.0, 0.0];
         let unperturbed = apply_perturbation(&original_point, zero_direction, 1.0);
-        let unperturbed_coords: [f64; 3] = unperturbed.into();
+        let unperturbed_coords = *unperturbed.coords();
         assert_relative_eq!(unperturbed_coords.as_slice(), [1.0, 2.0, 3.0].as_slice());
     }
 
@@ -1737,7 +1737,7 @@ mod tests {
 
         let all_finite_insphere_3d = with_la_stack_matrix!(5, |matrix| {
             for (i, point) in zero_points.iter().enumerate() {
-                let coords: [f64; 3] = point.into();
+                let coords = *point.coords();
                 for (j, &v) in coords.iter().enumerate() {
                     matrix_set(&mut matrix, i, j, v);
                 }
@@ -1745,7 +1745,7 @@ mod tests {
                 matrix_set(&mut matrix, i, 4, 1.0);
             }
 
-            let test_coords: [f64; 3] = zero_test.into();
+            let test_coords = *zero_test.coords();
             for (j, &v) in test_coords.iter().enumerate() {
                 matrix_set(&mut matrix, 4, j, v);
             }
@@ -1764,7 +1764,7 @@ mod tests {
 
         let all_finite_orientation_3d = with_la_stack_matrix!(4, |matrix| {
             for (i, point) in zero_points.iter().enumerate() {
-                let coords: [f64; 3] = point.into();
+                let coords = *point.coords();
                 for (j, &v) in coords.iter().enumerate() {
                     matrix_set(&mut matrix, i, j, v);
                 }
@@ -1791,7 +1791,7 @@ mod tests {
 
         let all_finite_insphere_2d = with_la_stack_matrix!(4, |matrix| {
             for (i, point) in large_points.iter().enumerate() {
-                let coords: [f64; 2] = point.into();
+                let coords = *point.coords();
                 for (j, &v) in coords.iter().enumerate() {
                     matrix_set(&mut matrix, i, j, v);
                 }
@@ -1799,7 +1799,7 @@ mod tests {
                 matrix_set(&mut matrix, i, 3, 1.0);
             }
 
-            let test_coords: [f64; 2] = large_test.into();
+            let test_coords = *large_test.coords();
             for (j, &v) in test_coords.iter().enumerate() {
                 matrix_set(&mut matrix, 3, j, v);
             }

@@ -634,8 +634,8 @@ where
 
     for v in ordered {
         if let Some(last) = unique.last() {
-            let vc: [T; D] = (&v).into();
-            let lc: [T; D] = last.into();
+            let vc = *v.point().coords();
+            let lc = *last.point().coords();
             if coords_equal_exact(&vc, &lc) {
                 record_duplicate_detection_metrics(false, 0, true);
                 continue;
@@ -747,10 +747,10 @@ where
 {
     let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(vertices.len());
     for v in vertices {
-        let vc: [T; D] = (&v).into();
+        let vc = *v.point().coords();
         let mut duplicate = false;
         for u in &unique {
-            let uc: [T; D] = u.into();
+            let uc = *u.point().coords();
             if coords_within_epsilon(&vc, &uc, epsilon) {
                 duplicate = true;
                 break;
@@ -1108,7 +1108,7 @@ where
 /// If flip-based repair fails to converge, insertion returns an error and the
 /// triangulation is left structurally valid but not guaranteed Delaunay.
 ///
-/// See: [Issue #120 Investigation](https://github.com/acgetchell/delaunay/blob/main/docs/issue_120_investigation.md)
+/// See: [Issue #120 Investigation](https://github.com/acgetchell/delaunay/blob/main/docs/archive/issue_120_investigation.md)
 ///
 /// # Implementation
 ///

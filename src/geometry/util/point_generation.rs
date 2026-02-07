@@ -522,7 +522,7 @@ mod tests {
 
         // Check that all points are within range
         for point in &points {
-            let coords: [f64; 2] = point.into();
+            let coords = *point.coords();
             assert!(coords[0] >= -10.0 && coords[0] < 10.0);
             assert!(coords[1] >= -10.0 && coords[1] < 10.0);
         }
@@ -536,7 +536,7 @@ mod tests {
         assert_eq!(points.len(), 75);
 
         for point in &points {
-            let coords: [f64; 3] = point.into();
+            let coords = *point.coords();
             assert!(coords[0] >= 0.0 && coords[0] < 5.0);
             assert!(coords[1] >= 0.0 && coords[1] < 5.0);
             assert!(coords[2] >= 0.0 && coords[2] < 5.0);
@@ -551,7 +551,7 @@ mod tests {
         assert_eq!(points.len(), 50);
 
         for point in &points {
-            let coords: [f32; 4] = point.into();
+            let coords = *point.coords();
             for &coord in &coords {
                 assert!((-2.0..2.0).contains(&coord));
             }
@@ -566,7 +566,7 @@ mod tests {
         assert_eq!(points.len(), 25);
 
         for point in &points {
-            let coords: [f64; 5] = point.into();
+            let coords = *point.coords();
             for &coord in &coords {
                 assert!((-1.0..1.0).contains(&coord));
             }
@@ -632,8 +632,8 @@ mod tests {
 
         // Points should be identical with same seed
         for (p1, p2) in points1.iter().zip(points2.iter()) {
-            let coords1: [f64; 2] = p1.into();
-            let coords2: [f64; 2] = p2.into();
+            let coords1 = *p1.coords();
+            let coords2 = *p2.coords();
 
             for (c1, c2) in coords1.iter().zip(coords2.iter()) {
                 assert_relative_eq!(c1, c2, epsilon = 1e-15);
@@ -651,8 +651,8 @@ mod tests {
         assert_eq!(points1.len(), points2.len());
 
         for (p1, p2) in points1.iter().zip(points2.iter()) {
-            let coords1: [f64; 3] = p1.into();
-            let coords2: [f64; 3] = p2.into();
+            let coords1 = *p1.coords();
+            let coords2 = *p2.coords();
 
             for (c1, c2) in coords1.iter().zip(coords2.iter()) {
                 assert_relative_eq!(c1, c2, epsilon = 1e-15);
@@ -670,8 +670,8 @@ mod tests {
         assert_eq!(points1.len(), points2.len());
 
         for (p1, p2) in points1.iter().zip(points2.iter()) {
-            let coords1: [f32; 4] = p1.into();
-            let coords2: [f32; 4] = p2.into();
+            let coords1 = *p1.coords();
+            let coords2 = *p2.coords();
 
             for (c1, c2) in coords1.iter().zip(coords2.iter()) {
                 assert_relative_eq!(c1, c2, epsilon = 1e-6); // f32 precision
@@ -689,8 +689,8 @@ mod tests {
         assert_eq!(points1.len(), points2.len());
 
         for (p1, p2) in points1.iter().zip(points2.iter()) {
-            let coords1: [f64; 5] = p1.into();
-            let coords2: [f64; 5] = p2.into();
+            let coords1 = *p1.coords();
+            let coords2 = *p2.coords();
 
             for (c1, c2) in coords1.iter().zip(coords2.iter()) {
                 assert_relative_eq!(c1, c2, epsilon = 1e-15);
@@ -733,7 +733,7 @@ mod tests {
         let mut max_2d = [f64::NEG_INFINITY; 2];
 
         for point in &points_2d {
-            let coords: [f64; 2] = point.into();
+            let coords = *point.coords();
             for (i, &coord) in coords.iter().enumerate() {
                 min_2d[i] = min_2d[i].min(coord);
                 max_2d[i] = max_2d[i].max(coord);
@@ -758,7 +758,7 @@ mod tests {
         let mut max_5d = [f64::NEG_INFINITY; 5];
 
         for point in &points_5d {
-            let coords: [f64; 5] = point.into();
+            let coords = *point.coords();
             for (i, &coord) in coords.iter().enumerate() {
                 min_5d[i] = min_5d[i].min(coord);
                 max_5d[i] = max_5d[i].max(coord);
@@ -806,7 +806,7 @@ mod tests {
 
         // Verify ranges for centered points
         for point in &centered_5d {
-            let coords: [f64; 5] = point.into();
+            let coords = *point.coords();
             for &coord in &coords {
                 assert!((-1.0..1.0).contains(&coord));
             }
@@ -838,7 +838,7 @@ mod tests {
         ];
 
         for point in &grid {
-            let coords: [f64; 2] = point.into();
+            let coords = *point.coords();
             // Grid generation order might vary, so check if point exists in expected set
             assert!(
                 expected_coords.iter().any(|&expected| {
@@ -859,7 +859,7 @@ mod tests {
 
         // Check that all points are within expected bounds
         for point in &grid {
-            let coords: [f64; 3] = point.into();
+            let coords = *point.coords();
             for &coord in &coords {
                 assert!((1.0..=3.0).contains(&coord)); // offset 1.0 + (0 or 1) * spacing 2.0
             }
@@ -875,7 +875,7 @@ mod tests {
 
         // Check coordinate ranges
         for point in &grid {
-            let coords: [f32; 4] = point.into();
+            let coords = *point.coords();
             for &coord in &coords {
                 assert!((-0.5..=0.0).contains(&coord)); // offset -0.5 + (0 or 1) * spacing 0.5
             }
@@ -891,7 +891,7 @@ mod tests {
 
         // Check coordinate ranges
         for point in &grid {
-            let coords: [f64; 5] = point.into();
+            let coords = *point.coords();
             for &coord in &coords {
                 assert!((0.0..=1.0).contains(&coord)); // offset 0.0 + (0 or 1) * spacing 1.0
             }
@@ -903,7 +903,7 @@ mod tests {
         // Test single point grid
         let grid = generate_grid_points::<f64, 3>(1, 1.0, [0.0, 0.0, 0.0]).unwrap();
         assert_eq!(grid.len(), 1);
-        let coords: [f64; 3] = (&grid[0]).into();
+        let coords = *grid[0].coords();
         // Use approx for floating point comparison
         for (actual, expected) in coords.iter().zip([0.0, 0.0, 0.0].iter()) {
             assert!((actual - expected).abs() < 1e-15);
@@ -913,7 +913,7 @@ mod tests {
         let grid = generate_grid_points::<f64, 2>(2, 0.0, [5.0, 5.0]).unwrap();
         assert_eq!(grid.len(), 4);
         for point in &grid {
-            let coords: [f64; 2] = point.into();
+            let coords = *point.coords();
             // Use approx for floating point comparison
             for (actual, expected) in coords.iter().zip([5.0, 5.0].iter()) {
                 assert!((actual - expected).abs() < 1e-15);
@@ -987,7 +987,7 @@ mod tests {
 
         // Check that all points are within bounds
         for point in &points {
-            let coords: [f64; 2] = point.into();
+            let coords = *point.coords();
             assert!((0.0..10.0).contains(&coords[0]));
             assert!((0.0..10.0).contains(&coords[1]));
         }
@@ -996,8 +996,8 @@ mod tests {
         for (i, p1) in points.iter().enumerate() {
             for (j, p2) in points.iter().enumerate() {
                 if i != j {
-                    let coords1: [f64; 2] = p1.into();
-                    let coords2: [f64; 2] = p2.into();
+                    let coords1 = *p1.coords();
+                    let coords2 = *p2.coords();
                     let diff = [coords1[0] - coords2[0], coords1[1] - coords2[1]];
                     let distance = hypot(diff);
                     assert!(
@@ -1018,7 +1018,7 @@ mod tests {
 
         // Check bounds and minimum distance
         for point in &points {
-            let coords: [f64; 3] = point.into();
+            let coords = *point.coords();
             for &coord in &coords {
                 assert!((-1.0..1.0).contains(&coord));
             }
@@ -1028,8 +1028,8 @@ mod tests {
         for (i, p1) in points.iter().enumerate() {
             for (j, p2) in points.iter().enumerate() {
                 if i != j {
-                    let coords1: [f64; 3] = p1.into();
-                    let coords2: [f64; 3] = p2.into();
+                    let coords1 = *p1.coords();
+                    let coords2 = *p2.coords();
                     let diff = [
                         coords1[0] - coords2[0],
                         coords1[1] - coords2[1],
@@ -1051,7 +1051,7 @@ mod tests {
         assert!(!points.is_empty());
 
         for point in &points {
-            let coords: [f32; 4] = point.into();
+            let coords = *point.coords();
             for &coord in &coords {
                 assert!((0.0..5.0).contains(&coord));
             }
@@ -1061,8 +1061,8 @@ mod tests {
         for (i, p1) in points.iter().enumerate() {
             for (j, p2) in points.iter().enumerate() {
                 if i != j {
-                    let coords1: [f32; 4] = p1.into();
-                    let coords2: [f32; 4] = p2.into();
+                    let coords1 = *p1.coords();
+                    let coords2 = *p2.coords();
                     let diff = [
                         coords1[0] - coords2[0],
                         coords1[1] - coords2[1],
@@ -1084,7 +1084,7 @@ mod tests {
         assert!(!points.is_empty());
 
         for point in &points {
-            let coords: [f64; 5] = point.into();
+            let coords = *point.coords();
             for &coord in &coords {
                 assert!((-2.0..2.0).contains(&coord));
             }
@@ -1094,8 +1094,8 @@ mod tests {
         for (i, p1) in points.iter().enumerate() {
             for (j, p2) in points.iter().enumerate() {
                 if i != j {
-                    let coords1: [f64; 5] = p1.into();
-                    let coords2: [f64; 5] = p2.into();
+                    let coords1 = *p1.coords();
+                    let coords2 = *p2.coords();
                     let diff = [
                         coords1[0] - coords2[0],
                         coords1[1] - coords2[1],
@@ -1119,8 +1119,8 @@ mod tests {
         assert_eq!(points1.len(), points2.len());
 
         for (p1, p2) in points1.iter().zip(points2.iter()) {
-            let coords1: [f64; 2] = p1.into();
-            let coords2: [f64; 2] = p2.into();
+            let coords1 = *p1.coords();
+            let coords2 = *p2.coords();
 
             for (c1, c2) in coords1.iter().zip(coords2.iter()) {
                 assert_relative_eq!(c1, c2, epsilon = 1e-15);
