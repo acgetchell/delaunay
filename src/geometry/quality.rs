@@ -42,14 +42,11 @@ use crate::core::{
 use crate::geometry::{
     kernel::Kernel,
     point::Point,
-    traits::coordinate::CoordinateScalar,
+    traits::coordinate::{ScalarAccumulative, ScalarSummable},
     util::{circumradius, hypot, inradius as simplex_inradius, simplex_volume},
 };
 use num_traits::{NumCast, One};
-use std::{
-    iter::Sum,
-    ops::{AddAssign, Div, SubAssign},
-};
+use std::ops::{AddAssign, Div};
 use thiserror::Error;
 
 /// Errors that can occur during quality metric computation.
@@ -96,7 +93,7 @@ fn cell_points<K, U, V, const D: usize>(
 ) -> Result<SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>, QualityError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + AddAssign + SubAssign + Sum,
+    K::Scalar: ScalarAccumulative,
     U: DataType,
     V: DataType,
 {
@@ -144,7 +141,7 @@ fn compute_scale_aware_epsilon<T, const D: usize>(
     points: &SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>,
 ) -> Result<(T, T), QualityError>
 where
-    T: CoordinateScalar + AddAssign<T> + Sum,
+    T: ScalarSummable + AddAssign<T>,
 {
     let mut total_edge_length = T::zero();
     let mut edge_count = 0;
@@ -239,11 +236,7 @@ pub fn radius_ratio<K, U, V, const D: usize>(
 ) -> Result<K::Scalar, QualityError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar
-        + AddAssign<K::Scalar>
-        + SubAssign<K::Scalar>
-        + Sum
-        + Div<Output = K::Scalar>,
+    K::Scalar: ScalarAccumulative + Div<Output = K::Scalar>,
     U: DataType,
     V: DataType,
 {
@@ -339,11 +332,7 @@ pub fn normalized_volume<K, U, V, const D: usize>(
 ) -> Result<K::Scalar, QualityError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar
-        + AddAssign<K::Scalar>
-        + SubAssign<K::Scalar>
-        + Sum
-        + Div<Output = K::Scalar>,
+    K::Scalar: ScalarAccumulative + Div<Output = K::Scalar>,
     U: DataType,
     V: DataType,
 {

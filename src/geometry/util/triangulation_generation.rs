@@ -16,13 +16,11 @@ use crate::core::vertex::{Vertex, VertexBuilder};
 use crate::geometry::kernel::{FastKernel, RobustKernel};
 use crate::geometry::point::Point;
 use crate::geometry::robust_predicates::config_presets;
-use crate::geometry::traits::coordinate::CoordinateScalar;
+use crate::geometry::traits::coordinate::{CoordinateScalar, ScalarAccumulative};
 use rand::SeedableRng;
 use rand::distr::uniform::SampleUniform;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
-use std::iter::Sum;
-use std::ops::{AddAssign, SubAssign};
 
 const RANDOM_TRIANGULATION_MAX_SHUFFLE_ATTEMPTS: usize = 6;
 const RANDOM_TRIANGULATION_MAX_POINTSET_ATTEMPTS: usize = 6;
@@ -33,7 +31,7 @@ fn validate_random_triangulation<K, U, V, const D: usize>(
 ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
 where
     K: crate::geometry::kernel::Kernel<D>,
-    K::Scalar: CoordinateScalar + AddAssign + SubAssign + Sum,
+    K::Scalar: ScalarAccumulative,
     U: DataType,
     V: DataType,
 {
@@ -51,7 +49,7 @@ fn random_triangulation_is_acceptable<K, U, V, const D: usize>(
 ) -> bool
 where
     K: crate::geometry::kernel::Kernel<D>,
-    K::Scalar: CoordinateScalar + AddAssign + SubAssign + Sum,
+    K::Scalar: ScalarAccumulative,
     U: DataType,
     V: DataType,
 {
@@ -66,7 +64,7 @@ fn random_triangulation_try_build<K, T, U, V, const D: usize>(
 ) -> Option<DelaunayTriangulation<K, U, V, D>>
 where
     K: crate::geometry::kernel::Kernel<D, Scalar = T>,
-    T: CoordinateScalar + AddAssign + SubAssign + Sum,
+    T: ScalarAccumulative,
     U: DataType,
     V: DataType,
 {
@@ -123,7 +121,7 @@ fn random_triangulation_to_fast_kernel<T, U, V, const D: usize>(
     topology_guarantee: TopologyGuarantee,
 ) -> DelaunayTriangulation<FastKernel<T>, U, V, D>
 where
-    T: CoordinateScalar + AddAssign + SubAssign + Sum,
+    T: ScalarAccumulative,
     U: DataType,
     V: DataType,
 {
@@ -142,7 +140,7 @@ fn random_triangulation_try_with_vertices<T, U, V, const D: usize>(
     topology_guarantee: TopologyGuarantee,
 ) -> Option<DelaunayTriangulation<FastKernel<T>, U, V, D>>
 where
-    T: CoordinateScalar + AddAssign + SubAssign + Sum,
+    T: ScalarAccumulative,
     U: DataType,
     V: DataType,
 {
@@ -199,7 +197,7 @@ where
 ///
 /// # Type Parameters
 ///
-/// * `T` - Coordinate scalar type (must implement `CoordinateScalar + SampleUniform`)
+/// * `T` - Coordinate scalar type (must implement `ScalarAccumulative + SampleUniform`)
 /// * `U` - Vertex data type (must implement `DataType`)
 /// * `V` - Cell data type (must implement `DataType`)
 /// * `D` - Dimensionality (const generic parameter)
@@ -322,11 +320,7 @@ pub fn generate_random_triangulation<T, U, V, const D: usize>(
     seed: Option<u64>,
 ) -> Result<DelaunayTriangulation<FastKernel<T>, U, V, D>, DelaunayTriangulationConstructionError>
 where
-    T: CoordinateScalar
-        + SampleUniform
-        + std::ops::AddAssign<T>
-        + std::ops::SubAssign<T>
-        + std::iter::Sum,
+    T: ScalarAccumulative + SampleUniform,
     U: DataType,
     V: DataType,
 {
@@ -388,11 +382,7 @@ pub fn generate_random_triangulation_with_topology_guarantee<T, U, V, const D: u
     topology_guarantee: TopologyGuarantee,
 ) -> Result<DelaunayTriangulation<FastKernel<T>, U, V, D>, DelaunayTriangulationConstructionError>
 where
-    T: CoordinateScalar
-        + SampleUniform
-        + std::ops::AddAssign<T>
-        + std::ops::SubAssign<T>
-        + std::iter::Sum,
+    T: ScalarAccumulative + SampleUniform,
     U: DataType,
     V: DataType,
 {
@@ -529,7 +519,7 @@ pub struct RandomTriangulationBuilder<T> {
 
 impl<T> RandomTriangulationBuilder<T>
 where
-    T: CoordinateScalar + SampleUniform + AddAssign<T> + SubAssign<T> + Sum,
+    T: ScalarAccumulative + SampleUniform,
 {
     /// Creates a new builder with the specified number of points and coordinate bounds.
     ///

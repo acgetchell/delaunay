@@ -12,7 +12,7 @@ use super::util::{safe_coords_to_f64, safe_scalar_to_f64, squared_norm};
 use crate::geometry::matrix::{determinant, matrix_get, matrix_set};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
-    Coordinate, CoordinateConversionError, CoordinateScalar,
+    Coordinate, CoordinateConversionError, CoordinateScalar, ScalarSummable,
 };
 use num_traits::cast;
 use std::fmt::Debug;
@@ -172,7 +172,7 @@ pub fn robust_insphere<T, const D: usize>(
     config: &RobustPredicateConfig<T>,
 ) -> Result<InSphere, CoordinateConversionError>
 where
-    T: CoordinateScalar + std::iter::Sum,
+    T: ScalarSummable,
     [T; D]: Copy + Sized,
 {
     if simplex_points.len() != D + 1 {
@@ -362,7 +362,7 @@ fn symbolic_perturbation_insphere<T, const D: usize>(
     config: &RobustPredicateConfig<T>,
 ) -> InSphere
 where
-    T: CoordinateScalar + std::iter::Sum,
+    T: ScalarSummable,
     [T; D]: Copy + Sized,
 {
     // Try with small perturbations in different directions
@@ -496,7 +496,7 @@ fn verify_insphere_consistency<T, const D: usize>(
     _config: &RobustPredicateConfig<T>,
 ) -> ConsistencyResult
 where
-    T: CoordinateScalar + std::iter::Sum,
+    T: ScalarSummable,
     [T; D]: Copy + Sized,
 {
     // Use the existing distance-based insphere test for verification
@@ -583,7 +583,7 @@ fn geometric_deterministic_tie_breaking<T, const D: usize>(
     test_point: &Point<T, D>,
 ) -> InSphere
 where
-    T: CoordinateScalar + std::iter::Sum,
+    T: ScalarSummable,
     [T; D]: Copy + Sized,
 {
     // Implement Simulation of Simplicity for insphere predicate
@@ -642,7 +642,7 @@ fn centroid_based_tie_breaking<T, const D: usize>(
     test_point: &Point<T, D>,
 ) -> InSphere
 where
-    T: CoordinateScalar + std::iter::Sum,
+    T: ScalarSummable,
     [T; D]: Copy + Sized,
 {
     // Calculate simplex centroid

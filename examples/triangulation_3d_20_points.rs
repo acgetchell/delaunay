@@ -25,14 +25,12 @@
 //! - Boundary analysis
 //! - Performance metrics
 
-use delaunay::geometry::traits::coordinate::CoordinateScalar;
+use delaunay::geometry::traits::coordinate::ScalarAccumulative;
 use delaunay::geometry::util::generate_random_triangulation;
 use delaunay::prelude::query::*;
 use delaunay::topology::characteristics::validation as topology_validation;
 use num_traits::NumCast;
 use num_traits::cast::cast;
-use std::iter::Sum;
-use std::ops::{AddAssign, SubAssign};
 use std::time::Instant;
 
 const SEED_CANDIDATES: &[u64] = &[1, 7, 11, 42, 99, 123, 666];
@@ -129,7 +127,7 @@ fn main() {
 fn analyze_triangulation<K, U, V, const D: usize>(dt: &DelaunayTriangulation<K, U, V, D>)
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + AddAssign + SubAssign + Sum + NumCast,
+    K::Scalar: ScalarAccumulative + NumCast,
     U: DataType,
     V: DataType,
 {
@@ -208,7 +206,7 @@ where
 fn validate_triangulation<K, U, V, const D: usize>(dt: &DelaunayTriangulation<K, U, V, D>)
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + AddAssign + SubAssign + Sum + NumCast,
+    K::Scalar: ScalarAccumulative + NumCast,
     U: DataType,
     V: DataType,
 {
@@ -300,7 +298,7 @@ where
 fn analyze_boundary_properties<K, U, V, const D: usize>(dt: &DelaunayTriangulation<K, U, V, D>)
 where
     K: Kernel<D>,
-    K::Scalar: AddAssign + SubAssign + Sum + NumCast,
+    K::Scalar: ScalarAccumulative + NumCast,
     U: DataType,
     V: DataType,
 {
@@ -352,7 +350,7 @@ where
 fn performance_analysis<K, U, V, const D: usize>(dt: &DelaunayTriangulation<K, U, V, D>)
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + AddAssign + SubAssign + Sum + NumCast,
+    K::Scalar: ScalarAccumulative + NumCast,
     U: DataType,
     V: DataType,
 {

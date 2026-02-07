@@ -13,8 +13,6 @@
 //! - Edge case tests with boundary and distant vertices
 //! - Numerical consistency validation between all three algorithms
 
-#![allow(missing_docs)]
-
 use criterion::{Criterion, criterion_group, criterion_main};
 use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::prelude::query::*;

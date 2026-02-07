@@ -45,13 +45,13 @@ use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::simplex_orientation;
 use crate::geometry::traits::coordinate::{
-    Coordinate, CoordinateConversionError, CoordinateScalar,
+    Coordinate, CoordinateConversionError, CoordinateScalar, ScalarAccumulative,
 };
 use crate::geometry::util::{safe_usize_to_scalar, squared_norm};
 use arc_swap::ArcSwapOption;
 use num_traits::Zero;
 use std::marker::PhantomData;
-use std::ops::{AddAssign, DivAssign, Sub, SubAssign};
+use std::ops::{DivAssign, Sub};
 use std::sync::{
     Arc, OnceLock,
     atomic::{AtomicU64, Ordering},
@@ -671,13 +671,7 @@ where
 impl<K, U, V, const D: usize> ConvexHull<K, U, V, D>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar
-        + AddAssign
-        + SubAssign
-        + Sub<Output = K::Scalar>
-        + DivAssign
-        + Copy
-        + std::iter::Sum,
+    K::Scalar: ScalarAccumulative + Sub<Output = K::Scalar> + DivAssign + Copy,
     U: DataType,
     V: DataType,
     [K::Scalar; D]: Copy + Sized,
@@ -1569,7 +1563,7 @@ where
 impl<K, U, V, const D: usize> FacetCacheProvider<K::Scalar, U, V, D> for ConvexHull<K, U, V, D>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + AddAssign + SubAssign + std::iter::Sum,
+    K::Scalar: ScalarAccumulative,
     U: DataType,
     V: DataType,
 {

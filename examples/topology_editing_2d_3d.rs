@@ -22,9 +22,6 @@ use delaunay::geometry::point::Point;
 use delaunay::geometry::util::{circumcenter, hypot};
 use delaunay::prelude::edit::*;
 use delaunay::prelude::*;
-use num_traits::{One, Zero};
-use std::iter::Sum;
-use std::ops::{AddAssign, SubAssign};
 
 fn main() {
     println!("============================================================");
@@ -483,7 +480,7 @@ fn edit_api_3d_k3() {
 
 fn print_stats_2d<K: Kernel<2>>(dt: &DelaunayTriangulation<K, (), (), 2>)
 where
-    K::Scalar: CoordinateScalar + AddAssign + SubAssign + Sum + Zero + One,
+    K::Scalar: ScalarAccumulative,
 {
     println!(
         "  Vertices: {}, Triangles: {}",
@@ -494,7 +491,7 @@ where
 
 fn print_stats_3d<K: Kernel<3>>(dt: &DelaunayTriangulation<K, (), (), 3>)
 where
-    K::Scalar: CoordinateScalar + AddAssign + SubAssign + Sum + Zero + One,
+    K::Scalar: ScalarAccumulative,
 {
     println!(
         "  Vertices: {}, Tetrahedra: {}",
@@ -507,7 +504,7 @@ fn find_interior_facet_2d<K: Kernel<2>>(
     dt: &DelaunayTriangulation<K, (), (), 2>,
 ) -> Option<FacetHandle>
 where
-    K::Scalar: CoordinateScalar + AddAssign + SubAssign + Sum + Zero + One,
+    K::Scalar: ScalarAccumulative,
 {
     for (cell_key, cell) in dt.cells() {
         if let Some(neighbors) = cell.neighbors() {
@@ -526,7 +523,7 @@ fn find_interior_facet_3d<K: Kernel<3>>(
     dt: &DelaunayTriangulation<K, (), (), 3>,
 ) -> Option<FacetHandle>
 where
-    K::Scalar: CoordinateScalar + AddAssign + SubAssign + Sum + Zero + One,
+    K::Scalar: ScalarAccumulative,
 {
     for (cell_key, cell) in dt.cells() {
         if let Some(neighbors) = cell.neighbors() {
@@ -545,7 +542,7 @@ fn find_flippable_ridge_3d<K: Kernel<3>>(
     dt: &DelaunayTriangulation<K, (), (), 3>,
 ) -> Option<RidgeHandle>
 where
-    K::Scalar: CoordinateScalar + AddAssign + SubAssign + Sum + Zero + One,
+    K::Scalar: ScalarAccumulative,
 {
     // Try to find any ridge (edge in 3D shared by multiple tetrahedra)
     for (cell_key, cell) in dt.cells() {

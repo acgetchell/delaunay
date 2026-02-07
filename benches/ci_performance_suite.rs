@@ -24,8 +24,6 @@
 //! - 2D: Fundamental triangulation case
 //! - 3D-5D: Higher-dimensional triangulations as documented in README.md
 
-#![allow(missing_docs)]
-
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::prelude::DelaunayTriangulation;

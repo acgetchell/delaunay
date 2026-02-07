@@ -11,8 +11,6 @@
 //! These benchmarks measure the effectiveness of the optimization implementations
 //! completed as part of the Pure Incremental Delaunay Triangulation refactoring project.
 
-#![allow(missing_docs)] // Criterion macros generate undocumented functions
-
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 use delaunay::geometry::kernel::RobustKernel;

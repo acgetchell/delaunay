@@ -139,7 +139,7 @@ use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::quality::radius_ratio;
-use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
+use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar, ScalarAccumulative};
 use crate::geometry::util::safe_scalar_to_f64;
 use crate::topology::characteristics::euler::TopologyClassification;
 use crate::topology::characteristics::validation::validate_triangulation_euler_with_facet_to_cells_map;
@@ -148,8 +148,7 @@ use crate::topology::manifold::{
     validate_vertex_links,
 };
 use crate::topology::traits::topological_space::TopologyError;
-use core::iter::Sum;
-use core::ops::{AddAssign, Div, SubAssign};
+use core::ops::Div;
 use num_traits::{NumCast, One, Zero};
 use std::borrow::Cow;
 use std::cmp::Ordering as CmpOrdering;
@@ -2279,7 +2278,7 @@ where
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
 where
     K: Kernel<D>,
-    K::Scalar: AddAssign + SubAssign + Sum + NumCast,
+    K::Scalar: ScalarAccumulative + NumCast,
     U: DataType,
     V: DataType,
 {
