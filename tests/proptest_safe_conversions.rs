@@ -285,7 +285,7 @@ macro_rules! gen_safe_coords_to_f64 {
             proptest! {
                 #[test]
                 fn [<prop_safe_coords_to_f64_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f32())) {
-                    let result = safe_coords_to_f64(coords);
+                    let result = safe_coords_to_f64(&coords);
                     prop_assert!(result.is_ok(), "Conversion should succeed for finite {}D coords", $dim);
                     let converted = result.unwrap();
                     for i in 0..$dim {
@@ -304,7 +304,7 @@ macro_rules! gen_safe_coords_from_f64 {
             proptest! {
                 #[test]
                 fn [<prop_safe_coords_from_f64_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
-                    let result: Result<[f64; $dim], _> = safe_coords_from_f64(coords);
+                    let result: Result<[f64; $dim], _> = safe_coords_from_f64(&coords);
                     prop_assert!(result.is_ok(), "Conversion should succeed for finite {}D coords", $dim);
                     let converted = result.unwrap();
                     for i in 0..$dim {
@@ -323,9 +323,9 @@ macro_rules! gen_round_trip_coords_f32 {
             proptest! {
                 #[test]
                 fn [<prop_round_trip_coords_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f32())) {
-                    let to_f64 = safe_coords_to_f64(coords);
+                    let to_f64 = safe_coords_to_f64(&coords);
                     prop_assert!(to_f64.is_ok());
-                    let back: Result<[f32; $dim], _> = safe_coords_from_f64(to_f64.unwrap());
+                    let back: Result<[f32; $dim], _> = safe_coords_from_f64(&to_f64.unwrap());
                     prop_assert!(back.is_ok());
                     let converted = back.unwrap();
                     for i in 0..$dim {
@@ -344,9 +344,9 @@ macro_rules! gen_round_trip_coords_f64_exact {
             proptest! {
                 #[test]
                 fn [<prop_round_trip_coords_ $dim d _exact>](coords in prop::array::[<uniform $dim>](finite_f64())) {
-                    let to_f64 = safe_coords_to_f64(coords);
+                    let to_f64 = safe_coords_to_f64(&coords);
                     prop_assert!(to_f64.is_ok());
-                    let back: Result<[f64; $dim], _> = safe_coords_from_f64(to_f64.unwrap());
+                    let back: Result<[f64; $dim], _> = safe_coords_from_f64(&to_f64.unwrap());
                     prop_assert!(back.is_ok());
                     let converted = back.unwrap();
                     for i in 0..$dim {
@@ -379,7 +379,7 @@ proptest! {
         let mut coords = [good_coord; 3];
         coords[nan_index] = f64::NAN;
 
-        let result: Result<[f64; 3], _> = safe_coords_from_f64(coords);
+        let result: Result<[f64; 3], _> = safe_coords_from_f64(&coords);
         prop_assert!(result.is_err(), "Array with NaN should be rejected");
     }
 
@@ -389,7 +389,7 @@ proptest! {
         let mut coords = [good_coord; 3];
         coords[inf_index] = f64::INFINITY;
 
-        let result: Result<[f64; 3], _> = safe_coords_from_f64(coords);
+        let result: Result<[f64; 3], _> = safe_coords_from_f64(&coords);
         prop_assert!(result.is_err(), "Array with Infinity should be rejected");
     }
 }
@@ -402,7 +402,7 @@ proptest! {
 #[test]
 fn prop_zero_coords_convert_correctly_3d() {
     let zeros = [0.0_f64; 3];
-    let result: Result<[f64; 3], _> = safe_coords_from_f64(zeros);
+    let result: Result<[f64; 3], _> = safe_coords_from_f64(&zeros);
     assert!(result.is_ok());
 
     let converted = result.unwrap();
@@ -417,7 +417,7 @@ proptest! {
     #[test]
     fn prop_negative_coords_convert_3d(coords in prop::array::uniform3(finite_f64())) {
         let negative_coords = coords.map(|x| -x.abs());
-        let result: Result<[f64; 3], _> = safe_coords_from_f64(negative_coords);
+        let result: Result<[f64; 3], _> = safe_coords_from_f64(&negative_coords);
         prop_assert!(result.is_ok());
 
         let converted = result.unwrap();

@@ -47,7 +47,7 @@ macro_rules! test_geometry_properties {
                             for i in 0..$dim {
                                 diff[i] = point_coords[i] - center_coords[i];
                             }
-                            distances.push(hypot(diff));
+                            distances.push(hypot(&diff));
                         }
                         if let Some(&first_dist) = distances.first() {
                             for &dist in &distances[1..] {
@@ -75,7 +75,7 @@ macro_rules! test_geometry_properties {
                             for i in 0..$dim {
                                 diff[i] = point_coords[i] - center_coords[i];
                             }
-                            let dist = hypot(diff);
+                            let dist = hypot(&diff);
                             prop_assert!((dist - radius).abs() < 1e-6 * radius.max(1.0));
                         }
                     }
@@ -122,11 +122,11 @@ macro_rules! test_geometry_properties {
                 fn [<prop_hypot_properties_ $dim d>](
                     coords in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
-                    let norm: f64 = hypot(coords);
+                    let norm: f64 = hypot(&coords);
                     prop_assert!(norm >= 0.0);
 
                     let zero_coords = [0.0f64; $dim];
-                    let zero_norm: f64 = hypot(zero_coords);
+                    let zero_norm: f64 = hypot(&zero_coords);
                     prop_assert!(zero_norm.abs() < 1e-12);
 
                     let scale = 2.5f64;
@@ -134,7 +134,7 @@ macro_rules! test_geometry_properties {
                     for i in 0..$dim {
                         scaled_coords[i] = coords[i] * scale;
                     }
-                    let scaled_norm: f64 = hypot(scaled_coords);
+                    let scaled_norm: f64 = hypot(&scaled_coords);
                     let expected = scale.mul_add(norm, -scaled_norm);
                     prop_assert!(expected.abs() < 1e-6 * scaled_norm.max(1.0));
                 }
@@ -144,8 +144,8 @@ macro_rules! test_geometry_properties {
                 fn [<prop_squared_norm_consistency_ $dim d>](
                     coords in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
-                    let norm = hypot(coords);
-                    let sq_norm = squared_norm(coords);
+                    let norm = hypot(&coords);
+                    let sq_norm = squared_norm(&coords);
                     let diff = norm.mul_add(norm, -sq_norm);
                     prop_assert!(diff.abs() < 1e-6 * sq_norm.max(1.0));
                     prop_assert!(sq_norm >= 0.0);
@@ -157,13 +157,13 @@ macro_rules! test_geometry_properties {
                     coords_a in prop::array::[<uniform $dim>](finite_coordinate()),
                     coords_b in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
-                    let norm_a = hypot(coords_a);
-                    let norm_b = hypot(coords_b);
+                    let norm_a = hypot(&coords_a);
+                    let norm_b = hypot(&coords_b);
                     let mut coords_sum = [0.0; $dim];
                     for i in 0..$dim {
                         coords_sum[i] = coords_a[i] + coords_b[i];
                     }
-                    let norm_sum = hypot(coords_sum);
+                    let norm_sum = hypot(&coords_sum);
                     prop_assert!(norm_sum <= norm_a + norm_b + 1e-10);
                 }
             }

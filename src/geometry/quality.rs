@@ -155,7 +155,7 @@ where
             for (idx, diff) in diff_coords.iter_mut().enumerate() {
                 *diff = points[i].coords()[idx] - points[j].coords()[idx];
             }
-            let dist = hypot(diff_coords);
+            let dist = hypot(&diff_coords);
             total_edge_length += dist;
             edge_count += 1;
         }

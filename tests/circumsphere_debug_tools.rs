@@ -60,7 +60,7 @@ fn distance<const D: usize>(a: &[f64; D], b: &[f64; D]) -> f64 {
     for i in 0..D {
         diff[i] = a[i] - b[i];
     }
-    hypot(diff)
+    hypot(&diff)
 }
 
 fn matrix_set<const D: usize>(m: &mut Matrix<D>, r: usize, c: usize, value: f64) {
@@ -940,7 +940,7 @@ fn build_and_analyze_matrix(simplex_vertices: &[Vertex<f64, i32, 3>]) -> (f64, b
 
     // Row 3: test_point - v0 = (0.9,0.9,0.9) - (0,0,0) = (0.9,0.9,0.9), ||test-v0||² = 0.9² + 0.9² + 0.9² = 2.43
     let test_rel = [0.9, 0.9, 0.9];
-    let test_norm2 = squared_norm(test_rel);
+    let test_norm2 = squared_norm(&test_rel);
     matrix_set(&mut matrix, 3, 0, test_rel[0]);
     matrix_set(&mut matrix, 3, 1, test_rel[1]);
     matrix_set(&mut matrix, 3, 2, test_rel[2]);

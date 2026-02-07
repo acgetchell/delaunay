@@ -47,7 +47,11 @@ impl<const D: usize> TopologicalSpace for SphericalSpace<D> {
     }
 
     fn canonicalize_point(&self, _coords: &mut [f64]) {
-        // TODO: normalize coords to unit sphere
+        // TODO: Implement unit-sphere normalization.
+        // This should normalize the input coordinates to lie on the unit sphere (radius = 1).
+        // Use the L2 norm of the coordinate array and divide each coordinate by it.
+        // Currently a no-op; see test_canonicalize_point() which documents this behavior.
+        // Tracking issue: https://github.com/acgetchell/delaunay/issues/188
     }
 
     fn fundamental_domain(&self) -> Option<&[f64]> {

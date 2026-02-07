@@ -478,7 +478,7 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
             for i in 0..D {
                 diff_coords[i] = candidate_coords[i] - existing_coords[i];
             }
-            let distance = hypot(diff_coords);
+            let distance = hypot(&diff_coords);
 
             if distance < min_distance {
                 valid = false;
@@ -999,7 +999,7 @@ mod tests {
                     let coords1 = *p1.coords();
                     let coords2 = *p2.coords();
                     let diff = [coords1[0] - coords2[0], coords1[1] - coords2[1]];
-                    let distance = hypot(diff);
+                    let distance = hypot(&diff);
                     assert!(
                         distance >= 0.5 - 1e-10,
                         "Distance {distance} violates minimum distance constraint"
@@ -1035,7 +1035,7 @@ mod tests {
                         coords1[1] - coords2[1],
                         coords1[2] - coords2[2],
                     ];
-                    let distance = hypot(diff);
+                    let distance = hypot(&diff);
                     assert!(distance >= 0.2 - 1e-10);
                 }
             }
@@ -1069,7 +1069,7 @@ mod tests {
                         coords1[2] - coords2[2],
                         coords1[3] - coords2[3],
                     ];
-                    let distance = hypot(diff);
+                    let distance = hypot(&diff);
                     assert!(distance >= 0.5 - 1e-6); // f32 precision
                 }
             }
@@ -1103,7 +1103,7 @@ mod tests {
                         coords1[3] - coords2[3],
                         coords1[4] - coords2[4],
                     ];
-                    let distance = hypot(diff);
+                    let distance = hypot(&diff);
                     assert!(distance >= 0.4 - 1e-10);
                 }
             }

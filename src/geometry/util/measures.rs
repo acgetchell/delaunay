@@ -280,11 +280,11 @@ where
 {
     // Convert points to f64 and create edge vectors from first point to all others
     let p0_coords = points[0].coords();
-    let p0_f64 = safe_coords_to_f64(*p0_coords)?;
+    let p0_f64 = safe_coords_to_f64(p0_coords)?;
 
     let mut edge_matrix = crate::geometry::matrix::Matrix::<D>::zero();
     for (row, point) in points.iter().skip(1).enumerate() {
-        let point_f64 = safe_coords_to_f64(*point.coords())?;
+        let point_f64 = safe_coords_to_f64(point.coords())?;
 
         for (j, (&p, &p0)) in point_f64.iter().zip(p0_f64.iter()).enumerate() {
             matrix_set(&mut edge_matrix, row, j, p - p0);
@@ -527,7 +527,7 @@ where
             let p1 = points[1].coords();
 
             let diff = [p1[0] - p0[0], p1[1] - p0[1]];
-            let length = hypot(diff);
+            let length = hypot(&diff);
 
             // Check for degeneracy (coincident points)
             let epsilon = T::from(1e-12).unwrap_or_else(T::zero);
@@ -557,7 +557,7 @@ where
             ];
 
             // Area is |cross product| / 2
-            let cross_magnitude = hypot(cross);
+            let cross_magnitude = hypot(&cross);
             let area = cross_magnitude / (T::one() + T::one()); // Divide by 2
 
             // Check for degeneracy (collinear points)
@@ -632,7 +632,7 @@ where
     // Convert points to f64.
     let mut coords_f64 = [[0.0f64; D]; D];
     for (dst, p) in coords_f64.iter_mut().zip(points.iter()) {
-        *dst = safe_coords_to_f64(*p.coords())?;
+        *dst = safe_coords_to_f64(p.coords())?;
     }
 
     // Compute Gram determinant with clamping.

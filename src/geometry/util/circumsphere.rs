@@ -112,7 +112,7 @@ where
     // Build matrix A and vector b for the linear system A * x = b.
     //
     // Here, A is D×D and b is length D, so we can solve with stack-allocated la-stack types.
-    let coords_0 = *points[0].coords();
+    let coords_0 = points[0].coords();
 
     // Use safe coordinate conversion
     let coords_0_f64: [f64; D] = safe_coords_to_f64(coords_0)?;
@@ -121,7 +121,7 @@ where
     let mut b_arr = [0.0f64; D];
 
     for i in 0..D {
-        let coords_point = *points[i + 1].coords();
+        let coords_point = points[i + 1].coords();
 
         // Use safe coordinate conversion
         let coords_point_f64: [f64; D] = safe_coords_to_f64(coords_point)?;
@@ -136,7 +136,7 @@ where
         for j in 0..D {
             diff_coords[j] = coords_point[j] - coords_0[j];
         }
-        let squared_distance = squared_norm(diff_coords);
+        let squared_distance = squared_norm(&diff_coords);
 
         // Use safe coordinate conversion for squared distance
         let squared_distance_f64: f64 = safe_scalar_to_f64(squared_distance)?;
@@ -277,15 +277,15 @@ where
         return Err(CircumcenterError::EmptyPointSet);
     }
 
-    let point_coords = *points[0].coords();
-    let circumcenter_coords: [T; D] = *circumcenter.coords();
+    let point_coords = points[0].coords();
+    let circumcenter_coords = circumcenter.coords();
 
     // Calculate distance using hypot for numerical stability
     let mut diff_coords = [T::zero(); D];
     for i in 0..D {
         diff_coords[i] = circumcenter_coords[i] - point_coords[i];
     }
-    let distance = hypot(diff_coords);
+    let distance = hypot(&diff_coords);
     Ok(distance)
 }
 
@@ -409,7 +409,7 @@ mod tests {
                     p_coords[1] - center_coords[1],
                     p_coords[2] - center_coords[2],
                 ];
-                hypot(diff)
+                hypot(&diff)
             })
             .collect();
 
@@ -627,7 +627,7 @@ mod tests {
                     p_coords[0] - center_coords[0],
                     p_coords[1] - center_coords[1],
                 ];
-                hypot(diff)
+                hypot(&diff)
             })
             .collect();
 
@@ -711,7 +711,7 @@ mod tests {
                     p_coords[3] - center_coords[3],
                     p_coords[4] - center_coords[4],
                 ];
-                hypot(diff)
+                hypot(&diff)
             })
             .collect();
 

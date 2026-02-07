@@ -1148,7 +1148,7 @@ where
         // Calculate facet centroid
         let mut centroid_coords = [K::Scalar::zero(); D];
         for vertex_point in &vertex_points {
-            let coords = *vertex_point.coords();
+            let coords = vertex_point.coords();
             for (i, &coord) in coords.iter().enumerate() {
                 centroid_coords[i] += coord;
             }
@@ -1160,25 +1160,25 @@ where
         }
 
         // Simple heuristic: if point is far from centroid, it's likely visible
-        let point_coords = *point.coords();
+        let point_coords = point.coords();
         let mut diff_coords = [K::Scalar::zero(); D];
         for i in 0..D {
             diff_coords[i] = point_coords[i] - centroid_coords[i];
         }
-        let distance_squared = squared_norm(diff_coords);
+        let distance_squared = squared_norm(&diff_coords);
 
         // Use a threshold to determine visibility - this is a simple heuristic
         // Scale-aware threshold: use the facet diameter squared (max pairwise edge length squared)
         let mut max_edge_sq = K::Scalar::zero();
         for (i, vertex_a) in vertex_points.iter().enumerate() {
-            let ai = *vertex_a.coords();
+            let ai = vertex_a.coords();
             for vertex_b in vertex_points.iter().skip(i + 1) {
-                let bj = *vertex_b.coords();
+                let bj = vertex_b.coords();
                 let mut diff = [K::Scalar::zero(); D];
                 for k in 0..D {
                     diff[k] = ai[k] - bj[k];
                 }
-                let edge_sq = squared_norm(diff);
+                let edge_sq = squared_norm(&diff);
                 if max_edge_sq.is_zero() || edge_sq > max_edge_sq {
                     max_edge_sq = edge_sq;
                 }
@@ -1364,7 +1364,7 @@ where
                 .map_err(ConvexHullConstructionError::CoordinateConversion)?;
 
             for vertex_point in &facet_points {
-                let coords = *vertex_point.coords();
+                let coords = vertex_point.coords();
                 for (i, &coord) in coords.iter().enumerate() {
                     centroid_coords[i] += coord;
                 }
@@ -1377,16 +1377,16 @@ where
             let centroid = Point::new(centroid_coords);
 
             // Calculate squared distance using squared_norm
-            let point_coords = *point.coords();
-            let centroid_coords = *centroid.coords();
+            let point_coords = point.coords();
+            let centroid_coords = centroid.coords();
             let mut diff_coords = [K::Scalar::zero(); D];
             for i in 0..D {
                 diff_coords[i] = point_coords[i] - centroid_coords[i];
             }
-            let distance = squared_norm(diff_coords);
+            let dist_sq = squared_norm(&diff_coords);
 
-            if min_distance.is_none_or(|min_dist| distance < min_dist) {
-                min_distance = Some(distance);
+            if min_distance.is_none_or(|min_dist| dist_sq < min_dist) {
+                min_distance = Some(dist_sq);
                 nearest_facet = Some(facet_index);
             }
         }
@@ -2242,7 +2242,7 @@ mod tests {
             >::fallback_visibility_test(&test_facet_vertices, point)
             .unwrap();
             visibility_results.push(is_visible);
-            let coords = *point.coords();
+            let coords = point.coords();
             println!("    Point {coords:?} ({description}) - Visible: {is_visible}");
         }
 
@@ -2330,7 +2330,7 @@ mod tests {
                 result.is_ok(),
                 "High precision coordinates should not cause errors"
             );
-            let coords = *point.coords();
+            let coords = point.coords();
             println!(
                 "    High precision Point {coords:?} - Visible: {:?}",
                 result.unwrap()
@@ -3667,7 +3667,7 @@ mod tests {
                 "Degenerate orientation handling should not crash"
             );
 
-            let coords = *point.coords();
+            let coords = point.coords();
             println!(
                 "  Degenerate point {coords:?} - Outside: {:?}",
                 result.unwrap()
@@ -3803,7 +3803,7 @@ mod tests {
                 "Edge case points should not cause numeric cast failures"
             );
 
-            let coords = *point.coords();
+            let coords = point.coords();
             let result_val = result.unwrap();
             println!("  Edge point {coords:?} - Result: {result_val:?}");
         }

@@ -225,7 +225,7 @@ where
 
     // Add simplex points
     for (i, point) in simplex_points.iter().enumerate() {
-        let coords = *point.coords();
+        let coords = point.coords();
 
         // Coordinates - use safe conversion
         let coords_f64 = safe_coords_to_f64(coords)?;
@@ -243,7 +243,7 @@ where
     }
 
     // Add test point
-    let test_coords = *test_point.coords();
+    let test_coords = test_point.coords();
 
     let test_coords_f64 = safe_coords_to_f64(test_coords)?;
     for (j, &v) in test_coords_f64.iter().enumerate() {
@@ -428,7 +428,7 @@ where
 
     try_with_la_stack_matrix!(k, |matrix| {
         for (i, point) in simplex_points.iter().enumerate() {
-            let coords = *point.coords();
+            let coords = point.coords();
 
             // Add coordinates using safe conversion
             let coords_f64 = safe_coords_to_f64(coords)?;
@@ -1738,7 +1738,7 @@ mod tests {
 
         let all_finite_insphere_3d = with_la_stack_matrix!(5, |matrix| {
             for (i, point) in zero_points.iter().enumerate() {
-                let coords = *point.coords();
+                let coords = point.coords();
                 for (j, &v) in coords.iter().enumerate() {
                     matrix_set(&mut matrix, i, j, v);
                 }
@@ -1746,7 +1746,7 @@ mod tests {
                 matrix_set(&mut matrix, i, 4, 1.0);
             }
 
-            let test_coords = *zero_test.coords();
+            let test_coords = zero_test.coords();
             for (j, &v) in test_coords.iter().enumerate() {
                 matrix_set(&mut matrix, 4, j, v);
             }
@@ -1765,7 +1765,7 @@ mod tests {
 
         let all_finite_orientation_3d = with_la_stack_matrix!(4, |matrix| {
             for (i, point) in zero_points.iter().enumerate() {
-                let coords = *point.coords();
+                let coords = point.coords();
                 for (j, &v) in coords.iter().enumerate() {
                     matrix_set(&mut matrix, i, j, v);
                 }
@@ -1792,7 +1792,7 @@ mod tests {
 
         let all_finite_insphere_2d = with_la_stack_matrix!(4, |matrix| {
             for (i, point) in large_points.iter().enumerate() {
-                let coords = *point.coords();
+                let coords = point.coords();
                 for (j, &v) in coords.iter().enumerate() {
                     matrix_set(&mut matrix, i, j, v);
                 }
@@ -1800,7 +1800,7 @@ mod tests {
                 matrix_set(&mut matrix, i, 3, 1.0);
             }
 
-            let test_coords = *large_test.coords();
+            let test_coords = large_test.coords();
             for (j, &v) in test_coords.iter().enumerate() {
                 matrix_set(&mut matrix, 3, j, v);
             }

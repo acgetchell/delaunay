@@ -4,6 +4,8 @@
 //! higher-level triangulation algorithms. This separation allows swapping
 //! between fast floating-point and robust exact-arithmetic implementations.
 
+#![forbid(unsafe_code)]
+
 use crate::geometry::point::Point;
 use crate::geometry::predicates::{InSphere, Orientation, insphere, simplex_orientation};
 use crate::geometry::robust_predicates::{

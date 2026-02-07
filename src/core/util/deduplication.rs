@@ -57,13 +57,9 @@ where
     let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(vertices.len());
 
     'outer: for v in vertices {
-        let vc = *v.point().coords();
-
         for u in &unique {
-            let uc = *u.point().coords();
-
             // Exact floating-point equality (NaN-aware, treats +0.0 == -0.0)
-            if coords_equal_exact(&vc, &uc) {
+            if coords_equal_exact(v.point().coords(), u.point().coords()) {
                 continue 'outer; // Skip exact duplicate
             }
         }
@@ -138,13 +134,9 @@ where
     let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(vertices.len());
 
     'outer: for v in vertices {
-        let vc = *v.point().coords();
-
         for u in &unique {
-            let uc = *u.point().coords();
-
             // Euclidean distance check
-            if coords_within_epsilon(&vc, &uc, epsilon) {
+            if coords_within_epsilon(v.point().coords(), u.point().coords(), epsilon) {
                 continue 'outer; // Skip near-duplicate
             }
         }
@@ -206,13 +198,9 @@ where
     let mut filtered = Vec::with_capacity(vertices.len());
 
     'outer: for v in vertices {
-        let vc = *v.point().coords();
-
         // Check against all reference vertices
         for ref_v in reference {
-            let ref_c = *ref_v.point().coords();
-
-            if coords_equal_exact(&vc, &ref_c) {
+            if coords_equal_exact(v.point().coords(), ref_v.point().coords()) {
                 continue 'outer; // Skip matching vertex
             }
         }

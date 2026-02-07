@@ -148,8 +148,7 @@ where
         // Populate rows with the coordinates of the points of the simplex.
         for (i, p) in simplex_points.iter().enumerate() {
             // Use implicit conversion from point to coordinates
-            let point_coords = *p.coords();
-            let point_coords_f64 = safe_coords_to_f64(point_coords)?;
+            let point_coords_f64 = safe_coords_to_f64(p.coords())?;
 
             // Add coordinates
             for (j, &v) in point_coords_f64.iter().enumerate() {
@@ -241,8 +240,8 @@ where
     let circumradius = circumradius_with_center(simplex_points, &circumcenter)?;
 
     // Calculate distance using hypot for numerical stability
-    let point_coords = *test_point.coords();
-    let circumcenter_coords: [T; D] = *circumcenter.coords();
+    let point_coords = test_point.coords();
+    let circumcenter_coords = circumcenter.coords();
 
     let mut diff_coords = [T::zero(); D];
     for (dst, (p, c)) in diff_coords
@@ -251,7 +250,7 @@ where
     {
         *dst = *p - *c;
     }
-    let radius = hypot(diff_coords);
+    let radius = hypot(&diff_coords);
 
     // Use Float::abs for proper absolute value comparison
     let tolerance = T::default_tolerance();
@@ -393,7 +392,7 @@ where
 
     try_with_la_stack_matrix!(k, |matrix| {
         for (i, p) in simplex_points.iter().enumerate() {
-            let point_coords = *p.coords();
+            let point_coords = p.coords();
             let point_coords_f64 = safe_coords_to_f64(point_coords)?;
 
             for (j, &v) in point_coords_f64.iter().enumerate() {
@@ -405,7 +404,7 @@ where
             matrix_set(&mut matrix, i, D + 1, 1.0);
         }
 
-        let test_point_coords = *test_point.coords();
+        let test_point_coords = test_point.coords();
         let test_point_coords_f64 = safe_coords_to_f64(test_point_coords)?;
         for (j, &v) in test_point_coords_f64.iter().enumerate() {
             matrix_set(&mut matrix, D + 1, j, v);
@@ -552,14 +551,14 @@ where
     }
 
     // Get the reference point (first point of the simplex)
-    let ref_point_coords = *simplex_points[0].coords();
+    let ref_point_coords = simplex_points[0].coords();
 
     let k = D + 1;
 
     try_with_la_stack_matrix!(k, |matrix| {
         // Populate rows with the coordinates relative to the reference point.
         for (row, point) in simplex_points.iter().skip(1).enumerate() {
-            let point_coords = *point.coords();
+            let point_coords = point.coords();
 
             // Calculate relative coordinates using generic arithmetic on T
             let mut relative_coords_t: [T; D] = [T::zero(); D];
@@ -571,7 +570,7 @@ where
             }
 
             // Convert to f64 for matrix operations using safe conversion
-            let relative_coords_f64: [f64; D] = safe_coords_to_f64(relative_coords_t)
+            let relative_coords_f64: [f64; D] = safe_coords_to_f64(&relative_coords_t)
                 .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
 
             // Fill matrix row
@@ -580,7 +579,7 @@ where
             }
 
             // Calculate squared norm using generic arithmetic on T
-            let squared_norm_t = squared_norm(relative_coords_t);
+            let squared_norm_t = squared_norm(&relative_coords_t);
             let squared_norm_f64: f64 = safe_scalar_to_f64(squared_norm_t)
                 .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
 
@@ -589,7 +588,7 @@ where
         }
 
         // Add the test point to the last row
-        let test_point_coords = *test_point.coords();
+        let test_point_coords = test_point.coords();
 
         // Calculate relative coordinates for test point using generic arithmetic on T
         let mut test_relative_coords_t: [T; D] = [T::zero(); D];
@@ -601,7 +600,7 @@ where
         }
 
         // Convert to f64 for matrix operations using safe conversion
-        let test_relative_coords_f64: [f64; D] = safe_coords_to_f64(test_relative_coords_t)
+        let test_relative_coords_f64: [f64; D] = safe_coords_to_f64(&test_relative_coords_t)
             .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
 
         // Fill matrix row
@@ -610,7 +609,7 @@ where
         }
 
         // Calculate squared norm using generic arithmetic on T
-        let test_squared_norm_t = squared_norm(test_relative_coords_t);
+        let test_squared_norm_t = squared_norm(&test_relative_coords_t);
         let test_squared_norm_f64: f64 = safe_scalar_to_f64(test_squared_norm_t)
             .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
 

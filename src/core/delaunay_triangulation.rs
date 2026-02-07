@@ -632,13 +632,11 @@ where
     let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(ordered.len());
 
     for v in ordered {
-        if let Some(last) = unique.last() {
-            let vc = *v.point().coords();
-            let lc = *last.point().coords();
-            if coords_equal_exact(&vc, &lc) {
-                record_duplicate_detection_metrics(false, 0, true);
-                continue;
-            }
+        if let Some(last) = unique.last()
+            && coords_equal_exact(v.point().coords(), last.point().coords())
+        {
+            record_duplicate_detection_metrics(false, 0, true);
+            continue;
         }
         record_duplicate_detection_metrics(false, 0, true);
         unique.push(v);
@@ -746,11 +744,9 @@ where
 {
     let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(vertices.len());
     for v in vertices {
-        let vc = *v.point().coords();
         let mut duplicate = false;
         for u in &unique {
-            let uc = *u.point().coords();
-            if coords_within_epsilon(&vc, &uc, epsilon) {
+            if coords_within_epsilon(v.point().coords(), u.point().coords(), epsilon) {
                 duplicate = true;
                 break;
             }
