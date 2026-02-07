@@ -984,21 +984,22 @@ where
     /// let cell1 = dt1.tds().cells().next().unwrap().1.clone();
     /// let cell2 = dt2.tds().cells().next().unwrap().1.clone();
     ///
-    /// let cells = vec![cell1.clone(), cell2.clone()];
-    /// let cell_map = Cell::into_hashmap(cells);
+    /// let uuid1 = cell1.uuid();
+    /// let uuid2 = cell2.uuid();
+    ///
+    /// let cell_map = Cell::into_hashmap([cell1, cell2]);
     ///
     /// // Access cells by their UUIDs
-    /// assert_eq!(cell_map.get(&cell1.uuid()), Some(&cell1));
-    /// assert_eq!(cell_map.get(&cell2.uuid()), Some(&cell2));
+    /// assert_eq!(cell_map.get(&uuid1).unwrap().uuid(), uuid1);
+    /// assert_eq!(cell_map.get(&uuid2).unwrap().uuid(), uuid2);
     /// assert_eq!(cell_map.len(), 2);
     /// ```
     ///
     /// ```
     /// use delaunay::core::cell::Cell;
     ///
-    /// // Empty vector produces empty FastHashMap
-    /// let empty_cells: Vec<Cell<f64, (), (), 3>> = vec![];
-    /// let empty_map = Cell::into_hashmap(empty_cells);
+    /// // Empty collection produces empty FastHashMap
+    /// let empty_map = Cell::<f64, (), (), 3>::into_hashmap([]);
     /// assert!(empty_map.is_empty());
     /// ```
     #[must_use]
@@ -2546,8 +2547,7 @@ mod tests {
 
     #[test]
     fn cell_into_hashmap_empty() {
-        let cells: Vec<Cell<f64, (), (), 3>> = Vec::new();
-        let hashmap = Cell::into_hashmap(cells);
+        let hashmap = Cell::<f64, (), (), 3>::into_hashmap([]);
 
         assert!(hashmap.is_empty());
     }
@@ -2563,13 +2563,23 @@ mod tests {
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-        // Collect cells from DT
-        let cells_vec: Vec<_> = dt.cells().map(|(_, cell)| cell.clone()).collect();
-        assert!(cells_vec.len() >= 2, "Need at least 2 cells for this test");
+        // Iterate cells from DT (clone into owned values for the hashmap).
+        let mut cells_iter = dt.cells().map(|(_, cell)| cell.clone());
 
-        let uuid1 = cells_vec[0].uuid();
-        let uuid2 = cells_vec[1].uuid();
-        let hashmap = Cell::into_hashmap(cells_vec);
+        let cell1 = cells_iter
+            .next()
+            .expect("Need at least 2 cells for this test");
+        let cell2 = cells_iter
+            .next()
+            .expect("Need at least 2 cells for this test");
+
+        let uuid1 = cell1.uuid();
+        let uuid2 = cell2.uuid();
+        let hashmap = Cell::into_hashmap(
+            std::iter::once(cell1)
+                .chain(std::iter::once(cell2))
+                .chain(cells_iter),
+        );
 
         assert!(hashmap.len() >= 2);
         assert!(hashmap.contains_key(&uuid1));
