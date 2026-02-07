@@ -76,8 +76,6 @@
 //! **Memory complexity:** O(n^⌈d/2⌉) cells in d dimensions
 //! **Query performance:** Directly measures `SlotMap` iteration efficiency
 
-#![allow(missing_docs)]
-
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 use delaunay::geometry::util::generate_random_points_seeded;

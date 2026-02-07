@@ -12,15 +12,14 @@
 //! cargo bench --bench topology_guarantee_construction
 //! ```
 
-use std::hint::black_box;
-use std::time::Duration;
-
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::prelude::{
     DelaunayRepairPolicy, DelaunayTriangulation, TopologyGuarantee, ValidationPolicy,
 };
 use delaunay::vertex;
+use std::hint::black_box;
+use std::time::Duration;
 
 const BOUNDS: (f64, f64) = (-100.0, 100.0);
 const SEED_SALT: u64 = 0x9E37_79B9_7F4A_7C15;

@@ -17,7 +17,7 @@ readme = "README.md"
 
 [dependencies]
 allocation-counter = { version = "0.8.1", optional = true } # for memory profiling
-anyhow = "1.0.100"
+anyhow = "1.0.101"
 arc-swap = "1.8.1"
 approx = "0.5.1"
 clap = { version = "4.5.57", features = [ "derive" ] }
@@ -39,10 +39,10 @@ thiserror = "2.0.18"
 uuid = { version = "1.20.0", features = [ "v4", "serde" ] }
 
 [dev-dependencies]
-criterion = { version = "0.8.1", features = [ "html_reports" ] }
+criterion = { version = "0.8.2", features = [ "html_reports" ] }
 pastey = "0.2.1"
-proptest = "1.9.0"
-sysinfo = "0.38.0" # Process memory monitoring for benchmarks
+proptest = "1.10.0"
+sysinfo = "0.38.1" # Process memory monitoring for benchmarks
 tracing-subscriber = { version = "0.3.22", features = [ "env-filter" ] }
 
 [features]

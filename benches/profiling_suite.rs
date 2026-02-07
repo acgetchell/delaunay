@@ -52,8 +52,6 @@
 //! BENCH_SAMPLE_SIZE=5 BENCH_WARMUP_SECS=5 BENCH_PERCENTILE=90 cargo bench --bench profiling_suite
 //! ```
 
-#![allow(missing_docs)]
-
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::core::collections::SmallBuffer;
 use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
