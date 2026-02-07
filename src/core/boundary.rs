@@ -10,7 +10,6 @@ use super::{
 };
 
 use crate::prelude::CoordinateScalar;
-use num_traits::NumCast;
 
 /// Implementation of `BoundaryAnalysis` trait for `Tds`.
 ///
@@ -18,7 +17,7 @@ use num_traits::NumCast;
 /// for d-dimensional triangulations using the triangulation data structure.
 impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D>
 where
-    T: CoordinateScalar + NumCast,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {

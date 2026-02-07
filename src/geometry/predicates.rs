@@ -5,7 +5,7 @@
 //! calculations.
 
 use crate::geometry::matrix::{determinant, matrix_set};
-use num_traits::{Float, Zero};
+use num_traits::Float;
 use std::iter::Sum;
 
 use crate::core::cell::CellValidationError;
@@ -234,7 +234,7 @@ pub fn insphere_distance<T, const D: usize>(
     test_point: Point<T, D>,
 ) -> Result<InSphere, CircumcenterError>
 where
-    T: CoordinateScalar + Sum + Zero,
+    T: CoordinateScalar + Sum,
 {
     let circumcenter = circumcenter(simplex_points)?;
     let circumradius = circumradius_with_center(simplex_points, &circumcenter)?;

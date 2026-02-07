@@ -5,7 +5,7 @@
 //! address the "No cavity boundary facets found" error by making the predicates
 //! more reliable when dealing with degenerate or near-degenerate point configurations.
 
-use num_traits::{Float, cast};
+use num_traits::cast;
 use std::fmt::Debug;
 
 use super::predicates::{InSphere, Orientation};
@@ -171,7 +171,7 @@ pub fn robust_insphere<T, const D: usize>(
     config: &RobustPredicateConfig<T>,
 ) -> Result<InSphere, CoordinateConversionError>
 where
-    T: CoordinateScalar + std::iter::Sum + num_traits::Zero,
+    T: CoordinateScalar + std::iter::Sum,
     [T; D]: Copy + Sized,
 {
     if simplex_points.len() != D + 1 {
@@ -324,9 +324,9 @@ where
         let tolerance_raw = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
 
         // Simple row scaling - scale each row by its maximum element.
-        let mut scale_factor = 1.0;
+        let mut scale_factor = 1.0_f64;
         for i in 0..k {
-            let mut max_element = 0.0;
+            let mut max_element = 0.0_f64;
             for j in 0..k {
                 max_element = max_element.max(matrix_get(&matrix, i, j).abs());
             }
@@ -361,7 +361,7 @@ fn symbolic_perturbation_insphere<T, const D: usize>(
     config: &RobustPredicateConfig<T>,
 ) -> InSphere
 where
-    T: CoordinateScalar + std::iter::Sum + num_traits::Zero,
+    T: CoordinateScalar + std::iter::Sum,
     [T; D]: Copy + Sized,
 {
     // Try with small perturbations in different directions
@@ -495,7 +495,7 @@ fn verify_insphere_consistency<T, const D: usize>(
     _config: &RobustPredicateConfig<T>,
 ) -> ConsistencyResult
 where
-    T: CoordinateScalar + std::iter::Sum + num_traits::Zero,
+    T: CoordinateScalar + std::iter::Sum,
     [T; D]: Copy + Sized,
 {
     // Use the existing distance-based insphere test for verification
@@ -582,7 +582,7 @@ fn geometric_deterministic_tie_breaking<T, const D: usize>(
     test_point: &Point<T, D>,
 ) -> InSphere
 where
-    T: CoordinateScalar + std::iter::Sum + num_traits::Zero,
+    T: CoordinateScalar + std::iter::Sum,
     [T; D]: Copy + Sized,
 {
     // Implement Simulation of Simplicity for insphere predicate
@@ -641,7 +641,7 @@ fn centroid_based_tie_breaking<T, const D: usize>(
     test_point: &Point<T, D>,
 ) -> InSphere
 where
-    T: CoordinateScalar + std::iter::Sum + num_traits::Zero,
+    T: CoordinateScalar + std::iter::Sum,
     [T; D]: Copy + Sized,
 {
     // Calculate simplex centroid
@@ -1190,9 +1190,9 @@ mod tests {
             matrix_set(&mut m, 1, 1, 1e-99);
             matrix_set(&mut m, 2, 2, 1e-98);
 
-            let mut scale_factor = 1.0;
+            let mut scale_factor = 1.0_f64;
             for i in 0..3 {
-                let mut max_element = 0.0;
+                let mut max_element = 0.0_f64;
                 for j in 0..3 {
                     max_element = max_element.max(matrix_get(&m, i, j).abs());
                 }
@@ -1224,9 +1224,9 @@ mod tests {
             matrix_set(&mut m, 1, 1, 1e-5);
             matrix_set(&mut m, 2, 2, 1.0);
 
-            let mut scale_factor = 1.0;
+            let mut scale_factor = 1.0_f64;
             for i in 0..3 {
-                let mut max_element = 0.0;
+                let mut max_element = 0.0_f64;
                 for j in 0..3 {
                     max_element = max_element.max(matrix_get(&m, i, j).abs());
                 }
@@ -1256,9 +1256,9 @@ mod tests {
             matrix_set(&mut m, 1, 1, 0.0); // This row will not be scaled
             matrix_set(&mut m, 2, 2, 2.0);
 
-            let mut scale_factor = 1.0;
+            let mut scale_factor = 1.0_f64;
             for i in 0..3 {
-                let mut max_element = 0.0;
+                let mut max_element = 0.0_f64;
                 for j in 0..3 {
                     max_element = max_element.max(matrix_get(&m, i, j).abs());
                 }

@@ -356,7 +356,7 @@ impl<T: CoordinateScalar> Default for RobustKernel<T> {
 
 impl<T, const D: usize> Kernel<D> for RobustKernel<T>
 where
-    T: CoordinateScalar + Sum + num_traits::Zero,
+    T: CoordinateScalar + Sum,
 {
     type Scalar = T;
 

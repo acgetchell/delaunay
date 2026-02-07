@@ -3,7 +3,6 @@
 //! This module provides functions for computing the circumcenter and circumradius
 //! of simplices in d-dimensional space.
 
-use num_traits::Zero;
 use std::iter::Sum;
 
 use la_stack::{DEFAULT_PIVOT_TOL, LaError, Vector as LaVector};
@@ -87,7 +86,7 @@ pub fn circumcenter<T, const D: usize>(
     points: &[Point<T, D>],
 ) -> Result<Point<T, D>, CircumcenterError>
 where
-    T: CoordinateScalar + Sum + Zero,
+    T: CoordinateScalar + Sum,
 {
     #[cfg(debug_assertions)]
     if std::env::var_os("DELAUNAY_DEBUG_UNUSED_IMPORTS").is_some() {
@@ -223,7 +222,7 @@ where
 /// ```
 pub fn circumradius<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
 where
-    T: CoordinateScalar + Sum + Zero,
+    T: CoordinateScalar + Sum,
 {
     let circumcenter = circumcenter(points)?;
     circumradius_with_center(points, &circumcenter)
@@ -272,7 +271,7 @@ pub fn circumradius_with_center<T, const D: usize>(
     circumcenter: &Point<T, D>,
 ) -> Result<T, CircumcenterError>
 where
-    T: CoordinateScalar + Sum + Zero,
+    T: CoordinateScalar + Sum,
 {
     if points.is_empty() {
         return Err(CircumcenterError::EmptyPointSet);

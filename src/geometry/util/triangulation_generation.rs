@@ -3,7 +3,6 @@
 //! This module provides utilities for generating random Delaunay triangulations
 //! with various topology guarantees.
 
-use num_traits::Zero;
 use rand::SeedableRng;
 use rand::distr::uniform::SampleUniform;
 use rand::rngs::StdRng;
@@ -34,7 +33,7 @@ fn validate_random_triangulation<K, U, V, const D: usize>(
 ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
 where
     K: crate::geometry::kernel::Kernel<D>,
-    K::Scalar: CoordinateScalar + AddAssign + SubAssign + Sum + num_traits::cast::NumCast,
+    K::Scalar: CoordinateScalar + AddAssign + SubAssign + Sum,
     U: DataType,
     V: DataType,
 {
@@ -52,7 +51,7 @@ fn random_triangulation_is_acceptable<K, U, V, const D: usize>(
 ) -> bool
 where
     K: crate::geometry::kernel::Kernel<D>,
-    K::Scalar: CoordinateScalar + AddAssign + SubAssign + Sum + num_traits::cast::NumCast,
+    K::Scalar: CoordinateScalar + AddAssign + SubAssign + Sum,
     U: DataType,
     V: DataType,
 {
@@ -67,7 +66,7 @@ fn random_triangulation_try_build<K, T, U, V, const D: usize>(
 ) -> Option<DelaunayTriangulation<K, U, V, D>>
 where
     K: crate::geometry::kernel::Kernel<D, Scalar = T>,
-    T: CoordinateScalar + AddAssign + SubAssign + Sum + num_traits::cast::NumCast,
+    T: CoordinateScalar + AddAssign + SubAssign + Sum,
     U: DataType,
     V: DataType,
 {
@@ -124,7 +123,7 @@ fn random_triangulation_to_fast_kernel<T, U, V, const D: usize>(
     topology_guarantee: TopologyGuarantee,
 ) -> DelaunayTriangulation<FastKernel<T>, U, V, D>
 where
-    T: CoordinateScalar + AddAssign + SubAssign + Sum + num_traits::cast::NumCast + Zero,
+    T: CoordinateScalar + AddAssign + SubAssign + Sum,
     U: DataType,
     V: DataType,
 {
@@ -143,7 +142,7 @@ fn random_triangulation_try_with_vertices<T, U, V, const D: usize>(
     topology_guarantee: TopologyGuarantee,
 ) -> Option<DelaunayTriangulation<FastKernel<T>, U, V, D>>
 where
-    T: CoordinateScalar + AddAssign + SubAssign + Sum + num_traits::cast::NumCast + Zero,
+    T: CoordinateScalar + AddAssign + SubAssign + Sum,
     U: DataType,
     V: DataType,
 {
@@ -327,9 +326,7 @@ where
         + SampleUniform
         + std::ops::AddAssign<T>
         + std::ops::SubAssign<T>
-        + std::iter::Sum
-        + num_traits::cast::NumCast
-        + num_traits::Zero,
+        + std::iter::Sum,
     U: DataType,
     V: DataType,
 {
@@ -395,9 +392,7 @@ where
         + SampleUniform
         + std::ops::AddAssign<T>
         + std::ops::SubAssign<T>
-        + std::iter::Sum
-        + num_traits::cast::NumCast
-        + num_traits::Zero,
+        + std::iter::Sum,
     U: DataType,
     V: DataType,
 {
@@ -534,13 +529,7 @@ pub struct RandomTriangulationBuilder<T> {
 
 impl<T> RandomTriangulationBuilder<T>
 where
-    T: CoordinateScalar
-        + SampleUniform
-        + AddAssign<T>
-        + SubAssign<T>
-        + Sum
-        + num_traits::cast::NumCast
-        + Zero,
+    T: CoordinateScalar + SampleUniform + AddAssign<T> + SubAssign<T> + Sum,
 {
     /// Creates a new builder with the specified number of points and coordinate bounds.
     ///

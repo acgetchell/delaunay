@@ -49,7 +49,6 @@ use crate::geometry::point::Point;
 use crate::geometry::predicates::{InSphere, Orientation};
 use crate::geometry::robust_predicates::{config_presets, robust_insphere, robust_orientation};
 use crate::geometry::traits::coordinate::CoordinateScalar;
-use num_traits::Zero;
 
 /// Bistellar flip kind descriptor.
 ///
@@ -81,7 +80,7 @@ fn repair_delaunay_with_flips_k2_k3_attempt<K, U, V, const D: usize>(
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + Sum + Zero,
+    K::Scalar: CoordinateScalar + Sum,
     U: DataType,
     V: DataType,
 {
@@ -345,7 +344,7 @@ fn is_delaunay_violation_k3<K, U, V, const D: usize>(
 ) -> Result<bool, FlipError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + Sum + Zero,
+    K::Scalar: CoordinateScalar + Sum,
     U: DataType,
     V: DataType,
 {
@@ -1400,7 +1399,7 @@ fn delaunay_violation_k2_for_facet<K, U, V, const D: usize>(
 ) -> Result<bool, FlipError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + Sum + Zero,
+    K::Scalar: CoordinateScalar + Sum,
     U: DataType,
     V: DataType,
 {
@@ -1532,7 +1531,7 @@ fn k2_flip_would_create_degenerate_cell<K, U, V, const D: usize>(
 ) -> Result<bool, FlipError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + Sum + Zero,
+    K::Scalar: CoordinateScalar + Sum,
     U: DataType,
     V: DataType,
 {
@@ -1590,7 +1589,7 @@ fn is_delaunay_violation_k2<K, U, V, const D: usize>(
 ) -> Result<bool, FlipError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + Sum + Zero,
+    K::Scalar: CoordinateScalar + Sum,
     U: DataType,
     V: DataType,
 {
@@ -1836,7 +1835,7 @@ fn delaunay_violation_k3_for_ridge<K, U, V, const D: usize>(
 ) -> Result<bool, FlipError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + Sum + Zero,
+    K::Scalar: CoordinateScalar + Sum,
     U: DataType,
     V: DataType,
 {
@@ -2015,7 +2014,7 @@ fn repair_delaunay_with_flips_k2_attempt<K, U, V, const D: usize>(
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + Sum + Zero,
+    K::Scalar: CoordinateScalar + Sum,
     U: DataType,
     V: DataType,
 {
@@ -2170,7 +2169,7 @@ pub(crate) fn repair_delaunay_with_flips_k2_k3<K, U, V, const D: usize>(
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + Sum + Zero,
+    K::Scalar: CoordinateScalar + Sum,
     U: DataType,
     V: DataType,
 {
@@ -2354,7 +2353,7 @@ pub fn verify_delaunay_via_flip_predicates<K, U, V, const D: usize>(
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + Sum + Zero,
+    K::Scalar: CoordinateScalar + Sum,
     U: DataType,
     V: DataType,
 {
@@ -2368,7 +2367,7 @@ fn verify_repair_postcondition<K, U, V, const D: usize>(
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + Sum + Zero,
+    K::Scalar: CoordinateScalar + Sum,
     U: DataType,
     V: DataType,
 {
@@ -2382,7 +2381,7 @@ fn verify_repair_postcondition_locally<K, U, V, const D: usize>(
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + Sum + Zero,
+    K::Scalar: CoordinateScalar + Sum,
     U: DataType,
     V: DataType,
 {
@@ -2453,7 +2452,7 @@ fn verify_postcondition_k2_facets<K, U, V, const D: usize>(
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + Sum + Zero,
+    K::Scalar: CoordinateScalar + Sum,
     U: DataType,
     V: DataType,
 {
@@ -2549,7 +2548,7 @@ fn verify_postcondition_k3_ridges<K, U, V, const D: usize>(
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + Sum + Zero,
+    K::Scalar: CoordinateScalar + Sum,
     U: DataType,
     V: DataType,
 {
@@ -2601,7 +2600,7 @@ fn verify_postcondition_inverse_k2_edges<K, U, V, const D: usize>(
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + Sum + Zero,
+    K::Scalar: CoordinateScalar + Sum,
     U: DataType,
     V: DataType,
 {
@@ -2672,7 +2671,7 @@ fn verify_postcondition_inverse_k3_triangles<K, U, V, const D: usize>(
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + Sum + Zero,
+    K::Scalar: CoordinateScalar + Sum,
     U: DataType,
     V: DataType,
 {
@@ -2879,7 +2878,7 @@ fn robust_insphere_sign<T, const D: usize>(
     diagnostics: &mut RepairDiagnostics,
 ) -> i32
 where
-    T: CoordinateScalar + Sum + Zero,
+    T: CoordinateScalar + Sum,
 {
     let config = config_presets::general_triangulation::<T>();
     match robust_insphere(simplex_points, test_point, &config) {
@@ -3110,7 +3109,7 @@ fn process_ridge_queue_step<K, U, V, const D: usize>(
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + Sum + Zero,
+    K::Scalar: CoordinateScalar + Sum,
     U: DataType,
     V: DataType,
 {
@@ -3211,7 +3210,7 @@ fn process_edge_queue_step<K, U, V, const D: usize>(
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + Sum + Zero,
+    K::Scalar: CoordinateScalar + Sum,
     U: DataType,
     V: DataType,
 {
@@ -3326,7 +3325,7 @@ fn process_triangle_queue_step<K, U, V, const D: usize>(
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + Sum + Zero,
+    K::Scalar: CoordinateScalar + Sum,
     U: DataType,
     V: DataType,
 {
@@ -3438,7 +3437,7 @@ fn process_facet_queue_step<K, U, V, const D: usize>(
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + Sum + Zero,
+    K::Scalar: CoordinateScalar + Sum,
     U: DataType,
     V: DataType,
 {

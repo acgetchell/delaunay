@@ -3,7 +3,7 @@
 //! This module provides functions for computing volumes, surface measures,
 //! and quality metrics of simplices.
 
-use num_traits::{Float, Zero};
+use num_traits::Float;
 use std::iter::Sum;
 use std::ops::{AddAssign, SubAssign};
 
@@ -79,7 +79,7 @@ pub use super::{CircumcenterError, SurfaceMeasureError, ValueConversionError};
 /// ```
 pub fn simplex_volume<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
 where
-    T: CoordinateScalar + Sum + Zero,
+    T: CoordinateScalar + Sum,
 {
     #[cfg(debug_assertions)]
     if std::env::var_os("DELAUNAY_DEBUG_UNUSED_IMPORTS").is_some() {
@@ -276,7 +276,7 @@ fn simplex_volume_gram_matrix<T, const D: usize>(
     points: &[Point<T, D>],
 ) -> Result<T, CircumcenterError>
 where
-    T: CoordinateScalar + Sum + Zero,
+    T: CoordinateScalar + Sum,
 {
     // Convert points to f64 and create edge vectors from first point to all others
     let p0_coords = points[0].coords();
@@ -371,7 +371,7 @@ where
 /// ```
 pub fn inradius<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
 where
-    T: CoordinateScalar + Sum + Zero + AddAssign<T>,
+    T: CoordinateScalar + Sum + AddAssign<T>,
 {
     if points.len() != D + 1 {
         return Err(CircumcenterError::InvalidSimplex {
@@ -498,7 +498,7 @@ where
 /// ```
 pub fn facet_measure<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
 where
-    T: CoordinateScalar + Sum + Zero,
+    T: CoordinateScalar + Sum,
 {
     if points.len() != D {
         return Err(CircumcenterError::InvalidSimplex {
@@ -627,7 +627,7 @@ fn facet_measure_gram_matrix<T, const D: usize>(
     points: &[Point<T, D>],
 ) -> Result<T, CircumcenterError>
 where
-    T: CoordinateScalar + Sum + Zero,
+    T: CoordinateScalar + Sum,
 {
     // Convert points to f64.
     let mut coords_f64 = [[0.0f64; D]; D];
@@ -726,7 +726,7 @@ pub fn surface_measure<T, U, V, const D: usize>(
     facets: &[FacetView<'_, T, U, V, D>],
 ) -> Result<T, SurfaceMeasureError>
 where
-    T: CoordinateScalar + Sum + Zero + AddAssign<T> + SubAssign<T> + num_traits::NumCast,
+    T: CoordinateScalar + Sum + AddAssign<T> + SubAssign<T>,
     U: DataType,
     V: DataType,
 {

@@ -1458,7 +1458,7 @@ where
         vertices: &[Vertex<K::Scalar, U, D>],
     ) -> Result<Self, DelaunayTriangulationConstructionError>
     where
-        K::Scalar: CoordinateScalar + Sum + Zero,
+        K::Scalar: CoordinateScalar + Sum,
     {
         Self::with_topology_guarantee(kernel, vertices, TopologyGuarantee::DEFAULT)
     }
@@ -1508,7 +1508,7 @@ where
         topology_guarantee: TopologyGuarantee,
     ) -> Result<Self, DelaunayTriangulationConstructionError>
     where
-        K::Scalar: CoordinateScalar + Sum + Zero,
+        K::Scalar: CoordinateScalar + Sum,
     {
         Self::with_topology_guarantee_and_options(
             kernel,
@@ -1567,7 +1567,7 @@ where
         options: ConstructionOptions,
     ) -> Result<Self, DelaunayTriangulationConstructionError>
     where
-        K::Scalar: CoordinateScalar + Sum + Zero,
+        K::Scalar: CoordinateScalar + Sum,
     {
         let ConstructionOptions {
             insertion_order,
@@ -1648,7 +1648,7 @@ where
         initial_simplex: InitialSimplexStrategy,
     ) -> PreprocessVerticesResult<K::Scalar, U, D>
     where
-        K::Scalar: CoordinateScalar + Sum + Zero,
+        K::Scalar: CoordinateScalar + Sum,
     {
         let default_tolerance = default_duplicate_tolerance::<K::Scalar>();
 
@@ -1758,7 +1758,7 @@ where
         grid_cell_size: Option<K::Scalar>,
     ) -> Result<Self, DelaunayTriangulationConstructionError>
     where
-        K::Scalar: CoordinateScalar + Sum + Zero,
+        K::Scalar: CoordinateScalar + Sum,
     {
         let base_seed = base_seed.unwrap_or_else(|| Self::construction_shuffle_seed(vertices));
 
@@ -1922,7 +1922,7 @@ where
         grid_cell_size: Option<K::Scalar>,
     ) -> Result<Self, DelaunayTriangulationConstructionError>
     where
-        K::Scalar: CoordinateScalar + Sum + Zero,
+        K::Scalar: CoordinateScalar + Sum,
     {
         let dt = Self::build_with_kernel_inner_seeded(
             kernel,
@@ -1967,7 +1967,7 @@ where
         grid_cell_size: Option<K::Scalar>,
     ) -> Result<Self, DelaunayTriangulationConstructionError>
     where
-        K::Scalar: CoordinateScalar + Sum + Zero,
+        K::Scalar: CoordinateScalar + Sum,
     {
         if vertices.len() < D + 1 {
             return Err(TriangulationConstructionError::InsufficientVertices {
@@ -2034,7 +2034,7 @@ where
         grid_cell_size: Option<K::Scalar>,
     ) -> Result<(), DelaunayTriangulationConstructionError>
     where
-        K::Scalar: CoordinateScalar + Sum + Zero,
+        K::Scalar: CoordinateScalar + Sum,
     {
         let mut grid_index = grid_cell_size.map(HashGridIndex::new);
         if let Some(grid) = grid_index.as_mut()
@@ -2118,7 +2118,7 @@ where
         run_final_repair: bool,
     ) -> Result<(), DelaunayTriangulationConstructionError>
     where
-        K::Scalar: CoordinateScalar + Sum + Zero,
+        K::Scalar: CoordinateScalar + Sum,
     {
         // Restore policies after batch construction.
         self.tri.validation_policy = original_validation_policy;
@@ -2658,7 +2658,7 @@ where
     /// ```
     pub fn repair_delaunay_with_flips(&mut self) -> Result<DelaunayRepairStats, DelaunayRepairError>
     where
-        K::Scalar: CoordinateScalar + Sum + Zero,
+        K::Scalar: CoordinateScalar + Sum,
     {
         let operation = TopologicalOperation::FacetFlip;
         let topology = self.tri.topology_guarantee();
@@ -2678,7 +2678,7 @@ where
         seed_cells: Option<&[CellKey]>,
     ) -> Result<DelaunayRepairStats, DelaunayRepairError>
     where
-        K::Scalar: CoordinateScalar + Sum + Zero,
+        K::Scalar: CoordinateScalar + Sum,
     {
         let topology = self.tri.topology_guarantee();
         let kernel = RobustKernel::<K::Scalar>::new();
@@ -2735,7 +2735,7 @@ where
         seed_cells: Option<&[CellKey]>,
     ) -> Result<bool, DelaunayRepairError>
     where
-        K::Scalar: CoordinateScalar + Sum + Zero,
+        K::Scalar: CoordinateScalar + Sum,
     {
         if !Self::force_heuristic_rebuild_enabled()
             && self.repair_delaunay_with_flips_robust(seed_cells).is_ok()
@@ -2787,7 +2787,7 @@ where
         config: DelaunayRepairHeuristicConfig,
     ) -> Result<DelaunayRepairOutcome, DelaunayRepairError>
     where
-        K::Scalar: CoordinateScalar + Sum + Zero,
+        K::Scalar: CoordinateScalar + Sum,
     {
         if Self::force_heuristic_rebuild_enabled() {
             let base_seed = self.heuristic_rebuild_base_seed();
@@ -2832,7 +2832,7 @@ where
         seeds: DelaunayRepairHeuristicSeeds,
     ) -> Result<(Self, DelaunayRepairStats), DelaunayRepairError>
     where
-        K::Scalar: CoordinateScalar + Sum + Zero,
+        K::Scalar: CoordinateScalar + Sum,
     {
         use rand::{SeedableRng, seq::SliceRandom};
 
@@ -3361,7 +3361,7 @@ where
     /// ```
     pub fn insert(&mut self, vertex: Vertex<K::Scalar, U, D>) -> Result<VertexKey, InsertionError>
     where
-        K::Scalar: CoordinateScalar + Sum + Zero,
+        K::Scalar: CoordinateScalar + Sum,
     {
         self.ensure_spatial_index_seeded();
 
@@ -3475,7 +3475,7 @@ where
         vertex: Vertex<K::Scalar, U, D>,
     ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError>
     where
-        K::Scalar: CoordinateScalar + Sum + Zero,
+        K::Scalar: CoordinateScalar + Sum,
     {
         self.ensure_spatial_index_seeded();
 
@@ -3556,7 +3556,7 @@ where
         hint: Option<CellKey>,
     ) -> Result<(VertexKey, bool), InsertionError>
     where
-        K::Scalar: CoordinateScalar + Sum + Zero,
+        K::Scalar: CoordinateScalar + Sum,
     {
         let topology = self.tri.topology_guarantee();
         if !self.should_run_delaunay_repair_for(
@@ -3675,7 +3675,7 @@ where
 
     fn maybe_check_after_insertion(&self) -> Result<(), InsertionError>
     where
-        K::Scalar: CoordinateScalar + Sum + Zero,
+        K::Scalar: CoordinateScalar + Sum,
     {
         if self.tri.tds.number_of_cells() == 0 {
             return Ok(());
@@ -3757,7 +3757,7 @@ where
         vertex: &Vertex<K::Scalar, U, D>,
     ) -> Result<usize, TriangulationValidationError>
     where
-        K::Scalar: CoordinateScalar + Sum + Zero,
+        K::Scalar: CoordinateScalar + Sum,
     {
         let Some(vertex_key) = self.tri.tds.vertex_key_from_uuid(&vertex.uuid()) else {
             return Ok(0);
@@ -3837,7 +3837,7 @@ where
     /// ```
     pub fn is_valid(&self) -> Result<(), DelaunayTriangulationValidationError>
     where
-        K::Scalar: CoordinateScalar + Sum + Zero,
+        K::Scalar: CoordinateScalar + Sum,
     {
         // Use fast flip-based verification (O(cells) instead of O(cells × vertices))
         self.is_delaunay_via_flips().map_err(|err| {
@@ -3880,7 +3880,7 @@ where
     /// ```
     pub fn is_delaunay_via_flips(&self) -> Result<(), DelaunayRepairError>
     where
-        K::Scalar: CoordinateScalar + Sum + Zero,
+        K::Scalar: CoordinateScalar + Sum,
     {
         crate::core::algorithms::flips::verify_delaunay_via_flip_predicates(
             &self.tri.tds,

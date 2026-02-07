@@ -17,7 +17,6 @@ use crate::geometry::traits::coordinate::{
 };
 use crate::geometry::util::{safe_usize_to_scalar, squared_norm};
 use arc_swap::ArcSwapOption;
-use num_traits::NumCast;
 use num_traits::Zero;
 use std::marker::PhantomData;
 use std::ops::{AddAssign, DivAssign, Sub, SubAssign};
@@ -29,6 +28,8 @@ use thiserror::Error;
 
 // Import Orientation for predicates
 use crate::geometry::predicates::Orientation;
+#[cfg(test)]
+use num_traits::NumCast;
 
 // =============================================================================
 // ERROR TYPES
@@ -643,8 +644,6 @@ where
         + SubAssign
         + Sub<Output = K::Scalar>
         + DivAssign
-        + Zero
-        + NumCast
         + Copy
         + std::iter::Sum,
     U: DataType,
@@ -1538,7 +1537,7 @@ where
 impl<K, U, V, const D: usize> FacetCacheProvider<K::Scalar, U, V, D> for ConvexHull<K, U, V, D>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + AddAssign + SubAssign + std::iter::Sum + num_traits::NumCast,
+    K::Scalar: CoordinateScalar + AddAssign + SubAssign + std::iter::Sum,
     U: DataType,
     V: DataType,
 {

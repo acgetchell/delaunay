@@ -3,7 +3,7 @@
 //! This module provides numerically stable functions for computing norms and
 //! distances of d-dimensional vectors.
 
-use num_traits::{Float, Zero};
+use num_traits::Float;
 
 use crate::geometry::traits::coordinate::CoordinateScalar;
 
@@ -22,10 +22,7 @@ use super::conversions::{safe_scalar_from_f64, safe_scalar_to_f64};
 /// # Returns
 ///
 /// The computed hypot value using scaled computation
-pub(in crate::geometry::util) fn scaled_hypot_2d<T: CoordinateScalar + Zero + Float>(
-    x: T,
-    y: T,
-) -> T {
+pub(in crate::geometry::util) fn scaled_hypot_2d<T: CoordinateScalar>(x: T, y: T) -> T {
     let max_abs = Float::abs(x).max(Float::abs(y));
     if max_abs == T::zero() {
         return T::zero();
@@ -71,7 +68,7 @@ pub(in crate::geometry::util) fn scaled_hypot_2d<T: CoordinateScalar + Zero + Fl
 /// ```
 pub fn squared_norm<T, const D: usize>(coords: [T; D]) -> T
 where
-    T: CoordinateScalar + Zero,
+    T: CoordinateScalar,
 {
     coords.iter().fold(T::zero(), |acc, &x| acc + x * x)
 }
@@ -117,7 +114,7 @@ where
 /// ```
 pub fn hypot<T, const D: usize>(coords: [T; D]) -> T
 where
-    T: CoordinateScalar + Zero + Float,
+    T: CoordinateScalar,
 {
     match D {
         0 => T::zero(),
