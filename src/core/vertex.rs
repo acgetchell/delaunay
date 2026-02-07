@@ -433,12 +433,12 @@ where
             .collect()
     }
 
-    /// The function `into_hashmap` converts a vector of vertices into a
+    /// The function `into_hashmap` converts a collection of vertices into a
     /// [`HashMap`], using the vertices [Uuid] as the key.
     ///
     /// # Arguments
     ///
-    /// * `vertices`: `vertices` is a vector of `Vertex<T, U, D>`.
+    /// * `vertices`: Vertices to be converted into a `HashMap`.
     ///
     /// # Returns
     ///
@@ -460,7 +460,10 @@ where
     /// ```
     #[inline]
     #[must_use]
-    pub fn into_hashmap(vertices: Vec<Self>) -> HashMap<Uuid, Self> {
+    pub fn into_hashmap<I>(vertices: I) -> HashMap<Uuid, Self>
+    where
+        I: IntoIterator<Item = Self>,
+    {
         vertices.into_iter().map(|v| (v.uuid(), v)).collect()
     }
 

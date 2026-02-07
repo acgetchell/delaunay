@@ -943,14 +943,14 @@ where
         D
     }
 
-    /// Converts a vector of cells into a `FastHashMap` indexed by their UUIDs.
+    /// Converts a collection of cells into a `FastHashMap` indexed by their UUIDs.
     ///
     /// This utility function transforms a collection of cells into a hash map structure
     /// for efficient lookups by UUID. Uses `FastHashMap` for performance.
     ///
     /// # Arguments
     ///
-    /// * `cells` - A vector of cells to be converted into a `FastHashMap`.
+    /// * `cells` - Cells to be converted into a `FastHashMap`.
     ///
     /// # Returns
     ///
@@ -1002,7 +1002,10 @@ where
     /// assert!(empty_map.is_empty());
     /// ```
     #[must_use]
-    pub fn into_hashmap(cells: Vec<Self>) -> FastHashMap<Uuid, Self> {
+    pub fn into_hashmap<I>(cells: I) -> FastHashMap<Uuid, Self>
+    where
+        I: IntoIterator<Item = Self>,
+    {
         cells.into_iter().map(|c| (c.uuid, c)).collect()
     }
 
