@@ -4,9 +4,10 @@
 //! between different numeric types with proper error handling and finite-value
 //! checking.
 
-use num_traits::cast;
+#![forbid(unsafe_code)]
 
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
+use num_traits::cast;
 
 // Re-export error type
 pub use super::ValueConversionError;

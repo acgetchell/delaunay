@@ -3,16 +3,15 @@
 //! This module provides functions for computing the circumcenter and circumradius
 //! of simplices in d-dimensional space.
 
-use std::iter::Sum;
-
-use la_stack::{DEFAULT_PIVOT_TOL, LaError, Vector as LaVector};
-
-use crate::geometry::matrix::matrix_set;
-use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
+#![forbid(unsafe_code)]
 
 use super::conversions::{safe_coords_to_f64, safe_scalar_from_f64, safe_scalar_to_f64};
 use super::norms::{hypot, squared_norm};
+use crate::geometry::matrix::matrix_set;
+use crate::geometry::point::Point;
+use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
+use la_stack::{DEFAULT_PIVOT_TOL, LaError, Vector as LaVector};
+use std::iter::Sum;
 
 // Re-export error type
 pub use super::CircumcenterError;

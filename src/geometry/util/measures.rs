@@ -3,20 +3,19 @@
 //! This module provides functions for computing volumes, surface measures,
 //! and quality metrics of simplices.
 
-use num_traits::Float;
-use std::iter::Sum;
-use std::ops::{AddAssign, SubAssign};
+#![forbid(unsafe_code)]
 
-use la_stack::{DEFAULT_SINGULAR_TOL, LaError};
-
+use super::conversions::{safe_coords_to_f64, safe_scalar_from_f64, safe_usize_to_scalar};
+use super::norms::hypot;
 use crate::core::facet::FacetView;
 use crate::core::traits::data_type::DataType;
 use crate::geometry::matrix::{Matrix, matrix_get, matrix_set};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
-
-use super::conversions::{safe_coords_to_f64, safe_scalar_from_f64, safe_usize_to_scalar};
-use super::norms::hypot;
+use la_stack::{DEFAULT_SINGULAR_TOL, LaError};
+use num_traits::Float;
+use std::iter::Sum;
+use std::ops::{AddAssign, SubAssign};
 
 // Re-export error types
 pub use super::{CircumcenterError, SurfaceMeasureError, ValueConversionError};

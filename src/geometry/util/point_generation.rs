@@ -3,14 +3,14 @@
 //! This module provides utilities for generating random points in d-dimensional
 //! space with various distribution strategies.
 
-use rand::Rng;
-use rand::distr::uniform::SampleUniform;
-
-use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
+#![forbid(unsafe_code)]
 
 use super::conversions::safe_usize_to_scalar;
 use super::norms::hypot;
+use crate::geometry::point::Point;
+use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
+use rand::Rng;
+use rand::distr::uniform::SampleUniform;
 
 // Re-export error type
 pub use super::RandomPointGenerationError;

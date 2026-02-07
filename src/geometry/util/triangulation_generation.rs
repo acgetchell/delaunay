@@ -3,13 +3,9 @@
 //! This module provides utilities for generating random Delaunay triangulations
 //! with various topology guarantees.
 
-use rand::SeedableRng;
-use rand::distr::uniform::SampleUniform;
-use rand::rngs::StdRng;
-use rand::seq::SliceRandom;
-use std::iter::Sum;
-use std::ops::{AddAssign, SubAssign};
+#![forbid(unsafe_code)]
 
+use super::point_generation::{generate_random_points, generate_random_points_seeded};
 use crate::core::delaunay_triangulation::{
     ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError,
     InsertionOrderStrategy, RetryPolicy,
@@ -21,8 +17,12 @@ use crate::geometry::kernel::{FastKernel, RobustKernel};
 use crate::geometry::point::Point;
 use crate::geometry::robust_predicates::config_presets;
 use crate::geometry::traits::coordinate::CoordinateScalar;
-
-use super::point_generation::{generate_random_points, generate_random_points_seeded};
+use rand::SeedableRng;
+use rand::distr::uniform::SampleUniform;
+use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
+use std::iter::Sum;
+use std::ops::{AddAssign, SubAssign};
 
 const RANDOM_TRIANGULATION_MAX_SHUFFLE_ATTEMPTS: usize = 6;
 const RANDOM_TRIANGULATION_MAX_POINTSET_ATTEMPTS: usize = 6;

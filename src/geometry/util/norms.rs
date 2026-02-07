@@ -3,11 +3,11 @@
 //! This module provides numerically stable functions for computing norms and
 //! distances of d-dimensional vectors.
 
-use num_traits::Float;
-
-use crate::geometry::traits::coordinate::CoordinateScalar;
+#![forbid(unsafe_code)]
 
 use super::conversions::{safe_scalar_from_f64, safe_scalar_to_f64};
+use crate::geometry::traits::coordinate::CoordinateScalar;
+use num_traits::Float;
 
 /// Compute 2D hypot using numerically stable scaled algorithm.
 ///
