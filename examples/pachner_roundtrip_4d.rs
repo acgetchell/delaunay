@@ -15,7 +15,7 @@
 
 use ::uuid::Uuid;
 use delaunay::core::delaunay_triangulation::{ConstructionOptions, InsertionOrderStrategy};
-use delaunay::prelude::edit::*;
+use delaunay::prelude::triangulation::flips::*;
 use delaunay::prelude::*;
 use std::time::Instant;
 

@@ -1,6 +1,6 @@
-//! Topology editing operations (bistellar flips).
+//! Triangulation editing operations (bistellar flips).
 //!
-//! This module exposes **high-level** flip methods for explicit topology editing.
+//! This module exposes **high-level** flip methods for explicit triangulation editing.
 //! These operations do **not** automatically restore the Delaunay property.
 //! For Delaunay construction/removal, use
 //! [`crate::core::delaunay_triangulation::DelaunayTriangulation::insert`] and
@@ -27,13 +27,13 @@ use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 
-/// High-level topology editing operations via bistellar flips.
+/// High-level triangulation editing operations via bistellar flips.
 ///
 /// # Example
 ///
 /// ```rust
 /// use delaunay::prelude::*;
-/// use delaunay::prelude::edit::*;
+/// use delaunay::prelude::triangulation::flips::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -54,7 +54,7 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 ///     .flip_k1_insert(cell_key, vertex!([0.1, 0.1, 0.1]))
 ///     .unwrap();
 /// ```
-pub trait TopologyEdit<K, U, V, const D: usize>
+pub trait BistellarFlips<K, U, V, const D: usize>
 where
     K: Kernel<D>,
     K::Scalar: CoordinateScalar,
@@ -72,7 +72,7 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::*;
-    /// use delaunay::prelude::edit::*;
+    /// use delaunay::prelude::triangulation::flips::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -109,7 +109,7 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::*;
-    /// use delaunay::prelude::edit::*;
+    /// use delaunay::prelude::triangulation::flips::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -144,7 +144,7 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::*;
-    /// use delaunay::prelude::edit::*;
+    /// use delaunay::prelude::triangulation::flips::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -183,7 +183,7 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::*;
-    /// use delaunay::prelude::edit::*;
+    /// use delaunay::prelude::triangulation::flips::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -221,7 +221,7 @@ where
     ) -> Result<FlipInfo<D>, FlipError>;
 }
 
-impl<K, U, V, const D: usize> TopologyEdit<K, U, V, D> for Triangulation<K, U, V, D>
+impl<K, U, V, const D: usize> BistellarFlips<K, U, V, D> for Triangulation<K, U, V, D>
 where
     K: Kernel<D>,
     K::Scalar: CoordinateScalar,
@@ -264,7 +264,7 @@ where
     }
 }
 
-impl<K, U, V, const D: usize> TopologyEdit<K, U, V, D> for DelaunayTriangulation<K, U, V, D>
+impl<K, U, V, const D: usize> BistellarFlips<K, U, V, D> for DelaunayTriangulation<K, U, V, D>
 where
     K: Kernel<D>,
     K::Scalar: CoordinateScalar,

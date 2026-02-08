@@ -4355,7 +4355,7 @@ mod tests {
     use crate::core::algorithms::flips::DelaunayRepairError;
     use crate::geometry::kernel::{FastKernel, RobustKernel};
     use crate::geometry::traits::coordinate::Coordinate;
-    use crate::topology::edit::TopologyEdit;
+    use crate::triangulation::flips::BistellarFlips;
     use crate::vertex;
     use rand::{Rng, SeedableRng};
     fn init_tracing() {

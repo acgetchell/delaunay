@@ -889,6 +889,27 @@ pub mod geometry {
     pub use util::*;
 }
 
+/// Triangulation-facing APIs.
+///
+/// This module groups public APIs that operate on triangulations, such as explicit
+/// bistellar (Pachner) flip operations.
+pub mod triangulation {
+    /// Triangulation editing operations (bistellar flips).
+    pub mod flips;
+
+    /// Prelude modules for triangulation editing.
+    pub mod prelude {
+        /// High-level bistellar flip API.
+        pub mod flips {
+            pub use crate::triangulation::flips::*;
+        }
+    }
+
+    // Re-export commonly used triangulation types for discoverability.
+    pub use crate::core::delaunay_triangulation::DelaunayTriangulation;
+    pub use crate::core::triangulation::Triangulation;
+}
+
 /// Topology analysis and validation for triangulated spaces.
 ///
 /// This module provides traits, algorithms, and data structures for analyzing
@@ -926,8 +947,6 @@ pub mod geometry {
 /// assert!(result.is_valid());
 /// ```
 pub mod topology {
-    /// Topology editing operations (bistellar flips).
-    pub mod edit;
     /// Traits for topological spaces and error types
     pub mod traits {
         pub mod topological_space;
@@ -971,13 +990,8 @@ pub mod topology {
     };
     pub use traits::*;
 
-    /// Prelude modules for topology editing and validation.
+    /// Prelude modules for topology validation & analysis.
     pub mod prelude {
-        /// High-level topology edit API (bistellar flips).
-        pub mod edit {
-            pub use crate::topology::edit::*;
-        }
-
         /// Topology validation & analysis utilities.
         pub mod validation {
             pub use crate::core::triangulation::TopologyGuarantee;
@@ -1091,9 +1105,20 @@ pub mod prelude {
         // Convenience macro (commonly used in docs/tests/examples) without importing full `prelude::*`.
         pub use crate::vertex;
     }
-    /// Topology edit API (bistellar flips).
-    pub mod edit {
-        pub use crate::topology::prelude::edit::*;
+    /// Topology validation & analysis utilities.
+    pub mod topology {
+        /// Topology validation utilities.
+        pub mod validation {
+            pub use crate::topology::prelude::validation::*;
+        }
+    }
+
+    /// Triangulation editing operations (bistellar flips).
+    pub mod triangulation {
+        /// High-level bistellar flip API.
+        pub mod flips {
+            pub use crate::triangulation::flips::*;
+        }
     }
 
     // Convenience macros

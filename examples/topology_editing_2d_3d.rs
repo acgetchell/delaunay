@@ -20,7 +20,7 @@
 
 use delaunay::geometry::point::Point;
 use delaunay::geometry::util::{circumcenter, hypot};
-use delaunay::prelude::edit::*;
+use delaunay::prelude::triangulation::flips::*;
 use delaunay::prelude::*;
 
 fn main() {
