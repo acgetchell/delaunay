@@ -66,10 +66,7 @@ use std::marker::PhantomData;
 /// let p = Point::new([1.0, 2.0]);
 /// assert_eq!(p.coords(), &[1.0, 2.0]);
 /// ```
-pub struct Point<T, const D: usize>
-where
-    T: CoordinateScalar,
-{
+pub struct Point<T, const D: usize> {
     /// The coordinates of the point.
     coords: [T; D],
 }
