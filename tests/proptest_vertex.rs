@@ -12,7 +12,7 @@
 
 #![allow(unused_imports)] // Imports used in macro expansion
 
-use delaunay::prelude::*;
+use delaunay::prelude::query::*;
 use proptest::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};

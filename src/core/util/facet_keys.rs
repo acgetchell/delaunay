@@ -30,7 +30,7 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::query::*;
 /// use delaunay::core::util::checked_facet_key_from_vertex_keys;
 ///
 /// let vertices = vec![

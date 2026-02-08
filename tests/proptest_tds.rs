@@ -21,7 +21,8 @@
 //!
 //! All tests use `dt.tds().is_valid()` (Level 2 structural validation).
 
-use delaunay::prelude::*;
+use delaunay::core::util::jaccard::jaccard_index;
+use delaunay::prelude::query::*;
 use proptest::prelude::*;
 use std::collections::HashSet;
 

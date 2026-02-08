@@ -35,7 +35,8 @@
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
 use ::uuid::Uuid;
-use delaunay::prelude::*;
+use delaunay::prelude::geometry::*;
+use delaunay::prelude::triangulation::*;
 use proptest::prelude::*;
 use std::collections::HashMap;
 

@@ -48,7 +48,7 @@
 //! ## Usage Guidelines
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::triangulation::*;
 //!
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0, 0.0]),
@@ -298,7 +298,7 @@ pub enum TriangulationConstructionError {
 ///
 /// ```rust
 /// use delaunay::core::triangulation::TriangulationValidationError;
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -581,7 +581,7 @@ impl Default for ValidationPolicy {
 /// # Example
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -803,7 +803,8 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::geometry::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let tri: Triangulation<FastKernel<f64>, (), (), 3> =
     ///     Triangulation::new_empty(FastKernel::new());
@@ -1019,7 +1020,7 @@ where
     // /// # Examples (future)
     // ///
     // /// ```rust,ignore
-    // /// use delaunay::prelude::*;
+    // /// use delaunay::prelude::triangulation::*;
     // /// use delaunay::topology::spaces::SphericalSpace;
     // ///
     // /// let space = SphericalSpace::new();
@@ -1052,7 +1053,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -1079,7 +1080,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -1104,7 +1105,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1125,7 +1126,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1146,7 +1147,8 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::geometry::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// // Empty triangulation has dimension -1
     /// let empty: Triangulation<FastKernel<f64>, (), (), 3> =
@@ -1181,7 +1183,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1217,7 +1219,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1276,7 +1278,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// // A single 3D tetrahedron has 6 unique edges.
     /// let vertices = vec![
@@ -1333,7 +1335,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// // A single 2D triangle has 3 unique edges.
     /// let vertices = vec![
@@ -1385,7 +1387,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// // Two tetrahedra sharing a triangular facet.
     /// let vertices: Vec<_> = vec![
@@ -1493,7 +1495,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// // Two tetrahedra sharing a triangular facet => each tetra has exactly one neighbor.
     /// let vertices: Vec<_> = vec![
@@ -1601,7 +1603,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// // In a single tetrahedron, each vertex has degree 3.
     /// let vertices = vec![
@@ -1692,7 +1694,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// // In a single tetrahedron, each vertex has degree 3.
     /// let vertices = vec![
@@ -1719,7 +1721,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -1745,7 +1747,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -1793,7 +1795,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// // Two tetrahedra sharing a triangular facet.
     /// let vertices: Vec<_> = vec![
@@ -1991,7 +1993,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices_4d = [
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -2067,7 +2069,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -2111,7 +2113,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices_4d = [
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -2309,7 +2311,8 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::geometry::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// // Create a 2D triangle (initial simplex)
     /// let vertices = vec![
@@ -4450,7 +4453,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// // A single simplex has no over-shared facets.
     /// let vertices = vec![
@@ -4560,7 +4563,7 @@ where
     ///
     /// ```rust
     /// use delaunay::core::collections::FacetIssuesMap;
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// // Start with a valid 2D simplex.
     /// let vertices = vec![

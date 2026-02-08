@@ -12,7 +12,7 @@
 //!
 //! For property-based tests with random triangulations, see `proptest_euler_characteristic.rs`.
 
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::*;
 use delaunay::topology::characteristics::{euler, validation};
 
 // =============================================================================

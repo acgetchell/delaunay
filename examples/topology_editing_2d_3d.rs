@@ -18,10 +18,13 @@
 //! cargo run --example topology_editing_2d_3d
 //! ```
 
+use delaunay::core::edge::EdgeKey;
+use delaunay::geometry::Coordinate;
+use delaunay::geometry::kernel::Kernel;
 use delaunay::geometry::point::Point;
+use delaunay::geometry::traits::coordinate::ScalarAccumulative;
 use delaunay::geometry::util::{circumcenter, hypot};
-use delaunay::prelude::edit::*;
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::flips::*;
 
 fn main() {
     println!("============================================================");

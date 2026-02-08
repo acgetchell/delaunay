@@ -4,7 +4,7 @@
 //! Delaunay violations, the deterministic rebuild heuristic is triggered and
 //! successfully produces a valid Delaunay triangulation.
 
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::*;
 
 /// Test that construction succeeds even when flip-based repair might struggle.
 ///

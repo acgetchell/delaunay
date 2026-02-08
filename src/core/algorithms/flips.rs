@@ -2344,7 +2344,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 /// use delaunay::core::algorithms::flips::verify_delaunay_via_flip_predicates;
 /// use delaunay::geometry::kernel::FastKernel;
 ///

@@ -247,7 +247,7 @@ This fallback is **heuristic** and **non-reproducible by default** when seeds ar
 When used, the returned `DelaunayRepairOutcome` includes the exact seeds so you can replay the run.
 
 ```rust
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::*;
 
 let mut dt: DelaunayTriangulation<_, (), (), 3> =
     DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
@@ -364,7 +364,7 @@ The robust predicates are integrated into the triangulation kernels and automati
 during insertion. Users can choose between different kernel types based on their needs:
 
 ```rust
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::*;
 use delaunay::geometry::kernel::{FastKernel, RobustKernel};
 
 // Fast predicates (default) - best for well-conditioned inputs
@@ -445,7 +445,7 @@ let result_determinant = cast(final_determinant)
 ### Basic Robust Triangulation
 
 ```rust
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::*;
 use delaunay::geometry::kernel::{FastKernel, RobustKernel};
 
 // For problematic point sets, use robust kernel
@@ -510,7 +510,7 @@ The library provides robust predicates integrated into kernel types. Choose the 
 kernel based on your input characteristics:
 
 ```rust
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::*;
 use delaunay::geometry::kernel::{FastKernel, RobustKernel};
 
 // Fast predicates (default) - best for well-conditioned inputs
@@ -532,7 +532,7 @@ let dt_robust: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
 ### Kernel Selection Examples
 
 ```rust
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::*;
 use delaunay::geometry::kernel::{FastKernel, RobustKernel};
 
 // For general applications - use default fast kernel
@@ -551,7 +551,7 @@ let dt_robust: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
 ### Error Recovery in Applications
 
 ```rust
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::*;
 use delaunay::geometry::kernel::{FastKernel, RobustKernel};
 use delaunay::core::vertex::Vertex;
 
@@ -897,7 +897,7 @@ The robust predicates and algorithms add computational overhead, but provide sig
 1. **Immediate**: Use `RobustKernel` for applications encountering triangulation failures
 
    ```rust
-   use delaunay::prelude::*;
+   use delaunay::prelude::triangulation::*;
    use delaunay::geometry::kernel::RobustKernel;
    
    // Replace failed standard triangulations
@@ -908,7 +908,7 @@ The robust predicates and algorithms add computational overhead, but provide sig
 2. **Short-term**: Implement tiered approach for new applications
 
    ```rust
-   use delaunay::prelude::*;
+   use delaunay::prelude::triangulation::*;
    use delaunay::geometry::kernel::{FastKernel, RobustKernel};
    
    // Try fast kernel first, fall back to robust

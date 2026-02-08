@@ -637,7 +637,7 @@ impl<T, U, V, const D: usize> CachedEulerCalculator<T, U, V, D> {
 #[cfg(test)]
 mod euler_tests {
     use super::*;
-    use delaunay::prelude::*;
+    use delaunay::prelude::triangulation::*;
     
     #[test]
     fn test_2d_triangle_euler_characteristic() {
@@ -696,7 +696,7 @@ mod euler_tests {
 #[cfg(test)]
 mod topology_validation_tests {
     use super::*;
-    use delaunay::prelude::*;
+    use delaunay::prelude::triangulation::*;
     
     #[test]
     fn test_planar_topology_validation_success() {
@@ -745,7 +745,7 @@ mod topology_validation_tests {
 #[cfg(test)]
 mod random_topology_tests {
     use super::*;
-    use delaunay::prelude::*;
+    use delaunay::prelude::triangulation::*;
     use proptest::prelude::*;
     
     proptest! {

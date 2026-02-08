@@ -107,7 +107,7 @@
 //! ## Example: Using Validation
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::triangulation::*;
 //!
 //! let vertices = [
 //!     vertex!([0.0, 0.0, 0.0]),
@@ -148,7 +148,7 @@
 //! ## Creating a 3D Triangulation
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::triangulation::*;
 //!
 //! // Create vertices for a tetrahedron
 //! let vertices = [
@@ -171,7 +171,7 @@
 //! ## Adding Vertices to Existing Triangulation
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::triangulation::*;
 //!
 //! // Start with initial vertices
 //! let initial_vertices = [
@@ -194,7 +194,7 @@
 //! ## 4D Triangulation
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::triangulation::*;
 //!
 //! // Create 4D triangulation with 5 vertices (needed for a 4-simplex)
 //! let vertices_4d = [
@@ -262,7 +262,7 @@ use uuid::Uuid;
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 ///
 /// let state = TriangulationConstructionState::Incomplete(2);
 /// assert!(matches!(state, TriangulationConstructionState::Incomplete(2)));
@@ -297,7 +297,7 @@ impl Default for TriangulationConstructionState {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 /// use uuid::Uuid;
 ///
 /// let err = TdsConstructionError::DuplicateUuid {
@@ -327,7 +327,7 @@ pub enum TdsConstructionError {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 ///
 /// let kind = EntityKind::Cell;
 /// assert_eq!(kind, EntityKind::Cell);
@@ -348,7 +348,7 @@ pub enum EntityKind {
 /// Example usage
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 ///
 /// // Build a simple 3D triangulation
 /// let vertices = [
@@ -481,7 +481,7 @@ pub enum TdsValidationError {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 ///
 /// let validation = TdsValidationError::InvalidNeighbors {
 ///     message: "bad neighbors".to_string(),
@@ -515,7 +515,7 @@ type TdsError = TdsValidationError;
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 ///
 /// let kind = InvariantKind::Topology;
 /// assert_eq!(kind, InvariantKind::Topology);
@@ -553,7 +553,7 @@ pub enum InvariantKind {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 ///
 /// let err = InvariantError::Tds(TdsValidationError::InvalidNeighbors {
 ///     message: "bad neighbors".to_string(),
@@ -585,7 +585,7 @@ pub enum InvariantError {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 ///
 /// let violation = InvariantViolation {
 ///     kind: InvariantKind::Topology,
@@ -651,7 +651,7 @@ new_key_type! {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -676,7 +676,7 @@ new_key_type! {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -725,7 +725,7 @@ new_key_type! {
 /// automatically computes the triangulation.
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 ///
 /// // Create vertices for a 2D triangulation
 /// let vertices = [
@@ -963,7 +963,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -994,7 +994,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1031,7 +1031,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -1057,7 +1057,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -1081,7 +1081,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -1105,7 +1105,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -1132,7 +1132,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -1170,7 +1170,7 @@ where
     /// Count vertices after adding them:
     ///
     /// ```no_run
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
     /// let vertex1: Vertex<f64, (), 3> = vertex!([1.0, 2.0, 3.0]);
@@ -1186,7 +1186,7 @@ where
     /// Count vertices initialized from points:
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// let points = [
     ///     Point::new([0.0, 0.0, 0.0]),
@@ -1227,7 +1227,7 @@ where
     /// Dimension progression as vertices are added:
     ///
     /// ```no_run
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
     ///
@@ -1256,7 +1256,7 @@ where
     /// Different dimensional triangulations:
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// // 2D triangulation
     /// let points_2d = [
@@ -1300,7 +1300,7 @@ where
     /// Count cells in a newly created triangulation:
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// let points = [
     ///     Point::new([0.0, 0.0, 0.0]),
@@ -1317,7 +1317,7 @@ where
     /// Count cells after triangulation:
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// let points = [
     ///     Point::new([0.0, 0.0, 0.0]),
@@ -1580,7 +1580,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -1642,7 +1642,7 @@ where
     /// Successfully finding a cell key from a UUID:
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// // Create a triangulation with some vertices
     /// let vertices = [
@@ -1702,7 +1702,7 @@ where
     /// Successfully finding a vertex key from a UUID:
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// // Create a triangulation with some vertices
     /// let vertices = [
@@ -1762,7 +1762,7 @@ where
     /// Successfully getting a UUID from a cell key:
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// // Create a triangulation with some vertices
     /// let vertices = [
@@ -1787,7 +1787,7 @@ where
     /// Round-trip conversion between UUID and key:
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// // Create a triangulation with some vertices
     /// let vertices = [
@@ -1835,7 +1835,7 @@ where
     /// Successfully getting a UUID from a vertex key:
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// // Create a triangulation with some vertices
     /// let vertices = [
@@ -1860,7 +1860,7 @@ where
     /// Round-trip conversion between UUID and key:
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// // Create a triangulation with some vertices
     /// let vertices = [
@@ -1913,7 +1913,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -1948,7 +1948,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -1979,7 +1979,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -2010,7 +2010,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -2041,7 +2041,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -2083,7 +2083,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -2138,7 +2138,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -2530,7 +2530,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -2607,7 +2607,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -2781,7 +2781,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -2845,7 +2845,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -2906,7 +2906,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -3011,7 +3011,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -3063,7 +3063,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -3545,7 +3545,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices_4d = [
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -3597,7 +3597,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices_4d = [
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),

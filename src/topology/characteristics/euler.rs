@@ -6,7 +6,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::query::*;
 //! use delaunay::topology::characteristics::euler;
 //!
 //! let vertices = vec![
@@ -183,7 +183,7 @@ pub enum TopologyClassification {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::query::*;
 /// use delaunay::topology::characteristics::euler;
 ///
 /// let vertices = vec![
@@ -372,7 +372,7 @@ fn insert_simplices_of_size(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::query::*;
 /// use delaunay::topology::characteristics::euler;
 ///
 /// // 3D tetrahedron - boundary is S² (sphere)
@@ -654,7 +654,7 @@ pub(crate) fn triangulated_surface_boundary_component_count(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::query::*;
 /// use delaunay::topology::characteristics::euler::{classify_triangulation, TopologyClassification};
 ///
 /// let vertices = vec![

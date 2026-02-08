@@ -9,7 +9,7 @@
 //! Converted from legacy `Tds::new()` tests to use the new `DelaunayTriangulation` API.
 
 use delaunay::geometry::kernel::RobustKernel;
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::*;
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 fn init_tracing() {

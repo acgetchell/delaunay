@@ -3,7 +3,7 @@
 //! This module tests that functions properly handle coordinate conversion errors
 //! when dealing with extreme values, NaN, infinity, etc.
 
-use delaunay::prelude::*;
+use delaunay::prelude::geometry::*;
 
 // =============================================================================
 // GEOMETRIC PREDICATES ERROR TESTS

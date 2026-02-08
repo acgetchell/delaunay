@@ -6,7 +6,7 @@
 //! - Insphere transitivity and symmetry properties
 //! - Robustness under small perturbations
 
-use delaunay::prelude::*;
+use delaunay::prelude::geometry::*;
 use proptest::prelude::*;
 
 // =============================================================================

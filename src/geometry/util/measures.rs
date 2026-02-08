@@ -700,7 +700,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::query::*;
 /// use delaunay::geometry::util::surface_measure;
 ///
 /// // Create a triangulation and calculate surface measure of boundary facets

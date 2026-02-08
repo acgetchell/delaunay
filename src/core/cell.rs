@@ -18,7 +18,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::triangulation::*;
 //!
 //! // Create vertices for a tetrahedron
 //! let vertices = vec![
@@ -178,7 +178,7 @@ impl From<crate::geometry::matrix::StackMatrixDispatchError> for CellValidationE
 /// Since cells now store keys, you need a `&Tds` reference to access vertex data:
 /// ```rust
 /// use delaunay::core::collections::Uuid;
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 ///
 /// // Create a triangulation with some vertices
 /// let vertices = vec![
@@ -450,7 +450,7 @@ where
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -485,7 +485,7 @@ where
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -520,7 +520,7 @@ where
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -553,7 +553,7 @@ where
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -585,7 +585,7 @@ where
     /// This method returns keys (not full vertex objects). Use the TDS to resolve keys:
     /// ```rust
     /// use delaunay::core::collections::Uuid;
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -736,7 +736,7 @@ where
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -765,7 +765,7 @@ where
     ///
     /// ```
     /// use delaunay::core::collections::Uuid;
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 1.0]),
@@ -797,7 +797,7 @@ where
     /// # Example
     ///
     /// ```
-    /// # use delaunay::prelude::*;
+    /// # use delaunay::prelude::triangulation::*;
     /// # let vertices = vec![
     /// #     vertex!([0.0, 0.0]),
     /// #     vertex!([1.0, 0.0]),
@@ -838,7 +838,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -890,7 +890,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -925,7 +925,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 1.0]),
@@ -961,7 +961,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     /// use delaunay::core::cell::Cell;
     ///
     /// // Create two separate triangulations
@@ -1042,7 +1042,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 1.0]),
@@ -1188,7 +1188,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1257,7 +1257,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// // Example 1: Comparing cells from different TDS instances with same coordinates
     /// let vertices = vec![
@@ -1278,7 +1278,7 @@ where
     /// ```
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// // Example 2: Comparing cells with different coordinates returns false
     /// let vertices1 = vec![
@@ -1365,7 +1365,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1390,7 +1390,7 @@ where
     /// ```
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),

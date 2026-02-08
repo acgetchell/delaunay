@@ -3,7 +3,7 @@
 //! This module tests circumsphere and flip repair behavior in minimal 2D configurations.
 
 use delaunay::core::util::debug_print_first_delaunay_violation;
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::*;
 
 #[test]
 fn regression_empty_circumsphere_2d_minimal_case() {

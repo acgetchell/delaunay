@@ -6,7 +6,8 @@
 // Import Delaunay triangulation crate components
 #[cfg(feature = "count-allocations")]
 use allocation_counter::measure;
-use delaunay::prelude::*;
+use delaunay::prelude::geometry::*;
+use delaunay::prelude::triangulation::*;
 
 // Testing utilities
 use rand::Rng;

@@ -4,7 +4,7 @@
 
 use delaunay::core::vertex::VertexBuilder;
 use delaunay::geometry::util::generate_random_points_seeded;
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::*;
 
 #[test]
 fn pl_manifold_insertion_is_non_negotiable_under_validation_policy_never() {

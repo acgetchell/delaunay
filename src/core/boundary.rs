@@ -54,7 +54,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// // Create a simple 3D triangulation (single tetrahedron)
     /// let vertices = vec![
@@ -103,7 +103,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -145,7 +145,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -198,7 +198,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),

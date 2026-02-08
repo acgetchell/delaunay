@@ -181,8 +181,9 @@ delaunay/
 │   │   │   └── toroidal.rs
 │   │   ├── traits/
 │   │   │   └── topological_space.rs
-│   │   ├── edit.rs
 │   │   └── manifold.rs
+│   ├── triangulation/
+│   │   └── flips.rs
 │   └── lib.rs
 ├── tests/
 │   ├── COVERAGE.md
@@ -365,7 +366,11 @@ with convenient `just` shortcuts for common workflows.
   - `circumsphere.rs` - Circumcenter and circumradius calculations for simplices
   - `measures.rs` - Simplex volume, inradius, facet measure, surface measure computations
   - `point_generation.rs` - Random point generation (uniform, grid, Poisson disk sampling)
-  - `triangulation_generation.rs` - Random triangulation generation with topology guarantees
+- `triangulation_generation.rs` - Random triangulation generation with topology guarantees
+
+**`src/triangulation/`** - Triangulation-facing public APIs:
+
+- `flips.rs` - High-level bistellar flip (Pachner move) trait and supporting public types; delegates to `core::algorithms::flips`
 
 **`src/topology/`** - Topology analysis and validation:
 
