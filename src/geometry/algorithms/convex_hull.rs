@@ -13,8 +13,7 @@
 //!
 //! # Example
 //! ```rust
-//! use delaunay::prelude::*;
-//! use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+//! use delaunay::prelude::query::*;
 //!
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0, 0.0]),

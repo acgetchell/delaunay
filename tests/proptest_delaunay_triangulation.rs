@@ -31,7 +31,8 @@
 //! local flip configurations (O(cells)) instead of the naive O(cells × vertices) brute-force.
 //! This provides ~40-100x speedup for property-based testing while remaining equally correct.
 
-use delaunay::prelude::*;
+use delaunay::prelude::geometry::*;
+use delaunay::prelude::triangulation::*;
 use proptest::prelude::*;
 
 fn init_tracing() {

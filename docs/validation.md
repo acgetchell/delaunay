@@ -76,7 +76,7 @@ insertion deviates from the happy-path and trips internal **suspicion flags**, e
 ### Example: configuring validation policy
 
 ```rust
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::*;
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),
@@ -118,7 +118,7 @@ PL-manifoldness. You can trigger that final certification via
 `Triangulation::validate_at_completion()` (or `Triangulation::validate()`).
 
 ```rust
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::*;
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),
@@ -207,7 +207,7 @@ Validates basic data integrity of individual vertices and cells.
 ### Example
 
 ```rust
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::*;
 
 let v = vertex!([0.0, 0.0, 0.0]);
 assert!(v.is_valid().is_ok());
@@ -255,7 +255,7 @@ Validates the combinatorial structure of the Triangulation Data Structure.
 ### Example
 
 ```rust
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::*;
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),
@@ -333,7 +333,7 @@ Validates that the triangulation forms a valid topological manifold.
 ### Example
 
 ```rust
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::*;
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),
@@ -398,7 +398,7 @@ Validates the geometric optimality of the triangulation.
 ### Example
 
 ```rust
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::*;
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),
@@ -498,7 +498,7 @@ fn test_my_triangulation_operation() {
 ### Pattern 2: Debug Build Validation
 
 ```rust
-use delaunay::prelude::*;
+use delaunay::prelude::query::*;
 
 pub fn my_algorithm(dt: &mut DelaunayTriangulation<FastKernel<f64>, (), (), 3>) {
     // Do work...
@@ -514,7 +514,7 @@ pub fn my_algorithm(dt: &mut DelaunayTriangulation<FastKernel<f64>, (), (), 3>) 
 ### Pattern 3: Conditional Deep Validation
 
 ```rust
-use delaunay::prelude::*;
+use delaunay::prelude::query::*;
 
 pub fn validate_with_level(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>, level: u8) -> Result<(), String> {
     match level {

@@ -171,8 +171,6 @@ delaunay/
 │   │   ├── quality.rs
 │   │   ├── robust_predicates.rs
 │   │   └── util.rs
-│   ├── triangulation/
-│   │   └── flips.rs
 │   ├── topology/
 │   │   ├── characteristics/
 │   │   │   ├── euler.rs
@@ -184,6 +182,8 @@ delaunay/
 │   │   ├── traits/
 │   │   │   └── topological_space.rs
 │   │   └── manifold.rs
+│   ├── triangulation/
+│   │   └── flips.rs
 │   └── lib.rs
 ├── tests/
 │   ├── COVERAGE.md

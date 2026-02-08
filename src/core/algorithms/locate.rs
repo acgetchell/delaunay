@@ -302,7 +302,8 @@ impl LocateStats {
 /// Basic point location in a 4D simplex:
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::algorithms::*;
+/// use delaunay::prelude::query::*;
 ///
 /// // Create a 4D simplex (5 vertices)
 /// let vertices = vec![
@@ -335,7 +336,9 @@ impl LocateStats {
 /// Using a hint cell for faster location:
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::geometry::kernel::RobustKernel;
+/// use delaunay::prelude::algorithms::*;
+/// use delaunay::prelude::query::*;
 ///
 /// // Create a 4D simplex
 /// let vertices = vec![
@@ -386,7 +389,8 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::algorithms::*;
+/// use delaunay::prelude::query::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0]),

@@ -17,7 +17,7 @@
 //! This library handles **arbitrary dimensions** (subject to numerical issues). Here's a 4D triangulation example:
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::triangulation::*;
 //!
 //! // Create a 4D Delaunay triangulation (4-dimensional space!)
 //! let vertices = vec![
@@ -45,7 +45,7 @@
 //! Extract d-dimensional convex hulls from Delaunay triangulations:
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::query::*;
 //!
 //! // Create two tetrahedrons sharing a triangular facet (double tetrahedron)
 //! let vertices: Vec<_> = vec![
@@ -172,7 +172,7 @@
 //! This automatic pass only runs Level 3 (`Triangulation::is_valid()`). It does **not** run Level 4.
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::triangulation::*;
 //! # let vertices = vec![
 //! #     vertex!([0.0, 0.0, 0.0]),
 //! #     vertex!([1.0, 0.0, 0.0]),
@@ -209,7 +209,7 @@
 //!   you may want to validate the Delaunay property explicitly for near-degenerate inputs.
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::triangulation::*;
 //! # let vertices = vec![
 //! #     vertex!([0.0, 0.0, 0.0]),
 //! #     vertex!([1.0, 0.0, 0.0]),
@@ -229,7 +229,7 @@
 //! ```
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::triangulation::*;
 //!
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0, 0.0]),
@@ -339,7 +339,7 @@
 //!   fails and the triangulation is left in its previous valid state
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::triangulation::*;
 //!
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0, 0.0]),
@@ -364,7 +364,7 @@
 //! early using robust orientation predicates before any topology is built.
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::triangulation::*;
 //!
 //! // All points lie on a line in 2D: no non-degenerate simplex exists.
 //! let degenerate = vec![
@@ -407,7 +407,7 @@
 //! ## Simple API Usage
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::triangulation::*;
 //!
 //! // Create 4D triangulation - uses fast predicates by default (f64)
 //! let vertices = vec![
@@ -897,14 +897,6 @@ pub mod triangulation {
     /// Triangulation editing operations (bistellar flips).
     pub mod flips;
 
-    /// Prelude modules for triangulation editing.
-    pub mod prelude {
-        /// High-level bistellar flip API.
-        pub mod flips {
-            pub use crate::triangulation::flips::*;
-        }
-    }
-
     // Re-export commonly used triangulation types for discoverability.
     pub use crate::core::delaunay_triangulation::DelaunayTriangulation;
     pub use crate::core::triangulation::Triangulation;
@@ -931,7 +923,7 @@ pub mod triangulation {
 /// # Example
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 /// use delaunay::topology::characteristics::validation;
 ///
 /// let vertices = vec![
@@ -1053,6 +1045,61 @@ pub mod prelude {
         robust_predicates::*, traits::coordinate::*, util::*,
     };
 
+    /// Focused exports for triangulation construction and inspection.
+    pub mod triangulation {
+        pub use crate::core::{
+            adjacency::*,
+            cell::*,
+            delaunay_triangulation::*,
+            edge::*,
+            facet::*,
+            traits::{boundary_analysis::*, data_type::*},
+            triangulation::*,
+            triangulation_data_structure::*,
+            vertex::*,
+        };
+
+        pub use crate::core::algorithms::incremental_insertion::InsertionError;
+        pub use crate::core::operations::{InsertionOutcome, InsertionStatistics, SuspicionFlags};
+
+        /// Bistellar (Pachner) flips for explicit triangulation editing.
+        pub mod flips {
+            pub use crate::core::delaunay_triangulation::DelaunayTriangulation;
+            pub use crate::core::triangulation::{TopologyGuarantee, Triangulation};
+            pub use crate::triangulation::flips::*;
+
+            // Convenience macro (commonly used in docs/examples).
+            pub use crate::vertex;
+        }
+
+        // Convenience macro (commonly used in docs/tests/examples).
+        pub use crate::vertex;
+    }
+
+    /// Focused exports for collection types used throughout the crate.
+    pub mod collections {
+        pub use crate::core::collections::{
+            CellNeighborsMap, FacetToCellsMap, FastHashMap, FastHashSet, SmallBuffer,
+            VertexToCellsMap, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
+        };
+    }
+
+    /// Focused exports for geometry types, predicates, and helpers.
+    pub mod geometry {
+        pub use crate::geometry::{
+            algorithms::*, kernel::*, matrix::*, point::*, predicates::*, quality::*,
+            robust_predicates::*, traits::coordinate::*, util::*,
+        };
+    }
+
+    /// Focused exports for core algorithms.
+    pub mod algorithms {
+        pub use crate::core::algorithms::locate::{
+            LocateError, LocateFallback, LocateFallbackReason, LocateResult, LocateStats, locate,
+            locate_with_stats,
+        };
+    }
+
     /// Convenience re-exports for common **read-only** workflows (topology traversal, adjacency,
     /// convex-hull extraction, and common input types).
     ///
@@ -1110,14 +1157,6 @@ pub mod prelude {
         /// Topology validation utilities.
         pub mod validation {
             pub use crate::topology::prelude::validation::*;
-        }
-    }
-
-    /// Triangulation editing operations (bistellar flips).
-    pub mod triangulation {
-        /// High-level bistellar flip API.
-        pub mod flips {
-            pub use crate::triangulation::flips::*;
         }
     }
 

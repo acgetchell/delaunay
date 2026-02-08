@@ -15,7 +15,7 @@
 //! - Non-finite values (NaN, Infinity) are properly rejected
 
 use approx::assert_relative_eq;
-use delaunay::prelude::*;
+use delaunay::prelude::geometry::*;
 use num_traits::cast;
 use proptest::prelude::*;
 // =============================================================================

@@ -8,7 +8,7 @@
 //! - Different kernels (Fast vs Robust)
 
 use approx::assert_relative_eq;
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::*;
 
 // =========================================================================
 // Basic Incremental Insertion Tests (using macros for 2D-5D)
@@ -562,6 +562,7 @@ test_bootstrap_key_stability!(
 fn test_bootstrap_returns_valid_key_after_tds_rebuild() {
     use ::uuid::Uuid;
     use delaunay::core::vertex::Vertex;
+    use delaunay::geometry::Coordinate;
     use delaunay::geometry::point::Point;
 
     // Create vertices with explicit UUIDs so we can track them

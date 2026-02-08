@@ -47,7 +47,7 @@ impl EdgeKey {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -85,7 +85,7 @@ impl EdgeKey {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -115,7 +115,7 @@ impl EdgeKey {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -145,7 +145,7 @@ impl EdgeKey {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),

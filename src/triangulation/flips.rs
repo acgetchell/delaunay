@@ -32,7 +32,6 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 /// # Example
 ///
 /// ```rust
-/// use delaunay::prelude::*;
 /// use delaunay::prelude::triangulation::flips::*;
 ///
 /// let vertices = vec![
@@ -71,7 +70,6 @@ where
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
     /// use delaunay::prelude::triangulation::flips::*;
     ///
     /// let vertices = vec![
@@ -108,7 +106,6 @@ where
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
     /// use delaunay::prelude::triangulation::flips::*;
     ///
     /// let vertices = vec![
@@ -143,7 +140,6 @@ where
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
     /// use delaunay::prelude::triangulation::flips::*;
     ///
     /// let vertices = vec![
@@ -182,7 +178,6 @@ where
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
     /// use delaunay::prelude::triangulation::flips::*;
     ///
     /// let vertices = vec![
@@ -210,6 +205,8 @@ where
     fn flip_k2_inverse_from_edge(&mut self, edge: EdgeKey) -> Result<FlipInfo<D>, FlipError>;
 
     /// Apply an inverse k=3 flip from a triangle star (D >= 4).
+    ///
+    /// If `D < 4`, this returns [`FlipError::UnsupportedDimension`].
     ///
     /// # Errors
     ///
@@ -259,8 +256,19 @@ where
         &mut self,
         triangle: TriangleHandle,
     ) -> Result<FlipInfo<D>, FlipError> {
+        if D < 4 {
+            return Err(FlipError::UnsupportedDimension { dimension: D });
+        }
+
         let context = build_k3_flip_context_from_triangle(&self.tds, triangle)?;
-        apply_bistellar_flip_dynamic(&mut self.tds, &self.kernel, D - 1, &context)
+
+        // Avoid const-eval underflow for invalid instantiations (e.g. D=0), even though
+        // the public contract for this method requires D>=4.
+        let k_move = D
+            .checked_sub(1)
+            .ok_or(FlipError::UnsupportedDimension { dimension: D })?;
+
+        apply_bistellar_flip_dynamic(&mut self.tds, &self.kernel, k_move, &context)
     }
 }
 
@@ -276,33 +284,29 @@ where
         cell_key: CellKey,
         vertex: Vertex<K::Scalar, U, D>,
     ) -> Result<FlipInfo<D>, FlipError> {
-        apply_bistellar_flip_k1(&mut self.tri.tds, &self.tri.kernel, cell_key, vertex)
+        self.tri.flip_k1_insert(cell_key, vertex)
     }
 
     fn flip_k1_remove(&mut self, vertex_key: VertexKey) -> Result<FlipInfo<D>, FlipError> {
-        apply_bistellar_flip_k1_inverse(&mut self.tri.tds, &self.tri.kernel, vertex_key)
+        self.tri.flip_k1_remove(vertex_key)
     }
 
     fn flip_k2(&mut self, facet: FacetHandle) -> Result<FlipInfo<D>, FlipError> {
-        let context = build_k2_flip_context(&self.tri.tds, facet)?;
-        apply_bistellar_flip_k2(&mut self.tri.tds, &self.tri.kernel, &context)
+        self.tri.flip_k2(facet)
     }
 
     fn flip_k3(&mut self, ridge: RidgeHandle) -> Result<FlipInfo<D>, FlipError> {
-        let context = build_k3_flip_context(&self.tri.tds, ridge)?;
-        apply_bistellar_flip_k3(&mut self.tri.tds, &self.tri.kernel, &context)
+        self.tri.flip_k3(ridge)
     }
 
     fn flip_k2_inverse_from_edge(&mut self, edge: EdgeKey) -> Result<FlipInfo<D>, FlipError> {
-        let context = build_k2_flip_context_from_edge(&self.tri.tds, edge)?;
-        apply_bistellar_flip_dynamic(&mut self.tri.tds, &self.tri.kernel, D, &context)
+        self.tri.flip_k2_inverse_from_edge(edge)
     }
 
     fn flip_k3_inverse_from_triangle(
         &mut self,
         triangle: TriangleHandle,
     ) -> Result<FlipInfo<D>, FlipError> {
-        let context = build_k3_flip_context_from_triangle(&self.tri.tds, triangle)?;
-        apply_bistellar_flip_dynamic(&mut self.tri.tds, &self.tri.kernel, D - 1, &context)
+        self.tri.flip_k3_inverse_from_triangle(triangle)
     }
 }

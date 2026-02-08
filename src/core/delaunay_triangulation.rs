@@ -63,7 +63,7 @@ thread_local! {
 ///
 /// ```rust
 /// use delaunay::core::delaunay_triangulation::DelaunayTriangulationConstructionError;
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -90,7 +90,7 @@ pub enum DelaunayTriangulationConstructionError {
 ///
 /// ```rust
 /// use delaunay::core::delaunay_triangulation::DelaunayTriangulationValidationError;
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -157,7 +157,7 @@ pub enum DelaunayTriangulationValidationError {
 ///
 /// ```rust
 /// use delaunay::core::delaunay_triangulation::{ConstructionOptions, InsertionOrderStrategy};
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -209,7 +209,7 @@ pub enum InsertionOrderStrategy {
 ///
 /// ```rust
 /// use delaunay::core::delaunay_triangulation::{ConstructionOptions, DedupPolicy};
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -265,7 +265,7 @@ pub enum InitialSimplexStrategy {
 ///
 /// ```rust
 /// use delaunay::core::delaunay_triangulation::{ConstructionOptions, RetryPolicy};
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -1125,7 +1125,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -1207,7 +1207,7 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
     /// use delaunay::core::delaunay_triangulation::{
     ///     ConstructionOptions, DedupPolicy, InsertionOrderStrategy,
     /// };
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1250,7 +1250,7 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
     ///
     /// ```rust
     /// use delaunay::core::triangulation::TopologyGuarantee;
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1285,7 +1285,7 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// // Start with empty triangulation
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
@@ -1314,7 +1314,7 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
     ///
     /// ```rust
     /// use delaunay::core::triangulation::TopologyGuarantee;
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::Pseudomanifold);
@@ -1348,7 +1348,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     /// use delaunay::geometry::kernel::RobustKernel;
     ///
     /// // Start with empty triangulation using robust kernel
@@ -1386,7 +1386,7 @@ where
     /// ```rust
     /// use delaunay::core::triangulation::TopologyGuarantee;
     /// use delaunay::geometry::kernel::RobustKernel;
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
     ///     DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
@@ -1478,7 +1478,7 @@ where
     /// ```rust
     /// use delaunay::core::triangulation::TopologyGuarantee;
     /// use delaunay::geometry::kernel::RobustKernel;
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1531,7 +1531,7 @@ where
     /// };
     /// use delaunay::core::triangulation::TopologyGuarantee;
     /// use delaunay::geometry::kernel::RobustKernel;
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -2228,7 +2228,7 @@ where
     // /// # Examples (future)
     // ///
     // /// ```rust,ignore
-    // /// use delaunay::prelude::*;
+    // /// use delaunay::prelude::query::*;
     // /// use delaunay::topology::spaces::ToroidalSpace;
     // ///
     // /// let space = ToroidalSpace::new([1.0, 1.0, 1.0]);
@@ -2343,7 +2343,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -2375,7 +2375,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -2506,7 +2506,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -2540,7 +2540,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -2577,7 +2577,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -2638,7 +2638,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -2762,7 +2762,7 @@ where
     ///
     /// ```rust
     /// use delaunay::core::delaunay_triangulation::DelaunayRepairHeuristicConfig;
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -2895,7 +2895,7 @@ where
     ///
     /// ```rust
     /// use delaunay::core::triangulation::TopologyGuarantee;
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
     /// dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
@@ -3454,7 +3454,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
     ///
@@ -3726,7 +3726,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -3815,7 +3815,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// let vertices_4d = [
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -3859,7 +3859,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -3897,7 +3897,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// let vertices_4d = [
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -4020,7 +4020,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -4125,7 +4125,8 @@ where
 /// deserialize the `Tds` directly and reconstruct with [`from_tds()`](Self::from_tds):
 ///
 /// ```rust
-/// # use delaunay::prelude::*;
+/// # use delaunay::prelude::geometry::*;
+/// # use delaunay::prelude::triangulation::*;
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create and serialize a triangulation
 /// let vertices = vec![

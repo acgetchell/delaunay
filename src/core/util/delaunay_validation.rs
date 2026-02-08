@@ -202,7 +202,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::query::*;
 /// use delaunay::core::util::find_delaunay_violations;
 ///
 /// let vertices = vec![

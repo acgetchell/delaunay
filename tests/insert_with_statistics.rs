@@ -14,7 +14,7 @@
 //! - Bootstrap phase (< D+1 vertices)
 //! - Post-bootstrap phase (≥ D+1 vertices)
 
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::*;
 
 // =============================================================================
 // DELAUNAY TRIANGULATION TESTS

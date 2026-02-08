@@ -66,7 +66,7 @@ pub enum AdjacencyIndexBuildError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::query::*;
 ///
 /// // Two tetrahedra sharing a triangular facet.
 /// let vertices: Vec<_> = vec![

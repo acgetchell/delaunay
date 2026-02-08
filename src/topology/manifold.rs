@@ -203,7 +203,8 @@ pub enum ManifoldError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::geometry::*;
+/// use delaunay::prelude::triangulation::*;
 /// use delaunay::topology::manifold::validate_facet_degree;
 ///
 /// let vertices = vec![
@@ -255,7 +256,8 @@ pub fn validate_facet_degree(facet_to_cells: &FacetToCellsMap) -> Result<(), Man
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::geometry::*;
+/// use delaunay::prelude::triangulation::*;
 /// use delaunay::topology::manifold::validate_closed_boundary;
 ///
 /// let vertices = vec![
@@ -812,7 +814,8 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::geometry::*;
+/// use delaunay::prelude::triangulation::*;
 /// use delaunay::topology::manifold::validate_ridge_links;
 ///
 /// let vertices = vec![
@@ -890,7 +893,8 @@ where
 ///
 /// # Examples
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::geometry::*;
+/// use delaunay::prelude::triangulation::*;
 /// use delaunay::topology::manifold::validate_ridge_links_for_cells;
 /// use delaunay::core::collections::CellKeyBuffer;
 ///
@@ -980,7 +984,8 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::geometry::*;
+/// use delaunay::prelude::triangulation::*;
 /// use delaunay::topology::manifold::{
 ///     validate_closed_boundary, validate_facet_degree, validate_vertex_links,
 /// };

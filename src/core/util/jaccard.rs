@@ -192,7 +192,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::query::*;
 /// use delaunay::core::util::extract_vertex_coordinate_set;
 ///
 /// let vertices = vec![
@@ -249,7 +249,7 @@ const fn canonical_edge(u: u128, v: u128) -> (u128, u128) {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::query::*;
 /// use delaunay::core::util::extract_edge_set;
 ///
 /// let vertices = vec![
@@ -321,7 +321,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::query::*;
 /// use delaunay::core::util::extract_facet_identifier_set;
 ///
 /// let vertices = vec![

@@ -214,7 +214,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::query::*;
 /// use delaunay::geometry::quality::radius_ratio;
 ///
 /// // Create a 2D equilateral triangle
@@ -311,7 +311,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::query::*;
 /// use delaunay::geometry::quality::normalized_volume;
 ///
 /// // Create a 2D triangle

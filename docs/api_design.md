@@ -58,7 +58,7 @@ The library provides two distinct APIs for different use cases:
 The Builder API is exposed directly on `DelaunayTriangulation`:
 
 ```rust
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::*;
 
 // Construction from a batch of vertices
 let vertices = vec![
@@ -92,7 +92,7 @@ dt.remove_vertex(vertex_key).unwrap();
 The Edit API is exposed through the `BistellarFlips` trait in `prelude::triangulation::flips`:
 
 ```rust
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::*;
 use delaunay::prelude::triangulation::flips::*;
 
 // Start with a valid triangulation
@@ -202,7 +202,7 @@ After applying flips, you should:
 You can mix both APIs in the same workflow:
 
 ```rust
-use delaunay::prelude::*;
+use delaunay::prelude::triangulation::*;
 use delaunay::prelude::triangulation::flips::*;
 
 // 1. Build initial triangulation (Builder API)

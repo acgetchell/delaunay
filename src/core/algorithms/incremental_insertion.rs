@@ -316,7 +316,7 @@ impl InsertionError {
 /// ```rust
 /// use delaunay::core::algorithms::incremental_insertion::fill_cavity;
 /// use delaunay::core::facet::FacetHandle;
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::query::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),

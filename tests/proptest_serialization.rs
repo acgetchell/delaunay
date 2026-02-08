@@ -9,7 +9,8 @@
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
 use approx::relative_eq;
-use delaunay::prelude::*;
+use delaunay::prelude::query::*;
+use delaunay::prelude::topology::validation::*;
 use proptest::prelude::*;
 
 /// Check if two points are approximately equal (coordinate-wise)

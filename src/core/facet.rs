@@ -34,7 +34,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::triangulation::*;
 //!
 //! // Create vertices for a tetrahedron
 //! let vertices = vec![
@@ -218,7 +218,7 @@ pub enum FacetError {
 /// # Example
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -252,7 +252,7 @@ impl FacetHandle {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -279,7 +279,7 @@ impl FacetHandle {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -302,7 +302,7 @@ impl FacetHandle {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -440,7 +440,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -502,7 +502,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -555,7 +555,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -606,7 +606,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -644,7 +644,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -771,7 +771,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 /// use delaunay::core::facet::all_facets_for_cell;
 ///
 /// let vertices = vec![
@@ -821,7 +821,7 @@ where
 ///
 /// ```rust
 /// use delaunay::core::facet::AllFacetsIter;
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -865,7 +865,7 @@ where
     ///
     /// ```rust
     /// use delaunay::core::facet::AllFacetsIter;
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -954,7 +954,7 @@ where
 ///
 /// ```rust
 /// use delaunay::core::facet::BoundaryFacetsIter;
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -991,7 +991,7 @@ where
     ///
     /// ```rust
     /// use delaunay::core::facet::BoundaryFacetsIter;
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),

@@ -15,8 +15,9 @@
 
 use ::uuid::Uuid;
 use delaunay::core::delaunay_triangulation::{ConstructionOptions, InsertionOrderStrategy};
+use delaunay::geometry::kernel::RobustKernel;
+use delaunay::prelude::triangulation::Vertex;
 use delaunay::prelude::triangulation::flips::*;
-use delaunay::prelude::*;
 use std::time::Instant;
 
 type Dt4 = DelaunayTriangulation<RobustKernel<f64>, (), (), 4>;

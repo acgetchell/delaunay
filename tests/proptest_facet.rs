@@ -8,7 +8,9 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
-use delaunay::prelude::*;
+use delaunay::core::facet::facet_key_from_vertices;
+use delaunay::prelude::query::*;
+use delaunay::prelude::topology::validation::*;
 use proptest::prelude::*;
 use std::collections::HashMap;
 

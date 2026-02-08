@@ -33,7 +33,7 @@ pub type VertexUuidSet = FastHashSet<Uuid>;
 ///
 /// For Key → UUID lookups (less common), use direct `SlotMap` access:
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -70,7 +70,7 @@ pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 ///
 /// For Key → UUID lookups (less common), use direct `SlotMap` access:
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
