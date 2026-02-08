@@ -25,7 +25,10 @@
 //! - Edelsbrunner & Shah (1996) - "Incremental Topological Flipping Works for Regular Triangulations"
 //! - Bistellar flips implementation notebook (Warp Drive)
 
-use crate::core::algorithms::incremental_insertion::wire_cavity_neighbors;
+use crate::core::algorithms::incremental_insertion::{
+    external_facets_for_boundary, wire_cavity_neighbors,
+};
+use crate::core::algorithms::locate::extract_cavity_boundary;
 use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::{
     CellKeyBuffer, FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
@@ -309,10 +312,24 @@ where
         new_cells.push(cell_key);
     }
 
-    wire_cavity_neighbors(tds, &new_cells, Some(removed_cells)).map_err(|e| {
-        FlipError::NeighborWiring {
+    let boundary_facets =
+        extract_cavity_boundary(tds, removed_cells).map_err(|e| FlipError::NeighborWiring {
+            message: format!("flip boundary extraction failed: {e}"),
+        })?;
+
+    let external_facets = external_facets_for_boundary(tds, removed_cells, &boundary_facets)
+        .map_err(|e| FlipError::NeighborWiring {
             message: e.to_string(),
-        }
+        })?;
+
+    wire_cavity_neighbors(
+        tds,
+        &new_cells,
+        external_facets.iter().copied(),
+        Some(removed_cells),
+    )
+    .map_err(|e| FlipError::NeighborWiring {
+        message: e.to_string(),
     })?;
 
     tds.remove_cells_by_keys(removed_cells);
@@ -4068,6 +4085,283 @@ mod tests {
             removed_cells: context.removed_cells,
             direction: context.direction,
         }
+    }
+
+    fn facet_index_for_edge_2d(
+        tds: &Tds<f64, (), (), 2>,
+        cell_key: CellKey,
+        edge_start: VertexKey,
+        edge_end: VertexKey,
+    ) -> u8 {
+        let cell = tds.get_cell(cell_key).expect("cell key missing in TDS");
+        for facet_idx in 0..cell.number_of_vertices() {
+            let facet = facet_vertices_from_cell(cell, facet_idx);
+            if facet.len() == 2 && facet.contains(&edge_start) && facet.contains(&edge_end) {
+                return u8::try_from(facet_idx).expect("facet index fits in u8");
+            }
+        }
+
+        panic!("edge ({edge_start:?}, {edge_end:?}) not found in cell {cell_key:?}");
+    }
+
+    fn facet_index_for_face_3d(
+        tds: &Tds<f64, (), (), 3>,
+        cell_key: CellKey,
+        face_v0: VertexKey,
+        face_v1: VertexKey,
+        face_v2: VertexKey,
+    ) -> u8 {
+        let cell = tds.get_cell(cell_key).expect("cell key missing in TDS");
+        for facet_idx in 0..cell.number_of_vertices() {
+            let facet = facet_vertices_from_cell(cell, facet_idx);
+            if facet.len() == 3
+                && facet.contains(&face_v0)
+                && facet.contains(&face_v1)
+                && facet.contains(&face_v2)
+            {
+                return u8::try_from(facet_idx).expect("facet index fits in u8");
+            }
+        }
+
+        panic!("face ({face_v0:?}, {face_v1:?}, {face_v2:?}) not found in cell {cell_key:?}");
+    }
+
+    #[test]
+    fn test_k2_flip_rewires_external_neighbors_across_cavity_boundary() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_left_bottom = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_right_bottom = tds.insert_vertex_with_mapping(vertex!([2.0, 0.0])).unwrap();
+        let v_left_top = tds.insert_vertex_with_mapping(vertex!([0.0, 2.0])).unwrap();
+        let v_right_top = tds.insert_vertex_with_mapping(vertex!([2.0, 2.0])).unwrap();
+        let v_external = tds
+            .insert_vertex_with_mapping(vertex!([-1.0, 1.0]))
+            .unwrap();
+
+        // Flip cavity: two triangles sharing the bottom edge.
+        let cell_cavity_left = tds
+            .insert_cell_with_mapping(
+                Cell::new(vec![v_left_bottom, v_right_bottom, v_left_top], None).unwrap(),
+            )
+            .unwrap();
+        let cell_cavity_right = tds
+            .insert_cell_with_mapping(
+                Cell::new(vec![v_right_bottom, v_left_bottom, v_right_top], None).unwrap(),
+            )
+            .unwrap();
+
+        // External cell glued along the left edge of the cavity.
+        let cell_external_left = tds
+            .insert_cell_with_mapping(
+                Cell::new(vec![v_left_bottom, v_left_top, v_external], None).unwrap(),
+            )
+            .unwrap();
+
+        repair_neighbor_pointers(&mut tds).unwrap();
+        assert!(tds.is_valid().is_ok());
+
+        let facet_idx_flip_edge =
+            facet_index_for_edge_2d(&tds, cell_cavity_left, v_left_bottom, v_right_bottom);
+        let ctx = build_k2_flip_context(
+            &tds,
+            FacetHandle::new(cell_cavity_left, facet_idx_flip_edge),
+        )
+        .unwrap();
+
+        let kernel = FastKernel::<f64>::new();
+        let info = apply_bistellar_flip(&mut tds, &kernel, &ctx).unwrap();
+
+        assert!(!tds.contains_cell(cell_cavity_left));
+        assert!(!tds.contains_cell(cell_cavity_right));
+        assert!(tds.contains_cell(cell_external_left));
+
+        // External cell must be rewired from the removed cell to a newly inserted cell.
+        let facet_idx_glue_edge =
+            facet_index_for_edge_2d(&tds, cell_external_left, v_left_bottom, v_left_top);
+        let external_cell = tds.get_cell(cell_external_left).unwrap();
+        let neighbors = external_cell
+            .neighbors()
+            .expect("external neighbors should exist");
+        let neighbor_key_glue = neighbors[usize::from(facet_idx_glue_edge)]
+            .expect("external cell should have a neighbor across the glue edge after the flip");
+
+        assert!(tds.contains_cell(neighbor_key_glue));
+        assert!(
+            info.new_cells
+                .iter()
+                .copied()
+                .any(|k| k == neighbor_key_glue),
+            "expected external neighbor across glue edge to be one of the flip-inserted cells"
+        );
+
+        // Neighbor relation must be symmetric.
+        let neighbor_cell = tds.get_cell(neighbor_key_glue).unwrap();
+        let mirror_idx = external_cell
+            .mirror_facet_index(usize::from(facet_idx_glue_edge), neighbor_cell)
+            .expect("mirror facet index should exist");
+        let neighbor_back = neighbor_cell
+            .neighbors()
+            .and_then(|ns| ns.get(mirror_idx).copied().flatten());
+        assert_eq!(neighbor_back, Some(cell_external_left));
+
+        // Ensure flip did not leave any dangling neighbor pointers in the newly inserted cells.
+        for &cell_key in &info.new_cells {
+            let cell = tds.get_cell(cell_key).unwrap();
+            if let Some(ns) = cell.neighbors() {
+                for neighbor_key in ns.iter().flatten() {
+                    assert!(
+                        tds.contains_cell(*neighbor_key),
+                        "dangling neighbor pointer from {cell_key:?} to {neighbor_key:?}"
+                    );
+                }
+            }
+        }
+
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Test constructs an explicit k=3 ridge-flip fixture and checks neighbor rewiring"
+    )]
+    fn test_k3_flip_rewires_external_neighbors_across_cavity_boundary() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+
+        // NOTE: keep `v_edge_start` off the plane of (v_cycle_0, v_cycle_1, v_cycle_2)
+        // so the post-flip inserted tetrahedra are non-degenerate.
+        let v_edge_start = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .unwrap();
+        let v_edge_end = tds
+            .insert_vertex_with_mapping(vertex!([2.0, 0.0, 0.0]))
+            .unwrap();
+
+        let v_cycle_0 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 2.0, 0.0]))
+            .unwrap();
+        let v_cycle_1 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 2.0]))
+            .unwrap();
+        let v_cycle_2 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 2.0, 2.0]))
+            .unwrap();
+
+        let v_external = tds
+            .insert_vertex_with_mapping(vertex!([-1.0, 1.0, 1.0]))
+            .unwrap();
+
+        // Three tetrahedra around the ridge (edge) (v_edge_start, v_edge_end).
+        // This is the configuration removed by a k=3 flip (3→2).
+        let cell_around_edge_0 = tds
+            .insert_cell_with_mapping(
+                Cell::new(vec![v_edge_start, v_edge_end, v_cycle_0, v_cycle_1], None).unwrap(),
+            )
+            .unwrap();
+        let cell_around_edge_1 = tds
+            .insert_cell_with_mapping(
+                Cell::new(vec![v_edge_start, v_edge_end, v_cycle_1, v_cycle_2], None).unwrap(),
+            )
+            .unwrap();
+        let cell_around_edge_2 = tds
+            .insert_cell_with_mapping(
+                Cell::new(vec![v_edge_start, v_edge_end, v_cycle_2, v_cycle_0], None).unwrap(),
+            )
+            .unwrap();
+
+        // External tetrahedron glued to a boundary face of `cell_around_edge_0`.
+        // This face must be rewired to a newly inserted tetrahedron after the flip.
+        let cell_external = tds
+            .insert_cell_with_mapping(
+                Cell::new(vec![v_edge_start, v_cycle_0, v_cycle_1, v_external], None).unwrap(),
+            )
+            .unwrap();
+
+        repair_neighbor_pointers(&mut tds).unwrap();
+        assert!(tds.is_valid().is_ok());
+
+        // In `cell_around_edge_0`, the ridge is the edge (v_edge_start, v_edge_end).
+        // We omitted the two non-ridge vertices by construction (indices 2 and 3).
+        let ridge = RidgeHandle::new(cell_around_edge_0, 2, 3);
+        let ctx = build_k3_flip_context(&tds, ridge).unwrap();
+        assert_eq!(ctx.removed_cells.len(), 3);
+        assert!(
+            ctx.removed_cells
+                .iter()
+                .copied()
+                .any(|cell_key| cell_key == cell_around_edge_0)
+        );
+        assert!(
+            ctx.removed_cells
+                .iter()
+                .copied()
+                .any(|cell_key| cell_key == cell_around_edge_1)
+        );
+        assert!(
+            ctx.removed_cells
+                .iter()
+                .copied()
+                .any(|cell_key| cell_key == cell_around_edge_2)
+        );
+
+        let kernel = FastKernel::<f64>::new();
+        let info = apply_bistellar_flip(&mut tds, &kernel, &ctx).unwrap();
+
+        // Removed cells should be gone.
+        assert!(!tds.contains_cell(cell_around_edge_0));
+        assert!(!tds.contains_cell(cell_around_edge_1));
+        assert!(!tds.contains_cell(cell_around_edge_2));
+        for &removed_cell in &info.removed_cells {
+            assert!(!tds.contains_cell(removed_cell));
+        }
+        assert!(tds.contains_cell(cell_external));
+
+        // The external cell must now neighbor one of the new cells across face
+        // (v_edge_start, v_cycle_0, v_cycle_1).
+        let glue_face_facet_index =
+            facet_index_for_face_3d(&tds, cell_external, v_edge_start, v_cycle_0, v_cycle_1);
+        let external_cell = tds.get_cell(cell_external).unwrap();
+        let neighbors = external_cell
+            .neighbors()
+            .expect("external cell should have neighbors after repair");
+        let glued_neighbor = neighbors[usize::from(glue_face_facet_index)]
+            .expect("external cell should have a neighbor across the glue face");
+
+        assert!(tds.contains_cell(glued_neighbor));
+        assert!(
+            info.new_cells
+                .iter()
+                .copied()
+                .any(|cell_key| cell_key == glued_neighbor),
+            "expected glued neighbor to be one of the flip-inserted cells"
+        );
+
+        // Neighbor relation must be symmetric.
+        let neighbor_cell = tds.get_cell(glued_neighbor).unwrap();
+        let mirror_idx = external_cell
+            .mirror_facet_index(usize::from(glue_face_facet_index), neighbor_cell)
+            .expect("mirror facet index should exist");
+        let neighbor_back = neighbor_cell
+            .neighbors()
+            .and_then(|ns| ns.get(mirror_idx).copied().flatten());
+        assert_eq!(neighbor_back, Some(cell_external));
+
+        // Ensure the newly inserted cells do not reference removed cells.
+        for &cell_key in &info.new_cells {
+            let cell = tds.get_cell(cell_key).unwrap();
+            if let Some(ns) = cell.neighbors() {
+                for neighbor_key in ns.iter().flatten() {
+                    assert!(
+                        tds.contains_cell(*neighbor_key),
+                        "dangling neighbor pointer from {cell_key:?} to {neighbor_key:?}"
+                    );
+                }
+            }
+        }
+
+        assert!(tds.is_valid().is_ok());
     }
 
     #[test]

@@ -109,8 +109,8 @@
 
 use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
 use crate::core::algorithms::incremental_insertion::{
-    HullExtensionReason, InsertionError, extend_hull, fill_cavity, repair_neighbor_pointers,
-    wire_cavity_neighbors,
+    HullExtensionReason, InsertionError, extend_hull, external_facets_for_boundary, fill_cavity,
+    repair_neighbor_pointers, wire_cavity_neighbors,
 };
 #[cfg(debug_assertions)]
 use crate::core::algorithms::locate::locate_with_stats;
@@ -3452,7 +3452,14 @@ where
         let new_cells = fill_cavity(&mut self.tds, v_key, &boundary_facets)?;
 
         // Wire neighbors (while both old and new cells exist)
-        wire_cavity_neighbors(&mut self.tds, &new_cells, Some(&conflict_cells))?;
+        let external_facets =
+            external_facets_for_boundary(&self.tds, &conflict_cells, &boundary_facets)?;
+        wire_cavity_neighbors(
+            &mut self.tds,
+            &new_cells,
+            external_facets.iter().copied(),
+            Some(&conflict_cells),
+        )?;
 
         // Remove conflict cells (now that new cells are wired up)
         let _removed_count = self.tds.remove_cells_by_keys(&conflict_cells);
@@ -4264,10 +4271,20 @@ where
             })?;
 
         // Wire neighbors for the new cells (while both old and new cells exist)
-        wire_cavity_neighbors(&mut self.tds, &new_cells, Some(&cells_to_remove)).map_err(|e| {
-            TdsValidationError::InconsistentDataStructure {
-                message: format!("Neighbor wiring failed: {e}"),
-            }
+        let external_facets =
+            external_facets_for_boundary(&self.tds, &cells_to_remove, &boundary_facets).map_err(
+                |e| TdsValidationError::InconsistentDataStructure {
+                    message: format!("External-facet collection failed: {e}"),
+                },
+            )?;
+        wire_cavity_neighbors(
+            &mut self.tds,
+            &new_cells,
+            external_facets.iter().copied(),
+            Some(&cells_to_remove),
+        )
+        .map_err(|e| TdsValidationError::InconsistentDataStructure {
+            message: format!("Neighbor wiring failed: {e}"),
         })?;
 
         // Remove the cells containing the vertex (now that new cells are wired up)

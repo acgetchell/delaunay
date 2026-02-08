@@ -539,21 +539,25 @@ where
 
 /// Wire neighbor relationships for newly created cavity cells.
 ///
-/// This function uses comprehensive facet matching to wire neighbors correctly
-/// for both interior cavity filling and hull extension:
-/// - Interior: New cells replace removed cells, share facets with boundary
-/// - Hull extension: New cells extend hull, share facets with original boundary cells
+/// This function wires:
+/// - **Internal facets** between newly created cells (new↔new)
+/// - **Boundary facets** between a new cell and an existing cell, using caller-supplied
+///   external facet handles (new↔existing)
+///
+/// The design goal is to keep wiring **local**: callers provide the small set of
+/// existing facets that bound the cavity/horizon, avoiding an O(#cells) global scan.
 ///
 /// The algorithm:
-/// 1. Index all facets of new cells
-/// 2. Index relevant boundary facets (from both conflict cells and neighbors)
-/// 3. Match facets by their vertex sets (using hash)
-/// 4. Wire mutual neighbor relationships for matched facets
+/// 1. Index all facets of `new_cells` by a canonical facet hash (sorted vertex keys)
+/// 2. For each `external_facet`, add it to the facet hash entry *only* if the entry
+///    currently has exactly 1 incident cell (i.e., a new-cell boundary facet)
+/// 3. Wire mutual neighbor relationships for facet-hash entries with exactly 2 incidents
 ///
 /// # Arguments
 /// - `tds` - Mutable triangulation data structure
 /// - `new_cells` - Keys of newly created cells
-/// - `conflict_cells` - Optional set of cells being removed (for interior insertion)
+/// - `external_facets` - Facets on existing cells that should be glued to the new cells
+/// - `conflict_cells` - Optional set of cells being removed (for debug classification only)
 ///
 /// # Returns
 /// Ok(()) if wiring succeeds
@@ -571,42 +575,47 @@ where
 /// let mut tds: Tds<f64, (), (), 3> = Tds::empty();
 /// let new_cells = CellKeyBuffer::new();
 ///
-/// wire_cavity_neighbors(&mut tds, &new_cells, None).unwrap();
+/// wire_cavity_neighbors(&mut tds, &new_cells, [], None).unwrap();
 /// ```
 #[expect(
     clippy::too_many_lines,
     reason = "Neighbor wiring keeps cohesive logic and debug accounting together"
 )]
-pub fn wire_cavity_neighbors<T, U, V, const D: usize>(
+pub fn wire_cavity_neighbors<T, U, V, const D: usize, I>(
     tds: &mut Tds<T, U, V, D>,
     new_cells: &CellKeyBuffer,
+    external_facets: I,
     conflict_cells: Option<&CellKeyBuffer>,
 ) -> Result<(), InsertionError>
 where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
+    I: IntoIterator<Item = FacetHandle>,
 {
-    // Build a comprehensive facet map for ALL facets of new cells and boundary cells
-    // This approach works for both interior cavity filling and hull extension
-    type FacetMap = FastHashMap<u64, Vec<(CellKey, u8)>>;
+    type FacetIncidents = SmallBuffer<(CellKey, u8), 2>;
+    type FacetMap = FastHashMap<u64, FacetIncidents>;
     let mut facet_map: FacetMap = FastHashMap::default();
+
+    // `conflict_cells` is used only for debug instrumentation, but CI also compiles in
+    // release mode with `-D warnings`.
+    #[cfg(not(debug_assertions))]
+    let _conflict_cells = conflict_cells;
 
     #[cfg(debug_assertions)]
     let log_enabled = std::env::var_os("DELAUNAY_DEBUG_CAVITY").is_some();
     #[cfg(debug_assertions)]
     let ridge_link_debug = std::env::var_os("DELAUNAY_DEBUG_RIDGE_LINK").is_some();
     #[cfg(debug_assertions)]
-    let mut skipped_existing_matches: Vec<(u64, CellKey, usize)> = Vec::new();
+    let mut skipped_external_matches: Vec<(u64, CellKey, usize)> = Vec::new();
     #[cfg(debug_assertions)]
-    let mut skipped_existing_count = 0usize;
+    let mut skipped_external_count = 0usize;
+    #[cfg(debug_assertions)]
+    let mut unmatched_external: Vec<(CellKey, u8)> = Vec::new();
+    #[cfg(debug_assertions)]
+    let mut unmatched_external_count = 0usize;
 
-    // Note: We don't assert new_cells.len() == boundary_facets.len() here because:
-    // 1. boundary_facets is not available in this function (only passed to fill_cavity)
-    // 2. For hull extension, the relationship is different than interior cavity filling
-    // The assertion is done in fill_cavity where boundary_facets is available.
-
-    // Index all facets of new cells
+    // Index all facets of new cells.
     for &cell_key in new_cells {
         let cell = tds
             .get_cell(cell_key)
@@ -615,7 +624,6 @@ where
             })?;
 
         for facet_idx in 0..cell.number_of_vertices() {
-            // Compute facet key (hash of vertex keys excluding facet_idx)
             let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
             for (i, &vkey) in cell.vertices().iter().enumerate() {
                 if i != facet_idx {
@@ -623,7 +631,6 @@ where
                 }
             }
 
-            // Sort vertices to get canonical facet key
             facet_vkeys.sort_unstable();
             let facet_key = compute_facet_hash(&facet_vkeys);
 
@@ -639,91 +646,79 @@ where
         }
     }
 
-    // Build conflict set for O(1) lookup
-    let conflict_set: FastHashSet<CellKey> = conflict_cells
-        .map(|cells| cells.iter().copied().collect())
-        .unwrap_or_default();
+    // Index caller-supplied external facets (existing cells) that should glue to
+    // new-cell boundary facets.
+    for external in external_facets {
+        let cell_key = external.cell_key();
+        let facet_idx = usize::from(external.facet_index());
 
-    // Build new cells set for O(1) lookup
-    let new_cells_set: FastHashSet<CellKey> = new_cells.iter().copied().collect();
+        let cell = tds
+            .get_cell(cell_key)
+            .ok_or_else(|| InsertionError::NeighborWiring {
+                message: format!("External facet cell {cell_key:?} not found"),
+            })?;
 
-    // Collect existing cell keys first to avoid borrow issues
-    let existing_cell_keys: Vec<CellKey> = tds
-        .cells()
-        .map(|(key, _)| key)
-        .filter(|&key| !new_cells_set.contains(&key) && !conflict_set.contains(&key))
-        .collect();
+        if facet_idx >= cell.number_of_vertices() {
+            return Err(InsertionError::NeighborWiring {
+                message: format!(
+                    "External facet index {facet_idx} out of range for cell {cell_key:?}"
+                ),
+            });
+        }
 
-    // Index facets from existing non-conflict cells to find matches with new cells
-    // This catches cases where existing cells should neighbor new cells but weren't
-    // in the boundary_facets list
-    for existing_cell_key in existing_cell_keys {
-        let existing_cell =
-            tds.get_cell(existing_cell_key)
-                .ok_or_else(|| InsertionError::NeighborWiring {
-                    message: format!("Existing cell {existing_cell_key:?} not found"),
-                })?;
+        let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+        for (i, &vkey) in cell.vertices().iter().enumerate() {
+            if i != facet_idx {
+                facet_vkeys.push(vkey);
+            }
+        }
+        facet_vkeys.sort_unstable();
+        let facet_key = compute_facet_hash(&facet_vkeys);
 
-        for facet_idx in 0..existing_cell.number_of_vertices() {
-            let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-            for (i, &vkey) in existing_cell.vertices().iter().enumerate() {
-                if i != facet_idx {
-                    facet_vkeys.push(vkey);
+        let Some(incidents) = facet_map.get_mut(&facet_key) else {
+            #[cfg(debug_assertions)]
+            {
+                unmatched_external_count = unmatched_external_count.saturating_add(1);
+                if unmatched_external.len() < 10 {
+                    unmatched_external.push((cell_key, external.facet_index()));
                 }
             }
+            continue;
+        };
 
-            facet_vkeys.sort_unstable();
-            let facet_key = compute_facet_hash(&facet_vkeys);
-
-            // Only add if this facet matches one from new cells
-            if let Some(existing_facet_cells) = facet_map.get_mut(&facet_key) {
-                // CRITICAL: Only wire to boundary facets (len == 1)
-                //
-                // Why: If len >= 2, the facet is already shared by multiple new cells (internal).
-                // Adding an existing cell would create a non-manifold configuration where the facet
-                // is shared by 3+ cells (>2 new cells + existing cell).
-                //
-                // By only wiring to boundary facets (len == 1), we ensure:
-                // - Boundary facets get their external neighbor (existing cell)
-                // - Internal facets remain paired between new cells only
-                // - Manifold property is preserved (each facet shared by ≤2 cells)
-                if existing_facet_cells.len() == 1 {
-                    let facet_idx_u8 =
-                        u8::try_from(facet_idx).map_err(|_| InsertionError::NeighborWiring {
-                            message: format!("Facet index {facet_idx} exceeds u8::MAX"),
-                        })?;
-
-                    existing_facet_cells.push((existing_cell_key, facet_idx_u8));
-                } else {
-                    #[cfg(debug_assertions)]
-                    if ridge_link_debug {
-                        skipped_existing_count = skipped_existing_count.saturating_add(1);
-                        if skipped_existing_matches.len() < 10 {
-                            skipped_existing_matches.push((
-                                facet_key,
-                                existing_cell_key,
-                                existing_facet_cells.len(),
-                            ));
-                        }
-                    }
+        // Only glue to boundary facets (len == 1). If len >= 2, the facet is already
+        // shared by multiple new cells (internal). Adding an external cell would create
+        // a non-manifold facet shared by 3+ cells.
+        if incidents.len() == 1 {
+            incidents.push((cell_key, external.facet_index()));
+        } else {
+            #[cfg(debug_assertions)]
+            if ridge_link_debug {
+                skipped_external_count = skipped_external_count.saturating_add(1);
+                if skipped_external_matches.len() < 10 {
+                    skipped_external_matches.push((facet_key, cell_key, incidents.len()));
                 }
             }
         }
     }
 
-    // Wire all matching facets (both internal and external)
-    // Two cells share a facet if they have the same facet key
+    #[cfg(debug_assertions)]
+    let conflict_set: FastHashSet<CellKey> = conflict_cells
+        .map(|cells| cells.iter().copied().collect())
+        .unwrap_or_default();
+    #[cfg(debug_assertions)]
+    let new_cells_set: FastHashSet<CellKey> = new_cells.iter().copied().collect();
+
+    // Wire all matching facets (both internal and external).
+    // Two cells share a facet if they have the same facet key.
     for (facet_key, cells) in &facet_map {
         if cells.len() == 2 {
             let (c1, idx1) = cells[0];
             let (c2, idx2) = cells[1];
 
-            // Set mutual neighbors
             set_neighbor(tds, c1, idx1, Some(c2))?;
             set_neighbor(tds, c2, idx2, Some(c1))?;
         } else if cells.len() > 2 {
-            // Non-manifold topology detected
-            // Return structured error for proper retry handling via coordinate perturbation
             #[cfg(debug_assertions)]
             {
                 let cell_types: Vec<String> = cells
@@ -846,11 +841,19 @@ where
 
     #[cfg(debug_assertions)]
     if ridge_link_debug {
-        if skipped_existing_count > 0 {
+        if skipped_external_count > 0 {
             tracing::debug!(
-                skipped_existing_count,
-                skipped_existing_matches = ?skipped_existing_matches,
-                "wire_cavity_neighbors: skipped existing-cell matches (facet already shared by >1 new cell)"
+                skipped_external_count,
+                skipped_external_matches = ?skipped_external_matches,
+                "wire_cavity_neighbors: skipped external-facet matches (facet already shared by >1 new cell)"
+            );
+        }
+
+        if unmatched_external_count > 0 {
+            tracing::debug!(
+                unmatched_external_count,
+                unmatched_external = ?unmatched_external,
+                "wire_cavity_neighbors: external facets did not match any new-cell facet hash"
             );
         }
 
@@ -933,6 +936,117 @@ where
     }
 
     Ok(())
+}
+
+/// Collect facets on existing (non-internal) cells that share a facet with the internal boundary.
+///
+/// Given:
+/// - `internal_cells`: a set of cells that will be removed/replaced
+/// - `boundary_facets`: facet handles on *internal* cells that lie on the boundary of that set
+///
+/// This returns facet handles on *external* cells (neighbors of `internal_cells`) whose facet
+/// vertex sets match one of the boundary facets.
+///
+/// This is used to wire new cells to the pre-existing triangulation without performing a global
+/// scan over all cells.
+pub(crate) fn external_facets_for_boundary<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    internal_cells: &CellKeyBuffer,
+    boundary_facets: &[FacetHandle],
+) -> Result<SmallBuffer<FacetHandle, 64>, InsertionError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    if internal_cells.is_empty() || boundary_facets.is_empty() {
+        return Ok(SmallBuffer::new());
+    }
+
+    let internal_set: FastHashSet<CellKey> = internal_cells.iter().copied().collect();
+
+    // Hashes of boundary facets on internal cells.
+    let mut boundary_hashes: FastHashSet<u64> = FastHashSet::default();
+    for &facet in boundary_facets {
+        let cell_key = facet.cell_key();
+        let facet_idx = usize::from(facet.facet_index());
+
+        let cell = tds
+            .get_cell(cell_key)
+            .ok_or_else(|| InsertionError::NeighborWiring {
+                message: format!("Boundary facet cell {cell_key:?} not found"),
+            })?;
+
+        if facet_idx >= cell.number_of_vertices() {
+            return Err(InsertionError::NeighborWiring {
+                message: format!(
+                    "Boundary facet index {facet_idx} out of range for cell {cell_key:?}"
+                ),
+            });
+        }
+
+        let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+        for (i, &vkey) in cell.vertices().iter().enumerate() {
+            if i != facet_idx {
+                facet_vkeys.push(vkey);
+            }
+        }
+        facet_vkeys.sort_unstable();
+        boundary_hashes.insert(compute_facet_hash(&facet_vkeys));
+    }
+
+    // Candidate external cells are those reachable via neighbor pointers from the internal set.
+    let mut candidate_cells: FastHashSet<CellKey> = FastHashSet::default();
+    for &cell_key in internal_cells {
+        let Some(cell) = tds.get_cell(cell_key) else {
+            continue;
+        };
+        let Some(neighbors) = cell.neighbors() else {
+            continue;
+        };
+
+        for &neighbor_opt in neighbors {
+            let Some(neighbor_key) = neighbor_opt else {
+                continue;
+            };
+            if !internal_set.contains(&neighbor_key) {
+                candidate_cells.insert(neighbor_key);
+            }
+        }
+    }
+
+    let mut external_facets: SmallBuffer<FacetHandle, 64> = SmallBuffer::new();
+
+    for &cell_key in &candidate_cells {
+        let cell = tds
+            .get_cell(cell_key)
+            .ok_or_else(|| InsertionError::NeighborWiring {
+                message: format!("External cell {cell_key:?} not found"),
+            })?;
+
+        for facet_idx in 0..cell.number_of_vertices() {
+            let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+            for (i, &vkey) in cell.vertices().iter().enumerate() {
+                if i != facet_idx {
+                    facet_vkeys.push(vkey);
+                }
+            }
+            facet_vkeys.sort_unstable();
+            let facet_hash = compute_facet_hash(&facet_vkeys);
+
+            if !boundary_hashes.contains(&facet_hash) {
+                continue;
+            }
+
+            let facet_idx_u8 =
+                u8::try_from(facet_idx).map_err(|_| InsertionError::NeighborWiring {
+                    message: format!("Facet index {facet_idx} exceeds u8::MAX"),
+                })?;
+            external_facets.push(FacetHandle::new(cell_key, facet_idx_u8));
+        }
+    }
+
+    Ok(external_facets)
 }
 
 /// Helper: Set a single neighbor relationship
@@ -1375,8 +1489,15 @@ where
             });
         }
 
+        let external_facets = external_facets_for_boundary(tds, &conflict_cells, &boundary_facets)?;
+
         let new_cells = fill_cavity(tds, new_vertex_key, &boundary_facets)?;
-        wire_cavity_neighbors(tds, &new_cells, Some(&conflict_cells))?;
+        wire_cavity_neighbors(
+            tds,
+            &new_cells,
+            external_facets.iter().copied(),
+            Some(&conflict_cells),
+        )?;
         let _ = tds.remove_cells_by_keys(&conflict_cells);
 
         return Ok(new_cells);
@@ -1416,7 +1537,7 @@ where
 
     // Wire neighbors using comprehensive facet matching
     // For hull extension, no conflict cells (nothing is removed)
-    wire_cavity_neighbors(tds, &new_cells, None)?;
+    wire_cavity_neighbors(tds, &new_cells, visible_facets.iter().copied(), None)?;
 
     Ok(new_cells)
 }
@@ -2201,8 +2322,14 @@ mod tests {
                     // Should create one cell per boundary facet
                     assert_eq!(new_cells.len(), $expected_facets);
 
-                    // Wire neighbors
-                    wire_cavity_neighbors(tds, &new_cells, None).unwrap();
+                    // Wire neighbors (glue new cells to the original cell's facets)
+                    wire_cavity_neighbors(
+                        tds,
+                        &new_cells,
+                        boundary_facets.iter().copied(),
+                        None,
+                    )
+                    .unwrap();
 
                     // Validate neighbor consistency
                     assert!(
@@ -2342,9 +2469,55 @@ mod tests {
         invalid_cells.push(CellKey::from(KeyData::from_ffi(u64::MAX)));
         invalid_cells.push(CellKey::from(KeyData::from_ffi(u64::MAX - 1)));
 
-        let result = wire_cavity_neighbors(tds, &invalid_cells, None);
+        let result = wire_cavity_neighbors(tds, &invalid_cells, [], None);
         assert!(result.is_err());
         assert!(matches!(result, Err(InsertionError::NeighborWiring { .. })));
+    }
+
+    #[test]
+    fn test_external_facets_for_boundary_finds_shared_edge_only() {
+        // Two triangles share one edge; only that edge should be returned as an external facet.
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let c1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let c2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v1, v0, v3], None).unwrap())
+            .unwrap();
+
+        repair_neighbor_pointers(&mut tds).unwrap();
+
+        let mut internal_cells = CellKeyBuffer::new();
+        internal_cells.push(c1);
+
+        // Internal set has a single cell, so all its facets are boundary facets.
+        let boundary_facets: Vec<FacetHandle> = (0..=2).map(|i| FacetHandle::new(c1, i)).collect();
+
+        let external_facets =
+            external_facets_for_boundary(&tds, &internal_cells, &boundary_facets).unwrap();
+        assert_eq!(external_facets.len(), 1);
+
+        let external = external_facets[0];
+        assert_eq!(external.cell_key(), c2);
+
+        let cell = tds.get_cell(external.cell_key()).unwrap();
+        let facet_idx = usize::from(external.facet_index());
+
+        let mut edge: SmallBuffer<VertexKey, 2> = SmallBuffer::new();
+        for (i, &vkey) in cell.vertices().iter().enumerate() {
+            if i != facet_idx {
+                edge.push(vkey);
+            }
+        }
+        assert_eq!(edge.len(), 2);
+        assert!(edge.contains(&v0));
+        assert!(edge.contains(&v1));
     }
 
     #[test]
@@ -2419,7 +2592,7 @@ mod tests {
         new_cells.push(c2);
         new_cells.push(c3);
 
-        let err = wire_cavity_neighbors(&mut tds, &new_cells, None).unwrap_err();
+        let err = wire_cavity_neighbors(&mut tds, &new_cells, [], None).unwrap_err();
         assert!(matches!(
             err,
             InsertionError::NonManifoldTopology { cell_count: 3, .. }
@@ -2450,7 +2623,7 @@ mod tests {
         let mut new_cells = CellKeyBuffer::new();
         new_cells.push(cell_key);
 
-        let err = wire_cavity_neighbors(tds, &new_cells, None).unwrap_err();
+        let err = wire_cavity_neighbors(tds, &new_cells, [], None).unwrap_err();
         assert!(matches!(
             err,
             InsertionError::NeighborWiring { message } if message.contains("Facet index")
