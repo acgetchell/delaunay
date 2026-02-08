@@ -743,7 +743,6 @@ new_key_type! {
 /// ```
 pub struct Tds<T, U, V, const D: usize>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -804,13 +803,8 @@ where
 // Following CGAL's Triangulation_data_structure pattern, these methods operate
 // on topology independently of geometry.
 //
-// NOTE: Currently T: CoordinateScalar is required because Cell and Vertex structs
-// have this bound. In Phase 1.2, we will relax Cell/Vertex bounds to complete
-// the separation.
-
 impl<T, U, V, const D: usize> Tds<T, U, V, D>
 where
-    T: CoordinateScalar, // TODO: Remove in Phase 1.2 after relaxing Cell/Vertex bounds
     U: DataType,
     V: DataType,
 {
@@ -3199,8 +3193,8 @@ where
     // =========================================================================
     // VALIDATION & CONSISTENCY CHECKS
     // =========================================================================
-    // Note: Validation methods only require CoordinateScalar (for Cell/Vertex type bounds).
-    // They don't perform numeric operations, so AddAssign/SubAssign/Sum/NumCast are not needed.
+    // Note: Structural validation is topology-only. Only Level-1 element validation (coordinates)
+    // requires `T: CoordinateScalar`.
 
     /// Validates the consistency of vertex UUID-to-key mappings.
     ///
@@ -3612,7 +3606,10 @@ where
     /// // Levels 1–2: elements + TDS structure
     /// assert!(dt.tds().validate().is_ok());
     /// ```
-    pub fn validate(&self) -> Result<(), TdsValidationError> {
+    pub fn validate(&self) -> Result<(), TdsValidationError>
+    where
+        T: CoordinateScalar,
+    {
         for (_vertex_key, vertex) in &self.vertices {
             if let Err(source) = (*vertex).is_valid() {
                 return Err(TdsError::InvalidVertex {

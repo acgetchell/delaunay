@@ -199,7 +199,6 @@ impl From<crate::geometry::matrix::StackMatrixDispatchError> for CellValidationE
 /// ```
 pub struct Cell<T, U, V, const D: usize>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -256,7 +255,6 @@ where
 /// serialize "data": null, but tests explicitly verify the field is omitted when None.
 impl<T, U, V, const D: usize> Serialize for Cell<T, U, V, D>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -283,7 +281,6 @@ where
 /// Manual implementation of Deserialize for Cell
 impl<'de, T, U, V, const D: usize> Deserialize<'de> for Cell<T, U, V, D>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -293,7 +290,6 @@ where
     {
         struct CellVisitor<T, U, V, const D: usize>
         where
-            T: CoordinateScalar,
             U: DataType,
             V: DataType,
         {
@@ -302,7 +298,6 @@ where
 
         impl<'de, T, U, V, const D: usize> Visitor<'de> for CellVisitor<T, U, V, D>
         where
-            T: CoordinateScalar,
             U: DataType,
             V: DataType,
         {
@@ -382,7 +377,6 @@ where
 // Minimal trait bounds impl block
 impl<T, U, V, const D: usize> Cell<T, U, V, D>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -723,7 +717,6 @@ where
 // Standard trait bounds impl block
 impl<T, U, V, const D: usize> Cell<T, U, V, D>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -1451,7 +1444,6 @@ where
 /// comparison, use `eq_by_vertex_uuids()` (to be added if needed).
 impl<T, U, V, const D: usize> PartialEq for Cell<T, U, V, D>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -1477,7 +1469,6 @@ where
 /// Fast (O(D log D)) and doesn't require TDS access.
 impl<T, U, V, const D: usize> PartialOrd for Cell<T, U, V, D>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -1508,7 +1499,6 @@ where
 /// are considered equal.
 impl<T, U, V, const D: usize> Eq for Cell<T, U, V, D>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -1525,7 +1515,6 @@ where
 /// the `PartialEq` implementation which only compares vertex keys.
 impl<T, U, V, const D: usize> Hash for Cell<T, U, V, D>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {

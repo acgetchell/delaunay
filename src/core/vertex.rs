@@ -184,7 +184,6 @@ pub use crate::vertex;
 /// ```
 pub struct Vertex<T, U, const D: usize>
 where
-    T: CoordinateScalar,
     U: DataType,
 {
     /// The coordinates of the vertex as a D-dimensional Point.
@@ -203,6 +202,23 @@ where
     /// Optional data associated with the vertex.
     #[builder(setter(into, strip_option), default)]
     pub data: Option<U>,
+}
+
+impl<T, U, const D: usize> Vertex<T, U, D>
+where
+    U: DataType,
+{
+    /// Returns the UUID of the vertex.
+    #[inline]
+    pub const fn uuid(&self) -> Uuid {
+        self.uuid
+    }
+
+    /// Returns the spatial dimension of the vertex.
+    #[inline]
+    pub const fn dim(&self) -> usize {
+        D
+    }
 }
 
 // =============================================================================
@@ -490,33 +506,6 @@ where
         &self.point
     }
 
-    /// Returns the UUID of the vertex.
-    ///
-    /// # Returns
-    ///
-    /// The Uuid uniquely identifying this vertex.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use delaunay::core::vertex::Vertex;
-    /// use delaunay::vertex;
-    /// use uuid::Uuid;
-    ///
-    /// let vertex: Vertex<f64, (), 3> = vertex!([1.0, 2.0, 3.0]);
-    /// let vertex_uuid = vertex.uuid();
-    /// // UUID should be valid and unique
-    /// assert_ne!(vertex_uuid, Uuid::nil());
-    ///
-    /// // Creating another vertex should have a different UUID
-    /// let another_vertex: Vertex<f64, (), 3> = vertex!([1.0, 2.0, 3.0]);
-    /// assert_ne!(vertex.uuid(), another_vertex.uuid());
-    /// ```
-    #[inline]
-    pub const fn uuid(&self) -> Uuid {
-        self.uuid
-    }
-
     /// Sets the vertex UUID with validation.
     ///
     /// This is a test-only utility for creating vertices with specific UUIDs
@@ -542,26 +531,6 @@ where
 
         self.uuid = uuid;
         Ok(())
-    }
-
-    /// The `dim` function returns the dimensionality of the [Vertex].
-    ///
-    /// # Returns
-    ///
-    /// The `dim` function is returning the value of `D`, which the number of
-    /// coordinates.
-    ///
-    /// # Example
-    /// ```
-    /// use delaunay::core::vertex::Vertex;
-    /// use delaunay::vertex;
-    ///
-    /// let vertex: Vertex<f64, (), 4> = vertex!([1.0, 2.0, 3.0, 4.0]);
-    /// assert_eq!(vertex.dim(), 4);
-    /// ```
-    #[inline]
-    pub const fn dim(&self) -> usize {
-        D
     }
 
     /// The function `is_valid` checks if a [Vertex] is valid.
