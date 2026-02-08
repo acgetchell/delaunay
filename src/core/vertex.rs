@@ -169,7 +169,8 @@ pub use crate::vertex;
 ///
 /// # Constraints
 ///
-/// - `T` must implement `CoordinateScalar` (floating-point operations, validation, etc.)
+/// - `T` must implement `CoordinateScalar` for geometric operations, validation, and serialization
+///   (the struct itself does not require it, enabling purely combinatorial use)
 /// - `U` must implement `DataType` (serialization, equality, hashing, etc.)
 ///
 /// # Usage
@@ -218,6 +219,28 @@ where
     #[inline]
     pub const fn dim(&self) -> usize {
         D
+    }
+
+    /// Returns the point coordinates of the vertex.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the Point representing the vertex's coordinates.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use delaunay::core::vertex::Vertex;
+    /// use delaunay::vertex;
+    /// use delaunay::geometry::traits::coordinate::Coordinate;
+    ///
+    /// let vertex: Vertex<f64, (), 3> = vertex!([1.0, 2.0, 3.0]);
+    /// let retrieved_point = vertex.point();
+    /// assert_eq!(retrieved_point.coords(), &[1.0, 2.0, 3.0]);
+    /// ```
+    #[inline]
+    pub const fn point(&self) -> &Point<T, D> {
+        &self.point
     }
 }
 
@@ -482,28 +505,6 @@ where
         I: IntoIterator<Item = Self>,
     {
         vertices.into_iter().map(|v| (v.uuid(), v)).collect()
-    }
-
-    /// Returns the point coordinates of the vertex.
-    ///
-    /// # Returns
-    ///
-    /// A reference to the Point representing the vertex's coordinates.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use delaunay::core::vertex::Vertex;
-    /// use delaunay::vertex;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
-    ///
-    /// let vertex: Vertex<f64, (), 3> = vertex!([1.0, 2.0, 3.0]);
-    /// let retrieved_point = vertex.point();
-    /// assert_eq!(retrieved_point.coords(), &[1.0, 2.0, 3.0]);
-    /// ```
-    #[inline]
-    pub const fn point(&self) -> &Point<T, D> {
-        &self.point
     }
 
     /// Sets the vertex UUID with validation.
