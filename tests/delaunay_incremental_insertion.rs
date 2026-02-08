@@ -562,7 +562,6 @@ test_bootstrap_key_stability!(
 fn test_bootstrap_returns_valid_key_after_tds_rebuild() {
     use ::uuid::Uuid;
     use delaunay::core::vertex::Vertex;
-    use delaunay::geometry::Coordinate;
     use delaunay::geometry::point::Point;
 
     // Create vertices with explicit UUIDs so we can track them
@@ -570,9 +569,9 @@ fn test_bootstrap_returns_valid_key_after_tds_rebuild() {
     let uuid2 = Uuid::new_v4();
     let uuid3 = Uuid::new_v4();
 
-    let v1 = Vertex::new_with_uuid(Point::new([0.0, 0.0]), uuid1, None);
-    let v2 = Vertex::new_with_uuid(Point::new([1.0, 0.0]), uuid2, None);
-    let v3 = Vertex::new_with_uuid(Point::new([0.0, 1.0]), uuid3, None);
+    let v1 = Vertex::new_with_uuid(Point::try_from([0.0, 0.0]).unwrap(), uuid1, None);
+    let v2 = Vertex::new_with_uuid(Point::try_from([1.0, 0.0]).unwrap(), uuid2, None);
+    let v3 = Vertex::new_with_uuid(Point::try_from([0.0, 1.0]).unwrap(), uuid3, None);
 
     // Bootstrap insertion: vertices inserted in order v1, v2, v3
     let mut dt: DelaunayTriangulation<_, (), (), 2> =

@@ -981,20 +981,6 @@ pub mod topology {
         validate_vertex_links,
     };
     pub use traits::*;
-
-    /// Prelude modules for topology validation & analysis.
-    pub mod prelude {
-        /// Topology validation & analysis utilities.
-        pub mod validation {
-            pub use crate::core::triangulation::TopologyGuarantee;
-            pub use crate::topology::characteristics::*;
-            pub use crate::topology::manifold::{
-                ManifoldError, validate_closed_boundary, validate_facet_degree,
-                validate_ridge_links, validate_vertex_links,
-            };
-            pub use crate::topology::traits::*;
-        }
-    }
 }
 
 /// A prelude module that re-exports commonly used types and macros.
@@ -1156,7 +1142,13 @@ pub mod prelude {
     pub mod topology {
         /// Topology validation utilities.
         pub mod validation {
-            pub use crate::topology::prelude::validation::*;
+            pub use crate::topology::TopologyGuarantee;
+            pub use crate::topology::characteristics::*;
+            pub use crate::topology::manifold::{
+                ManifoldError, validate_closed_boundary, validate_facet_degree,
+                validate_ridge_links, validate_vertex_links,
+            };
+            pub use crate::topology::traits::*;
         }
     }
 
