@@ -4050,7 +4050,7 @@ mod tests {
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
     use crate::geometry::kernel::{FastKernel, RobustKernel};
     use crate::vertex;
-    use rand::{Rng, SeedableRng, rngs::StdRng};
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     fn init_tracing() {
         static INIT: std::sync::Once = std::sync::Once::new();

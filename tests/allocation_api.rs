@@ -10,7 +10,7 @@ use delaunay::prelude::geometry::*;
 use delaunay::prelude::triangulation::*;
 
 // Testing utilities
-use rand::Rng;
+use rand::RngExt;
 
 /// Common test helpers for initializing and working with the allocator
 pub mod test_helpers {

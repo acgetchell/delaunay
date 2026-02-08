@@ -4358,7 +4358,7 @@ mod tests {
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::triangulation::flips::BistellarFlips;
     use crate::vertex;
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
     fn init_tracing() {
         static INIT: std::sync::Once = std::sync::Once::new();
         INIT.call_once(|| {

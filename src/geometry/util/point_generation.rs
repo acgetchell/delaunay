@@ -9,7 +9,7 @@ use super::conversions::safe_usize_to_scalar;
 use super::norms::hypot;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
-use rand::Rng;
+use rand::RngExt;
 use rand::distr::uniform::SampleUniform;
 
 // Re-export error type
@@ -418,7 +418,7 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
     min_distance: T,
     seed: u64,
 ) -> Result<Vec<Point<T, D>>, RandomPointGenerationError> {
-    use rand::Rng;
+    use rand::RngExt;
     use rand::SeedableRng;
 
     // Validate bounds

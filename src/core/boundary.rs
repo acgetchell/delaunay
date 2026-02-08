@@ -230,7 +230,7 @@ mod tests {
     #[cfg(feature = "bench")]
     use num_traits::cast::cast;
     #[cfg(feature = "bench")]
-    use rand::Rng;
+    use rand::RngExt;
     #[cfg(feature = "bench")]
     use std::time::Instant;
 
