@@ -38,6 +38,7 @@ use crate::core::facet::{AllFacetsIter, FacetHandle, facet_key_from_vertices};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::TopologyGuarantee;
 use crate::core::triangulation_data_structure::{CellKey, Tds, VertexKey};
+use crate::core::util::stable_hash_u64_slice;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
@@ -265,19 +266,25 @@ where
             }
         }
 
-        if flip_would_duplicate_cell_any(tds, &vertices, removed_cells) {
+        new_cell_vertices.push(vertices);
+    }
+
+    let topology_index = build_flip_topology_index(
+        tds,
+        &new_cell_vertices,
+        removed_cells,
+        inserted_face_vertices,
+    );
+
+    for vertices in &new_cell_vertices {
+        if flip_would_duplicate_cell_any(tds, vertices, &topology_index) {
             return Err(FlipError::DuplicateCell);
         }
-        if flip_would_create_nonmanifold_facets_any(
-            tds,
-            &vertices,
-            removed_cells,
-            inserted_face_vertices,
-        ) {
+        if flip_would_create_nonmanifold_facets_any(vertices, &topology_index) {
             return Err(FlipError::NonManifoldFacet);
         }
 
-        let points = vertices_to_points(tds, &vertices)?;
+        let points = vertices_to_points(tds, vertices)?;
         let orientation = kernel
             .orientation(&points)
             .map_err(|e| FlipError::PredicateFailure {
@@ -298,8 +305,6 @@ where
                 return Err(FlipError::DegenerateCell);
             }
         }
-
-        new_cell_vertices.push(vertices);
     }
 
     for vertices in new_cell_vertices {
@@ -3710,99 +3715,241 @@ where
     Ok(points)
 }
 
+#[derive(Debug, Default)]
+struct FlipTopologyIndex {
+    /// Map from candidate cell signature to the first existing cell that matches it.
+    duplicate_signature_to_cell: FastHashMap<u64, CellKey>,
+    /// Map from candidate facet hash to topology metadata.
+    candidate_facet_info: FastHashMap<u64, CandidateFacetInfo>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CandidateFacetInfo {
+    internal: bool,
+    existing_count: u8,
+    last_cell: Option<CellKey>,
+}
+
+fn sorted_vertex_key_values(
+    vertices: &[VertexKey],
+) -> SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> {
+    let mut key_values: SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> =
+        vertices.iter().map(|key| key.data().as_ffi()).collect();
+    key_values.sort_unstable();
+    key_values
+}
+
+fn cell_signature(vertices: &[VertexKey]) -> u64 {
+    let key_values = sorted_vertex_key_values(vertices);
+    stable_hash_u64_slice(&key_values)
+}
+
+fn build_flip_topology_index<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    new_cell_vertices: &[SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
+    removed_cells: &[CellKey],
+    inserted_face_vertices: &[VertexKey],
+) -> FlipTopologyIndex
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let inserted_values = sorted_vertex_key_values(inserted_face_vertices);
+
+    let mut candidate_cell_signatures: SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::with_capacity(new_cell_vertices.len());
+
+    let mut candidate_facet_info: FastHashMap<u64, CandidateFacetInfo> = FastHashMap::default();
+    candidate_facet_info.reserve(new_cell_vertices.len() * (D + 1));
+
+    // Seed the facet map with the facets that will exist after the flip.
+    for vertices in new_cell_vertices {
+        let cell_values = sorted_vertex_key_values(vertices);
+        candidate_cell_signatures.push(stable_hash_u64_slice(&cell_values));
+
+        let mut facet_values: SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(cell_values.len().saturating_sub(1));
+        for omit_idx in 0..cell_values.len() {
+            facet_values.clear();
+            for (i, &val) in cell_values.iter().enumerate() {
+                if i != omit_idx {
+                    facet_values.push(val);
+                }
+            }
+
+            let facet_hash = stable_hash_u64_slice(&facet_values);
+            let internal = inserted_values
+                .iter()
+                .all(|v| facet_values.binary_search(v).is_ok());
+
+            if let Some(info) = candidate_facet_info.get_mut(&facet_hash) {
+                info.internal |= internal;
+            } else {
+                candidate_facet_info.insert(
+                    facet_hash,
+                    CandidateFacetInfo {
+                        internal,
+                        existing_count: 0,
+                        last_cell: None,
+                    },
+                );
+            }
+        }
+    }
+
+    let mut duplicate_signature_to_cell: FastHashMap<u64, CellKey> = FastHashMap::default();
+    duplicate_signature_to_cell.reserve(candidate_cell_signatures.len());
+
+    let mut facet_values: SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::with_capacity(D);
+
+    // Scan existing cells once, updating only the candidate facet set.
+    for (cell_key, cell) in tds.cells() {
+        if removed_cells.contains(&cell_key) {
+            continue;
+        }
+
+        let mut cell_values: SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> = cell
+            .vertices()
+            .iter()
+            .map(|key| key.data().as_ffi())
+            .collect();
+        cell_values.sort_unstable();
+
+        let signature = stable_hash_u64_slice(&cell_values);
+        if candidate_cell_signatures.contains(&signature) {
+            duplicate_signature_to_cell
+                .entry(signature)
+                .or_insert(cell_key);
+        }
+
+        for omit_idx in 0..cell_values.len() {
+            facet_values.clear();
+            for (i, &val) in cell_values.iter().enumerate() {
+                if i != omit_idx {
+                    facet_values.push(val);
+                }
+            }
+            let facet_hash = stable_hash_u64_slice(&facet_values);
+
+            let Some(info) = candidate_facet_info.get_mut(&facet_hash) else {
+                continue;
+            };
+
+            if info.existing_count < 2 {
+                info.existing_count += 1;
+            }
+            info.last_cell = Some(cell_key);
+        }
+    }
+
+    FlipTopologyIndex {
+        duplicate_signature_to_cell,
+        candidate_facet_info,
+    }
+}
+
 fn flip_would_duplicate_cell_any<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     vertices: &[VertexKey],
-    removed: &[CellKey],
+    topology: &FlipTopologyIndex,
 ) -> bool
 where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    let mut target: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-        vertices.iter().copied().collect();
-    target.sort_unstable();
+    let signature = cell_signature(vertices);
+    let Some(&cell_key) = topology.duplicate_signature_to_cell.get(&signature) else {
+        return false;
+    };
 
-    for (cell_key, cell) in tds.cells() {
-        if removed.contains(&cell_key) {
-            continue;
+    if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() || repair_trace_enabled() {
+        let mut target: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            vertices.iter().copied().collect();
+        target.sort_unstable();
+
+        let existing_sorted = tds.get_cell(cell_key).map(|cell| {
+            let mut v: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                cell.vertices().iter().copied().collect();
+            v.sort_unstable();
+            v
+        });
+
+        if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+            tracing::debug!(
+                "k=2 flip would duplicate existing cell {cell_key:?}; target={target:?}; existing={existing_sorted:?}"
+            );
         }
-        if cell.number_of_vertices() != vertices.len() {
-            continue;
-        }
-        let mut cell_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-            cell.vertices().iter().copied().collect();
-        cell_vertices.sort_unstable();
-        if cell_vertices == target {
-            if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
-                tracing::debug!(
-                    "k=2 flip would duplicate existing cell {cell_key:?}; target={target:?}; existing={cell_vertices:?}"
-                );
-            }
-            if repair_trace_enabled() {
-                tracing::debug!(
-                    "[repair] flip would duplicate existing cell {cell_key:?}; target={target:?}; existing={cell_vertices:?}"
-                );
-            }
-            return true;
+        if repair_trace_enabled() {
+            tracing::debug!(
+                "[repair] flip would duplicate existing cell {cell_key:?}; target={target:?}; existing={existing_sorted:?}"
+            );
         }
     }
-    false
+
+    true
 }
 
-fn flip_would_create_nonmanifold_facets_any<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn flip_would_create_nonmanifold_facets_any(
     vertices: &[VertexKey],
-    removed: &[CellKey],
-    opposite_vertices: &[VertexKey],
-) -> bool
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
-    for omit_idx in 0..vertices.len() {
-        let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-            SmallBuffer::with_capacity(D);
-        for (i, &vkey) in vertices.iter().enumerate() {
+    topology: &FlipTopologyIndex,
+) -> bool {
+    let mut sorted_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+        vertices.iter().copied().collect();
+    sorted_vertices.sort_unstable();
+
+    let mut facet_values: SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::with_capacity(sorted_vertices.len().saturating_sub(1));
+    let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::with_capacity(sorted_vertices.len().saturating_sub(1));
+
+    for omit_idx in 0..sorted_vertices.len() {
+        facet_values.clear();
+        facet_vertices.clear();
+
+        for (i, &vkey) in sorted_vertices.iter().enumerate() {
             if i != omit_idx {
                 facet_vertices.push(vkey);
+                facet_values.push(vkey.data().as_ffi());
             }
         }
 
-        let mut shared_count = 0usize;
-        for (cell_key, cell) in tds.cells() {
-            if removed.contains(&cell_key) {
-                continue;
-            }
-            if facet_vertices.iter().all(|v| cell.contains_vertex(*v)) {
-                shared_count += 1;
-                if shared_count > 1 {
-                    if repair_trace_enabled() {
-                        tracing::debug!(
-                            "[repair] flip would create non-manifold facet: facet={:?} shared_count={} last_cell={cell_key:?}",
-                            facet_vertices,
-                            shared_count,
-                        );
-                    }
-                    return true;
+        let facet_hash = stable_hash_u64_slice(&facet_values);
+        let Some(info) = topology.candidate_facet_info.get(&facet_hash) else {
+            // If this happens, the index construction and facet hashing logic are inconsistent.
+            // Conservatively allow (old code would have scanned). This is debug-asserted.
+            debug_assert!(false, "missing facet hash in flip topology index");
+            continue;
+        };
+
+        if info.internal {
+            if info.existing_count > 0 {
+                if repair_trace_enabled() {
+                    tracing::debug!(
+                        "[repair] flip would create non-manifold internal facet: facet={facet_vertices:?} shared_count={} last_cell={:?}",
+                        info.existing_count,
+                        info.last_cell,
+                    );
                 }
+                return true;
             }
+            continue;
         }
 
-        let internal_facet = opposite_vertices.iter().all(|v| facet_vertices.contains(v));
-        if internal_facet && shared_count > 0 {
+        if info.existing_count > 1 {
             if repair_trace_enabled() {
                 tracing::debug!(
-                    "[repair] flip would create non-manifold internal facet: facet={:?} shared_count={}",
-                    facet_vertices,
-                    shared_count,
+                    "[repair] flip would create non-manifold facet: facet={facet_vertices:?} shared_count={} last_cell={:?}",
+                    info.existing_count,
+                    info.last_cell,
                 );
             }
             return true;
         }
     }
+
     false
 }
 
@@ -4679,6 +4826,71 @@ mod tests {
         }
         assert!(has_cd, "Expected flipped diagonal between c and d");
 
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_flip_k2_rejects_duplicate_cell() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let d = tds.insert_vertex_with_mapping(vertex!([1.0, 0.2])).unwrap();
+
+        let c1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+            .unwrap();
+        let _c2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
+            .unwrap();
+
+        // Pre-existing cell that the flip would recreate (B,C,D)
+        let _existing = tds
+            .insert_cell_with_mapping(Cell::new(vec![b, c, d], None).unwrap())
+            .unwrap();
+
+        repair_neighbor_pointers(&mut tds).unwrap();
+
+        let facet = FacetHandle::new(c1, 2); // facet opposite vertex index 2 (edge AB)
+        let kernel = FastKernel::<f64>::new();
+        let context = build_k2_flip_context(&tds, facet).unwrap();
+        let result = apply_bistellar_flip_k2(&mut tds, &kernel, &context);
+
+        assert!(matches!(result, Err(FlipError::DuplicateCell)));
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_flip_k2_rejects_nonmanifold_internal_facet() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 0.2])).unwrap();
+        let v_e = tds.insert_vertex_with_mapping(vertex!([2.0, 2.0])).unwrap();
+
+        let c1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        let _c2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
+            .unwrap();
+
+        // Existing cell containing the would-be inserted diagonal (C,D).
+        let _cd_external = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_c, v_d, v_e], None).unwrap())
+            .unwrap();
+
+        repair_neighbor_pointers(&mut tds).unwrap();
+
+        let facet = FacetHandle::new(c1, 2); // facet opposite vertex index 2 (edge AB)
+        let kernel = FastKernel::<f64>::new();
+        let context = build_k2_flip_context(&tds, facet).unwrap();
+        let result = apply_bistellar_flip_k2(&mut tds, &kernel, &context);
+
+        assert!(matches!(result, Err(FlipError::NonManifoldFacet)));
         assert!(tds.is_valid().is_ok());
     }
 

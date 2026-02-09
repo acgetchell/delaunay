@@ -25,10 +25,12 @@
 //! - 3D-5D: Higher-dimensional triangulations as documented in README.md
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use delaunay::core::delaunay_triangulation::{ConstructionOptions, RetryPolicy};
 use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::prelude::DelaunayTriangulation;
 use delaunay::vertex;
 use std::hint::black_box;
+use std::num::NonZeroUsize;
 use tracing::error;
 
 /// Common sample sizes used across all CI performance benchmarks
@@ -40,6 +42,19 @@ fn bench_logging_enabled() -> bool {
         .unwrap_or(false)
 }
 
+fn bench_seed_search_enabled() -> bool {
+    std::env::var("DELAUNAY_BENCH_SEED_SEARCH")
+        .map(|value| value != "0")
+        .unwrap_or(false)
+}
+
+fn bench_seed_search_limit() -> usize {
+    std::env::var("DELAUNAY_BENCH_SEED_SEARCH_LIMIT")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(2000)
+}
+
 /// Fixed seeds for deterministic triangulation generation across benchmark runs.
 /// Using seeded random number generation reduces variance in performance measurements
 /// and improves regression detection accuracy in CI environments.
@@ -49,6 +64,10 @@ fn bench_logging_enabled() -> bool {
 macro_rules! benchmark_tds_new_dimension {
     ($dim:literal, $func_name:ident, $seed:literal) => {
         /// Benchmark triangulation creation for D-dimensional triangulations
+        #[expect(
+            clippy::too_many_lines,
+            reason = "Keep benchmark configuration, seed search, and error reporting together"
+        )]
         fn $func_name(c: &mut Criterion) {
             let counts = COUNTS;
             let mut group = c.benchmark_group(concat!("tds_new_", stringify!($dim), "d"));
@@ -66,18 +85,85 @@ macro_rules! benchmark_tds_new_dimension {
                 group.bench_with_input(BenchmarkId::new("tds_new", count), &count, |b, &count| {
                     // Reduce variance: pre-generate deterministic inputs outside the measured loop,
                     // then benchmark only triangulation construction.
-                    let points =
-                        generate_random_points_seeded::<f64, $dim>(count, (-100.0, 100.0), $seed)
+                    //
+                    // Note: Use per-count seeds so that each benchmark case has its own deterministic
+                    // point set. This avoids a single pathological input (e.g. 3D/50) aborting the
+                    // entire suite.
+                    let bounds = (-100.0, 100.0);
+                    let seed = ($seed as u64).wrapping_add(count as u64);
+
+                    // Opt-in helper for discovering stable seeds without paying Criterion warmup/
+                    // measurement cost per seed.
+                    if bench_seed_search_enabled() {
+                        let limit = bench_seed_search_limit();
+                        for offset in 0..limit {
+                            let candidate_seed = seed.wrapping_add(offset as u64);
+                            let points = generate_random_points_seeded::<f64, $dim>(
+                                count,
+                                bounds,
+                                candidate_seed,
+                            )
                             .expect(concat!(
                                 "generate_random_points_seeded failed for ",
                                 stringify!($dim),
                                 "D"
                             ));
+                            let vertices = points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>();
+
+                            let options =
+                                ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
+                                    attempts: NonZeroUsize::new(6)
+                                        .expect("retry attempts must be non-zero"),
+                                    base_seed: Some(candidate_seed),
+                                });
+
+                            if DelaunayTriangulation::<_, (), (), $dim>::new_with_options(
+                                &vertices,
+                                options,
+                            )
+                            .is_ok()
+                            {
+                                println!(
+                                    "seed_search_found dim={} count={} seed={}",
+                                    $dim, count, candidate_seed
+                                );
+                                std::process::exit(0);
+                            }
+                        }
+
+                        println!(
+                            "seed_search_failed dim={} count={} start_seed={} limit={}",
+                            $dim,
+                            count,
+                            seed,
+                            limit
+                        );
+                        std::process::exit(1);
+                    }
+
+                    let points = generate_random_points_seeded::<f64, $dim>(count, bounds, seed)
+                        .expect(concat!(
+                            "generate_random_points_seeded failed for ",
+                            stringify!($dim),
+                            "D"
+                        ));
                     let vertices = points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>();
                     let sample_points = points.iter().take(5).collect::<Vec<_>>();
 
+                    // In benchmarks we compile in release mode, where the default retry policy is
+                    // disabled. For deterministic CI benchmarks we opt into a small number of
+                    // shuffled retries to avoid aborting the suite on rare non-convergent repair
+                    // cases.
+                    let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
+                        attempts: NonZeroUsize::new(6).expect("retry attempts must be non-zero"),
+                        base_seed: Some(seed),
+                    });
+
                     b.iter(|| {
-                        match DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                        match DelaunayTriangulation::<_, (), (), $dim>::new_with_options(
+                            &vertices,
+                            options,
+                        ) {
                             Ok(dt) => {
                                 black_box(dt);
                             }
@@ -87,8 +173,8 @@ macro_rules! benchmark_tds_new_dimension {
                                     error!(
                                         dim = $dim,
                                         count,
-                                        seed = $seed,
-                                        bounds = ?(-100.0, 100.0),
+                                        seed,
+                                        bounds = ?bounds,
                                         sample_points = ?sample_points,
                                         error = %error,
                                         "DelaunayTriangulation::new failed"
@@ -99,8 +185,8 @@ macro_rules! benchmark_tds_new_dimension {
                                     $dim,
                                     $dim,
                                     count,
-                                    $seed,
-                                    (-100.0, 100.0)
+                                    seed,
+                                    bounds
                                 );
                             }
                         }

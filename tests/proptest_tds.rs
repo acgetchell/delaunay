@@ -21,10 +21,26 @@
 //!
 //! All tests use `dt.tds().is_valid()` (Level 2 structural validation).
 
+use delaunay::core::triangulation_data_structure::Tds;
 use delaunay::core::util::jaccard::jaccard_index;
 use delaunay::prelude::query::*;
 use proptest::prelude::*;
 use std::collections::HashSet;
+
+#[test]
+fn tds_empty_does_not_require_coordinate_scalar() {
+    #[derive(Clone, Copy, Debug)]
+    struct NotAScalar;
+
+    let tds: Tds<NotAScalar, (), (), 3> = Tds::empty();
+
+    assert_eq!(tds.number_of_vertices(), 0);
+    assert_eq!(tds.number_of_cells(), 0);
+    assert_eq!(tds.dim(), -1);
+    assert!(tds.vertex_keys().next().is_none());
+    assert!(tds.cell_keys().next().is_none());
+    assert!(tds.is_valid().is_ok());
+}
 
 // =============================================================================
 // TEST CONFIGURATION

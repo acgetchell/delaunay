@@ -41,18 +41,19 @@ use std::marker::PhantomData;
 ///
 /// # Generic Type Support
 ///
-/// The Point struct supports any floating-point type `T` that implements the
-/// `CoordinateScalar` trait, including `f32`, `f64`, and other floating-point
-/// types. This generalization allows for flexibility in precision requirements
-/// and memory usage across different applications.
+/// `Point<T, D>` stores a fixed-size coordinate array `[T; D]`.
+///
+/// The type itself does **not** require `T: CoordinateScalar`, which allows the
+/// surrounding combinatorial data structures (e.g. `Tds<T, ..>`) to avoid geometry
+/// bounds at the type level.
+///
+/// Most geometric APIs (construction via [`Coordinate`], validation, hashing/ordering,
+/// and serialization) are only available when `T: CoordinateScalar`.
 ///
 /// # Properties
 ///
-/// * `coords`: `coords` is a private property of the [Point]. It is an array of
-///   type `T` with a length of `D`. The type `T` is a generic type parameter
-///   constrained to implement `CoordinateScalar`, ensuring it has all necessary
-///   traits for coordinate operations. The length `D` is a constant unsigned
-///   integer known at compile time.
+/// * `coords`: A private `[T; D]` coordinate array (length `D` is known at compile time).
+///   The field is private to keep points immutable once created.
 ///
 /// Points are intended to be immutable once created, so the `coords` field is
 /// private to prevent modification after instantiation.
