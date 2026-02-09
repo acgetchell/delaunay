@@ -237,13 +237,13 @@ delaunay/
 ├── README.md
 ├── REFERENCES.md
 ├── clippy.toml
-├── typos.toml
 ├── justfile
 ├── proptest.toml
 ├── pyproject.toml
 ├── rust-toolchain.toml
 ├── rustfmt.toml
 ├── ty.toml
+├── typos.toml
 └── uv.lock
 
 ```
