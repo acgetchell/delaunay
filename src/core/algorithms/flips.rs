@@ -1700,8 +1700,10 @@ where
         return Err(FlipError::InvalidRidgeMultiplicity { found: cells.len() });
     }
 
-    let mut opposite_counts: FastHashMap<VertexKey, usize> = FastHashMap::default();
-    let mut extras_per_cell: Vec<[VertexKey; 2]> = Vec::with_capacity(3);
+    // k=3 flip contexts are tiny (exactly 3 cells, with 2 "extra" vertices per cell).
+    // Use flat buffers + linear counting to avoid HashMap/Vec overhead in this hot path.
+    let mut opposite_counts: SmallBuffer<(VertexKey, u8), 3> = SmallBuffer::new();
+    let mut extras_per_cell: SmallBuffer<[VertexKey; 2], 3> = SmallBuffer::new();
 
     for &ck in &cells {
         let cell = tds
@@ -1712,22 +1714,28 @@ where
             return Err(FlipError::InvalidRidgeAdjacency { cell_key: ck });
         }
 
-        for &v in &extras {
-            *opposite_counts.entry(v).or_insert(0) += 1;
-        }
         let extras_pair: [VertexKey; 2] = extras
             .as_slice()
             .try_into()
             .map_err(|_| FlipError::InvalidRidgeAdjacency { cell_key: ck })?;
+
+        for &v in &extras_pair {
+            if let Some((_key, count)) = opposite_counts.iter_mut().find(|(key, _)| *key == v) {
+                *count += 1;
+            } else {
+                opposite_counts.push((v, 1));
+            }
+        }
+
         extras_per_cell.push(extras_pair);
     }
 
-    if opposite_counts.len() != 3 || !opposite_counts.values().all(|&count| count == 2) {
+    if opposite_counts.len() != 3 || !opposite_counts.iter().all(|(_v, count)| *count == 2) {
         return Err(FlipError::InvalidRidgeAdjacency { cell_key });
     }
 
     let mut opposite_vertices: SmallBuffer<VertexKey, 3> =
-        opposite_counts.keys().copied().collect();
+        opposite_counts.iter().map(|(v, _count)| *v).collect();
     opposite_vertices.sort_unstable();
     let opposite_vertices: [VertexKey; 3] = opposite_vertices
         .as_slice()
@@ -3801,6 +3809,8 @@ where
                 continue;
             }
 
+            // Intentional hash-only dedup (no vertex-level tie-break): a 64-bit collision is
+            // astronomically unlikely, and avoiding extra comparisons keeps this hot path fast.
             if candidate_facet_info
                 .iter()
                 .any(|(hash, _info)| *hash == facet_hash)
@@ -3871,6 +3881,7 @@ where
             }
             let facet_hash = stable_hash_u64_slice(&facet_values);
 
+            // Hash-only lookup (see comment above); collision risk is astronomically low.
             let Ok(idx) =
                 candidate_facet_info.binary_search_by_key(&facet_hash, |(hash, _info)| *hash)
             else {

@@ -163,7 +163,7 @@ where
         let tolerance_f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
 
         // Calculate determinant (singular => 0; non-finite => NaN).
-        let det = determinant(matrix);
+        let det = determinant(&matrix);
 
         if det > tolerance_f64 {
             Ok(Orientation::POSITIVE)
@@ -423,7 +423,7 @@ where
         let base_tol = safe_scalar_to_f64(T::default_tolerance())?;
         let tolerance_f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
 
-        let det = determinant(matrix);
+        let det = determinant(&matrix);
         let orientation = simplex_orientation(simplex_points)?;
 
         match orientation {
@@ -626,7 +626,7 @@ where
         let tolerance_f64: f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
 
         // Calculate determinant (singular => 0; non-finite => NaN).
-        let det = determinant(matrix);
+        let det = determinant(&matrix);
 
         // The sign interpretation depends on both orientation and dimension parity
         // For the lifted matrix formulation, even and odd dimensions have opposite sign conventions

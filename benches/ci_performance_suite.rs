@@ -25,9 +25,8 @@
 //! - 3D-5D: Higher-dimensional triangulations as documented in README.md
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use delaunay::core::delaunay_triangulation::{ConstructionOptions, RetryPolicy};
 use delaunay::geometry::util::generate_random_points_seeded;
-use delaunay::prelude::DelaunayTriangulation;
+use delaunay::prelude::{ConstructionOptions, DelaunayTriangulation, RetryPolicy};
 use delaunay::vertex;
 use std::hint::black_box;
 use std::num::NonZeroUsize;
@@ -70,6 +69,88 @@ macro_rules! benchmark_tds_new_dimension {
         )]
         fn $func_name(c: &mut Criterion) {
             let counts = COUNTS;
+
+            // Opt-in helper for discovering stable seeds without paying Criterion warmup/
+            // measurement cost per seed.
+            //
+            // NOTE: This helper is intentionally per (dim, count) benchmark case.
+            // It returns early on the first successful seed (and panics on failure),
+            // so it is meant to be run with a Criterion filter that selects a single
+            // case, for example:
+            //
+            //     cargo bench --bench ci_performance_suite -- 'tds_new_3d/tds_new/50'
+            //
+            // Because the base seed is derived from `count`, a seed that works for one
+            // count may still fail for a different count.
+            //
+            // We avoid `std::process::exit` here so that destructors run and Criterion
+            // can clean up state on both success and failure.
+            if bench_seed_search_enabled() {
+                let bounds = (-100.0, 100.0);
+                let filters: Vec<String> = std::env::args()
+                    .skip(1)
+                    .filter(|arg| !arg.starts_with('-'))
+                    .collect();
+
+                for &count in counts {
+                    let bench_id =
+                        format!("tds_new_{}d/tds_new/{}", stringify!($dim), count);
+
+                    if !filters.is_empty() && !filters.iter().any(|filter| bench_id.contains(filter)) {
+                        continue;
+                    }
+
+                    let seed = ($seed as u64).wrapping_add(count as u64);
+                    let limit = bench_seed_search_limit();
+
+                    for offset in 0..limit {
+                        let candidate_seed = seed.wrapping_add(offset as u64);
+                        let points = generate_random_points_seeded::<f64, $dim>(
+                            count,
+                            bounds,
+                            candidate_seed,
+                        )
+                        .expect(concat!(
+                            "generate_random_points_seeded failed for ",
+                            stringify!($dim),
+                            "D"
+                        ));
+                        let vertices = points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>();
+
+                        let options =
+                            ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
+                                attempts: NonZeroUsize::new(6)
+                                    .expect("retry attempts must be non-zero"),
+                                base_seed: Some(candidate_seed),
+                            });
+
+                        if DelaunayTriangulation::<_, (), (), $dim>::new_with_options(
+                            &vertices,
+                            options,
+                        )
+                        .is_ok()
+                        {
+                            println!(
+                                "seed_search_found dim={} count={} seed={}",
+                                $dim, count, candidate_seed
+                            );
+                            return;
+                        }
+                    }
+
+                    panic!(
+                        "seed_search_failed dim={} count={} start_seed={} limit={}",
+                        $dim,
+                        count,
+                        seed,
+                        limit
+                    );
+                }
+
+                // No filter matched this benchmark function; do nothing.
+                return;
+            }
+
             let mut group = c.benchmark_group(concat!("tds_new_", stringify!($dim), "d"));
 
             // Set smaller sample sizes for higher dimensions to keep CI times reasonable
@@ -91,65 +172,6 @@ macro_rules! benchmark_tds_new_dimension {
                     // entire suite.
                     let bounds = (-100.0, 100.0);
                     let seed = ($seed as u64).wrapping_add(count as u64);
-
-                    // Opt-in helper for discovering stable seeds without paying Criterion warmup/
-                    // measurement cost per seed.
-                    //
-                    // NOTE: This helper is intentionally per (dim, count) benchmark case.
-                    // It `exit(0)`s on the first successful seed (and `exit(1)`s on failure),
-                    // so it is meant to be run with a Criterion filter that selects a single
-                    // case, for example:
-                    //
-                    //     cargo bench --bench ci_performance_suite -- 'tds_new_3d/tds_new/50'
-                    //
-                    // Because the base seed is derived from `count`, a seed that works for one
-                    // count may still fail for a different count.
-                    if bench_seed_search_enabled() {
-                        let limit = bench_seed_search_limit();
-                        for offset in 0..limit {
-                            let candidate_seed = seed.wrapping_add(offset as u64);
-                            let points = generate_random_points_seeded::<f64, $dim>(
-                                count,
-                                bounds,
-                                candidate_seed,
-                            )
-                            .expect(concat!(
-                                "generate_random_points_seeded failed for ",
-                                stringify!($dim),
-                                "D"
-                            ));
-                            let vertices = points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>();
-
-                            let options =
-                                ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
-                                    attempts: NonZeroUsize::new(6)
-                                        .expect("retry attempts must be non-zero"),
-                                    base_seed: Some(candidate_seed),
-                                });
-
-                            if DelaunayTriangulation::<_, (), (), $dim>::new_with_options(
-                                &vertices,
-                                options,
-                            )
-                            .is_ok()
-                            {
-                                println!(
-                                    "seed_search_found dim={} count={} seed={}",
-                                    $dim, count, candidate_seed
-                                );
-                                std::process::exit(0);
-                            }
-                        }
-
-                        println!(
-                            "seed_search_failed dim={} count={} start_seed={} limit={}",
-                            $dim,
-                            count,
-                            seed,
-                            limit
-                        );
-                        std::process::exit(1);
-                    }
 
                     let points = generate_random_points_seeded::<f64, $dim>(count, bounds, seed)
                         .expect(concat!(

@@ -282,7 +282,7 @@ where
         fill_insphere_predicate_matrix(&mut matrix, simplex_points, test_point)?;
 
         let tol_f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
-        let det = determinant(matrix);
+        let det = determinant(&matrix);
 
         Ok::<(f64, f64), CoordinateConversionError>((det, tol_f64))
     })?;
@@ -342,7 +342,7 @@ where
         }
 
         // Determinant with scale correction.
-        let det = determinant(matrix) * scale_factor;
+        let det = determinant(&matrix) * scale_factor;
 
         Ok::<(f64, f64), CoordinateConversionError>((det, tolerance_raw))
     })?;
@@ -445,7 +445,7 @@ where
         let tolerance_f64: f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
 
         // Calculate determinant (singular => 0; non-finite => NaN).
-        let det = determinant(matrix);
+        let det = determinant(&matrix);
 
         if det > tolerance_f64 {
             Ok(Orientation::POSITIVE)
