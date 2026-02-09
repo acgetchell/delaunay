@@ -1,5 +1,4 @@
 name: CI
-# cspell:ignore rhysd binstall mktemp sha256sum sha256sums shasum
 permissions:
   contents: read
 concurrency:
@@ -24,8 +23,8 @@ env:
   RUST_BACKTRACE: 1
   ACTIONLINT_VERSION: "1.7.10"
   MARKDOWNLINT_VERSION: "0.47.0"
-  CSPELL_VERSION: "9.4.0"
   SHFMT_VERSION: "3.12.0"
+  TYPOS_VERSION: "1.43.4"
   UV_VERSION: "0.9.21"
 
 jobs:
@@ -68,7 +67,7 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
 
-      - name: Install Node.js (for markdownlint and cspell)
+      - name: Install Node.js (for markdownlint)
         if: matrix.os != 'windows-latest'
         uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
@@ -77,7 +76,12 @@ jobs:
       - name: Install Node.js packages
         if: matrix.os != 'windows-latest'
         run: |
-          npm install -g markdownlint-cli@${{ env.MARKDOWNLINT_VERSION }} cspell@${{ env.CSPELL_VERSION }}
+          npm install -g markdownlint-cli@${{ env.MARKDOWNLINT_VERSION }}
+
+      - name: Install typos-cli
+        if: matrix.os != 'windows-latest'
+        run: |
+          cargo install --locked typos-cli --version ${{ env.TYPOS_VERSION }}
 
       - name: Install taplo (for TOML formatting and linting)
         if: matrix.os != 'windows-latest'

@@ -1566,7 +1566,7 @@ class _BreakingChangeDetector:
     # promote entries into the "⚠️ Breaking Changes" section, so prefer patterns that
     # strongly imply downstream-facing breakage.
     #
-    # cspell:ignore incompatib ility bincompatib bcompatib bdeprecat touchpoints
+    # NOTE: The fragments below are intentionally included to match common breaking-change wording.
     _BREAKING_TITLE_PATTERNS: tuple[re.Pattern[str], ...] = (
         # MSRV bumps are breaking for downstream users.
         re.compile(r"\bmsrv\b", re.IGNORECASE),

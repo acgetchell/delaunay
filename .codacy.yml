@@ -195,7 +195,6 @@ exclude_paths:
   - "benches/baseline_results.txt"
   - "benches/benchmark_results/**"
   - "uv.lock"
-  - ".cspellcache"
 
 # Focus analysis on source code and documentation
 include_paths:

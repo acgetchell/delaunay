@@ -26,7 +26,7 @@ When user requests commit message generation:
 
 - **ALLOWED**: Run formatters/linters: `cargo fmt`, `cargo clippy`, `cargo doc`, `taplo fmt`, `taplo lint`,
   `uv run ruff check --fix`, `uv run ruff format`, `shfmt -w`, `shellcheck -x`, `npx markdownlint --fix`,
-  `npx cspell lint`, `actionlint`
+  `typos`, `actionlint`
 - **NEVER**: Use `sed`, `awk`, `perl` for code edits
 - **ALWAYS**: Use `apply_patch` for edits (and `create_file` for new files)
 - **EXCEPTION**: Shell text tools OK for read-only analysis only
@@ -37,7 +37,7 @@ When user requests commit message generation:
 - **TOML**: Lint/format with taplo: `just toml-lint`, `just toml-fmt-check`, `just toml-fmt` (or validate parsing with `just validate-toml`)
 - **GitHub Actions**: Validate workflows with `just action-lint` (uses `actionlint`)
 - **Spell check**: Run `just spell-check` (or `just lint-docs`) after editing; add legitimate technical terms to
-  `cspell.json` `words` array (don't spell-check `cspell.json` itself)
+  `typos.toml` under `[default.extend-words]` (the `just` recipe excludes `typos.toml` from checks)
 - **Shell scripts**: Run `shfmt -w scripts/*.sh` and `shellcheck -x scripts/*.sh` after editing
 
 ### Rust

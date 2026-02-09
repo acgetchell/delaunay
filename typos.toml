@@ -1,0 +1,32 @@
+# Configuration for typos-cli (https://github.com/crate-ci/typos)
+
+[files]
+# Avoid scanning generated/third-party directories and auto-generated files.
+extend-exclude = [
+    ".git/**",
+    "target/**",
+    "coverage/**",
+    "coverage_report/**",
+    "node_modules/**",
+    "dist/**",
+    "build/**",
+    "venv/**",
+    ".venv/**",
+    ".mypy_cache/**",
+    ".ruff_cache/**",
+    ".pytest_cache/**",
+    # Auto-generated from git history; contains commit-message fragments that frequently trip spellcheck.
+    "CHANGELOG.md",
+]
+
+[default]
+# Ignore identifier patterns that are common in tests/demos (e.g., symmetry_ab / symmetry_ba).
+extend-ignore-identifiers-re = [
+    ".*_ba$",
+]
+
+[default.extend-words]
+# Domain terms that typos suggests "fixing" but are correct in this repo.
+bimap = "bimap"
+Nd = "Nd"
+ND = "ND"

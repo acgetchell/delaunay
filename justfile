@@ -58,6 +58,12 @@ _ensure-taplo:
     set -euo pipefail
     command -v taplo >/dev/null || { echo "❌ 'taplo' not found. See 'just setup' or install: brew install taplo (or: cargo install taplo-cli)"; exit 1; }
 
+# Internal helper: ensure typos-cli is installed
+_ensure-typos:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v typos >/dev/null || { echo "❌ 'typos' not found. See 'just setup-tools' or install: cargo install typos-cli"; exit 1; }
+
 # Internal helper: ensure uv is installed
 _ensure-uv:
     #!/usr/bin/env bash
@@ -445,7 +451,7 @@ setup-tools:
         else
             echo "Install required tools via your system package manager, or ensure they are on PATH."
         fi
-        echo "Required tools: uv, jq, taplo, yamllint, shfmt, shellcheck, actionlint, node+npx"
+        echo "Required tools: uv, jq, taplo, yamllint, shfmt, shellcheck, actionlint, node+npx, typos"
         echo ""
     fi
 
@@ -465,6 +471,13 @@ setup-tools:
         echo "  ✓ samply"
     fi
 
+    if ! have typos; then
+        echo "  ⏳ Installing typos-cli (cargo)..."
+        cargo install --locked typos-cli
+    else
+        echo "  ✓ typos"
+    fi
+
     if ! have cargo-tarpaulin; then
         if [[ "$os" == "Linux" ]]; then
             echo "  ⏳ Installing cargo-tarpaulin (cargo)..."
@@ -480,7 +493,7 @@ setup-tools:
     echo "Verifying required commands are available..."
     missing=0
 
-    cmds=(uv jq taplo yamllint shfmt shellcheck actionlint node npx)
+    cmds=(uv jq taplo yamllint shfmt shellcheck actionlint node npx typos)
     if [[ "$os" == "Linux" ]]; then
         cmds+=(cargo-tarpaulin)
     fi
@@ -544,12 +557,8 @@ shell-fmt: _ensure-shfmt
 
 shell-lint: shell-check
 
-# Spell check (cspell)
-#
-# Requires either:
-# - `cspell` on PATH (recommended: `npm i -g cspell`), or
-# - `npx` (will run cspell without a global install)
-spell-check:
+# Spell check (typos)
+spell-check: _ensure-typos
     #!/usr/bin/env bash
     set -euo pipefail
     files=()
@@ -580,15 +589,8 @@ spell-check:
         files+=("$filename")
     done < <(git status --porcelain -z --ignored=no)
     if [ "${#files[@]}" -gt 0 ]; then
-        if command -v cspell >/dev/null; then
-            printf '%s\0' "${files[@]}" | xargs -0 cspell lint --config cspell.json --no-progress --gitignore --cache --exclude cspell.json
-        elif command -v npx >/dev/null; then
-            printf '%s\0' "${files[@]}" | xargs -0 npx cspell lint --config cspell.json --no-progress --gitignore --cache --exclude cspell.json
-        else
-            echo "❌ cspell not found. Install via npm (recommended): npm i -g cspell"
-            echo "   Or ensure npx is available (Node.js)."
-            exit 1
-        fi
+        # Exclude typos.toml itself: it intentionally contains allowlisted fragments.
+        printf '%s\0' "${files[@]}" | xargs -0 -n100 typos --config typos.toml --force-exclude --exclude typos.toml --
     else
         echo "No modified files to spell-check."
     fi

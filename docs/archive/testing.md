@@ -641,7 +641,7 @@ algorithms.
 - [x] Validate docs again: `just doc-check` - Documentation builds successfully
 - [x] Run quality suite: `just quality` - All checks pass
 - [x] Spell-check modified files: `just spell-check` - No issues found
-  - [x] No new terms needed in `cspell.json`
+  - [x] No new terms needed in `typos.toml`
   - [x] Validate JSON: `just validate-json` - All JSON files valid
   - [x] Validate TOML: `just validate-toml` - All TOML files valid
 - [x] Examples sanity: `just examples` - All examples run successfully

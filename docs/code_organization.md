@@ -237,7 +237,7 @@ delaunay/
 ├── README.md
 ├── REFERENCES.md
 ├── clippy.toml
-├── cspell.json
+├── typos.toml
 ├── justfile
 ├── proptest.toml
 ├── pyproject.toml
