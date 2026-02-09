@@ -94,6 +94,16 @@ macro_rules! benchmark_tds_new_dimension {
 
                     // Opt-in helper for discovering stable seeds without paying Criterion warmup/
                     // measurement cost per seed.
+                    //
+                    // NOTE: This helper is intentionally per (dim, count) benchmark case.
+                    // It `exit(0)`s on the first successful seed (and `exit(1)`s on failure),
+                    // so it is meant to be run with a Criterion filter that selects a single
+                    // case, for example:
+                    //
+                    //     cargo bench --bench ci_performance_suite -- 'tds_new_3d/tds_new/50'
+                    //
+                    // Because the base seed is derived from `count`, a seed that works for one
+                    // count may still fail for a different count.
                     if bench_seed_search_enabled() {
                         let limit = bench_seed_search_limit();
                         for offset in 0..limit {

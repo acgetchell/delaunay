@@ -3717,15 +3717,25 @@ where
 
 #[derive(Debug, Default)]
 struct FlipTopologyIndex {
-    /// Map from candidate cell signature to the first existing cell that matches it.
-    duplicate_signature_to_cell: FastHashMap<u64, CellKey>,
-    /// Map from candidate facet hash to topology metadata.
-    candidate_facet_info: FastHashMap<u64, CandidateFacetInfo>,
+    /// Candidate cell signature → the first existing cell that matches it.
+    ///
+    /// The number of candidate cells per flip is small (≤ D+1), so a flat buffer is
+    /// faster than a `HashMap` in this hot path.
+    duplicate_signature_to_cell: SmallBuffer<(u64, CellKey), MAX_PRACTICAL_DIMENSION_SIZE>,
+
+    /// Candidate *internal* facet hash → topology metadata, sorted by hash for binary search.
+    ///
+    /// We only track internal facets (facets that contain the inserted face). Boundary facets
+    /// lie on the cavity boundary and cannot become non-manifold when the surrounding topology is
+    /// valid.
+    candidate_facet_info: SmallBuffer<
+        (u64, CandidateFacetInfo),
+        { MAX_PRACTICAL_DIMENSION_SIZE * MAX_PRACTICAL_DIMENSION_SIZE },
+    >,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct CandidateFacetInfo {
-    internal: bool,
     existing_count: u8,
     last_cell: Option<CellKey>,
 }
@@ -3760,8 +3770,10 @@ where
     let mut candidate_cell_signatures: SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::with_capacity(new_cell_vertices.len());
 
-    let mut candidate_facet_info: FastHashMap<u64, CandidateFacetInfo> = FastHashMap::default();
-    candidate_facet_info.reserve(new_cell_vertices.len() * (D + 1));
+    let mut candidate_facet_info: SmallBuffer<
+        (u64, CandidateFacetInfo),
+        { MAX_PRACTICAL_DIMENSION_SIZE * MAX_PRACTICAL_DIMENSION_SIZE },
+    > = SmallBuffer::new();
 
     // Seed the facet map with the facets that will exist after the flip.
     for vertices in new_cell_vertices {
@@ -3783,45 +3795,71 @@ where
                 .iter()
                 .all(|v| facet_values.binary_search(v).is_ok());
 
-            if let Some(info) = candidate_facet_info.get_mut(&facet_hash) {
-                info.internal |= internal;
-            } else {
-                candidate_facet_info.insert(
-                    facet_hash,
-                    CandidateFacetInfo {
-                        internal,
-                        existing_count: 0,
-                        last_cell: None,
-                    },
-                );
+            // Only internal facets can become non-manifold: boundary facets are part of the cavity
+            // boundary and already exist in the surrounding triangulation.
+            if !internal {
+                continue;
             }
+
+            if candidate_facet_info
+                .iter()
+                .any(|(hash, _info)| *hash == facet_hash)
+            {
+                continue;
+            }
+
+            candidate_facet_info.push((
+                facet_hash,
+                CandidateFacetInfo {
+                    existing_count: 0,
+                    last_cell: None,
+                },
+            ));
         }
     }
 
-    let mut duplicate_signature_to_cell: FastHashMap<u64, CellKey> = FastHashMap::default();
-    duplicate_signature_to_cell.reserve(candidate_cell_signatures.len());
+    candidate_facet_info.sort_unstable_by_key(|(hash, _info)| *hash);
+
+    let mut duplicate_signature_to_cell: SmallBuffer<(u64, CellKey), MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::new();
 
     let mut facet_values: SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::with_capacity(D);
+    let mut cell_values: SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::with_capacity(D + 1);
 
-    // Scan existing cells once, updating only the candidate facet set.
+    // Scan existing cells once.
+    //
+    // Both duplicate cells and existing internal facets must contain all inserted-face vertices.
     for (cell_key, cell) in tds.cells() {
         if removed_cells.contains(&cell_key) {
             continue;
         }
-
-        let mut cell_values: SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> = cell
-            .vertices()
+        if !inserted_face_vertices
             .iter()
-            .map(|key| key.data().as_ffi())
-            .collect();
+            .all(|v| cell.contains_vertex(*v))
+        {
+            continue;
+        }
+
+        cell_values.clear();
+        for key in cell.vertices() {
+            cell_values.push(key.data().as_ffi());
+        }
         cell_values.sort_unstable();
 
         let signature = stable_hash_u64_slice(&cell_values);
-        if candidate_cell_signatures.contains(&signature) {
-            duplicate_signature_to_cell
-                .entry(signature)
-                .or_insert(cell_key);
+        if candidate_cell_signatures.contains(&signature)
+            && !duplicate_signature_to_cell
+                .iter()
+                .any(|(s, _cell_key)| *s == signature)
+        {
+            duplicate_signature_to_cell.push((signature, cell_key));
+        }
+
+        // If there are no internal facets to check, skip facet hashing.
+        if candidate_facet_info.is_empty() {
+            continue;
         }
 
         for omit_idx in 0..cell_values.len() {
@@ -3833,9 +3871,12 @@ where
             }
             let facet_hash = stable_hash_u64_slice(&facet_values);
 
-            let Some(info) = candidate_facet_info.get_mut(&facet_hash) else {
+            let Ok(idx) =
+                candidate_facet_info.binary_search_by_key(&facet_hash, |(hash, _info)| *hash)
+            else {
                 continue;
             };
+            let info = &mut candidate_facet_info[idx].1;
 
             if info.existing_count < 2 {
                 info.existing_count += 1;
@@ -3861,7 +3902,11 @@ where
     V: DataType,
 {
     let signature = cell_signature(vertices);
-    let Some(&cell_key) = topology.duplicate_signature_to_cell.get(&signature) else {
+    let Some(cell_key) = topology
+        .duplicate_signature_to_cell
+        .iter()
+        .find_map(|(s, ck)| (*s == signature).then_some(*ck))
+    else {
         return false;
     };
 
@@ -3896,52 +3941,42 @@ fn flip_would_create_nonmanifold_facets_any(
     vertices: &[VertexKey],
     topology: &FlipTopologyIndex,
 ) -> bool {
+    let sorted_values = sorted_vertex_key_values(vertices);
+
     let mut sorted_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
         vertices.iter().copied().collect();
-    sorted_vertices.sort_unstable();
+    sorted_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
 
     let mut facet_values: SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> =
-        SmallBuffer::with_capacity(sorted_vertices.len().saturating_sub(1));
+        SmallBuffer::with_capacity(sorted_values.len().saturating_sub(1));
     let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::with_capacity(sorted_vertices.len().saturating_sub(1));
 
-    for omit_idx in 0..sorted_vertices.len() {
+    for omit_idx in 0..sorted_values.len() {
         facet_values.clear();
         facet_vertices.clear();
 
-        for (i, &vkey) in sorted_vertices.iter().enumerate() {
+        for (i, &value) in sorted_values.iter().enumerate() {
             if i != omit_idx {
-                facet_vertices.push(vkey);
-                facet_values.push(vkey.data().as_ffi());
+                facet_values.push(value);
+                facet_vertices.push(sorted_vertices[i]);
             }
         }
 
         let facet_hash = stable_hash_u64_slice(&facet_values);
-        let Some(info) = topology.candidate_facet_info.get(&facet_hash) else {
-            // If this happens, the index construction and facet hashing logic are inconsistent.
-            // Conservatively allow (old code would have scanned). This is debug-asserted.
-            debug_assert!(false, "missing facet hash in flip topology index");
+        let Ok(idx) = topology
+            .candidate_facet_info
+            .binary_search_by_key(&facet_hash, |(hash, _info)| *hash)
+        else {
+            // Boundary facet: not tracked in the index.
             continue;
         };
+        let info = &topology.candidate_facet_info[idx].1;
 
-        if info.internal {
-            if info.existing_count > 0 {
-                if repair_trace_enabled() {
-                    tracing::debug!(
-                        "[repair] flip would create non-manifold internal facet: facet={facet_vertices:?} shared_count={} last_cell={:?}",
-                        info.existing_count,
-                        info.last_cell,
-                    );
-                }
-                return true;
-            }
-            continue;
-        }
-
-        if info.existing_count > 1 {
+        if info.existing_count > 0 {
             if repair_trace_enabled() {
                 tracing::debug!(
-                    "[repair] flip would create non-manifold facet: facet={facet_vertices:?} shared_count={} last_cell={:?}",
+                    "[repair] flip would create non-manifold internal facet: facet={facet_vertices:?} shared_count={} last_cell={:?}",
                     info.existing_count,
                     info.last_cell,
                 );
