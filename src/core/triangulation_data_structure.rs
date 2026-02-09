@@ -1,23 +1,29 @@
 //! Data and operations on d-dimensional triangulation data structures.
 //!
-//! This module provides the `Tds` (Triangulation Data Structure) struct which represents
-//! a D-dimensional finite simplicial complex with geometric vertices, cells, and their
-//! topological relationships. The implementation closely follows the design principles
-//! of [CGAL Triangulation](https://doc.cgal.org/latest/Triangulation/index.html).
+//! This module provides the `Tds` (Triangulation Data Structure): a key-based,
+//! CGAL-inspired representation of the **combinatorial** topology of a D-dimensional
+//! finite simplicial complex (vertices, cells, and adjacency). The implementation
+//! closely follows the design principles of
+//! [CGAL Triangulation](https://doc.cgal.org/latest/Triangulation/index.html).
+//!
+//! The crate follows a layered architecture: `Tds` is topology-focused, while geometric
+//! predicates and Delaunay-specific operations live in higher layers (`Triangulation` /
+//! `DelaunayTriangulation`) and `core::algorithms`.
 //!
 //! # Key Features
 //!
-//! - **Generic Coordinate Support**: Works with any floating-point type (`f32`, `f64`, etc.)
-//!   that implements the `CoordinateScalar` trait
+//! - **CGAL-style layering**: topology in `Tds`, geometry/predicates in higher layers
+//! - **Relaxed coordinate bounds**: most `Tds` methods require only `U: DataType` and
+//!   `V: DataType`; methods that validate or serialize geometric values are gated behind
+//!   `T: CoordinateScalar`
 //! - **Arbitrary Dimensions**: Supports triangulations in any dimension D ≥ 1
-//! - **Delaunay Triangulation**: Implements Bowyer-Watson algorithm for Delaunay triangulation
 //! - **Hierarchical Cell Structure**: Stores maximal D-dimensional cells and infers lower-dimensional
 //!   simplices (vertices, edges, facets) from the maximal cells
 //! - **Neighbor Relationships**: Maintains adjacency information between cells for efficient
-//!   traversal and geometric queries
-//! - **Validation Support**: Comprehensive validation of triangulation properties including
-//!   neighbor consistency and geometric validity
-//! - **Serialization Support**: Full serde support for persistence and data exchange
+//!   topological traversal
+//! - **Validation Support**: Structural invariant validation (Level 2) plus cumulative element
+//!   validation (Levels 1–2; requires `T: CoordinateScalar`)
+//! - **Serialization Support**: Serde support for persistence (available when `T: CoordinateScalar`)
 //! - **Optimized Storage**: Internal key-based storage with UUIDs for external identity
 //!
 //! # Geometric Structure
@@ -698,8 +704,9 @@ new_key_type! {
 ///
 /// - `vertices`: A storage map that stores vertices with stable keys for efficient access.
 ///   Each [`Vertex`] has a point of type T, vertex data of type U, and a constant D representing the dimension.
-/// - `cells`: The `cells` property is a storage map that stores [`Cell`] objects with stable keys.
-///   Each [`Cell`] has one or more [`Vertex`] objects with cell data of type V.
+/// - `cells`: A storage map that stores maximal [`Cell`] objects with stable keys.
+///   Each [`Cell`] stores [`VertexKey`]s (keys into `vertices`) and optional neighbor [`CellKey`]s,
+///   plus cell data of type `V`.
 ///   Note the dimensionality of the cell may differ from D, though the [`Tds`]
 ///   only stores cells of maximal dimensionality D and infers other lower
 ///   dimensional cells (cf. Facets) from the maximal cells and their vertices.
@@ -715,14 +722,19 @@ new_key_type! {
 ///
 /// A similar pattern holds for higher dimensions.
 ///
-/// In general, vertices are embedded into D-dimensional Euclidean space,
-/// and so the [`Tds`] is a finite simplicial complex.
+/// In typical usage, vertices carry coordinates in D-dimensional Euclidean space.
+/// However, the core `Tds` API is designed to be **combinatorial**: most methods do
+/// not require `T: CoordinateScalar` and operate purely on keys and adjacency.
 ///
 /// # Usage
 ///
-/// The `Tds` struct is the primary entry point for creating and manipulating
-/// Delaunay triangulations. It is initialized with a set of vertices and
-/// automatically computes the triangulation.
+/// `Tds` is the low-level topology container used by
+/// [`Triangulation`](crate::core::triangulation::Triangulation) and
+/// [`DelaunayTriangulation`](crate::core::delaunay_triangulation::DelaunayTriangulation).
+///
+/// Most users should construct triangulations via `DelaunayTriangulation` and access the
+/// underlying `Tds` via `dt.tds()`. Use [`Tds::empty`](Self::empty) for low-level or test
+/// scenarios where you want to manipulate the topology directly.
 ///
 /// ```rust
 /// use delaunay::prelude::triangulation::*;

@@ -6,8 +6,9 @@
 //!
 //! # Key Features
 //!
-//! - **Generic Coordinate Support**: Works with any floating-point type (`f32`, `f64`, etc.)
-//!   that implements the `CoordinateScalar` trait
+//! - **Geometry when you need it**: the `Cell` type does not require `T: CoordinateScalar`
+//!   at the type level, but geometric operations, validation, and serialization are only
+//!   available when `T: CoordinateScalar` (e.g. `f32`, `f64`)
 //! - **Unique Identification**: Each cell has a UUID for consistent identification
 //! - **Vertices Management**: Stores vertices that form the simplex
 //! - **Neighbor Tracking**: Maintains references to neighboring cells
