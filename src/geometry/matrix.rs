@@ -196,11 +196,11 @@ pub(crate) fn matrix_set<const D: usize>(m: &mut Matrix<D>, r: usize, c: usize, 
 /// use delaunay::geometry::matrix::{determinant, Matrix};
 ///
 /// let m = Matrix::<2>::zero();
-/// assert_eq!(determinant(m), 0.0);
+/// assert_eq!(determinant(&m), 0.0);
 /// ```
 #[inline]
 #[must_use]
-pub fn determinant<const D: usize>(m: Matrix<D>) -> f64 {
+pub fn determinant<const D: usize>(m: &Matrix<D>) -> f64 {
     match m.det(0.0) {
         Ok(det) => det,
         Err(LaError::Singular { .. }) => 0.0,

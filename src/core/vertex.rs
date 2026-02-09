@@ -6,8 +6,9 @@
 //!
 //! # Key Features
 //!
-//! - **Generic Coordinate Support**: Works with any floating-point type (`f32`, `f64`, etc.)
-//!   that implements the `CoordinateScalar` trait
+//! - **Geometry when you need it**: the `Vertex` type does not require `T: CoordinateScalar`
+//!   at the type level, but geometric operations, validation, and serialization are only
+//!   available when `T: CoordinateScalar` (e.g. `f32`, `f64`)
 //! - **Unique Identification**: Each vertex has a UUID for consistent identification
 //! - **Optional Data Storage**: Supports attaching user data of any type `U` that implements [`DataType`], or use `()` for no data
 //! - **Incident Cell Tracking**: Maintains references to containing cells
