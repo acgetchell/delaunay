@@ -963,7 +963,7 @@ fn build_and_analyze_matrix(simplex_vertices: &[Vertex<f64, i32, 3>]) -> (f64, b
         );
     }
 
-    let det = determinant(matrix);
+    let det = determinant(&matrix);
     println!();
     println!("Determinant: {det:.6}");
 
