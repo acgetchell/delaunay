@@ -6,6 +6,7 @@ error handling, and changelog generation workflows.
 """
 
 import json
+import logging
 from pathlib import Path
 from unittest.mock import patch
 
@@ -554,6 +555,42 @@ Signed-off-by: Someone <someone@example.com>
         # Should be treated as normal wrapped text, not an indented code block.
         assert "      deduplication" not in joined
         assert "  deduplication to prevent panics or unexpected behavior" in joined
+
+    def test_format_entry_body_dedents_indented_prose_with_equals_signs(self) -> None:
+        body_lines = [
+            "    This sentence contains x=y but is prose.",
+        ]
+
+        out = ChangelogUtils._format_entry_body(body_lines, max_line_length=80)
+        joined = "\n".join(out)
+
+        # The equals sign appears mid-sentence; this should still be treated as prose.
+        assert "      This sentence" not in joined
+        assert "  This sentence contains x=y but is prose." in joined
+
+    def test_format_entry_body_keeps_assignment_lines_in_fenced_code_blocks(self) -> None:
+        body_lines = [
+            "```",
+            "x = 1",
+            "```",
+        ]
+
+        out = ChangelogUtils._format_entry_body(body_lines, max_line_length=80)
+        joined = "\n".join(out)
+
+        assert "      x = 1" in joined
+
+    def test_convert_fenced_code_blocks_logs_when_unclosed(self, caplog) -> None:
+        body_lines = [
+            "```",
+            "echo hi",
+        ]
+
+        with caplog.at_level(logging.DEBUG):
+            out = ChangelogUtils._convert_fenced_code_blocks_to_indented(body_lines)
+
+        assert out == ["    echo hi"]
+        assert "Unclosed fenced code block detected" in caplog.text
 
 
 class TestGitHubAnchorExtraction:

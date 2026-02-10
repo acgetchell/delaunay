@@ -304,13 +304,8 @@ jobs:
           mkdir -p ab-baseline
           rm -f ab-baseline/baseline_results.txt
 
-          # Preserve the benchmark harness so BASELINE_COMMIT and SAFE_COMMIT_SHA
-          # are measured with identical benchmark code.
-          cp benches/ci_performance_suite.rs ab-baseline/ci_performance_suite.rs
-
           echo "=== Baseline benchmark (same runner) ==="
           git checkout --force "${BASELINE_COMMIT}"
-          cp ab-baseline/ci_performance_suite.rs benches/ci_performance_suite.rs
           uv run benchmark-utils generate-baseline \
             --output "ab-baseline/baseline_results.txt" \
             --bench-timeout "${BENCHMARK_TIMEOUT}" \
@@ -335,7 +330,6 @@ jobs:
           path: |
             benches/compare_results.txt
             ab-baseline/baseline_results.txt
-            ab-baseline/ci_performance_suite.rs
           if-no-files-found: warn
           retention-days: 30
 

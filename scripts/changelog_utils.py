@@ -486,9 +486,8 @@ class ChangelogUtils:
 
             # Keep issue-style references ("Refs: #123"), but drop branch-like refs
             # ("Refs: feature/foo") which are not stable release notes.
-            if m := refs_re.match(line):
-                if "#" not in m.group("refs"):
-                    continue
+            if (m := refs_re.match(line)) and "#" not in m.group("refs"):
+                continue
 
             if line.strip() or content_lines:
                 content_lines.append(line)
@@ -851,6 +850,9 @@ class ChangelogUtils:
 
             out.append(line)
 
+        if in_fence:
+            logging.debug("Unclosed fenced code block detected in commit body; output may be misformatted")
+
         return out
 
     @classmethod
@@ -887,7 +889,6 @@ class ChangelogUtils:
             ";",
             "{",
             "}",
-            "=",
         )
 
         for line in content_lines:
@@ -900,6 +901,11 @@ class ChangelogUtils:
                 return True
 
             if any(marker in stripped for marker in code_markers):
+                return True
+
+            # Treat assignment/config lines as code, but avoid classifying any line that
+            # merely *contains* '=' somewhere in the middle of prose.
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_.-]*\s*=\s*\S", stripped):
                 return True
 
             # Single-token lines inside indented blocks are more likely to be code/output
@@ -1550,7 +1556,12 @@ def _run_git_cliff(file_paths: dict[str, Path], project_root: Path) -> None:
         if e.stderr:
             print(e.stderr, file=sys.stderr)
         print("Error: git-cliff failed.", file=sys.stderr)
-        sys.exit(1)
+
+        details = (e.stderr or e.stdout or str(e) or "").strip()
+        msg = f"_run_git_cliff failed: git-cliff exited with status {e.returncode}"
+        if details:
+            msg = f"{msg}\n{details}"
+        raise ChangelogError(msg) from e
 
 
 def _post_process_dates(file_paths: dict[str, Path]) -> None:
