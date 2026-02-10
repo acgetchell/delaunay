@@ -83,7 +83,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ steps.tag_info.outputs.tag_name }}
-          path: target
+          path: bench-target
 
       - name: Install target Rust toolchain (from tag)
         env:
@@ -95,7 +95,7 @@ jobs:
           from pathlib import Path
           import tomllib
 
-          data = tomllib.loads(Path('target/rust-toolchain.toml').read_text(encoding='utf-8'))
+          data = tomllib.loads(Path('bench-target/rust-toolchain.toml').read_text(encoding='utf-8'))
           print(data['toolchain']['channel'])
           PY
           )"
@@ -115,14 +115,14 @@ jobs:
 
           # Generate baseline using fixed tooling (this checkout) against the tag checkout.
           uv run benchmark-utils generate-baseline \
-            --project-root target \
+            --project-root bench-target \
             --tag "${TAG_NAME}"
 
           echo "✅ Baseline generated successfully"
 
           # Display baseline summary
           uv run benchmark-utils display-summary \
-            --baseline "target/baseline-artifact/baseline_results.txt"
+            --baseline "bench-target/baseline-artifact/baseline_results.txt"
 
       - name: Prepare baseline artifact
         env:
@@ -134,14 +134,14 @@ jobs:
           # Create metadata file in the target checkout so it is included in the uploaded artifact.
           uv run benchmark-utils create-metadata \
             --tag "${TAG_NAME}" \
-            --output-dir "target/baseline-artifact"
+            --output-dir "bench-target/baseline-artifact"
 
           # Extract the tag commit from the baseline file for human-readable logging.
           baseline_commit="$(python3 - <<'PY'
           from pathlib import Path
           import re
 
-          text = Path('target/baseline-artifact/baseline_results.txt').read_text(encoding='utf-8', errors='replace')
+          text = Path('bench-target/baseline-artifact/baseline_results.txt').read_text(encoding='utf-8', errors='replace')
           m = re.search(r'^Git commit:\s*(\S+)', text, flags=re.MULTILINE)
           print(m.group(1) if m else 'unknown')
           PY
@@ -149,7 +149,7 @@ jobs:
           echo "BASELINE_COMMIT=${baseline_commit}" >> "$GITHUB_ENV"
 
           echo "📦 Artifact contents:"
-          ls -la target/baseline-artifact/
+          ls -la bench-target/baseline-artifact/
 
       - name: Create safe artifact name
         id: safe_name
@@ -161,7 +161,7 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{ steps.safe_name.outputs.artifact_name }}
-          path: target/baseline-artifact/
+          path: bench-target/baseline-artifact/
           retention-days: 90 # Keep baselines ~90 days (align with repo settings; adjust if needed)
           compression-level: 6 # Good balance of speed/compression
 
