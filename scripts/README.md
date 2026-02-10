@@ -575,7 +575,7 @@ git tag vX.Y.Z
 git push origin vX.Y.Z
 
 # This triggers `.github/workflows/generate-baseline.yml` and uploads an artifact named:
-#   performance-baseline-vX.Y.Z
+#   performance-baseline-vX_Y_Z  (for tag vX.Y.Z; dots replaced with underscores)
 # containing:
 #   baseline_results.txt
 #   metadata.json
@@ -725,7 +725,7 @@ The repository includes automated performance regression testing via GitHub Acti
 
 ```bash
 # If baseline exists:
-# 1. Finds the latest semver tag baseline artifact (performance-baseline-vX.Y.Z) from generate-baseline.yml runs
+# 1. Finds the latest semver tag baseline artifact (performance-baseline-vX_Y_Z) from generate-baseline.yml runs
 # 2. Downloads and normalizes it to baseline-artifact/baseline_results.txt
 # 3. Runs uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
 # 4. Uploads comparison results (benches/compare_results.txt) as artifacts

@@ -2064,8 +2064,16 @@ class WorkflowHelper:
         Returns:
             Sanitized artifact name
         """
-        # Replace any non-alphanumeric characters (except . _ -) with underscore
+        # Replace any non-alphanumeric characters (except . _ -) with underscore.
         clean_name = re.sub(r"[^a-zA-Z0-9._-]", "_", tag_name)
+
+        # Avoid dots in artifact names.
+        #
+        # Some tooling (including common unzip behavior on macOS) treats dot-separated segments
+        # as file extensions and can truncate extracted directory names for artifacts like
+        # "performance-baseline-v0.6.2".
+        clean_name = clean_name.replace(".", "_")
+
         artifact_name = f"performance-baseline-{clean_name}"
 
         # Set GitHub Actions output if available
@@ -2503,8 +2511,17 @@ def get_default_bench_timeout() -> int:
 
 
 def _sanitize_tag_name(tag_name: str) -> str:
-    """Sanitize a tag name for use in artifact names and local cache directories."""
+    """Sanitize a tag name for use in local cache directories."""
     return re.sub(r"[^a-zA-Z0-9._-]", "_", tag_name)
+
+
+def _sanitize_tag_name_for_artifact(tag_name: str) -> str:
+    """Sanitize a tag name for GitHub Actions artifact names.
+
+    We avoid dots because some tools treat dot-separated segments as file extensions
+    and can truncate extracted directory names (e.g., v0.6.2 → v0).
+    """
+    return _sanitize_tag_name(tag_name).replace(".", "_")
 
 
 def _default_baseline_cache_dir(project_root: Path, tag_name: str) -> Path:
@@ -2664,6 +2681,10 @@ class GitHubBaselineFetcher:
         self.repo = _resolve_github_repo(project_root, repo=repo, remote=remote)
 
     def _artifact_name_for_tag(self, tag_name: str) -> str:
+        return f"performance-baseline-{_sanitize_tag_name_for_artifact(tag_name)}"
+
+    def _legacy_artifact_name_for_tag(self, tag_name: str) -> str:
+        # Legacy naming kept dots from the tag (e.g., v0.6.2).
         return f"performance-baseline-{_sanitize_tag_name(tag_name)}"
 
     def _try_download_artifact(self, *, artifact_name: str, out_dir: Path) -> bool:
@@ -2726,13 +2747,21 @@ class GitHubBaselineFetcher:
             Path to the downloaded baseline_results.txt
         """
         artifact_name = self._artifact_name_for_tag(tag_name)
+        legacy_artifact_name = self._legacy_artifact_name_for_tag(tag_name)
+
+        # Try the current artifact name first, then fall back to the legacy dotful name.
+        candidates = list(dict.fromkeys([artifact_name, legacy_artifact_name]))
+
+        def _try_download_any() -> bool:
+            return any(self._try_download_artifact(artifact_name=candidate, out_dir=out_dir) for candidate in candidates)
 
         try:
-            if self._try_download_artifact(artifact_name=artifact_name, out_dir=out_dir):
+            if _try_download_any():
                 return _find_downloaded_baseline_file(out_dir)
 
             if not options.regenerate_missing:
-                msg = f"Baseline artifact not found for tag {tag_name} (expected artifact: {artifact_name})"
+                expected = ", ".join(candidates)
+                msg = f"Baseline artifact not found for tag {tag_name} (expected artifact name(s): {expected})"
                 raise FileNotFoundError(msg)
 
             print(f"🔁 Baseline artifact not found for {tag_name}; dispatching generate-baseline.yml and waiting...")
@@ -2744,14 +2773,15 @@ class GitHubBaselineFetcher:
                 attempt += 1
                 time.sleep(options.poll_seconds)
 
-                if self._try_download_artifact(artifact_name=artifact_name, out_dir=out_dir):
+                if _try_download_any():
                     return _find_downloaded_baseline_file(out_dir)
 
                 if attempt % 5 == 0:
                     remaining = int(max(0.0, deadline - time.monotonic()))
                     print(f"⏳ Waiting for baseline artifact {artifact_name}... ({remaining}s remaining)")
 
-            msg = f"Timed out waiting for baseline artifact {artifact_name} (tag {tag_name})"
+            expected = ", ".join(candidates)
+            msg = f"Timed out waiting for baseline artifact(s) {expected} (tag {tag_name})"
             raise TimeoutError(msg)
 
         except ExecutableNotFoundError as e:

@@ -75,7 +75,8 @@ jobs:
           script: |
             try {
               const prefix = 'performance-baseline-';
-              const semverRe = /^performance-baseline-v(\d+)\.(\d+)\.(\d+)(?:[._-].*)?$/;
+              // Accept both legacy dotful names (vX.Y.Z) and dotless names (vX_Y_Z).
+              const semverRe = /^performance-baseline-v(\d+)[._](\d+)[._](\d+)(?:[._-].*)?$/;
 
               const parseSemver = (name) => {
                 const m = name.match(semverRe);

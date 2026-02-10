@@ -1,38 +1,55 @@
 # Topological and Geometric Invariants
 
 This document provides the **theoretical background, formal definitions, and rationale**
-for the invariants enforced by the `delaunay` crate.
+for the invariants enforced by the [`delaunay`](https://crates.io/crates/delaunay) crate.
 
-Whereas the crate-level documentation (`lib.rs`) specifies the **semantic contract**
+Whereas the crate-level [documentation](https://docs.rs/delaunay/) specifies the **semantic contract**
 — what invariants are enforced and when —
 this document explains **why** those invariants are sufficient, how they relate to
 PL-manifold theory, and what assumptions underlie convergence guarantees.
+
+- Rendered public API docs: <https://docs.rs/delaunay>.
+- Crate page: <https://crates.io/crates/delaunay>.
+- Source: <https://github.com/acgetchell/delaunay>.
+- External reference implementation: [CGAL](https://www.cgal.org/) (<https://doc.cgal.org/latest/>).
 
 This file is intentionally non-normative: it complements, but does not override,
 the guarantees stated in the public API documentation.
 
 ---
 
-## Scope and intent
+## Table of Contents
 
-This document covers:
-
-- Formal definitions of simplicial-complex and PL-manifold invariants
-- Link-based manifold conditions (ridge links vs vertex links)
-- Rationale for incremental validation strategies
-- Ordering heuristics used during insertion (Hilbert, Morton)
-- Convergence assumptions for bistellar / flip-based repair
-- Known limitations and pathological cases
-- References to relevant computational geometry literature
-
-Throughout, footnotes link to (a) primary sources (papers/books) justifying the claims in each section and
-(b) representative implementations (both internal modules and external libraries like CGAL) when helpful.
+- [Topological and Geometric Invariants](#topological-and-geometric-invariants)
+  - [Table of Contents](#table-of-contents)
+  - [Simplicial complexes and manifolds](#simplicial-complexes-and-manifolds)
+    - [Simplicial complex model](#simplicial-complex-model)
+  - [Geometric invariants](#geometric-invariants)
+    - [Delaunay condition (empty circumsphere property)](#delaunay-condition-empty-circumsphere-property)
+  - [PL-manifold conditions](#pl-manifold-conditions)
+    - [PL-manifolds vs pseudomanifolds](#pl-manifolds-vs-pseudomanifolds)
+  - [Link-based manifold validation](#link-based-manifold-validation)
+    - [Vertex links](#vertex-links)
+    - [Ridge links](#ridge-links)
+  - [Incremental validation strategy](#incremental-validation-strategy)
+    - [Incremental insertion algorithm (cavity-based)](#incremental-insertion-algorithm-cavity-based)
+    - [Degenerate input and initial simplex construction](#degenerate-input-and-initial-simplex-construction)
+    - [Tradeoffs](#tradeoffs)
+  - [Insertion ordering and locality heuristics](#insertion-ordering-and-locality-heuristics)
+    - [Hilbert ordering](#hilbert-ordering)
+    - [Morton (Z-order) ordering](#morton-z-order-ordering)
+  - [Convergence considerations](#convergence-considerations)
+  - [Limitations and pathological cases](#limitations-and-pathological-cases)
+  - [Footnotes](#footnotes)
 
 Readers primarily interested in **how to use the library** should start with:
 
-- `README.md`
-- `docs/workflows.md`
-- `docs/validation.md`
+- [`README.md`](../README.md)
+- [`docs/workflows.md`](workflows.md)
+- [`docs/validation.md`](validation.md)
+- [`docs/api_design.md`](api_design.md)
+- [`docs/topology.md`](topology.md)
+- [`docs/numerical_robustness_guide.md`](numerical_robustness_guide.md)
 
 ---
 
@@ -41,18 +58,20 @@ Readers primarily interested in **how to use the library** should start with:
 ### Simplicial complex model
 
 At the data-structure level, the crate models a triangulation as a **finite simplicial complex**[^edelsbrunner2001]
-represented by its **maximal** simplices (“cells”). In dimension `D`, a maximal cell is a
+represented by its **minimal** ("vertices) and **maximal** simplices (“cells”). In dimension `D`, a maximal cell is a
 `D`-simplex with exactly `D+1` vertices.
 
 Key combinatorial objects:
 
 - **Vertices**: 0-simplices. In the implementation, a vertex has coordinates plus an internal key
-  (and a UUID) used for stable referencing.
-- **Cells**: maximal `D`-simplices. Each cell stores a set of `D+1` vertex keys.
+  and a UUID (used for stable referencing, e.g. serialization to files).
+- **Cells**: maximal `D`-simplices. Each cell stores a set of `D+1` vertex keys, and also has an internal key and an externally accessible UUID.
 - **Facets**: codimension-1 faces of a cell. A `D`-simplex has `D+1` facets, each missing exactly one
   vertex.
 - **Adjacency / neighbors**: two cells are neighbors if they share a facet. The triangulation data
-  structure (TDS) stores neighbor pointers across facets.[^cgal-tds3][^impl-tds]
+  structure (TDS) stores neighbor pointers across facets (see
+  [`src/core/triangulation_data_structure.rs`](../src/core/triangulation_data_structure.rs) and CGAL’s
+  [TDS_3](https://doc.cgal.org/latest/TDS_3/index.html)).[^cgal-tds3][^impl-tds]
 - **Boundary vs interior facets**:
   - An **interior facet** is incident to exactly two cells.
   - A **boundary facet** is incident to exactly one cell.
@@ -70,7 +89,7 @@ complex.
 
 A Delaunay triangulation is characterized by the **empty circumsphere** condition:[^deberg2008][^edelsbrunner2001]
 
-- for each `D`-simplex (cell), no other input vertex lies *strictly inside* that simplex’s
+- for each `D`-simplex (cell), no non-cell vertex lies *strictly inside* that simplex’s
   circumsphere.
 
 This is a **geometric** invariant: it depends on the embedding coordinates and on robust evaluation
@@ -117,14 +136,19 @@ simplicial complexes for geometry:
   global consistency check that catches some classes of topological corruption.
 
 Piecewise-linear (PL) manifoldness is strictly stronger than the pseudomanifold conditions. The public API exposes this
-via `TopologyGuarantee`:
+via [`TopologyGuarantee`](https://docs.rs/delaunay/latest/delaunay/core/triangulation/enum.TopologyGuarantee.html)
+(source: [`src/core/triangulation.rs`](../src/core/triangulation.rs)):
 
-- `TopologyGuarantee::Pseudomanifold` checks the codimension-1 incidence conditions (plus boundary
-- consistency, connectedness, isolated-vertex, and Euler characteristic checks).
-- `TopologyGuarantee::PLManifold` and `PLManifoldStrict` add **link-based** conditions (ridge links
-  and/or vertex links) that are characteristic of PL-manifolds. In PL topology, requiring the links
-  of simplices to be spheres (or balls at the boundary) is equivalent to the standard manifold condition that
-  every point has a locally Euclidean neighborhood (up to PL homeomorphism).[^hatcher2002][^rourke-sanderson]
+- [`TopologyGuarantee::Pseudomanifold`](https://docs.rs/delaunay/latest/delaunay/core/triangulation/enum.TopologyGuarantee.html#variant.Pseudomanifold)
+  checks the codimension-1 incidence conditions (plus boundary consistency, connectedness,
+  isolated-vertex, and Euler characteristic checks).
+- [`TopologyGuarantee::PLManifold`](https://docs.rs/delaunay/latest/delaunay/core/triangulation/enum.TopologyGuarantee.html#variant.PLManifold)
+  and
+  [`TopologyGuarantee::PLManifoldStrict`](https://docs.rs/delaunay/latest/delaunay/core/triangulation/enum.TopologyGuarantee.html#variant.PLManifoldStrict)
+  add **link-based** conditions (ridge links and/or vertex links) that are characteristic of
+  PL-manifolds. In PL topology, requiring the links of simplices to be spheres (or balls at the
+  boundary) is equivalent to the standard manifold condition that every point has a locally
+  Euclidean neighborhood (up to PL homeomorphism).[^hatcher2002][^rourke-sanderson]
 
 The precise **when/where** of these checks (during insertion vs at completion) is described in the
 crate-level API docs and implemented by the validation stack; this document focuses on the rationale
@@ -155,8 +179,9 @@ vertex and verifying topological properties of the resulting complex.
 
 For this reason, the `delaunay` crate defers vertex-link validation until
 construction completion by default. When stronger guarantees are required,
-`TopologyGuarantee::PLManifoldStrict` enables vertex-link validation after every
-insertion, trading performance for earlier detection and improved diagnosability.
+[`TopologyGuarantee::PLManifoldStrict`](https://docs.rs/delaunay/latest/delaunay/core/triangulation/enum.TopologyGuarantee.html#variant.PLManifoldStrict)
+enables vertex-link validation after every insertion, trading performance for earlier detection and
+improved diagnosability.
 
 ### Ridge links
 
@@ -196,14 +221,19 @@ At a high level:
   links are small, local objects, and validating them catches many PL-manifold violations early.
 - **Vertex-link validation** is stronger but significantly more expensive. The default strategy is
   to defer full vertex-link certification until construction completion.
-- **Strict mode** (`TopologyGuarantee::PLManifoldStrict`) runs vertex-link validation after each
-  insertion, trading performance for earlier detection and improved diagnosability.
+- **Strict mode**
+  ([`TopologyGuarantee::PLManifoldStrict`](https://docs.rs/delaunay/latest/delaunay/core/triangulation/enum.TopologyGuarantee.html#variant.PLManifoldStrict))
+  runs vertex-link validation after each insertion, trading performance for earlier detection and
+  improved diagnosability.
 
 ### Incremental insertion algorithm (cavity-based)
 
-The crate’s incremental construction follows the standard cavity-based approach (CGAL-style):[^bowyer1981][^watson1981][^cgal-triangulation3][^impl-incremental-insertion]
+The crate’s incremental construction follows the standard cavity-based approach (CGAL-style; see
+[CGAL Triangulation_3](https://doc.cgal.org/latest/Triangulation_3/index.html) and
+[`src/core/algorithms/incremental_insertion.rs`](../src/core/algorithms/incremental_insertion.rs)):[^bowyer1981][^watson1981][^cgal-triangulation3][^impl-incremental-insertion]
 
-1. **Locate** the simplex containing the query point (facet walking / scan fallback).[^devillers-walking][^impl-locate]
+1. **Locate** the simplex containing the query point (facet walking / scan fallback;
+   [`src/core/algorithms/locate.rs`](../src/core/algorithms/locate.rs)).[^devillers-walking][^impl-locate]
 2. **Find the conflict region**: the set of cells whose circumspheres contain the point.
 3. **Extract the cavity boundary** (a set of boundary facets separating conflicting from
    non-conflicting cells).
@@ -253,12 +283,14 @@ triangulation. Its impact is strictly on performance, robustness, and practical
 convergence behavior, particularly in higher dimensions where cavity growth and
 flip complexity can otherwise become large.
 
-In this crate, Hilbert indices are computed using Skilling’s algorithm and used for batch preprocessing.[^skilling2004][^impl-hilbert]
+In this crate, Hilbert indices are computed using Skilling’s algorithm and used for batch preprocessing
+(see [`src/core/util/hilbert.rs`](../src/core/util/hilbert.rs)).[^skilling2004][^impl-hilbert]
 
 ### Morton (Z-order) ordering
 
 Morton (Z-order) ordering sorts points by interleaving coordinate bits (after an appropriate
-normalization).[^morton1966][^moon2001][^impl-morton]
+normalization; see [`InsertionOrderStrategy::Morton`](../src/core/delaunay_triangulation.rs) and
+`order_vertices_morton` in [`src/core/delaunay_triangulation.rs`](../src/core/delaunay_triangulation.rs)).[^morton1966][^moon2001][^impl-morton]
 Like Hilbert ordering, it is a space-filling curve that tends to preserve locality,
 but typically has weaker locality properties than Hilbert.
 
@@ -277,7 +309,8 @@ guarantees: the same invariants are enforced regardless of insertion order.
 ## Convergence considerations
 
 Many “repair” and “editing” workflows in high dimensions rely on sequences of **bistellar flips**
-(Pachner moves) to improve topology or restore the Delaunay property.[^pachner1991][^edelshah1996][^impl-flips]
+(Pachner moves) to improve topology or restore the Delaunay property (see
+[`src/core/algorithms/flips.rs`](../src/core/algorithms/flips.rs)).[^pachner1991][^edelshah1996][^impl-flips]
 
 Important caveats:
 
@@ -293,7 +326,7 @@ The crate therefore treats flip/repair as a best-effort procedure with explicit 
   flip-heavy workflows.
 - Validate the Delaunay property (Level 4) explicitly when inputs are near-degenerate.
 
-See the public API docs and `docs/workflows.md` for practical guidance.
+See the public API docs (<https://docs.rs/delaunay>) and [`docs/workflows.md`](workflows.md) for practical guidance.
 
 ---
 
@@ -315,14 +348,14 @@ Ordering and preprocessing can mitigate (but not eliminate) these issues:
 - Locality-preserving orders (Hilbert / Morton) tend to keep cavities small and reduce flip cascades.
 - Deduplication / near-duplicate rejection avoids many “almost coincident” degeneracies.
 
-For concrete failure modes and recommended workflows, see `docs/workflows.md`, `docs/validation.md`,
-and the issue investigation notes in `docs/archive/`.
+For concrete failure modes and recommended workflows, see [`docs/workflows.md`](workflows.md),
+[`docs/validation.md`](validation.md), and the issue investigation notes in [`docs/archive/`](archive/).
 
 ---
 
 ## Footnotes
 
-For the project-wide bibliography (including references not cited here), see `REFERENCES.md`.
+For the project-wide bibliography (including references not cited here), see [`REFERENCES.md`](../REFERENCES.md).
 
 [^edelsbrunner2001]: Herbert Edelsbrunner. *Geometry and Topology for Mesh Generation*. Cambridge University Press, 2001. DOI: <https://doi.org/10.1017/CBO9780511530067>.
 [^cgal-tds3]: CGAL Project. *Triangulation Data Structure* (TDS_3) documentation. <https://doc.cgal.org/latest/TDS_3/index.html>.

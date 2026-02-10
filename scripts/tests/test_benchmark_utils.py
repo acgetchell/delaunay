@@ -1028,7 +1028,7 @@ Time: [220.0, 250.0, 280.0] µs
     def test_sanitize_artifact_name_basic(self):
         """Test basic artifact name sanitization."""
         artifact_name = WorkflowHelper.sanitize_artifact_name("v1.2.3")
-        assert artifact_name == "performance-baseline-v1.2.3"
+        assert artifact_name == "performance-baseline-v1_2_3"
 
     def test_sanitize_artifact_name_with_special_chars(self):
         """Test artifact name sanitization with special characters."""
@@ -1043,21 +1043,21 @@ Time: [220.0, 250.0, 280.0] µs
         try:
             with patch.dict(os.environ, {"GITHUB_OUTPUT": output_file}):
                 artifact_name = WorkflowHelper.sanitize_artifact_name("v2.0.0-beta.1")
-                assert artifact_name == "performance-baseline-v2.0.0-beta.1"
+                assert artifact_name == "performance-baseline-v2_0_0-beta_1"
 
             # Check that GITHUB_OUTPUT file was written
             with open(output_file, encoding="utf-8") as f:
                 content = f.read()
-                assert "artifact_name=performance-baseline-v2.0.0-beta.1\n" in content
+                assert "artifact_name=performance-baseline-v2_0_0-beta_1\n" in content
         finally:
             Path(output_file).unlink(missing_ok=True)
 
     @pytest.mark.parametrize(
         ("input_tag", "expected_output"),
         [
-            ("v1.0.0-alpha.1", "performance-baseline-v1.0.0-alpha.1"),
+            ("v1.0.0-alpha.1", "performance-baseline-v1_0_0-alpha_1"),
             ("tag with spaces", "performance-baseline-tag_with_spaces"),
-            ("v1.0.0+build.123", "performance-baseline-v1.0.0_build.123"),
+            ("v1.0.0+build.123", "performance-baseline-v1_0_0_build_123"),
         ],
     )
     def test_sanitize_artifact_name_edge_cases(self, input_tag, expected_output):
