@@ -29,97 +29,58 @@ lightweight alternative to [CGAL] for the [Rust] ecosystem.
 - [x]  Geometry quality metrics for simplices: radius ratio and normalized volume (dimension-agnostic)
 - [x]  Serialization/Deserialization of all data structures to/from [JSON]
 - [x]  Tested for 2-, 3-, 4-, and 5-dimensional triangulations
+- [x]  Configurable predicate kernels: `FastKernel` (speed) vs `RobustKernel` (degenerate / near-degenerate robustness)
+- [x]  Bulk insertion ordering (`InsertionOrderStrategy`): [Hilbert curve] (default), [Z-order curve] / Morton, lexicographic, or input order
+- [x]  Batch construction options (`ConstructionOptions`): optional deduplication and deterministic retries
+- [x]  Incremental construction APIs: insertion plus vertex removal (`remove_vertex`)
+- [x]  4-level validation hierarchy (elements → structure → topology → Delaunay), including full diagnostics via `validation_report`
 - [x]  Local topology validation ([PL-manifold] default, [Pseudomanifold] opt-out)
 - [x]  The complete set of [Pachner moves] up to 5D implemented as bistellar k-flips for k = 1, 2, 3 plus inverse moves
-- [x]  Delaunay repair using bistellar flips for k=2/k=3 with inverse edge/triangle queues in 4D/5D
+- [x]  [Delaunay repair] using bistellar flips for k=2/k=3 with inverse edge/triangle queues in 4D/5D
+- [x]  Safe Rust: `#![forbid(unsafe_code)]`
 
 See [CHANGELOG.md](CHANGELOG.md) for details.
 
-## ⚠️ Delaunay Property
+## 🟢 Delaunay triangulation (happy path)
 
-The triangulation uses flip-based [Delaunay repair] (k=2 facet queues, k=3 ridge queues,
-and inverse edge/triangle queues in 4D/5D) after insertion by default via
-`DelaunayRepairPolicy`.
-
-The default topology guarantee is `TopologyGuarantee::PLManifold` (ridge-link validation during
-insertion, vertex-link validation at completion), which is the recommended mode for Delaunay
-triangulations. For strict per-insertion vertex-link checks, use `TopologyGuarantee::PLManifoldStrict`.
-
-You can relax to `TopologyGuarantee::Pseudomanifold` for speed, but bistellar flip convergence is not
-guaranteed and the Delaunay property may not hold on construction for near-degenerate inputs (or if
-repair is disabled/non-convergent). Use `dt.is_valid()` / `dt.validate()` to verify.
-
-Repair is **bounded to two attempts**: attempt 1 uses FIFO ordering with fast predicates;
-on non-convergence it retries once with LIFO ordering and robust predicates **only for
-ambiguous boundary classifications**. If it still fails, the error includes diagnostics
-(checked counts, ambiguous predicate samples, max queue depth, etc.). Highly degenerate
-inputs or duplicate-handling edge cases can still require additional filtering.
-For persistent failures, an **optional heuristic fallback** is available via
-`repair_delaunay_with_flips_advanced`. This runs the standard two-pass repair, and
-if it still fails, rebuilds the triangulation from the current vertex set using a
-shuffled insertion order and a fresh perturbation seed, then runs a final flip-repair
-pass. This fallback is heuristic and **non-reproducible by default**; the returned
-`DelaunayRepairOutcome` includes the seeds used so you can replay the exact run.
+The **Builder API** (`DelaunayTriangulation`) is the recommended way to construct and maintain
+Delaunay triangulations.
 
 ```rust
-use delaunay::prelude::*;
-let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+use delaunay::prelude::triangulation::*;
 
-// Default topology guarantee for Delaunay triangulations:
-assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
+// Create a 4D Delaunay triangulation from a set of vertices (with the default fast kernel).
+let vertices = vec![
+    vertex!([0.0, 0.0, 0.0, 0.0]),
+    vertex!([1.0, 0.0, 0.0, 0.0]),
+    vertex!([0.0, 1.0, 0.0, 0.0]),
+    vertex!([0.0, 0.0, 1.0, 0.0]),
+    vertex!([0.0, 0.0, 0.0, 1.0]), // 5 vertices (D+1) creates first 4-simplex
+    vertex!([0.2, 0.2, 0.2, 0.2]), // Adding this vertex creates new simplices via flips
+];
 
-// Insert some vertices to build an initial triangulation.
-// dt.insert(vertex!([0.0, 0.0, 0.0]))?;
-// dt.insert(vertex!([1.0, 0.0, 0.0]))?;
-// dt.insert(vertex!([0.0, 1.0, 0.0]))?;
-// dt.insert(vertex!([0.0, 0.0, 1.0]))?;
+let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-let outcome = dt.repair_delaunay_with_flips_advanced(
-    DelaunayRepairHeuristicConfig::default(),
-)?;
+assert_eq!(dt.dim(), 4);
+assert_eq!(dt.number_of_vertices(), 6);
+assert_eq!(dt.number_of_cells(), 5); // 1 simplex from first 5 vertices + 4 new simplices from last vertex
 
-if outcome.used_heuristic() {
-    eprintln!("Heuristic rebuild used: {:?}", outcome.heuristic);
-}
+// Optional verification:
+// - `dt.is_valid()` checks Level 4 only (Delaunay property).
+// - `dt.validate()` checks Levels 1–4 (elements + structure + topology + Delaunay).
+assert!(dt.is_valid().is_ok());
 ```
 
-For details, see: [Issue #120 Investigation (RESOLVED)](docs/archive/issue_120_investigation.md)
+Need more control?
 
-**Validation**: You can verify your triangulation meets your requirements using the library's
-[4-level validation hierarchy](docs/validation.md):
-
-- **Level 1** (`Vertex::is_valid()` / `Cell::is_valid()`) - Element validity (finite coordinates, non-nil UUIDs, D+1 distinct vertices)
-- **Level 2** (`dt.tds().is_valid()`) - Structural correctness (expected to pass when using public APIs)
-- **Level 3** (`dt.as_triangulation().is_valid()`) - Manifold topology + Euler characteristic
-- **Level 4** (`dt.is_valid()`) - Delaunay property only (may fail if repair is disabled or non-convergent)
-- **All levels (1–4)** (`dt.validate()`) - Elements + structure + topology + Delaunay property
-
-Level 3 topology validation is parameterized by `TopologyGuarantee` (default: `PLManifold`).
-To relax topology checks for speed, set `TopologyGuarantee::Pseudomanifold` (skips vertex-link validation).
-For strict per-insertion vertex-link checks, use `TopologyGuarantee::PLManifoldStrict`.
-
-During incremental insertion, the automatic Level 3 validation pass is controlled by
-`ValidationPolicy` (default: `OnSuspicion`).
-
-```rust
-use delaunay::prelude::*;
-
-let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
-
-// Optional: relax topology checks for speed (skips vertex-link validation).
-dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
-
-// In tests/debugging, validate Level 3 after every insertion:
-dt.set_validation_policy(ValidationPolicy::Always);
-```
-
-For applications requiring strict Delaunay guarantees:
-
-- Keep `DelaunayRepairPolicy::EveryInsertion` (default) or call `repair_delaunay_with_flips()` after batch edits
-- If standard repair does not converge, consider `repair_delaunay_with_flips_advanced()` for the heuristic rebuild fallback
-- Use `dt.is_valid()` (Level 4 only) or `dt.validate()` (Levels 1–4) to check your triangulation
-- Filter degenerate configurations when possible
-- Monitor for additional flip types in future releases
+- **Editing with flips (Edit API)**:
+  see [`docs/workflows.md`](docs/workflows.md) for a minimal example and [`docs/api_design.md`](docs/api_design.md) for details.
+- **Flip-based Delaunay repair**, including the heuristic rebuild fallback (`repair_delaunay_with_flips*`):
+  see [`docs/workflows.md`](docs/workflows.md).
+- **Insertion outcomes and statistics** (`insert_with_statistics`, `InsertionOutcome`, `InsertionStatistics`):
+  see [`docs/workflows.md`](docs/workflows.md) and [`docs/numerical_robustness_guide.md`](docs/numerical_robustness_guide.md).
+- **Topology guarantees** (`TopologyGuarantee`) and **automatic topology validation** (`ValidationPolicy`):
+  see [`docs/validation.md`](docs/validation.md) and [`docs/topology.md`](docs/topology.md).
 
 ## 🚧 Project History
 
@@ -190,8 +151,11 @@ This includes information about:
 ## 📖 Documentation
 
 - **[Code Organization](docs/code_organization.md)** - Project structure and module patterns
-- **[Topology integration design](docs/topology.md)** - Design notes on topology integration (includes historical sections)
+- **[API Design](docs/api_design.md)** - Builder vs Edit API design (explicit bistellar flips)
+- **[Workflows](docs/workflows.md)** - Happy-path construction plus practical Builder/Edit recipes (stats, repairs, and minimal flips)
+- **[Topology](docs/topology.md)** - Level 3 topology validation (manifoldness + Euler characteristic) and module overview
 - **[Validation Guide](docs/validation.md)** - Comprehensive 4-level validation hierarchy guide (element → structural → manifold → Delaunay)
+- **[Numerical Robustness Guide](docs/numerical_robustness_guide.md)** - Robustness strategies, kernels, and retry/repair behavior
 - **[Issue #120 Investigation (RESOLVED)](docs/archive/issue_120_investigation.md)** - Bistellar flip-based Delaunay repair (completed v0.7.0+)
 
 ## 📚 References
@@ -226,6 +190,8 @@ Portions of this library were developed with the assistance of these AI tools:
 [Constrained Delaunay triangulations]: https://grokipedia.com/page/Constrained_Delaunay_triangulation
 [Voronoi diagrams]: https://grokipedia.com/page/Voronoi_diagram
 [Convex hulls]: https://grokipedia.com/page/Convex_hull
+[Hilbert curve]: https://grokipedia.com/page/Hilbert_curve
+[Z-order curve]: https://grokipedia.com/page/Z-order_curve
 [ChatGPT]: https://openai.com/chatgpt
 [Claude]: https://www.anthropic.com/claude
 [CodeRabbit]: https://coderabbit.ai/

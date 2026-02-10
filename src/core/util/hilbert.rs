@@ -74,7 +74,11 @@ pub fn hilbert_quantize<T: CoordinateScalar, const D: usize>(
 fn validate_hilbert_params<const D: usize>(bits: u32) {
     #[cfg(debug_assertions)]
     if bits == 0 || bits > 31 {
-        eprintln!("hilbert params invalid: bits={bits} (expected 1..=31)");
+        tracing::warn!(
+            dimension = D,
+            bits,
+            "hilbert params invalid (bits must be in 1..=31)"
+        );
     }
 
     assert!(bits > 0 && bits <= 31, "bits must be in range [1, 31]");
@@ -83,7 +87,12 @@ fn validate_hilbert_params<const D: usize>(bits: u32) {
 
     #[cfg(debug_assertions)]
     if total_bits > 128 {
-        eprintln!("hilbert params invalid: D={D} bits={bits} total_bits={total_bits} (max 128)");
+        tracing::warn!(
+            dimension = D,
+            bits,
+            total_bits,
+            "hilbert params invalid (Hilbert index would overflow u128)"
+        );
     }
 
     assert!(
@@ -398,13 +407,13 @@ mod tests {
     fn test_hilbert_bits_boundaries() {
         let origin = hilbert_index(&[0.0_f64, 0.0], (0.0, 1.0), 1);
         let corner = hilbert_index(&[1.0_f64, 1.0], (0.0, 1.0), 1);
-        eprintln!("bits=1 origin={origin} corner={corner}");
+        tracing::debug!(origin, corner, "bits=1 boundaries");
         assert_eq!(origin, 0, "bits=1 origin should map to 0");
         assert_ne!(origin, corner, "bits=1 should distinguish corners");
 
         let origin_31 = hilbert_index(&[0.0_f64, 0.0], (0.0, 1.0), 31);
         let corner_31 = hilbert_index(&[1.0_f64, 1.0], (0.0, 1.0), 31);
-        eprintln!("bits=31 origin={origin_31} corner={corner_31}");
+        tracing::debug!(origin_31, corner_31, "bits=31 boundaries");
         assert_eq!(origin_31, 0, "bits=31 origin should map to 0");
         assert_ne!(origin_31, corner_31, "bits=31 should distinguish corners");
     }
@@ -417,7 +426,7 @@ mod tests {
         let b = hilbert_index(&[0.25_f64], bounds, bits);
         let c = hilbert_index(&[0.5_f64], bounds, bits);
         let d = hilbert_index(&[1.0_f64], bounds, bits);
-        eprintln!("1d indices: a={a} b={b} c={c} d={d}");
+        tracing::debug!(a, b, c, d, "1d indices");
         assert!(
             a < b && b < c && c < d,
             "1D Hilbert indices should be monotonic"
@@ -430,7 +439,7 @@ mod tests {
         let coords = [2.0_f64, -2.0_f64];
         let q = hilbert_quantize(&coords, bounds, 8);
         let idx = hilbert_index(&coords, bounds, 8);
-        eprintln!("degenerate bounds q={q:?} idx={idx}");
+        tracing::debug!(?q, idx, "degenerate bounds");
         assert_eq!(q, [0, 0], "degenerate bounds should quantize to zeros");
         assert_eq!(idx, 0, "degenerate bounds should map to index 0");
     }
@@ -442,7 +451,7 @@ mod tests {
         let coords = [-1.0_f64, 2.0_f64];
         let q = hilbert_quantize(&coords, bounds, bits);
         let max_val = (1_u32 << bits) - 1;
-        eprintln!("clamp q={q:?} max={max_val}");
+        tracing::debug!(?q, max_val, "clamp quantize");
         assert_eq!(
             q,
             [0, max_val],
@@ -451,7 +460,7 @@ mod tests {
 
         let idx = hilbert_index(&coords, bounds, bits);
         let idx_clamped = hilbert_index(&[0.0_f64, 1.0_f64], bounds, bits);
-        eprintln!("clamp idx={idx} idx_clamped={idx_clamped}");
+        tracing::debug!(idx, idx_clamped, "clamp index");
         assert_eq!(
             idx, idx_clamped,
             "clamped coords should match clamped index"

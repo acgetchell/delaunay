@@ -588,7 +588,7 @@ Once the benchmark consolidation is complete, Phase 4 will evaluate these metric
 
 ## References
 
-- **Phase 4 Roadmap:** `docs/OPTIMIZATION_ROADMAP.md` (lines 493-685)
+- **Phase 4 Roadmap:** `docs/archive/OPTIMIZATION_ROADMAP.md` (see Phase 4 section)
 - **Large Scale Benchmark:** `benches/large_scale_performance.rs` (Phase 4 evaluation comments on lines 16-23, 57-58)
 - **Current Benchmark Suite:** `benches/README.md`
 - **Benchmark Tooling:** `scripts/benchmark_utils.py`

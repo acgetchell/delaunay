@@ -192,10 +192,9 @@ After applying flips, you should:
    dt.is_valid().unwrap();  // Check Level 4 (Delaunay property)
    ```
 
-2. Or implement your own Delaunay repair logic using the flip primitives
-
-3. Consider using the internal repair functions (for advanced users):
-   - These are currently `pub(crate)` but demonstrate how to restore the Delaunay property using k=2 and k=3 flips
+2. Consider running a repair pass if you need the Delaunay property again:
+   - `dt.repair_delaunay_with_flips()` (flip-based repair)
+   - `dt.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())` (includes a heuristic rebuild fallback)
 
 ## Combining Both APIs
 

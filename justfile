@@ -565,19 +565,19 @@ spell-check: _ensure-typos
     # Use -z for NUL-delimited output to handle filenames with spaces.
     #
     # Note: For renames/copies, `git status --porcelain -z` emits *two* NUL-separated paths.
-    # Examples:
-    #   R  old_path\0new_path\0
-    #   C  old_path\0new_path\0
-    # We therefore read two tokens and treat the second as the destination filename.
+    # The ordering can differ depending on the porcelain output, so we read both and
+    # spell-check whichever one exists on disk.
     while IFS= read -r -d '' status_line; do
         status="${status_line:0:2}"
         filename="${status_line:3}"
 
-        # For renames/copies, consume the destination path (the next NUL-delimited token).
-        # Git emits: "R  old_path\0new_path\0" (and similarly for "C  ...")
+        # For renames/copies, consume the second path token to keep parsing in sync.
+        # Prefer the path that exists on disk to avoid passing stale paths to typos.
         if [[ "$status" == *"R"* || "$status" == *"C"* ]]; then
-            if IFS= read -r -d '' rename_target; then
-                filename="$rename_target"
+            if IFS= read -r -d '' other_path; then
+                if [ ! -e "$filename" ] && [ -e "$other_path" ]; then
+                    filename="$other_path"
+                fi
             fi
         fi
 

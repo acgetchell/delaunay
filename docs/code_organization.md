@@ -68,6 +68,7 @@ delaunay/
 │   │   ├── invariant_validation_plan.md
 │   │   ├── issue_120_investigation.md
 │   │   ├── jaccard.md
+│   │   ├── OPTIMIZATION_ROADMAP.md
 │   │   ├── optimization_recommendations_historical.md
 │   │   ├── phase2_bowyer_watson_optimization.md
 │   │   ├── phase2_uuid_iter_optimization.md
@@ -78,7 +79,6 @@ delaunay/
 │   ├── templates/
 │   │   ├── README.md
 │   │   └── changelog.hbs
-│   ├── OPTIMIZATION_ROADMAP.md
 │   ├── README.md
 │   ├── RELEASING.md
 │   ├── api_design.md
@@ -290,36 +290,34 @@ cargo test --lib --features bench
 > These tests are designed for local performance analysis and ergonomics validation rather than
 > deterministic unit testing. Use `--features bench` when conducting performance investigations.
 
-**Note**: Python tests in `scripts/tests/` are executed via pytest (use `uv run pytest` for reproducible envs) and discovered via `pyproject.toml`. Run with:
+**Note**: Python tests in `scripts/tests/` are executed via pytest (recommended: `uv run pytest`) and discovered via `pyproject.toml`. Run with:
 
 ```bash
-# Run all Python utility tests (just command - 452 tests)
+# Run all Python utility tests
 just test-python
 
-# Or run specific test files directly
+# Or run a specific test file
 uv run pytest scripts/tests/test_benchmark_utils.py
-uv run pytest scripts/tests/test_changelog_tag_size_limit.py  # GitHub 125KB limit tests
-
-# Without uv:
-pytest scripts/tests/test_benchmark_utils.py
+uv run pytest scripts/tests/test_changelog_tag_size_limit.py
 ```
 
-**Note**: The `changelog_utils.py` module automatically handles GitHub's 125KB tag annotation limit. When creating tags for releases with large
-changelogs (like v0.5.4 at 152KB), it creates lightweight tags and provides instructions for extracting the changelog section for GitHub release
-creation. See `test_changelog_tag_size_limit.py` for comprehensive tests using real v0.5.4 data.
+**Note**: The changelog tooling (exposed via `just changelog*`) handles GitHub's tag annotation size limits by falling back to lightweight tags when needed.
+See `scripts/tests/test_changelog_tag_size_limit.py` for coverage.
 
-**Note**: Performance summary generation is available through the benchmark utilities CLI:
+**Note**: Benchmarks, baselines, and performance summaries are generated via the benchmark utilities CLI:
 
 ```bash
-# Generate performance summary in benches/PERFORMANCE_RESULTS.md (just command)
+# Generate a baseline artifact (used for comparisons)
 just bench-baseline
 
-# Or use the CLI directly for more options
-uv run benchmark-utils generate-summary
+# Generate benches/PERFORMANCE_RESULTS.md (runs benchmarks; longer)
+just bench-perf-summary
+
+# Or use the CLI directly
+uv run benchmark-utils generate-summary --run-benchmarks
 ```
 
-The `benchmark-utils` CLI provides integrated benchmark workflow functionality including performance summary generation,
-with convenient `just` shortcuts for common workflows.
+The `benchmark-utils` CLI provides integrated benchmark workflow functionality, with convenient `just` shortcuts for common workflows.
 
 ### Architecture Overview
 
@@ -334,7 +332,7 @@ with convenient `just` shortcuts for common workflows.
 - `edge.rs` - Canonical `EdgeKey` for topology traversal
 - `adjacency.rs` - Optional `AdjacencyIndex` builder outputs (opt-in)
 - `collections/` - Optimized collection types and spatial acceleration structures
-  - `spatial_hash_grid.rs` - Hash-grid spatial index for duplicate detection and locate-hint selection (Phase 4)
+  - `spatial_hash_grid.rs` - Hash-grid spatial index for duplicate detection and locate-hint selection
 - `boundary.rs` - Boundary detection and analysis
 - `algorithms/` - Core algorithms (incremental insertion, flips, point location)
 - `traits/` - Core trait definitions including FacetCacheProvider for performance optimization
@@ -360,7 +358,7 @@ with convenient `just` shortcuts for common workflows.
 - `matrix.rs` - Linear algebra support
 - `algorithms/convex_hull.rs` - Hull extraction
 - `traits/coordinate.rs` - Coordinate abstractions
-- `util/` - Geometric utility functions organized by functionality (refactored from monolithic `util.rs` in v0.7.0)
+- `util/` - Geometric utility functions organized by functionality
   - `conversions.rs` - Safe coordinate type conversions with finite-value checking
   - `norms.rs` - Vector norms and distance computations (squared_norm, hypot)
   - `circumsphere.rs` - Circumcenter and circumradius calculations for simplices
@@ -393,11 +391,11 @@ with convenient `just` shortcuts for common workflows.
   debugging utilities, regression testing, allocation profiling tools
   (see: [tests/allocation_api.rs](../tests/README.md#allocation_apirs)), and robust predicates validation
 - **`docs/`** - Architecture guides, performance documentation, numerical robustness guide, and templates
-- **`scripts/`** - Python utilities for automation and CI integration (452 tests)
+- **`scripts/`** - Python utilities for automation and CI integration
   - **`changelog_utils.py`** - Changelog generation and git tag management with automatic 125KB limit handling
   - **`benchmark_utils.py`** - Performance benchmarking, regression testing, and baseline management
   - **`hardware_utils.py`** - Cross-platform hardware detection for performance tracking
-  - **`tests/`** - Comprehensive test suite with 452 tests including regression tests for real-world issues
+  - **`tests/`** - Test suite for the Python utilities (regressions and tooling behavior)
 
 #### Configuration
 
@@ -419,7 +417,7 @@ The project structure reflects several key architectural decisions:
 5. **Memory Profiling**: Comprehensive allocation tracking with `count-allocations` feature for detailed memory analysis
 6. **Performance Analysis (opt-in)**: `bench` feature for timing-based tests and ergonomics checks; distinct from CI-driven regression detection in item 4
 7. **Academic Integration**: Strong support for research use with comprehensive citations and references
-8. **High-Performance Optimizations**: Phase 1-2 optimizations completed in v0.4.4+ with significant performance gains
+8. **Performance-Oriented Design**: Optimized collections, key-based APIs, and optional spatial indexing to reduce hot-path overhead
 9. **Enhanced Robustness**: Rollback mechanisms, atomic operations, and comprehensive error handling
 10. **Cross-Platform Development**: Modern Python tooling alongside traditional Rust development
 11. **Quality Assurance**: Multiple layers of automated quality control and testing
@@ -429,7 +427,7 @@ development tooling and clear architectural guidance).
 
 #### Memory Profiling System
 
-Version 0.4.4 includes comprehensive memory profiling capabilities:
+The project includes optional memory profiling capabilities:
 
 - **Allocation Tracking**: Optional `count-allocations` feature using the `allocation-counter` crate
 - **Memory Benchmarks**: Dedicated benchmarks for memory scaling analysis (`profiling_suite.rs`) - comprehensive profiling suite
@@ -439,25 +437,17 @@ Version 0.4.4 includes comprehensive memory profiling capabilities:
 - **Integration Testing**: `allocation_api.rs` provides utilities for testing memory usage in various scenarios
 - **CI Integration**: Automated profiling benchmarks with detailed allocation reports
 
-#### Performance Optimization System (v0.4.4+)
+#### Performance-oriented infrastructure
 
-Version 0.4.4+ completes Phase 1-2 of the comprehensive optimization roadmap:
+The codebase includes several performance-focused components that are relevant when working on hot paths:
 
-- **Collection Optimization** (Phase 1): FxHasher-based collections for 2-3x faster hash operations
-- **Key-Based Internal APIs** (Phase 2): Direct SlotMap key operations eliminating UUID lookups
-- **Spatial Index Acceleration** (Phase 4): Hash-grid spatial index for O(3^D) duplicate detection and locate-hint selection
-  - Accelerates fixed-radius neighbor queries during bulk construction and incremental insertion
-  - Maintains rollback safety with transactional semantics
-  - Dimension-aware (optimized for D ≤ 5)
-- **FacetCacheProvider**: 50-90% reduction in facet mapping computation time
-- **Zero-Allocation Iterators**: 1.86x faster iteration with `vertex_uuid_iter()`
-- **Enhanced Collections**: 15-30% additional gains from FastHashSet/SmallBuffer optimizations
-- **Thread Safety**: RCU-based caching and atomic operations for concurrent operations
-- **Enhanced Error Handling**: Comprehensive `InsertionError` enum with structured error variants for geometric degeneracies
-  - `NonManifoldTopology` variant for facet sharing violations (retryable via perturbation)
-  - Robust retry semantics using structured error matching instead of string parsing
-  - Direct error propagation without unnecessary unwrapping
-- **Robustness Infrastructure**: Atomic TDS operations with validation and rollback capabilities
+- **Fast collections**: `FastHashMap`, `FastHashSet`, and small-buffer helpers in `src/core/collections/`
+- **Key-based internal APIs**: core types use key handles (`VertexKey`, `CellKey`) for fast lookups
+- **Spatial hash-grid index**: `src/core/collections/spatial_hash_grid.rs` (duplicate detection and locate-hint selection)
+- **Zero-allocation iterators / helpers**: used in performance-sensitive traversal paths
+- **Benchmark suite + utilities**: `benches/` and the `benchmark-utils` tooling used by `just bench-*`
+
+Exact performance characteristics depend on dimension, input distribution, and kernel choice; use the benchmarks to measure changes.
 
 #### Development Workflow
 

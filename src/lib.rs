@@ -1,3 +1,5 @@
+#![cfg_attr(doctest, doc = include_str!("../README.md"))]
+
 //! # delaunay
 //!
 //! This is a library for computing the Delaunay triangulation of a set of n-dimensional points
@@ -12,6 +14,11 @@
 //! - Copy-able data types associated with vertices and cells (see [`DataType`](core::traits::DataType) for constraints)
 //! - Serialization/Deserialization with [serde](https://serde.rs)
 //!
+//! ## Practical workflows
+//!
+//! For end-to-end recipes (Builder API, Edit API, validation, repairs, and statistics), see:
+//! <https://github.com/acgetchell/delaunay/blob/main/docs/workflows.md>
+//!
 //! # Basic Usage
 //!
 //! This library handles **arbitrary dimensions** (subject to numerical issues). Here's a 4D triangulation example:
@@ -19,7 +26,6 @@
 //! ```rust
 //! use delaunay::prelude::triangulation::*;
 //!
-//! // Create a 4D Delaunay triangulation (4-dimensional space!)
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0, 0.0, 0.0]),
 //!     vertex!([1.0, 0.0, 0.0, 0.0]),
@@ -29,12 +35,12 @@
 //!     vertex!([0.2, 0.2, 0.2, 0.2]),  // Additional vertex uses incremental insertion
 //! ];
 //!
-//! let dt: DelaunayTriangulation<_, (), (), 4> =
-//!     DelaunayTriangulation::new(&vertices).unwrap();
+//! let dt = DelaunayTriangulation::new(&vertices).unwrap();
 //!
 //! assert_eq!(dt.number_of_vertices(), 6);
 //! assert_eq!(dt.dim(), 4);                    // Full 4D triangulation
-//! assert!(dt.number_of_cells() > 1);          // Cavity-based insertion creates additional 4-simplices
+//! assert_eq!(dt.number_of_cells(), 5);        // 1 simplex from first 5 vertices + 4 new simplices from last vertex
+//! assert!(dt.validate().is_ok());             // Validates all invariants (Levels 1–4)
 //! ```
 //!
 //! **Key insight**: The triangulation uses efficient incremental cavity-based insertion after
@@ -59,8 +65,7 @@
 //!     vertex!([1.0, 0.7, -1.5]),   // Second tet apex
 //! ];
 //!
-//! let dt: DelaunayTriangulation<_, (), (), 3> =
-//!     DelaunayTriangulation::new(&vertices).unwrap();
+//! let dt = DelaunayTriangulation::new(&vertices).unwrap();
 //!
 //! // Extract the convex hull (boundary facets of the triangulation)
 //! let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
@@ -86,8 +91,7 @@
 //!     vertex!([0.0, 0.0, 1.0, 0.0]),
 //!     vertex!([0.0, 0.0, 0.0, 1.0]),
 //! ];
-//! let dt_4d: DelaunayTriangulation<_, (), (), 4> =
-//!     DelaunayTriangulation::new(&vertices_4d).unwrap();
+//! let dt_4d = DelaunayTriangulation::new(&vertices_4d).unwrap();
 //! let hull_4d = ConvexHull::from_triangulation(dt_4d.as_triangulation()).unwrap();
 //!
 //! assert_eq!(hull_4d.number_of_facets(), 5);  // 4-simplex has 5 boundary facets
@@ -179,7 +183,7 @@
 //! #     vertex!([0.0, 1.0, 0.0]),
 //! #     vertex!([0.0, 0.0, 1.0]),
 //! # ];
-//! let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+//! let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
 //!
 //! // Default:
 //! assert_eq!(dt.validation_policy(), ValidationPolicy::OnSuspicion);
@@ -216,8 +220,7 @@
 //! #     vertex!([0.0, 1.0, 0.0]),
 //! #     vertex!([0.0, 0.0, 1.0]),
 //! # ];
-//! let mut dt: DelaunayTriangulation<_, (), (), 3> =
-//!     DelaunayTriangulation::new(&vertices).unwrap();
+//! let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
 //!
 //! assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
 //!
@@ -348,8 +351,7 @@
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
 //!
-//! let dt: DelaunayTriangulation<_, (), (), 3> =
-//!     DelaunayTriangulation::new(&vertices).unwrap();
+//! let dt = DelaunayTriangulation::new(&vertices).unwrap();
 //!
 //! assert_eq!(dt.number_of_vertices(), 4);
 //! assert!(dt.validate().is_ok());
@@ -418,8 +420,7 @@
 //!     vertex!([0.0, 0.0, 0.0, 1.0]),
 //! ];
 //!
-//! let dt: DelaunayTriangulation<_, (), (), 4> =
-//!     DelaunayTriangulation::new(&vertices).unwrap();
+//! let dt = DelaunayTriangulation::new(&vertices).unwrap();
 //!
 //! assert_eq!(dt.number_of_vertices(), 5);
 //! assert_eq!(dt.dim(), 4);
@@ -432,8 +433,7 @@
 //!     vertex!([0.5, 1.0]),
 //! ];
 //!
-//! let dt_2d: DelaunayTriangulation<_, (), (), 2> =
-//!     DelaunayTriangulation::new(&vertices_2d).unwrap();
+//! let dt_2d = DelaunayTriangulation::new(&vertices_2d).unwrap();
 //!
 //! assert_eq!(dt_2d.number_of_vertices(), 3);
 //! assert_eq!(dt_2d.dim(), 2);
@@ -471,13 +471,13 @@ extern crate derive_builder;
 /// It includes the `Tds` struct, which represents the triangulation, as well as `Cell`, `Facet`, and `Vertex` components.
 /// This module provides traits for customizing vertex and cell data. The crate also includes a `prelude` module for convenient access to commonly used types.
 pub mod core {
-    /// Triangulation algorithms for construction, maintenance, and querying
+    /// Triangulation algorithms for construction, maintenance, and querying.
     pub mod algorithms {
-        /// Bistellar flip operations - Phase 3 TODO
+        /// Flip-based algorithms (Delaunay repair, diagnostics, and related utilities).
         pub mod flips;
-        /// Incremental cavity-based insertion (Phase 3.6)
+        /// Incremental cavity-based insertion.
         pub mod incremental_insertion;
-        /// Point location algorithms (facet walking)
+        /// Point location algorithms (facet walking).
         pub mod locate;
     }
 
@@ -564,14 +564,14 @@ pub mod core {
     /// let facet_map: FacetToCellsMap = FacetToCellsMap::default();
     /// ```
     ///
-    /// ## Phase 1 Migration: Key-Based Internal Operations
+    /// ## Key-based internal operations
     ///
-    /// Phase 1 of the UUID-to-Key migration provides optimized collections for internal operations:
+    /// The crate uses stable keys (`VertexKey`, `CellKey`) internally for performance.
+    /// This module provides optimized maps/sets keyed by those identifiers:
     ///
     /// ```rust
     /// use delaunay::core::collections::{CellKeySet, KeyBasedCellMap, VertexKeySet};
     ///
-    /// // Phase 1: Direct key-based collections for internal algorithms
     /// let mut internal_cells: CellKeySet = CellKeySet::default();
     /// let mut internal_vertices: VertexKeySet = VertexKeySet::default();
     /// let mut key_mappings: KeyBasedCellMap<String> = KeyBasedCellMap::default();
@@ -598,13 +598,13 @@ pub mod core {
         pub use secondary_maps::*;
         pub use triangulation_maps::*;
     }
-    /// Delaunay triangulation layer with incremental insertion - Phase 3 TODO
+    /// Delaunay triangulation layer with incremental insertion.
     pub mod delaunay_triangulation;
     pub mod edge;
     pub mod facet;
     /// Semantic classification and telemetry for topological operations
     pub mod operations;
-    /// Generic triangulation combining kernel + Tds - Phase 2 TODO
+    /// Generic triangulation combining kernel + Tds.
     pub mod triangulation;
     pub mod triangulation_data_structure;
 
@@ -673,7 +673,7 @@ pub mod geometry {
         pub mod convex_hull;
         pub use convex_hull::*;
     }
-    /// Geometric kernel abstraction (CGAL-style) - Phase 2 TODO
+    /// Geometric kernel abstraction (CGAL-style).
     pub mod kernel;
     #[macro_use]
     pub mod matrix;

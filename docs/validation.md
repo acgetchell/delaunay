@@ -361,12 +361,12 @@ Validates the geometric optimality of the triangulation.
 
 ### Methods
 
-- `DelaunayTriangulation::is_valid()` - Level 4 Delaunay property only (empty circumsphere).
+- `DelaunayTriangulation::is_valid()` - Level 4 Delaunay property only (fast verification via local flip predicates).
 - `DelaunayTriangulation::validate()` - Levels 1–4 (elements + structure + topology + Delaunay property).
 
 ### What It Checks
 
-- **Empty Circumsphere Property**: For every D-dimensional cell, no vertex lies strictly inside its circumsphere
+- **Delaunay property**: Verified via local flip predicates (k=2/k=3 and inverses), equivalent to the empty-circumsphere condition for properly constructed triangulations
 - Uses geometric predicates from the kernel (`insphere` test)
 - **Independent of Levels 1-3**: Checks geometric property, not structural/topological
 - **Flip-based repair**: Insertions run k=2/k=3 flip repairs with inverse edge/triangle queues in
@@ -381,19 +381,17 @@ Validates the geometric optimality of the triangulation.
 ### Complexity
 
 - **Time**:
-  - `DelaunayTriangulation::is_valid()` (Level 4 only): O(N×V) in the worst case.
-  - `DelaunayTriangulation::validate()` (Levels 1–4): O(N×D² + N×V)
-    (typically dominated by O(N×V)).
-  - `DelaunayTriangulation::validation_report()` (Levels 1–4): O(N×D² + N×V)
-    (typically dominated by O(N×V)).
-- **Space**: O(1) per test
+  - `DelaunayTriangulation::is_valid()` (Level 4 only): O(cells) (local flip-predicate verification, for fixed D)
+  - `DelaunayTriangulation::validate()` (Levels 1–4): O(cells × D²) + O(cells) (typically dominated by Levels 1–3)
+  - `DelaunayTriangulation::validation_report()` (Levels 1–4): O(cells × D²) + O(cells)
+- **Space**: O(1) additional space (aside from temporary working sets)
 
 ### When to Use
 
 - **Critical Applications**: When Delaunay guarantees are essential (interpolation, mesh quality)
 - **Tests**: After construction to verify correctness
 - **Debug**: Investigating geometric issues or suspected violations
-- **Rarely**: Expensive for large triangulations
+- **Avoid**: Hot loops (still O(cells); use for spot checks / tests)
 
 ### Example
 
@@ -442,36 +440,14 @@ Start: Do you need to validate?
 
 ---
 
-## Performance Comparison
+## Performance notes
 
-The numbers below are **order-of-magnitude** examples to help you choose a validation level.
+- Level 2 and Level 3 validation are dominated by combinatorial bookkeeping (roughly O(cells × D²)).
+- Level 4 `DelaunayTriangulation::is_valid()` verifies the Delaunay property via local flip predicates and is
+  roughly O(cells) for fixed `D`.
+- A brute-force empty-circumsphere check would be O(cells × vertices) and is not used by `is_valid()`.
 
-**Measurement conditions (baseline):**
-
-- Single-threaded, `--release`, on typical modern hardware
-- 3D triangulation with ~1000 vertices (~5000–6000 cells)
-- Using the default kernel for most examples (`FastKernel<f64>`)
-
-**Caveats:** Actual times can vary significantly with hardware and compiler settings,
-dimension, and especially with **input degeneracy** (near-coplanar/collinear points),
-and **kernel choice** (`FastKernel` vs `RobustKernel`).
-
-| Level | Time | What It Does |
-|-------|------|--------------|
-| 1 | ~1μs | Single element check |
-| 2 | ~10–50ms | Full structural validation |
-| 3 | ~50–100ms | Structural + topological (connectedness + Euler) |
-| 4 | ~100–500ms | Empty circumsphere for all cells (many `insphere` tests) |
-
-**Why Level 4 is usually 2–5× slower than Level 3:** Level 3 is dominated by
-combinatorial bookkeeping (roughly O(N×D²)), while Level 4 checks the
-empty-circumsphere property and can be **O(cells × vertices)** in the worst case
-(millions of `insphere` predicate evaluations for the sizes above). This is also where
-`RobustKernel` can be substantially slower than `FastKernel`.
-
-**Recommendation**: Use Level 2 in production (or skip entirely on hot paths once
-thoroughly tested), and reserve Level 3+ for tests/debug and for situations where
-topological or geometric guarantees are critical.
+In practice, `DelaunayTriangulation::validate()` is usually dominated by Level 3 (topology) work.
 
 ---
 
@@ -566,14 +542,14 @@ opt-in heuristic rebuild fallback via `dt.repair_delaunay_with_flips_advanced(..
 | 2 | `Tds::validate()` | `core::triangulation_data_structure` | O(N×D²) |
 | 3 | `Triangulation::is_valid()` | `core::triangulation` | O(N×D²) |
 | 3 | `Triangulation::validate()` | `core::triangulation` | O(N×D²) |
-| 4 | `DelaunayTriangulation::is_valid()` | `core::delaunay_triangulation` | O(N×V) |
-| 4 | `DelaunayTriangulation::validate()` | `core::delaunay_triangulation` | O(N×D² + N×V) |
-| — | `DelaunayTriangulation::validation_report()` | `core::delaunay_triangulation` | O(N×D² + N×V) |
+| 4 | `DelaunayTriangulation::is_valid()` | `core::delaunay_triangulation` | O(cells) |
+| 4 | `DelaunayTriangulation::validate()` | `core::delaunay_triangulation` | O(cells × D²) + O(cells) |
+| — | `DelaunayTriangulation::validation_report()` | `core::delaunay_triangulation` | O(cells × D²) + O(cells) |
 
 ---
 
 ## See Also
 
-- [Topology integration design](topology.md) - Design notes on topology integration (includes historical sections)
+- [Topology](topology.md) - Level 3 topology invariants and combinatorial checks
 - [Code Organization](code_organization.md) - Where to find validation code
 - [CGAL Triangulation](https://doc.cgal.org/latest/Triangulation/index.html) - Inspiration for validation design

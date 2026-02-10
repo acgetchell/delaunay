@@ -34,7 +34,7 @@ git pull --ff-only
 
 ---
 
-## Phase 1: Create a clean release PR
+## Step 1: Create a clean release PR
 
 This PR should primarily include: version bumps, changelog updates, and documentation updates. All major code changes should already be on main.
 
@@ -57,13 +57,7 @@ Preferred (if cargo-edit is installed):
 cargo set-version $VERSION
 ```
 
-Alternative (sed fallback):
-
-```bash
-# Update version = "..." in the [package] section of Cargo.toml
-# Note: Review the change afterward to ensure only the intended line was modified
-sed -i.bak -E "s/^version = \"[0-9]+\.[0-9]+\.[0-9]+\"/version = \"$VERSION\"/" Cargo.toml && rm Cargo.toml.bak
-```
+Alternative: edit `Cargo.toml` manually (update `version = "..."` under `[package]`).
 
 Update references in documentation (search, then manually edit as needed):
 
@@ -154,7 +148,7 @@ If you discover issues (bugs, formatting problems, etc.) after creating the chan
 
 ---
 
-## Phase 2: After the PR is merged into main
+## Step 2: After the PR is merged into main
 
 1. Sync your local main to the merge commit
 

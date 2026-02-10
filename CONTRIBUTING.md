@@ -390,7 +390,7 @@ just bench-quick      # Quick validation (minimal samples, ~30 sec)
 - `just lint-config` - Configuration validation (JSON, TOML, Actions)
 - `just python-fix` - Auto-format / auto-fix Python scripts
 - `just python-lint` - Lint + typecheck Python scripts (non-mutating)
-- `just spell-check` - Check spelling across project files
+- `just spell-check` - Check spelling across project files (uses `typos-cli`, configured by `typos.toml`)
 - `just shell-fmt` - Format shell scripts
 - `just shell-lint` - Lint/check shell scripts (non-mutating)
 - `just markdown-fix` - Auto-fix markdown formatting
@@ -417,7 +417,7 @@ just bench-quick      # Quick validation (minimal samples, ~30 sec)
 - `just shell-lint` - Format and lint shell scripts
 - `just markdown-lint` - Lint markdown files
 - `just action-lint` - GitHub Actions workflow validation
-- `just spell-check` - Check spelling across project files
+- `just spell-check` - Check spelling across project files (uses `typos-cli`, configured by `typos.toml`)
 
 #### Utilities
 

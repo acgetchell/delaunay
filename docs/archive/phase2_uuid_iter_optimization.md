@@ -148,7 +148,7 @@ Some usages of `vertex_uuids()` were intentionally kept because:
 
 ## Relation to Phase 2 & Phase 3 Work
 
-This optimization complements the Phase 2 key-based internal APIs. For the complete optimization roadmap and details about all phases, see [OPTIMIZATION_ROADMAP.md](./OPTIMIZATION_ROADMAP.md).
+This optimization complements the Phase 2 key-based internal APIs. For the archived optimization roadmap and details about all phases, see [OPTIMIZATION_ROADMAP.md](./OPTIMIZATION_ROADMAP.md).
 
 - **Phase 2 (COMPLETED)**: Added `vertex_keys_for_cell_direct()` to get vertex keys without UUID lookups
 - **This Work**: Optimized UUID iteration when UUIDs are still needed (e.g., for external APIs)
