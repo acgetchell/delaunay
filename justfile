@@ -25,6 +25,15 @@ _ensure-jq:
     set -euo pipefail
     command -v jq >/dev/null || { echo "❌ 'jq' not found. See 'just setup' or install: brew install jq"; exit 1; }
 
+_ensure-git-cliff:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v git-cliff >/dev/null || {
+        echo "❌ 'git-cliff' not found. Install via Homebrew: brew install git-cliff"
+        echo "   Or via Cargo: cargo install git-cliff"
+        exit 1
+    }
+
 _ensure-npx:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -129,7 +138,7 @@ build-release:
     cargo build --release
 
 # Changelog management
-changelog: _ensure-uv
+changelog: _ensure-uv _ensure-git-cliff
     uv run changelog-utils generate
 
 changelog-tag version: _ensure-uv
@@ -451,7 +460,7 @@ setup-tools:
         else
             echo "Install required tools via your system package manager, or ensure they are on PATH."
         fi
-        echo "Required tools: uv, jq, taplo, yamllint, shfmt, shellcheck, actionlint, node+npx, typos"
+        echo "Required tools: uv, jq, taplo, yamllint, shfmt, shellcheck, actionlint, git-cliff, node+npx, typos"
         echo ""
     fi
 
@@ -478,6 +487,13 @@ setup-tools:
         echo "  ✓ typos"
     fi
 
+    if ! have git-cliff; then
+        echo "  ⏳ Installing git-cliff (cargo)..."
+        cargo install --locked git-cliff
+    else
+        echo "  ✓ git-cliff"
+    fi
+
     if ! have cargo-tarpaulin; then
         if [[ "$os" == "Linux" ]]; then
             echo "  ⏳ Installing cargo-tarpaulin (cargo)..."
@@ -493,7 +509,7 @@ setup-tools:
     echo "Verifying required commands are available..."
     missing=0
 
-    cmds=(uv jq taplo yamllint shfmt shellcheck actionlint node npx typos)
+    cmds=(uv jq taplo yamllint shfmt shellcheck actionlint git-cliff node npx typos)
     if [[ "$os" == "Linux" ]]; then
         cmds+=(cargo-tarpaulin)
     fi

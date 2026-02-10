@@ -152,7 +152,7 @@ uv run changelog-utils tag vX.Y.Z --force
 - **AI Categorization**: Uses Keep a Changelog format (Added/Changed/Fixed/Removed/Deprecated/Security)
 - **GitHub Integration**: Tag messages work with `gh release create --notes-from-tag`
 
-**Dependencies**: Python 3.11+, `enhance_commits.py`, `subprocess_utils.py`, Node.js (`npx`), `auto-changelog`
+**Dependencies**: Python 3.11+, `enhance_commits.py`, `subprocess_utils.py`, `git-cliff`
 
 ---
 
