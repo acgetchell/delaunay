@@ -3,7 +3,7 @@
 These focus on the plumbing around `changelog-utils generate` (invoked via `just changelog`)
 so that the release workflow in docs/RELEASING.md stays reliable.
 
-We avoid calling external tools (npx/auto-changelog, AI helpers) by patching those steps,
+We avoid calling external tools (git-cliff, AI helpers) by patching those steps,
 but still exercise the file-based pipeline and cleanup behavior.
 """
 
@@ -128,7 +128,7 @@ All tests pass: 123 passed
 
 """
 
-    def fake_run_auto_changelog(file_paths: dict[str, Path], _project_root: Path) -> None:
+    def fake_run_git_cliff(file_paths: dict[str, Path], _project_root: Path) -> None:
         file_paths["temp"].write_text(sample, encoding="utf-8")
 
     def fake_expand_squashed_commits(file_paths: dict[str, Path], _repo_url: str) -> None:
@@ -140,7 +140,7 @@ All tests pass: 123 passed
         expanded = file_paths["expanded"].read_text(encoding="utf-8")
         file_paths["enhanced"].write_text(expanded + "\n\n\n", encoding="utf-8")
 
-    monkeypatch.setattr(changelog_utils, "_run_auto_changelog", fake_run_auto_changelog)
+    monkeypatch.setattr(changelog_utils, "_run_git_cliff", fake_run_git_cliff)
     monkeypatch.setattr(changelog_utils, "_expand_squashed_commits", fake_expand_squashed_commits)
     monkeypatch.setattr(changelog_utils, "_enhance_with_ai", fake_enhance_with_ai)
 
@@ -190,7 +190,7 @@ def test_execute_changelog_generation_restores_backup_on_failure(tmp_path: Path,
         msg = "boom"
         raise ChangelogError(msg)
 
-    monkeypatch.setattr(changelog_utils, "_run_auto_changelog", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(changelog_utils, "_run_git_cliff", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(changelog_utils, "_post_process_dates", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(changelog_utils, "_expand_squashed_commits", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(changelog_utils, "_enhance_with_ai", lambda *_args, **_kwargs: None)

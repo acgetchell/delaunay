@@ -487,6 +487,75 @@ More text.
         assert "<http://files.example.com/file.txt>" not in result
 
 
+class TestCommitBodyFormatting:
+    """Tests for commit-body formatting helpers used in changelog generation."""
+
+    def test_extract_content_lines_keeps_issue_refs_but_drops_branch_refs(self) -> None:
+        commit_msg = """Subject line
+
+Body paragraph.
+
+Refs: feature/some-branch
+Refs: #72, #73
+Signed-off-by: Someone <someone@example.com>
+"""
+
+        lines = ChangelogUtils._extract_content_lines(commit_msg)
+
+        assert "Body paragraph." in lines
+        assert "Refs: feature/some-branch" not in lines
+        assert "Refs: #72, #73" in lines
+        assert not any(line.lower().startswith("signed-off-by:") for line in lines)
+
+    def test_process_body_line_strips_heading_like_emphasis(self) -> None:
+        # Avoid markdownlint MD036 (emphasis-only lines).
+        line = "*Also add targeted test*"
+        assert ChangelogUtils._process_body_line(line) == "Also add targeted test"
+
+    def test_format_entry_body_converts_fenced_code_blocks_to_indented(self) -> None:
+        body_lines = [
+            "Here is code:",
+            "",
+            "```bash",
+            "curl https://example.com/api",
+            "```",
+            "",
+            "Done.",
+        ]
+
+        out = ChangelogUtils._format_entry_body(body_lines, max_line_length=80)
+        joined = "\n".join(out)
+
+        assert "```" not in joined
+        assert "curl https://example.com/api" in joined
+
+    def test_format_entry_body_wraps_long_code_lines(self) -> None:
+        body_lines = [
+            "```",
+            "x" * 50,
+            "```",
+        ]
+
+        out = ChangelogUtils._format_entry_body(body_lines, max_line_length=30)
+        code_lines = [line for line in out if line.startswith("      x")]
+
+        assert len(code_lines) > 1
+        assert all(len(line) <= 30 for line in code_lines)
+
+    def test_format_entry_body_dedents_indented_prose_not_code(self) -> None:
+        body_lines = [
+            "    deduplication to prevent panics or unexpected behavior",
+            "    in corner cases.",
+        ]
+
+        out = ChangelogUtils._format_entry_body(body_lines, max_line_length=80)
+        joined = "\n".join(out)
+
+        # Should be treated as normal wrapped text, not an indented code block.
+        assert "      deduplication" not in joined
+        assert "  deduplication to prevent panics or unexpected behavior" in joined
+
+
 class TestGitHubAnchorExtraction:
     """Test suite for GitHub anchor extraction from changelog headings."""
 
