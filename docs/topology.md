@@ -7,6 +7,9 @@ different topological spaces.
 If you want the user-facing guide to the full validation stack (Levels 1–4), start
 with `docs/validation.md`.
 
+For the theoretical background and rationale behind the invariants themselves, see
+[`invariants.md`](invariants.md).
+
 ## Code layout
 
 Relevant modules (lexicographically sorted):

@@ -7,6 +7,7 @@ This document provides small, practical recipes for working with triangulations.
 
 For the full design discussion (and more extensive examples), see [`api_design.md`](api_design.md).
 For validation semantics and configuration details, see [`validation.md`](validation.md).
+For the theoretical background and rationale behind the invariants, see [`invariants.md`](invariants.md).
 
 ## Builder API: the happy path
 

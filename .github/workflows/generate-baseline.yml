@@ -141,7 +141,10 @@ jobs:
           from pathlib import Path
           import re
 
-          text = Path('bench-target/baseline-artifact/baseline_results.txt').read_text(encoding='utf-8', errors='replace')
+          text = Path('bench-target/baseline-artifact/baseline_results.txt').read_text(
+              encoding='utf-8',
+              errors='replace',
+          )
           m = re.search(r'^Git commit:\s*(\S+)', text, flags=re.MULTILINE)
           print(m.group(1) if m else 'unknown')
           PY

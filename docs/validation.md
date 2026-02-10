@@ -2,6 +2,9 @@
 
 This document explains the validation hierarchy in the delaunay library and provides guidance on when and how to use each validation level.
 
+For the theoretical background, rationale, and implementation pointers behind the invariants, see
+[`invariants.md`](invariants.md).
+
 ## Overview
 
 The library provides **four levels of validation**, each building on the previous level to provide increasingly comprehensive correctness guarantees:
@@ -550,6 +553,7 @@ opt-in heuristic rebuild fallback via `dt.repair_delaunay_with_flips_advanced(..
 
 ## See Also
 
+- [Invariants](invariants.md) - Theoretical background and rationale for the invariants
 - [Topology](topology.md) - Level 3 topology invariants and combinatorial checks
 - [Code Organization](code_organization.md) - Where to find validation code
 - [CGAL Triangulation](https://doc.cgal.org/latest/Triangulation/index.html) - Inspiration for validation design

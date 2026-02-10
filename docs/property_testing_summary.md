@@ -3,6 +3,9 @@
 This repository uses property-based testing (via `proptest`) to exercise structural,
 topological, and geometric invariants across multiple dimensions.
 
+For a curated list of invariants (with rationale and implementation pointers), see
+[`invariants.md`](invariants.md).
+
 This document is intentionally *current-only*. Historical notes belong in
 `docs/archive/`.
 

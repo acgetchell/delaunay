@@ -84,7 +84,8 @@ dt.remove_vertex(vertex_key).unwrap();
 - **Automatic property preservation**: The Delaunay empty-circumsphere property is maintained automatically
 - **Cavity-based insertion**: New vertices are inserted by identifying conflicting cells, removing them, and filling the cavity
 - **Fan retriangulation**: Vertex removal uses fan-based retriangulation of the vertex star
-- **Error handling**: Operations fail gracefully if they would violate invariants
+- **Error handling**: Operations fail gracefully if they would violate invariants (see
+  [`invariants.md`](invariants.md)).
 - **Validation**: Use `ValidationPolicy` to control automatic topology validation during construction
 
 ## Edit API Reference
@@ -293,5 +294,6 @@ See the following examples for practical demonstrations:
 
 - **Bistellar flip theory**: See `REFERENCES.md` for academic citations
 - **Validation framework**: See `docs/validation.md` for detailed validation guide
+- **Invariant rationale**: See [`invariants.md`](invariants.md) for theory and implementation pointers
 - **Topology analysis**: See `docs/topology.md` for topological concepts
 - **API implementation**: See `triangulation::flips` module documentation
