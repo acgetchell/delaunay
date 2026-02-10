@@ -68,28 +68,29 @@ jobs:
       - name: Verify uv installation
         run: uv --version
 
-      - name: Find baseline artifact
+      - name: Find baseline artifact (latest semver tag baseline)
         id: find_baseline
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
           script: |
             try {
-              // Precompute expected baseline names for early-hit optimization
-              const releases = await github.paginate(
-                github.rest.repos.listReleases,
-                { owner: context.repo.owner, repo: context.repo.repo, per_page: 50 }
-              );
+              const prefix = 'performance-baseline-';
+              const semverRe = /^performance-baseline-v(\d+)\.(\d+)\.(\d+)(?:[._-].*)?$/;
 
-              const expectedReleaseBaselines = new Set();
-              for (const release of releases) {
-                if (!release.draft && !release.prerelease) {
-                  const cleanTag = release.tag_name.replace(/[^a-zA-Z0-9._-]/g, '_');
-                  expectedReleaseBaselines.add(`performance-baseline-${cleanTag}`);
+              const parseSemver = (name) => {
+                const m = name.match(semverRe);
+                if (!m) return null;
+                return [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)];
+              };
+
+              const compareSemver = (a, b) => {
+                for (let i = 0; i < 3; i += 1) {
+                  if (a[i] !== b[i]) return a[i] - b[i];
                 }
-              }
-              console.log(`Precomputed ${expectedReleaseBaselines.size} expected release baseline names`);
+                return 0;
+              };
 
-              // Fetch all successful generate-baseline.yml runs once (O(runs) API calls)
+              // Fetch successful generate-baseline.yml runs (most recent first)
               console.log('Fetching recent generate-baseline.yml runs...');
               let count = 0;
               const runs = await github.paginate(
@@ -116,8 +117,8 @@ jobs:
               console.log(`Found ${runs.length} successful generate-baseline runs`);
 
               // Build artifact cache: artifact name → {run_id, run_created_at}
+              // Note: We keep the *newest* run for a given artifact name (runs are newest-first).
               const artifactCache = new Map();
-              let foundReleaseBaseline = false;
               for (const run of runs) {
                 try {
                   const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
@@ -127,24 +128,16 @@ jobs:
                   });
 
                   for (const artifact of artifacts.data.artifacts) {
-                    if (artifact.name.startsWith('performance-baseline-') && artifact.expired !== true) {
-                      if (!artifactCache.has(artifact.name)) {
-                        artifactCache.set(artifact.name, {
-                          run_id: run.id,
-                          run_created_at: run.created_at
-                        });
+                    if (artifact.expired === true) continue;
+                    if (!artifact.name.startsWith(prefix)) continue;
 
-                        // Early-hit optimization: stop if we found a release baseline
-                        if (expectedReleaseBaselines.has(artifact.name)) {
-                          console.log(`Early hit: found release baseline ${artifact.name}, stopping search`);
-                          foundReleaseBaseline = true;
-                        }
-                      }
+                    if (!artifactCache.has(artifact.name)) {
+                      artifactCache.set(artifact.name, {
+                        run_id: run.id,
+                        run_created_at: run.created_at
+                      });
                     }
                   }
-
-                  // Short-circuit if we found a release baseline
-                  if (foundReleaseBaseline) break;
                 } catch (error) {
                   console.log(`Warning: Could not fetch artifacts for run ${run.id}: ${error.message}`);
                   continue;
@@ -153,66 +146,54 @@ jobs:
 
               console.log(`Built cache of ${artifactCache.size} baseline artifacts`);
 
-              console.log(`Found ${releases.length} releases (already fetched)`);
+              // Prefer the highest semver tag baseline present in the cache.
+              let best = null;
+              for (const [artifactName, artifactInfo] of artifactCache.entries()) {
+                const ver = parseSemver(artifactName);
+                if (!ver) continue;
 
-              // Look for releases with baseline artifacts (now O(releases) lookups)
-              for (const release of releases) {
-                console.log(`Checking release ${release.tag_name}...`);
-                if (release.draft || release.prerelease) {
-                  console.log(`Skipping draft/prerelease ${release.tag_name}`);
-                  continue;
-                }
-
-                // Must match sanitize step in .github/workflows/generate-baseline.yml
-                const cleanTag = release.tag_name.replace(/[^a-zA-Z0-9._-]/g, '_');
-                const expectedName = `performance-baseline-${cleanTag}`;
-
-                if (artifactCache.has(expectedName)) {
-                  const artifactInfo = artifactCache.get(expectedName);
-                  console.log(
-                    `Found release baseline artifact ${expectedName} in run ${artifactInfo.run_id} ` +
-                    `for release ${release.tag_name}`
-                  );
-                  core.setOutput('found', 'true');
-                  core.setOutput('release_tag', release.tag_name);
-                  core.setOutput('artifact_name', expectedName);
-                  core.setOutput('run_id', artifactInfo.run_id.toString());
-                  core.setOutput('source_type', 'release');
-                  return;
+                const tag = artifactName.slice(prefix.length);
+                if (!best || compareSemver(ver, best.ver) > 0) {
+                  best = { name: artifactName, info: artifactInfo, ver, tag };
                 }
               }
 
-              console.log('No release baseline artifacts found, checking for any recent baselines...');
+              if (best) {
+                console.log(`Selected baseline ${best.name} (tag ${best.tag}) from run ${best.info.run_id}`);
+                core.setOutput('found', 'true');
+                core.setOutput('artifact_name', best.name);
+                core.setOutput('run_id', best.info.run_id.toString());
+                core.setOutput('tag', best.tag);
+                return;
+              }
 
-              // Fallback: look for any recent baseline artifact (including manual runs)
+              // Fallback: pick the most recent baseline artifact (including manual runs)
               if (artifactCache.size > 0) {
-                // Find the most recent artifact (by run creation time)
-                let mostRecentArtifact = null;
+                let mostRecent = null;
                 let mostRecentTime = null;
 
                 for (const [artifactName, artifactInfo] of artifactCache.entries()) {
                   const runTime = new Date(artifactInfo.run_created_at);
                   if (!mostRecentTime || runTime > mostRecentTime) {
                     mostRecentTime = runTime;
-                    mostRecentArtifact = { name: artifactName, ...artifactInfo };
+                    mostRecent = { name: artifactName, info: artifactInfo };
                   }
                 }
 
-                if (mostRecentArtifact) {
+                if (mostRecent) {
                   console.log(
-                    `Found baseline artifact ${mostRecentArtifact.name} in run ${mostRecentArtifact.run_id} ` +
-                    `(created: ${mostRecentArtifact.run_created_at})`
+                    `Fallback: selected most recent baseline ${mostRecent.name} in run ${mostRecent.info.run_id} ` +
+                    `(created: ${mostRecent.info.run_created_at})`
                   );
                   core.setOutput('found', 'true');
-                  core.setOutput('release_tag', 'manual-baseline');
-                  core.setOutput('artifact_name', mostRecentArtifact.name);
-                  core.setOutput('run_id', mostRecentArtifact.run_id.toString());
-                  core.setOutput('source_type', 'manual');
+                  core.setOutput('artifact_name', mostRecent.name);
+                  core.setOutput('run_id', mostRecent.info.run_id.toString());
+                  core.setOutput('tag', mostRecent.name.slice(prefix.length));
                   return;
                 }
               }
 
-              console.log('No baseline artifacts found in any recent runs');
+              console.log('No baseline artifacts found');
               core.setOutput('found', 'false');
             } catch (error) {
               console.error(`Error searching for baseline artifacts: ${error.message}`);
@@ -231,92 +212,31 @@ jobs:
 
       - name: Prepare baseline for comparison
         if: steps.find_baseline.outputs.found == 'true'
-        env:
-          RELEASE_TAG: ${{ steps.find_baseline.outputs.release_tag }}
-          SOURCE_TYPE: ${{ steps.find_baseline.outputs.source_type }}
-        run: |
-          # Set additional environment variables based on source
-          echo "BASELINE_ORIGIN=${SOURCE_TYPE:-unknown}" >> "$GITHUB_ENV"
-          if [[ -n "${RELEASE_TAG:-}" ]]; then
-            echo "BASELINE_TAG=${RELEASE_TAG}" >> "$GITHUB_ENV"
-          fi
-
-          # Prepare baseline using Python utility
-          uv run benchmark-utils prepare-baseline
+        run: uv run benchmark-utils prepare-baseline
 
       - name: Set baseline status if none found
         if: steps.find_baseline.outputs.found != 'true'
         run: uv run benchmark-utils set-no-baseline
 
-      - name: Extract baseline commit SHA
-        if: env.BASELINE_EXISTS == 'true'
-        run: uv run benchmark-utils extract-baseline-commit
-
-      - name: Determine if benchmarks should run
-        if: env.BASELINE_EXISTS == 'true'
-        env:
-          SAFE_COMMIT_SHA: ${{ github.sha }}
-        run: |
-          uv run benchmark-utils determine-skip \
-            --baseline-commit "$BASELINE_COMMIT" \
-            --current-commit "$SAFE_COMMIT_SHA"
-
-      - name: Skip benchmarks - no code changes
-        if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'true'
-        run: |
-          uv run benchmark-utils display-skip-message \
-            --reason "$SKIP_REASON" \
-            --baseline-commit "$BASELINE_COMMIT"
-
       - name: Skip benchmarks - no baseline available
         if: env.BASELINE_EXISTS != 'true'
         run: uv run benchmark-utils display-no-baseline
 
-      - name: Run performance regression test (same-runner A/B)
-        if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false'
-        env:
-          SAFE_COMMIT_SHA: ${{ github.sha }}
+      - name: Run performance regression test (compare vs tag baseline)
+        if: env.BASELINE_EXISTS == 'true'
         run: |
           set -euo pipefail
 
+          # Ensure regression-summary reports this as a real run.
+          echo "SKIP_BENCHMARKS=false" >> "$GITHUB_ENV"
+          echo "SKIP_REASON=running" >> "$GITHUB_ENV"
+
           echo "   Baseline origin: ${BASELINE_ORIGIN:-unknown}"
-          echo "   Baseline commit: ${BASELINE_COMMIT:-}"
-          echo "   Current commit:  ${SAFE_COMMIT_SHA:-}"
+          echo "   Baseline tag:    ${BASELINE_TAG:-unknown}"
 
-          # Security: validate SHAs before using in git commands
-          if [[ ! "${BASELINE_COMMIT:-}" =~ ^[0-9A-Fa-f]{7,40}$ ]]; then
-            echo "Invalid BASELINE_COMMIT: ${BASELINE_COMMIT:-}" >&2
-            exit 1
-          fi
-          if [[ ! "${SAFE_COMMIT_SHA:-}" =~ ^[0-9A-Fa-f]{7,40}$ ]]; then
-            echo "Invalid SAFE_COMMIT_SHA: ${SAFE_COMMIT_SHA:-}" >&2
-            exit 1
-          fi
-
-          # Always return to the current commit so follow-on steps run with current scripts.
-          cleanup() {
-            git checkout --force "${SAFE_COMMIT_SHA}" >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
-
-          # Generate an on-runner baseline at BASELINE_COMMIT, then compare at SAFE_COMMIT_SHA.
-          # This avoids cross-runner/cross-day noise on GitHub-hosted macOS runners.
-          mkdir -p ab-baseline
-          rm -f ab-baseline/baseline_results.txt
-
-          echo "=== Baseline benchmark (same runner) ==="
-          git checkout --force "${BASELINE_COMMIT}"
-          uv run benchmark-utils generate-baseline \
-            --output "ab-baseline/baseline_results.txt" \
-            --bench-timeout "${BENCHMARK_TIMEOUT}" \
-            --dev
-
-          echo "=== Current benchmark + compare ==="
-          git checkout --force "${SAFE_COMMIT_SHA}"
           uv run benchmark-utils compare \
-            --baseline "ab-baseline/baseline_results.txt" \
-            --bench-timeout "${BENCHMARK_TIMEOUT}" \
-            --dev
+            --baseline "baseline-artifact/baseline_results.txt" \
+            --bench-timeout "${BENCHMARK_TIMEOUT}"
 
       - name: Display regression test results
         if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false' && always()
@@ -329,7 +249,7 @@ jobs:
           name: performance-regression-results-${{ github.run_number }}
           path: |
             benches/compare_results.txt
-            ab-baseline/baseline_results.txt
+            baseline-artifact/baseline_results.txt
           if-no-files-found: warn
           retention-days: 30
 

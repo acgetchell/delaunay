@@ -23,7 +23,10 @@ This document covers:
 - Ordering heuristics used during insertion (Hilbert, Morton)
 - Convergence assumptions for bistellar / flip-based repair
 - Known limitations and pathological cases
-- References to relevant computational geometry and CDT literature
+- References to relevant computational geometry literature
+
+Throughout, footnotes link to (a) primary sources (papers/books) justifying the claims in each section and
+(b) representative implementations (both internal modules and external libraries like CGAL) when helpful.
 
 Readers primarily interested in **how to use the library** should start with:
 
@@ -37,7 +40,7 @@ Readers primarily interested in **how to use the library** should start with:
 
 ### Simplicial complex model
 
-At the data-structure level, the crate models a triangulation as a **finite simplicial complex**
+At the data-structure level, the crate models a triangulation as a **finite simplicial complex**[^edelsbrunner2001]
 represented by its **maximal** simplices (“cells”). In dimension `D`, a maximal cell is a
 `D`-simplex with exactly `D+1` vertices.
 
@@ -48,8 +51,8 @@ Key combinatorial objects:
 - **Cells**: maximal `D`-simplices. Each cell stores a set of `D+1` vertex keys.
 - **Facets**: codimension-1 faces of a cell. A `D`-simplex has `D+1` facets, each missing exactly one
   vertex.
-- **Adjacency / neighbors**: two cells are neighbors if they share a facet. The TDS stores neighbor
-  pointers across facets.
+- **Adjacency / neighbors**: two cells are neighbors if they share a facet. The triangulation data
+  structure (TDS) stores neighbor pointers across facets.[^cgal-tds3][^impl-tds]
 - **Boundary vs interior facets**:
   - An **interior facet** is incident to exactly two cells.
   - A **boundary facet** is incident to exactly one cell.
@@ -65,13 +68,17 @@ complex.
 
 ### Delaunay condition (empty circumsphere property)
 
-A Delaunay triangulation is characterized by the **empty circumsphere** condition:
+A Delaunay triangulation is characterized by the **empty circumsphere** condition:[^deberg2008][^edelsbrunner2001]
 
 - for each `D`-simplex (cell), no other input vertex lies *strictly inside* that simplex’s
   circumsphere.
 
 This is a **geometric** invariant: it depends on the embedding coordinates and on robust evaluation
-of orientation / in-sphere predicates.
+of orientation / in-sphere predicates.[^shewchuk1997]
+
+The key assumption behind local repair is that *regular triangulations* (including Delaunay triangulations)
+can be related by sequences of bistellar flips, and that PL-manifoldness keeps those local moves well-defined
+in the combinatorial/PL category.[^edelshah1996][^pachner1991]
 
 In practice, floating-point degeneracy matters:
 
@@ -82,7 +89,7 @@ In practice, floating-point degeneracy matters:
 
 Internally, the crate’s Level 4 verifier prefers fast, local flip-based checks over the naive
 O(cells × vertices) brute-force test. This reflects the standard theoretical relationship between
-Delaunay optimality and local flip predicates.
+Delaunay optimality and local flip predicates.[^edelshah1996][^impl-flips][^impl-delaunay-validation]
 
 ---
 
@@ -117,7 +124,7 @@ via `TopologyGuarantee`:
 - `TopologyGuarantee::PLManifold` and `PLManifoldStrict` add **link-based** conditions (ridge links
   and/or vertex links) that are characteristic of PL-manifolds. In PL topology, requiring the links
   of simplices to be spheres (or balls at the boundary) is equivalent to the standard manifold condition that
-  every point has a locally Euclidean neighborhood (up to PL homeomorphism).
+  every point has a locally Euclidean neighborhood (up to PL homeomorphism).[^hatcher2002][^rourke-sanderson]
 
 The precise **when/where** of these checks (during insertion vs at completion) is described in the
 crate-level API docs and implemented by the validation stack; this document focuses on the rationale
@@ -136,7 +143,7 @@ away from the embedding space.
 
 For a PL-manifold, the link of every interior vertex must be homeomorphic to a
 (d−1)-sphere, where d is the dimension of the triangulation. Boundary vertices
-must have links homeomorphic to a (d−1)-ball. These conditions characterize local
+must have links homeomorphic to a (d−1)-ball.[^hatcher2002][^rourke-sanderson] These conditions characterize local
 manifoldness at vertices and rule out singularities such as cones, pinched points,
 or branching neighborhoods.
 
@@ -159,7 +166,7 @@ with the ridge itself removed.
 
 For a PL‑manifold, the link of every interior ridge must be homeomorphic to a
 circle (in 3D) or, more generally, a 1‑sphere. Boundary ridges must have links
-homeomorphic to an interval. Violations of this condition indicate local
+homeomorphic to an interval.[^hatcher2002][^rourke-sanderson] Violations of this condition indicate local
 non‑manifold behavior such as branching or pinching.
 
 The `delaunay` crate exploits this property during **incremental insertion**:
@@ -194,9 +201,9 @@ At a high level:
 
 ### Incremental insertion algorithm (cavity-based)
 
-The crate’s incremental construction follows the standard cavity-based approach (CGAL-style):
+The crate’s incremental construction follows the standard cavity-based approach (CGAL-style):[^bowyer1981][^watson1981][^cgal-triangulation3][^impl-incremental-insertion]
 
-1. **Locate** the simplex containing the query point (facet walking / scan fallback).
+1. **Locate** the simplex containing the query point (facet walking / scan fallback).[^devillers-walking][^impl-locate]
 2. **Find the conflict region**: the set of cells whose circumspheres contain the point.
 3. **Extract the cavity boundary** (a set of boundary facets separating conflicting from
    non-conflicting cells).
@@ -231,8 +238,8 @@ geometric interpretation is undefined.
 ### Hilbert ordering
 
 Hilbert ordering refers to sorting vertices along a space-filling Hilbert curve
-prior to incremental insertion. Hilbert curves have strong locality-preserving
-properties: points that are close in Euclidean space tend to be close along the
+prior to incremental insertion.[^moon2001][^cgal-spatial-sorting][^impl-hilbert]
+Hilbert curves have strong locality-preserving properties: points that are close in Euclidean space tend to be close along the
 curve parameterization.
 
 In the context of incremental Delaunay construction, improved locality reduces
@@ -246,10 +253,13 @@ triangulation. Its impact is strictly on performance, robustness, and practical
 convergence behavior, particularly in higher dimensions where cavity growth and
 flip complexity can otherwise become large.
 
+In this crate, Hilbert indices are computed using Skilling’s algorithm and used for batch preprocessing.[^skilling2004][^impl-hilbert]
+
 ### Morton (Z-order) ordering
 
 Morton (Z-order) ordering sorts points by interleaving coordinate bits (after an appropriate
-normalization). Like Hilbert ordering, it is a space-filling curve that tends to preserve locality,
+normalization).[^morton1966][^moon2001][^impl-morton]
+Like Hilbert ordering, it is a space-filling curve that tends to preserve locality,
 but typically has weaker locality properties than Hilbert.
 
 In practice:
@@ -267,7 +277,7 @@ guarantees: the same invariants are enforced regardless of insertion order.
 ## Convergence considerations
 
 Many “repair” and “editing” workflows in high dimensions rely on sequences of **bistellar flips**
-(Pachner moves) to improve topology or restore the Delaunay property.
+(Pachner moves) to improve topology or restore the Delaunay property.[^pachner1991][^edelshah1996][^impl-flips]
 
 Important caveats:
 
@@ -298,7 +308,7 @@ Some limitations are inherent to incremental high-dimensional computational geom
   numerical predicates.
 - **Numerical precision**: floating-point robustness is a fundamental constraint. Robust predicates
   substantially reduce failures, but extreme coordinate magnitudes or ill-conditioned point sets can
-  still trigger edge cases.
+  still trigger edge cases.[^shewchuk1997]
 
 Ordering and preprocessing can mitigate (but not eliminate) these issues:
 
@@ -310,29 +320,30 @@ and the issue investigation notes in `docs/archive/`.
 
 ---
 
-## Further reading
+## Footnotes
 
-This section is a short, curated list of references most directly relevant to the invariants and
-validation strategy described in this document.
+For the project-wide bibliography (including references not cited here), see `REFERENCES.md`.
 
-For the full project bibliography (including many more specialized topics), see `REFERENCES.md`:
-
-- <https://github.com/acgetchell/delaunay/blob/main/REFERENCES.md>
-
-### Selected references for invariants and validation
-
-- The CGAL Project. "CGAL User and Reference Manual." CGAL Editorial Board, 6.0.1 edition, 2024.
-  <https://doc.cgal.org/6.0.1/Manual/packages.html>
-- de Berg, M., et al. "Computational Geometry: Algorithms and Applications." 3rd ed.
-  Springer-Verlag, 2008. DOI: <https://doi.org/10.1007/978-3-540-77974-2>
-- Edelsbrunner, H. *Geometry and Topology for Mesh Generation*. Cambridge University Press, 2001.
-- Shewchuk, J. R. "Adaptive Precision Floating-Point Arithmetic and Fast Robust Geometric Predicates."
-  *Discrete & Computational Geometry* 18, no. 3 (1997): 305-363. DOI: <https://doi.org/10.1007/PL00009321>
-- Edelsbrunner, H., and Shah, N. R. "Incremental Topological Flipping Works for Regular Triangulations."
-  *Algorithmica* 15, no. 3 (1996): 223-241. DOI: <https://doi.org/10.1007/BF02523408>
-- Pachner, U. "PL Homeomorphic Manifolds Are Equivalent by Elementary Shellings."
-  *European Journal of Combinatorics* 12, no. 2 (1991): 129-145.
-  DOI: <https://doi.org/10.1016/S0195-6698(13)80028-2>
-- Hatcher, A. *Algebraic Topology*. Cambridge University Press, 2002.
-  (Appendix A: PL Manifolds and Links.)
-- Rourke, C. P., and Sanderson, B. J. *Introduction to Piecewise-Linear Topology*. Springer, 1972.
+[^edelsbrunner2001]: Herbert Edelsbrunner. *Geometry and Topology for Mesh Generation*. Cambridge University Press, 2001. DOI: <https://doi.org/10.1017/CBO9780511530067>.
+[^cgal-tds3]: CGAL Project. *Triangulation Data Structure* (TDS_3) documentation. <https://doc.cgal.org/latest/TDS_3/index.html>.
+[^impl-tds]: Implementation: [src/core/triangulation_data_structure.rs](../src/core/triangulation_data_structure.rs).
+[^deberg2008]: Mark de Berg, Otfried Cheong, Marc van Kreveld, Mark Overmars. *Computational Geometry: Algorithms and Applications*, 3rd ed. Springer, 2008. DOI: <https://doi.org/10.1007/978-3-540-77974-2>.
+[^shewchuk1997]: Jonathan Richard Shewchuk. “Adaptive Precision Floating-Point Arithmetic and Fast Robust Geometric Predicates.” *Discrete & Computational Geometry* 18(3), 1997. DOI: <https://doi.org/10.1007/PL00009321>.
+[^edelshah1996]: Herbert Edelsbrunner and Nimish R. Shah. “Incremental Topological Flipping Works for Regular Triangulations.” *Algorithmica* 15(3), 1996. DOI: <https://doi.org/10.1007/BF01975867>.
+[^pachner1991]: Udo Pachner. “P.L. Homeomorphic Manifolds Are Equivalent by Elementary Shellings.” *European Journal of Combinatorics* 12(2), 1991. DOI: <https://doi.org/10.1016/S0195-6698(13)80080-7>.
+[^impl-flips]: Implementation: [src/core/algorithms/flips.rs](../src/core/algorithms/flips.rs).
+[^impl-delaunay-validation]: Implementation: [src/core/util/delaunay_validation.rs](../src/core/util/delaunay_validation.rs).
+[^hatcher2002]: Allen Hatcher. *Algebraic Topology*. Cambridge University Press, 2002. Free online version: <https://pi.math.cornell.edu/~hatcher/AT/ATpage>. (See Appendix A: “PL Manifolds and Links”.)
+[^rourke-sanderson]: C. P. Rourke and B. J. Sanderson. *Introduction to Piecewise-Linear Topology*. Springer, 1972. DOI: <https://doi.org/10.1007/978-3-642-81735-9>.
+[^bowyer1981]: A. Bowyer. “Computing Dirichlet Tessellations.” *The Computer Journal* 24(2), 1981. DOI: <https://doi.org/10.1093/comjnl/24.2.162>.
+[^watson1981]: D. F. Watson. “Computing the n-dimensional Delaunay tessellation with application to Voronoi polytopes.” *The Computer Journal* 24(2), 1981. DOI: <https://doi.org/10.1093/comjnl/24.2.167>.
+[^cgal-triangulation3]: CGAL Project. *3D Triangulations* (Triangulation_3) documentation. <https://doc.cgal.org/latest/Triangulation_3/>.
+[^impl-incremental-insertion]: Implementation: [src/core/algorithms/incremental_insertion.rs](../src/core/algorithms/incremental_insertion.rs).
+[^devillers-walking]: Olivier Devillers, Sylvain Pion, Monique Teillaud. “Walking in a Triangulation.” *International Journal of Foundations of Computer Science* 13(2), 2002. DOI: <https://doi.org/10.1142/S0129054102001047>.
+[^impl-locate]: Implementation: [src/core/algorithms/locate.rs](../src/core/algorithms/locate.rs).
+[^moon2001]: Bongki Moon, H. V. Jagadish, Christos Faloutsos, Joel H. Saltz. “Analysis of the Clustering Properties of the Hilbert Space-Filling Curve.” *IEEE Transactions on Knowledge and Data Engineering* 13(1), 2001. DOI: <https://doi.org/10.1109/69.908985>.
+[^cgal-spatial-sorting]: CGAL Project. *Spatial Sorting* documentation. <https://doc.cgal.org/latest/Spatial_sorting/index.html>.
+[^impl-hilbert]: Implementation: [src/core/util/hilbert.rs](../src/core/util/hilbert.rs) (Skilling’s Hilbert index).
+[^skilling2004]: John Skilling. “Programming the Hilbert curve.” *AIP Conference Proceedings* 707, 2004. DOI: <https://doi.org/10.1063/1.1751381>.
+[^morton1966]: G. M. Morton. “A computer oriented geodetic data base and a new technique in file sequencing.” IBM Ltd., 1966. PDF: <https://www.ibm.com/docs/api/v1/content/7f40403c-c547-47ef-91b2-7f258272ae7c/Morton1966.pdf>.
+[^impl-morton]: Implementation: [src/core/delaunay_triangulation.rs](../src/core/delaunay_triangulation.rs) (`InsertionOrderStrategy::Morton`, `order_vertices_morton`, `morton_code`).

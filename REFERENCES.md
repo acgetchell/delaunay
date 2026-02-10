@@ -102,13 +102,13 @@ This section contains the foundational algorithms and data structures that form 
 ### Bistellar (Pachner) Moves and Delaunay Repair
 
 - Edelsbrunner, H., and Shah, N. R. "Incremental Topological Flipping Works for Regular Triangulations."
-  *Algorithmica* 15, no. 3 (1996): 223-241. DOI: [10.1007/BF02523408](https://doi.org/10.1007/BF02523408)
+  *Algorithmica* 15, no. 3 (1996): 223-241. DOI: [10.1007/BF01975867](https://doi.org/10.1007/BF01975867)
 - Joe, B. "Construction of Three-Dimensional Delaunay Triangulations Using Local Transformations."
   *Computer Aided Geometric Design* 8, no. 2 (1991): 123-142.
   DOI: [10.1016/0167-8396(91)90038-D](https://doi.org/10.1016/0167-8396(91)90038-D)
 - Pachner, U. "PL Homeomorphic Manifolds Are Equivalent by Elementary Shellings."
   *European Journal of Combinatorics* 12, no. 2 (1991): 129-145.
-  DOI: [10.1016/S0195-6698(13)80028-2](https://doi.org/10.1016/S0195-6698(13)80028-2)
+  DOI: [10.1016/S0195-6698(13)80080-7](https://doi.org/10.1016/S0195-6698(13)80080-7)
 
 ### Data Structures and Implementation References
 
@@ -120,6 +120,7 @@ This section contains the foundational algorithms and data structures that form 
 - Devillers, O. "The Delaunay Hierarchy." *International Journal of Foundations of Computer Science* 13,
   no. 2 (2002): 163-180. DOI: [10.1142/S0129054102001035](https://doi.org/10.1142/S0129054102001035)
 - Edelsbrunner, H. "Geometry and Topology for Mesh Generation." Cambridge: Cambridge University Press, 2001.
+  DOI: [10.1017/CBO9780511530067](https://doi.org/10.1017/CBO9780511530067)
   ISBN: 978-0-521-79309-4
 - Getchell, Adam. "la-stack: Fast, stack-allocated linear algebra for fixed dimensions in Rust." Zenodo, 2026.
   DOI: [10.5281/zenodo.18444315](https://doi.org/10.5281/zenodo.18444315)

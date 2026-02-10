@@ -12,6 +12,7 @@ Replaces complex bash parsing logic with maintainable Python code.
 """
 
 import argparse
+import io
 import json
 import logging
 import math
@@ -19,11 +20,14 @@ import os
 import re
 import subprocess
 import sys
+import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from shutil import copy2 as copyfile  # NOTE: Use copy2 (metadata-preserving) under the 'copyfile' alias for tests/patching convenience.
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from packaging.version import Version
@@ -42,11 +46,14 @@ if TYPE_CHECKING:
     )
     from hardware_utils import HardwareComparator, HardwareInfo
     from subprocess_utils import (
+        ExecutableNotFoundError,
         ProjectRootNotFoundError,
         find_project_root,
         get_git_commit_hash,
+        get_git_remote_url,
         run_cargo_command,
         run_git_command,
+        run_safe_command,
     )
 else:
     try:
@@ -60,11 +67,14 @@ else:
         )
         from hardware_utils import HardwareComparator, HardwareInfo
         from subprocess_utils import (
+            ExecutableNotFoundError,
             ProjectRootNotFoundError,
             find_project_root,
             get_git_commit_hash,
+            get_git_remote_url,
             run_cargo_command,
             run_git_command,
+            run_safe_command,
         )
     except ModuleNotFoundError:
         # When imported as a module (e.g., scripts.benchmark_utils)
@@ -77,11 +87,14 @@ else:
         )
         from scripts.hardware_utils import HardwareComparator, HardwareInfo
         from scripts.subprocess_utils import (
+            ExecutableNotFoundError,
             ProjectRootNotFoundError,
             find_project_root,
             get_git_commit_hash,
+            get_git_remote_url,
             run_cargo_command,
             run_git_command,
+            run_safe_command,
         )
 
 # Development mode arguments - centralized to keep baseline generation and comparison in sync
@@ -199,7 +212,7 @@ class PerformanceSummaryGenerator:
 
         # Add git information
         try:
-            commit_hash = get_git_commit_hash()
+            commit_hash = get_git_commit_hash(cwd=self.project_root)
             if commit_hash and commit_hash != "unknown":
                 lines.append(f"**Git Commit**: {commit_hash}")
         except Exception as e:
@@ -208,7 +221,7 @@ class PerformanceSummaryGenerator:
         # Add hardware information
         try:
             hardware_info = HardwareInfo()
-            hw_info = hardware_info.get_hardware_info()
+            hw_info = hardware_info.get_hardware_info(cwd=self.project_root)
             lines.extend(
                 [
                     f"**Hardware**: {hw_info['CPU']} ({hw_info['CPU_CORES']} cores)",
@@ -1458,11 +1471,11 @@ class BaselineGenerator:
 
         try:
             # Use secure subprocess wrapper for git command
-            git_commit = get_git_commit_hash()
+            git_commit = get_git_commit_hash(cwd=self.project_root)
         except Exception:
             git_commit = "unknown"
 
-        hardware_info = self.hardware.format_hardware_info()
+        hardware_info = self.hardware.format_hardware_info(cwd=self.project_root)
 
         # Write baseline file
         output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1637,6 +1650,18 @@ class PerformanceComparator:
 
         return results
 
+    def parse_baseline_file(self, baseline_content: str) -> dict[str, BenchmarkData]:
+        """Public wrapper for parsing a baseline file."""
+        return self._parse_baseline_file(baseline_content)
+
+    def write_performance_comparison(self, f, current_results: list[BenchmarkData], baseline_results: dict[str, BenchmarkData]) -> bool:
+        """Public wrapper for writing the performance comparison section.
+
+        Returns:
+            True if the overall average regression exceeds the threshold.
+        """
+        return self._write_performance_comparison(f, current_results, baseline_results)
+
     def _write_comparison_file(
         self,
         current_results: list[BenchmarkData],
@@ -1670,7 +1695,7 @@ class PerformanceComparator:
         current_date = now.strftime("%a %b %d %H:%M:%S %Z %Y")
 
         try:
-            git_commit = get_git_commit_hash()
+            git_commit = get_git_commit_hash(cwd=self.project_root)
         except Exception:
             git_commit = "unknown"
 
@@ -1693,7 +1718,7 @@ class PerformanceComparator:
 
     def _prepare_hardware_comparison(self, baseline_content: str) -> str:
         """Prepare hardware comparison report."""
-        current_hardware = self.hardware.get_hardware_info()
+        current_hardware = self.hardware.get_hardware_info(cwd=self.project_root)
         baseline_hardware = HardwareComparator.parse_baseline_hardware(baseline_content)
         hardware_report, _ = HardwareComparator.compare_hardware(current_hardware, baseline_hardware)
         return hardware_report
@@ -2472,15 +2497,274 @@ def get_default_bench_timeout() -> int:
         return 1800
 
 
-def create_argument_parser() -> argparse.ArgumentParser:
-    """Create and configure the argument parser."""
-    parser = argparse.ArgumentParser(description="Benchmark utilities for baseline generation and comparison")
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+# =============================================================================
+# LOCAL BASELINE FETCH/COMPARE HELPERS
+# =============================================================================
 
-    # Generate baseline command
+
+def _sanitize_tag_name(tag_name: str) -> str:
+    """Sanitize a tag name for use in artifact names and local cache directories."""
+    return re.sub(r"[^a-zA-Z0-9._-]", "_", tag_name)
+
+
+def _default_baseline_cache_dir(project_root: Path, tag_name: str) -> Path:
+    """Default on-disk cache location for downloaded baseline artifacts."""
+    return project_root / "baseline-artifacts" / _sanitize_tag_name(tag_name)
+
+
+def _parse_github_owner_repo(remote_url: str) -> tuple[str, str] | None:
+    """Parse a GitHub owner/repo from a git remote URL."""
+    url = remote_url.strip()
+    if url.endswith(".git"):
+        url = url[: -len(".git")]
+
+    # https://github.com/OWNER/REPO
+    if url.startswith(("https://", "http://")):
+        parsed = urlparse(url)
+        if parsed.netloc.lower() in {"github.com", "www.github.com"}:
+            parts = parsed.path.strip("/").split("/")
+            if len(parts) >= 2:
+                return parts[0], parts[1]
+        return None
+
+    # git@github.com:OWNER/REPO
+    match = re.match(r"^git@github\.com:(?P<owner>[^/]+)/(?P<repo>.+)$", url)
+    if match:
+        return match.group("owner"), match.group("repo")
+
+    # ssh://git@github.com/OWNER/REPO
+    if url.startswith("ssh://"):
+        parsed = urlparse(url)
+        if (parsed.hostname or "").lower() == "github.com":
+            parts = (parsed.path or "").strip("/").split("/")
+            if len(parts) >= 2:
+                return parts[0], parts[1]
+
+    return None
+
+
+def _resolve_github_repo(project_root: Path, repo: str | None, remote: str) -> str:
+    """Resolve the GitHub repo in OWNER/REPO form."""
+    if repo is not None:
+        return repo
+
+    remote_url = get_git_remote_url(remote=remote, cwd=project_root)
+    parsed = _parse_github_owner_repo(remote_url)
+    if parsed is None:
+        msg = f"Unable to determine GitHub repo from remote '{remote}': {remote_url}"
+        raise ValueError(msg)
+
+    owner, repo_name = parsed
+    return f"{owner}/{repo_name}"
+
+
+def _parse_baseline_metadata(baseline_content: str) -> dict[str, str]:
+    """Parse basic metadata fields from a baseline file."""
+    metadata = {
+        "date": "Unknown",
+        "commit": "Unknown",
+        "tag": "Unknown",
+    }
+
+    for line in baseline_content.splitlines():
+        if line.startswith("Date: "):
+            metadata["date"] = line[6:].strip()
+        elif line.startswith("Git commit: "):
+            metadata["commit"] = line[12:].strip()
+        elif line.startswith("Tag: "):
+            metadata["tag"] = line[5:].strip()
+        elif line.strip() == "Hardware Information:":
+            break
+
+    return metadata
+
+
+def _sorted_benchmark_list(results: Mapping[str, "BenchmarkData"]) -> list["BenchmarkData"]:
+    """Return benchmarks sorted by (dimension, point count) for stable output."""
+    return sorted(results.values(), key=lambda b: (int(b.dimension.rstrip("D")), b.points))
+
+
+def _find_downloaded_baseline_file(download_dir: Path) -> Path:
+    """Find baseline_results.txt in a downloaded artifact directory."""
+    direct = download_dir / "baseline_results.txt"
+    if direct.exists():
+        return direct
+
+    nested = download_dir / "baseline-artifact" / "baseline_results.txt"
+    if nested.exists():
+        return nested
+
+    matches = list(download_dir.rglob("baseline_results.txt"))
+    if len(matches) == 1:
+        return matches[0]
+
+    if matches:
+        msg = f"Multiple baseline_results.txt files found under: {download_dir}"
+        raise FileNotFoundError(msg)
+
+    msg = f"baseline_results.txt not found under: {download_dir}"
+    raise FileNotFoundError(msg)
+
+
+def render_baseline_comparison(project_root: Path, old_baseline: Path, new_baseline: Path) -> tuple[str, bool]:
+    """Render a baseline-vs-baseline comparison report.
+
+    Returns:
+        (report_text, regression_found)
+    """
+    old_content = old_baseline.read_text(encoding="utf-8")
+    new_content = new_baseline.read_text(encoding="utf-8")
+
+    old_meta = _parse_baseline_metadata(old_content)
+    new_meta = _parse_baseline_metadata(new_content)
+
+    # Treat "new" as the "current" side for the hardware comparator.
+    new_hw = HardwareComparator.parse_baseline_hardware(new_content)
+    old_hw = HardwareComparator.parse_baseline_hardware(old_content)
+    hardware_report, _ = HardwareComparator.compare_hardware(new_hw, old_hw)
+
+    comparator = PerformanceComparator(project_root)
+    old_results = comparator.parse_baseline_file(old_content)
+    new_results = comparator.parse_baseline_file(new_content)
+
+    buf = io.StringIO()
+    buf.write("Baseline Comparison Results\n")
+    buf.write("==========================\n")
+    buf.write(f"New baseline file: {new_baseline}\n")
+    buf.write(f"  Date: {new_meta['date']}\n")
+    buf.write(f"  Tag: {new_meta['tag']}\n")
+    buf.write(f"  Git commit: {new_meta['commit']}\n")
+    buf.write(f"Old baseline file: {old_baseline}\n")
+    buf.write(f"  Date: {old_meta['date']}\n")
+    buf.write(f"  Tag: {old_meta['tag']}\n")
+    buf.write(f"  Git commit: {old_meta['commit']}\n\n")
+
+    buf.write(hardware_report)
+    buf.write("\n")
+
+    current_results = _sorted_benchmark_list(new_results)
+    regression_found = comparator.write_performance_comparison(buf, current_results, old_results)
+
+    return buf.getvalue(), regression_found
+
+
+@dataclass(frozen=True)
+class BaselineFetchOptions:
+    regenerate_missing: bool = False
+    workflow_ref: str = "main"
+    wait_seconds: int = 3600
+    poll_seconds: int = 30
+
+
+class GitHubBaselineFetcher:
+    """Fetch tag baselines from GitHub Actions artifacts using the GitHub CLI."""
+
+    def __init__(self, project_root: Path, *, repo: str | None = None, remote: str = "origin") -> None:
+        self.project_root = project_root
+        self.repo = _resolve_github_repo(project_root, repo=repo, remote=remote)
+
+    def _artifact_name_for_tag(self, tag_name: str) -> str:
+        return f"performance-baseline-{_sanitize_tag_name(tag_name)}"
+
+    def _try_download_artifact(self, *, artifact_name: str, out_dir: Path) -> bool:
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        result = run_safe_command(
+            "gh",
+            [
+                "run",
+                "download",
+                "-R",
+                self.repo,
+                "-n",
+                artifact_name,
+                "-D",
+                str(out_dir),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        if result.returncode == 0:
+            return True
+
+        logger.debug("gh run download failed (artifact=%s rc=%s stderr=%s)", artifact_name, result.returncode, (result.stderr or "").strip())
+        return False
+
+    def _dispatch_generate_baseline(self, *, tag_name: str, workflow_ref: str) -> None:
+        result = run_safe_command(
+            "gh",
+            [
+                "workflow",
+                "run",
+                "generate-baseline.yml",
+                "-R",
+                self.repo,
+                "--ref",
+                workflow_ref,
+                "-f",
+                f"tag={tag_name}",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        if result.returncode != 0:
+            details = (result.stderr or result.stdout or "").strip()
+            msg = f"Failed to dispatch generate-baseline.yml for tag {tag_name} on ref {workflow_ref}: {details}"
+            raise RuntimeError(msg)
+
+    def fetch_baseline(self, *, tag_name: str, out_dir: Path, options: BaselineFetchOptions) -> Path:
+        """Fetch a baseline for a tag.
+
+        If options.regenerate_missing is True, this will trigger a workflow_dispatch run
+        when the artifact is missing/expired, and poll until it becomes available.
+
+        Returns:
+            Path to the downloaded baseline_results.txt
+        """
+        artifact_name = self._artifact_name_for_tag(tag_name)
+
+        try:
+            if self._try_download_artifact(artifact_name=artifact_name, out_dir=out_dir):
+                return _find_downloaded_baseline_file(out_dir)
+
+            if not options.regenerate_missing:
+                msg = f"Baseline artifact not found for tag {tag_name} (expected artifact: {artifact_name})"
+                raise FileNotFoundError(msg)
+
+            print(f"🔁 Baseline artifact not found for {tag_name}; dispatching generate-baseline.yml and waiting...")
+            self._dispatch_generate_baseline(tag_name=tag_name, workflow_ref=options.workflow_ref)
+
+            deadline = time.monotonic() + options.wait_seconds
+            attempt = 0
+            while time.monotonic() < deadline:
+                attempt += 1
+                time.sleep(options.poll_seconds)
+
+                if self._try_download_artifact(artifact_name=artifact_name, out_dir=out_dir):
+                    return _find_downloaded_baseline_file(out_dir)
+
+                if attempt % 5 == 0:
+                    remaining = int(max(0.0, deadline - time.monotonic()))
+                    print(f"⏳ Waiting for baseline artifact {artifact_name}... ({remaining}s remaining)")
+
+            msg = f"Timed out waiting for baseline artifact {artifact_name} (tag {tag_name})"
+            raise TimeoutError(msg)
+
+        except ExecutableNotFoundError as e:
+            msg = f"Missing dependency: {e} (install the GitHub CLI: gh)"
+            raise RuntimeError(msg) from e
+
+
+def _add_benchmark_subcommands(subparsers) -> None:
+    """Add benchmark-running subcommands."""
     gen_parser = subparsers.add_parser("generate-baseline", help="Generate performance baseline")
     gen_parser.add_argument("--dev", action="store_true", help="Use development mode with faster benchmark settings")
     gen_parser.add_argument("--output", type=Path, help="Output file path")
+    gen_parser.add_argument("--project-root", type=Path, help="Project root to benchmark (directory containing Cargo.toml)")
     gen_parser.add_argument("--tag", type=str, default=os.getenv("TAG_NAME"), help="Tag name for this baseline (from TAG_NAME env or --tag option)")
     gen_parser.add_argument(
         "--bench-timeout",
@@ -2490,11 +2774,11 @@ def create_argument_parser() -> argparse.ArgumentParser:
     )
     gen_parser.set_defaults(validate_bench_timeout=True)
 
-    # Compare benchmarks command
     cmp_parser = subparsers.add_parser("compare", help="Compare current performance against baseline")
     cmp_parser.add_argument("--baseline", type=Path, required=True, help="Path to baseline file")
     cmp_parser.add_argument("--dev", action="store_true", help="Use development mode with faster benchmark settings")
     cmp_parser.add_argument("--output", type=Path, help="Output file path")
+    cmp_parser.add_argument("--project-root", type=Path, help="Project root to benchmark (directory containing Cargo.toml)")
     cmp_parser.add_argument(
         "--bench-timeout",
         type=int,
@@ -2503,7 +2787,51 @@ def create_argument_parser() -> argparse.ArgumentParser:
     )
     cmp_parser.set_defaults(validate_bench_timeout=True)
 
-    # Workflow helper commands
+
+def _add_local_baseline_subcommands(subparsers) -> None:
+    """Add subcommands that operate on existing baseline artifacts/files."""
+    bb_parser = subparsers.add_parser("compare-baselines", help="Compare two baseline files (no benchmarks)")
+    bb_parser.add_argument("--old", dest="old_baseline", type=Path, required=True, help="Path to the older baseline file")
+    bb_parser.add_argument("--new", dest="new_baseline", type=Path, required=True, help="Path to the newer baseline file")
+    bb_parser.add_argument("--output", type=Path, help="Optional path to write the comparison report")
+    bb_parser.add_argument("--project-root", type=Path, help="Project root (only used for repo context; optional)")
+
+    fetch_parser = subparsers.add_parser("fetch-baseline", help="Fetch a tag baseline artifact from GitHub Actions")
+    fetch_parser.add_argument("--tag", dest="tag_name", type=str, required=True, help="Tag name to fetch (e.g., v0.6.2)")
+    fetch_parser.add_argument("--out", dest="out_dir", type=Path, help="Output directory for downloaded artifact contents")
+    fetch_parser.add_argument("--repo", type=str, help="GitHub repo in OWNER/REPO form (defaults to parsing the git remote)")
+    fetch_parser.add_argument("--remote", type=str, default="origin", help="Git remote name used to infer repo when --repo is not set")
+    fetch_parser.add_argument("--regenerate-missing", action="store_true", help="If missing, dispatch generate-baseline.yml and wait for artifact")
+    fetch_parser.add_argument(
+        "--workflow-ref",
+        type=str,
+        default="main",
+        help="Git ref to run generate-baseline.yml from when regenerating (default: main)",
+    )
+    fetch_parser.add_argument("--wait-seconds", type=int, default=3600, help="Max seconds to wait when regenerating (default: 3600)")
+    fetch_parser.add_argument("--poll-seconds", type=int, default=30, help="Polling interval seconds when waiting (default: 30)")
+    fetch_parser.add_argument("--project-root", type=Path, help="Project root containing the git repo (directory containing Cargo.toml)")
+
+    tags_parser = subparsers.add_parser("compare-tags", help="Compare two tags by fetching their baselines and comparing locally")
+    tags_parser.add_argument("--old-tag", dest="old_tag", type=str, required=True, help="Older tag (e.g., v0.6.1)")
+    tags_parser.add_argument("--new-tag", dest="new_tag", type=str, required=True, help="Newer tag (e.g., v0.6.2)")
+    tags_parser.add_argument("--output", type=Path, help="Optional path to write the comparison report")
+    tags_parser.add_argument("--repo", type=str, help="GitHub repo in OWNER/REPO form (defaults to parsing the git remote)")
+    tags_parser.add_argument("--remote", type=str, default="origin", help="Git remote name used to infer repo when --repo is not set")
+    tags_parser.add_argument("--regenerate-missing", action="store_true", help="If missing, dispatch generate-baseline.yml and wait for artifacts")
+    tags_parser.add_argument(
+        "--workflow-ref",
+        type=str,
+        default="main",
+        help="Git ref to run generate-baseline.yml from when regenerating (default: main)",
+    )
+    tags_parser.add_argument("--wait-seconds", type=int, default=3600, help="Max seconds to wait when regenerating (default: 3600)")
+    tags_parser.add_argument("--poll-seconds", type=int, default=30, help="Polling interval seconds when waiting (default: 30)")
+    tags_parser.add_argument("--project-root", type=Path, help="Project root containing the git repo (directory containing Cargo.toml)")
+
+
+def _add_workflow_helper_subcommands(subparsers) -> None:
+    """Add subcommands used by GitHub Actions workflows."""
     subparsers.add_parser("determine-tag", help="Determine tag name for baseline generation")
 
     meta_parser = subparsers.add_parser("create-metadata", help="Create metadata.json file for baseline artifact")
@@ -2516,7 +2844,9 @@ def create_argument_parser() -> argparse.ArgumentParser:
     artifact_parser = subparsers.add_parser("sanitize-artifact-name", help="Sanitize tag name for GitHub Actions artifact")
     artifact_parser.add_argument("--tag", type=str, required=True, help="Tag name to sanitize")
 
-    # Regression testing helper commands
+
+def _add_regression_subcommands(subparsers) -> None:
+    """Add regression-testing helper subcommands."""
     prepare_parser = subparsers.add_parser("prepare-baseline", help="Prepare baseline for regression testing")
     prepare_parser.add_argument("--baseline-dir", type=Path, default=Path("baseline-artifact"), help="Baseline artifact directory")
 
@@ -2551,10 +2881,24 @@ def create_argument_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("regression-summary", help="Generate regression testing summary")
 
-    # Performance summary command
+
+def _add_performance_summary_subcommands(subparsers) -> None:
+    """Add performance summary generation subcommands."""
     perf_summary_parser = subparsers.add_parser("generate-summary", help="Generate performance summary markdown")
     perf_summary_parser.add_argument("--output", type=Path, help="Output file path (defaults to benches/PERFORMANCE_RESULTS.md)")
     perf_summary_parser.add_argument("--run-benchmarks", action="store_true", help="Run fresh circumsphere benchmarks before generating summary")
+
+
+def create_argument_parser() -> argparse.ArgumentParser:
+    """Create and configure the argument parser."""
+    parser = argparse.ArgumentParser(description="Benchmark utilities for baseline generation and comparison")
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    _add_benchmark_subcommands(subparsers)
+    _add_local_baseline_subcommands(subparsers)
+    _add_workflow_helper_subcommands(subparsers)
+    _add_regression_subcommands(subparsers)
+    _add_performance_summary_subcommands(subparsers)
 
     return parser
 
@@ -2579,6 +2923,114 @@ def execute_baseline_commands(args: argparse.Namespace, project_root: Path) -> N
             sys.exit(1)
 
         sys.exit(1 if regression_found else 0)
+
+
+def _write_optional_report(output_path: Path | None, report_text: str) -> None:
+    if output_path is None:
+        return
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(report_text, encoding="utf-8")
+
+
+def _baseline_fetch_options_from_args(args: argparse.Namespace) -> BaselineFetchOptions:
+    return BaselineFetchOptions(
+        regenerate_missing=args.regenerate_missing,
+        workflow_ref=args.workflow_ref,
+        wait_seconds=args.wait_seconds,
+        poll_seconds=args.poll_seconds,
+    )
+
+
+def _cmd_compare_baselines(args: argparse.Namespace, project_root: Path) -> None:
+    if not args.old_baseline.exists():
+        print(f"❌ Baseline file not found: {args.old_baseline}", file=sys.stderr)
+        sys.exit(3)
+    if not args.new_baseline.exists():
+        print(f"❌ Baseline file not found: {args.new_baseline}", file=sys.stderr)
+        sys.exit(3)
+
+    try:
+        report_text, regression_found = render_baseline_comparison(project_root, args.old_baseline, args.new_baseline)
+    except Exception as e:
+        print(f"❌ Failed to compare baseline files: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print(report_text, end="" if report_text.endswith("\n") else "\n")
+    _write_optional_report(args.output, report_text)
+    sys.exit(1 if regression_found else 0)
+
+
+def _cmd_fetch_baseline(args: argparse.Namespace, project_root: Path) -> None:
+    out_dir = args.out_dir
+    if out_dir is None:
+        out_dir = _default_baseline_cache_dir(project_root, args.tag_name)
+
+    try:
+        fetcher = GitHubBaselineFetcher(project_root, repo=args.repo, remote=args.remote)
+        options = _baseline_fetch_options_from_args(args)
+        baseline_path = fetcher.fetch_baseline(tag_name=args.tag_name, out_dir=out_dir, options=options)
+    except FileNotFoundError as e:
+        print(f"❌ {e}", file=sys.stderr)
+        sys.exit(3)
+    except TimeoutError as e:
+        print(f"❌ {e}", file=sys.stderr)
+        sys.exit(1)
+    except RuntimeError as e:
+        print(f"❌ {e}", file=sys.stderr)
+        sys.exit(2 if str(e).startswith("Missing dependency:") else 1)
+    except Exception as e:
+        print(f"❌ Failed to fetch baseline: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print(baseline_path)
+    sys.exit(0)
+
+
+def _cmd_compare_tags(args: argparse.Namespace, project_root: Path) -> None:
+    try:
+        fetcher = GitHubBaselineFetcher(project_root, repo=args.repo, remote=args.remote)
+        options = _baseline_fetch_options_from_args(args)
+
+        old_dir = _default_baseline_cache_dir(project_root, args.old_tag)
+        new_dir = _default_baseline_cache_dir(project_root, args.new_tag)
+
+        old_baseline = fetcher.fetch_baseline(tag_name=args.old_tag, out_dir=old_dir, options=options)
+        new_baseline = fetcher.fetch_baseline(tag_name=args.new_tag, out_dir=new_dir, options=options)
+
+        report_text, regression_found = render_baseline_comparison(project_root, old_baseline, new_baseline)
+    except FileNotFoundError as e:
+        print(f"❌ {e}", file=sys.stderr)
+        sys.exit(3)
+    except TimeoutError as e:
+        print(f"❌ {e}", file=sys.stderr)
+        sys.exit(1)
+    except RuntimeError as e:
+        print(f"❌ {e}", file=sys.stderr)
+        sys.exit(2 if str(e).startswith("Missing dependency:") else 1)
+    except Exception as e:
+        print(f"❌ Failed to compare tags: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print(report_text, end="" if report_text.endswith("\n") else "\n")
+    _write_optional_report(args.output, report_text)
+    sys.exit(1 if regression_found else 0)
+
+
+def execute_local_baseline_commands(args: argparse.Namespace, project_root: Path) -> None:
+    """Execute local (non-benchmark) baseline fetch/compare commands."""
+    handlers = {
+        "compare-baselines": _cmd_compare_baselines,
+        "fetch-baseline": _cmd_fetch_baseline,
+        "compare-tags": _cmd_compare_tags,
+    }
+
+    handler = handlers.get(args.command)
+    if handler is None:
+        msg = f"Unknown local baseline command: {args.command}"
+        raise ValueError(msg)
+
+    handler(args, project_root)
 
 
 def execute_workflow_commands(args: argparse.Namespace) -> None:
@@ -2660,6 +3112,11 @@ def execute_command(args: argparse.Namespace, project_root: Path) -> None:
         execute_baseline_commands(args, project_root)
         return
 
+    # Try local baseline commands
+    if args.command in ("compare-baselines", "fetch-baseline", "compare-tags"):
+        execute_local_baseline_commands(args, project_root)
+        return
+
     # Try workflow commands
     if args.command in ("determine-tag", "create-metadata", "display-summary", "sanitize-artifact-name"):
         execute_workflow_commands(args)
@@ -2701,7 +3158,13 @@ def main():
         parser.error(f"--bench-timeout must be positive (got {args.bench_timeout})")
 
     try:
-        project_root = find_project_root()
+        project_root: Path
+        if hasattr(args, "project_root") and args.project_root is not None:
+            project_root = args.project_root.resolve()
+            if not (project_root / "Cargo.toml").exists():
+                parser.error(f"--project-root must contain Cargo.toml (got: {project_root})")
+        else:
+            project_root = find_project_root()
     except ProjectRootNotFoundError as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(2)

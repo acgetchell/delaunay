@@ -884,7 +884,7 @@ The project includes comprehensive benchmarking:
 - **Location**: `benches/` directory with detailed [README][benches-readme]
 - **Framework**: Criterion with allocation tracking
 - **Coverage**: Small-scale triangulations across dimensions
-- **Automated Baselines**: Performance baselines are automatically generated on releases
+- **Automated Baselines**: Performance baselines are automatically generated on version tags (`vX.Y.Z`) as GitHub Actions artifacts
 
 ### Performance Testing Workflow
 
@@ -898,12 +898,22 @@ just bench
 just examples
 ```
 
+**Compare tags using CI baselines (no benchmarking):**
+
+```bash
+# Requires GitHub CLI (gh) and an authenticated session
+uv run benchmark-utils compare-tags --old-tag vX.Y.Z --new-tag vA.B.C
+
+# If a baseline artifact is missing/expired, regenerate via workflow_dispatch and wait
+uv run benchmark-utils compare-tags --old-tag vX.Y.Z --new-tag vA.B.C --regenerate-missing
+```
+
 **Note**: The project uses an **automated performance baseline system**:
 
 - **Automatic baseline generation**: Baselines are created automatically when git tags are pushed via GitHub Actions
 - **CI regression testing**: Performance regressions are detected automatically in PRs against the latest baseline
 - **Hardware compatibility**: The system detects hardware differences and provides warnings when comparing across different configurations
-- **5% regression threshold**: CI fails if performance degrades by more than 5%
+- **Regression threshold**: CI flags overall average regressions above 7.5% (default)
 
 The old shell scripts (`generate_baseline.sh`, `compare_benchmarks.sh`) mentioned in some documentation have been
 **replaced** with Python utilities that integrate with GitHub Actions for automated baseline management.
@@ -937,7 +947,7 @@ just profile-dev
 - **Algorithmic Complexity**: Document and optimize time/space complexity
 - **Memory Allocation**: Minimize unnecessary allocations
 - **Numerical Stability**: Balance performance with numerical accuracy
-- **Regression Detection**: CI fails on >5% performance regressions
+- **Regression Detection**: CI flags/fails on overall average regressions above 7.5% (default)
 - **Hardware Awareness**: Consider performance implications across different hardware configurations
 
 See [scripts documentation][scripts-readme] for detailed benchmarking workflows and the [AGENTS.md](AGENTS.md) file

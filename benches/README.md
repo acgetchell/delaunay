@@ -94,6 +94,9 @@ uv run benchmark-utils generate-summary --run-benchmarks
 
 # Compare current performance against baseline
 uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
+
+# Compare two tags without re-running benchmarks (downloads baseline artifacts via gh)
+uv run benchmark-utils compare-tags --old-tag vX.Y.Z --new-tag vA.B.C
 ```
 
 #### Benchmark Structure

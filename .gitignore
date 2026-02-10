@@ -27,6 +27,8 @@
 .venv/
 .mypy_cache/
 /benches/baseline_results.txt
+/baseline-artifact/
+/baseline-artifacts/
 
 
 #Ignore vscode AI rules

@@ -9,8 +9,13 @@ on:
     tags:
       - "v*"
 
-  # Manual trigger for testing
+  # Manual trigger (supports regenerating a baseline for an existing tag)
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to benchmark (e.g. v0.6.2)"
+        required: true
+        type: string
 
 # Security: Define minimal required permissions
 permissions:
@@ -48,39 +53,103 @@ jobs:
       - name: Verify uv installation
         run: uv --version
 
-      - name: Determine tag information
+      - name: Determine target tag
         id: tag_info
-        run: uv run benchmark-utils determine-tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${REF_TYPE}" = "tag" && -n "${REF_NAME}" ]]; then
+            tag_name="${REF_NAME}"
+          elif [[ -n "${INPUT_TAG}" ]]; then
+            tag_name="${INPUT_TAG}"
+          else
+            echo "error: no tag provided. For workflow_dispatch you must provide inputs.tag" >&2
+            exit 1
+          fi
+
+          if [[ ! "${tag_name}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "error: tag must look like vX.Y.Z (got: '${tag_name}')" >&2
+            exit 1
+          fi
+
+          echo "tag_name=${tag_name}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout target tag (code under test)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.tag_info.outputs.tag_name }}
+          path: target
+
+      - name: Install target Rust toolchain (from tag)
+        env:
+          TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+
+          channel="$(python3 - <<'PY'
+          from pathlib import Path
+          import tomllib
+
+          data = tomllib.loads(Path('target/rust-toolchain.toml').read_text(encoding='utf-8'))
+          print(data['toolchain']['channel'])
+          PY
+          )"
+
+          echo "📌 Target tag: ${TAG_NAME}"
+          echo "🦀 Installing Rust toolchain: ${channel}"
+
+          rustup toolchain install "${channel}" --profile minimal
 
       - name: Generate performance baseline
         env:
           TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
         run: |
-          echo "🚀 Generating performance baseline for tag $TAG_NAME"
-          mkdir -p baseline-artifact
+          set -euo pipefail
 
-          # Generate baseline using Python CLI tool
+          echo "🚀 Generating performance baseline for tag ${TAG_NAME}"
+
+          # Generate baseline using fixed tooling (this checkout) against the tag checkout.
           uv run benchmark-utils generate-baseline \
-            --output "baseline-artifact/baseline-$TAG_NAME.txt" \
-            --tag "$TAG_NAME"
+            --project-root target \
+            --tag "${TAG_NAME}"
 
-                    echo "✅ Baseline generated successfully"
+          echo "✅ Baseline generated successfully"
 
           # Display baseline summary
           uv run benchmark-utils display-summary \
-            --baseline "baseline-artifact/baseline-$TAG_NAME.txt"
+            --baseline "target/baseline-artifact/baseline_results.txt"
 
       - name: Prepare baseline artifact
         env:
           TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
-          SAFE_COMMIT_SHA: ${{ github.sha }}
           SAFE_RUN_ID: ${{ github.run_id }}
         run: |
-          # Create metadata file using Python utility
-          uv run benchmark-utils create-metadata --tag "$TAG_NAME"
+          set -euo pipefail
+
+          # Create metadata file in the target checkout so it is included in the uploaded artifact.
+          uv run benchmark-utils create-metadata \
+            --tag "${TAG_NAME}" \
+            --output-dir "target/baseline-artifact"
+
+          # Extract the tag commit from the baseline file for human-readable logging.
+          baseline_commit="$(python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          text = Path('target/baseline-artifact/baseline_results.txt').read_text(encoding='utf-8', errors='replace')
+          m = re.search(r'^Git commit:\s*(\S+)', text, flags=re.MULTILINE)
+          print(m.group(1) if m else 'unknown')
+          PY
+          )"
+          echo "BASELINE_COMMIT=${baseline_commit}" >> "$GITHUB_ENV"
 
           echo "📦 Artifact contents:"
-          ls -la baseline-artifact/
+          ls -la target/baseline-artifact/
 
       - name: Create safe artifact name
         id: safe_name
@@ -92,21 +161,22 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{ steps.safe_name.outputs.artifact_name }}
-          path: baseline-artifact/
+          path: target/baseline-artifact/
           retention-days: 90 # Keep baselines ~90 days (align with repo settings; adjust if needed)
           compression-level: 6 # Good balance of speed/compression
 
       - name: Display next steps
         env:
           TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
-          SAFE_COMMIT_SHA: ${{ github.sha }}
           SAFE_REF_TYPE: ${{ github.ref_type }}
         run: |
+          set -euo pipefail
+
           echo "🎉 Performance baseline generated successfully!"
           echo ""
           echo "📋 Summary:"
           echo "  Tag: $TAG_NAME"
-          echo "  Commit: $SAFE_COMMIT_SHA"
+          echo "  Commit: ${BASELINE_COMMIT:-unknown}"
           echo "  Artifact: ${{ steps.safe_name.outputs.artifact_name }}"
           echo ""
           echo "🔄 The benchmark workflow will now use this baseline for:"
@@ -115,5 +185,5 @@ jobs:
           echo "  • Manual performance comparisons"
           echo ""
           if [ "$SAFE_REF_TYPE" = "tag" ]; then
-            echo "💡 This baseline is now available for release $TAG_NAME"
+            echo "💡 This baseline is now available for tag $TAG_NAME"
           fi
