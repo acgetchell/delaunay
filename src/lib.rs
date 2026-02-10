@@ -1,101 +1,115 @@
-#![cfg_attr(doctest, doc = include_str!("../README.md"))]
+#![cfg_attr(any(doc, doctest), doc = include_str!("../README.md"))]
 
-//! # delaunay
+//! ---
+//! # Documentation map
 //!
-//! This is a library for computing the Delaunay triangulation of a set of n-dimensional points
-//! in a [simplicial complex](https://grokipedia.com/page/Simplicial_complex)
-//! inspired by [CGAL](https://www.cgal.org).
+//! The README above is included verbatim and serves as the **user-facing introduction** to the
+//! crate (overview, features, and quick-start examples).
 //!
-//! # Features
+//! Everything below this line specifies the **semantic and correctness contract** of the
+//! `delaunay` crate and is intended for users who need stronger guarantees, deeper understanding
+//! of invariants, or who are extending the implementation.
 //!
-//! - d-dimensional Delaunay triangulations
-//! - d-dimensional convex hulls
-//! - Generic floating-point coordinate types (supports `f32`, `f64`, and other types implementing `CoordinateScalar`)
-//! - Copy-able data types associated with vertices and cells (see [`DataType`](core::traits::DataType) for constraints)
-//! - Serialization/Deserialization with [serde](https://serde.rs)
+//! This crate’s documentation is intentionally layered by audience and intent:
 //!
-//! ## Practical workflows
+//! - **README.md** (included above):
+//!   User-facing overview, feature list, and quick-start examples.
 //!
-//! For end-to-end recipes (Builder API, Edit API, validation, repairs, and statistics), see:
-//! <https://github.com/acgetchell/delaunay/blob/main/docs/workflows.md>
+//! - **Crate-level documentation (`lib.rs`)** (this document):
+//!   The programming contract of the library: what invariants are enforced, when validation runs,
+//!   and what errors mean.
 //!
-//! # Basic Usage
+//!   In particular, this document covers:
+//!   - The validation hierarchy and invariant stack (Levels 1–4)
+//!   - Topological guarantees (`TopologyGuarantee`) and insertion-time validation policy (`ValidationPolicy`)
+//!   - High-level error semantics and programming contract (transactional operations, duplicate rejection)
 //!
-//! This library handles **arbitrary dimensions** (subject to numerical issues). Here's a 4D triangulation example:
+//! - **docs/workflows.md**:
+//!   Task-oriented, end-to-end usage recipes (Builder API, Edit API, validation,
+//!   repairs, diagnostics, and statistics).
+//!
+//! - **docs/validation.md**:
+//!   Formal definitions of validation Levels 1–4, their costs, and guidance on when
+//!   each level should be applied.
+//!
+//! - **docs/invariants.md**:
+//!   Deeper theoretical discussion of topological and geometric invariants
+//!   (PL-manifold conditions, ridge/vertex links, ordering heuristics, and
+//!   convergence assumptions), plus algorithmic background and limitations.
+//!
+//! ## Examples (contract-oriented)
+//!
+//! ### Validation hierarchy (Levels 1–4)
 //!
 //! ```rust
 //! use delaunay::prelude::triangulation::*;
 //!
 //! let vertices = vec![
-//!     vertex!([0.0, 0.0, 0.0, 0.0]),
-//!     vertex!([1.0, 0.0, 0.0, 0.0]),
-//!     vertex!([0.0, 1.0, 0.0, 0.0]),
-//!     vertex!([0.0, 0.0, 1.0, 0.0]),
-//!     vertex!([0.0, 0.0, 0.0, 1.0]),  // 5 vertices (D+1) creates first 4-simplex
-//!     vertex!([0.2, 0.2, 0.2, 0.2]),  // Additional vertex uses incremental insertion
+//!     vertex!([0.0, 0.0, 0.0]),
+//!     vertex!([1.0, 0.0, 0.0]),
+//!     vertex!([0.0, 1.0, 0.0]),
+//!     vertex!([0.0, 0.0, 1.0]),
 //! ];
-//!
 //! let dt = DelaunayTriangulation::new(&vertices).unwrap();
 //!
-//! assert_eq!(dt.number_of_vertices(), 6);
-//! assert_eq!(dt.dim(), 4);                    // Full 4D triangulation
-//! assert_eq!(dt.number_of_cells(), 5);        // 1 simplex from first 5 vertices + 4 new simplices from last vertex
-//! assert!(dt.validate().is_ok());             // Validates all invariants (Levels 1–4)
+//! // Levels 1–2: elements + structural (TDS)
+//! assert!(dt.tds().validate().is_ok());
+//!
+//! // Levels 1–3: elements + structural + topology
+//! assert!(dt.as_triangulation().validate().is_ok());
+//!
+//! // Level 4 only: Delaunay property (assumes Levels 1–3)
+//! assert!(dt.is_valid().is_ok());
+//!
+//! // Levels 1–4: full cumulative validation
+//! assert!(dt.validate().is_ok());
 //! ```
 //!
-//! **Key insight**: The triangulation uses efficient incremental cavity-based insertion after
-//! building an initial simplex from the first D+1 vertices (5 vertices for 4D).
-//!
-//! # Convex Hull Extraction
-//!
-//! Extract d-dimensional convex hulls from Delaunay triangulations:
+//! ### Topology guarantees and insertion-time validation (`TopologyGuarantee`, `ValidationPolicy`)
 //!
 //! ```rust
-//! use delaunay::prelude::query::*;
+//! use delaunay::prelude::triangulation::*;
 //!
-//! // Create two tetrahedrons sharing a triangular facet (double tetrahedron)
-//! let vertices: Vec<_> = vec![
-//!     // Shared triangular facet vertices (forms base of both tetrahedrons)
-//!     vertex!([0.0, 0.0, 0.0]),    // Shared vertex A
-//!     vertex!([2.0, 0.0, 0.0]),    // Shared vertex B
-//!     vertex!([1.0, 2.0, 0.0]),    // Shared vertex C
-//!     // Apex of first tetrahedron (above the shared facet)
-//!     vertex!([1.0, 0.7, 1.5]),    // First tet apex
-//!     // Apex of second tetrahedron (below the shared facet)
-//!     vertex!([1.0, 0.7, -1.5]),   // Second tet apex
+//! let vertices = vec![
+//!     vertex!([0.0, 0.0, 0.0]),
+//!     vertex!([1.0, 0.0, 0.0]),
+//!     vertex!([0.0, 1.0, 0.0]),
+//!     vertex!([0.0, 0.0, 1.0]),
 //! ];
+//! let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
 //!
-//! let dt = DelaunayTriangulation::new(&vertices).unwrap();
+//! assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
+//! assert_eq!(dt.validation_policy(), ValidationPolicy::OnSuspicion);
 //!
-//! // Extract the convex hull (boundary facets of the triangulation)
-//! let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+//! dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+//! dt.set_validation_policy(ValidationPolicy::Always);
 //!
-//! println!("Convex hull has {} facets in {}D", hull.number_of_facets(), hull.dimension());
+//! assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+//! assert_eq!(dt.validation_policy(), ValidationPolicy::Always);
+//! ```
 //!
-//! // Test point containment
-//! let inside_point = Point::new([1.0, 0.5, 0.5]);
-//! let outside_point = Point::new([3.0, 3.0, 3.0]);
+//! ### Transactional operations and duplicate rejection
 //!
-//! assert!(!hull.is_point_outside(&inside_point, dt.as_triangulation()).unwrap());  // Inside the hull
-//! assert!(hull.is_point_outside(&outside_point, dt.as_triangulation()).unwrap());   // Outside the hull
+//! ```rust
+//! use delaunay::prelude::triangulation::*;
 //!
-//! // Find visible facets from an external point (useful for incremental construction)
-//! let visible_facets = hull.find_visible_facets(&outside_point, dt.as_triangulation()).unwrap();
-//! println!("Point sees {} out of {} facets", visible_facets.len(), hull.number_of_facets());
-//!
-//! // Works in any dimension!
-//! let vertices_4d: Vec<_> = vec![
-//!     vertex!([0.0, 0.0, 0.0, 0.0]),
-//!     vertex!([1.0, 0.0, 0.0, 0.0]),
-//!     vertex!([0.0, 1.0, 0.0, 0.0]),
-//!     vertex!([0.0, 0.0, 1.0, 0.0]),
-//!     vertex!([0.0, 0.0, 0.0, 1.0]),
+//! let vertices = vec![
+//!     vertex!([0.0, 0.0]),
+//!     vertex!([1.0, 0.0]),
+//!     vertex!([0.0, 1.0]),
 //! ];
-//! let dt_4d = DelaunayTriangulation::new(&vertices_4d).unwrap();
-//! let hull_4d = ConvexHull::from_triangulation(dt_4d.as_triangulation()).unwrap();
+//! let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
 //!
-//! assert_eq!(hull_4d.number_of_facets(), 5);  // 4-simplex has 5 boundary facets
-//! assert_eq!(hull_4d.dimension(), 4);     // 4D convex hull
+//! let before_vertices = dt.number_of_vertices();
+//! let before_cells = dt.number_of_cells();
+//!
+//! // Duplicate coordinates are rejected.
+//! let result = dt.insert(vertex!([0.0, 0.0]));
+//! assert!(matches!(result, Err(InsertionError::DuplicateCoordinates { .. })));
+//!
+//! // On error, the triangulation is unchanged.
+//! assert_eq!(dt.number_of_vertices(), before_vertices);
+//! assert_eq!(dt.number_of_cells(), before_cells);
 //! ```
 //!
 //! # Triangulation invariants and validation hierarchy
@@ -177,25 +191,29 @@
 //!
 //! ```rust
 //! use delaunay::prelude::triangulation::*;
-//! # let vertices = vec![
-//! #     vertex!([0.0, 0.0, 0.0]),
-//! #     vertex!([1.0, 0.0, 0.0]),
-//! #     vertex!([0.0, 1.0, 0.0]),
-//! #     vertex!([0.0, 0.0, 1.0]),
-//! # ];
+//!
+//! let vertices = vec![
+//!     vertex!([0.0, 0.0, 0.0]),
+//!     vertex!([1.0, 0.0, 0.0]),
+//!     vertex!([0.0, 1.0, 0.0]),
+//!     vertex!([0.0, 0.0, 1.0]),
+//! ];
 //! let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
 //!
-//! // Default:
-//! assert_eq!(dt.validation_policy(), ValidationPolicy::OnSuspicion);
-//!
-//! // Tests/debugging:
-//! dt.set_validation_policy(ValidationPolicy::Always);
-//!
-//! // Max performance (you can still validate explicitly when desired):
+//! // Performance mode: disable insertion-time Level 3 topology validation.
 //! dt.set_validation_policy(ValidationPolicy::Never);
+//!
+//! // Do incremental work...
+//! dt.insert(vertex!([0.2, 0.2, 0.2])).unwrap();
+//!
+//! // ...then explicitly validate the topology layer when you need a certificate.
+//! assert!(dt.as_triangulation().validate().is_ok());
 //! ```
 //!
 //! ### Choosing Level 3 topology guarantee (`TopologyGuarantee`)
+//!
+//! This section specifies *what* invariants are enforced. The formal topological
+//! definitions and rationale live in `docs/invariants.md`.
 //!
 //! Level 3 topology validation is parameterized by
 //! [`TopologyGuarantee`](crate::core::triangulation::TopologyGuarantee). This is separate from
@@ -203,9 +221,12 @@
 //! validation runs.
 //!
 //! - [`TopologyGuarantee::PLManifold`](crate::core::triangulation::TopologyGuarantee::PLManifold)
-//!   (default): facet degree + closed boundary + connectedness + isolated-vertex + Euler characteristic
-//!   checks **plus** ridge-link validation during insertion, with vertex-link validation at
-//!   construction completion.
+//!   (default): enforces manifold facet degree, boundary closure, connectedness, Euler characteristic,
+//!   and link-based manifold conditions. Ridge-link checks are applied incrementally during insertion,
+//!   with vertex-link validation performed at construction completion.
+//!
+//!   The formal topological definitions, link conditions, and rationale for this validation strategy
+//!   are documented in `docs/invariants.md`.
 //! - [`TopologyGuarantee::PLManifoldStrict`](crate::core::triangulation::TopologyGuarantee::PLManifoldStrict):
 //!   vertex-link validation after every insertion (slowest, maximum safety).
 //! - [`TopologyGuarantee::Pseudomanifold`](crate::core::triangulation::TopologyGuarantee::Pseudomanifold):
@@ -214,21 +235,18 @@
 //!
 //! ```rust
 //! use delaunay::prelude::triangulation::*;
-//! # let vertices = vec![
-//! #     vertex!([0.0, 0.0, 0.0]),
-//! #     vertex!([1.0, 0.0, 0.0]),
-//! #     vertex!([0.0, 1.0, 0.0]),
-//! #     vertex!([0.0, 0.0, 1.0]),
-//! # ];
-//! let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
 //!
-//! assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
+//! let vertices = vec![
+//!     vertex!([0.0, 0.0, 0.0]),
+//!     vertex!([1.0, 0.0, 0.0]),
+//!     vertex!([0.0, 1.0, 0.0]),
+//!     vertex!([0.0, 0.0, 1.0]),
+//! ];
+//! let dt = DelaunayTriangulation::new(&vertices).unwrap();
 //!
-//! // Optional: relax topology checks for speed (weaker guarantees).
-//! dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
-//!
-//! // Now Level 3 skips vertex-link validation entirely.
-//! dt.as_triangulation().is_valid().unwrap();
+//! // For `TopologyGuarantee::PLManifold`, full certification includes a completion-time
+//! // vertex-link validation pass.
+//! assert!(dt.as_triangulation().validate_at_completion().is_ok());
 //! ```
 //!
 //! ```rust
@@ -241,219 +259,34 @@
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
 //! let dt = DelaunayTriangulation::new(&vertices).unwrap();
-//! assert!(dt.tds().is_valid().is_ok());
-//! assert!(dt.as_triangulation().is_valid().is_ok());
-//! assert!(dt.is_valid().is_ok());
-//! assert!(dt.validate().is_ok());
+//!
+//! // `validate()` returns the first violation; `validation_report()` is intended for
+//! // debugging/telemetry where you want the full set of violated invariants.
+//! assert!(dt.validation_report().is_ok());
 //! ```
 //!
 //! For implementation details on invariant enforcement, see [`core::algorithms::incremental_insertion`].
-//! # Correctness Guarantees and Limitations
 //!
-//! The library provides strong correctness guarantees for vertex insertion operations while being
-//! transparent about edge cases and limitations.
+//! # Programming contract (high-level)
 //!
-//! ## Guarantees
+//! - **Transactional mutations**: Construction and incremental operations are designed to be
+//!   all-or-nothing. If an operation returns `Err(_)`, the triangulation is rolled back to its
+//!   previous state.
+//! - **Duplicate detection**: Near-duplicate coordinates are rejected using a small Euclidean
+//!   tolerance (currently `1e-10` for the default floating-point scalars), returning
+//!   [`InsertionError::DuplicateCoordinates`](core::algorithms::incremental_insertion::InsertionError::DuplicateCoordinates).
+//!   Duplicate UUIDs return
+//!   [`InsertionError::DuplicateUuid`](core::algorithms::incremental_insertion::InsertionError::DuplicateUuid).
+//! - **Explicit verification**: Use `dt.validate()` for cumulative verification (Levels 1–4), or
+//!   `dt.is_valid()` for Level 4 only.
 //!
-//! When using [`DelaunayTriangulation::insert()`](core::delaunay_triangulation::DelaunayTriangulation::insert) or the underlying
-//! insertion algorithms:
-//!
-//! 1. **Successful insertions are designed to maintain all invariants** - If insertion succeeds
-//!    (`Ok(_)`), the triangulation is expected to satisfy all structural and topological invariants.
-//!    The incremental cavity-based insertion algorithm is designed to maintain these invariants.
-//!    For applications requiring strict guarantees, use `DelaunayTriangulation::validate()` (Levels 1–4)
-//!    or `DelaunayTriangulation::is_valid()` (Level 4 only) to verify the Delaunay property.
-//!
-//! 2. **Failed insertions leave triangulation in valid state** - If insertion fails (`Err(_)`),
-//!    the triangulation remains in a valid state with all invariants maintained. No partial or
-//!    corrupted state is possible.
-//!
-//! 3. **Clear error messages** - Insertion failures include detailed error messages specifying
-//!    which constraint or invariant was violated, along with context about what went wrong.
-//!
-//! 4. **No silent failures** - The library never silently produces incorrect triangulations.
-//!    Operations either succeed with guarantees or fail with explicit errors.
-//!
-//! 5. **Duplicate vertex detection** - Duplicate and near-duplicate vertices (within `1e-10`
-//!    epsilon) are automatically detected and rejected with
-//!    [`InsertionError::DuplicateCoordinates`](core::algorithms::incremental_insertion::InsertionError::DuplicateCoordinates)
-//!    or [`InsertionError::DuplicateUuid`](core::algorithms::incremental_insertion::InsertionError::DuplicateUuid),
-//!    preventing numerical instabilities.
-//!
-//! When constructing a triangulation from a batch of vertices using
-//! [`DelaunayTriangulation::new`](core::delaunay_triangulation::DelaunayTriangulation::new):
-//!
-//! - Successful construction yields a triangulation that is designed to satisfy the Delaunay property.
-//!   Use `dt.validate()` (Levels 1–4) for cumulative verification.
-//! - Duplicate coordinates are automatically detected and rejected.
-//!
-//! Incremental construction via [`DelaunayTriangulation::insert`](core::delaunay_triangulation::DelaunayTriangulation::insert)
-//! follows the same invariant rules on each insertion: on success the triangulation remains
-//! structurally valid; on failure the data structure is rolled back to its previous state.
-//! Use `DelaunayTriangulation::is_valid()` (Level 4) if you need explicit verification of the Delaunay property.
-//!
-//! ## Incremental insertion algorithm
-//!
-//! Triangulations are built using an efficient incremental cavity-based insertion algorithm:
-//!
-//! - **Initial simplex construction** - The first D+1 affinely independent vertices are used
-//!   to create an initial valid simplex using robust orientation predicates. If no
-//!   non-degenerate simplex can be formed, construction fails with
-//!   [`TriangulationConstructionError::GeometricDegeneracy`](core::triangulation::TriangulationConstructionError::GeometricDegeneracy).
-//!
-//! - **Incremental insertion** - Each subsequent vertex is inserted using a cavity-based
-//!   algorithm that:
-//!   1. Locates the vertex using efficient point location
-//!   2. Identifies conflicting cells (those whose circumsphere contains the new vertex)
-//!   3. Removes conflicting cells to create a cavity
-//!   4. Fills the cavity with new cells connecting the cavity boundary to the new vertex
-//!   5. Wires neighbor relationships locally without global recomputation
-//!
-//! The incremental insertion algorithm maintains all structural invariants throughout construction,
-//! and is designed to satisfy the Delaunay (empty-circumsphere) property. Vertices are only rejected
-//! if they would violate fundamental geometric constraints (duplicates, near-duplicates, or degenerate
-//! configurations).
-//!
-//! ## Delaunay validation
-//!
-//! The incremental insertion algorithm is designed to maintain the Delaunay property,
-//! aiming to ensure that the empty circumsphere property holds after each insertion.
-//! Global Delaunay validation can be performed explicitly using
-//! [`DelaunayTriangulation::is_valid`](core::delaunay_triangulation::DelaunayTriangulation::is_valid)
-//! when verification is needed (see [Issue #120](https://github.com/acgetchell/delaunay/issues/120)
-//! for rare edge cases where validation may be necessary).
-//!
-//! For construction from a batch of vertices using
-//! [`DelaunayTriangulation::new`](core::delaunay_triangulation::DelaunayTriangulation::new),
-//! the resulting triangulation is constructed to satisfy the Delaunay property. Call
-//! `DelaunayTriangulation::is_valid()` if you need explicit verification.
-//!
-//! ## Error handling
-//!
-//! The incremental insertion algorithm provides clear error reporting for vertices that
-//! cannot be inserted:
-//!
-//! - **Duplicate detection** - Exact and near-duplicate vertices are detected and rejected
-//!   with [`InsertionError::DuplicateCoordinates`](core::algorithms::incremental_insertion::InsertionError::DuplicateCoordinates)
-//!   or [`InsertionError::DuplicateUuid`](core::algorithms::incremental_insertion::InsertionError::DuplicateUuid)
-//! - **Geometric failures** - Degenerate configurations that would violate the Delaunay
-//!   property are rejected with appropriate error messages
-//! - **Validation failures** - If insertion would break structural invariants, the operation
-//!   fails and the triangulation is left in its previous valid state
-//!
-//! ```rust
-//! use delaunay::prelude::triangulation::*;
-//!
-//! let vertices = vec![
-//!     vertex!([0.0, 0.0, 0.0]),
-//!     vertex!([1.0, 0.0, 0.0]),
-//!     vertex!([0.0, 1.0, 0.0]),
-//!     vertex!([0.0, 0.0, 1.0]),
-//! ];
-//!
-//! let dt = DelaunayTriangulation::new(&vertices).unwrap();
-//!
-//! assert_eq!(dt.number_of_vertices(), 4);
-//! assert!(dt.validate().is_ok());
-//! ```
-//!
-//! ### Degenerate input handling
-//!
-//! When the input vertices cannot form a non-degenerate simplex (for example, when all points
-//! are collinear in 2D), construction fails during initial simplex construction with
-//! [`TriangulationConstructionError::GeometricDegeneracy`](core::triangulation::TriangulationConstructionError::GeometricDegeneracy).
-//! This occurs because degenerate simplices (collinear in 2D, coplanar in 3D, etc.) are detected
-//! early using robust orientation predicates before any topology is built.
-//!
-//! ```rust
-//! use delaunay::prelude::triangulation::*;
-//!
-//! // All points lie on a line in 2D: no non-degenerate simplex exists.
-//! let degenerate = vec![
-//!     vertex!([0.0, 0.0]),
-//!     vertex!([1.0, 0.0]),
-//!     vertex!([2.0, 0.0]),
-//!     vertex!([3.0, 0.0]),
-//! ];
-//!
-//! let result: Result<DelaunayTriangulation<_, (), (), 2>, _> =
-//!     DelaunayTriangulation::new(&degenerate);
-//!
-//! // Collinear points fail during initial simplex construction due to degeneracy
-//! assert!(matches!(
-//!     result,
-//!     Err(DelaunayTriangulationConstructionError::Triangulation(
-//!         TriangulationConstructionError::GeometricDegeneracy { .. },
-//!     ))
-//! ));
-//! ```
-//!
-//! ## Limitations
-//!
-//! 1. **Degenerate geometry in higher dimensions** - Highly degenerate point configurations (e.g.,
-//!    many nearly collinear or coplanar points) in 4D and 5D may cause insertion to fail gracefully
-//!    with [`InsertionError`](core::algorithms::incremental_insertion::InsertionError).
-//!    This is a known limitation of incremental algorithms in high-dimensional spaces with
-//!    degenerate inputs.
-//!
-//! 2. **Iterative refinement constraints** - The cavity-based insertion algorithm uses iterative
-//!    refinement to maintain the Delaunay property. In rare cases with complex geometries,
-//!    refinement may hit topological constraints and fail gracefully rather than producing an
-//!    invalid triangulation.
-//!
-//! 3. **Numerical precision** - Like all computational geometry libraries, numerical precision can
-//!    affect results near floating-point boundaries. The library uses robust predicates to minimize
-//!    these issues, but extreme coordinate values or ill-conditioned point sets may still cause
-//!    problems.
-//!
-//! ## Simple API Usage
-//!
-//! ```rust
-//! use delaunay::prelude::triangulation::*;
-//!
-//! // Create 4D triangulation - uses fast predicates by default (f64)
-//! let vertices = vec![
-//!     vertex!([0.0, 0.0, 0.0, 0.0]),
-//!     vertex!([1.0, 0.0, 0.0, 0.0]),
-//!     vertex!([0.0, 1.0, 0.0, 0.0]),
-//!     vertex!([0.0, 0.0, 1.0, 0.0]),
-//!     vertex!([0.0, 0.0, 0.0, 1.0]),
-//! ];
-//!
-//! let dt = DelaunayTriangulation::new(&vertices).unwrap();
-//!
-//! assert_eq!(dt.number_of_vertices(), 5);
-//! assert_eq!(dt.dim(), 4);
-//! assert_eq!(dt.number_of_cells(), 1);  // Single 4-simplex
-//!
-//! // Also works in 2D
-//! let vertices_2d = vec![
-//!     vertex!([0.0, 0.0]),
-//!     vertex!([1.0, 0.0]),
-//!     vertex!([0.5, 1.0]),
-//! ];
-//!
-//! let dt_2d = DelaunayTriangulation::new(&vertices_2d).unwrap();
-//!
-//! assert_eq!(dt_2d.number_of_vertices(), 3);
-//! assert_eq!(dt_2d.dim(), 2);
-//! ```
-//!
-//! For implementation details on invariant validation and error handling, see
-//! [`core::algorithms::incremental_insertion`].
-//!
-//! # References
-//!
-//! The algorithms and geometric predicates in this library are based on established computational
-//! geometry literature. For a comprehensive list of academic references and bibliographic citations,
-//! see the [REFERENCES.md](https://github.com/acgetchell/delaunay/blob/main/REFERENCES.md) file in the repository.
-//!
-//! ## Project History
-//! Versions ≤ 0.1.0 were maintained at [old repo](https://github.com/oovm/shape-rs).
-//! Versions ≥ 0.3.4 are maintained [here](https://github.com/acgetchell/delaunay).
-//!
-//! See <https://docs.rs/delaunay/0.1.0> for historical documentation.
-//! See <https://docs.rs/delaunay> for the latest documentation.
+//! # Further reading
+//! - Theory / rationale for invariants: `docs/invariants.md`
+//!   (<https://github.com/acgetchell/delaunay/blob/main/docs/invariants.md>)
+//! - Validation guide: <https://github.com/acgetchell/delaunay/blob/main/docs/validation.md>
+//! - Topology guide: <https://github.com/acgetchell/delaunay/blob/main/docs/topology.md>
+//! - Workflows: <https://github.com/acgetchell/delaunay/blob/main/docs/workflows.md>
+//! - References: <https://github.com/acgetchell/delaunay/blob/main/REFERENCES.md>
 
 // Allow multiple crate versions due to transitive dependencies
 #![expect(clippy::multiple_crate_versions)]

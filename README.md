@@ -3,7 +3,7 @@
 [![DOI](https://zenodo.org/badge/729897852.svg)](https://doi.org/10.5281/zenodo.16931097)
 [![Crates.io](https://img.shields.io/crates/v/delaunay.svg)](https://crates.io/crates/delaunay)
 [![Downloads](https://img.shields.io/crates/d/delaunay.svg)](https://crates.io/crates/delaunay)
-[![License](https://img.shields.io/crates/l/delaunay.svg)](LICENSE)
+[![License](https://img.shields.io/crates/l/delaunay.svg)](https://github.com/acgetchell/delaunay/blob/main/LICENSE)
 [![Docs.rs](https://docs.rs/delaunay/badge.svg)](https://docs.rs/delaunay)
 [![CI](https://github.com/acgetchell/delaunay/actions/workflows/ci.yml/badge.svg)](https://github.com/acgetchell/delaunay/actions/workflows/ci.yml)
 [![rust-clippy analyze](https://github.com/acgetchell/delaunay/actions/workflows/rust-clippy.yml/badge.svg)](https://github.com/acgetchell/delaunay/actions/workflows/rust-clippy.yml)
@@ -128,11 +128,13 @@ cargo run --release --example convex_hull_3d_20_points
 
 The `examples/` directory contains several demonstrations:
 
-- **`triangulation_3d_20_points`**: 3D Delaunay triangulation with a stable 20-point random configuration
 - **`convex_hull_3d_20_points`**: 3D convex hull extraction and analysis on the same 20-point configuration
 - **`into_from_conversions`**: Demonstrates Into/From trait conversions and utilities
-- **`point_comparison_and_hashing`**: Demonstrates point comparison and hashing behavior
 - **`memory_analysis`**: Memory usage analysis for triangulations across dimensions with allocation tracking
+- **`pachner_roundtrip_4d`**: 4D Pachner move (k=1,2,3) roundtrip checks (flip + inverse preserves the triangulation)
+- **`point_comparison_and_hashing`**: Demonstrates point comparison and hashing behavior
+- **`topology_editing_2d_3d`**: Builder API vs Edit API in 2D/3D (bistellar flips and Delaunay preservation)
+- **`triangulation_3d_20_points`**: 3D Delaunay triangulation with a stable 20-point random configuration
 - **`zero_allocation_iterator_demo`**: Performance comparison between allocation and zero-allocation iterators
 
 For detailed documentation, sample output, and usage instructions for each example, see [examples/README.md](examples/README.md).
@@ -150,13 +152,15 @@ This includes information about:
 
 ## 📖 Documentation
 
-- **[Code Organization](docs/code_organization.md)** - Project structure and module patterns
 - **[API Design](docs/api_design.md)** - Builder vs Edit API design (explicit bistellar flips)
-- **[Workflows](docs/workflows.md)** - Happy-path construction plus practical Builder/Edit recipes (stats, repairs, and minimal flips)
+- **[Code Organization](docs/code_organization.md)** - Project structure and module patterns
+- **[Invariants](docs/invariants.md)** - Theoretical background and rationale for the topological and geometric invariants
+- **[Numerical Robustness Guide](docs/numerical_robustness_guide.md)** - Robustness strategies, kernels, and retry/repair behavior
+- **[Property Testing Summary](docs/property_testing_summary.md)** - Property-based testing with proptest (where tests live, how to run)
+- **[Releasing](docs/RELEASING.md)** - Release workflow (changelog + benchmarks + publish)
 - **[Topology](docs/topology.md)** - Level 3 topology validation (manifoldness + Euler characteristic) and module overview
 - **[Validation Guide](docs/validation.md)** - Comprehensive 4-level validation hierarchy guide (element → structural → manifold → Delaunay)
-- **[Numerical Robustness Guide](docs/numerical_robustness_guide.md)** - Robustness strategies, kernels, and retry/repair behavior
-- **[Issue #120 Investigation (RESOLVED)](docs/archive/issue_120_investigation.md)** - Bistellar flip-based Delaunay repair (completed v0.7.0+)
+- **[Workflows](docs/workflows.md)** - Happy-path construction plus practical Builder/Edit recipes (stats, repairs, and minimal flips)
 
 ## 📚 References
 
