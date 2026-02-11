@@ -375,7 +375,8 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality, 
 
 - `characteristics/euler.rs` - Euler characteristic computation for full complexes and boundaries
 - `characteristics/validation.rs` - Topological validation functions
-- `manifold.rs` - Topology-only manifold invariants (e.g., closed boundary checks)
+- `manifold.rs` - Topology-only manifold invariants (e.g., closed boundary checks; see
+  [`invariants.md`](invariants.md))
 - `spaces/euclidean.rs` - Euclidean space topology implementation
 - `spaces/spherical.rs` - Spherical space topology implementation
 - `spaces/toroidal.rs` - Toroidal space topology implementation

@@ -281,12 +281,14 @@
 //!   `dt.is_valid()` for Level 4 only.
 //!
 //! # Further reading
-//! - Theory / rationale for invariants: `docs/invariants.md`
-//!   (<https://github.com/acgetchell/delaunay/blob/main/docs/invariants.md>)
-//! - Validation guide: <https://github.com/acgetchell/delaunay/blob/main/docs/validation.md>
-//! - Topology guide: <https://github.com/acgetchell/delaunay/blob/main/docs/topology.md>
-//! - Workflows: <https://github.com/acgetchell/delaunay/blob/main/docs/workflows.md>
+//! - Documentation index: <https://github.com/acgetchell/delaunay/blob/main/docs/README.md>
+//! - Public API design notes (Builder vs Edit APIs):
+//!   <https://github.com/acgetchell/delaunay/blob/main/docs/api_design.md>
 //! - References: <https://github.com/acgetchell/delaunay/blob/main/REFERENCES.md>
+//! - Theory / rationale for invariants: <https://github.com/acgetchell/delaunay/blob/main/docs/invariants.md>
+//! - Topology guide: <https://github.com/acgetchell/delaunay/blob/main/docs/topology.md>
+//! - Validation guide: <https://github.com/acgetchell/delaunay/blob/main/docs/validation.md>
+//! - Workflows: <https://github.com/acgetchell/delaunay/blob/main/docs/workflows.md>
 
 // Allow multiple crate versions due to transitive dependencies
 #![expect(clippy::multiple_crate_versions)]

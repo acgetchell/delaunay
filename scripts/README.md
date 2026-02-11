@@ -48,7 +48,7 @@ benchmarking, changelog management, and hardware detection.
 
 - **Criterion JSON Parsing**: Direct parsing of Criterion's estimates.json for accuracy
 - **Baseline Generation**: `generate-baseline` command with git metadata
-- **Performance Comparison**: `compare` command with regression detection (>5% threshold)
+- **Performance Comparison**: `compare` command with regression detection (>7.5% default threshold)
 - **Flexible Baseline Formats**: Handles standard and tag-specific baseline file naming patterns
 - **Automatic File Conversion**: Converts tag-specific baselines to standard format for compatibility
 - **Hardware Integration**: Automatic hardware info inclusion and comparison
@@ -565,15 +565,36 @@ uv run changelog-utils generate --debug   # Keep intermediate files for debuggin
 
 ## Workflow Examples
 
-### Performance Baseline Setup (One-time)
+### Tag Baselines (CI)
+
+Baselines used by CI are generated and stored as GitHub Actions artifacts (not committed to the repo).
 
 ```bash
-# 1. Generate initial performance baseline
-uv run benchmark-utils generate-baseline
+# Create and push a version tag
+git tag vX.Y.Z
+git push origin vX.Y.Z
 
-# 2. Commit baseline for CI regression testing
-git add benches/baseline_results.txt
-git commit -m "Add performance baseline for CI regression testing"
+# This triggers `.github/workflows/generate-baseline.yml` and uploads an artifact named:
+#   performance-baseline-vX_Y_Z  (for tag vX.Y.Z; dots replaced with underscores)
+# containing:
+#   baseline_results.txt
+#   metadata.json
+```
+
+You can fetch (and optionally regenerate missing/expired) baselines locally:
+
+```bash
+# Download the baseline artifact for a tag into baseline-artifacts/<tag>/
+uv run benchmark-utils fetch-baseline --tag vX.Y.Z
+
+# If the artifact is missing/expired, dispatch generate-baseline.yml and wait for it
+uv run benchmark-utils fetch-baseline --tag vX.Y.Z --regenerate-missing
+```
+
+Compare any two tags locally without re-running benchmarks:
+
+```bash
+uv run benchmark-utils compare-tags --old-tag vX.Y.Z --new-tag vA.B.C
 ```
 
 ### Performance Regression Testing (Development)
@@ -583,13 +604,11 @@ git commit -m "Add performance baseline for CI regression testing"
 # ... your modifications ...
 
 # 2. Test for performance regressions
-uv run benchmark-utils compare --baseline benches/baseline_results.txt
+uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
 
 # 3. Review results in benches/compare_results.txt
-# 4. If regressions are acceptable, update baseline:
+# 4. If regressions are acceptable, update the local baseline:
 uv run benchmark-utils generate-baseline
-git add benches/baseline_results.txt
-git commit -m "Update performance baseline after optimization"
 ```
 
 ### Fast Development Workflow (Development Mode)
@@ -602,14 +621,14 @@ git commit -m "Update performance baseline after optimization"
 # ... your modifications ...
 
 # 2. Quick performance check
-uv run benchmark-utils compare --baseline benches/baseline_results.txt --dev
+uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt --dev
 
 # 3. If major changes needed, generate new dev baseline:
 uv run benchmark-utils generate-baseline --dev
 
 # 4. Final validation with full benchmarks before commit:
 uv run benchmark-utils generate-baseline          # Full baseline
-uv run benchmark-utils compare --baseline benches/baseline_results.txt         # Full comparison
+uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt # Full comparison
 ```
 
 **Development Mode Benefits**:
@@ -667,7 +686,7 @@ cargo bench --bench ci_performance_suite
 uv run benchmark-utils generate-baseline
 
 # 3. Compare against previous baseline
-uv run benchmark-utils compare --baseline benches/baseline_results.txt
+uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
 ```
 
 **CI Performance Suite**: The benchmark utilities now use `benches/ci_performance_suite.rs` for CI/CD-optimized performance testing:
@@ -706,23 +725,22 @@ The repository includes automated performance regression testing via GitHub Acti
 
 ```bash
 # If baseline exists:
-# 1. Downloads baseline from artifacts (performance-baseline-vX.Y.Z)
-# 2. Automatically converts tag-specific files (baseline-vX.Y.Z.txt → baseline_results.txt)
-# 3. Runs uv run benchmark-utils run-regression-test --baseline baseline-artifact/baseline_results.txt
-# 4. Flags regressions (sets BENCHMARK_REGRESSION_DETECTED); CI may fail in a later step if configured
-# 5. Uploads comparison results as artifacts
+# 1. Finds the latest semver tag baseline artifact (performance-baseline-vX_Y_Z) from generate-baseline.yml runs
+# 2. Downloads and normalizes it to baseline-artifact/baseline_results.txt
+# 3. Runs uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
+# 4. Uploads comparison results (benches/compare_results.txt) as artifacts
 
 # If no baseline exists:
-# 1. Logs instructions for creating baseline
+# 1. Logs instructions for creating a baseline
 # 2. Skips regression testing (does not fail CI)
-# 3. Suggests creating a git tag to generate baseline automatically
+# 3. Suggests creating a git tag to generate a baseline automatically
 ```
 
 #### CI Integration Benefits
 
 - **Automated baseline management**: No manual baseline commits needed
-- **Flexible baseline formats**: Handles both standard (`baseline_results.txt`) and tag-specific (`baseline-vX.Y.Z.txt`) naming
-- **Automatic normalization**: Converts tag-specific artifacts to standard format for compatibility
+- **Stable artifact format**: Baseline artifacts contain `baseline_results.txt` (plus `metadata.json`)
+- **Automatic normalization**: Ensures CI always uses `baseline-artifact/baseline_results.txt`
 - **Separate from main CI**: Avoids slowing down regular development workflow
 - **Environment consistency**: Uses macOS runners (Apple Silicon) for reproducible benchmark comparisons
 - **Smart triggering**: Only runs on changes that could affect performance
@@ -738,10 +756,7 @@ The repository includes automated performance regression testing via GitHub Acti
 3. **Path Issues**: Run scripts from the project root directory
 4. **Missing Baseline**: Create a git tag to automatically generate baseline via CI, or run `uv run benchmark-utils generate-baseline` locally
 5. **Python Version**: Ensure Python 3.11+ is installed and available
-6. **Baseline Format Issues**: The system automatically handles different baseline file formats:
-   - `baseline-vX.Y.Z.txt` (from generate-baseline workflow) → converted to `baseline_results.txt`
-   - `baseline_results.txt` (standard format) → used directly
-   - Multiple files → uses first available in preference order
+6. **Baseline Format Issues**: CI expects a baseline artifact that contains `baseline_results.txt` (plus optional metadata).
 
 ### Exit Codes
 

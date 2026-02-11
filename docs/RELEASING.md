@@ -191,6 +191,19 @@ git tag -l --format='%(contents)' "$TAG"
 git push origin "$TAG"
 ```
 
+4a. (Recommended) Confirm CI baseline artifact generation
+
+Pushing a version tag triggers `.github/workflows/generate-baseline.yml`, which generates a performance baseline
+artifact named `performance-baseline-$TAG` with dots replaced by underscores (e.g., `performance-baseline-v0_6_2`).
+This baseline is what `.github/workflows/benchmarks.yml` uses to compare future commits/PRs against the latest semver tag.
+
+If you need to regenerate a missing/expired baseline artifact for a tag:
+
+```bash
+# Requires GitHub CLI (gh)
+gh workflow run generate-baseline.yml -f tag="$TAG" --ref main
+```
+
 5. Create the GitHub release with notes from the tag annotation
 
 ```bash

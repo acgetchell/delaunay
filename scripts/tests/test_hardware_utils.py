@@ -51,7 +51,14 @@ class TestHardwareInfo:
         result = hardware._run_command(["echo", "test"])
 
         assert result == "test output"
-        mock_run_safe.assert_called_once_with("echo", ["test"], capture_output=True, text=True, check=True)
+        mock_run_safe.assert_called_once_with(
+            "echo",
+            ["test"],
+            cwd=None,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
 
     @patch("hardware_utils.run_safe_command")
     def test_run_command_failure(self, mock_run_safe, hardware):

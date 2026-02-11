@@ -165,9 +165,11 @@ def run_safe_command(command: str, args: list[str], cwd: Path | None = None, **k
 
 
 # Convenience functions for commonly used git commands
-def get_git_commit_hash() -> str:
-    """
-    Get the current git commit hash.
+def get_git_commit_hash(cwd: Path | None = None) -> str:
+    """Get the current git commit hash.
+
+    Args:
+        cwd: Working directory for the git command (defaults to current process cwd)
 
     Returns:
         Current commit hash
@@ -176,16 +178,16 @@ def get_git_commit_hash() -> str:
         ExecutableNotFoundError: If git is not found
         subprocess.CalledProcessError: If git command fails
     """
-    result = run_git_command(["rev-parse", "HEAD"])
+    result = run_git_command(["rev-parse", "HEAD"], cwd=cwd)
     return result.stdout.strip()
 
 
-def get_git_remote_url(remote: str = "origin") -> str:
-    """
-    Get the URL of a git remote.
+def get_git_remote_url(remote: str = "origin", cwd: Path | None = None) -> str:
+    """Get the URL of a git remote.
 
     Args:
         remote: Remote name (default: "origin")
+        cwd: Working directory for the git command (defaults to current process cwd)
 
     Returns:
         Remote URL
@@ -194,7 +196,7 @@ def get_git_remote_url(remote: str = "origin") -> str:
         ExecutableNotFoundError: If git is not found
         subprocess.CalledProcessError: If git command fails
     """
-    result = run_git_command(["remote", "get-url", remote])
+    result = run_git_command(["remote", "get-url", remote], cwd=cwd)
     return result.stdout.strip()
 
 
