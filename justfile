@@ -207,6 +207,9 @@ coverage:
 coverage-ci:
     cargo tarpaulin {{_coverage_base_args}} --out Xml --output-dir coverage -- --skip prop_
 
+debug-large-scale-4d:
+    RUST_LOG=delaunay=trace cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
+
 # Default recipe shows available commands
 default:
     @just --list
@@ -247,6 +250,7 @@ help-workflows:
     @echo "  just test-slow         # Run slow/stress tests with --features slow-tests"
     @echo "  just test-slow-release # Slow tests in release mode (faster)"
     @echo "  just test-debug        # Run debug tools with output"
+    @echo "  just debug-large-scale-4d # Run large-scale 4D debug harness (ignored) with trace logging"
     @echo "  just test-allocation   # Memory allocation profiling"
     @echo "  just examples          # Run all examples"
     @echo "  just coverage          # Generate coverage report (HTML)"

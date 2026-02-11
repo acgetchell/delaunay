@@ -77,10 +77,15 @@
 //! **Query performance:** Directly measures `SlotMap` iteration efficiency
 
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
-use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+use delaunay::core::delaunay_triangulation::{
+    ConstructionOptions, DelaunayTriangulation, RetryPolicy,
+};
+use delaunay::core::vertex::Vertex;
+use delaunay::geometry::kernel::FastKernel;
 use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::vertex;
 use std::hint::black_box;
+use std::num::NonZeroUsize;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
@@ -121,6 +126,73 @@ fn get_memory_usage() -> u64 {
         .map_or(0, |process| process.memory() / 1024) // bytes → KiB
 }
 
+/// Get the deterministic base seed for random point generation.
+/// Reads `DELAUNAY_BENCH_SEED` (decimal or 0x-hex). Defaults to 42.
+/// Prints the resolved seed once on first use if `PRINT_BENCH_SEED` is set.
+fn get_benchmark_seed() -> u64 {
+    static SEED: OnceLock<u64> = OnceLock::new();
+    *SEED.get_or_init(|| {
+        let seed = std::env::var("DELAUNAY_BENCH_SEED")
+            .ok()
+            .and_then(|s| {
+                let s = s.trim();
+                s.strip_prefix("0x")
+                    .or_else(|| s.strip_prefix("0X"))
+                    .map_or_else(|| s.parse().ok(), |hex| u64::from_str_radix(hex, 16).ok())
+            })
+            .unwrap_or(42);
+
+        if std::env::var("PRINT_BENCH_SEED").is_ok() {
+            eprintln!("Benchmark seed: 0x{seed:X} ({seed})");
+        }
+
+        seed
+    })
+}
+
+fn benchmark_retry_attempts() -> NonZeroUsize {
+    static ATTEMPTS: OnceLock<NonZeroUsize> = OnceLock::new();
+    *ATTEMPTS.get_or_init(|| {
+        let attempts = std::env::var("DELAUNAY_BENCH_RETRY_ATTEMPTS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(6)
+            .max(1);
+
+        NonZeroUsize::new(attempts).expect("attempts clamped to >= 1")
+    })
+}
+
+fn seed_for_case<const D: usize>(n_points: usize) -> u64 {
+    const SEED_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
+
+    let base_seed = get_benchmark_seed();
+    base_seed
+        .wrapping_add((n_points as u64).wrapping_mul(SEED_SALT))
+        .wrapping_add((D as u64).wrapping_mul(SEED_SALT.rotate_left(17)))
+}
+
+fn construction_options(seed: u64) -> ConstructionOptions {
+    ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
+        attempts: benchmark_retry_attempts(),
+        base_seed: Some(seed),
+    })
+}
+
+fn construct_triangulation<const D: usize>(
+    vertices: &[Vertex<f64, (), D>],
+    seed: u64,
+) -> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
+    DelaunayTriangulation::new_with_options(vertices, construction_options(seed)).unwrap_or_else(
+        |err| {
+            panic!(
+                "Failed to create triangulation (dim={D}, n_vertices={}, seed={seed}): {err:?}",
+                vertices.len()
+            )
+        },
+    )
+}
+
 /// Measure memory delta during triangulation construction
 fn measure_construction_with_memory<const D: usize>(n_points: usize, seed: u64) -> MemoryInfo {
     let mem_before = get_memory_usage();
@@ -133,7 +205,7 @@ fn measure_construction_with_memory<const D: usize>(n_points: usize, seed: u64) 
     // Measure memory before triangulation construction to isolate allocation
     let mem_before_tds = get_memory_usage();
 
-    let dt = DelaunayTriangulation::new(&vertices).expect("Failed to create triangulation");
+    let dt = construct_triangulation::<D>(&vertices, seed);
 
     let mem_after = get_memory_usage();
 
@@ -168,6 +240,8 @@ fn bench_construction<const D: usize>(c: &mut Criterion, dimension_name: &str, n
     let mut group = c.benchmark_group(&bench_name);
     group.throughput(Throughput::Elements(n_points as u64));
 
+    let seed = seed_for_case::<D>(n_points);
+
     // Adjust sample size for heavy cases to bound execution time
     if (D == 4 && n_points >= 5000) || D == 5 {
         group.sample_size(10);
@@ -178,14 +252,14 @@ fn bench_construction<const D: usize>(c: &mut Criterion, dimension_name: &str, n
         b.iter_batched(
             || {
                 // Setup: Generate points (not measured)
-                let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), 42)
-                    .expect("Failed to generate points");
+                let points =
+                    generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed)
+                        .expect("Failed to generate points");
                 points.into_iter().map(|p| vertex!(p)).collect::<Vec<_>>()
             },
             |vertices| {
                 // Measured operation: Construct triangulation
-                let dt = DelaunayTriangulation::new(black_box(&vertices))
-                    .expect("Failed to create triangulation");
+                let dt = construct_triangulation::<D>(black_box(&vertices), seed);
                 black_box(dt)
             },
             BatchSize::LargeInput,
@@ -204,12 +278,14 @@ fn bench_memory_usage<const D: usize>(c: &mut Criterion, dimension_name: &str, n
     let bench_name = format!("memory/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
 
+    let seed = seed_for_case::<D>(n_points);
+
     // Single measurement for memory delta - reduce sample size
     group.sample_size(10);
 
     group.bench_function("construction_memory_delta", |b| {
         b.iter(|| {
-            let mem_info = measure_construction_with_memory::<D>(n_points, 42);
+            let mem_info = measure_construction_with_memory::<D>(n_points, seed);
             // Report memory usage to stderr (won't interfere with benchmark timing)
             if std::env::var_os("BENCH_PRINT_MEM").is_some() {
                 eprintln!(
@@ -233,6 +309,8 @@ fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_p
     let bench_name = format!("validation/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
 
+    let seed = seed_for_case::<D>(n_points);
+
     // Adjust sample size for large cases and 5D
     if n_points >= 5000 || D == 5 {
         group.sample_size(10);
@@ -240,10 +318,10 @@ fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_p
     }
 
     // Pre-generate triangulation for validation benchmarks
-    let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), 42)
+    let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed)
         .expect("Failed to generate points");
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
-    let dt = DelaunayTriangulation::new(&vertices).expect("Failed to create triangulation");
+    let dt = construct_triangulation::<D>(&vertices, seed);
     let tri = dt.as_triangulation();
 
     // Throughput in terms of cells we actually validate
@@ -279,11 +357,13 @@ fn bench_neighbor_queries<const D: usize>(
         group.measurement_time(Duration::from_secs(120));
     }
 
+    let seed = seed_for_case::<D>(n_points);
+
     // Pre-generate triangulation
-    let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), 42)
+    let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed)
         .expect("Failed to generate points");
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
-    let dt = DelaunayTriangulation::new(&vertices).expect("Failed to create triangulation");
+    let dt = construct_triangulation::<D>(&vertices, seed);
     let tds = dt.tds();
 
     // Collect cell keys for iteration
@@ -321,11 +401,13 @@ fn bench_vertex_iteration<const D: usize>(
         group.measurement_time(Duration::from_secs(120));
     }
 
+    let seed = seed_for_case::<D>(n_points);
+
     // Pre-generate triangulation
-    let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), 42)
+    let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed)
         .expect("Failed to generate points");
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
-    let dt = DelaunayTriangulation::new(&vertices).expect("Failed to create triangulation");
+    let dt = construct_triangulation::<D>(&vertices, seed);
     let tds = dt.tds();
 
     group.bench_function("iterate_all_vertices", |b| {
@@ -354,11 +436,13 @@ fn bench_cell_iteration<const D: usize>(c: &mut Criterion, dimension_name: &str,
         group.measurement_time(Duration::from_secs(120));
     }
 
+    let seed = seed_for_case::<D>(n_points);
+
     // Pre-generate triangulation
-    let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), 42)
+    let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed)
         .expect("Failed to generate points");
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
-    let dt = DelaunayTriangulation::new(&vertices).expect("Failed to create triangulation");
+    let dt = construct_triangulation::<D>(&vertices, seed);
     let tds = dt.tds();
 
     let num_cells = tds.number_of_cells();
@@ -447,16 +531,19 @@ criterion_group!(
     config = {
         let sample_size = std::env::var("BENCH_SAMPLE_SIZE")
             .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(100);
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(100)
+            .max(1);
         let warm_up_secs = std::env::var("BENCH_WARMUP_SECS")
             .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(3);
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(3)
+            .max(1);
         let measurement_secs = std::env::var("BENCH_MEASUREMENT_TIME")
             .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(5);
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(5)
+            .max(1);
 
         Criterion::default()
             .sample_size(sample_size)

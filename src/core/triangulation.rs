@@ -3556,7 +3556,7 @@ where
             });
         }
 
-        // Surgical reconstruction: fix broken/None pointers by facet matching.
+        // Rebuild neighbor pointers from facet incidence (global O(n·D) pass).
         let repaired =
             repair_neighbor_pointers(&mut self.tds).map_err(|e| InsertionError::CavityFilling {
                 message: format!("Failed to repair neighbor pointers after insertion: {e}"),
@@ -4120,8 +4120,8 @@ where
                         });
                     }
 
-                    // Use repair_neighbor_pointers for surgical reconstruction
-                    // This preserves existing correct pointers and only fixes broken ones
+                    // Rebuild neighbor pointers from facet incidence (global O(n·D) pass).
+                    // This is only needed after we removed cells in the local repair loop.
                     let repaired = repair_neighbor_pointers(&mut self.tds).map_err(|e| {
                         InsertionError::CavityFilling {
                             message: format!("Failed to rebuild neighbors after repairs: {e}"),

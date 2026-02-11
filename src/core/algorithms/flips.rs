@@ -25,6 +25,8 @@
 //! - Edelsbrunner & Shah (1996) - "Incremental Topological Flipping Works for Regular Triangulations"
 //! - Bistellar flips implementation notebook (Warp Drive)
 
+#![forbid(unsafe_code)]
+
 use crate::core::algorithms::incremental_insertion::{
     external_facets_for_boundary, wire_cavity_neighbors,
 };
