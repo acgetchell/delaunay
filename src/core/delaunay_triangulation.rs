@@ -2829,13 +2829,12 @@ where
     where
         K::Scalar: ScalarSummable,
     {
-        use rand::{seq::SliceRandom, SeedableRng};
+        use rand::{SeedableRng, seq::SliceRandom};
 
         let mut vertices = self.collect_vertices_for_rebuild();
         let mut rng = rand::rngs::StdRng::seed_from_u64(seeds.shuffle_seed);
         vertices.shuffle(&mut rng);
 
-        // First attempt: reuse the fast bulk constructor and then run a global flip-repair pass.
         let mut candidate = Self::build_with_kernel_inner_seeded(
             self.tri.kernel.clone(),
             &vertices,
@@ -2858,81 +2857,8 @@ where
         candidate.insertion_state.last_inserted_cell = None;
 
         let topology = candidate.tri.topology_guarantee();
-        let stats = {
-            let (tds, kernel) = (&mut candidate.tri.tds, &candidate.tri.kernel);
-            repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology)
-        };
-
-        match stats {
-            Ok(stats) => Ok((candidate, stats)),
-            Err(
-                err @ (DelaunayRepairError::NonConvergent { .. }
-                | DelaunayRepairError::PostconditionFailed { .. }),
-            ) => {
-                // Fallback: rebuild incrementally with automatic local repairs enabled.
-                //
-                // This is slower than the bulk constructor but avoids known global repair cycle
-                // pathologies on some 3D+ configurations.
-                if std::env::var_os("DELAUNAY_REPAIR_TRACE").is_some() {
-                    tracing::debug!("[repair] heuristic bulk rebuild failed ({err}); retrying with incremental rebuild");
-                }
-                self.rebuild_with_heuristic_incremental(&vertices)
-            }
-            Err(err) => Err(err),
-        }
-    }
-
-    fn rebuild_with_heuristic_incremental(
-        &self,
-        vertices: &[Vertex<K::Scalar, U, D>],
-    ) -> Result<(Self, DelaunayRepairStats), DelaunayRepairError>
-    where
-        K::Scalar: ScalarSummable,
-    {
-        // Build by inserting vertices one-by-one with automatic repair enabled.
-        // Use the same topology guarantee as the source triangulation.
-        let topology = self.tri.topology_guarantee();
-        let mut candidate = Self::with_empty_kernel_and_topology_guarantee(
-            self.tri.kernel.clone(),
-            topology,
-        );
-
-        // During rebuild we want repairs after each insertion, but we restore the caller's
-        // policies below.
-
-        candidate.tri.validation_policy = if topology.requires_vertex_links_during_insertion()
-            || topology.requires_ridge_links()
-        {
-            ValidationPolicy::Always
-        } else {
-            ValidationPolicy::DebugOnly
-        };
-        candidate.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::EveryInsertion;
-        candidate.insertion_state.delaunay_check_policy = DelaunayCheckPolicy::EndOnly;
-
-        for &vertex in vertices {
-            candidate
-                .insert(vertex)
-                .map_err(|e| DelaunayRepairError::HeuristicRebuildFailed {
-                    message: format!("incremental heuristic rebuild insertion failed: {e}"),
-                })?;
-        }
-
-        // Restore policies/state to match the original triangulation.
-        candidate.tri.validation_policy = self.tri.validation_policy;
-        candidate.insertion_state.delaunay_repair_policy =
-            self.insertion_state.delaunay_repair_policy;
-        candidate.insertion_state.delaunay_check_policy =
-            self.insertion_state.delaunay_check_policy;
-        candidate.insertion_state.delaunay_repair_insertion_count =
-            self.insertion_state.delaunay_repair_insertion_count;
-        candidate.insertion_state.last_inserted_cell = None;
-
-        // Run a final global flip pass (should be a no-op if incremental repair succeeded).
-        let stats = {
-            let (tds, kernel) = (&mut candidate.tri.tds, &candidate.tri.kernel);
-            repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology)
-        }?;
+        let (tds, kernel) = (&mut candidate.tri.tds, &candidate.tri.kernel);
+        let stats = repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology)?;
 
         Ok((candidate, stats))
     }
