@@ -48,7 +48,7 @@ benchmarking, changelog management, and hardware detection.
 
 - **Criterion JSON Parsing**: Direct parsing of Criterion's estimates.json for accuracy
 - **Baseline Generation**: `generate-baseline` command with git metadata
-- **Performance Comparison**: `compare` command with regression detection (>5% threshold)
+- **Performance Comparison**: `compare` command with regression detection (>7.5% default threshold)
 - **Flexible Baseline Formats**: Handles standard and tag-specific baseline file naming patterns
 - **Automatic File Conversion**: Converts tag-specific baselines to standard format for compatibility
 - **Hardware Integration**: Automatic hardware info inclusion and comparison
@@ -628,7 +628,7 @@ uv run benchmark-utils generate-baseline --dev
 
 # 4. Final validation with full benchmarks before commit:
 uv run benchmark-utils generate-baseline          # Full baseline
-uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt         # Full comparison
+uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt # Full comparison
 ```
 
 **Development Mode Benefits**:

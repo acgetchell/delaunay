@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from shutil import copy2 as copyfile  # NOTE: Use copy2 (metadata-preserving) under the 'copyfile' alias for tests/patching convenience.
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TextIO
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -1654,7 +1654,7 @@ class PerformanceComparator:
         """Public wrapper for parsing a baseline file."""
         return self._parse_baseline_file(baseline_content)
 
-    def write_performance_comparison(self, f, current_results: list[BenchmarkData], baseline_results: dict[str, BenchmarkData]) -> bool:
+    def write_performance_comparison(self, f: TextIO, current_results: list[BenchmarkData], baseline_results: dict[str, BenchmarkData]) -> bool:
         """Public wrapper for writing the performance comparison section.
 
         Returns:
@@ -1733,7 +1733,7 @@ class PerformanceComparator:
         f.write(f"Baseline Git commit: {metadata['baseline_commit']}\n\n")
         f.write(hardware_report)
 
-    def _write_performance_comparison(self, f, current_results: list[BenchmarkData], baseline_results: dict[str, BenchmarkData]) -> bool:
+    def _write_performance_comparison(self, f: TextIO, current_results: list[BenchmarkData], baseline_results: dict[str, BenchmarkData]) -> bool:
         """Write performance comparison section and return whether average regression exceeds threshold."""
         time_changes = []  # Track all time changes for average calculation
         individual_regressions = 0
@@ -2789,7 +2789,7 @@ class GitHubBaselineFetcher:
             raise RuntimeError(msg) from e
 
 
-def _add_benchmark_subcommands(subparsers) -> None:
+def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
     """Add benchmark-running subcommands."""
     gen_parser = subparsers.add_parser("generate-baseline", help="Generate performance baseline")
     gen_parser.add_argument("--dev", action="store_true", help="Use development mode with faster benchmark settings")
@@ -2818,7 +2818,7 @@ def _add_benchmark_subcommands(subparsers) -> None:
     cmp_parser.set_defaults(validate_bench_timeout=True)
 
 
-def _add_local_baseline_subcommands(subparsers) -> None:
+def _add_local_baseline_subcommands(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
     """Add subcommands that operate on existing baseline artifacts/files."""
     bb_parser = subparsers.add_parser("compare-baselines", help="Compare two baseline files (no benchmarks)")
     bb_parser.add_argument("--old", dest="old_baseline", type=Path, required=True, help="Path to the older baseline file")
@@ -2860,7 +2860,7 @@ def _add_local_baseline_subcommands(subparsers) -> None:
     tags_parser.add_argument("--project-root", type=Path, help="Project root containing the git repo (directory containing Cargo.toml)")
 
 
-def _add_workflow_helper_subcommands(subparsers) -> None:
+def _add_workflow_helper_subcommands(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
     """Add subcommands used by GitHub Actions workflows."""
     subparsers.add_parser("determine-tag", help="Determine tag name for baseline generation")
 
@@ -2875,7 +2875,7 @@ def _add_workflow_helper_subcommands(subparsers) -> None:
     artifact_parser.add_argument("--tag", type=str, required=True, help="Tag name to sanitize")
 
 
-def _add_regression_subcommands(subparsers) -> None:
+def _add_regression_subcommands(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
     """Add regression-testing helper subcommands."""
     prepare_parser = subparsers.add_parser("prepare-baseline", help="Prepare baseline for regression testing")
     prepare_parser.add_argument("--baseline-dir", type=Path, default=Path("baseline-artifact"), help="Baseline artifact directory")
@@ -2912,7 +2912,7 @@ def _add_regression_subcommands(subparsers) -> None:
     subparsers.add_parser("regression-summary", help="Generate regression testing summary")
 
 
-def _add_performance_summary_subcommands(subparsers) -> None:
+def _add_performance_summary_subcommands(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
     """Add performance summary generation subcommands."""
     perf_summary_parser = subparsers.add_parser("generate-summary", help="Generate performance summary markdown")
     perf_summary_parser.add_argument("--output", type=Path, help="Output file path (defaults to benches/PERFORMANCE_RESULTS.md)")
@@ -2982,7 +2982,10 @@ def _cmd_compare_baselines(args: argparse.Namespace, project_root: Path) -> None
 
     try:
         report_text, regression_found = render_baseline_comparison(project_root, args.old_baseline, args.new_baseline)
-    except Exception as e:
+    except FileNotFoundError as e:
+        print(f"❌ {e}", file=sys.stderr)
+        sys.exit(3)
+    except RuntimeError as e:
         print(f"❌ Failed to compare baseline files: {e}", file=sys.stderr)
         sys.exit(1)
 
@@ -3009,9 +3012,6 @@ def _cmd_fetch_baseline(args: argparse.Namespace, project_root: Path) -> None:
     except RuntimeError as e:
         print(f"❌ {e}", file=sys.stderr)
         sys.exit(2 if str(e).startswith("Missing dependency:") else 1)
-    except Exception as e:
-        print(f"❌ Failed to fetch baseline: {e}", file=sys.stderr)
-        sys.exit(1)
 
     print(baseline_path)
     sys.exit(0)
@@ -3038,9 +3038,6 @@ def _cmd_compare_tags(args: argparse.Namespace, project_root: Path) -> None:
     except RuntimeError as e:
         print(f"❌ {e}", file=sys.stderr)
         sys.exit(2 if str(e).startswith("Missing dependency:") else 1)
-    except Exception as e:
-        print(f"❌ Failed to compare tags: {e}", file=sys.stderr)
-        sys.exit(1)
 
     print(report_text, end="" if report_text.endswith("\n") else "\n")
     _write_optional_report(args.output, report_text)

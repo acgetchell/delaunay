@@ -429,10 +429,7 @@ class HardwareInfo:
         command_name = cmd[0]
         args = cmd[1:] if len(cmd) > 1 else []
 
-        if cwd is None:
-            result = run_safe_command(command_name, args, capture_output=True, text=True, check=True)
-        else:
-            result = run_safe_command(command_name, args, cwd=cwd, capture_output=True, text=True, check=True)
+        result = run_safe_command(command_name, args, cwd=cwd, capture_output=True, text=True, check=True)
 
         return result.stdout.strip()
 

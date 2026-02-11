@@ -463,7 +463,10 @@ impl FlipDirection {
         }
     }
 }
-/// Detect repeated flip signatures and abort on cycles.
+/// Detect repeated flip signatures.
+///
+/// We track repeated flip-context signatures for diagnostics, but do not abort a repair attempt
+/// purely because of repetition. Termination is guaranteed by the global `max_flips` budget.
 fn check_flip_cycle(
     signature: u64,
     diagnostics: &mut RepairDiagnostics,
@@ -476,10 +479,11 @@ fn check_flip_cycle(
         .get(&signature)
         .copied()
         .unwrap_or(0);
+
     if repeats >= MAX_REPEAT_SIGNATURE {
         if repair_trace_enabled() {
             tracing::debug!(
-                "[repair] cycle abort signature={} repeats={} flips={} max_flips={} attempt={} order={:?}",
+                "[repair] cycle detected signature={} repeats={} flips={} max_flips={} attempt={} order={:?}",
                 signature,
                 repeats,
                 stats.flips_performed,
@@ -489,8 +493,8 @@ fn check_flip_cycle(
             );
         }
         diagnostics.record_cycle_abort(signature);
-        return Err(non_convergent_error(max_flips, stats, diagnostics, config));
     }
+
     Ok(())
 }
 

@@ -58,7 +58,7 @@ Readers primarily interested in **how to use the library** should start with:
 ### Simplicial complex model
 
 At the data-structure level, the crate models a triangulation as a **finite simplicial complex**[^edelsbrunner2001]
-represented by its **minimal** ("vertices) and **maximal** simplices (“cells”). In dimension `D`, a maximal cell is a
+represented by its **minimal** ("vertices") and **maximal** simplices (“cells”). In dimension `D`, a maximal cell is a
 `D`-simplex with exactly `D+1` vertices.
 
 Key combinatorial objects:

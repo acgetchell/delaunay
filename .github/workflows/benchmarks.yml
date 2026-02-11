@@ -92,7 +92,10 @@ jobs:
               };
 
               // Fetch successful generate-baseline.yml runs (most recent first)
-              console.log('Fetching recent generate-baseline.yml runs...');
+              // Note: Each run requires a follow-up listWorkflowRunArtifacts call, so keep this cap conservative
+              // to avoid slowdowns and API rate limits.
+              const MAX_RUNS = 50;
+              console.log(`Fetching recent generate-baseline.yml runs (up to ${MAX_RUNS})...`);
               let count = 0;
               const runs = await github.paginate(
                 github.rest.actions.listWorkflowRuns,
@@ -105,12 +108,12 @@ jobs:
                   per_page: 100
                 },
                 (response, done) => {
-                  // Limit to 150 runs total across pages (no overshoot)
-                  const remaining = Math.max(0, 150 - count);
+                  // Limit to MAX_RUNS runs total across pages (no overshoot)
+                  const remaining = Math.max(0, MAX_RUNS - count);
                   if (remaining === 0) { done(); return []; }
                   const slice = response.data.slice(0, remaining);
                   count += slice.length;
-                  if (count >= 150) done();
+                  if (count >= MAX_RUNS) done();
                   return slice;
                 }
               );

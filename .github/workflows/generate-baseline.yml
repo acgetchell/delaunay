@@ -71,8 +71,8 @@ jobs:
             exit 1
           fi
 
-          if [[ ! "${tag_name}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-            echo "error: tag must look like vX.Y.Z (got: '${tag_name}')" >&2
+          if [[ ! "${tag_name}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "error: tag must look like vX.Y.Z[-PRERELEASE][+BUILD] (got: '${tag_name}')" >&2
             exit 1
           fi
 
@@ -91,7 +91,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          channel="$(python3 - <<'PY'
+          channel="$(uv run python - <<'PY'
           from pathlib import Path
           import tomllib
 
@@ -137,7 +137,7 @@ jobs:
             --output-dir "bench-target/baseline-artifact"
 
           # Extract the tag commit from the baseline file for human-readable logging.
-          baseline_commit="$(python3 - <<'PY'
+          baseline_commit="$(uv run python - <<'PY'
           from pathlib import Path
           import re
 
