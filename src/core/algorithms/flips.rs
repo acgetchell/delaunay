@@ -525,31 +525,79 @@ impl FlipDirection {
     }
 }
 /// Detect repeated flip signatures and abort on cycles.
-fn check_flip_cycle(
+#[derive(Debug, Clone, Copy)]
+struct FlipCycleContext<'a> {
     signature: u64,
+    k_move: usize,
+    direction: FlipDirection,
+    removed_face_vertices: &'a [VertexKey],
+    inserted_face_vertices: &'a [VertexKey],
+}
+
+impl<'a> FlipCycleContext<'a> {
+    const fn new(
+        signature: u64,
+        k_move: usize,
+        direction: FlipDirection,
+        removed_face_vertices: &'a [VertexKey],
+        inserted_face_vertices: &'a [VertexKey],
+    ) -> Self {
+        Self {
+            signature,
+            k_move,
+            direction,
+            removed_face_vertices,
+            inserted_face_vertices,
+        }
+    }
+}
+
+fn check_flip_cycle<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    context: FlipCycleContext<'_>,
     diagnostics: &mut RepairDiagnostics,
     stats: &DelaunayRepairStats,
     max_flips: usize,
     config: &RepairAttemptConfig,
-) -> Result<(), DelaunayRepairError> {
+) -> Result<(), DelaunayRepairError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
     let repeats = diagnostics
         .flip_signature_counts
-        .get(&signature)
+        .get(&context.signature)
         .copied()
         .unwrap_or(0);
     if repeats >= MAX_REPEAT_SIGNATURE {
         if repair_trace_enabled() {
+            let removed_details: Vec<_> = context
+                .removed_face_vertices
+                .iter()
+                .filter_map(|&vkey| tds.get_vertex_by_key(vkey).map(|v| (vkey, *v.point())))
+                .collect();
+            let inserted_details: Vec<_> = context
+                .inserted_face_vertices
+                .iter()
+                .filter_map(|&vkey| tds.get_vertex_by_key(vkey).map(|v| (vkey, *v.point())))
+                .collect();
+
             tracing::debug!(
-                "[repair] cycle abort signature={} repeats={} flips={} max_flips={} attempt={} order={:?}",
-                signature,
+                "[repair] cycle abort signature={} repeats={} flips={} max_flips={} attempt={} order={:?} k={} direction={:?} removed_face={:?} inserted_face={:?}",
+                context.signature,
                 repeats,
                 stats.flips_performed,
                 max_flips,
                 config.attempt,
                 config.queue_order,
+                context.k_move,
+                context.direction,
+                removed_details,
+                inserted_details,
             );
         }
-        diagnostics.record_cycle_abort(signature);
+        diagnostics.record_cycle_abort(context.signature);
         return Err(non_convergent_error(max_flips, stats, diagnostics, config));
     }
     Ok(())
@@ -2193,7 +2241,20 @@ where
             &context.removed_face_vertices,
             &context.inserted_face_vertices,
         );
-        check_flip_cycle(signature, &mut diagnostics, &stats, max_flips, config)?;
+        check_flip_cycle(
+            tds,
+            FlipCycleContext::new(
+                signature,
+                2,
+                context.direction,
+                &context.removed_face_vertices,
+                &context.inserted_face_vertices,
+            ),
+            &mut diagnostics,
+            &stats,
+            max_flips,
+            config,
+        )?;
 
         let info = match apply_bistellar_flip_k2(tds, kernel, &context) {
             Ok(info) => info,
@@ -3257,7 +3318,20 @@ where
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     );
-    check_flip_cycle(signature, diagnostics, stats, max_flips, config)?;
+    check_flip_cycle(
+        tds,
+        FlipCycleContext::new(
+            signature,
+            3,
+            context.direction,
+            &context.removed_face_vertices,
+            &context.inserted_face_vertices,
+        ),
+        diagnostics,
+        stats,
+        max_flips,
+        config,
+    )?;
 
     let info = match apply_bistellar_flip_k3(tds, kernel, &context) {
         Ok(info) => info,
@@ -3304,6 +3378,10 @@ where
     Ok(true)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "Repair step contains inline tracing and queue handling for diagnostics"
+)]
 fn process_edge_queue_step<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -3373,7 +3451,20 @@ where
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     );
-    check_flip_cycle(signature, diagnostics, stats, max_flips, config)?;
+    check_flip_cycle(
+        tds,
+        FlipCycleContext::new(
+            signature,
+            D,
+            context.direction,
+            &context.removed_face_vertices,
+            &context.inserted_face_vertices,
+        ),
+        diagnostics,
+        stats,
+        max_flips,
+        config,
+    )?;
 
     let info = match apply_bistellar_flip_dynamic(tds, kernel, D, &context) {
         Ok(info) => info,
@@ -3420,6 +3511,10 @@ where
     Ok(true)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "Repair step contains inline tracing and queue handling for diagnostics"
+)]
 fn process_triangle_queue_step<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -3484,7 +3579,20 @@ where
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     );
-    check_flip_cycle(signature, diagnostics, stats, max_flips, config)?;
+    check_flip_cycle(
+        tds,
+        FlipCycleContext::new(
+            signature,
+            D - 1,
+            context.direction,
+            &context.removed_face_vertices,
+            &context.inserted_face_vertices,
+        ),
+        diagnostics,
+        stats,
+        max_flips,
+        config,
+    )?;
 
     let info = match apply_bistellar_flip_dynamic(tds, kernel, D - 1, &context) {
         Ok(info) => info,
@@ -3533,6 +3641,10 @@ where
     Ok(true)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "Repair step contains inline tracing and queue handling for diagnostics"
+)]
 fn process_facet_queue_step<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -3589,7 +3701,20 @@ where
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     );
-    check_flip_cycle(signature, diagnostics, stats, max_flips, config)?;
+    check_flip_cycle(
+        tds,
+        FlipCycleContext::new(
+            signature,
+            2,
+            context.direction,
+            &context.removed_face_vertices,
+            &context.inserted_face_vertices,
+        ),
+        diagnostics,
+        stats,
+        max_flips,
+        config,
+    )?;
 
     let info = match apply_bistellar_flip_k2(tds, kernel, &context) {
         Ok(info) => info,
