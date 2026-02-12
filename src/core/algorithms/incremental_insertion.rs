@@ -1267,15 +1267,18 @@ where
     Ok(total_neighbor_slots_fixed)
 }
 
-/// Validate that the neighbor graph has no cycles using BFS.
+/// Debug-only sanity check for neighbor pointers.
 ///
-/// This catches cycles early during development/testing. Cycles in the neighbor
-/// graph would cause infinite loops during point location.
+/// This does **not** attempt to prove the neighbor graph is acyclic (triangulations
+/// naturally contain cycles). Instead, it ensures that walking neighbor pointers from a
+/// few sample cells:
+/// - terminates (by visiting each discovered cell at most once), and
+/// - does not encounter pointers to missing cell keys.
 ///
-/// **Performance**: O(n·D) - visits each cell once, checks D neighbors per cell.
+/// **Performance**: O(n·D) in the worst case for each sampled start cell.
 ///
 /// # Errors
-/// Returns `NeighborWiring` error if a cycle is detected.
+/// Returns `NeighborWiring` if a neighbor pointer references a missing cell key.
 #[cfg(debug_assertions)]
 fn validate_no_neighbor_cycles<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
@@ -1285,47 +1288,61 @@ where
     U: DataType,
     V: DataType,
 {
-    const MAX_WALK_STEPS: usize = 10000;
-
-    // Sample a few cells and try walking through their neighbor graph
+    // Sample a few cells and try walking through their neighbor graph.
     let sample_cells: Vec<CellKey> = tds.cells().map(|(key, _)| key).take(10).collect();
+    let max_cells = tds.number_of_cells();
 
     for &start_cell in &sample_cells {
-        let mut visited = FastHashSet::default();
+        let mut visited: FastHashSet<CellKey> = FastHashSet::default();
         let mut to_visit = vec![start_cell];
-        let mut steps = 0;
+        visited.insert(start_cell);
 
         while let Some(current) = to_visit.pop() {
-            steps += 1;
-            if steps > MAX_WALK_STEPS {
-                return Err(InsertionError::NeighborWiring {
-                    message: format!(
-                        "Possible cycle detected: BFS exceeded {MAX_WALK_STEPS} steps from cell {start_cell:?}"
-                    ),
-                });
-            }
+            let cell = tds
+                .get_cell(current)
+                .ok_or_else(|| InsertionError::NeighborWiring {
+                    message: format!("Neighbor walk encountered missing cell {current:?}"),
+                })?;
 
-            if !visited.insert(current) {
-                continue; // Already visited
-            }
+            let Some(neighbors) = cell.neighbors() else {
+                continue;
+            };
 
-            // Add all neighbors to visit queue
-            if let Some(cell) = tds.get_cell(current)
-                && let Some(neighbors) = cell.neighbors()
-            {
-                for &neighbor_opt in neighbors {
-                    if let Some(neighbor_key) = neighbor_opt
-                        && tds.contains_cell(neighbor_key)
-                        && !visited.contains(&neighbor_key)
-                    {
-                        to_visit.push(neighbor_key);
+            for &neighbor_opt in neighbors {
+                let Some(neighbor_key) = neighbor_opt else {
+                    continue;
+                };
+
+                if neighbor_key == current {
+                    return Err(InsertionError::NeighborWiring {
+                        message: format!("Cell {current:?} has a self-neighbor pointer"),
+                    });
+                }
+
+                if !tds.contains_cell(neighbor_key) {
+                    return Err(InsertionError::NeighborWiring {
+                        message: format!(
+                            "Cell {current:?} has neighbor pointer to missing cell {neighbor_key:?}"
+                        ),
+                    });
+                }
+
+                if visited.insert(neighbor_key) {
+                    to_visit.push(neighbor_key);
+                    if visited.len() > max_cells {
+                        return Err(InsertionError::NeighborWiring {
+                            message: format!(
+                                "Neighbor walk visited {} unique cells but triangulation contains {max_cells} cells",
+                                visited.len()
+                            ),
+                        });
                     }
                 }
             }
         }
     }
 
-    tracing::trace!("validate_no_neighbor_cycles: passed (no cycles detected)");
+    tracing::trace!("validate_no_neighbor_cycles: neighbor walk terminated");
     Ok(())
 }
 

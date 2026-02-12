@@ -25,27 +25,38 @@
 //! DELAUNAY_LARGE_DEBUG_BALL_RADIUS=100 \
 //! # Box half-width (default: 100) [used when distribution=box]
 //! DELAUNAY_LARGE_DEBUG_BOX_HALF_WIDTH=100 \
-//! # Deterministically shuffle insertion order
+//! # Construction mode:
+//! # - "new" (default): build via DelaunayTriangulation::new() which applies Hilbert ordering
+//! # - "incremental": manual insert loop (debug/profiling)
+//! DELAUNAY_LARGE_DEBUG_CONSTRUCTION_MODE=new \
+//! # Deterministically shuffle insertion order (incremental mode only)
 //! DELAUNAY_LARGE_DEBUG_SHUFFLE_SEED=123 \
-//! # Print progress every N insertions
+//! # Print progress every N insertions (incremental mode only)
 //! DELAUNAY_LARGE_DEBUG_PROGRESS_EVERY=1000 \
-//! # (Optional) validate topology every N insertions once cells exist (can be expensive)
+//! # (Optional) validate topology every N insertions once cells exist (incremental mode only; can be expensive)
 //! DELAUNAY_LARGE_DEBUG_VALIDATE_EVERY=2000 \
 //! # Allow skipped vertices (otherwise the test fails if any are skipped)
 //! DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 \
 //! # Skip the final flip-based repair pass (faster, but may leave Delaunay violations)
 //! DELAUNAY_LARGE_DEBUG_SKIP_FINAL_REPAIR=1 \
+//! # Run bounded incremental flip repair every N successful insertions (incremental mode only; 0 disables; default: 128)
+//! DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=128 \
 //! cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
 //! ```
 
 #![forbid(unsafe_code)]
 
-use delaunay::core::delaunay_triangulation::DelaunayRepairHeuristicConfig;
+use delaunay::core::delaunay_triangulation::{
+    ConstructionOptions, ConstructionStatistics, DelaunayRepairHeuristicConfig,
+    DelaunayTriangulationConstructionErrorWithStatistics,
+};
+use delaunay::geometry::kernel::FastKernel;
 use delaunay::geometry::util::{
     generate_random_points_in_ball_seeded, generate_random_points_seeded,
 };
 use delaunay::prelude::triangulation::*;
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
+use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
@@ -123,6 +134,38 @@ impl<const D: usize> InsertionSummary<D> {
     }
 }
 
+impl<const D: usize> From<ConstructionStatistics> for InsertionSummary<D> {
+    fn from(stats: ConstructionStatistics) -> Self {
+        let skip_samples: Vec<SkipSample<D>> = stats
+            .skip_samples
+            .iter()
+            .filter_map(|s| {
+                let coords: [f64; D] = s.coords.as_slice().try_into().ok()?;
+                Some(SkipSample {
+                    index: s.index,
+                    uuid: s.uuid,
+                    coords,
+                    attempts: s.attempts,
+                    error: s.error.clone(),
+                })
+            })
+            .collect();
+
+        Self {
+            inserted: stats.inserted,
+            skipped_duplicate: stats.skipped_duplicate,
+            skipped_degeneracy: stats.skipped_degeneracy,
+            total_attempts: stats.total_attempts,
+            max_attempts: stats.max_attempts,
+            attempts_histogram: stats.attempts_histogram,
+            used_perturbation: stats.used_perturbation,
+            cells_removed_total: stats.cells_removed_total,
+            cells_removed_max: stats.cells_removed_max,
+            skip_samples,
+        }
+    }
+}
+
 fn parse_u64(s: &str) -> Option<u64> {
     let s = s.trim();
     s.strip_prefix("0x")
@@ -161,6 +204,23 @@ fn init_tracing() {
 enum PointDistribution {
     Ball,
     Box,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConstructionMode {
+    /// Build via `DelaunayTriangulation::new()` (batch construction + Hilbert ordering).
+    New,
+    /// Insert vertices one by one (manual incremental construction).
+    Incremental,
+}
+
+impl ConstructionMode {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::New => "new",
+            Self::Incremental => "incremental",
+        }
+    }
 }
 
 impl PointDistribution {
@@ -203,6 +263,25 @@ fn point_distribution_from_env() -> PointDistribution {
     }
 
     panic!("invalid DELAUNAY_LARGE_DEBUG_DISTRIBUTION={raw:?} (expected 'ball' or 'box')");
+}
+
+fn construction_mode_from_env() -> ConstructionMode {
+    let Ok(raw) = std::env::var("DELAUNAY_LARGE_DEBUG_CONSTRUCTION_MODE") else {
+        return ConstructionMode::New;
+    };
+
+    let raw = raw.trim();
+    if raw.is_empty() || raw.eq_ignore_ascii_case("new") {
+        return ConstructionMode::New;
+    }
+
+    if raw.eq_ignore_ascii_case("incremental") {
+        return ConstructionMode::Incremental;
+    }
+
+    panic!(
+        "invalid DELAUNAY_LARGE_DEBUG_CONSTRUCTION_MODE={raw:?} (expected 'new' or 'incremental')"
+    );
 }
 
 fn seed_for_case<const D: usize>(base_seed: u64, n_points: usize) -> u64 {
@@ -281,6 +360,8 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
     let ball_radius = env_f64("DELAUNAY_LARGE_DEBUG_BALL_RADIUS").unwrap_or(100.0);
     let box_half_width = env_f64("DELAUNAY_LARGE_DEBUG_BOX_HALF_WIDTH").unwrap_or(100.0);
 
+    let mode = construction_mode_from_env();
+
     let shuffle_seed = env_u64("DELAUNAY_LARGE_DEBUG_SHUFFLE_SEED");
     let progress_every = env_usize("DELAUNAY_LARGE_DEBUG_PROGRESS_EVERY")
         .unwrap_or(1000)
@@ -289,6 +370,12 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
 
     let allow_skips = env_flag("DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS");
     let skip_final_repair = env_flag("DELAUNAY_LARGE_DEBUG_SKIP_FINAL_REPAIR");
+
+    // Delaunay repair scheduling: run a bounded local flip-repair pass every N successful insertions.
+    // - 0 disables incremental repair
+    // - 1 runs repair after every insertion
+    // - N>1 runs repair after every N successful insertions
+    let repair_every = env_usize("DELAUNAY_LARGE_DEBUG_REPAIR_EVERY").unwrap_or(128);
 
     println!("=============================================");
     println!("Large-scale triangulation debug: {dimension_name}");
@@ -306,11 +393,13 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
         PointDistribution::Ball => println!("  ball_radius:  {ball_radius}"),
         PointDistribution::Box => println!("  box_half_width:{box_half_width}"),
     }
+    println!("  construction_mode: {}", mode.name());
     println!("  shuffle_seed:  {shuffle_seed:?}");
     println!("  progress_every:{progress_every}");
     println!("  validate_every:{validate_every:?}");
     println!("  allow_skips:   {allow_skips}");
     println!("  skip_final_repair: {skip_final_repair}");
+    println!("  repair_every:  {repair_every}");
     println!();
 
     let t_gen = Instant::now();
@@ -333,107 +422,160 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
     println!("Generated {} points in {:?}", points.len(), t_gen.elapsed());
 
     let mut vertices: Vec<Vertex<f64, (), D>> = points.into_iter().map(|p| vertex!(p)).collect();
-    if let Some(shuffle_seed) = shuffle_seed {
-        let mut rng = StdRng::seed_from_u64(shuffle_seed);
-        vertices.shuffle(&mut rng);
-        println!("Shuffled insertion order with seed {shuffle_seed}");
-    }
-
-    let mut dt: DelaunayTriangulation<_, (), (), D> =
-        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
-
-    // Keep incremental insertion closer to the batch-construction path:
-    // - Disable per-insertion flip-repair (too expensive at large scale).
-    // - Run a single global repair pass at the end (unless explicitly skipped).
-    dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
-    dt.set_delaunay_check_policy(DelaunayCheckPolicy::EndOnly);
-
-    println!("Policies:");
-    println!("  topology_guarantee:   {:?}", dt.topology_guarantee());
-    println!("  validation_policy:    {:?}", dt.validation_policy());
-    println!("  delaunay_repair_policy:{:?}", dt.delaunay_repair_policy());
-    println!("  delaunay_check_policy: {:?}", dt.delaunay_check_policy());
-    println!();
 
     let t_insert = Instant::now();
-    let mut summary: InsertionSummary<D> = InsertionSummary::default();
-    let mut had_cells = false;
 
-    for (idx, vertex) in vertices.into_iter().enumerate() {
-        let coords = *vertex.point().coords();
-        let uuid = vertex.uuid();
+    let mut dt: DelaunayTriangulation<_, (), (), D> = match mode {
+        ConstructionMode::New => {
+            // `DelaunayTriangulation::new()` applies Hilbert ordering during batch construction.
+            // Use the statistics-returning variant so we can report aggregate insertion telemetry.
+            //
+            // Use PLManifoldStrict during batch construction to ensure vertex-link invariants are
+            // maintained on each insertion.
+            let kernel = FastKernel::<f64>::new();
+            match DelaunayTriangulation::with_topology_guarantee_and_options_with_construction_statistics(
+                &kernel,
+                &vertices,
+                TopologyGuarantee::PLManifoldStrict,
+                ConstructionOptions::default(),
+            ) {
+                Ok((dt, stats)) => {
+                    let summary: InsertionSummary<D> = stats.into();
+                    print_insertion_summary(&summary, t_insert.elapsed());
+                    dt
+                }
+                Err(e) => {
+                    let DelaunayTriangulationConstructionErrorWithStatistics {
+                        error,
+                        statistics,
+                        ..
+                    } = e;
+                    let summary: InsertionSummary<D> = (*statistics).into();
+                    print_insertion_summary(&summary, t_insert.elapsed());
+                    println!("construction failed: {error}");
+                    panic!("aborting: batch construction failed");
+                }
+            }
+        }
+        ConstructionMode::Incremental => {
+            if let Some(shuffle_seed) = shuffle_seed {
+                let mut rng = StdRng::seed_from_u64(shuffle_seed);
+                vertices.shuffle(&mut rng);
+                println!("Shuffled insertion order with seed {shuffle_seed}");
+            }
 
-        match dt.insert_with_statistics(vertex) {
-            Ok((InsertionOutcome::Inserted { .. }, stats)) => {
-                summary.record_inserted(stats);
-            }
-            Ok((InsertionOutcome::Skipped { error }, stats)) => {
-                let sample = SkipSample {
-                    index: idx,
-                    uuid,
-                    coords,
-                    attempts: stats.attempts,
-                    error: error.to_string(),
-                };
-                summary.record_skipped(sample, stats);
-            }
-            Err(err) => {
-                println!(
-                    "Non-retryable insertion error at idx={idx} uuid={uuid} coords={coords:?}"
+            let mut dt: DelaunayTriangulation<_, (), (), D> =
+                DelaunayTriangulation::empty_with_topology_guarantee(
+                    TopologyGuarantee::PLManifoldStrict,
                 );
-                println!("  error: {err}");
 
-                if let Err(report) = dt.validation_report() {
-                    print_validation_report(&report);
-                } else {
-                    println!("validation_report: OK (after rollback)");
+            // Delaunay policies:
+            // - Enable bounded incremental repair (local flip queue) every N successful insertions.
+            // - Keep global Delaunay checks off during insertion; the harness can optionally run a final
+            //   global repair pass at the end.
+            let repair_policy = match NonZeroUsize::new(repair_every) {
+                None => DelaunayRepairPolicy::Never,
+                Some(n) if n.get() == 1 => DelaunayRepairPolicy::EveryInsertion,
+                Some(n) => DelaunayRepairPolicy::EveryN(n),
+            };
+            dt.set_delaunay_repair_policy(repair_policy);
+            dt.set_delaunay_check_policy(DelaunayCheckPolicy::EndOnly);
+
+            // In incremental mode we want strict topology guarantees to be enforced immediately,
+            // so force validation to run after each insertion.
+            dt.set_validation_policy(ValidationPolicy::Always);
+
+            println!("Policies:");
+            println!("  topology_guarantee:   {:?}", dt.topology_guarantee());
+            println!("  validation_policy:    {:?}", dt.validation_policy());
+            println!("  delaunay_repair_policy:{:?}", dt.delaunay_repair_policy());
+            println!("  delaunay_check_policy: {:?}", dt.delaunay_check_policy());
+            println!();
+
+            let mut summary: InsertionSummary<D> = InsertionSummary::default();
+            let mut had_cells = false;
+
+            for (idx, vertex) in vertices.iter().copied().enumerate() {
+                let coords = *vertex.point().coords();
+                let uuid = vertex.uuid();
+
+                match dt.insert_with_statistics(vertex) {
+                    Ok((InsertionOutcome::Inserted { .. }, stats)) => {
+                        summary.record_inserted(stats);
+                    }
+                    Ok((InsertionOutcome::Skipped { error }, stats)) => {
+                        let sample = SkipSample {
+                            index: idx,
+                            uuid,
+                            coords,
+                            attempts: stats.attempts,
+                            error: error.to_string(),
+                        };
+                        summary.record_skipped(sample, stats);
+                    }
+                    Err(err) => {
+                        println!(
+                            "Non-retryable insertion error at idx={idx} uuid={uuid} coords={coords:?}"
+                        );
+                        println!("  error: {err}");
+
+                        if let Err(report) = dt.validation_report() {
+                            print_validation_report(&report);
+                        } else {
+                            println!("validation_report: OK (after rollback)");
+                        }
+
+                        panic!("aborting: non-retryable insertion error");
+                    }
                 }
 
-                panic!("aborting: non-retryable insertion error");
+                if !had_cells && dt.number_of_cells() > 0 {
+                    had_cells = true;
+                    println!("Initial simplex created at insertion {}", idx + 1);
+                }
+
+                if let Some(every) = validate_every
+                    && every > 0
+                    && had_cells
+                    && (idx + 1) % every == 0
+                    && let Err(e) = dt.as_triangulation().is_valid()
+                {
+                    println!("Topology validation failed at idx={idx}: {e}");
+                    if let Err(report) = dt.validation_report() {
+                        print_validation_report(&report);
+                    }
+                    panic!("aborting: topology validation failure");
+                }
+
+                if (idx + 1) % progress_every == 0 {
+                    println!(
+                        "progress: {}/{} inserted={} skipped={} cells={} elapsed={:?}",
+                        idx + 1,
+                        n_points,
+                        summary.inserted,
+                        summary.total_skipped(),
+                        dt.number_of_cells(),
+                        t_insert.elapsed()
+                    );
+                }
             }
-        }
 
-        if !had_cells && dt.number_of_cells() > 0 {
-            had_cells = true;
-            println!("Initial simplex created at insertion {}", idx + 1);
-        }
+            print_insertion_summary(&summary, t_insert.elapsed());
 
-        if let Some(every) = validate_every
-            && every > 0
-            && had_cells
-            && (idx + 1) % every == 0
-            && let Err(e) = dt.as_triangulation().is_valid()
-        {
-            println!("Topology validation failed at idx={idx}: {e}");
-            if let Err(report) = dt.validation_report() {
-                print_validation_report(&report);
-            }
-            panic!("aborting: topology validation failure");
+            dt
         }
+    };
 
-        if (idx + 1) % progress_every == 0 {
-            println!(
-                "progress: {}/{} inserted={} skipped={} cells={} elapsed={:?}",
-                idx + 1,
-                n_points,
-                summary.inserted,
-                summary.total_skipped(),
-                dt.number_of_cells(),
-                t_insert.elapsed()
-            );
-        }
-    }
-
-    print_insertion_summary(&summary, t_insert.elapsed());
+    // Infer skipped count from the resulting triangulation size.
+    let skipped_total = n_points.saturating_sub(dt.number_of_vertices());
 
     println!(
-        "Triangulation size: vertices={} cells={} dim={}",
+        "Triangulation size: vertices={} (skipped={skipped_total}) cells={} dim={}",
         dt.number_of_vertices(),
         dt.number_of_cells(),
         dt.dim()
     );
 
-    let skipped_total = summary.total_skipped();
     assert!(
         allow_skips || skipped_total == 0,
         "{skipped_total} vertices were skipped (set DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 to allow)"

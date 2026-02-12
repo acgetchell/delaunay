@@ -3379,6 +3379,9 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
+        #[cfg(not(debug_assertions))]
+        let _ = point;
+
         if conflict_cells.is_empty() {
             let Some(start_cell) = fallback_cell else {
                 return Err(InsertionError::CavityFilling {
@@ -3534,44 +3537,58 @@ where
             }
         }
 
-        // Rebuild neighbor pointers now that topology is manifold
+        // Rebuild neighbor pointers now that topology is manifold.
         #[cfg(debug_assertions)]
         tracing::debug!("After repair loop: total_removed={total_removed}");
 
-        // After insertion we ALWAYS removed the conflict region, which can leave broken/None neighbor
-        // pointers in surviving cells. Even if the subsequent non-manifold repair loop removed 0 cells,
-        // we still must repair neighbor pointers to ensure the cavity is glued.
-        let facet_valid = self.tds.validate_facet_sharing().is_ok();
-        #[cfg(debug_assertions)]
-        tracing::debug!(
-            "Before repair_neighbor_pointers: facet_sharing_valid={facet_valid}, cells={}",
-            self.tds.number_of_cells()
-        );
+        // Global neighbor rebuild is expensive. In the common case (no cells removed during the
+        // local facet-repair loop), `wire_cavity_neighbors` has already glued the cavity locally.
+        //
+        // If we *did* remove cells during the repair loop, neighbor pointers may no longer match
+        // facet incidence, so we rebuild globally.
+        if total_removed > 0 {
+            // Double-check that facet sharing is actually valid.
+            let facet_valid = self.tds.validate_facet_sharing().is_ok();
+            #[cfg(debug_assertions)]
+            tracing::debug!(
+                "Before repair_neighbor_pointers: facet_sharing_valid={facet_valid}, cells={}",
+                self.tds.number_of_cells()
+            );
 
-        if !facet_valid {
-            return Err(InsertionError::CavityFilling {
-                message:
-                    "Facet sharing invalid after insertion/repairs - cannot safely repair neighbors"
+            if !facet_valid {
+                return Err(InsertionError::CavityFilling {
+                    message: "Facet sharing invalid after insertion/repairs - cannot safely rebuild neighbors"
                         .to_string(),
-            });
+                });
+            }
+
+            // Rebuild neighbor pointers from facet incidence (global O(n·D) pass).
+            // This is only needed after we removed cells in the local repair loop.
+            let repaired = repair_neighbor_pointers(&mut self.tds).map_err(|e| {
+                InsertionError::CavityFilling {
+                    message: format!("Failed to rebuild neighbors after repairs: {e}"),
+                }
+            })?;
+            suspicion.neighbor_pointers_rebuilt = repaired > 0;
         }
 
-        // Rebuild neighbor pointers from facet incidence (global O(n·D) pass).
-        let repaired =
-            repair_neighbor_pointers(&mut self.tds).map_err(|e| InsertionError::CavityFilling {
-                message: format!("Failed to repair neighbor pointers after insertion: {e}"),
-            })?;
-        suspicion.neighbor_pointers_rebuilt = repaired > 0;
+        // Assign an incident cell for the inserted vertex without a global rebuild.
+        let hint = new_cells.iter().copied().find(|&ck| {
+            self.tds
+                .get_cell(ck)
+                .is_some_and(|cell| cell.contains_vertex(v_key))
+        });
+        if let Some(incident_cell) = hint
+            && let Some(vertex) = self.tds.get_vertex_by_key_mut(v_key)
+        {
+            vertex.incident_cell = Some(incident_cell);
+        }
 
-        // Validate neighbor pointers by forcing a full facet walk (no hint).
-        let _ = locate(&self.tds, &self.kernel, point, None)?;
-
-        // Always rebuild vertex→cell incidence after insertion.
-        self.tds
-            .assign_incident_cells()
-            .map_err(|e| InsertionError::CavityFilling {
-                message: format!("Failed to assign incident cells after insertion: {e}"),
-            })?;
+        // Optional debug: validate neighbor pointers by forcing a full facet walk (no hint).
+        #[cfg(debug_assertions)]
+        if std::env::var_os("DELAUNAY_DEBUG_VALIDATE_LOCATE").is_some() {
+            let _ = locate(&self.tds, &self.kernel, point, None)?;
+        }
 
         #[cfg(debug_assertions)]
         if std::env::var_os("DELAUNAY_DEBUG_RIDGE_LINK").is_some() {
@@ -3616,10 +3633,6 @@ where
         self.validate_connectedness(&new_cells)?;
 
         // Return hint for next insertion
-        let hint = new_cells
-            .iter()
-            .copied()
-            .find(|ck| self.tds.contains_cell(*ck));
         Ok((hint, total_removed))
     }
     /// Internal implementation of insert without retry logic.
@@ -4130,12 +4143,17 @@ where
                     suspicion.neighbor_pointers_rebuilt = repaired > 0;
                 }
 
-                // Always rebuild vertex→cell incidence after insertion.
-                self.tds
-                    .assign_incident_cells()
-                    .map_err(|e| InsertionError::CavityFilling {
-                        message: format!("Failed to assign incident cells after insertion: {e}"),
-                    })?;
+                // Assign an incident cell for the inserted vertex without a global rebuild.
+                let hint = new_cells.iter().copied().find(|&ck| {
+                    self.tds
+                        .get_cell(ck)
+                        .is_some_and(|cell| cell.contains_vertex(v_key))
+                });
+                if let Some(incident_cell) = hint
+                    && let Some(vertex) = self.tds.get_vertex_by_key_mut(v_key)
+                {
+                    vertex.incident_cell = Some(incident_cell);
+                }
 
                 #[cfg(debug_assertions)]
                 if std::env::var_os("DELAUNAY_DEBUG_RIDGE_LINK").is_some() {
@@ -4170,10 +4188,6 @@ where
                 self.validate_connectedness(&new_cells)?;
 
                 // Return vertex key and hint for next insertion
-                let hint = new_cells
-                    .iter()
-                    .copied()
-                    .find(|ck| self.tds.contains_cell(*ck));
                 Ok(((v_key, hint), total_removed, suspicion))
             }
             LocateResult::OnFacet(_, _) | LocateResult::OnEdge(_) | LocateResult::OnVertex(_) => {

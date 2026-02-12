@@ -252,6 +252,30 @@ where
         });
     }
 
+    // Bistellar move legality: the inserted simplex must not already exist in the complex.
+    //
+    // If it does, applying the move can create non-manifold codimension>1 singularities
+    // (e.g., disconnected ridge links in 3D when a k=2 flip inserts an already-existing edge).
+    //
+    // For facets (k==D) and full cells (k==D+1), this is already covered by the existing
+    // non-manifold facet / duplicate-cell checks.
+    if k_move >= 2
+        && k_move < D
+        && let Some(existing_cell) =
+            find_cell_containing_simplex(tds, inserted_face_vertices, removed_cells)
+    {
+        if repair_trace_enabled() || std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+            tracing::debug!(
+                "[repair] skip flip: inserted simplex already exists (k={k_move}, inserted_face={inserted_face_vertices:?}, existing_cell={existing_cell:?})"
+            );
+        }
+        return Err(FlipError::InsertedSimplexAlreadyExists {
+            k_move,
+            simplex_vertices: inserted_face_vertices.iter().copied().collect(),
+            existing_cell,
+        });
+    }
+
     let mut new_cells = CellKeyBuffer::new();
     let mut new_cell_vertices: SmallBuffer<
         SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
@@ -350,6 +374,41 @@ where
         inserted_face_vertices: inserted_face_vertices.iter().copied().collect(),
     })
 }
+
+fn find_cell_containing_simplex<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    simplex_vertices: &[VertexKey],
+    removed_cells: &[CellKey],
+) -> Option<CellKey>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let first = *simplex_vertices.first()?;
+    let candidates = tds.find_cells_containing_vertex_by_key(first);
+
+    for cell_key in candidates {
+        if removed_cells.contains(&cell_key) {
+            continue;
+        }
+
+        let Some(cell) = tds.get_cell(cell_key) else {
+            continue;
+        };
+
+        if simplex_vertices
+            .iter()
+            .copied()
+            .all(|vk| cell.contains_vertex(vk))
+        {
+            return Some(cell_key);
+        }
+    }
+
+    None
+}
+
 /// Check whether a k=3 ridge violates the local Delaunay condition.
 ///
 /// # Errors
@@ -727,6 +786,21 @@ pub enum FlipError {
     /// Flip would create a non-manifold facet.
     #[error("Flip would create a non-manifold facet")]
     NonManifoldFacet,
+    /// Flip would insert a simplex that already exists in the triangulation.
+    ///
+    /// This violates the bistellar move link condition and can create non-manifold
+    /// codimension>1 singularities (e.g., disconnected ridge links).
+    #[error(
+        "Flip would insert simplex that already exists (k={k_move}, simplex={simplex_vertices:?}, existing_cell={existing_cell:?})"
+    )]
+    InsertedSimplexAlreadyExists {
+        /// k for the attempted move.
+        k_move: usize,
+        /// Vertex keys of the inserted simplex.
+        simplex_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+        /// A witness cell key that already contains the inserted simplex.
+        existing_cell: CellKey,
+    },
     /// Cell creation failed.
     #[error(transparent)]
     CellCreation(#[from] CellValidationError),
@@ -2127,6 +2201,7 @@ where
                 err @ (FlipError::DegenerateCell
                 | FlipError::DuplicateCell
                 | FlipError::NonManifoldFacet
+                | FlipError::InsertedSimplexAlreadyExists { .. }
                 | FlipError::CellCreation(_)),
             ) => {
                 if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
@@ -2761,7 +2836,7 @@ where
 const AMBIGUOUS_SAMPLE_LIMIT: usize = 16;
 const CYCLE_SAMPLE_LIMIT: usize = 16;
 const FLIP_SIGNATURE_WINDOW: usize = 4096;
-const MAX_REPEAT_SIGNATURE: usize = 4;
+const MAX_REPEAT_SIGNATURE: usize = 32;
 
 #[derive(Debug, Default)]
 struct RepairDiagnostics {
@@ -3190,6 +3265,7 @@ where
             err @ (FlipError::DegenerateCell
             | FlipError::DuplicateCell
             | FlipError::NonManifoldFacet
+            | FlipError::InsertedSimplexAlreadyExists { .. }
             | FlipError::CellCreation(_)),
         ) => {
             if repair_trace_enabled() {
@@ -3305,6 +3381,7 @@ where
             err @ (FlipError::DegenerateCell
             | FlipError::DuplicateCell
             | FlipError::NonManifoldFacet
+            | FlipError::InsertedSimplexAlreadyExists { .. }
             | FlipError::CellCreation(_)),
         ) => {
             if repair_trace_enabled() {
@@ -3415,6 +3492,7 @@ where
             err @ (FlipError::DegenerateCell
             | FlipError::DuplicateCell
             | FlipError::NonManifoldFacet
+            | FlipError::InsertedSimplexAlreadyExists { .. }
             | FlipError::CellCreation(_)),
         ) => {
             if repair_trace_enabled() {
@@ -3519,6 +3597,7 @@ where
             err @ (FlipError::DegenerateCell
             | FlipError::DuplicateCell
             | FlipError::NonManifoldFacet
+            | FlipError::InsertedSimplexAlreadyExists { .. }
             | FlipError::CellCreation(_)),
         ) => {
             if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
@@ -4906,6 +4985,69 @@ mod tests {
         let result = apply_bistellar_flip_k2(&mut tds, &kernel, &context);
 
         assert!(matches!(result, Err(FlipError::DuplicateCell)));
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_flip_k2_rejects_inserting_existing_edge_in_3d() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+
+        // Opposite vertices across the shared face.
+        let v_a = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .unwrap();
+        let v_b = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .unwrap();
+
+        // Shared face vertices.
+        let v_x = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .unwrap();
+        let v_y = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .unwrap();
+        let v_z = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 1.0]))
+            .unwrap();
+
+        // Extra vertices for an existing tetrahedron containing the edge (v_a, v_b).
+        let v_p = tds
+            .insert_vertex_with_mapping(vertex!([2.0, 0.0, 0.0]))
+            .unwrap();
+        let v_q = tds
+            .insert_vertex_with_mapping(vertex!([2.0, 1.0, 0.0]))
+            .unwrap();
+
+        // Two tetrahedra sharing face (v_x, v_y, v_z): a k=2 flip across that face would insert edge (v_a, v_b).
+        let cell_a = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_x, v_y, v_z], None).unwrap())
+            .unwrap();
+        let _cell_b = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_b, v_x, v_y, v_z], None).unwrap())
+            .unwrap();
+
+        // Existing tetrahedron that already contains edge (v_a, v_b) but does not contain any of
+        // the shared-face vertices (v_x, v_y, v_z).
+        let _edge_witness = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_p, v_q], None).unwrap())
+            .unwrap();
+
+        repair_neighbor_pointers(&mut tds).unwrap();
+        assert!(tds.is_valid().is_ok());
+
+        // Face (v_x, v_y, v_z) is opposite v_a in `cell_a` (index 0 by construction).
+        let facet = FacetHandle::new(cell_a, 0);
+        let ctx = build_k2_flip_context(&tds, facet).unwrap();
+
+        let kernel = FastKernel::<f64>::new();
+        let result = apply_bistellar_flip_k2(&mut tds, &kernel, &ctx);
+
+        assert!(matches!(
+            result,
+            Err(FlipError::InsertedSimplexAlreadyExists { .. })
+        ));
         assert!(tds.is_valid().is_ok());
     }
 
