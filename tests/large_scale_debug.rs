@@ -17,6 +17,8 @@
 //! ```bash
 //! # Base RNG seed (decimal or 0x-hex)
 //! DELAUNAY_LARGE_DEBUG_SEED=0xDEADBEEF \
+//! # Optional explicit case seed (overrides derived seed_for_case)
+//! DELAUNAY_LARGE_DEBUG_CASE_SEED=0x12345678 \
 //! # Override point count for the selected test
 //! DELAUNAY_LARGE_DEBUG_N=10000 \
 //! # Point distribution: "ball" (default) or "box"
@@ -355,7 +357,9 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
         .unwrap_or(default_n_points)
         .max(D + 1);
 
-    let seed = seed_for_case::<D>(base_seed, n_points);
+    let seed = env_u64(&format!("DELAUNAY_LARGE_DEBUG_CASE_SEED_{D}D"))
+        .or_else(|| env_u64("DELAUNAY_LARGE_DEBUG_CASE_SEED"))
+        .unwrap_or_else(|| seed_for_case::<D>(base_seed, n_points));
     let distribution = point_distribution_from_env();
     let ball_radius = env_f64("DELAUNAY_LARGE_DEBUG_BALL_RADIUS").unwrap_or(100.0);
     let box_half_width = env_f64("DELAUNAY_LARGE_DEBUG_BOX_HALF_WIDTH").unwrap_or(100.0);
@@ -620,6 +624,154 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
 
     println!();
     println!("Total wall time: {:?}", t_gen.elapsed());
+}
+#[derive(Debug, Clone)]
+struct IncrementalFailure3d {
+    prefix_len: usize,
+    index: usize,
+    uuid: uuid::Uuid,
+    coords: [f64; 3],
+    error: String,
+}
+
+fn run_incremental_prefix_3d(
+    vertices: &[Vertex<f64, (), 3>],
+    prefix_len: usize,
+    repair_every: usize,
+) -> Result<(), IncrementalFailure3d> {
+    let mut dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
+
+    let repair_policy = match NonZeroUsize::new(repair_every) {
+        None => DelaunayRepairPolicy::Never,
+        Some(n) if n.get() == 1 => DelaunayRepairPolicy::EveryInsertion,
+        Some(n) => DelaunayRepairPolicy::EveryN(n),
+    };
+    dt.set_delaunay_repair_policy(repair_policy);
+    dt.set_delaunay_check_policy(DelaunayCheckPolicy::EndOnly);
+    dt.set_validation_policy(ValidationPolicy::Always);
+
+    for (idx, vertex) in vertices.iter().copied().take(prefix_len).enumerate() {
+        let uuid = vertex.uuid();
+        let coords = *vertex.point().coords();
+
+        match dt.insert_with_statistics(vertex) {
+            Ok((InsertionOutcome::Inserted { .. } | InsertionOutcome::Skipped { .. }, _)) => {}
+            Err(err) => {
+                return Err(IncrementalFailure3d {
+                    prefix_len,
+                    index: idx,
+                    uuid,
+                    coords,
+                    error: err.to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore = "large-scale debug harness (manual run)"]
+fn debug_large_scale_3d_incremental_prefix_bisect() {
+    init_tracing();
+
+    let total_n = env_usize("DELAUNAY_LARGE_DEBUG_PREFIX_TOTAL")
+        .unwrap_or(1000)
+        .max(4);
+    let base_seed = env_u64("DELAUNAY_LARGE_DEBUG_SEED").unwrap_or(42);
+    let case_seed = env_u64("DELAUNAY_LARGE_DEBUG_CASE_SEED_3D")
+        .or_else(|| env_u64("DELAUNAY_LARGE_DEBUG_CASE_SEED"))
+        .unwrap_or_else(|| seed_for_case::<3>(base_seed, total_n));
+    let ball_radius = env_f64("DELAUNAY_LARGE_DEBUG_BALL_RADIUS").unwrap_or(100.0);
+    let repair_every = env_usize("DELAUNAY_LARGE_DEBUG_REPAIR_EVERY").unwrap_or(128);
+
+    println!("=============================================");
+    println!("3D incremental prefix bisect");
+    println!("=============================================");
+    println!("Config:");
+    println!("  total_n:        {total_n}");
+    println!("  base_seed:      0x{base_seed:X} ({base_seed})");
+    println!("  case_seed:      0x{case_seed:X} ({case_seed})");
+    println!("  ball_radius:    {ball_radius}");
+    println!("  repair_every:   {repair_every}");
+    println!();
+
+    let points = generate_random_points_in_ball_seeded::<f64, 3>(total_n, ball_radius, case_seed)
+        .unwrap_or_else(|e| {
+            panic!("failed to generate deterministic 3D ball points for bisect: {e}")
+        });
+    let vertices: Vec<Vertex<f64, (), 3>> = points.into_iter().map(|p| vertex!(p)).collect();
+
+    let first_failure = match run_incremental_prefix_3d(&vertices, total_n, repair_every) {
+        Ok(()) => {
+            println!(
+                "No failure observed for full prefix total_n={total_n}; bisect skipped (likely fixed or total too small)."
+            );
+            println!(
+                "Config recap: base_seed=0x{base_seed:X} case_seed=0x{case_seed:X} ball_radius={ball_radius} repair_every={repair_every}"
+            );
+            println!(
+                "To force a failure, increase DELAUNAY_LARGE_DEBUG_PREFIX_TOTAL or adjust DELAUNAY_LARGE_DEBUG_CASE_SEED_3D."
+            );
+            return;
+        }
+        Err(err) => err,
+    };
+
+    let mut lo = 4;
+    let mut hi = (first_failure.index + 1).max(lo);
+    println!(
+        "Full-run first failure: idx={} (prefix_len={})",
+        first_failure.index, first_failure.prefix_len
+    );
+    println!("Initial binary-search range: [{lo}, {hi}]");
+
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        let failed = run_incremental_prefix_3d(&vertices, mid, repair_every).is_err();
+        println!(
+            "  bisect probe: prefix_len={mid} -> {}",
+            if failed { "FAIL" } else { "PASS" }
+        );
+
+        if failed {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+
+    let minimal_prefix = lo;
+    let minimal_failure = run_incremental_prefix_3d(&vertices, minimal_prefix, repair_every)
+        .err()
+        .unwrap_or_else(|| {
+            panic!(
+                "internal bisect inconsistency: expected failure at minimal_prefix={minimal_prefix}"
+            )
+        });
+
+    if minimal_prefix > 4 {
+        assert!(
+            run_incremental_prefix_3d(&vertices, minimal_prefix - 1, repair_every).is_ok(),
+            "internal bisect inconsistency: prefix {} should pass",
+            minimal_prefix - 1
+        );
+    }
+
+    println!();
+    println!("Minimal failing prefix: {minimal_prefix}");
+    println!(
+        "Failure details: idx={} uuid={} coords={:?}",
+        minimal_failure.index, minimal_failure.uuid, minimal_failure.coords
+    );
+    println!("Error: {}", minimal_failure.error);
+    println!();
+    println!("Replay command:");
+    println!(
+        "  DELAUNAY_LARGE_DEBUG_CONSTRUCTION_MODE=incremental DELAUNAY_LARGE_DEBUG_N_3D={minimal_prefix} DELAUNAY_LARGE_DEBUG_CASE_SEED_3D=0x{case_seed:X} DELAUNAY_REPAIR_DEBUG_FACETS=1 cargo test --test large_scale_debug debug_large_scale_3d -- --ignored --nocapture"
+    );
 }
 
 #[test]

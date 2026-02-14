@@ -2,6 +2,7 @@
 //!
 //! This test is ignored by default; run it manually with:
 //! `cargo test --test k3_cycle_predicate -- --ignored --nocapture`
+//! The sample diagnostic event is emitted at warn level by default.
 
 #![forbid(unsafe_code)]
 
@@ -107,7 +108,7 @@ fn debug_k3_cycle_signature_259165653798390695() {
     let (a_robust, a_robust_signs) = eval_k3_violation_4d(&robust, &ridge_a, &tri_a);
     let (b_robust, b_robust_signs) = eval_k3_violation_4d(&robust, &ridge_b, &tri_b);
 
-    tracing::trace!(
+    tracing::warn!(
         signature = 259_165_653_798_390_695_u64,
         a_ridge = ?[2_u8, 4_u8, 14_u8],
         a_tri = ?[3_u8, 6_u8, 9_u8],
