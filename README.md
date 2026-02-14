@@ -120,21 +120,21 @@ just help-workflows   # Show common workflow patterns
 ```bash
 just examples         # Run all examples
 # Or run specific examples:
-cargo run --release --example triangulation_3d_20_points
-cargo run --release --example convex_hull_3d_20_points
+cargo run --release --example triangulation_3d_100_points
+cargo run --release --example convex_hull_3d_100_points
 ```
 
 ## 📋 Examples
 
 The `examples/` directory contains several demonstrations:
 
-- **`convex_hull_3d_20_points`**: 3D convex hull extraction and analysis on the same 20-point configuration
+- **`convex_hull_3d_100_points`**: 3D convex hull extraction and analysis on the same 100-point configuration
 - **`into_from_conversions`**: Demonstrates Into/From trait conversions and utilities
 - **`memory_analysis`**: Memory usage analysis for triangulations across dimensions with allocation tracking
 - **`pachner_roundtrip_4d`**: 4D Pachner move (k=1,2,3) roundtrip checks (flip + inverse preserves the triangulation)
 - **`point_comparison_and_hashing`**: Demonstrates point comparison and hashing behavior
 - **`topology_editing_2d_3d`**: Builder API vs Edit API in 2D/3D (bistellar flips and Delaunay preservation)
-- **`triangulation_3d_20_points`**: 3D Delaunay triangulation with a stable 20-point random configuration
+- **`triangulation_3d_100_points`**: 3D Delaunay triangulation with a stable 100-point random configuration
 - **`zero_allocation_iterator_demo`**: Performance comparison between allocation and zero-allocation iterators
 
 For detailed documentation, sample output, and usage instructions for each example, see [examples/README.md](examples/README.md).

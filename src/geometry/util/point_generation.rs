@@ -251,6 +251,120 @@ pub fn generate_random_points_seeded<T: CoordinateScalar + SampleUniform, const 
     Ok(points)
 }
 
+fn generate_random_points_in_ball_with_rng<T, R, const D: usize>(
+    n_points: usize,
+    radius: T,
+    rng: &mut R,
+) -> Result<Vec<Point<T, D>>, RandomPointGenerationError>
+where
+    T: CoordinateScalar + SampleUniform,
+    R: rand::Rng + ?Sized,
+{
+    // Validate radius.
+    //
+    // We treat `radius` as the half-width of the axis-aligned bounding box `[-radius, +radius]^D`.
+    // Rejection sampling within that cube yields a uniform distribution in the inscribed ball.
+    if !radius.is_finite() || radius <= T::zero() {
+        return Err(RandomPointGenerationError::InvalidRange {
+            min: format!("{:?}", -radius),
+            max: format!("{radius:?}"),
+        });
+    }
+
+    if n_points == 0 {
+        return Ok(Vec::new());
+    }
+
+    let bounds = (-radius, radius);
+    let radius_sq = radius * radius;
+
+    let mut points = Vec::with_capacity(n_points);
+
+    while points.len() < n_points {
+        let coords = [T::zero(); D].map(|_| rng.random_range(bounds.0..bounds.1));
+        let norm_sq = coords.iter().fold(T::zero(), |acc, &c| acc + c * c);
+        if norm_sq <= radius_sq {
+            points.push(Point::new(coords));
+        }
+    }
+
+    Ok(points)
+}
+
+/// Generate random points uniformly distributed in a D-dimensional ball.
+///
+/// Points are generated inside the ball of radius `radius` centered at the origin.
+///
+/// ## Distribution
+///
+/// This uses rejection sampling from the axis-aligned cube `[-radius, radius]^D`.
+/// Since candidates are drawn uniformly from the cube and accepted only when they
+/// lie inside the ball, the accepted points are i.i.d. and uniformly distributed
+/// within the ball.
+///
+/// # Arguments
+///
+/// * `n_points` - Number of points to generate
+/// * `radius` - Ball radius (must be finite and > 0)
+///
+/// # Errors
+///
+/// Returns [`RandomPointGenerationError::InvalidRange`] if `radius` is non-finite or ≤ 0.
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::util::generate_random_points_in_ball;
+///
+/// // Generate 100 random 4D points in a radius-10 ball.
+/// let points = generate_random_points_in_ball::<f64, 4>(100, 10.0).unwrap();
+/// assert_eq!(points.len(), 100);
+/// ```
+pub fn generate_random_points_in_ball<T: CoordinateScalar + SampleUniform, const D: usize>(
+    n_points: usize,
+    radius: T,
+) -> Result<Vec<Point<T, D>>, RandomPointGenerationError> {
+    let mut rng = rand::rng();
+    generate_random_points_in_ball_with_rng(n_points, radius, &mut rng)
+}
+
+/// Generate random points uniformly distributed in a D-dimensional ball, using a seeded RNG.
+///
+/// See [`generate_random_points_in_ball`] for distribution and semantics.
+///
+/// # Arguments
+///
+/// * `n_points` - Number of points to generate
+/// * `radius` - Ball radius (must be finite and > 0)
+/// * `seed` - Seed for the random number generator
+///
+/// # Errors
+///
+/// Returns [`RandomPointGenerationError::InvalidRange`] if `radius` is non-finite or ≤ 0.
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::util::generate_random_points_in_ball_seeded;
+///
+/// let points1 = generate_random_points_in_ball_seeded::<f64, 4>(10, 1.0, 42).unwrap();
+/// let points2 = generate_random_points_in_ball_seeded::<f64, 4>(10, 1.0, 42).unwrap();
+/// assert_eq!(points1, points2);
+/// ```
+pub fn generate_random_points_in_ball_seeded<
+    T: CoordinateScalar + SampleUniform,
+    const D: usize,
+>(
+    n_points: usize,
+    radius: T,
+    seed: u64,
+) -> Result<Vec<Point<T, D>>, RandomPointGenerationError> {
+    use rand::SeedableRng;
+
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    generate_random_points_in_ball_with_rng(n_points, radius, &mut rng)
+}
+
 /// Generate points arranged in a regular grid pattern.
 ///
 /// This function creates points in D-dimensional space arranged in a regular grid
@@ -721,6 +835,116 @@ mod tests {
         let points1_5d = generate_random_points_seeded::<f64, 5>(15, (0.0, 10.0), 2021).unwrap();
         let points2_5d = generate_random_points_seeded::<f64, 5>(15, (0.0, 10.0), 2024).unwrap();
         assert_ne!(points1_5d, points2_5d);
+    }
+
+    // =============================================================================
+    // RANDOM POINT GENERATION (UNIFORM IN BALL) TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_generate_random_points_in_ball_4d() {
+        let radius = 3.0_f64;
+        let points = generate_random_points_in_ball::<f64, 4>(200, radius).unwrap();
+        assert_eq!(points.len(), 200);
+
+        let radius_sq = radius * radius;
+        for point in &points {
+            let coords = *point.coords();
+            let mut norm_sq = 0.0_f64;
+            for &c in &coords {
+                assert!(c >= -radius && c <= radius);
+                norm_sq += c * c;
+            }
+            assert!(norm_sq <= radius_sq + 1e-12);
+        }
+    }
+
+    #[test]
+    fn test_generate_random_points_in_ball_seeded_reproducible_4d() {
+        let points1 = generate_random_points_in_ball_seeded::<f64, 4>(50, 2.5, 42).unwrap();
+        let points2 = generate_random_points_in_ball_seeded::<f64, 4>(50, 2.5, 42).unwrap();
+        assert_eq!(points1, points2);
+    }
+
+    #[test]
+    fn test_generate_random_points_in_ball_seeded_different_seeds_4d() {
+        let points1 = generate_random_points_in_ball_seeded::<f64, 4>(50, 2.5, 42).unwrap();
+        let points2 = generate_random_points_in_ball_seeded::<f64, 4>(50, 2.5, 123).unwrap();
+        assert_ne!(points1, points2);
+    }
+
+    #[test]
+    fn test_generate_random_points_in_ball_rejects_zero_radius() {
+        let result = generate_random_points_in_ball::<f64, 4>(10, 0.0);
+        assert!(matches!(
+            result,
+            Err(RandomPointGenerationError::InvalidRange { .. })
+        ));
+    }
+
+    #[test]
+    fn test_generate_random_points_in_ball_rejects_negative_radius() {
+        let result = generate_random_points_in_ball::<f64, 4>(10, -1.0);
+        assert!(matches!(
+            result,
+            Err(RandomPointGenerationError::InvalidRange { .. })
+        ));
+    }
+
+    #[test]
+    fn test_generate_random_points_in_ball_zero_points() {
+        let points = generate_random_points_in_ball::<f64, 4>(0, 1.0).unwrap();
+        assert!(points.is_empty());
+    }
+
+    #[test]
+    fn test_generate_random_points_in_ball_seeded_zero_points() {
+        let points = generate_random_points_in_ball_seeded::<f64, 4>(0, 1.0, 7).unwrap();
+        assert!(points.is_empty());
+    }
+
+    #[test]
+    fn test_generate_random_points_in_ball_rejects_nan_radius() {
+        let result = generate_random_points_in_ball::<f64, 4>(10, f64::NAN);
+        assert!(matches!(
+            result,
+            Err(RandomPointGenerationError::InvalidRange { .. })
+        ));
+    }
+
+    #[test]
+    fn test_generate_random_points_in_ball_rejects_infinite_radius() {
+        let result = generate_random_points_in_ball::<f64, 4>(10, f64::INFINITY);
+        assert!(matches!(
+            result,
+            Err(RandomPointGenerationError::InvalidRange { .. })
+        ));
+    }
+
+    #[test]
+    fn test_generate_random_points_in_ball_seeded_in_ball_constraints_4d() {
+        let radius = 1.25_f32;
+        let points = generate_random_points_in_ball_seeded::<f32, 4>(100, radius, 99).unwrap();
+        assert_eq!(points.len(), 100);
+
+        let radius_sq = radius * radius;
+        for point in &points {
+            let coords = *point.coords();
+            let mut norm_sq = 0.0_f32;
+            for &c in &coords {
+                assert!(c >= -radius && c <= radius);
+                norm_sq += c * c;
+            }
+            assert!(norm_sq <= radius_sq + 1e-5);
+        }
+    }
+
+    #[test]
+    fn test_generate_random_points_in_ball_seeded_same_seed_is_deterministic_4d() {
+        // This is a small smoke test that ensures deterministic output for fixed seed.
+        let points1 = generate_random_points_in_ball_seeded::<f64, 4>(10, 1.0, 0xBEEF).unwrap();
+        let points2 = generate_random_points_in_ball_seeded::<f64, 4>(10, 1.0, 0xBEEF).unwrap();
+        assert_eq!(points1, points2);
     }
 
     #[test]

@@ -89,13 +89,13 @@ delaunay/
 │   └── validation.md
 ├── examples/
 │   ├── README.md
-│   ├── convex_hull_3d_20_points.rs
+│   ├── convex_hull_3d_100_points.rs
 │   ├── into_from_conversions.rs
 │   ├── memory_analysis.rs
 │   ├── pachner_roundtrip_4d.rs
 │   ├── point_comparison_and_hashing.rs
 │   ├── topology_editing_2d_3d.rs
-│   ├── triangulation_3d_20_points.rs
+│   ├── triangulation_3d_100_points.rs
 │   └── zero_allocation_iterator_demo.rs
 ├── scripts/
 │   ├── tests/

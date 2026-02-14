@@ -26,19 +26,19 @@ Some examples use random inputs but are seeded for reproducibility. For those ex
 override the seed with `DELAUNAY_EXAMPLE_SEED`:
 
 ```bash
-DELAUNAY_EXAMPLE_SEED=666 cargo run --release --example triangulation_3d_20_points
+DELAUNAY_EXAMPLE_SEED=666 cargo run --release --example triangulation_3d_100_points
 ```
 
 ## Example index (lexicographic)
 
-### `convex_hull_3d_20_points`
+### `convex_hull_3d_100_points`
 
-Extracts a 3D convex hull from a Delaunay triangulation built from a stable 20-point random
+Extracts a 3D convex hull from a Delaunay triangulation built from a stable 100-point random
 configuration. Demonstrates hull validation, containment queries, visible-facet queries, and
 basic timing.
 
-- Run: `cargo run --release --example convex_hull_3d_20_points`
-- Source: [`convex_hull_3d_20_points.rs`](./convex_hull_3d_20_points.rs)
+- Run: `cargo run --release --example convex_hull_3d_100_points`
+- Source: [`convex_hull_3d_100_points.rs`](./convex_hull_3d_100_points.rs)
 
 ### `into_from_conversions`
 
@@ -81,13 +81,13 @@ k=3 where applicable) and how Delaunay preservation differs between the two trac
 - Run: `cargo run --release --example topology_editing_2d_3d`
 - Source: [`topology_editing_2d_3d.rs`](./topology_editing_2d_3d.rs)
 
-### `triangulation_3d_20_points`
+### `triangulation_3d_100_points`
 
-Constructs a 3D Delaunay triangulation from a stable 20-point random configuration and
+Constructs a 3D Delaunay triangulation from a stable 100-point random configuration and
 demonstrates validation and boundary analysis.
 
-- Run: `cargo run --release --example triangulation_3d_20_points`
-- Source: [`triangulation_3d_20_points.rs`](./triangulation_3d_20_points.rs)
+- Run: `cargo run --release --example triangulation_3d_100_points`
+- Source: [`triangulation_3d_100_points.rs`](./triangulation_3d_100_points.rs)
 
 ### `zero_allocation_iterator_demo`
 

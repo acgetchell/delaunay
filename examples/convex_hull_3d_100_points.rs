@@ -1,7 +1,7 @@
-//! # 3D Convex Hull Example with 20 Points
+//! # 3D Convex Hull Example with 100 Points
 //!
 //! This example demonstrates extracting and analyzing a 3D convex hull from a Delaunay
-//! triangulation using 20 randomly generated points. It showcases:
+//! triangulation using 100 randomly generated points. It showcases:
 //!
 //! - Using the `generate_random_triangulation` utility function for convenience
 //! - Building a Delaunay triangulation using the incremental cavity-based insertion algorithm
@@ -15,7 +15,7 @@
 //! ## Usage
 //!
 //! ```bash
-//! cargo run --example convex_hull_3d_20_points
+//! cargo run --example convex_hull_3d_100_points
 //! ```
 //!
 //! ## Output
@@ -37,12 +37,12 @@ const SEED_CANDIDATES: &[u64] = &[1, 7, 11, 42, 99, 123, 666];
 
 fn main() {
     println!("=================================================================");
-    println!("3D Convex Hull Example - 20 Random Points");
+    println!("3D Convex Hull Example - 100 Random Points");
     println!("=================================================================\\n");
 
     // Create Delaunay triangulation with timing.
     // Use a fixed seed + bounds so that `just examples` is reproducible and robust.
-    let n_points = 20;
+    let n_points = 100;
     let bounds = (-3.0, 3.0);
     let seed_override: Option<u64> =
         std::env::var("DELAUNAY_EXAMPLE_SEED")

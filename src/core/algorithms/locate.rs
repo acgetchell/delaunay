@@ -17,6 +17,8 @@
 //!   International Journal of Foundations of Computer Science, 2001.
 //! - CGAL Triangulation_3 documentation
 
+#![forbid(unsafe_code)]
+
 use crate::core::collections::{
     CavityBoundaryBuffer, CellKeyBuffer, CellSecondaryMap, FacetToCellsMap, FastHashMap,
     FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,

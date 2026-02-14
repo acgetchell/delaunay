@@ -207,6 +207,20 @@ coverage:
 coverage-ci:
     cargo tarpaulin {{_coverage_base_args}} --out Xml --output-dir coverage -- --skip prop_
 
+debug-large-scale-3d-100:
+    DELAUNAY_LARGE_DEBUG_N_3D=100 cargo test --test large_scale_debug debug_large_scale_3d -- --ignored --nocapture
+
+debug-large-scale-3d-1000:
+    DELAUNAY_LARGE_DEBUG_N_3D=1000 cargo test --test large_scale_debug debug_large_scale_3d -- --ignored --nocapture
+debug-large-scale-3d-incremental-bisect total="1000":
+    DELAUNAY_LARGE_DEBUG_PREFIX_TOTAL={{total}} cargo test --test large_scale_debug debug_large_scale_3d_incremental_prefix_bisect -- --ignored --nocapture
+
+debug-large-scale-4d-100:
+    DELAUNAY_LARGE_DEBUG_N_4D=100 cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
+
+debug-large-scale-4d:
+    cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
+
 # Default recipe shows available commands
 default:
     @just --list
@@ -246,7 +260,12 @@ help-workflows:
     @echo "  just test-release      # All tests in release mode"
     @echo "  just test-slow         # Run slow/stress tests with --features slow-tests"
     @echo "  just test-slow-release # Slow tests in release mode (faster)"
-    @echo "  just test-debug        # Run debug tools with output"
+    @echo "  just test-debug            # Run debug tools with output"
+    @echo "  just debug-large-scale-3d-100   # Run large-scale 3D debug harness at 100 points (ball)"
+    @echo "  just debug-large-scale-3d-1000  # Run large-scale 3D debug harness at 1000 points (ball)"
+    @echo "  just debug-large-scale-3d-incremental-bisect [total] # Bisect minimal failing 3D incremental prefix (default total=1000)"
+    @echo "  just debug-large-scale-4d-100   # Run large-scale 4D debug harness at 100 points (ball)"
+    @echo "  just debug-large-scale-4d       # Run large-scale 4D debug harness with default point count"
     @echo "  just test-allocation   # Memory allocation profiling"
     @echo "  just examples          # Run all examples"
     @echo "  just coverage          # Generate coverage report (HTML)"
