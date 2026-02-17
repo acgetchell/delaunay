@@ -46,6 +46,7 @@ use rand::seq::SliceRandom;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::hash::{Hash, Hasher};
 use std::num::NonZeroUsize;
+use std::time::Instant;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -2400,19 +2401,35 @@ where
             .topology_guarantee
             .requires_vertex_links_at_completion()
         {
-            dt.tri.validate().map_err(|err| {
-                TriangulationConstructionError::GeometricDegeneracy {
+            tracing::warn!("post-construction: starting topology validation (build)");
+            let validation_started = Instant::now();
+            let validation_result = dt.tri.validate();
+            tracing::warn!(
+                elapsed = ?validation_started.elapsed(),
+                success = validation_result.is_ok(),
+                "post-construction: topology validation (build) completed"
+            );
+            if let Err(err) = validation_result {
+                return Err(TriangulationConstructionError::GeometricDegeneracy {
                     message: format!("PL-manifold validation failed after construction: {err}"),
                 }
-            })?;
+                .into());
+            }
         }
 
         // `DelaunayCheckPolicy::EndOnly`: always run a final global Delaunay validation pass after
         // batch construction.
-        dt.is_valid()
-            .map_err(|err| TriangulationConstructionError::GeometricDegeneracy {
-                message: format!("Delaunay property violated after construction: {err}"),
-            })?;
+        tracing::warn!("post-construction: starting Delaunay validation (build)");
+        let delaunay_started = Instant::now();
+        let delaunay_result = dt.is_valid();
+        tracing::warn!(
+            elapsed = ?delaunay_started.elapsed(),
+            success = delaunay_result.is_ok(),
+            "post-construction: Delaunay validation (build) completed"
+        );
+        delaunay_result.map_err(|err| TriangulationConstructionError::GeometricDegeneracy {
+            message: format!("Delaunay property violated after construction: {err}"),
+        })?;
 
         Ok(dt)
     }
@@ -2442,20 +2459,37 @@ where
             .tri
             .topology_guarantee
             .requires_vertex_links_at_completion()
-            && let Err(err) = dt.tri.validate()
         {
-            return Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                error: TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!("PL-manifold validation failed after construction: {err}"),
-                }
-                .into(),
-                statistics: Box::new(stats),
-            });
+            tracing::warn!("post-construction: starting topology validation (build stats)");
+            let validation_started = Instant::now();
+            let validation_result = dt.tri.validate();
+            tracing::warn!(
+                elapsed = ?validation_started.elapsed(),
+                success = validation_result.is_ok(),
+                "post-construction: topology validation (build stats) completed"
+            );
+            if let Err(err) = validation_result {
+                return Err(DelaunayTriangulationConstructionErrorWithStatistics {
+                    error: TriangulationConstructionError::GeometricDegeneracy {
+                        message: format!("PL-manifold validation failed after construction: {err}"),
+                    }
+                    .into(),
+                    statistics: Box::new(stats),
+                });
+            }
         }
 
         // `DelaunayCheckPolicy::EndOnly`: always run a final global Delaunay validation pass after
         // batch construction.
-        if let Err(err) = dt.is_valid() {
+        tracing::warn!("post-construction: starting Delaunay validation (build stats)");
+        let delaunay_started = Instant::now();
+        let delaunay_result = dt.is_valid();
+        tracing::warn!(
+            elapsed = ?delaunay_started.elapsed(),
+            success = delaunay_result.is_ok(),
+            "post-construction: Delaunay validation (build stats) completed"
+        );
+        if let Err(err) = delaunay_result {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                 error: TriangulationConstructionError::GeometricDegeneracy {
                     message: format!("Delaunay property violated after construction: {err}"),
@@ -2665,20 +2699,53 @@ where
             }
         }
 
+        let trace_insertion = std::env::var_os("DELAUNAY_INSERT_TRACE").is_some();
+
         match construction_stats {
             None => {
                 // Insert remaining vertices incrementally.
                 // Retryable geometric degeneracies are retried with perturbation and ultimately skipped
                 // (transactional rollback) to keep the triangulation manifold. Duplicate/near-duplicate
                 // coordinates are skipped immediately.
-                for vertex in vertices.iter().skip(D + 1) {
-                    match self.tri.insert_with_statistics_seeded_indexed(
-                        *vertex,
-                        None,
-                        self.insertion_state.last_inserted_cell,
-                        perturbation_seed,
-                        grid_index.as_mut(),
-                    ) {
+                for (offset, vertex) in vertices.iter().skip(D + 1).enumerate() {
+                    let index = (D + 1).saturating_add(offset);
+                    let uuid = vertex.uuid();
+                    let coords = trace_insertion.then(|| {
+                        vertex
+                            .point()
+                            .coords()
+                            .iter()
+                            .map(|c| c.to_f64().unwrap_or(f64::NAN))
+                            .collect::<Vec<f64>>()
+                    });
+
+                    if trace_insertion && let Some(coords) = coords.as_ref() {
+                        eprintln!("[bulk] start idx={index} uuid={uuid} coords={coords:?}");
+                    }
+
+                    let started = trace_insertion.then(std::time::Instant::now);
+                    let mut insert = || {
+                        self.tri.insert_with_statistics_seeded_indexed(
+                            *vertex,
+                            None,
+                            self.insertion_state.last_inserted_cell,
+                            perturbation_seed,
+                            grid_index.as_mut(),
+                        )
+                    };
+                    let insert_result = if trace_insertion {
+                        let span = tracing::warn_span!(
+                            "bulk_insert",
+                            index,
+                            uuid = %uuid,
+                            coords = ?coords
+                        );
+                        span.in_scope(insert)
+                    } else {
+                        insert()
+                    };
+                    let elapsed = started.map(|started| started.elapsed());
+                    match insert_result {
                         Ok((
                             InsertionOutcome::Inserted {
                                 vertex_key: v_key,
@@ -2686,6 +2753,11 @@ where
                             },
                             _stats,
                         )) => {
+                            if trace_insertion && let Some(elapsed) = elapsed {
+                                eprintln!(
+                                    "[bulk] inserted idx={index} uuid={uuid} elapsed={elapsed:?}"
+                                );
+                            }
                             // Cache hint for faster subsequent insertions.
                             self.insertion_state.last_inserted_cell = hint;
                             self.insertion_state.delaunay_repair_insertion_count = self
@@ -2704,6 +2776,12 @@ where
                             }
                         }
                         Ok((InsertionOutcome::Skipped { error }, stats)) => {
+                            if trace_insertion && let Some(elapsed) = elapsed {
+                                eprintln!(
+                                    "[bulk] skipped idx={index} uuid={uuid} attempts={} elapsed={elapsed:?} err={error}",
+                                    stats.attempts
+                                );
+                            }
                             // Keep going: this vertex was intentionally skipped (e.g. duplicate/near-duplicate
                             // coordinates, or an unsalvageable geometric degeneracy after retries).
                             #[cfg(debug_assertions)]
@@ -2718,6 +2796,11 @@ where
                             }
                         }
                         Err(e) => {
+                            if trace_insertion && let Some(elapsed) = elapsed {
+                                eprintln!(
+                                    "[bulk] failed idx={index} uuid={uuid} elapsed={elapsed:?} err={e}"
+                                );
+                            }
                             // Non-retryable failure: abort construction with a structured error.
                             return Err(Self::map_insertion_error(e).into());
                         }
@@ -2729,13 +2812,43 @@ where
                 // samples for debugging.
                 for (offset, vertex) in vertices.iter().skip(D + 1).enumerate() {
                     let index = (D + 1).saturating_add(offset);
-                    match self.tri.insert_with_statistics_seeded_indexed(
-                        *vertex,
-                        None,
-                        self.insertion_state.last_inserted_cell,
-                        perturbation_seed,
-                        grid_index.as_mut(),
-                    ) {
+                    let uuid = vertex.uuid();
+                    let coords = trace_insertion.then(|| {
+                        vertex
+                            .point()
+                            .coords()
+                            .iter()
+                            .map(|c| c.to_f64().unwrap_or(f64::NAN))
+                            .collect::<Vec<f64>>()
+                    });
+
+                    if trace_insertion && let Some(coords) = coords.as_ref() {
+                        eprintln!("[bulk] start idx={index} uuid={uuid} coords={coords:?}");
+                    }
+
+                    let started = trace_insertion.then(std::time::Instant::now);
+                    let mut insert = || {
+                        self.tri.insert_with_statistics_seeded_indexed(
+                            *vertex,
+                            None,
+                            self.insertion_state.last_inserted_cell,
+                            perturbation_seed,
+                            grid_index.as_mut(),
+                        )
+                    };
+                    let insert_result = if trace_insertion {
+                        let span = tracing::warn_span!(
+                            "bulk_insert",
+                            index,
+                            uuid = %uuid,
+                            coords = ?coords
+                        );
+                        span.in_scope(insert)
+                    } else {
+                        insert()
+                    };
+                    let elapsed = started.map(|started| started.elapsed());
+                    match insert_result {
                         Ok((
                             InsertionOutcome::Inserted {
                                 vertex_key: v_key,
@@ -2743,6 +2856,12 @@ where
                             },
                             stats,
                         )) => {
+                            if trace_insertion && let Some(elapsed) = elapsed {
+                                eprintln!(
+                                    "[bulk] inserted idx={index} uuid={uuid} attempts={} elapsed={elapsed:?}",
+                                    stats.attempts
+                                );
+                            }
                             construction_stats.record_insertion(stats);
 
                             // Cache hint for faster subsequent insertions.
@@ -2763,6 +2882,12 @@ where
                             }
                         }
                         Ok((InsertionOutcome::Skipped { error }, stats)) => {
+                            if trace_insertion && let Some(elapsed) = elapsed {
+                                eprintln!(
+                                    "[bulk] skipped idx={index} uuid={uuid} attempts={} elapsed={elapsed:?} err={error}",
+                                    stats.attempts
+                                );
+                            }
                             construction_stats.record_insertion(stats);
 
                             // Keep the first few skip samples so we have concrete reproduction anchors.
@@ -2794,6 +2919,11 @@ where
                             }
                         }
                         Err(e) => {
+                            if trace_insertion && let Some(elapsed) = elapsed {
+                                eprintln!(
+                                    "[bulk] failed idx={index} uuid={uuid} elapsed={elapsed:?} err={e}"
+                                );
+                            }
                             // Non-retryable failure: abort construction with a structured error.
                             return Err(Self::map_insertion_error(e).into());
                         }
@@ -2823,43 +2953,61 @@ where
 
         let topology = self.tri.topology_guarantee();
         if run_final_repair && self.should_run_delaunay_repair_for(topology, 0) {
+            tracing::warn!("post-construction: starting global Delaunay repair (finalize)");
+            let repair_started = Instant::now();
             let repair_result = {
                 let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
                 repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology).map(|_| ())
             };
-
-            match repair_result {
-                Ok(()) => {}
-                Err(
-                    e @ (DelaunayRepairError::NonConvergent { .. }
-                    | DelaunayRepairError::PostconditionFailed { .. }),
-                ) => {
-                    // Deterministic rebuild fallback to avoid rejecting an otherwise-valid
-                    // triangulation due to non-convergent global flip repair.
-                    let _ = self.run_flip_repair_fallbacks(None).map_err(|fallback_err| {
-                        TriangulationConstructionError::GeometricDegeneracy {
-                            message: format!(
-                                "Delaunay repair failed after construction ({e}); robust repair fallback also failed; heuristic rebuild fallback also failed ({fallback_err})"
+            let repair_outcome: Result<(), DelaunayTriangulationConstructionError> =
+                match repair_result {
+                    Ok(()) => Ok(()),
+                    Err(
+                        e @ (DelaunayRepairError::NonConvergent { .. }
+                        | DelaunayRepairError::PostconditionFailed { .. }),
+                    ) => {
+                        // Deterministic rebuild fallback to avoid rejecting an otherwise-valid
+                        // triangulation due to non-convergent global flip repair.
+                        match self.run_flip_repair_fallbacks(None) {
+                            Ok(_) => Ok(()),
+                            Err(fallback_err) => Err(
+                                TriangulationConstructionError::GeometricDegeneracy {
+                                    message: format!(
+                                        "Delaunay repair failed after construction ({e}); robust repair fallback also failed; heuristic rebuild fallback also failed ({fallback_err})"
+                                    ),
+                                }
+                                .into(),
                             ),
                         }
-                    })?;
-                }
-                Err(e) => {
-                    return Err(TriangulationConstructionError::GeometricDegeneracy {
+                    }
+                    Err(e) => Err(TriangulationConstructionError::GeometricDegeneracy {
                         message: format!("Delaunay repair failed after construction: {e}"),
                     }
-                    .into());
-                }
-            }
+                    .into()),
+                };
+            tracing::warn!(
+                elapsed = ?repair_started.elapsed(),
+                success = repair_outcome.is_ok(),
+                "post-construction: global Delaunay repair (finalize) completed"
+            );
+            repair_outcome?;
         }
 
-        if topology.requires_vertex_links_at_completion()
-            && let Err(err) = self.tri.validate()
-        {
-            return Err(TriangulationConstructionError::GeometricDegeneracy {
-                message: format!("PL-manifold validation failed after construction: {err}"),
+        if topology.requires_vertex_links_at_completion() {
+            tracing::warn!("post-construction: starting topology validation (finalize)");
+            let validation_started = Instant::now();
+            let validation_result = self.tri.validate();
+            tracing::warn!(
+                elapsed = ?validation_started.elapsed(),
+                success = validation_result.is_ok(),
+                "post-construction: topology validation (finalize) completed"
+            );
+            if let Err(err) = validation_result {
+                return Err(TriangulationConstructionError::GeometricDegeneracy {
+                    message: format!("PL-manifold validation failed after construction: {err}"),
+                }
+                .into());
             }
-            .into());
         }
 
         Ok(())

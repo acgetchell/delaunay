@@ -673,6 +673,7 @@ where
 ///     assert_eq!(conflict_cells.len(), 1); // Single 4-simplex contains the point
 /// }
 /// ```
+#[allow(clippy::too_many_lines)]
 pub fn find_conflict_region<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -687,6 +688,22 @@ where
 {
     #[cfg(debug_assertions)]
     let log_conflict = std::env::var_os("DELAUNAY_DEBUG_CONFLICT").is_some();
+    #[cfg(debug_assertions)]
+    let progress_enabled = std::env::var_os("DELAUNAY_DEBUG_CONFLICT_PROGRESS").is_some();
+    #[cfg(debug_assertions)]
+    let progress_every = std::env::var("DELAUNAY_DEBUG_CONFLICT_PROGRESS_EVERY")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(5000);
+    #[cfg(debug_assertions)]
+    let start_time = std::time::Instant::now();
+    #[cfg(debug_assertions)]
+    let mut visited_count = 0usize;
+    #[cfg(debug_assertions)]
+    let mut conflict_count = 0usize;
+    #[cfg(debug_assertions)]
+    let mut neighbor_enqueued = 0usize;
 
     // Validate start cell exists
     if !tds.contains_cell(start_cell) {
@@ -711,6 +728,21 @@ where
             continue;
         }
         visited.insert(cell_key, ());
+
+        #[cfg(debug_assertions)]
+        {
+            visited_count = visited_count.saturating_add(1);
+            if progress_enabled && visited_count.is_multiple_of(progress_every) {
+                tracing::debug!(
+                    visited_count,
+                    conflict_count,
+                    queue_len = queue.len(),
+                    neighbor_enqueued,
+                    elapsed = ?start_time.elapsed(),
+                    "find_conflict_region: progress"
+                );
+            }
+        }
 
         // Get cell vertices for in_sphere test
         let cell = tds
@@ -774,6 +806,11 @@ where
             // Point is inside or on circumsphere - cell is in conflict
             conflict_cells.push(cell_key);
 
+            #[cfg(debug_assertions)]
+            {
+                conflict_count = conflict_count.saturating_add(1);
+            }
+
             // Add neighbors to queue for exploration
             if let Some(neighbors) = cell.neighbors() {
                 for &neighbor_opt in neighbors {
@@ -781,11 +818,26 @@ where
                         && !visited.contains_key(neighbor_key)
                     {
                         queue.push(neighbor_key);
+                        #[cfg(debug_assertions)]
+                        {
+                            neighbor_enqueued = neighbor_enqueued.saturating_add(1);
+                        }
                     }
                 }
             }
         }
         // If sign < 0, cell is not in conflict, don't explore further in this direction
+    }
+
+    #[cfg(debug_assertions)]
+    if progress_enabled || log_conflict {
+        tracing::debug!(
+            visited_count,
+            conflict_cells = conflict_cells.len(),
+            neighbor_enqueued,
+            elapsed = ?start_time.elapsed(),
+            "find_conflict_region: summary"
+        );
     }
 
     Ok(conflict_cells)
@@ -887,6 +939,20 @@ where
 
     #[cfg(debug_assertions)]
     let detail_enabled = std::env::var_os("DELAUNAY_DEBUG_CAVITY").is_some();
+    #[cfg(debug_assertions)]
+    let start_time = std::time::Instant::now();
+    #[cfg(debug_assertions)]
+    let mut boundary_facet_count = 0usize;
+    #[cfg(debug_assertions)]
+    let mut internal_facet_count = 0usize;
+
+    #[cfg(debug_assertions)]
+    if detail_enabled {
+        tracing::debug!(
+            conflict_cells = conflict_cells.len(),
+            "extract_cavity_boundary: start"
+        );
+    }
 
     // IMPORTANT:
     // We intentionally do NOT rely on neighbor pointers to classify boundary facets here.
@@ -968,6 +1034,10 @@ where
 
                 let boundary_facet_idx = boundary_facets.len();
                 boundary_facets.push(FacetHandle::new(cell_key, facet_idx_u8));
+                #[cfg(debug_assertions)]
+                {
+                    boundary_facet_count = boundary_facet_count.saturating_add(1);
+                }
 
                 // Use the cached canonical facet vertex keys for ridge analysis.
                 let facet_vkeys = facet_hash_to_vkeys.get(facet_hash).ok_or_else(|| {
@@ -1012,17 +1082,46 @@ where
             }
 
             // Two conflict cells share this facet => internal facet (not on boundary)
-            [_, _] => {}
+            [_, _] => {
+                #[cfg(debug_assertions)]
+                {
+                    internal_facet_count = internal_facet_count.saturating_add(1);
+                }
+            }
 
             // >2 conflict cells share this facet => non-manifold (should be impossible in valid TDS)
             // Treat as a retryable degeneracy.
             many => {
+                #[cfg(debug_assertions)]
+                if detail_enabled {
+                    tracing::debug!(
+                        facet_hash = *facet_hash,
+                        cell_count = many.len(),
+                        conflict_cells = conflict_cells.len(),
+                        boundary_facet_count,
+                        internal_facet_count,
+                        elapsed = ?start_time.elapsed(),
+                        "extract_cavity_boundary: non-manifold facet"
+                    );
+                }
                 return Err(ConflictError::NonManifoldFacet {
                     facet_hash: *facet_hash,
                     cell_count: many.len(),
                 });
             }
         }
+    }
+
+    #[cfg(debug_assertions)]
+    if detail_enabled {
+        tracing::debug!(
+            conflict_cells = conflict_cells.len(),
+            facet_entries = facet_to_conflict.len(),
+            boundary_facets = boundary_facets.len(),
+            internal_facets = internal_facet_count,
+            elapsed = ?start_time.elapsed(),
+            "extract_cavity_boundary: facet classification summary"
+        );
     }
 
     #[cfg(debug_assertions)]
@@ -1065,6 +1164,17 @@ where
         for info in ridge_map.values() {
             // Closed manifold boundary requires exactly 2 incident facets per ridge.
             if info.facet_count == 1 {
+                #[cfg(debug_assertions)]
+                if detail_enabled {
+                    tracing::debug!(
+                        facet_count = info.facet_count,
+                        ridge_vertex_count = info.ridge_vertex_count,
+                        boundary_facets = boundary_facets.len(),
+                        ridge_count = ridge_map.len(),
+                        elapsed = ?start_time.elapsed(),
+                        "extract_cavity_boundary: open boundary ridge"
+                    );
+                }
                 return Err(ConflictError::OpenBoundary {
                     facet_count: info.facet_count,
                     ridge_vertex_count: info.ridge_vertex_count,
@@ -1072,6 +1182,17 @@ where
             }
 
             if info.facet_count >= 3 {
+                #[cfg(debug_assertions)]
+                if detail_enabled {
+                    tracing::debug!(
+                        facet_count = info.facet_count,
+                        ridge_vertex_count = info.ridge_vertex_count,
+                        boundary_facets = boundary_facets.len(),
+                        ridge_count = ridge_map.len(),
+                        elapsed = ?start_time.elapsed(),
+                        "extract_cavity_boundary: ridge fan"
+                    );
+                }
                 return Err(ConflictError::RidgeFan {
                     facet_count: info.facet_count,
                     ridge_vertex_count: info.ridge_vertex_count,
@@ -1122,6 +1243,16 @@ where
         }
 
         if visited_count != boundary_len {
+            #[cfg(debug_assertions)]
+            if detail_enabled {
+                tracing::debug!(
+                    visited = visited_count,
+                    total = boundary_len,
+                    boundary_facets = boundary_facets.len(),
+                    elapsed = ?start_time.elapsed(),
+                    "extract_cavity_boundary: disconnected boundary"
+                );
+            }
             return Err(ConflictError::DisconnectedBoundary {
                 visited: visited_count,
                 total: boundary_len,
@@ -1132,7 +1263,11 @@ where
     #[cfg(debug_assertions)]
     if detail_enabled {
         tracing::debug!(
+            conflict_cells = conflict_cells.len(),
             boundary_facets = boundary_facets.len(),
+            internal_facets = internal_facet_count,
+            ridge_count = ridge_map.len(),
+            elapsed = ?start_time.elapsed(),
             "extract_cavity_boundary: boundary connectivity validated"
         );
     }

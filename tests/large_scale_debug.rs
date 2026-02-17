@@ -406,6 +406,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
     println!("  repair_every:  {repair_every}");
     println!();
 
+    println!("Generating points...");
     let t_gen = Instant::now();
     let points = match distribution {
         PointDistribution::Ball => {
@@ -425,7 +426,14 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
     };
     println!("Generated {} points in {:?}", points.len(), t_gen.elapsed());
 
+    println!("Building vertices...");
+    let t_vertices = Instant::now();
     let mut vertices: Vec<Vertex<f64, (), D>> = points.into_iter().map(|p| vertex!(p)).collect();
+    println!(
+        "Built {} vertices in {:?}",
+        vertices.len(),
+        t_vertices.elapsed()
+    );
 
     let t_insert = Instant::now();
 
@@ -437,6 +445,8 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
             // Use PLManifoldStrict during batch construction to ensure vertex-link invariants are
             // maintained on each insertion.
             let kernel = FastKernel::<f64>::new();
+            println!("Starting batch construction (new)...");
+            let t_batch = Instant::now();
             match DelaunayTriangulation::with_topology_guarantee_and_options_with_construction_statistics(
                 &kernel,
                 &vertices,
@@ -446,6 +456,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
                 Ok((dt, stats)) => {
                     let summary: InsertionSummary<D> = stats.into();
                     print_insertion_summary(&summary, t_insert.elapsed());
+                    println!("Batch construction completed in {:?}", t_batch.elapsed());
                     dt
                 }
                 Err(e) => {
@@ -456,6 +467,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
                     } = e;
                     let summary: InsertionSummary<D> = (*statistics).into();
                     print_insertion_summary(&summary, t_insert.elapsed());
+                    println!("Batch construction failed after {:?}", t_batch.elapsed());
                     println!("construction failed: {error}");
                     panic!("aborting: batch construction failed");
                 }
@@ -614,7 +626,10 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
 
     println!();
     println!("Running validation_report (Levels 1–4)...");
-    match dt.validation_report() {
+    let t_validate = Instant::now();
+    let validation_result = dt.validation_report();
+    println!("validation_report wall time: {:?}", t_validate.elapsed());
+    match validation_result {
         Ok(()) => println!("validation_report: OK"),
         Err(report) => {
             print_validation_report(&report);
