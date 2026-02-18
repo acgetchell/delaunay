@@ -831,8 +831,8 @@ where
     ///
     /// **Internal use only**: This method rebuilds ALL neighbor pointers from scratch, which is
     /// inefficient for most use cases. For external use, prefer
-    /// [`repair_neighbor_pointers`](crate::core::algorithms::incremental_insertion::repair_neighbor_pointers)
-    /// which provides more efficient surgical reconstruction by only fixing broken neighbor pointers.
+    /// [`repair_neighbor_pointers`](crate::core::algorithms::incremental_insertion::repair_neighbor_pointers),
+    /// which rebuilds neighbor pointers from facet incidence.
     ///
     /// # Errors
     ///

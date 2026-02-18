@@ -3379,6 +3379,9 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
+        #[cfg(not(debug_assertions))]
+        let _ = point;
+
         if conflict_cells.is_empty() {
             let Some(start_cell) = fallback_cell else {
                 return Err(InsertionError::CavityFilling {
@@ -3534,44 +3537,58 @@ where
             }
         }
 
-        // Rebuild neighbor pointers now that topology is manifold
+        // Rebuild neighbor pointers now that topology is manifold.
         #[cfg(debug_assertions)]
         tracing::debug!("After repair loop: total_removed={total_removed}");
 
-        // After insertion we ALWAYS removed the conflict region, which can leave broken/None neighbor
-        // pointers in surviving cells. Even if the subsequent non-manifold repair loop removed 0 cells,
-        // we still must repair neighbor pointers to ensure the cavity is glued.
-        let facet_valid = self.tds.validate_facet_sharing().is_ok();
-        #[cfg(debug_assertions)]
-        tracing::debug!(
-            "Before repair_neighbor_pointers: facet_sharing_valid={facet_valid}, cells={}",
-            self.tds.number_of_cells()
-        );
+        // Global neighbor rebuild is expensive. In the common case (no cells removed during the
+        // local facet-repair loop), `wire_cavity_neighbors` has already glued the cavity locally.
+        //
+        // If we *did* remove cells during the repair loop, neighbor pointers may no longer match
+        // facet incidence, so we rebuild globally.
+        if total_removed > 0 {
+            // Double-check that facet sharing is actually valid.
+            let facet_valid = self.tds.validate_facet_sharing().is_ok();
+            #[cfg(debug_assertions)]
+            tracing::debug!(
+                "Before repair_neighbor_pointers: facet_sharing_valid={facet_valid}, cells={}",
+                self.tds.number_of_cells()
+            );
 
-        if !facet_valid {
-            return Err(InsertionError::CavityFilling {
-                message:
-                    "Facet sharing invalid after insertion/repairs - cannot safely repair neighbors"
+            if !facet_valid {
+                return Err(InsertionError::CavityFilling {
+                    message: "Facet sharing invalid after insertion/repairs - cannot safely rebuild neighbors"
                         .to_string(),
-            });
+                });
+            }
+
+            // Rebuild neighbor pointers from facet incidence (global O(n·D) pass).
+            // This is only needed after we removed cells in the local repair loop.
+            let repaired = repair_neighbor_pointers(&mut self.tds).map_err(|e| {
+                InsertionError::CavityFilling {
+                    message: format!("Failed to rebuild neighbors after repairs: {e}"),
+                }
+            })?;
+            suspicion.neighbor_pointers_rebuilt = repaired > 0;
         }
 
-        // Surgical reconstruction: fix broken/None pointers by facet matching.
-        let repaired =
-            repair_neighbor_pointers(&mut self.tds).map_err(|e| InsertionError::CavityFilling {
-                message: format!("Failed to repair neighbor pointers after insertion: {e}"),
-            })?;
-        suspicion.neighbor_pointers_rebuilt = repaired > 0;
+        // Assign an incident cell for the inserted vertex without a global rebuild.
+        let hint = new_cells.iter().copied().find(|&ck| {
+            self.tds
+                .get_cell(ck)
+                .is_some_and(|cell| cell.contains_vertex(v_key))
+        });
+        if let Some(incident_cell) = hint
+            && let Some(vertex) = self.tds.get_vertex_by_key_mut(v_key)
+        {
+            vertex.incident_cell = Some(incident_cell);
+        }
 
-        // Validate neighbor pointers by forcing a full facet walk (no hint).
-        let _ = locate(&self.tds, &self.kernel, point, None)?;
-
-        // Always rebuild vertex→cell incidence after insertion.
-        self.tds
-            .assign_incident_cells()
-            .map_err(|e| InsertionError::CavityFilling {
-                message: format!("Failed to assign incident cells after insertion: {e}"),
-            })?;
+        // Optional debug: validate neighbor pointers by forcing a full facet walk (no hint).
+        #[cfg(debug_assertions)]
+        if std::env::var_os("DELAUNAY_DEBUG_VALIDATE_LOCATE").is_some() {
+            let _ = locate(&self.tds, &self.kernel, point, None)?;
+        }
 
         #[cfg(debug_assertions)]
         if std::env::var_os("DELAUNAY_DEBUG_RIDGE_LINK").is_some() {
@@ -3616,10 +3633,6 @@ where
         self.validate_connectedness(&new_cells)?;
 
         // Return hint for next insertion
-        let hint = new_cells
-            .iter()
-            .copied()
-            .find(|ck| self.tds.contains_cell(*ck));
         Ok((hint, total_removed))
     }
     /// Internal implementation of insert without retry logic.
@@ -4120,8 +4133,8 @@ where
                         });
                     }
 
-                    // Use repair_neighbor_pointers for surgical reconstruction
-                    // This preserves existing correct pointers and only fixes broken ones
+                    // Rebuild neighbor pointers from facet incidence (global O(n·D) pass).
+                    // This is only needed after we removed cells in the local repair loop.
                     let repaired = repair_neighbor_pointers(&mut self.tds).map_err(|e| {
                         InsertionError::CavityFilling {
                             message: format!("Failed to rebuild neighbors after repairs: {e}"),
@@ -4130,12 +4143,17 @@ where
                     suspicion.neighbor_pointers_rebuilt = repaired > 0;
                 }
 
-                // Always rebuild vertex→cell incidence after insertion.
-                self.tds
-                    .assign_incident_cells()
-                    .map_err(|e| InsertionError::CavityFilling {
-                        message: format!("Failed to assign incident cells after insertion: {e}"),
-                    })?;
+                // Assign an incident cell for the inserted vertex without a global rebuild.
+                let hint = new_cells.iter().copied().find(|&ck| {
+                    self.tds
+                        .get_cell(ck)
+                        .is_some_and(|cell| cell.contains_vertex(v_key))
+                });
+                if let Some(incident_cell) = hint
+                    && let Some(vertex) = self.tds.get_vertex_by_key_mut(v_key)
+                {
+                    vertex.incident_cell = Some(incident_cell);
+                }
 
                 #[cfg(debug_assertions)]
                 if std::env::var_os("DELAUNAY_DEBUG_RIDGE_LINK").is_some() {
@@ -4170,10 +4188,6 @@ where
                 self.validate_connectedness(&new_cells)?;
 
                 // Return vertex key and hint for next insertion
-                let hint = new_cells
-                    .iter()
-                    .copied()
-                    .find(|ck| self.tds.contains_cell(*ck));
                 Ok(((v_key, hint), total_removed, suspicion))
             }
             LocateResult::OnFacet(_, _) | LocateResult::OnEdge(_) | LocateResult::OnVertex(_) => {
@@ -4778,6 +4792,100 @@ mod tests {
         tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
         assert_eq!(tri.topology_guarantee(), TopologyGuarantee::PLManifold);
     }
+    #[test]
+    fn test_validation_policy_should_validate_matrix() {
+        let clean = SuspicionFlags::default();
+        let suspicious = SuspicionFlags {
+            perturbation_used: true,
+            ..SuspicionFlags::default()
+        };
+
+        assert!(!ValidationPolicy::Never.should_validate(clean));
+        assert!(!ValidationPolicy::Never.should_validate(suspicious));
+
+        assert!(ValidationPolicy::Always.should_validate(clean));
+        assert!(ValidationPolicy::Always.should_validate(suspicious));
+
+        assert!(!ValidationPolicy::OnSuspicion.should_validate(clean));
+        assert!(ValidationPolicy::OnSuspicion.should_validate(suspicious));
+
+        assert!(ValidationPolicy::DebugOnly.should_validate(suspicious));
+        assert_eq!(
+            ValidationPolicy::DebugOnly.should_validate(clean),
+            cfg!(debug_assertions)
+        );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_topology_guarantee_helper_matrix_and_policy_compatibility() {
+        assert_eq!(TopologyGuarantee::default(), TopologyGuarantee::DEFAULT);
+        assert_eq!(TopologyGuarantee::DEFAULT, TopologyGuarantee::PLManifold);
+
+        assert!(!TopologyGuarantee::Pseudomanifold.requires_vertex_links_during_insertion());
+        assert!(TopologyGuarantee::PLManifoldStrict.requires_vertex_links_during_insertion());
+
+        assert!(!TopologyGuarantee::Pseudomanifold.requires_vertex_links_at_completion());
+        assert!(TopologyGuarantee::PLManifold.requires_vertex_links_at_completion());
+        assert!(TopologyGuarantee::PLManifoldStrict.requires_vertex_links_at_completion());
+
+        assert!(!TopologyGuarantee::Pseudomanifold.requires_ridge_links());
+        assert!(TopologyGuarantee::PLManifold.requires_ridge_links());
+        assert!(TopologyGuarantee::PLManifoldStrict.requires_ridge_links());
+
+        assert!(!TopologyGuarantee::Pseudomanifold.requires_vertex_links());
+        assert!(TopologyGuarantee::PLManifold.requires_vertex_links());
+        assert!(TopologyGuarantee::PLManifoldStrict.requires_vertex_links());
+
+        for policy in [
+            ValidationPolicy::Never,
+            ValidationPolicy::OnSuspicion,
+            ValidationPolicy::Always,
+            ValidationPolicy::DebugOnly,
+        ] {
+            assert!(TopologyGuarantee::Pseudomanifold.is_compatible_with_policy(policy));
+        }
+
+        assert!(!TopologyGuarantee::PLManifold.is_compatible_with_policy(ValidationPolicy::Never));
+        assert!(
+            !TopologyGuarantee::PLManifoldStrict.is_compatible_with_policy(ValidationPolicy::Never)
+        );
+        assert!(
+            TopologyGuarantee::PLManifold.is_compatible_with_policy(ValidationPolicy::OnSuspicion)
+        );
+        assert!(TopologyGuarantee::PLManifold.is_compatible_with_policy(ValidationPolicy::Always));
+        assert!(
+            TopologyGuarantee::PLManifoldStrict.is_compatible_with_policy(ValidationPolicy::Always)
+        );
+    }
+
+    #[test]
+    fn test_set_validation_policy_incompatible_updates_when_completion_validation_succeeds() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+
+        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::PLManifold);
+        assert_eq!(tri.validation_policy(), ValidationPolicy::OnSuspicion);
+
+        tri.set_validation_policy(ValidationPolicy::Never);
+        assert_eq!(tri.validation_policy(), ValidationPolicy::Never);
+    }
+
+    #[test]
+    fn test_set_topology_guarantee_incompatible_updates_when_completion_validation_succeeds() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+
+        tri.set_validation_policy(ValidationPolicy::Never);
+        assert_eq!(tri.validation_policy(), ValidationPolicy::Never);
+        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::PLManifold);
+
+        tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
+        assert_eq!(
+            tri.topology_guarantee(),
+            TopologyGuarantee::PLManifoldStrict
+        );
+    }
 
     #[test]
     fn test_duplicate_detection_metrics_force_enable() {
@@ -4822,9 +4930,7 @@ mod tests {
         tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
         assert!(tri.validate_at_completion().is_ok());
     }
-
-    #[test]
-    fn test_validate_at_completion_reports_invalid_vertex_link() {
+    fn build_invalid_vertex_link_tds_2d() -> (Tds<f64, (), (), 2>, VertexKey) {
         // Two triangles sharing only a single vertex produce a disconnected vertex link.
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
@@ -4847,6 +4953,13 @@ mod tests {
 
         tds.assign_incident_cells().unwrap();
 
+        (tds, v0)
+    }
+
+    #[test]
+    fn test_validate_at_completion_reports_invalid_vertex_link() {
+        let (tds, v0) = build_invalid_vertex_link_tds_2d();
+
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
         tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
@@ -4857,6 +4970,49 @@ mod tests {
             }
             other => panic!("Expected VertexLinkNotManifold, got {other:?}"),
         }
+    }
+    #[test]
+    fn test_set_validation_policy_rejects_incompatible_policy_when_completion_validation_fails() {
+        let (tds, _) = build_invalid_vertex_link_tds_2d();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+
+        assert!(matches!(
+            tri.validate_at_completion(),
+            Err(TriangulationValidationError::VertexLinkNotManifold { .. })
+        ));
+        assert_eq!(tri.validation_policy(), ValidationPolicy::OnSuspicion);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            tri.set_validation_policy(ValidationPolicy::Never);
+        }));
+        if cfg!(debug_assertions) {
+            assert!(result.is_err());
+        } else {
+            assert!(result.is_ok());
+        }
+        assert_eq!(tri.validation_policy(), ValidationPolicy::OnSuspicion);
+    }
+
+    #[test]
+    fn test_set_topology_guarantee_rejects_incompatible_guarantee_when_completion_validation_fails()
+    {
+        let (tds, _) = build_invalid_vertex_link_tds_2d();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+
+        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+        tri.set_validation_policy(ValidationPolicy::Never);
+        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+        assert_eq!(tri.validation_policy(), ValidationPolicy::Never);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
+        }));
+        if cfg!(debug_assertions) {
+            assert!(result.is_err());
+        } else {
+            assert!(result.is_ok());
+        }
+        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
     }
 
     fn build_disconnected_two_triangles_tds_2d() -> Tds<f64, (), (), 2> {
@@ -6729,6 +6885,115 @@ mod tests {
         assert!(index.vertex_to_cells.is_empty());
         assert!(index.cell_to_neighbors.is_empty());
         assert!(index.vertex_to_edges.is_empty());
+    }
+
+    #[test]
+    fn test_build_adjacency_index_includes_isolated_vertex_entries() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+
+        let isolated_vertex = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([10.0, 10.0]))
+            .unwrap();
+        let index = tri.build_adjacency_index().unwrap();
+
+        assert!(
+            index
+                .vertex_to_cells
+                .get(&isolated_vertex)
+                .is_some_and(SmallBuffer::is_empty)
+        );
+        assert!(
+            index
+                .vertex_to_edges
+                .get(&isolated_vertex)
+                .is_some_and(SmallBuffer::is_empty)
+        );
+    }
+
+    #[test]
+    fn test_build_adjacency_index_errors_on_missing_neighbor_cell() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        let cell_key = tri.tds.cell_keys().next().unwrap();
+
+        let mut missing_neighbor = CellKey::default();
+        if tri.tds.contains_cell(missing_neighbor) {
+            missing_neighbor = CellKey::from(KeyData::from_ffi(u64::MAX));
+        }
+        assert!(!tri.tds.contains_cell(missing_neighbor));
+
+        {
+            let cell = tri.tds.get_cell_by_key_mut(cell_key).unwrap();
+            let neighbors = cell.ensure_neighbors_buffer_mut();
+            neighbors[0] = Some(missing_neighbor);
+        }
+
+        match tri.build_adjacency_index() {
+            Err(AdjacencyIndexBuildError::MissingNeighborCell {
+                cell_key: err_cell_key,
+                neighbor_key,
+            }) => {
+                assert_eq!(err_cell_key, cell_key);
+                assert_eq!(neighbor_key, missing_neighbor);
+            }
+            other => panic!("Expected MissingNeighborCell, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_build_adjacency_index_errors_on_missing_vertex_key() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        let cell_key = tri.tds.cell_keys().next().unwrap();
+        let existing_vertices = tri.tds.get_cell(cell_key).unwrap().vertices().to_vec();
+
+        let mut missing_vertex = VertexKey::default();
+        if tri.tds.contains_vertex_key(missing_vertex) {
+            missing_vertex = VertexKey::from(KeyData::from_ffi(u64::MAX));
+        }
+        assert!(!tri.tds.contains_vertex_key(missing_vertex));
+
+        {
+            let cell = tri.tds.get_cell_by_key_mut(cell_key).unwrap();
+            cell.clear_vertex_keys();
+            cell.push_vertex_key(existing_vertices[0]);
+            cell.push_vertex_key(existing_vertices[1]);
+            cell.push_vertex_key(missing_vertex);
+        }
+
+        match tri.build_adjacency_index() {
+            Err(AdjacencyIndexBuildError::MissingVertexKey {
+                cell_key: err_cell_key,
+                vertex_key,
+            }) => {
+                assert_eq!(err_cell_key, cell_key);
+                assert_eq!(vertex_key, missing_vertex);
+            }
+            other => panic!("Expected MissingVertexKey, got {other:?}"),
+        }
     }
 
     // =============================================================================
