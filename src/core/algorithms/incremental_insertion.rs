@@ -2838,4 +2838,95 @@ mod tests {
             }
         ));
     }
+
+    #[test]
+    fn test_find_boundary_edge_split_facet_on_segment_2d() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
+        let kernel = FastKernel::<f64>::new();
+        let point = Point::new([0.5, 0.0]); // on boundary edge
+
+        let facet = find_boundary_edge_split_facet(dt.tds(), &kernel, &point).unwrap();
+        assert!(facet.is_some());
+    }
+
+    #[test]
+    fn test_find_boundary_edge_split_facet_off_segment_returns_none_2d() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
+        let kernel = FastKernel::<f64>::new();
+        let point = Point::new([2.0, 0.0]); // collinear with an edge line, outside segment
+
+        let facet = find_boundary_edge_split_facet(dt.tds(), &kernel, &point).unwrap();
+        assert!(facet.is_none());
+    }
+
+    #[test]
+    fn test_find_visible_boundary_facets_inside_returns_empty_2d() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
+        let kernel = FastKernel::<f64>::new();
+        let point = Point::new([0.2, 0.2]); // inside simplex
+
+        let visible = find_visible_boundary_facets(dt.tds(), &kernel, &point).unwrap();
+        assert!(visible.is_empty());
+    }
+
+    #[test]
+    fn test_find_visible_boundary_facets_outside_returns_non_empty_2d() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
+        let kernel = FastKernel::<f64>::new();
+        let point = Point::new([3.0, 3.0]); // clearly outside
+
+        let visible = find_visible_boundary_facets(dt.tds(), &kernel, &point).unwrap();
+        assert!(!visible.is_empty());
+        assert!(visible.len() <= 3);
+    }
+
+    #[test]
+    fn test_set_neighbor_errors_on_missing_cell() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let missing = CellKey::from(KeyData::from_ffi(u64::MAX));
+
+        let err = set_neighbor(&mut tds, missing, 0, None).unwrap_err();
+        assert!(matches!(
+            err,
+            InsertionError::NeighborWiring { message } if message.contains("not found")
+        ));
+    }
+
+    #[test]
+    fn test_external_facets_for_boundary_empty_inputs_returns_empty() {
+        let tds: Tds<f64, (), (), 2> = Tds::empty();
+        let internal_cells = CellKeyBuffer::new();
+        let boundary_facets: Vec<FacetHandle> = Vec::new();
+
+        let external =
+            external_facets_for_boundary(&tds, &internal_cells, &boundary_facets).unwrap();
+        assert!(external.is_empty());
+    }
+
+    #[test]
+    fn test_repair_neighbor_pointers_empty_tds_returns_zero() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let fixed = repair_neighbor_pointers(&mut tds).unwrap();
+        assert_eq!(fixed, 0);
+    }
 }

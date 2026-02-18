@@ -510,7 +510,7 @@ pub struct DelaunayTriangulationConstructionErrorWithStatistics {
 
 impl ConstructionStatistics {
     #[inline]
-    fn record_common(&mut self, stats: InsertionStatistics) {
+    fn record_common(&mut self, stats: &InsertionStatistics) {
         self.total_attempts = self.total_attempts.saturating_add(stats.attempts);
         self.max_attempts = self.max_attempts.max(stats.attempts);
 
@@ -535,7 +535,7 @@ impl ConstructionStatistics {
     const MAX_SKIP_SAMPLES: usize = 8;
 
     /// Record a single insertion attempt (inserted or skipped).
-    pub fn record_insertion(&mut self, stats: InsertionStatistics) {
+    pub fn record_insertion(&mut self, stats: &InsertionStatistics) {
         if stats.skipped_duplicate() {
             self.skipped_duplicate = self.skipped_duplicate.saturating_add(1);
         } else if stats.skipped() {
@@ -2401,10 +2401,10 @@ where
             .topology_guarantee
             .requires_vertex_links_at_completion()
         {
-            tracing::warn!("post-construction: starting topology validation (build)");
+            tracing::debug!("post-construction: starting topology validation (build)");
             let validation_started = Instant::now();
             let validation_result = dt.tri.validate();
-            tracing::warn!(
+            tracing::debug!(
                 elapsed = ?validation_started.elapsed(),
                 success = validation_result.is_ok(),
                 "post-construction: topology validation (build) completed"
@@ -2419,10 +2419,10 @@ where
 
         // `DelaunayCheckPolicy::EndOnly`: always run a final global Delaunay validation pass after
         // batch construction.
-        tracing::warn!("post-construction: starting Delaunay validation (build)");
+        tracing::debug!("post-construction: starting Delaunay validation (build)");
         let delaunay_started = Instant::now();
         let delaunay_result = dt.is_valid();
-        tracing::warn!(
+        tracing::debug!(
             elapsed = ?delaunay_started.elapsed(),
             success = delaunay_result.is_ok(),
             "post-construction: Delaunay validation (build) completed"
@@ -2460,10 +2460,10 @@ where
             .topology_guarantee
             .requires_vertex_links_at_completion()
         {
-            tracing::warn!("post-construction: starting topology validation (build stats)");
+            tracing::debug!("post-construction: starting topology validation (build stats)");
             let validation_started = Instant::now();
             let validation_result = dt.tri.validate();
-            tracing::warn!(
+            tracing::debug!(
                 elapsed = ?validation_started.elapsed(),
                 success = validation_result.is_ok(),
                 "post-construction: topology validation (build stats) completed"
@@ -2481,10 +2481,10 @@ where
 
         // `DelaunayCheckPolicy::EndOnly`: always run a final global Delaunay validation pass after
         // batch construction.
-        tracing::warn!("post-construction: starting Delaunay validation (build stats)");
+        tracing::debug!("post-construction: starting Delaunay validation (build stats)");
         let delaunay_started = Instant::now();
         let delaunay_result = dt.is_valid();
-        tracing::warn!(
+        tracing::debug!(
             elapsed = ?delaunay_started.elapsed(),
             success = delaunay_result.is_ok(),
             "post-construction: Delaunay validation (build stats) completed"
@@ -2576,7 +2576,7 @@ where
             ..InsertionStatistics::default()
         };
         for _ in 0..=D {
-            stats.record_insertion(simplex_stats);
+            stats.record_insertion(&simplex_stats);
         }
 
         if let Err(error) = dt.insert_remaining_vertices_seeded(
@@ -2862,7 +2862,7 @@ where
                                     stats.attempts
                                 );
                             }
-                            construction_stats.record_insertion(stats);
+                            construction_stats.record_insertion(&stats);
 
                             // Cache hint for faster subsequent insertions.
                             self.insertion_state.last_inserted_cell = hint;
@@ -2888,7 +2888,7 @@ where
                                     stats.attempts
                                 );
                             }
-                            construction_stats.record_insertion(stats);
+                            construction_stats.record_insertion(&stats);
 
                             // Keep the first few skip samples so we have concrete reproduction anchors.
                             let coords: Vec<f64> = vertex
@@ -2994,10 +2994,10 @@ where
         }
 
         if topology.requires_vertex_links_at_completion() {
-            tracing::warn!("post-construction: starting topology validation (finalize)");
+            tracing::debug!("post-construction: starting topology validation (finalize)");
             let validation_started = Instant::now();
             let validation_result = self.tri.validate();
-            tracing::warn!(
+            tracing::debug!(
                 elapsed = ?validation_started.elapsed(),
                 success = validation_result.is_ok(),
                 "post-construction: topology validation (finalize) completed"
@@ -5486,6 +5486,100 @@ mod tests {
         assert_eq!(sample.coords, vec![0.0, 0.0, 0.0]);
         assert_eq!(sample.attempts, 1);
         assert!(sample.error.contains("Duplicate coordinates"));
+    }
+    #[test]
+    fn test_construction_statistics_record_insertion_tracks_inserted_common_fields() {
+        init_tracing();
+
+        let mut summary = ConstructionStatistics::default();
+        let stats = InsertionStatistics {
+            attempts: 3,
+            cells_removed_during_repair: 4,
+            result: crate::core::operations::InsertionResult::Inserted,
+        };
+
+        summary.record_insertion(&stats);
+
+        assert_eq!(summary.inserted, 1);
+        assert_eq!(summary.skipped_duplicate, 0);
+        assert_eq!(summary.skipped_degeneracy, 0);
+        assert_eq!(summary.total_attempts, 3);
+        assert_eq!(summary.max_attempts, 3);
+        assert_eq!(summary.attempts_histogram.get(3).copied().unwrap_or(0), 1);
+        assert_eq!(summary.used_perturbation, 1);
+        assert_eq!(summary.cells_removed_total, 4);
+        assert_eq!(summary.cells_removed_max, 4);
+
+        // Borrowed API: caller retains ownership of insertion stats.
+        assert_eq!(stats.attempts, 3);
+        assert!(matches!(
+            stats.result,
+            crate::core::operations::InsertionResult::Inserted
+        ));
+    }
+
+    #[test]
+    fn test_construction_statistics_record_insertion_tracks_skipped_variants() {
+        init_tracing();
+
+        let mut summary = ConstructionStatistics::default();
+        let skipped_duplicate = InsertionStatistics {
+            attempts: 1,
+            cells_removed_during_repair: 0,
+            result: crate::core::operations::InsertionResult::SkippedDuplicate,
+        };
+        let skipped_degeneracy = InsertionStatistics {
+            attempts: 2,
+            cells_removed_during_repair: 5,
+            result: crate::core::operations::InsertionResult::SkippedDegeneracy,
+        };
+
+        summary.record_insertion(&skipped_duplicate);
+        summary.record_insertion(&skipped_degeneracy);
+
+        assert_eq!(summary.inserted, 0);
+        assert_eq!(summary.skipped_duplicate, 1);
+        assert_eq!(summary.skipped_degeneracy, 1);
+        assert_eq!(summary.total_skipped(), 2);
+        assert_eq!(summary.total_attempts, 3);
+        assert_eq!(summary.max_attempts, 2);
+        assert_eq!(summary.attempts_histogram.get(1).copied().unwrap_or(0), 1);
+        assert_eq!(summary.attempts_histogram.get(2).copied().unwrap_or(0), 1);
+        assert_eq!(summary.used_perturbation, 1);
+        assert_eq!(summary.cells_removed_total, 5);
+        assert_eq!(summary.cells_removed_max, 5);
+    }
+
+    #[test]
+    fn test_construction_statistics_record_skip_sample_caps_at_eight_samples() {
+        init_tracing();
+
+        let mut summary = ConstructionStatistics::default();
+        for index in 0..10 {
+            let sample_index_u32 = u32::try_from(index).unwrap();
+            let coordinate_base = <f64 as std::convert::From<u32>>::from(sample_index_u32);
+            summary.record_skip_sample(ConstructionSkipSample {
+                index,
+                uuid: Uuid::from_u128(
+                    <u128 as std::convert::From<u32>>::from(sample_index_u32) + 1,
+                ),
+                coords: vec![
+                    coordinate_base,
+                    coordinate_base + 0.5,
+                    coordinate_base + 1.0,
+                ],
+                attempts: index + 1,
+                error: format!("skip sample #{index}"),
+            });
+        }
+
+        assert_eq!(summary.skip_samples.len(), 8);
+        assert_eq!(summary.skip_samples.first().map(|s| s.index), Some(0));
+        assert_eq!(summary.skip_samples.last().map(|s| s.index), Some(7));
+        assert_eq!(
+            summary.skip_samples.last().map(|s| s.uuid),
+            Some(Uuid::from_u128(8))
+        );
     }
 
     #[test]

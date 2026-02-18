@@ -6160,6 +6160,76 @@ mod tests {
     }
 
     #[test]
+    fn test_verify_delaunay_via_flip_predicates_reports_non_delaunay_2d() {
+        init_tracing();
+        let kernel = FastKernel::<f64>::new();
+        let a_coords = [0.0, 0.0];
+        let b_coords = [1.0, 1.0];
+        let c_coords = [1.0, 0.0];
+        let d_candidates = [[0.0, 1.2], [0.1, 1.1], [0.2, 0.9], [-0.1, 1.3]];
+
+        let mut tds = None;
+        for d_coords in d_candidates {
+            let mut candidate: Tds<f64, (), (), 2> = Tds::empty();
+            let a = candidate
+                .insert_vertex_with_mapping(vertex!(a_coords))
+                .unwrap();
+            let b = candidate
+                .insert_vertex_with_mapping(vertex!(b_coords))
+                .unwrap();
+            let c = candidate
+                .insert_vertex_with_mapping(vertex!(c_coords))
+                .unwrap();
+            let d = candidate
+                .insert_vertex_with_mapping(vertex!(d_coords))
+                .unwrap();
+
+            let _c1 = candidate
+                .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+                .unwrap();
+            let _c2 = candidate
+                .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
+                .unwrap();
+
+            repair_neighbor_pointers(&mut candidate).unwrap();
+
+            if verify_delaunay_via_flip_predicates(&candidate, &kernel).is_err() {
+                tds = Some(candidate);
+                break;
+            }
+        }
+
+        let tds = tds.expect("expected a non-Delaunay configuration from candidates");
+        let result = verify_delaunay_via_flip_predicates(&tds, &kernel);
+
+        assert!(matches!(
+            result,
+            Err(DelaunayRepairError::PostconditionFailed { .. })
+        ));
+    }
+
+    #[test]
+    fn test_repair_delaunay_with_flips_rejects_unsupported_dimension_1d() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 1> = Tds::empty();
+        let kernel = FastKernel::<f64>::new();
+
+        let result = repair_delaunay_with_flips_k2_k3(
+            &mut tds,
+            &kernel,
+            None,
+            TopologyGuarantee::PLManifold,
+        );
+
+        assert!(matches!(
+            result,
+            Err(DelaunayRepairError::Flip(FlipError::UnsupportedDimension {
+                dimension: 1
+            }))
+        ));
+    }
+
+    #[test]
     fn test_flip_k2_robust_kernel_near_degenerate_2d() {
         init_tracing();
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();

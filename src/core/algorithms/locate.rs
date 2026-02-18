@@ -17,8 +17,6 @@
 //!   International Journal of Foundations of Computer Science, 2001.
 //! - CGAL Triangulation_3 documentation
 
-#![forbid(unsafe_code)]
-
 use crate::core::collections::{
     CavityBoundaryBuffer, CellKeyBuffer, CellSecondaryMap, FacetToCellsMap, FastHashMap,
     FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
@@ -32,6 +30,28 @@ use crate::geometry::traits::coordinate::{
     CoordinateConversionError, CoordinateScalar, ScalarSummable,
 };
 use std::hash::{Hash, Hasher};
+#[cfg(debug_assertions)]
+#[derive(Debug, Clone, Copy)]
+struct ConflictDebugConfig {
+    log_conflict: bool,
+    progress_enabled: bool,
+    progress_every: usize,
+}
+
+#[cfg(debug_assertions)]
+fn conflict_debug_config() -> &'static ConflictDebugConfig {
+    static CONFIG: std::sync::OnceLock<ConflictDebugConfig> = std::sync::OnceLock::new();
+
+    CONFIG.get_or_init(|| ConflictDebugConfig {
+        log_conflict: std::env::var_os("DELAUNAY_DEBUG_CONFLICT").is_some(),
+        progress_enabled: std::env::var_os("DELAUNAY_DEBUG_CONFLICT_PROGRESS").is_some(),
+        progress_every: std::env::var("DELAUNAY_DEBUG_CONFLICT_PROGRESS_EVERY")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(5000),
+    })
+}
 
 /// Result of point location query.
 ///
@@ -673,7 +693,10 @@ where
 ///     assert_eq!(conflict_cells.len(), 1); // Single 4-simplex contains the point
 /// }
 /// ```
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "function is long due to complex locate logic and should be split when refactoring"
+)]
 pub fn find_conflict_region<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -687,15 +710,7 @@ where
     V: DataType,
 {
     #[cfg(debug_assertions)]
-    let log_conflict = std::env::var_os("DELAUNAY_DEBUG_CONFLICT").is_some();
-    #[cfg(debug_assertions)]
-    let progress_enabled = std::env::var_os("DELAUNAY_DEBUG_CONFLICT_PROGRESS").is_some();
-    #[cfg(debug_assertions)]
-    let progress_every = std::env::var("DELAUNAY_DEBUG_CONFLICT_PROGRESS_EVERY")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(5000);
+    let debug_config = conflict_debug_config();
     #[cfg(debug_assertions)]
     let start_time = std::time::Instant::now();
     #[cfg(debug_assertions)]
@@ -732,7 +747,9 @@ where
         #[cfg(debug_assertions)]
         {
             visited_count = visited_count.saturating_add(1);
-            if progress_enabled && visited_count.is_multiple_of(progress_every) {
+            if debug_config.progress_enabled
+                && visited_count.is_multiple_of(debug_config.progress_every)
+            {
                 tracing::debug!(
                     visited_count,
                     conflict_count,
@@ -764,7 +781,7 @@ where
         }
 
         #[cfg(debug_assertions)]
-        if log_conflict {
+        if debug_config.log_conflict {
             tracing::debug!(
                 cell_key = ?cell_key,
                 vertex_keys = ?cell.vertices(),
@@ -779,7 +796,7 @@ where
             Ok(value) => value,
             Err(err) => {
                 #[cfg(debug_assertions)]
-                if log_conflict {
+                if debug_config.log_conflict {
                     tracing::debug!(
                         cell_key = ?cell_key,
                         vertex_keys = ?cell.vertices(),
@@ -793,7 +810,7 @@ where
         };
 
         #[cfg(debug_assertions)]
-        if log_conflict {
+        if debug_config.log_conflict {
             tracing::debug!(
                 cell_key = ?cell_key,
                 sign,
@@ -830,7 +847,7 @@ where
     }
 
     #[cfg(debug_assertions)]
-    if progress_enabled || log_conflict {
+    if debug_config.progress_enabled || debug_config.log_conflict {
         tracing::debug!(
             visited_count,
             conflict_cells = conflict_cells.len(),
@@ -1278,6 +1295,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::cell::Cell;
     use crate::geometry::kernel::{FastKernel, RobustKernel};
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::prelude::DelaunayTriangulation;
@@ -1886,5 +1904,211 @@ mod tests {
             0,
             "Expected 0 boundary facets for empty conflict region"
         );
+    }
+
+    #[test]
+    fn test_locate_with_stats_invalid_hint_uses_arbitrary_start_cell() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let kernel = FastKernel::<f64>::new();
+        let point = Point::new([0.25, 0.25]);
+
+        let invalid_hint = CellKey::from(KeyData::from_ffi(999_999));
+        let expected_start = dt.tds().cell_keys().next().unwrap();
+        let (result, stats) =
+            locate_with_stats(dt.tds(), &kernel, &point, Some(invalid_hint)).unwrap();
+
+        assert!(matches!(result, LocateResult::InsideCell(_)));
+        assert_eq!(stats.start_cell, expected_start);
+        assert!(!stats.used_hint);
+        assert!(!stats.fell_back_to_scan());
+    }
+
+    #[test]
+    fn test_locate_by_scan_inside_and_outside() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let kernel = FastKernel::<f64>::new();
+        let expected_cell = dt.tds().cell_keys().next().unwrap();
+
+        let inside = Point::new([0.2, 0.2]);
+        let outside = Point::new([3.0, 3.0]);
+
+        assert_eq!(
+            locate_by_scan(dt.tds(), &kernel, &inside).unwrap(),
+            LocateResult::InsideCell(expected_cell)
+        );
+        assert_eq!(
+            locate_by_scan(dt.tds(), &kernel, &outside).unwrap(),
+            LocateResult::Outside
+        );
+    }
+
+    #[test]
+    fn test_extract_cavity_boundary_rejects_nonmanifold_facet_2d() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let origin = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let x_axis = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let y_axis = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let upper_right = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+        let top_apex = tds.insert_vertex_with_mapping(vertex!([0.5, 1.5])).unwrap();
+
+        let first_cell = tds
+            .insert_cell_with_mapping(Cell::new(vec![origin, x_axis, y_axis], None).unwrap())
+            .unwrap();
+        let second_cell = tds
+            .insert_cell_with_mapping(Cell::new(vec![origin, x_axis, upper_right], None).unwrap())
+            .unwrap();
+        let third_cell = tds
+            .insert_cell_with_mapping(Cell::new(vec![origin, x_axis, top_apex], None).unwrap())
+            .unwrap();
+
+        let mut conflict_cells = CellKeyBuffer::new();
+        conflict_cells.push(first_cell);
+        conflict_cells.push(second_cell);
+        conflict_cells.push(third_cell);
+
+        let err = extract_cavity_boundary(&tds, &conflict_cells).unwrap_err();
+        assert!(matches!(
+            err,
+            ConflictError::NonManifoldFacet { cell_count: 3, .. }
+        ));
+    }
+
+    #[test]
+    fn test_extract_cavity_boundary_detects_disconnected_boundary_2d() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let left_origin = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let left_x = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let left_y = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let right_origin = tds.insert_vertex_with_mapping(vertex!([3.0, 0.0])).unwrap();
+        let right_x = tds.insert_vertex_with_mapping(vertex!([4.0, 0.0])).unwrap();
+        let right_y = tds.insert_vertex_with_mapping(vertex!([3.0, 1.0])).unwrap();
+
+        let left = tds
+            .insert_cell_with_mapping(Cell::new(vec![left_origin, left_x, left_y], None).unwrap())
+            .unwrap();
+        let right = tds
+            .insert_cell_with_mapping(
+                Cell::new(vec![right_origin, right_x, right_y], None).unwrap(),
+            )
+            .unwrap();
+
+        let mut conflict_cells = CellKeyBuffer::new();
+        conflict_cells.push(left);
+        conflict_cells.push(right);
+
+        let err = extract_cavity_boundary(&tds, &conflict_cells).unwrap_err();
+        match err {
+            ConflictError::DisconnectedBoundary { visited, total } => {
+                assert!(visited < total);
+                assert_eq!(total, 6);
+            }
+            other => panic!("Expected DisconnectedBoundary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_locate_with_stats_valid_hint_marks_used_hint() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let kernel = FastKernel::<f64>::new();
+        let point = Point::new([0.2, 0.2]);
+        let hint = dt.tds().cell_keys().next().unwrap();
+
+        let (result, stats) = locate_with_stats(dt.tds(), &kernel, &point, Some(hint)).unwrap();
+
+        assert!(matches!(result, LocateResult::InsideCell(_)));
+        assert_eq!(stats.start_cell, hint);
+        assert!(stats.used_hint);
+        assert!(!stats.fell_back_to_scan());
+    }
+
+    #[test]
+    fn test_locate_by_scan_empty_returns_outside() {
+        let tds: Tds<f64, (), (), 2> = Tds::empty();
+        let kernel = FastKernel::<f64>::new();
+        let point = Point::new([0.0, 0.0]);
+
+        assert_eq!(
+            locate_by_scan(&tds, &kernel, &point).unwrap(),
+            LocateResult::Outside
+        );
+    }
+
+    #[test]
+    fn test_extract_cavity_boundary_invalid_conflict_cell_key() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+
+        let invalid = CellKey::from(KeyData::from_ffi(424_242));
+        let mut conflict_cells = CellKeyBuffer::new();
+        conflict_cells.push(invalid);
+
+        let err = extract_cavity_boundary(dt.tds(), &conflict_cells).unwrap_err();
+        assert!(matches!(
+            err,
+            ConflictError::InvalidStartCell { cell_key } if cell_key == invalid
+        ));
+    }
+
+    #[test]
+    fn test_extract_cavity_boundary_rejects_ridge_fan_2d() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let center = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let axis_x = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let axis_y = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let axis_neg_x = tds
+            .insert_vertex_with_mapping(vertex!([-1.0, 0.0]))
+            .unwrap();
+        let axis_neg_y = tds
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0]))
+            .unwrap();
+        let far_x = tds.insert_vertex_with_mapping(vertex!([2.0, 0.0])).unwrap();
+        let far_y = tds.insert_vertex_with_mapping(vertex!([0.0, 2.0])).unwrap();
+
+        let first_cell = tds
+            .insert_cell_with_mapping(Cell::new(vec![center, axis_x, axis_y], None).unwrap())
+            .unwrap();
+        let second_cell = tds
+            .insert_cell_with_mapping(
+                Cell::new(vec![center, axis_neg_x, axis_neg_y], None).unwrap(),
+            )
+            .unwrap();
+        let third_cell = tds
+            .insert_cell_with_mapping(Cell::new(vec![center, far_x, far_y], None).unwrap())
+            .unwrap();
+
+        let mut conflict_cells = CellKeyBuffer::new();
+        conflict_cells.push(first_cell);
+        conflict_cells.push(second_cell);
+        conflict_cells.push(third_cell);
+
+        match extract_cavity_boundary(&tds, &conflict_cells).unwrap_err() {
+            ConflictError::RidgeFan {
+                facet_count,
+                ridge_vertex_count,
+            } => {
+                assert!(facet_count >= 3);
+                assert_eq!(ridge_vertex_count, 1);
+            }
+            other => panic!("Expected RidgeFan, got {other:?}"),
+        }
     }
 }

@@ -142,7 +142,18 @@ impl<const D: usize> From<ConstructionStatistics> for InsertionSummary<D> {
             .skip_samples
             .iter()
             .filter_map(|s| {
-                let coords: [f64; D] = s.coords.as_slice().try_into().ok()?;
+                let coords: [f64; D] = if let Ok(coords) = s.coords.as_slice().try_into() {
+                    coords
+                } else {
+                    tracing::warn!(
+                        index = s.index,
+                        uuid = %s.uuid,
+                        coords_len = s.coords.len(),
+                        expected_dim = D,
+                        "dropping skip sample due to coordinate dimension mismatch"
+                    );
+                    return None;
+                };
                 Some(SkipSample {
                     index: s.index,
                     uuid: s.uuid,
@@ -640,6 +651,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
     println!();
     println!("Total wall time: {:?}", t_gen.elapsed());
 }
+
 #[derive(Debug, Clone)]
 struct IncrementalFailure3d {
     prefix_len: usize,
