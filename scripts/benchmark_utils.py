@@ -2806,6 +2806,12 @@ def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.
 
     cmp_parser = subparsers.add_parser("compare", help="Compare current performance against baseline")
     cmp_parser.add_argument("--baseline", type=Path, required=True, help="Path to baseline file")
+    cmp_parser.add_argument(
+        "--threshold",
+        type=float,
+        default=DEFAULT_REGRESSION_THRESHOLD,
+        help=f"Regression threshold percentage for marking regressions (default: {DEFAULT_REGRESSION_THRESHOLD})",
+    )
     cmp_parser.add_argument("--dev", action="store_true", help="Use development mode with faster benchmark settings")
     cmp_parser.add_argument("--output", type=Path, help="Output file path")
     cmp_parser.add_argument("--project-root", type=Path, help="Project root to benchmark (directory containing Cargo.toml)")
@@ -2942,6 +2948,7 @@ def execute_baseline_commands(args: argparse.Namespace, project_root: Path) -> N
 
     elif args.command == "compare":
         comparator = PerformanceComparator(project_root)
+        comparator.regression_threshold = args.threshold
         success, regression_found = comparator.compare_with_baseline(
             args.baseline,
             dev_mode=args.dev,
@@ -3183,6 +3190,10 @@ def main():
     # Validate bench_timeout if present
     if hasattr(args, "validate_bench_timeout") and args.validate_bench_timeout and args.bench_timeout <= 0:
         parser.error(f"--bench-timeout must be positive (got {args.bench_timeout})")
+
+    # Validate threshold if present
+    if hasattr(args, "threshold") and args.threshold < 0:
+        parser.error(f"--threshold must be non-negative (got {args.threshold})")
 
     try:
         project_root: Path
