@@ -6,6 +6,8 @@
 #![forbid(unsafe_code)]
 
 use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
+#[cfg(any(test, debug_assertions))]
+use crate::core::algorithms::flips::repair_delaunay_single_pass_local;
 use crate::core::algorithms::flips::{
     DelaunayRepairError, DelaunayRepairStats, FlipError, apply_bistellar_flip_k1_inverse,
     repair_delaunay_with_flips_k2_k3,
@@ -2564,9 +2566,15 @@ where
             ValidationPolicy::DebugOnly
         };
 
-        // Temporarily disable flip-based Delaunay repairs during bulk construction to avoid
-        // aborting otherwise valid (manifold) triangulations in numerically degenerate cases.
-        // The final global repair pass remains enabled after construction unless suppressed.
+        // Disable flip-based Delaunay repairs via maybe_repair_after_insertion during bulk
+        // construction to avoid aborting valid manifold triangulations in numerically
+        // degenerate cases.  The final global repair pass in finalize_bulk_construction
+        // runs after all vertices are inserted and handles remaining violations.
+        //
+        // For D>=4 in debug/test mode, insert_remaining_vertices_seeded additionally runs a
+        // per-insertion LOCAL repair (soft-fail, no heuristic rebuild) after each vertex.
+        // This prevents violation accumulation that would make the global repair prohibitively
+        // slow in debug builds (O(cells * D^2) predicate evaluations per attempt).
         let original_repair_policy = dt.insertion_state.delaunay_repair_policy;
         dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
 
@@ -2659,9 +2667,11 @@ where
             ValidationPolicy::DebugOnly
         };
 
-        // Temporarily disable flip-based Delaunay repairs during bulk construction to avoid
-        // aborting otherwise valid (manifold) triangulations in numerically degenerate cases.
-        // The final global repair pass remains enabled after construction unless suppressed.
+        // Disable flip-based Delaunay repairs via maybe_repair_after_insertion during bulk
+        // construction to avoid aborting valid manifold triangulations in numerically
+        // degenerate cases.  See the _with_construction_statistics variant for a fuller
+        // comment.  For D>=4 debug/test builds, insert_remaining_vertices_seeded injects a
+        // soft-fail per-insertion local repair to keep violation counts low.
         let original_repair_policy = dt.insertion_state.delaunay_repair_policy;
         dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
         dt.insert_remaining_vertices_seeded(vertices, perturbation_seed, grid_cell_size, None)?;
@@ -2774,6 +2784,46 @@ where
                             if used_heuristic {
                                 self.insertion_state.last_inserted_cell = None;
                             }
+                            // For D>=4 in debug/test mode: run a per-insertion local
+                            // Delaunay repair (seeded from the newly inserted vertex's star)
+                            // to prevent violation accumulation during bulk construction.
+                            // Without this, all violations accumulate until finalize time
+                            // and the global repair must process O(n_cells * D^2) queue items
+                            // -- prohibitively slow in debug mode for D>=4.
+                            // Soft-fails (logs, does NOT abort) because the final global
+                            // repair in finalize_bulk_construction catches any stragglers.
+                            #[cfg(any(test, debug_assertions))]
+                            if D >= 4 {
+                                let seed_cells: Vec<CellKey> =
+                                    self.tri.adjacent_cells(v_key).collect();
+                                if !seed_cells.is_empty() {
+                                    let repair_result = {
+                                        let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
+                                        repair_delaunay_single_pass_local(tds, kernel, &seed_cells)
+                                    };
+                                    match repair_result {
+                                        Ok(stats) => {
+                                            tracing::trace!(
+                                                idx = index,
+                                                seeds = seed_cells.len(),
+                                                cells = self.tri.tds.number_of_cells(),
+                                                flips = stats.flips_performed,
+                                                "bulk D>=4: per-insertion local repair ok"
+                                            );
+                                        }
+                                        Err(e) => {
+                                            tracing::debug!(
+                                                error = %e,
+                                                idx = index,
+                                                seeds = seed_cells.len(),
+                                                cells = self.tri.tds.number_of_cells(),
+                                                "bulk D>=4: per-insertion local repair soft-failed; \
+                                                 global repair will handle remaining violations"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
                         }
                         Ok((InsertionOutcome::Skipped { error }, stats)) => {
                             if trace_insertion && let Some(elapsed) = elapsed {
@@ -2879,6 +2929,39 @@ where
                                 })?;
                             if used_heuristic {
                                 self.insertion_state.last_inserted_cell = None;
+                            }
+                            // Same soft-fail per-insertion local repair as the non-stats branch above.
+                            #[cfg(any(test, debug_assertions))]
+                            if D >= 4 {
+                                let seed_cells: Vec<CellKey> =
+                                    self.tri.adjacent_cells(v_key).collect();
+                                if !seed_cells.is_empty() {
+                                    let repair_result = {
+                                        let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
+                                        repair_delaunay_single_pass_local(tds, kernel, &seed_cells)
+                                    };
+                                    match repair_result {
+                                        Ok(stats) => {
+                                            tracing::trace!(
+                                                idx = index,
+                                                seeds = seed_cells.len(),
+                                                cells = self.tri.tds.number_of_cells(),
+                                                flips = stats.flips_performed,
+                                                "bulk D>=4: per-insertion local repair ok"
+                                            );
+                                        }
+                                        Err(e) => {
+                                            tracing::debug!(
+                                                error = %e,
+                                                idx = index,
+                                                seeds = seed_cells.len(),
+                                                cells = self.tri.tds.number_of_cells(),
+                                                "bulk D>=4: per-insertion local repair soft-failed; \
+                                                 global repair will handle remaining violations"
+                                            );
+                                        }
+                                    }
+                                }
                             }
                         }
                         Ok((InsertionOutcome::Skipped { error }, stats)) => {

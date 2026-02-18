@@ -3393,39 +3393,174 @@ where
             conflict_cells.push(start_cell);
         }
 
-        // Extract cavity boundary
-        let mut boundary_facets = match extract_cavity_boundary(&self.tds, &conflict_cells) {
-            Ok(boundary) => boundary,
-            Err(err) => {
-                let should_fallback = matches!(
-                    err,
-                    ConflictError::NonManifoldFacet { .. }
-                        | ConflictError::RidgeFan { .. }
-                        | ConflictError::DisconnectedBoundary { .. }
-                        | ConflictError::OpenBoundary { .. }
-                );
+        // Extract cavity boundary.
+        //
+        // For D>=4, iteratively resolve cavity-boundary errors rather than falling back to a
+        // star-split.  Star-splits in high dimensions create configurations that the k=2/k=3
+        // bistellar-flip repair cannot efficiently undo, causing the global repair to run for
+        // an extremely long time or fail to converge.  Instead we reshape the conflict region:
+        //
+        //   • RidgeFan          – SHRINK: remove extra fan cells (3rd, 4th, … facets).
+        //   • DisconnectedBnd   – EXPAND: add the non-conflict neighbors of the disconnected
+        //                         cells to fill the topological "hole" in the conflict region
+        //                         that causes the disconnected boundary.  Falls back to SHRINK
+        //                         if no non-conflict neighbors are found.
+        //   • OpenBoundary      – SHRINK: remove the cell with the dangling facet.
+        //
+        // After each reshape we re-run extract_cavity_boundary.  If the loop exhausts its
+        // budget without producing a valid boundary, we return a retryable error (for D>=4)
+        // so that insert_transactional can retry with a perturbed vertex instead of creating
+        // an un-repairable star-split.
+        let mut boundary_facets = {
+            let mut extraction_result = extract_cavity_boundary(&self.tds, &conflict_cells);
 
-                if should_fallback {
-                    let Some(start_cell) = fallback_cell else {
+            if D >= 4 {
+                const MAX_CAVITY_ITERATIONS: usize = 32;
+                let mut iterations: usize = 0;
+
+                loop {
+                    if iterations >= MAX_CAVITY_ITERATIONS {
+                        break;
+                    }
+                    iterations += 1;
+
+                    match &extraction_result {
+                        // RidgeFan: SHRINK – remove the cells contributing extra boundary facets.
+                        Err(ConflictError::RidgeFan { extra_cells, .. })
+                            if !extra_cells.is_empty() && conflict_cells.len() > D + 1 =>
+                        {
+                            #[cfg(debug_assertions)]
+                            tracing::debug!(
+                                remove_count = extra_cells.len(),
+                                conflict_cells_before = conflict_cells.len(),
+                                "D={D}: cavity reduction (RidgeFan shrink)"
+                            );
+                            let remove_set: FastHashSet<CellKey> =
+                                extra_cells.iter().copied().collect();
+                            conflict_cells.retain(|k| !remove_set.contains(k));
+                        }
+
+                        // DisconnectedBoundary: EXPAND – add non-conflict neighbors of the
+                        // disconnected cells to fill the topological hole.  These cells form the
+                        // "inner wall" of a donut-shaped conflict region; their non-conflict
+                        // neighbors are the hole cells that, when added, reconnect the boundary.
+                        // Falls back to SHRINK if no non-conflict neighbors exist.
+                        Err(ConflictError::DisconnectedBoundary {
+                            disconnected_cells, ..
+                        }) if !disconnected_cells.is_empty() => {
+                            let conflict_set: FastHashSet<CellKey> =
+                                conflict_cells.iter().copied().collect();
+                            let mut cells_to_add: FastHashSet<CellKey> = FastHashSet::default();
+                            for &dc in disconnected_cells {
+                                if let Some(cell) = self.tds.get_cell(dc)
+                                    && let Some(neighbors) = cell.neighbors()
+                                {
+                                    for &neighbor_opt in neighbors {
+                                        if let Some(nk) = neighbor_opt
+                                            && !conflict_set.contains(&nk)
+                                        {
+                                            cells_to_add.insert(nk);
+                                        }
+                                    }
+                                }
+                            }
+
+                            if !cells_to_add.is_empty() {
+                                // EXPAND: add the hole-filling cells.
+                                #[cfg(debug_assertions)]
+                                tracing::debug!(
+                                    add_count = cells_to_add.len(),
+                                    conflict_cells_before = conflict_cells.len(),
+                                    "D={D}: cavity expansion (DisconnectedBoundary hole-fill)"
+                                );
+                                for k in cells_to_add {
+                                    conflict_cells.push(k);
+                                }
+                            } else if conflict_cells.len() > D + 1 {
+                                // SHRINK fallback: no non-conflict neighbors found.
+                                #[cfg(debug_assertions)]
+                                tracing::debug!(
+                                    remove_count = disconnected_cells.len(),
+                                    conflict_cells_before = conflict_cells.len(),
+                                    "D={D}: cavity reduction (DisconnectedBoundary shrink fallback)"
+                                );
+                                let remove_set: FastHashSet<CellKey> =
+                                    disconnected_cells.iter().copied().collect();
+                                conflict_cells.retain(|k| !remove_set.contains(k));
+                            } else {
+                                break;
+                            }
+                        }
+
+                        // OpenBoundary: SHRINK – remove the cell with the dangling facet.
+                        Err(ConflictError::OpenBoundary { open_cell, .. })
+                            if conflict_cells.len() > D + 1 =>
+                        {
+                            #[cfg(debug_assertions)]
+                            tracing::debug!(
+                                ?open_cell,
+                                conflict_cells_before = conflict_cells.len(),
+                                "D={D}: cavity reduction (OpenBoundary shrink)"
+                            );
+                            let open = *open_cell;
+                            conflict_cells.retain(|k| *k != open);
+                        }
+
+                        _ => break,
+                    }
+
+                    extraction_result = extract_cavity_boundary(&self.tds, &conflict_cells);
+                }
+            }
+
+            match extraction_result {
+                Ok(boundary) => boundary,
+                Err(err) => {
+                    // For D>=4: do NOT fall back to star-split.  Star-splits in high dimensions
+                    // create configurations the k=2/k=3 flip repair cannot efficiently undo,
+                    // leading to extremely slow or non-convergent global repair.  Return a
+                    // retryable error instead so insert_transactional can retry with a perturbed
+                    // vertex (and build_with_shuffled_retries can try a different ordering).
+                    //
+                    // For D<4: use the existing star-split fallback (the 2D/3D flip repair can
+                    // always handle star-split configurations).
+                    let should_fallback = D < 4
+                        && matches!(
+                            err,
+                            ConflictError::NonManifoldFacet { .. }
+                                | ConflictError::RidgeFan { .. }
+                                | ConflictError::DisconnectedBoundary { .. }
+                                | ConflictError::OpenBoundary { .. }
+                        );
+
+                    if should_fallback {
+                        let Some(start_cell) = fallback_cell else {
+                            return Err(err.into());
+                        };
+
+                        suspicion.fallback_star_split = true;
+
+                        #[cfg(debug_assertions)]
+                        tracing::warn!(
+                            "Conflict region degeneracy ({err}); falling back to star-split of cell {start_cell:?}"
+                        );
+
+                        conflict_cells = {
+                            let mut owned = CellKeyBuffer::new();
+                            owned.push(start_cell);
+                            owned
+                        };
+
+                        Self::star_split_boundary_facets(start_cell)
+                    } else {
+                        #[cfg(debug_assertions)]
+                        if D >= 4 {
+                            tracing::debug!(
+                                "D={D}: cavity boundary unresolvable ({err}); returning retryable error"
+                            );
+                        }
                         return Err(err.into());
-                    };
-
-                    suspicion.fallback_star_split = true;
-
-                    #[cfg(debug_assertions)]
-                    tracing::warn!(
-                        "Conflict region degeneracy ({err}); falling back to star-split of cell {start_cell:?}"
-                    );
-
-                    conflict_cells = {
-                        let mut owned = CellKeyBuffer::new();
-                        owned.push(start_cell);
-                        owned
-                    };
-
-                    Self::star_split_boundary_facets(start_cell)
-                } else {
-                    return Err(err.into());
+                    }
                 }
             }
         };

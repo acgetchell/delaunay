@@ -2623,6 +2623,7 @@ mod tests {
             InsertionError::ConflictRegion(ConflictError::RidgeFan {
                 facet_count: 3,
                 ridge_vertex_count: 2,
+                extra_cells: vec![],
             })
             .is_retryable()
         );

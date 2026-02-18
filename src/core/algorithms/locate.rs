@@ -171,6 +171,11 @@ pub enum ConflictError {
         facet_count: usize,
         /// Number of vertices in the shared ridge
         ridge_vertex_count: usize,
+        /// Cell keys of the conflict-region cells that contribute the *extra* (3rd, 4th, …)
+        /// facets to the fan.  Removing these cells from the conflict region eliminates the
+        /// ridge fan, enabling cavity insertion to proceed at the cost of leaving those cells
+        /// temporarily non-Delaunay (fixed by the subsequent flip-repair pass).
+        extra_cells: Vec<CellKey>,
     },
 
     /// Cavity boundary is disconnected (multiple components).
@@ -186,6 +191,11 @@ pub enum ConflictError {
         visited: usize,
         /// Total number of boundary facets.
         total: usize,
+        /// Cell keys from the disconnected (unreachable) boundary component.
+        /// Removing these cells from the conflict region makes the cavity boundary
+        /// connected, enabling insertion to proceed (the cells are left temporarily
+        /// non-Delaunay and fixed by the subsequent flip-repair pass).
+        disconnected_cells: Vec<CellKey>,
     },
 
     /// Cavity boundary is not closed (a ridge is incident to only one boundary facet).
@@ -201,16 +211,22 @@ pub enum ConflictError {
         facet_count: usize,
         /// Number of vertices in the ridge.
         ridge_vertex_count: usize,
+        /// The conflict-region cell that contributes the dangling (open) boundary facet.
+        /// Removing this cell from the conflict region closes the open ridge.
+        open_cell: CellKey,
     },
 }
 
 /// Ridge incidence information used for cavity-boundary validation.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct RidgeInfo {
     ridge_vertex_count: usize,
     facet_count: usize,
     first_facet: usize,
     second_facet: Option<usize>,
+    /// Indices (into `boundary_facets`) of the 3rd, 4th, … facets in the fan.
+    /// Populated only when `facet_count >= 3`.
+    extra_facets: Vec<usize>,
 }
 
 /// Indicates why facet-walking fell back to a brute-force scan.
@@ -1086,6 +1102,9 @@ where
                                 info.facet_count += 1;
                                 if info.second_facet.is_none() {
                                     info.second_facet = Some(boundary_facet_idx);
+                                } else {
+                                    // 3rd+ facet: record for fan-cell identification.
+                                    info.extra_facets.push(boundary_facet_idx);
                                 }
                             })
                             .or_insert(RidgeInfo {
@@ -1093,6 +1112,7 @@ where
                                 facet_count: 1,
                                 first_facet: boundary_facet_idx,
                                 second_facet: None,
+                                extra_facets: Vec::new(),
                             });
                     }
                 }
@@ -1192,9 +1212,14 @@ where
                         "extract_cavity_boundary: open boundary ridge"
                     );
                 }
+                // The open facet's cell is the cell to remove to close the boundary.
+                let open_cell = boundary_facets
+                    .get(info.first_facet)
+                    .map_or_else(CellKey::default, FacetHandle::cell_key);
                 return Err(ConflictError::OpenBoundary {
                     facet_count: info.facet_count,
                     ridge_vertex_count: info.ridge_vertex_count,
+                    open_cell,
                 });
             }
 
@@ -1204,15 +1229,25 @@ where
                     tracing::debug!(
                         facet_count = info.facet_count,
                         ridge_vertex_count = info.ridge_vertex_count,
+                        extra_facets = info.extra_facets.len(),
                         boundary_facets = boundary_facets.len(),
                         ridge_count = ridge_map.len(),
                         elapsed = ?start_time.elapsed(),
                         "extract_cavity_boundary: ridge fan"
                     );
                 }
+                // Collect the cell keys of the extra (3rd, 4th, …) facets so callers can
+                // reduce the conflict region to eliminate the fan without skipping the vertex.
+                let extra_cells: Vec<CellKey> = info
+                    .extra_facets
+                    .iter()
+                    .filter_map(|&fi| boundary_facets.get(fi))
+                    .map(FacetHandle::cell_key)
+                    .collect();
                 return Err(ConflictError::RidgeFan {
                     facet_count: info.facet_count,
                     ridge_vertex_count: info.ridge_vertex_count,
+                    extra_cells,
                 });
             }
 
@@ -1270,9 +1305,20 @@ where
                     "extract_cavity_boundary: disconnected boundary"
                 );
             }
+            // Collect de-duplicated cell keys from the unreachable (disconnected) component
+            // so callers can reduce the conflict region to eliminate the disconnection.
+            let mut seen = FastHashSet::<CellKey>::default();
+            let disconnected_cells: Vec<CellKey> = boundary_facets
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !visited[*i])
+                .map(|(_, fh)| fh.cell_key())
+                .filter(|ck| seen.insert(*ck))
+                .collect();
             return Err(ConflictError::DisconnectedBoundary {
                 visited: visited_count,
                 total: boundary_len,
+                disconnected_cells,
             });
         }
     }
@@ -2008,7 +2054,7 @@ mod tests {
 
         let err = extract_cavity_boundary(&tds, &conflict_cells).unwrap_err();
         match err {
-            ConflictError::DisconnectedBoundary { visited, total } => {
+            ConflictError::DisconnectedBoundary { visited, total, .. } => {
                 assert!(visited < total);
                 assert_eq!(total, 6);
             }
@@ -2104,6 +2150,7 @@ mod tests {
             ConflictError::RidgeFan {
                 facet_count,
                 ridge_vertex_count,
+                ..
             } => {
                 assert!(facet_count >= 3);
                 assert_eq!(ridge_vertex_count, 1);

@@ -99,7 +99,9 @@ where
         return repair_delaunay_with_flips_k2_attempt(tds, kernel, seed_cells, config);
     }
 
-    let max_flips = default_max_flips::<D>(tds.number_of_cells());
+    let max_flips = config
+        .max_flips_override
+        .unwrap_or_else(|| default_max_flips::<D>(tds.number_of_cells()));
 
     let mut stats = DelaunayRepairStats::default();
     let mut diagnostics = RepairDiagnostics::default();
@@ -2261,7 +2263,9 @@ where
         return Err(FlipError::UnsupportedDimension { dimension: D }.into());
     }
 
-    let max_flips = default_max_flips::<D>(tds.number_of_cells());
+    let max_flips = config
+        .max_flips_override
+        .unwrap_or_else(|| default_max_flips::<D>(tds.number_of_cells()));
 
     let mut stats = DelaunayRepairStats::default();
     let mut diagnostics = RepairDiagnostics::default();
@@ -2427,6 +2431,62 @@ where
     Ok(stats)
 }
 
+/// Single-pass local Delaunay repair intended for soft-fail use during bulk construction.
+///
+/// Unlike [`repair_delaunay_with_flips_k2_k3`], this function:
+/// - Does **not** clone the TDS (no rollback snapshot)
+/// - Runs exactly **one** flip pass seeded from the provided cells
+/// - Does **not** fall back to a full reseed on failure
+/// - Does **not** run a postcondition verification pass
+///
+/// Any remaining violations after a soft-fail are caught by the final global repair in
+/// `finalize_bulk_construction`.
+///
+/// # Errors
+///
+/// Returns [`DelaunayRepairError::NonConvergent`] if the flip budget is exceeded, or a
+/// hard error for structural failures.
+#[cfg(any(test, debug_assertions))]
+pub(crate) fn repair_delaunay_single_pass_local<K, U, V, const D: usize>(
+    tds: &mut Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    seed_cells: &[CellKey],
+) -> Result<DelaunayRepairStats, DelaunayRepairError>
+where
+    K: Kernel<D>,
+    K::Scalar: ScalarSummable,
+    U: DataType,
+    V: DataType,
+{
+    if D < 2 {
+        return Err(FlipError::UnsupportedDimension { dimension: D }.into());
+    }
+
+    // Cap the flip budget proportionally to the seed set size rather than the total cell count.
+    // For per-insertion local repair in bulk construction (D>=4), the seed set is ~D+1 cells
+    // (the star of the newly inserted vertex), so using total cell count would produce an
+    // enormous budget late in construction (e.g. 500 cells × 5 × 4 = 10,000 flips).
+    // A seed-proportional cap keeps each per-insertion repair fast.
+    let seed_proportional_max_flips = seed_cells
+        .len()
+        .saturating_mul(D.saturating_add(1))
+        .saturating_mul(8)
+        .max(64);
+
+    let config = RepairAttemptConfig {
+        attempt: 1,
+        queue_order: RepairQueueOrder::Fifo,
+        use_robust_on_ambiguous: cfg!(any(test, debug_assertions)) && D >= 3,
+        max_flips_override: Some(seed_proportional_max_flips),
+    };
+
+    if D == 2 {
+        repair_delaunay_with_flips_k2_attempt(tds, kernel, Some(seed_cells), &config)
+    } else {
+        repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, Some(seed_cells), &config)
+    }
+}
+
 /// Repair Delaunay violations using k=2 queues, k=3 queues in 3D,
 /// and inverse edge/triangle queues in higher dimensions.
 ///
@@ -2460,17 +2520,20 @@ where
         attempt: 1,
         queue_order: RepairQueueOrder::Fifo,
         use_robust_on_ambiguous: cfg!(any(test, debug_assertions)) && D >= 3,
+        max_flips_override: None,
     };
 
     let attempt2 = RepairAttemptConfig {
         attempt: 2,
         queue_order: RepairQueueOrder::Lifo,
         use_robust_on_ambiguous: true,
+        max_flips_override: None,
     };
     let attempt3 = RepairAttemptConfig {
         attempt: 3,
         queue_order: RepairQueueOrder::Fifo,
         use_robust_on_ambiguous: true,
+        max_flips_override: None,
     };
     // Snapshot the pre-repair state so a failed attempt doesn't poison retries.
     let tds_snapshot = tds.clone();
@@ -2666,6 +2729,7 @@ where
         attempt: 0,
         queue_order: RepairQueueOrder::Fifo,
         use_robust_on_ambiguous: true,
+        max_flips_override: None,
     };
 
     let mut stats = DelaunayRepairStats::default();
@@ -3106,6 +3170,10 @@ struct RepairAttemptConfig {
     attempt: usize,
     queue_order: RepairQueueOrder,
     use_robust_on_ambiguous: bool,
+    /// Override the flip budget. `None` uses `default_max_flips` (proportional to total cell
+    /// count). Set to `Some(n)` for per-insertion local repairs to avoid a runaway budget when
+    /// the triangulation is large but the seed set is small.
+    max_flips_override: Option<usize>,
 }
 
 fn non_convergent_error(
@@ -3315,8 +3383,23 @@ fn should_emit_ridge_debug() -> bool {
     current < limit
 }
 fn default_max_flips<const D: usize>(cell_count: usize) -> usize {
+    // Flip budget strategy by dimension and build mode:
+    //
+    // - D<=2: use 4× budget in debug/test (2D flips are fast).
+    // - D=3: use 16× budget in debug/test for extra robustness.
+    // - D>=4: use same 4× multiplier as release mode.
+    //
+    // Previously D>=4 used multiplier=0 (minimum 512 only) as a workaround for
+    // non-terminating repair loops that arose when the triangulation was incomplete
+    // (vertices skipped due to ridge fans).  Now that `insert_with_conflict_region`
+    // reduces the conflict region to eliminate ridge fans rather than skipping vertices,
+    // the triangulation is always fully populated and repair converges with the
+    // standard proportional budget.
     #[cfg(any(test, debug_assertions))]
-    let multiplier = if D >= 3 { 16 } else { 4 };
+    let multiplier = match D {
+        3 => 16,
+        _ => 4, // D<=2 and D>=4: proportional budget
+    };
     #[cfg(not(any(test, debug_assertions)))]
     let multiplier = 4;
     let base = cell_count

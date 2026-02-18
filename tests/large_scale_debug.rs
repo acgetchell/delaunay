@@ -43,6 +43,8 @@
 //! DELAUNAY_LARGE_DEBUG_SKIP_FINAL_REPAIR=1 \
 //! # Run bounded incremental flip repair every N successful insertions (incremental mode only; 0 disables; default: 128)
 //! DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=128 \
+//! # Hard wall-clock cap in seconds before the harness aborts (0 = no cap; default: 600)
+//! DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=600 \
 //! cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
 //! ```
 
@@ -60,6 +62,14 @@ use delaunay::prelude::triangulation::*;
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
+
+fn install_runtime_cap(max_secs: u64) {
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(max_secs));
+        eprintln!("=== TIMEOUT: wall time exceeded {max_secs} seconds — aborting ===");
+        std::process::exit(2);
+    });
+}
 
 #[derive(Debug, Clone)]
 struct SkipSample<const D: usize> {
@@ -236,6 +246,23 @@ impl ConstructionMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DebugMode {
+    /// Faster default: repair/check in cadence, with suspicion-driven automatic validation.
+    Cadenced,
+    /// Maximal diagnostics: strict guarantee + per-insertion automatic validation.
+    Strict,
+}
+
+impl DebugMode {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Cadenced => "cadenced",
+            Self::Strict => "strict",
+        }
+    }
+}
+
 impl PointDistribution {
     const fn name(self) -> &'static str {
         match self {
@@ -295,6 +322,23 @@ fn construction_mode_from_env() -> ConstructionMode {
     panic!(
         "invalid DELAUNAY_LARGE_DEBUG_CONSTRUCTION_MODE={raw:?} (expected 'new' or 'incremental')"
     );
+}
+
+fn debug_mode_from_env() -> DebugMode {
+    let Ok(raw) = std::env::var("DELAUNAY_LARGE_DEBUG_DEBUG_MODE") else {
+        return DebugMode::Cadenced;
+    };
+
+    let raw = raw.trim();
+    if raw.is_empty() || raw.eq_ignore_ascii_case("cadenced") {
+        return DebugMode::Cadenced;
+    }
+
+    if raw.eq_ignore_ascii_case("strict") {
+        return DebugMode::Strict;
+    }
+
+    panic!("invalid DELAUNAY_LARGE_DEBUG_DEBUG_MODE={raw:?} (expected 'cadenced' or 'strict')");
 }
 
 fn seed_for_case<const D: usize>(base_seed: u64, n_points: usize) -> u64 {
@@ -361,6 +405,13 @@ fn print_insertion_summary<const D: usize>(summary: &InsertionSummary<D>, elapse
 fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usize) {
     init_tracing();
 
+    // Install a hard wall-clock cap so the harness doesn't hang indefinitely.
+    // Override with DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS (0 = no cap).
+    let max_runtime_secs = env_usize("DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS").unwrap_or(600);
+    if max_runtime_secs > 0 {
+        install_runtime_cap(max_runtime_secs as u64);
+    }
+
     let base_seed = env_u64("DELAUNAY_LARGE_DEBUG_SEED").unwrap_or(42);
 
     let n_points = env_usize(&format!("DELAUNAY_LARGE_DEBUG_N_{D}D"))
@@ -376,21 +427,28 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
     let box_half_width = env_f64("DELAUNAY_LARGE_DEBUG_BOX_HALF_WIDTH").unwrap_or(100.0);
 
     let mode = construction_mode_from_env();
+    let debug_mode = debug_mode_from_env();
 
     let shuffle_seed = env_u64("DELAUNAY_LARGE_DEBUG_SHUFFLE_SEED");
     let progress_every = env_usize("DELAUNAY_LARGE_DEBUG_PROGRESS_EVERY")
         .unwrap_or(1000)
         .max(1);
-    let validate_every = env_usize("DELAUNAY_LARGE_DEBUG_VALIDATE_EVERY");
 
     let allow_skips = env_flag("DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS");
     let skip_final_repair = env_flag("DELAUNAY_LARGE_DEBUG_SKIP_FINAL_REPAIR");
 
-    // Delaunay repair scheduling: run a bounded local flip-repair pass every N successful insertions.
+    // Delaunay repair scheduling
     // - 0 disables incremental repair
     // - 1 runs repair after every insertion
     // - N>1 runs repair after every N successful insertions
     let repair_every = env_usize("DELAUNAY_LARGE_DEBUG_REPAIR_EVERY").unwrap_or(128);
+    let validate_every = env_usize("DELAUNAY_LARGE_DEBUG_VALIDATE_EVERY").or_else(|| {
+        if matches!(debug_mode, DebugMode::Cadenced) {
+            NonZeroUsize::new(repair_every).map(NonZeroUsize::get)
+        } else {
+            None
+        }
+    });
 
     println!("=============================================");
     println!("Large-scale triangulation debug: {dimension_name}");
@@ -409,12 +467,16 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
         PointDistribution::Box => println!("  box_half_width:{box_half_width}"),
     }
     println!("  construction_mode: {}", mode.name());
+    println!("  debug_mode:    {}", debug_mode.name());
     println!("  shuffle_seed:  {shuffle_seed:?}");
     println!("  progress_every:{progress_every}");
     println!("  validate_every:{validate_every:?}");
     println!("  allow_skips:   {allow_skips}");
     println!("  skip_final_repair: {skip_final_repair}");
     println!("  repair_every:  {repair_every}");
+    if max_runtime_secs > 0 {
+        println!("  max_runtime_secs: {max_runtime_secs}");
+    }
     println!();
 
     println!("Generating points...");
@@ -491,10 +553,18 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
                 println!("Shuffled insertion order with seed {shuffle_seed}");
             }
 
-            let mut dt: DelaunayTriangulation<_, (), (), D> =
-                DelaunayTriangulation::empty_with_topology_guarantee(
+            let (topology_guarantee, validation_policy) = match debug_mode {
+                DebugMode::Cadenced => {
+                    (TopologyGuarantee::PLManifold, ValidationPolicy::OnSuspicion)
+                }
+                DebugMode::Strict => (
                     TopologyGuarantee::PLManifoldStrict,
-                );
+                    ValidationPolicy::Always,
+                ),
+            };
+
+            let mut dt: DelaunayTriangulation<_, (), (), D> =
+                DelaunayTriangulation::empty_with_topology_guarantee(topology_guarantee);
 
             // Delaunay policies:
             // - Enable bounded incremental repair (local flip queue) every N successful insertions.
@@ -508,9 +578,10 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
             dt.set_delaunay_repair_policy(repair_policy);
             dt.set_delaunay_check_policy(DelaunayCheckPolicy::EndOnly);
 
-            // In incremental mode we want strict topology guarantees to be enforced immediately,
-            // so force validation to run after each insertion.
-            dt.set_validation_policy(ValidationPolicy::Always);
+            // Debug-mode-dependent topology validation strategy:
+            // - cadenced: suspicion-driven automatic checks + periodic explicit checks
+            // - strict: per-insertion automatic checks
+            dt.set_validation_policy(validation_policy);
 
             println!("Policies:");
             println!("  topology_guarantee:   {:?}", dt.topology_guarantee());
