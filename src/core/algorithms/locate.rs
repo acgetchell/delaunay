@@ -2150,6 +2150,96 @@ mod tests {
         ));
     }
 
+    /// `is_point_outside_facet` collects vertex points via `filter_map`, so a cell whose
+    /// vertex-key list contains a key that does not exist in the TDS will produce fewer
+    /// than `D+1` points and hit the degenerate-cell guard on line 613.
+    #[test]
+    fn test_is_point_outside_facet_degenerate_cell_missing_vertex_returns_none() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        // Build a valid cell first, then mutate its vertex list to include a missing key.
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let existing_vertices = tds.get_cell(cell_key).unwrap().vertices().to_vec();
+        let missing = VertexKey::from(KeyData::from_ffi(999_999));
+        {
+            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            cell.clear_vertex_keys();
+            cell.push_vertex_key(existing_vertices[0]);
+            cell.push_vertex_key(existing_vertices[1]);
+            cell.push_vertex_key(missing);
+        }
+
+        let kernel = FastKernel::<f64>::new();
+        let point = Point::new([0.3_f64, 0.3_f64]);
+
+        // Only 2 of the 3 vertices exist → cell_vertices.len() (2) != D+1 (3) → Ok(None).
+        let result = is_point_outside_facet(&tds, &kernel, cell_key, 0, &point);
+        assert!(
+            matches!(result, Ok(None)),
+            "degenerate cell with missing vertex should return Ok(None), got {result:?}"
+        );
+    }
+
+    /// `find_conflict_region` collects simplex points via `filter_map` in the BFS loop;
+    /// a conflict cell whose vertex-key list contains a key absent from the TDS produces
+    /// fewer than `D+1` points and returns `Err(CellDataAccessFailed)` (lines 793-795).
+    #[test]
+    fn test_find_conflict_region_degenerate_cell_returns_cell_data_access_failed() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        // Build valid cell then mutate one vertex to a missing key.
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let existing_vertices = tds.get_cell(cell_key).unwrap().vertices().to_vec();
+        let missing = VertexKey::from(KeyData::from_ffi(999_999));
+        {
+            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            cell.clear_vertex_keys();
+            cell.push_vertex_key(existing_vertices[0]);
+            cell.push_vertex_key(existing_vertices[1]);
+            cell.push_vertex_key(missing);
+        }
+
+        let kernel = FastKernel::<f64>::new();
+        let point = Point::new([0.3_f64, 0.3_f64]);
+
+        // BFS visits the cell; simplex_points.len() == 2 != D+1 == 3 → CellDataAccessFailed.
+        let result = find_conflict_region(&tds, &kernel, &point, cell_key);
+        assert!(
+            matches!(result, Err(ConflictError::CellDataAccessFailed { cell_key: ck, .. }) if ck == cell_key),
+            "expected CellDataAccessFailed for degenerate cell, got {result:?}"
+        );
+    }
+
+    /// Calling `locate_with_stats` with `hint = None` exercises the `_ =>` fallback arm
+    /// of the hint-match, which picks an arbitrary start cell and records `used_hint = false`.
+    #[test]
+    fn test_locate_with_stats_none_hint_picks_arbitrary_start_cell() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let kernel = FastKernel::<f64>::new();
+        let point = Point::new([0.25_f64, 0.25_f64]);
+
+        let (result, stats) = locate_with_stats(dt.tds(), &kernel, &point, None).unwrap();
+
+        assert!(matches!(result, LocateResult::InsideCell(_)));
+        assert!(!stats.used_hint, "None hint should set used_hint = false");
+        assert!(!stats.fell_back_to_scan());
+    }
+
     #[test]
     fn test_extract_cavity_boundary_rejects_ridge_fan_2d() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
