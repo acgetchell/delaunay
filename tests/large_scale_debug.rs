@@ -63,12 +63,27 @@ use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
 
-fn install_runtime_cap(max_secs: u64) {
+/// Installs a per-test wall-clock cap.
+///
+/// Spawns a watchdog thread that calls [`std::process::abort`] if `max_secs` elapses.
+/// Returns a [`std::sync::mpsc::SyncSender`] whose **drop** cancels the watchdog: when
+/// the sender is dropped (i.e. the test completes normally), the channel disconnects and
+/// the watchdog thread exits without aborting.  This prevents a stale watchdog installed
+/// for one test from firing during a subsequent test.
+fn install_runtime_cap(max_secs: u64) -> std::sync::mpsc::SyncSender<()> {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_secs(max_secs));
-        eprintln!("=== TIMEOUT: wall time exceeded {max_secs} seconds — aborting ===");
-        std::process::exit(2);
+        match rx.recv_timeout(Duration::from_secs(max_secs)) {
+            // Sender dropped (test finished) or explicit send — exit cleanly.
+            Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {}
+            // Deadline exceeded — hard abort.
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                eprintln!("=== TIMEOUT: wall time exceeded {max_secs} seconds — aborting ===");
+                std::process::abort();
+            }
+        }
     });
+    tx
 }
 
 #[derive(Debug, Clone)]
@@ -408,9 +423,9 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
     // Install a hard wall-clock cap so the harness doesn't hang indefinitely.
     // Override with DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS (0 = no cap).
     let max_runtime_secs = env_usize("DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS").unwrap_or(600);
-    if max_runtime_secs > 0 {
-        install_runtime_cap(max_runtime_secs as u64);
-    }
+    // Hold the sender for the lifetime of this function; dropping it at return
+    // cancels the watchdog thread so it does not outlive this test.
+    let _watchdog = (max_runtime_secs > 0).then(|| install_runtime_cap(max_runtime_secs as u64));
 
     let base_seed = env_u64("DELAUNAY_LARGE_DEBUG_SEED").unwrap_or(42);
 

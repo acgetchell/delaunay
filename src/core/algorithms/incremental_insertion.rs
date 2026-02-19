@@ -2627,6 +2627,15 @@ mod tests {
             })
             .is_retryable()
         );
+        // extra_cells contents do not affect retryability — a non-empty vec is also retryable.
+        assert!(
+            InsertionError::ConflictRegion(ConflictError::RidgeFan {
+                facet_count: 3,
+                ridge_vertex_count: 2,
+                extra_cells: vec![CellKey::from(KeyData::from_ffi(1))],
+            })
+            .is_retryable()
+        );
         assert!(
             !InsertionError::ConflictRegion(ConflictError::InvalidStartCell {
                 cell_key: CellKey::from(KeyData::from_ffi(u64::MAX)),

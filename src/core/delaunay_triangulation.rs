@@ -2784,16 +2784,17 @@ where
                             if used_heuristic {
                                 self.insertion_state.last_inserted_cell = None;
                             }
-                            // For D>=4 in debug/test mode: run a per-insertion local
+                            // For D>=3 in debug/test mode: run a per-insertion local
                             // Delaunay repair (seeded from the newly inserted vertex's star)
                             // to prevent violation accumulation during bulk construction.
-                            // Without this, all violations accumulate until finalize time
-                            // and the global repair must process O(n_cells * D^2) queue items
-                            // -- prohibitively slow in debug mode for D>=4.
+                            // Without this, violations from star-splits and non-Delaunay
+                            // insertions accumulate until finalize time and the global repair
+                            // must process O(n_cells * D^2) queue items -- prohibitively slow
+                            // in debug mode even for D=3 with many star-split fallbacks.
                             // Soft-fails (logs, does NOT abort) because the final global
                             // repair in finalize_bulk_construction catches any stragglers.
                             #[cfg(any(test, debug_assertions))]
-                            if D >= 4 {
+                            if D >= 3 {
                                 let seed_cells: Vec<CellKey> =
                                     self.tri.adjacent_cells(v_key).collect();
                                 if !seed_cells.is_empty() {
@@ -2808,7 +2809,7 @@ where
                                                 seeds = seed_cells.len(),
                                                 cells = self.tri.tds.number_of_cells(),
                                                 flips = stats.flips_performed,
-                                                "bulk D>=4: per-insertion local repair ok"
+                                                "bulk D>={D}: per-insertion local repair ok"
                                             );
                                         }
                                         Err(e) => {
@@ -2817,7 +2818,7 @@ where
                                                 idx = index,
                                                 seeds = seed_cells.len(),
                                                 cells = self.tri.tds.number_of_cells(),
-                                                "bulk D>=4: per-insertion local repair soft-failed; \
+                                                "bulk D>={D}: per-insertion local repair soft-failed; \
                                                  global repair will handle remaining violations"
                                             );
                                         }
@@ -2932,7 +2933,7 @@ where
                             }
                             // Same soft-fail per-insertion local repair as the non-stats branch above.
                             #[cfg(any(test, debug_assertions))]
-                            if D >= 4 {
+                            if D >= 3 {
                                 let seed_cells: Vec<CellKey> =
                                     self.tri.adjacent_cells(v_key).collect();
                                 if !seed_cells.is_empty() {
@@ -2947,7 +2948,7 @@ where
                                                 seeds = seed_cells.len(),
                                                 cells = self.tri.tds.number_of_cells(),
                                                 flips = stats.flips_performed,
-                                                "bulk D>=4: per-insertion local repair ok"
+                                                "bulk D>={D}: per-insertion local repair ok"
                                             );
                                         }
                                         Err(e) => {
@@ -2956,7 +2957,7 @@ where
                                                 idx = index,
                                                 seeds = seed_cells.len(),
                                                 cells = self.tri.tds.number_of_cells(),
-                                                "bulk D>=4: per-insertion local repair soft-failed; \
+                                                "bulk D>={D}: per-insertion local repair soft-failed; \
                                                  global repair will handle remaining violations"
                                             );
                                         }

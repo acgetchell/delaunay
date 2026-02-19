@@ -3395,10 +3395,10 @@ where
 
         // Extract cavity boundary.
         //
-        // For D>=4, iteratively resolve cavity-boundary errors rather than falling back to a
-        // star-split.  Star-splits in high dimensions create configurations that the k=2/k=3
-        // bistellar-flip repair cannot efficiently undo, causing the global repair to run for
-        // an extremely long time or fail to converge.  Instead we reshape the conflict region:
+        // Iteratively resolve cavity-boundary errors rather than immediately falling back to a
+        // star-split.  Star-splits create non-Delaunay configurations that the global flip repair
+        // must fix; in high dimensions this is extremely slow.  In all dimensions it is better
+        // to first attempt to reshape the conflict region:
         //
         //   • RidgeFan          – SHRINK: remove extra fan cells (3rd, 4th, … facets).
         //   • DisconnectedBnd   – EXPAND: add the non-conflict neighbors of the disconnected
@@ -3408,13 +3408,15 @@ where
         //   • OpenBoundary      – SHRINK: remove the cell with the dangling facet.
         //
         // After each reshape we re-run extract_cavity_boundary.  If the loop exhausts its
-        // budget without producing a valid boundary, we return a retryable error (for D>=4)
-        // so that insert_transactional can retry with a perturbed vertex instead of creating
-        // an un-repairable star-split.
+        // budget without producing a valid boundary:
+        //   • D>=4: return a retryable error so insert_transactional retries with a perturbed
+        //     vertex instead of creating an un-repairable star-split.
+        //   • D<4:  fall through to the existing star-split fallback (the 2D/3D flip repair
+        //     guarantees convergence even from star-split configurations).
         let mut boundary_facets = {
             let mut extraction_result = extract_cavity_boundary(&self.tds, &conflict_cells);
 
-            if D >= 4 {
+            {
                 const MAX_CAVITY_ITERATIONS: usize = 32;
                 let mut iterations: usize = 0;
 
@@ -3516,15 +3518,16 @@ where
             match extraction_result {
                 Ok(boundary) => boundary,
                 Err(err) => {
-                    // For D>=4: do NOT fall back to star-split.  Star-splits in high dimensions
-                    // create configurations the k=2/k=3 flip repair cannot efficiently undo,
-                    // leading to extremely slow or non-convergent global repair.  Return a
-                    // retryable error instead so insert_transactional can retry with a perturbed
-                    // vertex (and build_with_shuffled_retries can try a different ordering).
+                    // For D>=3: do NOT fall back to star-split once cavity reduction is
+                    // exhausted.  Star-splits create heavily non-Delaunay configurations that
+                    // cause the global flip repair to spend hours cycling, especially for D=3
+                    // inputs with many near-degenerate configurations.  Return a retryable
+                    // error instead so insert_transactional can retry with a perturbed vertex.
                     //
-                    // For D<4: use the existing star-split fallback (the 2D/3D flip repair can
-                    // always handle star-split configurations).
-                    let should_fallback = D < 4
+                    // For D=2: star-split is used as a last resort.  The 2D flip repair
+                    // guarantees convergence from star-split configurations and the extra cells
+                    // are quickly handled by the k=2 repair loop.
+                    let should_fallback = D < 3
                         && matches!(
                             err,
                             ConflictError::NonManifoldFacet { .. }
@@ -3554,11 +3557,9 @@ where
                         Self::star_split_boundary_facets(start_cell)
                     } else {
                         #[cfg(debug_assertions)]
-                        if D >= 4 {
-                            tracing::debug!(
-                                "D={D}: cavity boundary unresolvable ({err}); returning retryable error"
-                            );
-                        }
+                        tracing::debug!(
+                            "D={D}: cavity boundary unresolvable ({err}); returning retryable error"
+                        );
                         return Err(err.into());
                     }
                 }

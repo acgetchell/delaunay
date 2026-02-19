@@ -1213,9 +1213,21 @@ where
                     );
                 }
                 // The open facet's cell is the cell to remove to close the boundary.
+                // first_facet is always a valid index by construction (it is set during the
+                // same boundary-building traversal), so None here is an internal
+                // consistency error — return CellDataAccessFailed rather than a null key.
                 let open_cell = boundary_facets
                     .get(info.first_facet)
-                    .map_or_else(CellKey::default, FacetHandle::cell_key);
+                    .ok_or_else(|| ConflictError::CellDataAccessFailed {
+                        cell_key: CellKey::default(),
+                        message: format!(
+                            "OpenBoundary: boundary_facets missing first_facet index {} \
+                             (boundary_facets.len()={})",
+                            info.first_facet,
+                            boundary_facets.len(),
+                        ),
+                    })
+                    .map(FacetHandle::cell_key)?;
                 return Err(ConflictError::OpenBoundary {
                     facet_count: info.facet_count,
                     ridge_vertex_count: info.ridge_vertex_count,
@@ -1238,11 +1250,21 @@ where
                 }
                 // Collect the cell keys of the extra (3rd, 4th, …) facets so callers can
                 // reduce the conflict region to eliminate the fan without skipping the vertex.
+                // Every index in extra_facets is written by the same traversal that populates
+                // boundary_facets, so an out-of-range index is an internal logic error — assert
+                // loudly instead of silently dropping it with filter_map.
+                debug_assert!(
+                    info.extra_facets
+                        .iter()
+                        .all(|&fi| fi < boundary_facets.len()),
+                    "RidgeFan extra_facets index out of bounds: extra_facets={:?}, boundary_facets.len()={}",
+                    info.extra_facets,
+                    boundary_facets.len(),
+                );
                 let extra_cells: Vec<CellKey> = info
                     .extra_facets
                     .iter()
-                    .filter_map(|&fi| boundary_facets.get(fi))
-                    .map(FacetHandle::cell_key)
+                    .map(|&fi| boundary_facets[fi].cell_key())
                     .collect();
                 return Err(ConflictError::RidgeFan {
                     facet_count: info.facet_count,
@@ -2054,9 +2076,23 @@ mod tests {
 
         let err = extract_cavity_boundary(&tds, &conflict_cells).unwrap_err();
         match err {
-            ConflictError::DisconnectedBoundary { visited, total, .. } => {
+            ConflictError::DisconnectedBoundary {
+                visited,
+                total,
+                disconnected_cells,
+            } => {
                 assert!(visited < total);
                 assert_eq!(total, 6);
+                assert!(
+                    !disconnected_cells.is_empty(),
+                    "disconnected_cells should be non-empty"
+                );
+                for ck in &disconnected_cells {
+                    assert!(
+                        tds.contains_cell(*ck),
+                        "disconnected cell key {ck:?} should be present in the TDS"
+                    );
+                }
             }
             other => panic!("Expected DisconnectedBoundary, got {other:?}"),
         }
@@ -2150,10 +2186,21 @@ mod tests {
             ConflictError::RidgeFan {
                 facet_count,
                 ridge_vertex_count,
-                ..
+                extra_cells,
             } => {
                 assert!(facet_count >= 3);
                 assert_eq!(ridge_vertex_count, 1);
+                assert_eq!(
+                    extra_cells.len(),
+                    facet_count - 2,
+                    "extra_cells.len() should equal facet_count - 2"
+                );
+                for ck in &extra_cells {
+                    assert!(
+                        tds.contains_cell(*ck),
+                        "extra cell key {ck:?} should be present in the TDS"
+                    );
+                }
             }
             other => panic!("Expected RidgeFan, got {other:?}"),
         }

@@ -2463,15 +2463,25 @@ where
     }
 
     // Cap the flip budget proportionally to the seed set size rather than the total cell count.
-    // For per-insertion local repair in bulk construction (D>=4), the seed set is ~D+1 cells
-    // (the star of the newly inserted vertex), so using total cell count would produce an
-    // enormous budget late in construction (e.g. 500 cells × 5 × 4 = 10,000 flips).
-    // A seed-proportional cap keeps each per-insertion repair fast.
+    // For per-insertion local repair in bulk construction, the seed set is ~D+1 cells (the
+    // star of the newly inserted vertex).  Using the total cell count would produce an enormous
+    // budget late in construction (e.g. 500 cells × 5 × 4 = 10,000 flips).
+    //
+    // The multiplier is dimension-sensitive:
+    //   D<=3: multiplier=1, minimum=16.  Each flip in D=3 spawns D new cells whose facets and
+    //         ridges must all be rechecked; a larger multiplier burns hundreds of ms per
+    //         insertion and causes construction to exceed the harness timeout.  Any remaining
+    //         violations after the small budget are cleaned up by the global repair, which
+    //         handles D=3 robustly via the guaranteed-convergent k=2/k=3 flip sequence.
+    //   D>=4: multiplier=8, minimum=64.  High-dimensional repairs propagate fewer cells per
+    //         flip, so a larger budget produces meaningfully better local repair quality.
+    let (per_insertion_multiplier, per_insertion_min): (usize, usize) =
+        if D >= 4 { (8, 64) } else { (1, 16) };
     let seed_proportional_max_flips = seed_cells
         .len()
         .saturating_mul(D.saturating_add(1))
-        .saturating_mul(8)
-        .max(64);
+        .saturating_mul(per_insertion_multiplier)
+        .max(per_insertion_min);
 
     let config = RepairAttemptConfig {
         attempt: 1,
@@ -3386,7 +3396,10 @@ fn default_max_flips<const D: usize>(cell_count: usize) -> usize {
     // Flip budget strategy by dimension and build mode:
     //
     // - D<=2: use 4× budget in debug/test (2D flips are fast).
-    // - D=3: use 16× budget in debug/test for extra robustness.
+    // - D=3: use 8× budget in debug/test.  Previously 16× but that caused the global repair
+    //   to spend hours cycling through flip loops when many star-splits produced a heavily
+    //   non-Delaunay triangulation.  8× still provides headroom for legitimate convergence
+    //   while failing faster (triggering the heuristic rebuild sooner) when cycling.
     // - D>=4: use same 4× multiplier as release mode.
     //
     // Previously D>=4 used multiplier=0 (minimum 512 only) as a workaround for
@@ -3397,7 +3410,7 @@ fn default_max_flips<const D: usize>(cell_count: usize) -> usize {
     // standard proportional budget.
     #[cfg(any(test, debug_assertions))]
     let multiplier = match D {
-        3 => 16,
+        3 => 8,
         _ => 4, // D<=2 and D>=4: proportional budget
     };
     #[cfg(not(any(test, debug_assertions)))]
