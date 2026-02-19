@@ -3409,9 +3409,9 @@ where
         //
         // After each reshape we re-run extract_cavity_boundary.  If the loop exhausts its
         // budget without producing a valid boundary:
-        //   • D>=4: return a retryable error so insert_transactional retries with a perturbed
+        //   • D>=3: return a retryable error so insert_transactional retries with a perturbed
         //     vertex instead of creating an un-repairable star-split.
-        //   • D<4:  fall through to the existing star-split fallback (the 2D/3D flip repair
+        //   • D<3:  fall through to the existing star-split fallback (the 2D flip repair
         //     guarantees convergence even from star-split configurations).
         let mut boundary_facets = {
             let mut extraction_result = extract_cavity_boundary(&self.tds, &conflict_cells);

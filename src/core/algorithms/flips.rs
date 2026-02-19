@@ -2462,6 +2462,13 @@ where
         return Err(FlipError::UnsupportedDimension { dimension: D }.into());
     }
 
+    // Enforce the local-only contract: an empty seed set means nothing to repair locally.
+    // Without this guard, seed_repair_queues falls back to global seeding when present == 0,
+    // defeating the purpose of the localised pass and burning the full cell-count budget.
+    if seed_cells.is_empty() {
+        return Ok(DelaunayRepairStats::default());
+    }
+
     // Cap the flip budget proportionally to the seed set size rather than the total cell count.
     // For per-insertion local repair in bulk construction, the seed set is ~D+1 cells (the
     // star of the newly inserted vertex).  Using the total cell count would produce an enormous
@@ -6740,5 +6747,98 @@ mod tests {
         .unwrap();
         assert!(stats.facets_checked > 0);
         assert!(tds.is_valid().is_ok());
+    }
+
+    // ==========================================================================
+    // Tests for repair_delaunay_single_pass_local
+    // ==========================================================================
+
+    #[test]
+    fn test_repair_single_pass_local_empty_seeds_returns_ok() {
+        // An empty seed set must return Ok(default stats) immediately without
+        // performing any work.  This exercises the early-return guard added to
+        // prevent global-reseed fallback when the local contract is violated.
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let kernel = FastKernel::<f64>::new();
+
+        let result = repair_delaunay_single_pass_local(&mut tds, &kernel, &[]);
+        let stats = result.expect("empty seed set should return Ok");
+        assert_eq!(stats.flips_performed, 0);
+        assert_eq!(stats.facets_checked, 0);
+    }
+
+    #[test]
+    fn test_repair_single_pass_local_d_less_than_2_returns_error() {
+        // D < 2 must return Err(Flip(UnsupportedDimension)) before any repair
+        // is attempted.  This exercises the dimension guard that fires first.
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 1> = Tds::empty();
+        let kernel = FastKernel::<f64>::new();
+
+        // The dimension check fires before the empty-seeds check, so seeds do
+        // not matter here.
+        let result = repair_delaunay_single_pass_local(&mut tds, &kernel, &[]);
+        assert!(result.is_err(), "D=1 should return an error");
+        assert!(
+            matches!(
+                result.unwrap_err(),
+                DelaunayRepairError::Flip(FlipError::UnsupportedDimension { dimension: 1 })
+            ),
+            "expected Flip(UnsupportedDimension {{ dimension: 1 }})"
+        );
+    }
+
+    #[test]
+    fn test_repair_single_pass_local_d2_uses_k2_repair() {
+        // D=2: exercises the `if D == 2` branch, which delegates to
+        // repair_delaunay_with_flips_k2_attempt.
+        init_tracing();
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([0.5, 0.5]),
+        ];
+        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let mut tds = dt.tds().clone();
+        let kernel = FastKernel::<f64>::new();
+
+        let seed_cells: Vec<CellKey> = tds.cell_keys().collect();
+        assert!(!seed_cells.is_empty(), "need seed cells for the D=2 path");
+
+        let stats = repair_delaunay_single_pass_local(&mut tds, &kernel, &seed_cells)
+            .expect("D=2 single-pass repair should succeed");
+        assert!(tds.is_valid().is_ok());
+        // At least the seed-proportional budget path was entered.
+        let _ = stats;
+    }
+
+    #[test]
+    fn test_repair_single_pass_local_d4_uses_high_budget() {
+        // D=4: exercises the `D >= 4` branch, which uses multiplier (8, 64)
+        // instead of the default (1, 16).
+        init_tracing();
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+            vertex!([0.2, 0.2, 0.2, 0.2]),
+        ];
+        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 4> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let mut tds = dt.tds().clone();
+        let kernel = FastKernel::<f64>::new();
+
+        let seed_cells: Vec<CellKey> = tds.cell_keys().collect();
+        assert!(!seed_cells.is_empty(), "need seed cells for the D=4 path");
+
+        let stats = repair_delaunay_single_pass_local(&mut tds, &kernel, &seed_cells)
+            .expect("D=4 single-pass repair should succeed");
+        assert!(tds.is_valid().is_ok());
+        let _ = stats;
     }
 }
