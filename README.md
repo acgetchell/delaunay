@@ -157,6 +157,7 @@ This includes information about:
 - **[Invariants](docs/invariants.md)** - Theoretical background and rationale for the topological and geometric invariants
 - **[Numerical Robustness Guide](docs/numerical_robustness_guide.md)** - Robustness strategies, kernels, and retry/repair behavior
 - **[Property Testing Summary](docs/property_testing_summary.md)** - Property-based testing with proptest (where tests live, how to run)
+- **[Known Issues](docs/KNOWN_ISSUES_4D.md)** - Known limitations for large-scale and 4D bulk construction
 - **[Releasing](docs/RELEASING.md)** - Release workflow (changelog + benchmarks + publish)
 - **[Topology](docs/topology.md)** - Level 3 topology validation (manifoldness + Euler characteristic) and module overview
 - **[Validation Guide](docs/validation.md)** - Comprehensive 4-level validation hierarchy guide (element → structural → manifold → Delaunay)

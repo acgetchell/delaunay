@@ -79,6 +79,7 @@ delaunay/
 │   ├── templates/
 │   │   ├── README.md
 │   │   └── changelog.hbs
+│   ├── KNOWN_ISSUES_4D.md
 │   ├── README.md
 │   ├── RELEASING.md
 │   ├── api_design.md
