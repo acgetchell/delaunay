@@ -1113,8 +1113,11 @@ class PerformanceSummaryGenerator:
             def brief_label(desc: str, position: int) -> str:
                 """Extract label from description or use position-based default."""
                 if "best in" in desc:
-                    # Extract just the dimension info: "(best in 2D, 3D)"
-                    return desc.split(" - ")[0]
+                    # Extract just the dimension info without outer parens;
+                    # the caller's f-string wraps the result in (...) already.
+                    # Use removeprefix/removesuffix (not strip) to avoid
+                    # accidentally removing internal parentheses.
+                    return desc.split(" - ")[0].removeprefix("(").removesuffix(")")
                 defaults = ["fastest average", "second fastest", "third fastest"]
                 return defaults[position] if position < len(defaults) else "slower"
 
