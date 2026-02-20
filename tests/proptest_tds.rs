@@ -419,3 +419,40 @@ gen_cell_vertex_count!(3, 4);
 gen_cell_vertex_count!(4, 5, #[ignore = "Slow (>60s) in test-integration"]);
 
 gen_cell_vertex_count!(5, 6, #[ignore = "Slow (>60s) in test-integration"]);
+
+// =============================================================================
+// CONNECTIVITY TESTS (2D-5D)
+// =============================================================================
+//
+// Property: every successfully-constructed Delaunay triangulation is connected.
+// This validates that `Tds::is_connected` (BFS over neighbor pointers) does not
+// produce false negatives on well-formed triangulations.
+
+macro_rules! gen_is_connected {
+    ($dim:literal $(, #[$attr:meta])*) => {
+        pastey::paste! {
+            proptest! {
+                $(#[$attr])*
+                #[test]
+                fn [<prop_tds_is_connected_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                        prop_assert!(
+                            dt.tds().is_connected(),
+                            "{}D successfully-built triangulation must be connected ({} cells)",
+                            $dim,
+                            dt.tds().number_of_cells()
+                        );
+                    }
+                }
+            }
+        }
+    };
+}
+
+gen_is_connected!(2);
+
+gen_is_connected!(3);
+
+gen_is_connected!(4, #[ignore = "Slow (>60s) in test-integration"]);
+
+gen_is_connected!(5, #[ignore = "Slow (>60s) in test-integration"]);

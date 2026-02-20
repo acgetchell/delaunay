@@ -2009,33 +2009,34 @@ where
     /// assert!(dt.as_triangulation().is_valid().is_ok());
     /// ```
     pub fn is_valid(&self) -> Result<(), TriangulationValidationError> {
-        // 1. Manifold facet multiplicity (codimension-1 pseudomanifold condition)
+        // 1. Connectedness — O(N·D) BFS over neighbor pointers.
+        //
+        // Checked first because it is cheaper than building the facet-to-cells map
+        // (which requires O(N·D) hash-map insertions plus allocations) and avoids
+        // all subsequent work when the triangulation is disconnected.
+        self.validate_global_connectedness()?;
+
+        // 2. Manifold facet multiplicity (codimension-1 pseudomanifold condition)
         //
         // Build the facet map once and reuse it for manifold validation and Euler counting.
         let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
         validate_facet_degree(&facet_to_cells)?;
 
-        // 1b. Boundary manifoldness in codimension 2: the boundary must be "closed"
+        // 2b. Boundary manifoldness in codimension 2: the boundary must be "closed"
         // (i.e., its ridges must have degree 2 within boundary facets).
         validate_closed_boundary(&self.tds, &facet_to_cells)?;
 
-        // 1c. Ridge-link validation for PLManifold/PLManifoldStrict (fast, catches many PL issues).
+        // 2c. Ridge-link validation for PLManifold/PLManifoldStrict (fast, catches many PL issues).
         if self.topology_guarantee.requires_ridge_links() {
             validate_ridge_links(&self.tds)?;
         }
-        // 1d. PL-manifold vertex-link condition during insertion (strict mode).
+        // 2d. PL-manifold vertex-link condition during insertion (strict mode).
         if self
             .topology_guarantee
             .requires_vertex_links_during_insertion()
         {
             validate_vertex_links(&self.tds, &facet_to_cells)?;
         }
-
-        // 2. Connectedness (single component in the cell neighbor graph).
-        //
-        // This is cheaper than Euler characteristic validation and catches cases where χ can
-        // still match even though the triangulation is disconnected.
-        self.validate_global_connectedness()?;
 
         // 3. Vertex incidence (manifold invariant): every vertex must be incident to at least one cell.
         self.validate_no_isolated_vertices()?;
@@ -2209,33 +2210,18 @@ where
 
     /// Validates that the triangulation's cell neighbor graph is a single connected component.
     ///
-    /// This is an O(N·D) traversal (equivalently O(N+E) with bounded degree), where N is the
-    /// number of cells and each cell has at most D+1 neighbors.
+    /// Delegates to [`Tds::is_connected`], an O(N·D) BFS over neighbor pointers.
     fn validate_global_connectedness(&self) -> Result<(), TriangulationValidationError> {
-        let total_cells = self.tds.number_of_cells();
-        if total_cells == 0 {
-            return Ok(());
-        }
-
-        let start = self.tds.cell_keys().next().ok_or_else(|| {
-            TdsValidationError::InconsistentDataStructure {
-                message: "Triangulation has non-zero cell count but no cell keys".to_string(),
-            }
-        })?;
-
-        let visited = self.traverse_cell_neighbor_graph(start, total_cells, None, |_from, _to| {});
-
-        if visited.len() != total_cells {
+        if !self.tds.is_connected() {
             return Err(TdsValidationError::InconsistentDataStructure {
                 message: format!(
-                    "Disconnected triangulation: visited {} of {} cells in the cell neighbor graph",
-                    visited.len(),
-                    total_cells
+                    "Disconnected triangulation: cell neighbor graph is not a single connected \
+                     component ({} cells total)",
+                    self.tds.number_of_cells()
                 ),
             }
             .into());
         }
-
         Ok(())
     }
 
@@ -3393,39 +3379,181 @@ where
             conflict_cells.push(start_cell);
         }
 
-        // Extract cavity boundary
-        let mut boundary_facets = match extract_cavity_boundary(&self.tds, &conflict_cells) {
-            Ok(boundary) => boundary,
-            Err(err) => {
-                let should_fallback = matches!(
-                    err,
-                    ConflictError::NonManifoldFacet { .. }
-                        | ConflictError::RidgeFan { .. }
-                        | ConflictError::DisconnectedBoundary { .. }
-                        | ConflictError::OpenBoundary { .. }
-                );
+        // Extract cavity boundary.
+        //
+        // Iteratively resolve cavity-boundary errors rather than immediately falling back to a
+        // star-split.  Star-splits create non-Delaunay configurations that the global flip repair
+        // must fix; in high dimensions this is extremely slow.  In all dimensions it is better
+        // to first attempt to reshape the conflict region:
+        //
+        //   • RidgeFan          – SHRINK: remove extra fan cells (3rd, 4th, … facets).
+        //   • DisconnectedBnd   – EXPAND: add the non-conflict neighbors of the disconnected
+        //                         cells to fill the topological "hole" in the conflict region
+        //                         that causes the disconnected boundary.  Falls back to SHRINK
+        //                         if no non-conflict neighbors are found.
+        //   • OpenBoundary      – SHRINK: remove the cell with the dangling facet.
+        //
+        // After each reshape we re-run extract_cavity_boundary.  If the loop exhausts its
+        // budget without producing a valid boundary:
+        //   • D>=3: return a retryable error so insert_transactional retries with a perturbed
+        //     vertex instead of creating an un-repairable star-split.
+        //   • D<3:  fall through to the existing star-split fallback (the 2D flip repair
+        //     guarantees convergence even from star-split configurations).
+        let mut boundary_facets = {
+            let mut extraction_result = extract_cavity_boundary(&self.tds, &conflict_cells);
 
-                if should_fallback {
-                    let Some(start_cell) = fallback_cell else {
+            {
+                const MAX_CAVITY_ITERATIONS: usize = 32;
+                let mut iterations: usize = 0;
+
+                loop {
+                    if iterations >= MAX_CAVITY_ITERATIONS {
+                        break;
+                    }
+                    iterations += 1;
+
+                    match &extraction_result {
+                        // RidgeFan: SHRINK – remove the cells contributing extra boundary facets.
+                        Err(ConflictError::RidgeFan { extra_cells, .. })
+                            if !extra_cells.is_empty() && conflict_cells.len() > D + 1 =>
+                        {
+                            #[cfg(debug_assertions)]
+                            tracing::debug!(
+                                remove_count = extra_cells.len(),
+                                conflict_cells_before = conflict_cells.len(),
+                                "D={D}: cavity reduction (RidgeFan shrink)"
+                            );
+                            let remove_set: FastHashSet<CellKey> =
+                                extra_cells.iter().copied().collect();
+                            conflict_cells.retain(|k| !remove_set.contains(k));
+                        }
+
+                        // DisconnectedBoundary: EXPAND – add non-conflict neighbors of the
+                        // disconnected cells to fill the topological hole.  These cells form the
+                        // "inner wall" of a donut-shaped conflict region; their non-conflict
+                        // neighbors are the hole cells that, when added, reconnect the boundary.
+                        // Falls back to SHRINK if no non-conflict neighbors exist.
+                        Err(ConflictError::DisconnectedBoundary {
+                            disconnected_cells, ..
+                        }) if !disconnected_cells.is_empty() => {
+                            let conflict_set: FastHashSet<CellKey> =
+                                conflict_cells.iter().copied().collect();
+                            let mut cells_to_add: FastHashSet<CellKey> = FastHashSet::default();
+                            for &dc in disconnected_cells {
+                                if let Some(cell) = self.tds.get_cell(dc)
+                                    && let Some(neighbors) = cell.neighbors()
+                                {
+                                    for &neighbor_opt in neighbors {
+                                        if let Some(nk) = neighbor_opt
+                                            && !conflict_set.contains(&nk)
+                                        {
+                                            cells_to_add.insert(nk);
+                                        }
+                                    }
+                                }
+                            }
+
+                            if !cells_to_add.is_empty() {
+                                // EXPAND: add the hole-filling cells.
+                                #[cfg(debug_assertions)]
+                                tracing::debug!(
+                                    add_count = cells_to_add.len(),
+                                    conflict_cells_before = conflict_cells.len(),
+                                    "D={D}: cavity expansion (DisconnectedBoundary hole-fill)"
+                                );
+                                for k in cells_to_add {
+                                    conflict_cells.push(k);
+                                }
+                            } else if conflict_cells.len() > D + 1 {
+                                // SHRINK fallback: no non-conflict neighbors found.
+                                #[cfg(debug_assertions)]
+                                tracing::debug!(
+                                    remove_count = disconnected_cells.len(),
+                                    conflict_cells_before = conflict_cells.len(),
+                                    "D={D}: cavity reduction (DisconnectedBoundary shrink fallback)"
+                                );
+                                let remove_set: FastHashSet<CellKey> =
+                                    disconnected_cells.iter().copied().collect();
+                                conflict_cells.retain(|k| !remove_set.contains(k));
+                            } else {
+                                break;
+                            }
+                        }
+
+                        // OpenBoundary: SHRINK – remove the cell with the dangling facet.
+                        Err(ConflictError::OpenBoundary { open_cell, .. })
+                            if conflict_cells.len() > D + 1 =>
+                        {
+                            #[cfg(debug_assertions)]
+                            tracing::debug!(
+                                ?open_cell,
+                                conflict_cells_before = conflict_cells.len(),
+                                "D={D}: cavity reduction (OpenBoundary shrink)"
+                            );
+                            let open = *open_cell;
+                            conflict_cells.retain(|k| *k != open);
+                        }
+
+                        _ => break,
+                    }
+
+                    extraction_result = extract_cavity_boundary(&self.tds, &conflict_cells);
+                }
+            }
+
+            match extraction_result {
+                Ok(boundary) => boundary,
+                Err(err) => {
+                    // For D=3 and D≥4: do NOT fall back to star-split once cavity reduction
+                    // is exhausted.  Star-splits create heavily non-Delaunay configurations
+                    // (the star of the new vertex is only D+1 cells instead of the correct
+                    // conflict region) whose violations cannot be reliably fixed by the flip
+                    // repair: isolated violations may exist in cells that are not connected to
+                    // the star-split star through any violation chain.  Return a retryable
+                    // error instead so insert_transactional can retry with a perturbed vertex
+                    // and, after all retries, skip the vertex.  A valid Delaunay triangulation
+                    // with a few skipped vertices is preferable to an invalid one with all of
+                    // them (the is_delaunay_property_only() check in build_with_shuffled_retries
+                    // will reject the latter anyway).
+                    //
+                    // For D=2: star-split is used as a last resort.  The 2D flip repair
+                    // guarantees convergence from star-split configurations and the extra cells
+                    // are quickly handled by the k=2 repair loop.
+                    let should_fallback = D < 3
+                        && matches!(
+                            err,
+                            ConflictError::NonManifoldFacet { .. }
+                                | ConflictError::RidgeFan { .. }
+                                | ConflictError::DisconnectedBoundary { .. }
+                                | ConflictError::OpenBoundary { .. }
+                        );
+
+                    if should_fallback {
+                        let Some(start_cell) = fallback_cell else {
+                            return Err(err.into());
+                        };
+
+                        suspicion.fallback_star_split = true;
+
+                        #[cfg(debug_assertions)]
+                        tracing::warn!(
+                            "Conflict region degeneracy ({err}); falling back to star-split of cell {start_cell:?}"
+                        );
+
+                        conflict_cells = {
+                            let mut owned = CellKeyBuffer::new();
+                            owned.push(start_cell);
+                            owned
+                        };
+
+                        Self::star_split_boundary_facets(start_cell)
+                    } else {
+                        #[cfg(debug_assertions)]
+                        tracing::debug!(
+                            "D={D}: cavity boundary unresolvable ({err}); returning retryable error"
+                        );
                         return Err(err.into());
-                    };
-
-                    suspicion.fallback_star_split = true;
-
-                    #[cfg(debug_assertions)]
-                    tracing::warn!(
-                        "Conflict region degeneracy ({err}); falling back to star-split of cell {start_cell:?}"
-                    );
-
-                    conflict_cells = {
-                        let mut owned = CellKeyBuffer::new();
-                        owned.push(start_cell);
-                        owned
-                    };
-
-                    Self::star_split_boundary_facets(start_cell)
-                } else {
-                    return Err(err.into());
+                    }
                 }
             }
         };
@@ -5581,8 +5709,10 @@ mod tests {
 
         tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
 
-        // In strict PL-manifold mode, Level 3 validation should fail due to link validation.
-        // Depending on validation order, this may surface as ridge-link or vertex-link failure.
+        // In strict PL-manifold mode, Level 3 validation should fail.  With connectivity now
+        // checked first, a disconnected triangulation surfaces as Disconnected before vertex-link
+        // or ridge-link validation.  The two components share only v0 (a vertex, not a facet)
+        // so the neighbor graph is disconnected.
         match tri.is_valid() {
             Err(TriangulationValidationError::VertexLinkNotManifold {
                 vertex_key,
@@ -5602,8 +5732,13 @@ mod tests {
                 assert!(!connected);
             }
             Err(TriangulationValidationError::RidgeLinkNotManifold { .. }) => {}
+            // Connectivity is now checked before link validation; a two-component wedge is
+            // also disconnected in the neighbor graph.
+            Err(TriangulationValidationError::Tds(
+                TdsValidationError::InconsistentDataStructure { ref message },
+            )) if message.contains("Disconnected") => {}
             other => panic!(
-                "Expected RidgeLinkNotManifold or VertexLinkNotManifold in strict PL-manifold mode, got {other:?}"
+                "Expected RidgeLinkNotManifold, VertexLinkNotManifold, or Disconnected in strict PL-manifold mode, got {other:?}"
             ),
         }
     }
@@ -5691,9 +5826,11 @@ mod tests {
     }
 
     #[test]
-    fn test_is_valid_errors_on_non_manifold_boundary_ridge_before_connectedness() {
-        // Two tetrahedra that share an edge but not a facet create a non-manifold boundary:
-        // the shared edge is incident to 4 boundary triangles.
+    fn test_is_valid_disconnected_detected_before_non_manifold_boundary_ridge() {
+        // Two tetrahedra that share only an edge (not a facet) are disconnected in the neighbor
+        // graph (no shared facet ⇒ no neighbor pointers).  Connectivity is now checked FIRST in
+        // `is_valid()`, so the disconnection error is returned before the non-manifold boundary
+        // ridge error (4 boundary triangles on the shared edge).
         let mut tds: Tds<f64, (), (), 3> = Tds::empty();
 
         // Shared edge
@@ -5733,15 +5870,19 @@ mod tests {
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
 
-        // Ordering check: Level 3 should fail for boundary ridge multiplicity before connectedness.
+        // The two cells share only an edge, so they have no mutual neighbor pointers and the
+        // neighbor-graph BFS visits only one of them.  Connectivity is now the first check in
+        // `is_valid()`, so the disconnection error is returned first.
         match tri.is_valid() {
-            Err(TriangulationValidationError::BoundaryRidgeMultiplicity {
-                boundary_facet_count,
-                ..
-            }) => {
-                assert_eq!(boundary_facet_count, 4);
+            Err(TriangulationValidationError::Tds(
+                TdsValidationError::InconsistentDataStructure { ref message },
+            )) => {
+                assert!(
+                    message.contains("Disconnected"),
+                    "Expected disconnection message, got: {message}"
+                );
             }
-            other => panic!("Expected BoundaryRidgeMultiplicity, got {other:?}"),
+            other => panic!("Expected Disconnected InconsistentDataStructure, got {other:?}"),
         }
     }
     #[test]
@@ -6073,11 +6214,25 @@ mod tests {
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
 
+        // The three cells share facet {v0,v1,v2} three-ways.  `repair_neighbor_pointers` would
+        // fail on this configuration (a facet shared by >2 cells violates the early-exit guard in
+        // `assign_neighbors`), so the cells have no neighbor pointers and the neighbor-graph BFS
+        // visits only one of them.  Connectivity is now the first check in `is_valid()`, so the
+        // disconnection error is returned before the non-manifold facet error.
         match tri.is_valid() {
+            Err(TriangulationValidationError::Tds(
+                TdsValidationError::InconsistentDataStructure { ref message },
+            )) => {
+                assert!(
+                    message.contains("Disconnected"),
+                    "Expected disconnection message, got: {message}"
+                );
+            }
+            // Non-manifold facet detection is still valid if the cells happen to be connected.
             Err(TriangulationValidationError::ManifoldFacetMultiplicity { cell_count, .. }) => {
                 assert_eq!(cell_count, 3);
             }
-            other => panic!("Expected ManifoldFacetMultiplicity, got {other:?}"),
+            other => panic!("Expected Disconnected or ManifoldFacetMultiplicity, got {other:?}"),
         }
     }
 
@@ -7219,5 +7374,357 @@ mod tests {
             cells_before,
             cells_after
         );
+    }
+
+    // =============================================================================
+    // insert_with_conflict_region: cavity reduction loop branch coverage
+    //
+    // These tests exercise `insert_with_conflict_region` directly via a synthetic
+    // TDS rather than through the public API.  The goal is to cover the loop arms
+    // (RidgeFan SHRINK, DisconnectedBoundary EXPAND / SHRINK-fallback / else-break,
+    // and the post-loop error paths) that are not reachable through normal Delaunay
+    // insertions.
+    // =============================================================================
+
+    /// `DisconnectedBoundary` where disconnected cells have no non-conflict neighbours:
+    /// `else { break; }` fires, then the D<3 star-split fallback is taken.
+    ///
+    /// Covers: `DisconnectedBoundary` `else { break; }` (line 3492), `should_fallback=true`
+    /// path (lines 3530-3555), and `suspicion.fallback_star_split` being set.
+    #[test]
+    fn test_cavity_reduction_disconnected_no_neighbors_sets_star_split_2d() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+
+        // Two triangles that share no vertices (→ DisconnectedBoundary on extraction).
+        let v0 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+            .unwrap();
+        let v1 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]))
+            .unwrap();
+        let v2 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.5, 1.0]))
+            .unwrap();
+        let v3 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([5.0, 0.0]))
+            .unwrap();
+        let v4 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([6.0, 0.0]))
+            .unwrap();
+        let v5 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([5.5, 1.0]))
+            .unwrap();
+
+        let cell_a = tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let cell_b = tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(vec![v3, v4, v5], None).unwrap())
+            .unwrap();
+
+        // Neither cell has any neighbour pointers, so `cells_to_add` will be empty on
+        // the first iteration and the `else { break; }` arm fires immediately.
+        let new_v = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.5, 0.3]))
+            .unwrap();
+        let point = Point::new([0.5_f64, 0.3_f64]);
+
+        let mut conflict_cells = CellKeyBuffer::new();
+        conflict_cells.push(cell_a);
+        conflict_cells.push(cell_b);
+
+        let mut suspicion = SuspicionFlags::default();
+        let _ = tri.insert_with_conflict_region(
+            new_v,
+            &point,
+            conflict_cells,
+            Some(cell_a),
+            &mut suspicion,
+        );
+
+        // `else { break; }` → Err(DisconnectedBoundary) → should_fallback=true (D<3)
+        // → star-split fallback sets suspicion.fallback_star_split.
+        assert!(
+            suspicion.fallback_star_split,
+            "DisconnectedBoundary with no non-conflict neighbours should trigger star-split (D=2)"
+        );
+    }
+
+    /// Three 3D tetrahedra sharing the same triangular face → `NonManifoldFacet` on the
+    /// first extraction.  D=3 → `should_fallback=false` → the function returns Err
+    /// immediately without entering the star-split path.
+    ///
+    /// Covers: `_ => break` (line 3511), `should_fallback=false` path (lines 3558-3563).
+    #[test]
+    fn test_cavity_reduction_nonmanifold_3d_returns_error_without_star_split() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 3> =
+            Triangulation::new_empty(FastKernel::new());
+
+        let v0 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .unwrap();
+        let v1 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .unwrap();
+        let v2 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .unwrap();
+        // Three distinct fourth vertices that all pair with the {v0,v1,v2} face.
+        let v3 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .unwrap();
+        let v4 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, -1.0]))
+            .unwrap();
+        let v5 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 2.0]))
+            .unwrap();
+
+        let cell1 = tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v3], None).unwrap())
+            .unwrap();
+        let cell2 = tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v4], None).unwrap())
+            .unwrap();
+        let cell3 = tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v5], None).unwrap())
+            .unwrap();
+
+        let new_v = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.1, 0.1, 0.1]))
+            .unwrap();
+        let point = Point::new([0.1_f64, 0.1_f64, 0.1_f64]);
+
+        let mut conflict_cells = CellKeyBuffer::new();
+        conflict_cells.push(cell1);
+        conflict_cells.push(cell2);
+        conflict_cells.push(cell3);
+
+        let mut suspicion = SuspicionFlags::default();
+        let result =
+            tri.insert_with_conflict_region(new_v, &point, conflict_cells, None, &mut suspicion);
+
+        // NonManifoldFacet → `_ => break` → should_fallback = D<3 = false → Err returned.
+        assert!(result.is_err(), "D=3 NonManifoldFacet should return Err");
+        assert!(
+            !suspicion.fallback_star_split,
+            "D=3 should NOT enter star-split fallback"
+        );
+    }
+
+    /// Four 2D triangles all sharing a common vertex but with no shared edges produce a
+    /// `RidgeFan` error (`facet_count >= 3` for the shared vertex).  Because
+    /// `conflict_cells.len() = 4 > D+1 = 3`, the SHRINK branch fires on the first
+    /// iteration, removing the extra fan cells from the conflict region.
+    ///
+    /// Covers: `RidgeFan` SHRINK body (lines 3434-3442) and re-extraction (line 3514).
+    #[test]
+    fn test_cavity_reduction_ridge_fan_shrink_fires_for_4_conflict_cells_2d() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+
+        // `center` appears in 8 boundary edges (2 per cell × 4 cells) → RidgeFan.
+        let center = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+            .unwrap();
+        let va = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([-1.0, 2.0]))
+            .unwrap();
+        let vb = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([1.0, 2.0]))
+            .unwrap();
+        let vc = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([-3.0, -2.0]))
+            .unwrap();
+        let vd = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([-2.0, -3.0]))
+            .unwrap();
+        let ve = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([3.0, -2.0]))
+            .unwrap();
+        let vf = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([2.0, -3.0]))
+            .unwrap();
+        let vg = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([-4.0, 1.0]))
+            .unwrap();
+        let vh = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([-4.0, -1.0]))
+            .unwrap();
+
+        let cell1 = tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(vec![center, va, vb], None).unwrap())
+            .unwrap();
+        let cell2 = tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(vec![center, vc, vd], None).unwrap())
+            .unwrap();
+        let cell3 = tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(vec![center, ve, vf], None).unwrap())
+            .unwrap();
+        let cell4 = tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(vec![center, vg, vh], None).unwrap())
+            .unwrap();
+
+        let new_v = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.3, 1.0]))
+            .unwrap();
+        let point = Point::new([0.3_f64, 1.0_f64]);
+
+        let mut conflict_cells = CellKeyBuffer::new();
+        conflict_cells.push(cell1);
+        conflict_cells.push(cell2);
+        conflict_cells.push(cell3);
+        conflict_cells.push(cell4);
+
+        let mut suspicion = SuspicionFlags::default();
+        // RidgeFan SHRINK fires on iteration 1 (4 > D+1=3), reducing conflict_cells.
+        // The function completes without panic; result may be Ok or Err.
+        let _ = tri.insert_with_conflict_region(
+            new_v,
+            &point,
+            conflict_cells,
+            Some(cell1),
+            &mut suspicion,
+        );
+        // Reaching here confirms the SHRINK branch executed successfully.
+    }
+
+    /// Two completely disconnected 2D conflict cells that each have one non-conflict
+    /// neighbour trigger the `DisconnectedBoundary` EXPAND path on the first iteration
+    /// (adding the neighbours), and the SHRINK-fallback on a subsequent iteration
+    /// (when `cells_to_add` is empty but `conflict_cells.len() > D+1`).
+    ///
+    /// Covers: EXPAND body (lines 3470-3480), SHRINK-fallback (lines 3481-3491),
+    /// and re-extraction after each reshape (line 3514).
+    #[test]
+    fn test_cavity_reduction_disconnected_expand_then_shrink_2d() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+
+        // Group A: cell_a = {v0,v1,v2} shares edge {v0,v1} with cell_c = {v0,v1,v6}.
+        let v0 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+            .unwrap();
+        let v1 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]))
+            .unwrap();
+        let v2 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.5, 1.0]))
+            .unwrap();
+        let v6 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.5, -1.0]))
+            .unwrap();
+        // Group B: cell_b = {v3,v4,v5} shares edge {v3,v4} with cell_d = {v3,v4,v7}.
+        let v3 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([5.0, 0.0]))
+            .unwrap();
+        let v4 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([6.0, 0.0]))
+            .unwrap();
+        let v5 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([5.5, 1.0]))
+            .unwrap();
+        let v7 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([5.5, -1.0]))
+            .unwrap();
+
+        let cell_a = tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        // cell_c is a non-conflict neighbour of cell_a (not initially in conflict_cells).
+        let cell_c = tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v6], None).unwrap())
+            .unwrap();
+        let cell_b = tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(vec![v3, v4, v5], None).unwrap())
+            .unwrap();
+        // cell_d is a non-conflict neighbour of cell_b.
+        let cell_d = tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(vec![v3, v4, v7], None).unwrap())
+            .unwrap();
+
+        // Wire neighbours so EXPAND discovers cell_c via cell_a and cell_d via cell_b.
+        {
+            let cell = tri.tds.get_cell_by_key_mut(cell_a).unwrap();
+            let nb = cell.ensure_neighbors_buffer_mut();
+            nb[0] = Some(cell_c);
+        }
+        {
+            let cell = tri.tds.get_cell_by_key_mut(cell_b).unwrap();
+            let nb = cell.ensure_neighbors_buffer_mut();
+            nb[0] = Some(cell_d);
+        }
+
+        let new_v = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.5, 0.3]))
+            .unwrap();
+        let point = Point::new([0.5_f64, 0.3_f64]);
+
+        let mut conflict_cells = CellKeyBuffer::new();
+        conflict_cells.push(cell_a);
+        conflict_cells.push(cell_b);
+
+        // Iteration trace:
+        //   1. DisconnectedBoundary → EXPAND (adds cell_c or cell_d) → re-extract.
+        //   2. DisconnectedBoundary → EXPAND (adds the other) → re-extract.
+        //   3. DisconnectedBoundary, cells_to_add=empty (all neighbours in conflict_set),
+        //      len=4 > D+1=3 → SHRINK-fallback removes disconnected component → re-extract.
+        //   4. Two cells sharing an edge → connected boundary → Ok → break.
+        let mut suspicion = SuspicionFlags::default();
+        let _ = tri.insert_with_conflict_region(
+            new_v,
+            &point,
+            conflict_cells,
+            Some(cell_a),
+            &mut suspicion,
+        );
+        // Reaching here without panic confirms EXPAND and SHRINK branches executed.
     }
 }

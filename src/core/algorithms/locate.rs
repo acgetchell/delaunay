@@ -171,6 +171,11 @@ pub enum ConflictError {
         facet_count: usize,
         /// Number of vertices in the shared ridge
         ridge_vertex_count: usize,
+        /// Cell keys of the conflict-region cells that contribute the *extra* (3rd, 4th, …)
+        /// facets to the fan.  Removing these cells from the conflict region eliminates the
+        /// ridge fan, enabling cavity insertion to proceed at the cost of leaving those cells
+        /// temporarily non-Delaunay (fixed by the subsequent flip-repair pass).
+        extra_cells: Vec<CellKey>,
     },
 
     /// Cavity boundary is disconnected (multiple components).
@@ -186,6 +191,11 @@ pub enum ConflictError {
         visited: usize,
         /// Total number of boundary facets.
         total: usize,
+        /// Cell keys from the disconnected (unreachable) boundary component.
+        /// Removing these cells from the conflict region makes the cavity boundary
+        /// connected, enabling insertion to proceed (the cells are left temporarily
+        /// non-Delaunay and fixed by the subsequent flip-repair pass).
+        disconnected_cells: Vec<CellKey>,
     },
 
     /// Cavity boundary is not closed (a ridge is incident to only one boundary facet).
@@ -201,16 +211,22 @@ pub enum ConflictError {
         facet_count: usize,
         /// Number of vertices in the ridge.
         ridge_vertex_count: usize,
+        /// The conflict-region cell that contributes the dangling (open) boundary facet.
+        /// Removing this cell from the conflict region closes the open ridge.
+        open_cell: CellKey,
     },
 }
 
 /// Ridge incidence information used for cavity-boundary validation.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct RidgeInfo {
     ridge_vertex_count: usize,
     facet_count: usize,
     first_facet: usize,
     second_facet: Option<usize>,
+    /// Indices (into `boundary_facets`) of the 3rd, 4th, … facets in the fan.
+    /// Populated only when `facet_count >= 3`.
+    extra_facets: Vec<usize>,
 }
 
 /// Indicates why facet-walking fell back to a brute-force scan.
@@ -1086,6 +1102,9 @@ where
                                 info.facet_count += 1;
                                 if info.second_facet.is_none() {
                                     info.second_facet = Some(boundary_facet_idx);
+                                } else {
+                                    // 3rd+ facet: record for fan-cell identification.
+                                    info.extra_facets.push(boundary_facet_idx);
                                 }
                             })
                             .or_insert(RidgeInfo {
@@ -1093,6 +1112,7 @@ where
                                 facet_count: 1,
                                 first_facet: boundary_facet_idx,
                                 second_facet: None,
+                                extra_facets: Vec::new(),
                             });
                     }
                 }
@@ -1192,9 +1212,26 @@ where
                         "extract_cavity_boundary: open boundary ridge"
                     );
                 }
+                // The open facet's cell is the cell to remove to close the boundary.
+                // first_facet is always a valid index by construction (it is set during the
+                // same boundary-building traversal), so None here is an internal
+                // consistency error — return CellDataAccessFailed rather than a null key.
+                let open_cell = boundary_facets
+                    .get(info.first_facet)
+                    .ok_or_else(|| ConflictError::CellDataAccessFailed {
+                        cell_key: CellKey::default(),
+                        message: format!(
+                            "OpenBoundary: boundary_facets missing first_facet index {} \
+                             (boundary_facets.len()={})",
+                            info.first_facet,
+                            boundary_facets.len(),
+                        ),
+                    })
+                    .map(FacetHandle::cell_key)?;
                 return Err(ConflictError::OpenBoundary {
                     facet_count: info.facet_count,
                     ridge_vertex_count: info.ridge_vertex_count,
+                    open_cell,
                 });
             }
 
@@ -1204,15 +1241,51 @@ where
                     tracing::debug!(
                         facet_count = info.facet_count,
                         ridge_vertex_count = info.ridge_vertex_count,
+                        extra_facets = info.extra_facets.len(),
                         boundary_facets = boundary_facets.len(),
                         ridge_count = ridge_map.len(),
                         elapsed = ?start_time.elapsed(),
                         "extract_cavity_boundary: ridge fan"
                     );
                 }
+                // Collect the cell keys of the extra (3rd, 4th, …) facets so callers can
+                // reduce the conflict region to eliminate the fan without skipping the vertex.
+                // Every index in extra_facets is written by the same traversal that populates
+                // boundary_facets, so an out-of-range index is an internal logic error — assert
+                // loudly instead of silently dropping it with filter_map.
+                debug_assert!(
+                    info.extra_facets
+                        .iter()
+                        .all(|&fi| fi < boundary_facets.len()),
+                    "RidgeFan extra_facets index out of bounds: extra_facets={:?}, boundary_facets.len()={}",
+                    info.extra_facets,
+                    boundary_facets.len(),
+                );
+                // Deduplicate: multiple extra facets can come from the same cell. Downstream
+                // code (e.g., triangulation cavity reduction) converts this to a FastHashSet and
+                // expects unique keys; keep the payload minimal and stable for testing.
+                let mut seen = FastHashSet::<CellKey>::default();
+                let mut extra_cells: Vec<CellKey> = Vec::new();
+                for &fi in &info.extra_facets {
+                    let ck = boundary_facets
+                        .get(fi)
+                        .ok_or_else(|| ConflictError::CellDataAccessFailed {
+                            cell_key: CellKey::default(),
+                            message: format!(
+                                "RidgeFan extra_facets index {fi} out of bounds \
+                                 (boundary_facets.len()={})",
+                                boundary_facets.len()
+                            ),
+                        })?
+                        .cell_key();
+                    if seen.insert(ck) {
+                        extra_cells.push(ck);
+                    }
+                }
                 return Err(ConflictError::RidgeFan {
                     facet_count: info.facet_count,
                     ridge_vertex_count: info.ridge_vertex_count,
+                    extra_cells,
                 });
             }
 
@@ -1270,9 +1343,20 @@ where
                     "extract_cavity_boundary: disconnected boundary"
                 );
             }
+            // Collect de-duplicated cell keys from the unreachable (disconnected) component
+            // so callers can reduce the conflict region to eliminate the disconnection.
+            let mut seen = FastHashSet::<CellKey>::default();
+            let disconnected_cells: Vec<CellKey> = boundary_facets
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !visited[*i])
+                .map(|(_, fh)| fh.cell_key())
+                .filter(|ck| seen.insert(*ck))
+                .collect();
             return Err(ConflictError::DisconnectedBoundary {
                 visited: visited_count,
                 total: boundary_len,
+                disconnected_cells,
             });
         }
     }
@@ -2008,9 +2092,23 @@ mod tests {
 
         let err = extract_cavity_boundary(&tds, &conflict_cells).unwrap_err();
         match err {
-            ConflictError::DisconnectedBoundary { visited, total } => {
+            ConflictError::DisconnectedBoundary {
+                visited,
+                total,
+                disconnected_cells,
+            } => {
                 assert!(visited < total);
                 assert_eq!(total, 6);
+                assert!(
+                    !disconnected_cells.is_empty(),
+                    "disconnected_cells should be non-empty"
+                );
+                for ck in &disconnected_cells {
+                    assert!(
+                        tds.contains_cell(*ck),
+                        "disconnected cell key {ck:?} should be present in the TDS"
+                    );
+                }
             }
             other => panic!("Expected DisconnectedBoundary, got {other:?}"),
         }
@@ -2068,6 +2166,96 @@ mod tests {
         ));
     }
 
+    /// `is_point_outside_facet` collects vertex points via `filter_map`, so a cell whose
+    /// vertex-key list contains a key that does not exist in the TDS will produce fewer
+    /// than `D+1` points and hit the degenerate-cell guard on line 613.
+    #[test]
+    fn test_is_point_outside_facet_degenerate_cell_missing_vertex_returns_none() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        // Build a valid cell first, then mutate its vertex list to include a missing key.
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let existing_vertices = tds.get_cell(cell_key).unwrap().vertices().to_vec();
+        let missing = VertexKey::from(KeyData::from_ffi(999_999));
+        {
+            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            cell.clear_vertex_keys();
+            cell.push_vertex_key(existing_vertices[0]);
+            cell.push_vertex_key(existing_vertices[1]);
+            cell.push_vertex_key(missing);
+        }
+
+        let kernel = FastKernel::<f64>::new();
+        let point = Point::new([0.3_f64, 0.3_f64]);
+
+        // Only 2 of the 3 vertices exist → cell_vertices.len() (2) != D+1 (3) → Ok(None).
+        let result = is_point_outside_facet(&tds, &kernel, cell_key, 0, &point);
+        assert!(
+            matches!(result, Ok(None)),
+            "degenerate cell with missing vertex should return Ok(None), got {result:?}"
+        );
+    }
+
+    /// `find_conflict_region` collects simplex points via `filter_map` in the BFS loop;
+    /// a conflict cell whose vertex-key list contains a key absent from the TDS produces
+    /// fewer than `D+1` points and returns `Err(CellDataAccessFailed)` (lines 793-795).
+    #[test]
+    fn test_find_conflict_region_degenerate_cell_returns_cell_data_access_failed() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        // Build valid cell then mutate one vertex to a missing key.
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let existing_vertices = tds.get_cell(cell_key).unwrap().vertices().to_vec();
+        let missing = VertexKey::from(KeyData::from_ffi(999_999));
+        {
+            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            cell.clear_vertex_keys();
+            cell.push_vertex_key(existing_vertices[0]);
+            cell.push_vertex_key(existing_vertices[1]);
+            cell.push_vertex_key(missing);
+        }
+
+        let kernel = FastKernel::<f64>::new();
+        let point = Point::new([0.3_f64, 0.3_f64]);
+
+        // BFS visits the cell; simplex_points.len() == 2 != D+1 == 3 → CellDataAccessFailed.
+        let result = find_conflict_region(&tds, &kernel, &point, cell_key);
+        assert!(
+            matches!(result, Err(ConflictError::CellDataAccessFailed { cell_key: ck, .. }) if ck == cell_key),
+            "expected CellDataAccessFailed for degenerate cell, got {result:?}"
+        );
+    }
+
+    /// Calling `locate_with_stats` with `hint = None` exercises the `_ =>` fallback arm
+    /// of the hint-match, which picks an arbitrary start cell and records `used_hint = false`.
+    #[test]
+    fn test_locate_with_stats_none_hint_picks_arbitrary_start_cell() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let kernel = FastKernel::<f64>::new();
+        let point = Point::new([0.25_f64, 0.25_f64]);
+
+        let (result, stats) = locate_with_stats(dt.tds(), &kernel, &point, None).unwrap();
+
+        assert!(matches!(result, LocateResult::InsideCell(_)));
+        assert!(!stats.used_hint, "None hint should set used_hint = false");
+        assert!(!stats.fell_back_to_scan());
+    }
+
     #[test]
     fn test_extract_cavity_boundary_rejects_ridge_fan_2d() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
@@ -2104,9 +2292,27 @@ mod tests {
             ConflictError::RidgeFan {
                 facet_count,
                 ridge_vertex_count,
+                extra_cells,
             } => {
                 assert!(facet_count >= 3);
                 assert_eq!(ridge_vertex_count, 1);
+                // After deduplication, extra_cells contains unique cell keys contributing
+                // the 3rd, 4th, … facets. Its length is ≤ facet_count - 2 and ≥ 1 here.
+                assert!(
+                    !extra_cells.is_empty() && extra_cells.len() <= facet_count - 2,
+                    "deduped extra_cells should be non-empty and not exceed facet_count - 2; got {} vs {}",
+                    extra_cells.len(),
+                    facet_count - 2
+                );
+                // All entries must be valid keys from the TDS and unique.
+                let mut seen = FastHashSet::default();
+                for ck in &extra_cells {
+                    assert!(
+                        tds.contains_cell(*ck),
+                        "extra cell key {ck:?} should be present in the TDS"
+                    );
+                    assert!(seen.insert(*ck), "duplicate key {ck:?} in extra_cells");
+                }
             }
             other => panic!("Expected RidgeFan, got {other:?}"),
         }

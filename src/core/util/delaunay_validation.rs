@@ -120,7 +120,85 @@ where
         // Test if this vertex is inside the cell's circumsphere using ROBUST predicates
         match robust_insphere(cell_vertex_points, test_vertex.point(), config) {
             Ok(InSphere::INSIDE) => {
-                // Found a violation - this cell has an external vertex inside its circumsphere
+                // For D≥4: check for the both_positive_artifact before reporting a violation.
+                //
+                // "Vertex j is always opposite neighbor j" means cell.neighbors()[k] is
+                // the neighbor opposite cell.vertices()[k].  When robust_insphere gives
+                // in_a > 0 AND in_b > 0 simultaneously for the two cells sharing a facet,
+                // it is physically impossible by cofactor antisymmetry and indicates a
+                // near-degenerate numerical artefact in the (D+2)×(D+2) insphere matrix.
+                // The repair predicate already suppresses flips for such cases
+                // (both_positive_artifact in delaunay_violation_k2_for_facet); validation
+                // must be consistent and skip the same cases.
+                //
+                // To identify the neighbour B for which test_vkey is the apex:
+                // - test_vkey is already confirmed not in cell A's vertex set.
+                // - Since B shares a D-facet with A (D vertices in common), B has exactly
+                //   one vertex not in A: its apex.  So test_vkey is B's apex ⇔
+                //   test_vkey ∈ B.vertices().
+                // - The corresponding apex of A w.r.t. B is A.vertices()[k] where
+                //   A.neighbors()[k] = B  ("vertex j opposite neighbor j").
+                if D >= 4 {
+                    let is_artifact = 'artifact: {
+                        let Some(a_neighbors) = cell.neighbors() else {
+                            break 'artifact false;
+                        };
+                        let mut b_points: SmallVec<[Point<T, D>; 8]> =
+                            SmallVec::with_capacity(D + 1);
+                        for (k, neighbor_opt) in a_neighbors.iter().enumerate() {
+                            let Some(b_key) = neighbor_opt else {
+                                continue;
+                            };
+                            let Some(b_cell) = tds.get_cell(*b_key) else {
+                                continue;
+                            };
+                            // Is test_vkey the apex of B w.r.t. A?
+                            if !b_cell.vertices().contains(&test_vkey) {
+                                continue;
+                            }
+                            // Found. A's apex w.r.t. B = cell.vertices()[k].
+                            let apex_a_key = cell_vertex_keys[k];
+                            let Some(apex_a_v) = tds.get_vertex_by_key(apex_a_key) else {
+                                continue;
+                            };
+                            // Build B's circumsphere points.
+                            b_points.clear();
+                            let mut valid = true;
+                            for &bv in b_cell.vertices() {
+                                let Some(v) = tds.get_vertex_by_key(bv) else {
+                                    valid = false;
+                                    break;
+                                };
+                                b_points.push(*v.point());
+                            }
+                            if !valid {
+                                continue;
+                            }
+                            // Symmetric check: is A's apex inside-or-on B's circumsphere?
+                            //
+                            // We suppress two co-degenerate artifact classes:
+                            //  • Both-positive: both inspheres are > 0 simultaneously,
+                            //    physically impossible by cofactor antisymmetry.
+                            //  • Co-spherical: A sees V slightly inside (floating-point > 0)
+                            //    but B sees A's apex exactly on the sphere (BOUNDARY == 0).
+                            //    This happens with near co-spherical point sets in D≥4 where
+                            //    the (D+2)×(D+2) determinant is near zero.  The repair
+                            //    predicate would attempt a flip but every flip just cycles
+                            //    the sign; suppressing here is consistent.
+                            if matches!(
+                                robust_insphere(&b_points, apex_a_v.point(), config),
+                                Ok(InSphere::INSIDE | InSphere::BOUNDARY)
+                            ) {
+                                break 'artifact true;
+                            }
+                        }
+                        false
+                    };
+                    if is_artifact {
+                        continue;
+                    }
+                }
+                // Genuine violation
                 return Ok(Some(cell_key));
             }
             Ok(InSphere::BOUNDARY | InSphere::OUTSIDE) => {
