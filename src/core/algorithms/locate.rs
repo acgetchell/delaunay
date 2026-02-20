@@ -1267,7 +1267,17 @@ where
                 let mut seen = FastHashSet::<CellKey>::default();
                 let mut extra_cells: Vec<CellKey> = Vec::new();
                 for &fi in &info.extra_facets {
-                    let ck = boundary_facets[fi].cell_key();
+                    let ck = boundary_facets
+                        .get(fi)
+                        .ok_or_else(|| ConflictError::CellDataAccessFailed {
+                            cell_key: CellKey::default(),
+                            message: format!(
+                                "RidgeFan extra_facets index {fi} out of bounds \
+                                 (boundary_facets.len()={})",
+                                boundary_facets.len()
+                            ),
+                        })?
+                        .cell_key();
                     if seen.insert(ck) {
                         extra_cells.push(ck);
                     }
@@ -2295,7 +2305,7 @@ mod tests {
                     facet_count - 2
                 );
                 // All entries must be valid keys from the TDS and unique.
-                let mut seen = std::collections::HashSet::new();
+                let mut seen = FastHashSet::default();
                 for ck in &extra_cells {
                     assert!(
                         tds.contains_cell(*ck),

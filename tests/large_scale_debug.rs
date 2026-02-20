@@ -31,6 +31,8 @@
 //! # - "new" (default): build via DelaunayTriangulation::new() which applies Hilbert ordering
 //! # - "incremental": manual insert loop (debug/profiling)
 //! DELAUNAY_LARGE_DEBUG_CONSTRUCTION_MODE=new \
+//! # Debug mode: "cadenced" (default, repair/validate on a cadence) or "strict" (per-insertion)
+//! DELAUNAY_LARGE_DEBUG_DEBUG_MODE=cadenced \
 //! # Deterministically shuffle insertion order (incremental mode only)
 //! DELAUNAY_LARGE_DEBUG_SHUFFLE_SEED=123 \
 //! # Print progress every N insertions (incremental mode only)
@@ -459,7 +461,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
     let repair_every = env_usize("DELAUNAY_LARGE_DEBUG_REPAIR_EVERY").unwrap_or(128);
     let validate_every = env_usize("DELAUNAY_LARGE_DEBUG_VALIDATE_EVERY").or_else(|| {
         if matches!(debug_mode, DebugMode::Cadenced) {
-            NonZeroUsize::new(repair_every).map(NonZeroUsize::get)
+            (repair_every != 0).then_some(repair_every)
         } else {
             None
         }

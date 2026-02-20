@@ -174,13 +174,21 @@ where
                             if !valid {
                                 continue;
                             }
-                            // Symmetric check: is A's apex inside B's circumsphere?
-                            if robust_insphere(&b_points, apex_a_v.point(), config)
-                                == Ok(InSphere::INSIDE)
-                            {
-                                // Both sides INSIDE: numerical artefact, not a genuine
-                                // violation.  Consistent with both_positive_artifact in
-                                // the repair predicate.
+                            // Symmetric check: is A's apex inside-or-on B's circumsphere?
+                            //
+                            // We suppress two co-degenerate artifact classes:
+                            //  • Both-positive: both inspheres are > 0 simultaneously,
+                            //    physically impossible by cofactor antisymmetry.
+                            //  • Co-spherical: A sees V slightly inside (floating-point > 0)
+                            //    but B sees A's apex exactly on the sphere (BOUNDARY == 0).
+                            //    This happens with near co-spherical point sets in D≥4 where
+                            //    the (D+2)×(D+2) determinant is near zero.  The repair
+                            //    predicate would attempt a flip but every flip just cycles
+                            //    the sign; suppressing here is consistent.
+                            if matches!(
+                                robust_insphere(&b_points, apex_a_v.point(), config),
+                                Ok(InSphere::INSIDE | InSphere::BOUNDARY)
+                            ) {
                                 break 'artifact true;
                             }
                         }
