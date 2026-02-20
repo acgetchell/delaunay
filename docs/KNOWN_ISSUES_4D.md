@@ -10,7 +10,9 @@
 
 ### Description
 
-Large-scale 4D bulk construction (100+ vertices) can complete without convergence failures but produce triangulations that fail final Delaunay validation. The repair logic succeeds locally but leaves global violations.
+Large-scale 4D bulk construction (100+ vertices) can complete without convergence failures but
+produce triangulations that fail final Delaunay validation. The repair logic succeeds locally but
+leaves global violations.
 
 ### Test Evidence
 
@@ -30,7 +32,7 @@ Degenerate points encountered: 21/100 (ridge fans, disconnected cavities)
 
 3D construction works reliably up to 100 vertices. At 1000 vertices, repair convergence issues appear:
 
-```
+```bash
 # Fails at vertex 18 with repair cycling
 DELAUNAY_LARGE_DEBUG_N_3D=1000 cargo test --test large_scale_debug \
   debug_large_scale_3d -- --ignored --exact --nocapture
@@ -40,7 +42,9 @@ Error: `Delaunay repair failed to converge after 32 flips (cycles=6)`
 
 ### Root Cause Hypothesis
 
-The TDS does not enforce positive orientation invariants. Many assumptions throughout the codebase rely on positive orientation, but it's not guaranteed at the data structure level. This creates subtle correctness issues in higher dimensions where:
+The TDS does not enforce positive orientation invariants. Many assumptions throughout the codebase
+rely on positive orientation, but it's not guaranteed at the data structure level. This creates
+subtle correctness issues in higher dimensions where:
 
 1. Repair logic may flip to negative-orientation states
 2. Local repairs succeed but create global inconsistencies
