@@ -1115,7 +1115,9 @@ class PerformanceSummaryGenerator:
                 if "best in" in desc:
                     # Extract just the dimension info without outer parens;
                     # the caller's f-string wraps the result in (...) already.
-                    return desc.split(" - ")[0].strip("()")
+                    # Use removeprefix/removesuffix (not strip) to avoid
+                    # accidentally removing internal parentheses.
+                    return desc.split(" - ")[0].removeprefix("(").removesuffix(")")
                 defaults = ["fastest average", "second fastest", "third fastest"]
                 return defaults[position] if position < len(defaults) else "slower"
 
