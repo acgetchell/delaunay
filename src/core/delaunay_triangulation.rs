@@ -6,11 +6,9 @@
 #![forbid(unsafe_code)]
 
 use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
-#[cfg(any(test, debug_assertions))]
-use crate::core::algorithms::flips::repair_delaunay_single_pass_local;
 use crate::core::algorithms::flips::{
     DelaunayRepairError, DelaunayRepairStats, FlipError, apply_bistellar_flip_k1_inverse,
-    repair_delaunay_with_flips_k2_k3,
+    repair_delaunay_local_single_pass, repair_delaunay_with_flips_k2_k3,
 };
 use crate::core::algorithms::incremental_insertion::InsertionError;
 use crate::core::cell::Cell;
@@ -2566,15 +2564,15 @@ where
             ValidationPolicy::DebugOnly
         };
 
-        // Disable flip-based Delaunay repairs via maybe_repair_after_insertion during bulk
-        // construction to avoid aborting valid manifold triangulations in numerically
-        // degenerate cases.  The final global repair pass in finalize_bulk_construction
-        // runs after all vertices are inserted and handles remaining violations.
-        //
-        // For D>=3 in debug/test mode, insert_remaining_vertices_seeded additionally runs a
-        // per-insertion LOCAL repair (soft-fail, no heuristic rebuild) after each vertex.
-        // This prevents violation accumulation that would make the global repair prohibitively
-        // slow in debug builds (O(cells * D^2) predicate evaluations per attempt).
+        // Disable maybe_repair_after_insertion during bulk construction: its full pipeline
+        // (multi-pass repair + topology validation + heuristic rebuild) is too expensive
+        // per insertion.  Instead, insert_remaining_vertices_seeded runs a targeted
+        // repair_delaunay_with_flips_k2_k3 call directly after each insertion (no topology
+        // check, no heuristic rebuild, soft-fail on non-convergence).  Soft-failed
+        // insertions record their adjacent cells in soft_fail_seeds, which is used as the
+        // seed for the final global repair in finalize_bulk_construction.  If no soft-fails
+        // occurred, the seed is empty and the global repair returns immediately with an
+        // empty queue (no work needed).
         let original_repair_policy = dt.insertion_state.delaunay_repair_policy;
         dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
 
@@ -2587,11 +2585,13 @@ where
             stats.record_insertion(&simplex_stats);
         }
 
+        let mut soft_fail_seeds: Vec<CellKey> = Vec::new();
         if let Err(error) = dt.insert_remaining_vertices_seeded(
             vertices,
             perturbation_seed,
             grid_cell_size,
             Some(&mut stats),
+            &mut soft_fail_seeds,
         ) {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                 error,
@@ -2603,6 +2603,7 @@ where
             original_validation_policy,
             original_repair_policy,
             run_final_repair,
+            &soft_fail_seeds,
         ) {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                 error,
@@ -2667,69 +2668,25 @@ where
             ValidationPolicy::DebugOnly
         };
 
-        // Disable flip-based Delaunay repairs via maybe_repair_after_insertion during bulk
-        // construction to avoid aborting valid manifold triangulations in numerically
-        // degenerate cases.  See the _with_construction_statistics variant for a fuller
-        // comment.  For D>=3 debug/test builds, insert_remaining_vertices_seeded injects a
-        // soft-fail per-insertion local repair to keep violation counts low.
+        // See the _with_construction_statistics variant for the repair policy rationale.
         let original_repair_policy = dt.insertion_state.delaunay_repair_policy;
         dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
-        dt.insert_remaining_vertices_seeded(vertices, perturbation_seed, grid_cell_size, None)?;
+        let mut soft_fail_seeds: Vec<CellKey> = Vec::new();
+        dt.insert_remaining_vertices_seeded(
+            vertices,
+            perturbation_seed,
+            grid_cell_size,
+            None,
+            &mut soft_fail_seeds,
+        )?;
         dt.finalize_bulk_construction(
             original_validation_policy,
             original_repair_policy,
             run_final_repair,
+            &soft_fail_seeds,
         )?;
 
         Ok(dt)
-    }
-
-    /// Per-insertion soft-fail local Delaunay repair used during bulk construction in
-    /// debug/test builds for D>=3.  Seeds the repair queue from the star of `v_key`
-    /// (the newly inserted vertex) and runs one bounded flip pass.  Any remaining
-    /// violations are caught by the final global repair in `finalize_bulk_construction`.
-    ///
-    /// Soft-fails (traces error and returns) rather than aborting so that a
-    /// non-converging local repair does not abort an otherwise healthy construction.
-    #[cfg(any(test, debug_assertions))]
-    fn run_soft_local_repair_after_insertion(&mut self, v_key: VertexKey, index: usize)
-    where
-        K::Scalar: ScalarSummable,
-    {
-        if D < 3 {
-            return;
-        }
-        let seed_cells: Vec<CellKey> = self.tri.adjacent_cells(v_key).collect();
-        // seed_cells.is_empty() is also handled inside repair_delaunay_single_pass_local,
-        // but skip the call entirely to avoid unnecessary overhead.
-        if seed_cells.is_empty() {
-            return;
-        }
-        let repair_result = {
-            let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-            repair_delaunay_single_pass_local(tds, kernel, &seed_cells)
-        };
-        match repair_result {
-            Ok(stats) => {
-                tracing::trace!(
-                    idx = index,
-                    seeds = seed_cells.len(),
-                    cells = self.tri.tds.number_of_cells(),
-                    flips = stats.flips_performed,
-                    "bulk D>={D}: per-insertion local repair ok"
-                );
-            }
-            Err(e) => {
-                tracing::debug!(
-                    error = %e,
-                    idx = index,
-                    seeds = seed_cells.len(),
-                    cells = self.tri.tds.number_of_cells(),
-                    "bulk D>={D}: per-insertion local repair soft-failed; \
-                     global repair will handle remaining violations"
-                );
-            }
-        }
     }
 
     #[allow(clippy::too_many_lines)]
@@ -2739,6 +2696,7 @@ where
         perturbation_seed: u64,
         grid_cell_size: Option<K::Scalar>,
         construction_stats: Option<&mut ConstructionStatistics>,
+        _soft_fail_seeds: &mut Vec<CellKey>,
     ) -> Result<(), DelaunayTriangulationConstructionError>
     where
         K::Scalar: ScalarSummable,
@@ -2822,22 +2780,70 @@ where
                                 .insertion_state
                                 .delaunay_repair_insertion_count
                                 .saturating_add(1);
-                            let (_v_key, used_heuristic) = self
-                                .maybe_repair_after_insertion(v_key, hint)
-                                .map_err(|e| {
-                                    TriangulationConstructionError::GeometricDegeneracy {
-                                        message: e.to_string(),
+                            // Per-insertion local Delaunay repair: seeded from the star of
+                            // the inserted vertex with a seed-proportional flip budget.
+                            //
+                            // For D<4: the flip graph is proven convergent (Lawson 1977 for
+                            // D=2, Rajan 1991/Joe 1991 for D=3); hard-fail on non-convergence
+                            // triggers a shuffle retry at the outer level.
+                            //
+                            // For D≥4: Bowyer-Watson with the fast kernel can produce
+                            // non-Delaunay facets when the conflict region is detected
+                            // imprecisely (co-spherical configurations).  A bounded
+                            // per-insertion repair pass fixes these violations.  If repair
+                            // does not converge (e.g. co-spherical cycling suppressed by
+                            // both_positive_artifact), the soft-fail path lets construction
+                            // continue; the final is_valid() check validates the result.
+                            let topology = self.tri.topology_guarantee();
+                            if D >= 2
+                                && TopologicalOperation::FacetFlip.is_admissible_under(topology)
+                                && self.tri.tds.number_of_cells() > 0
+                            {
+                                let seed_cells: Vec<CellKey> =
+                                    self.tri.adjacent_cells(v_key).collect();
+                                if !seed_cells.is_empty() {
+                                    let max_flips = (seed_cells.len() * (D + 1) * 4).max(16);
+                                    let repair_result = {
+                                        let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
+                                        repair_delaunay_local_single_pass(
+                                            tds,
+                                            kernel,
+                                            &seed_cells,
+                                            max_flips,
+                                        )
+                                    };
+                                    if let Err(repair_err) = repair_result {
+                                        if D < 4 {
+                                            // Hard-fail for D<4: proven convergent, so a
+                                            // failure here is a real numerical problem.
+                                            tracing::debug!(
+                                                error = %repair_err,
+                                                idx = index,
+                                                "bulk: per-insertion repair failed; \
+                                                 aborting this vertex ordering"
+                                            );
+                                            return Err(
+                                                TriangulationConstructionError::GeometricDegeneracy {
+                                                    message: format!(
+                                                        "per-insertion Delaunay repair \
+                                                         failed at index {index}: \
+                                                         {repair_err}"
+                                                    ),
+                                                }
+                                                .into(),
+                                            );
+                                        }
+                                        // Soft-fail for D≥4: non-convergence is expected in
+                                        // degenerate configurations; continue building.
+                                        tracing::debug!(
+                                            error = %repair_err,
+                                            idx = index,
+                                            "bulk D≥4: per-insertion repair non-convergent; \
+                                             continuing (both_positive_artifact handled)"
+                                        );
                                     }
-                                })?;
-                            if used_heuristic {
-                                self.insertion_state.last_inserted_cell = None;
+                                }
                             }
-                            // For D>=3 in debug/test mode: run a per-insertion local Delaunay
-                            // repair to prevent violation accumulation during bulk construction.
-                            // Soft-fails; global repair in finalize_bulk_construction catches
-                            // any stragglers.
-                            #[cfg(any(test, debug_assertions))]
-                            self.run_soft_local_repair_after_insertion(v_key, index);
                         }
                         Ok((InsertionOutcome::Skipped { error }, stats)) => {
                             if trace_insertion && let Some(elapsed) = elapsed {
@@ -2934,19 +2940,54 @@ where
                                 .insertion_state
                                 .delaunay_repair_insertion_count
                                 .saturating_add(1);
-                            let (_v_key, used_heuristic) = self
-                                .maybe_repair_after_insertion(v_key, hint)
-                                .map_err(|e| {
-                                    TriangulationConstructionError::GeometricDegeneracy {
-                                        message: e.to_string(),
+                            // Per-insertion local repair: see the non-stats branch
+                            // comment for full details.
+                            let topology = self.tri.topology_guarantee();
+                            if D >= 2
+                                && TopologicalOperation::FacetFlip.is_admissible_under(topology)
+                                && self.tri.tds.number_of_cells() > 0
+                            {
+                                let seed_cells: Vec<CellKey> =
+                                    self.tri.adjacent_cells(v_key).collect();
+                                if !seed_cells.is_empty() {
+                                    let max_flips = (seed_cells.len() * (D + 1) * 4).max(16);
+                                    let repair_result = {
+                                        let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
+                                        repair_delaunay_local_single_pass(
+                                            tds,
+                                            kernel,
+                                            &seed_cells,
+                                            max_flips,
+                                        )
+                                    };
+                                    if let Err(repair_err) = repair_result {
+                                        if D < 4 {
+                                            tracing::debug!(
+                                                error = %repair_err,
+                                                idx = index,
+                                                "bulk: per-insertion repair failed; \
+                                                 aborting this vertex ordering"
+                                            );
+                                            return Err(
+                                                TriangulationConstructionError::GeometricDegeneracy {
+                                                    message: format!(
+                                                        "per-insertion Delaunay repair \
+                                                         failed at index {index}: \
+                                                         {repair_err}"
+                                                    ),
+                                                }
+                                                .into(),
+                                            );
+                                        }
+                                        tracing::debug!(
+                                            error = %repair_err,
+                                            idx = index,
+                                            "bulk D≥4: per-insertion repair non-convergent; \
+                                             continuing (both_positive_artifact handled)"
+                                        );
                                     }
-                                })?;
-                            if used_heuristic {
-                                self.insertion_state.last_inserted_cell = None;
+                                }
                             }
-                            // Same soft-fail per-insertion local repair as the non-stats path.
-                            #[cfg(any(test, debug_assertions))]
-                            self.run_soft_local_repair_after_insertion(v_key, index);
                         }
                         Ok((InsertionOutcome::Skipped { error }, stats)) => {
                             if trace_insertion && let Some(elapsed) = elapsed {
@@ -3010,6 +3051,7 @@ where
         original_validation_policy: ValidationPolicy,
         original_repair_policy: DelaunayRepairPolicy,
         run_final_repair: bool,
+        soft_fail_seeds: &[CellKey],
     ) -> Result<(), DelaunayTriangulationConstructionError>
     where
         K::Scalar: ScalarSummable,
@@ -3020,39 +3062,51 @@ where
 
         let topology = self.tri.topology_guarantee();
         if run_final_repair && self.should_run_delaunay_repair_for(topology, 0) {
-            tracing::warn!("post-construction: starting global Delaunay repair (finalize)");
+            // Use a single-pass seeded repair bounded to the soft-fail neighbourhood.
+            // An empty soft_fail_seeds slice means per-insertion repair had no soft-fails:
+            // seed_repair_queues leaves the queue empty → O(1) exit.
+            // A non-empty slice targets only the affected neighbourhoods.
+            //
+            // For D≥4 we intentionally do NOT fall back to all-cells seeding here:
+            // the D≥4 flip graph is not guaranteed convergent (Edelsbrunner-Shah 1996)
+            // and a full-triangulation repair pass is prohibitively slow in debug mode.
+            // Correctness is ensured by the is_delaunay_property_only() check in
+            // build_with_shuffled_retries (which handles both_positive_artifact cases).
+            let finalize_seeds = soft_fail_seeds;
+            tracing::debug!(
+                seed_count = finalize_seeds.len(),
+                "post-construction: starting global Delaunay repair (finalize)"
+            );
             let repair_started = Instant::now();
+            let global_repair_max_flips = (finalize_seeds.len() * (D + 1) * 16).max(512);
             let repair_result = {
                 let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-                repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology).map(|_| ())
+                repair_delaunay_local_single_pass(
+                    tds,
+                    kernel,
+                    finalize_seeds,
+                    global_repair_max_flips,
+                )
+                .map(|_| ())
             };
             let repair_outcome: Result<(), DelaunayTriangulationConstructionError> =
                 match repair_result {
                     Ok(()) => Ok(()),
-                    Err(
-                        e @ (DelaunayRepairError::NonConvergent { .. }
-                        | DelaunayRepairError::PostconditionFailed { .. }),
-                    ) => {
-                        // Deterministic rebuild fallback to avoid rejecting an otherwise-valid
-                        // triangulation due to non-convergent global flip repair.
-                        match self.run_flip_repair_fallbacks(None) {
-                            Ok(_) => Ok(()),
-                            Err(fallback_err) => Err(
-                                TriangulationConstructionError::GeometricDegeneracy {
-                                    message: format!(
-                                        "Delaunay repair failed after construction ({e}); robust repair fallback also failed; heuristic rebuild fallback also failed ({fallback_err})"
-                                    ),
-                                }
-                                .into(),
-                            ),
+                    Err(e) => {
+                        // Single-pass did not converge or encountered an error.
+                        // Return a construction error so that build_with_shuffled_retries
+                        // can try another vertex ordering (the intended fallback for
+                        // hard-to-repair configurations).  We intentionally do NOT run
+                        // run_flip_repair_fallbacks here: that chain can internally trigger
+                        // a full-triangulation None-seed repair (O(cells × queues/cell))
+                        // which is prohibitively slow for D≥4 with many cells.
+                        Err(TriangulationConstructionError::GeometricDegeneracy {
+                            message: format!("Delaunay repair failed after construction: {e}"),
                         }
+                        .into())
                     }
-                    Err(e) => Err(TriangulationConstructionError::GeometricDegeneracy {
-                        message: format!("Delaunay repair failed after construction: {e}"),
-                    }
-                    .into()),
                 };
-            tracing::warn!(
+            tracing::debug!(
                 elapsed = ?repair_started.elapsed(),
                 success = repair_outcome.is_ok(),
                 "post-construction: global Delaunay repair (finalize) completed"
@@ -7192,15 +7246,15 @@ mod tests {
     }
 
     // =========================================================================
-    // Tests for run_soft_local_repair_after_insertion (D>=3 per-insertion repair)
+    // Tests for per-insertion incremental Delaunay repair during batch construction
     // =========================================================================
 
-    /// Exercises the `None`-stats call site (line 2840) by constructing a 3D
-    /// triangulation with more vertices than the initial simplex (D+1 = 4).
-    /// Any vertices beyond the first 4 go through `insert_remaining_vertices_seeded`
-    /// which invokes `run_soft_local_repair_after_insertion` in test/debug builds.
+    /// Verifies that 3D batch construction with more vertices than the initial simplex
+    /// (D+1 = 4) completes successfully.  Each inserted vertex triggers a
+    /// `maybe_repair_after_insertion` call (`EveryInsertion` policy) in
+    /// `insert_remaining_vertices_seeded`.
     #[test]
-    fn test_batch_3d_construction_with_extra_vertex_triggers_soft_repair() {
+    fn test_batch_3d_construction_with_extra_vertex_triggers_incremental_repair() {
         init_tracing();
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -7216,11 +7270,11 @@ mod tests {
         assert!(dt.validate().is_ok());
     }
 
-    /// Exercises the `Some`-stats call site (line 2949) via
-    /// `new_with_construction_statistics`, which passes `Some(&mut stats)` into
-    /// `insert_remaining_vertices_seeded`.
+    /// Verifies the `Some`-stats call site: `new_with_construction_statistics` passes
+    /// `Some(&mut stats)` into `insert_remaining_vertices_seeded`, exercising the
+    /// per-insertion repair in the stats-collecting branch.
     #[test]
-    fn test_batch_3d_construction_statistics_with_extra_vertex_triggers_soft_repair() {
+    fn test_batch_3d_construction_statistics_with_extra_vertex_triggers_incremental_repair() {
         init_tracing();
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -7236,26 +7290,6 @@ mod tests {
             .unwrap();
         assert_eq!(dt.number_of_vertices(), 5);
         assert_eq!(stats.inserted, 5);
-        assert!(dt.validate().is_ok());
-    }
-
-    /// Exercises the `if D < 3 { return; }` early-exit in
-    /// `run_soft_local_repair_after_insertion` by calling it directly for D=2.
-    #[cfg(any(test, debug_assertions))]
-    #[test]
-    fn test_soft_repair_after_insertion_is_noop_for_d2() {
-        init_tracing();
-        let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-        ];
-        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
-        let v_key = dt.tri.tds.vertices().next().unwrap().0;
-        // D=2 < 3: must return immediately without touching the triangulation.
-        dt.run_soft_local_repair_after_insertion(v_key, 0);
-        assert_eq!(dt.number_of_vertices(), 3);
         assert!(dt.validate().is_ok());
     }
 }

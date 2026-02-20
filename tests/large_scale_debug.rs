@@ -54,7 +54,7 @@ use delaunay::core::delaunay_triangulation::{
     ConstructionOptions, ConstructionStatistics, DelaunayRepairHeuristicConfig,
     DelaunayTriangulationConstructionErrorWithStatistics,
 };
-use delaunay::geometry::kernel::FastKernel;
+use delaunay::geometry::kernel::RobustKernel;
 use delaunay::geometry::util::{
     generate_random_points_in_ball_seeded, generate_random_points_seeded,
 };
@@ -532,7 +532,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
             //
             // Use PLManifoldStrict during batch construction to ensure vertex-link invariants are
             // maintained on each insertion.
-            let kernel = FastKernel::<f64>::new();
+            let kernel = RobustKernel::<f64>::new();
             println!("Starting batch construction (new)...");
             let t_batch = Instant::now();
             match DelaunayTriangulation::with_topology_guarantee_and_options_with_construction_statistics(
@@ -579,7 +579,10 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
             };
 
             let mut dt: DelaunayTriangulation<_, (), (), D> =
-                DelaunayTriangulation::empty_with_topology_guarantee(topology_guarantee);
+                DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
+                    RobustKernel::<f64>::new(),
+                    topology_guarantee,
+                );
 
             // Delaunay policies:
             // - Enable bounded incremental repair (local flip queue) every N successful insertions.

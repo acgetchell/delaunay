@@ -1261,11 +1261,17 @@ where
                     info.extra_facets,
                     boundary_facets.len(),
                 );
-                let extra_cells: Vec<CellKey> = info
-                    .extra_facets
-                    .iter()
-                    .map(|&fi| boundary_facets[fi].cell_key())
-                    .collect();
+                // Deduplicate: multiple extra facets can come from the same cell. Downstream
+                // code (e.g., triangulation cavity reduction) converts this to a FastHashSet and
+                // expects unique keys; keep the payload minimal and stable for testing.
+                let mut seen = FastHashSet::<CellKey>::default();
+                let mut extra_cells: Vec<CellKey> = Vec::new();
+                for &fi in &info.extra_facets {
+                    let ck = boundary_facets[fi].cell_key();
+                    if seen.insert(ck) {
+                        extra_cells.push(ck);
+                    }
+                }
                 return Err(ConflictError::RidgeFan {
                     facet_count: info.facet_count,
                     ridge_vertex_count: info.ridge_vertex_count,
@@ -2280,16 +2286,22 @@ mod tests {
             } => {
                 assert!(facet_count >= 3);
                 assert_eq!(ridge_vertex_count, 1);
-                assert_eq!(
+                // After deduplication, extra_cells contains unique cell keys contributing
+                // the 3rd, 4th, … facets. Its length is ≤ facet_count - 2 and ≥ 1 here.
+                assert!(
+                    !extra_cells.is_empty() && extra_cells.len() <= facet_count - 2,
+                    "deduped extra_cells should be non-empty and not exceed facet_count - 2; got {} vs {}",
                     extra_cells.len(),
-                    facet_count - 2,
-                    "extra_cells.len() should equal facet_count - 2"
+                    facet_count - 2
                 );
+                // All entries must be valid keys from the TDS and unique.
+                let mut seen = std::collections::HashSet::new();
                 for ck in &extra_cells {
                     assert!(
                         tds.contains_cell(*ck),
                         "extra cell key {ck:?} should be present in the TDS"
                     );
+                    assert!(seen.insert(*ck), "duplicate key {ck:?} in extra_cells");
                 }
             }
             other => panic!("Expected RidgeFan, got {other:?}"),

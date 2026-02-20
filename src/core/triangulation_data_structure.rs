@@ -548,6 +548,8 @@ pub enum InvariantKind {
     FacetSharing,
     /// Neighbor topology and mutual-consistency invariants.
     NeighborConsistency,
+    /// Cell neighbor graph connectivity (single connected component).
+    Connectedness,
     /// Triangulation/topology invariants (manifold-with-boundary, Euler characteristic).
     Topology,
     /// Delaunay empty-circumsphere property.
@@ -1348,6 +1350,77 @@ where
     #[must_use]
     pub fn number_of_cells(&self) -> usize {
         self.cells.len()
+    }
+
+    /// Returns `true` if the cell neighbor graph is a single connected component.
+    ///
+    /// An empty triangulation (no cells) is trivially connected.
+    ///
+    /// Connectivity is a **topology-layer** (Level 3) invariant: it is not checked
+    /// by [`Tds::is_valid`] (Level 2), but it *is* checked by [`Triangulation::is_valid`].
+    /// This method exposes the underlying BFS so that diagnostic code and the
+    /// `Triangulation`-layer check can both reuse the same primitive without going
+    /// through a full `Triangulation` wrapper.
+    ///
+    /// Time complexity: O(N · D), where N is the number of cells (each cell has at most
+    /// D+1 neighbors, so the BFS visits at most N·(D+1) edges).
+    ///
+    /// [`Triangulation::is_valid`]: crate::core::triangulation::Triangulation::is_valid
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::triangulation::*;
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// assert!(dt.tds().is_connected());
+    ///
+    /// let empty = dt.tds().number_of_cells() == 0 || dt.tds().is_connected();
+    /// assert!(empty);
+    /// ```
+    #[must_use]
+    pub fn is_connected(&self) -> bool {
+        let total = self.cells.len();
+        if total == 0 {
+            return true;
+        }
+
+        let Some(start) = self.cell_keys().next() else {
+            return true;
+        };
+
+        let mut visited: CellKeySet = CellKeySet::default();
+        visited.reserve(total);
+        let mut stack: Vec<CellKey> = Vec::with_capacity(total.min(64));
+        stack.push(start);
+
+        while let Some(ck) = stack.pop() {
+            if !visited.insert(ck) {
+                continue;
+            }
+            let Some(cell) = self.cells.get(ck) else {
+                continue;
+            };
+            let Some(neighbors) = cell.neighbors() else {
+                continue;
+            };
+            for &n_opt in neighbors {
+                let Some(nk) = n_opt else {
+                    continue;
+                };
+                if self.cells.contains_key(nk) && !visited.contains(&nk) {
+                    stack.push(nk);
+                }
+            }
+        }
+
+        visited.len() == total
     }
 
     /// Increments the generation counter to invalidate dependent caches.
@@ -3766,6 +3839,26 @@ where
             }
         }
 
+        // 7. Connectivity (topology-layer invariant; reported here for comprehensive diagnostics).
+        //
+        // Note: connectivity is NOT part of Level-2 `is_valid()` — it belongs at Level 3
+        // (Triangulation::is_valid). It is included here in the diagnostic report so that
+        // `DelaunayTriangulation::validation_report()` surfaces it together with all other
+        // structural failures, even when the Triangulation wrapper is not available.
+        if !self.is_connected() {
+            violations.push(InvariantViolation {
+                kind: InvariantKind::Connectedness,
+                error: TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Disconnected triangulation: cell neighbor graph is not a single \
+                         connected component ({} cells total)",
+                        self.cells.len()
+                    ),
+                }
+                .into(),
+            });
+        }
+
         if violations.is_empty() {
             Ok(())
         } else {
@@ -5948,5 +6041,43 @@ mod tests {
             TdsError::InconsistentDataStructure { message }
                 if message.contains("references non-existent vertex key")
         ));
+    }
+
+    #[test]
+    fn test_is_connected_returns_false_for_isolated_cells() {
+        use crate::core::cell::Cell;
+
+        // Build a TDS with two triangles that have no neighbor wiring between them.
+        // Since neither cell's `neighbors` field is populated, BFS from either cell
+        // cannot reach the other → is_connected() must return false.
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        // Component A
+        let a0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let a1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let a2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        // Component B (far away, no shared vertices)
+        let b0 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 0.0]))
+            .unwrap();
+        let b1 = tds
+            .insert_vertex_with_mapping(vertex!([11.0, 0.0]))
+            .unwrap();
+        let b2 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 1.0]))
+            .unwrap();
+
+        tds.insert_cell_with_mapping(Cell::new(vec![a0, a1, a2], None).unwrap())
+            .unwrap();
+        tds.insert_cell_with_mapping(Cell::new(vec![b0, b1, b2], None).unwrap())
+            .unwrap();
+
+        // Two cells with neighbors = None: BFS from the first cell finds no edges
+        // and can never visit the second.
+        assert!(
+            !tds.is_connected(),
+            "TDS with two isolated cells (no neighbor wiring) must not be connected"
+        );
     }
 }

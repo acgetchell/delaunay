@@ -2009,33 +2009,34 @@ where
     /// assert!(dt.as_triangulation().is_valid().is_ok());
     /// ```
     pub fn is_valid(&self) -> Result<(), TriangulationValidationError> {
-        // 1. Manifold facet multiplicity (codimension-1 pseudomanifold condition)
+        // 1. Connectedness — O(N·D) BFS over neighbor pointers.
+        //
+        // Checked first because it is cheaper than building the facet-to-cells map
+        // (which requires O(N·D) hash-map insertions plus allocations) and avoids
+        // all subsequent work when the triangulation is disconnected.
+        self.validate_global_connectedness()?;
+
+        // 2. Manifold facet multiplicity (codimension-1 pseudomanifold condition)
         //
         // Build the facet map once and reuse it for manifold validation and Euler counting.
         let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
         validate_facet_degree(&facet_to_cells)?;
 
-        // 1b. Boundary manifoldness in codimension 2: the boundary must be "closed"
+        // 2b. Boundary manifoldness in codimension 2: the boundary must be "closed"
         // (i.e., its ridges must have degree 2 within boundary facets).
         validate_closed_boundary(&self.tds, &facet_to_cells)?;
 
-        // 1c. Ridge-link validation for PLManifold/PLManifoldStrict (fast, catches many PL issues).
+        // 2c. Ridge-link validation for PLManifold/PLManifoldStrict (fast, catches many PL issues).
         if self.topology_guarantee.requires_ridge_links() {
             validate_ridge_links(&self.tds)?;
         }
-        // 1d. PL-manifold vertex-link condition during insertion (strict mode).
+        // 2d. PL-manifold vertex-link condition during insertion (strict mode).
         if self
             .topology_guarantee
             .requires_vertex_links_during_insertion()
         {
             validate_vertex_links(&self.tds, &facet_to_cells)?;
         }
-
-        // 2. Connectedness (single component in the cell neighbor graph).
-        //
-        // This is cheaper than Euler characteristic validation and catches cases where χ can
-        // still match even though the triangulation is disconnected.
-        self.validate_global_connectedness()?;
 
         // 3. Vertex incidence (manifold invariant): every vertex must be incident to at least one cell.
         self.validate_no_isolated_vertices()?;
@@ -2209,33 +2210,18 @@ where
 
     /// Validates that the triangulation's cell neighbor graph is a single connected component.
     ///
-    /// This is an O(N·D) traversal (equivalently O(N+E) with bounded degree), where N is the
-    /// number of cells and each cell has at most D+1 neighbors.
+    /// Delegates to [`Tds::is_connected`], an O(N·D) BFS over neighbor pointers.
     fn validate_global_connectedness(&self) -> Result<(), TriangulationValidationError> {
-        let total_cells = self.tds.number_of_cells();
-        if total_cells == 0 {
-            return Ok(());
-        }
-
-        let start = self.tds.cell_keys().next().ok_or_else(|| {
-            TdsValidationError::InconsistentDataStructure {
-                message: "Triangulation has non-zero cell count but no cell keys".to_string(),
-            }
-        })?;
-
-        let visited = self.traverse_cell_neighbor_graph(start, total_cells, None, |_from, _to| {});
-
-        if visited.len() != total_cells {
+        if !self.tds.is_connected() {
             return Err(TdsValidationError::InconsistentDataStructure {
                 message: format!(
-                    "Disconnected triangulation: visited {} of {} cells in the cell neighbor graph",
-                    visited.len(),
-                    total_cells
+                    "Disconnected triangulation: cell neighbor graph is not a single connected \
+                     component ({} cells total)",
+                    self.tds.number_of_cells()
                 ),
             }
             .into());
         }
-
         Ok(())
     }
 
@@ -3518,11 +3504,17 @@ where
             match extraction_result {
                 Ok(boundary) => boundary,
                 Err(err) => {
-                    // For D>=3: do NOT fall back to star-split once cavity reduction is
-                    // exhausted.  Star-splits create heavily non-Delaunay configurations that
-                    // cause the global flip repair to spend hours cycling, especially for D=3
-                    // inputs with many near-degenerate configurations.  Return a retryable
-                    // error instead so insert_transactional can retry with a perturbed vertex.
+                    // For D=3 and D≥4: do NOT fall back to star-split once cavity reduction
+                    // is exhausted.  Star-splits create heavily non-Delaunay configurations
+                    // (the star of the new vertex is only D+1 cells instead of the correct
+                    // conflict region) whose violations cannot be reliably fixed by the flip
+                    // repair: isolated violations may exist in cells that are not connected to
+                    // the star-split star through any violation chain.  Return a retryable
+                    // error instead so insert_transactional can retry with a perturbed vertex
+                    // and, after all retries, skip the vertex.  A valid Delaunay triangulation
+                    // with a few skipped vertices is preferable to an invalid one with all of
+                    // them (the is_delaunay_property_only() check in build_with_shuffled_retries
+                    // will reject the latter anyway).
                     //
                     // For D=2: star-split is used as a last resort.  The 2D flip repair
                     // guarantees convergence from star-split configurations and the extra cells
@@ -5717,8 +5709,10 @@ mod tests {
 
         tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
 
-        // In strict PL-manifold mode, Level 3 validation should fail due to link validation.
-        // Depending on validation order, this may surface as ridge-link or vertex-link failure.
+        // In strict PL-manifold mode, Level 3 validation should fail.  With connectivity now
+        // checked first, a disconnected triangulation surfaces as Disconnected before vertex-link
+        // or ridge-link validation.  The two components share only v0 (a vertex, not a facet)
+        // so the neighbor graph is disconnected.
         match tri.is_valid() {
             Err(TriangulationValidationError::VertexLinkNotManifold {
                 vertex_key,
@@ -5738,8 +5732,13 @@ mod tests {
                 assert!(!connected);
             }
             Err(TriangulationValidationError::RidgeLinkNotManifold { .. }) => {}
+            // Connectivity is now checked before link validation; a two-component wedge is
+            // also disconnected in the neighbor graph.
+            Err(TriangulationValidationError::Tds(
+                TdsValidationError::InconsistentDataStructure { ref message },
+            )) if message.contains("Disconnected") => {}
             other => panic!(
-                "Expected RidgeLinkNotManifold or VertexLinkNotManifold in strict PL-manifold mode, got {other:?}"
+                "Expected RidgeLinkNotManifold, VertexLinkNotManifold, or Disconnected in strict PL-manifold mode, got {other:?}"
             ),
         }
     }
@@ -5827,9 +5826,11 @@ mod tests {
     }
 
     #[test]
-    fn test_is_valid_errors_on_non_manifold_boundary_ridge_before_connectedness() {
-        // Two tetrahedra that share an edge but not a facet create a non-manifold boundary:
-        // the shared edge is incident to 4 boundary triangles.
+    fn test_is_valid_disconnected_detected_before_non_manifold_boundary_ridge() {
+        // Two tetrahedra that share only an edge (not a facet) are disconnected in the neighbor
+        // graph (no shared facet ⇒ no neighbor pointers).  Connectivity is now checked FIRST in
+        // `is_valid()`, so the disconnection error is returned before the non-manifold boundary
+        // ridge error (4 boundary triangles on the shared edge).
         let mut tds: Tds<f64, (), (), 3> = Tds::empty();
 
         // Shared edge
@@ -5869,15 +5870,19 @@ mod tests {
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
 
-        // Ordering check: Level 3 should fail for boundary ridge multiplicity before connectedness.
+        // The two cells share only an edge, so they have no mutual neighbor pointers and the
+        // neighbor-graph BFS visits only one of them.  Connectivity is now the first check in
+        // `is_valid()`, so the disconnection error is returned first.
         match tri.is_valid() {
-            Err(TriangulationValidationError::BoundaryRidgeMultiplicity {
-                boundary_facet_count,
-                ..
-            }) => {
-                assert_eq!(boundary_facet_count, 4);
+            Err(TriangulationValidationError::Tds(
+                TdsValidationError::InconsistentDataStructure { ref message },
+            )) => {
+                assert!(
+                    message.contains("Disconnected"),
+                    "Expected disconnection message, got: {message}"
+                );
             }
-            other => panic!("Expected BoundaryRidgeMultiplicity, got {other:?}"),
+            other => panic!("Expected Disconnected InconsistentDataStructure, got {other:?}"),
         }
     }
     #[test]
@@ -6209,11 +6214,25 @@ mod tests {
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
 
+        // The three cells share facet {v0,v1,v2} three-ways.  `repair_neighbor_pointers` would
+        // fail on this configuration (a facet shared by >2 cells violates the early-exit guard in
+        // `assign_neighbors`), so the cells have no neighbor pointers and the neighbor-graph BFS
+        // visits only one of them.  Connectivity is now the first check in `is_valid()`, so the
+        // disconnection error is returned before the non-manifold facet error.
         match tri.is_valid() {
+            Err(TriangulationValidationError::Tds(
+                TdsValidationError::InconsistentDataStructure { ref message },
+            )) => {
+                assert!(
+                    message.contains("Disconnected"),
+                    "Expected disconnection message, got: {message}"
+                );
+            }
+            // Non-manifold facet detection is still valid if the cells happen to be connected.
             Err(TriangulationValidationError::ManifoldFacetMultiplicity { cell_count, .. }) => {
                 assert_eq!(cell_count, 3);
             }
-            other => panic!("Expected ManifoldFacetMultiplicity, got {other:?}"),
+            other => panic!("Expected Disconnected or ManifoldFacetMultiplicity, got {other:?}"),
         }
     }
 

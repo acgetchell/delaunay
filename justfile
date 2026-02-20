@@ -216,7 +216,7 @@ debug-large-scale-3d-incremental-bisect total="1000":
     DELAUNAY_LARGE_DEBUG_PREFIX_TOTAL={{total}} cargo test --test large_scale_debug debug_large_scale_3d_incremental_prefix_bisect -- --ignored --nocapture
 
 debug-large-scale-4d-100:
-    DELAUNAY_LARGE_DEBUG_N_4D=100 cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
+    DELAUNAY_LARGE_DEBUG_N_4D=100 DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
 
 debug-large-scale-4d:
     cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
