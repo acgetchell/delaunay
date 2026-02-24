@@ -231,14 +231,13 @@ use super::{
     cell::{Cell, CellValidationError},
     facet::{FacetHandle, facet_key_from_vertices},
     traits::data_type::DataType,
-    util::usize_to_u8,
+    util::{stable_hash_u64_slice, usize_to_u8},
     vertex::{Vertex, VertexValidationError},
 };
 use crate::core::collections::{
-    CellKeySet, CellRemovalBuffer, CellVertexUuidBuffer, CellVerticesMap, Entry, FacetToCellsMap,
-    FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, SmallBuffer, StorageMap,
-    UuidToCellKeyMap, UuidToVertexKeyMap, VertexKeyBuffer, VertexKeySet,
-    fast_hash_map_with_capacity,
+    CellKeySet, CellRemovalBuffer, CellVerticesMap, Entry, FacetToCellsMap, FastHashMap,
+    MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, SmallBuffer, StorageMap, UuidToCellKeyMap,
+    UuidToVertexKeyMap, VertexKeyBuffer, VertexKeySet, fast_hash_map_with_capacity,
 };
 use crate::core::triangulation::TriangulationValidationError;
 use crate::geometry::traits::coordinate::CoordinateScalar;
@@ -246,7 +245,7 @@ use serde::{
     Deserialize, Deserializer, Serialize,
     de::{self, MapAccess, Visitor},
 };
-use slotmap::new_key_type;
+use slotmap::{Key, new_key_type};
 use std::{
     cmp::Ordering as CmpOrdering,
     fmt::{self, Debug},
@@ -822,6 +821,92 @@ where
     U: DataType,
     V: DataType,
 {
+    fn periodic_facet_key_from_cell_vertices(
+        cell: &Cell<T, U, V, D>,
+        vertices: &[VertexKey],
+        facet_index: usize,
+    ) -> Result<u64, TdsValidationError> {
+        if facet_index >= vertices.len() {
+            return Err(TdsError::InconsistentDataStructure {
+                message: format!(
+                    "Facet index {facet_index} out of bounds for cell with {} vertices",
+                    vertices.len()
+                ),
+            });
+        }
+
+        let Some(periodic_offsets) = cell.periodic_vertex_offsets() else {
+            let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                SmallBuffer::new();
+            for (i, &vertex_key) in vertices.iter().enumerate() {
+                if i != facet_index {
+                    facet_vertices.push(vertex_key);
+                }
+            }
+            return Ok(facet_key_from_vertices(&facet_vertices));
+        };
+
+        if periodic_offsets.len() != vertices.len() {
+            return Err(TdsError::InconsistentDataStructure {
+                message: format!(
+                    "Cell periodic offset count {} does not match vertex count {}",
+                    periodic_offsets.len(),
+                    vertices.len(),
+                ),
+            });
+        }
+
+        let mut lifted_facet: SmallBuffer<(u64, [i8; D]), MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::new();
+        for (vertex_idx, &vertex_key) in vertices.iter().enumerate() {
+            if vertex_idx == facet_index {
+                continue;
+            }
+            lifted_facet.push((vertex_key.data().as_ffi(), periodic_offsets[vertex_idx]));
+        }
+
+        lifted_facet.sort_unstable_by_key(|(vertex_key_value, _)| *vertex_key_value);
+        let facet_anchor_offset = lifted_facet
+            .first()
+            .map_or([0_i8; D], |(_, offset)| *offset);
+
+        let mut packed_signature: SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::new();
+        for (vertex_key_value, offset) in lifted_facet {
+            packed_signature.push(vertex_key_value);
+            for axis in 0..D {
+                let shifted = i16::from(offset[axis]) - i16::from(facet_anchor_offset[axis]) + 128;
+                if !(0..=255).contains(&shifted) {
+                    return Err(TdsError::InconsistentDataStructure {
+                        message: format!(
+                            "Periodic offset component {shifted} (axis {axis}) is out of encodable range 0..=255",
+                        ),
+                    });
+                }
+                packed_signature
+                    .push(u64::try_from(shifted).expect("validated shifted offset is in 0..=255"));
+            }
+        }
+
+        Ok(stable_hash_u64_slice(&packed_signature))
+    }
+
+    pub(crate) fn facet_key_for_cell_facet(
+        &self,
+        cell_key: CellKey,
+        facet_index: usize,
+    ) -> Result<u64, TdsValidationError> {
+        let vertices = self.get_cell_vertices(cell_key)?;
+        let cell = self
+            .cells
+            .get(cell_key)
+            .ok_or_else(|| TdsError::InconsistentDataStructure {
+                message: format!(
+                    "Cell key {cell_key:?} not found while deriving facet key for index {facet_index}",
+                ),
+            })?;
+        Self::periodic_facet_key_from_cell_vertices(cell, &vertices, facet_index)
+    }
     /// Assigns neighbor relationships between cells based on shared facets with semantic ordering.
     ///
     /// This method efficiently builds neighbor relationships by using the `facet_key_from_vertices`
@@ -841,8 +926,6 @@ where
     /// Returns `TdsValidationError` if neighbor assignment fails due to inconsistent
     /// data structures or invalid facet sharing patterns.
     fn assign_neighbors(&mut self) -> Result<(), TdsValidationError> {
-        use crate::core::facet::facet_key_from_vertices;
-
         // Build facet mapping with vertex index information using optimized collections
         // facet_key -> [(cell_key, vertex_index_opposite_to_facet)]
         type FacetInfo = (CellKey, usize);
@@ -861,16 +944,8 @@ where
                 }
             })?;
 
-            let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-                SmallBuffer::with_capacity(vertices.len().saturating_sub(1));
             for i in 0..vertices.len() {
-                facet_vertices.clear();
-                for (j, &key) in vertices.iter().enumerate() {
-                    if j != i {
-                        facet_vertices.push(key);
-                    }
-                }
-                let facet_key = facet_key_from_vertices(&facet_vertices);
+                let facet_key = Self::periodic_facet_key_from_cell_vertices(cell, &vertices, i)?;
                 let facet_entry = facet_map.entry(facet_key).or_default();
                 // Detect degenerate case early: more than 2 cells sharing a facet
                 // Note: Check happens before push, so len() reflects current sharing count
@@ -3171,26 +3246,15 @@ where
         let cap = self.cells.len().saturating_mul(D.saturating_add(1));
         let mut facet_to_cells: FacetToCellsMap = fast_hash_map_with_capacity(cap);
 
-        // Preallocate facet_vertices buffer outside the loops to avoid per-iteration allocations
-        let mut facet_vertices = Vec::with_capacity(D);
-
         // Iterate over all cells and their facets
-        for (cell_id, _cell) in &self.cells {
+        for (cell_id, cell) in &self.cells {
             // Use direct key-based method to avoid UUID→Key lookups
             // The error from get_cell_vertices is already TdsValidationError
             let vertices = self.get_cell_vertices(cell_id)?;
 
             for i in 0..vertices.len() {
-                // Clear and reuse the buffer instead of allocating a new one
-                facet_vertices.clear();
-                for (j, &key) in vertices.iter().enumerate() {
-                    if i != j {
-                        facet_vertices.push(key);
-                    }
-                }
-
-                let facet_key = facet_key_from_vertices(&facet_vertices);
-                let Ok(facet_index_u8) = usize_to_u8(i, facet_vertices.len()) else {
+                let facet_key = Self::periodic_facet_key_from_cell_vertices(cell, &vertices, i)?;
+                let Ok(facet_index_u8) = usize_to_u8(i, vertices.len()) else {
                     return Err(TdsError::InconsistentDataStructure {
                         message: format!("Facet index {i} exceeds u8 range for dimension {D}"),
                     });
@@ -3237,16 +3301,45 @@ where
         // First pass: identify duplicate cells
         for cell_key in self.cells.keys() {
             let vertices = self.get_cell_vertices(cell_key)?;
-            // Sort vertex UUIDs instead of keys for deterministic ordering
-            // Note: Don't sort by VertexKey as slotmap::Key's Ord is implementation-defined
-            let mut vertex_uuids: Vec<_> = vertices
+            let cell =
+                self.cells
+                    .get(cell_key)
+                    .ok_or_else(|| TdsError::InconsistentDataStructure {
+                        message: format!(
+                            "Cell key {cell_key:?} missing during duplicate-cell removal"
+                        ),
+                    })?;
+            let periodic_offsets = cell.periodic_vertex_offsets();
+            if let Some(offsets) = periodic_offsets
+                && offsets.len() != vertices.len()
+            {
+                return Err(TdsError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell {cell_key:?} periodic offset count {} does not match vertex count {} during duplicate-cell removal",
+                        offsets.len(),
+                        vertices.len(),
+                    ),
+                }
+                .into());
+            }
+
+            let mut vertex_uuid_offsets: Vec<_> = vertices
                 .iter()
-                .map(|&key| self.vertices[key].uuid())
+                .enumerate()
+                .map(|(idx, &key)| {
+                    (
+                        self.vertices[key].uuid(),
+                        periodic_offsets
+                            .and_then(|offsets| offsets.get(idx))
+                            .copied()
+                            .unwrap_or([0_i8; D]),
+                    )
+                })
                 .collect();
-            vertex_uuids.sort_unstable();
+            vertex_uuid_offsets.sort_unstable_by_key(|(uuid, _)| *uuid);
 
             // Use Entry API for atomic check-and-insert
-            match unique_cells.entry(vertex_uuids) {
+            match unique_cells.entry(vertex_uuid_offsets) {
                 Entry::Occupied(_) => {
                     cells_to_remove.push(cell_key);
                 }
@@ -3510,31 +3603,47 @@ where
     ///
     /// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
     fn validate_no_duplicate_cells(&self) -> Result<(), TdsValidationError> {
-        // Use CellVertexUuidBuffer as HashMap key directly to avoid extra Vec allocation
-        // Pre-size to avoid rehashing during insertion (minor optimization for hot path)
-        let mut unique_cells: FastHashMap<CellVertexUuidBuffer, CellKey> =
+        // Include periodic per-vertex offsets in the duplicate key so periodic quotient cells
+        // with identical vertex sets but distinct lattice offsets are not collapsed.
+        let mut unique_cells: FastHashMap<Vec<(Uuid, [i8; D])>, CellKey> =
             crate::core::collections::fast_hash_map_with_capacity(self.cells.len());
         let mut duplicates = Vec::new();
 
         for (cell_key, cell) in &self.cells {
-            // Use Cell::vertex_uuids() helper to avoid duplicating VertexKey→UUID mapping logic
-            // Convert CellValidationError to TdsValidationError for propagation
-            let mut vertex_uuids =
-                cell.vertex_uuids(self)
-                    .map_err(|e| TdsError::InconsistentDataStructure {
-                        message: format!("Failed to get vertex UUIDs for cell {cell_key:?}: {e}"),
-                    })?;
+            let vertices = self.get_cell_vertices(cell_key)?;
+            let periodic_offsets = cell.periodic_vertex_offsets();
+            if let Some(offsets) = periodic_offsets
+                && offsets.len() != vertices.len()
+            {
+                return Err(TdsError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell {cell_key:?} periodic offset count {} does not match vertex count {} during duplicate-cell validation",
+                        offsets.len(),
+                        vertices.len(),
+                    ),
+                });
+            }
 
-            // Canonicalize by sorting UUIDs for backend-agnostic equality
-            // Note: Don't sort by VertexKey as slotmap::Key's Ord is implementation-defined
-            vertex_uuids.sort_unstable();
+            let mut vertex_uuid_offsets: Vec<_> = vertices
+                .iter()
+                .enumerate()
+                .map(|(idx, &vertex_key)| {
+                    (
+                        self.vertices[vertex_key].uuid(),
+                        periodic_offsets
+                            .and_then(|offsets| offsets.get(idx))
+                            .copied()
+                            .unwrap_or([0_i8; D]),
+                    )
+                })
+                .collect();
+            vertex_uuid_offsets.sort_unstable_by_key(|(uuid, _)| *uuid);
 
-            // Use buffer directly as HashMap key (keeps stack allocation, avoids Vec copy)
-            if let Some(existing_cell_key) = unique_cells.get(&vertex_uuids) {
+            if let Some(existing_cell_key) = unique_cells.get(&vertex_uuid_offsets) {
                 // Convert to Vec only for error message payload
-                duplicates.push((cell_key, *existing_cell_key, vertex_uuids.to_vec()));
+                duplicates.push((cell_key, *existing_cell_key, vertex_uuid_offsets.clone()));
             } else {
-                unique_cells.insert(vertex_uuids, cell_key);
+                unique_cells.insert(vertex_uuid_offsets, cell_key);
             }
         }
 
@@ -3939,6 +4048,10 @@ where
                     if let Some(neighbors) = cell.neighbors() {
                         let neighbor = neighbors.get(facet_index).and_then(|n| *n);
                         if let Some(neighbor_key) = neighbor {
+                            // Periodic quotient triangulations may encode this as self-adjacency.
+                            if neighbor_key == cell_key {
+                                continue;
+                            }
                             return Err(TdsError::InvalidNeighbors {
                                 message: format!(
                                     "Boundary facet {facet_key} unexpectedly has a neighbor across cell {}[{facet_index}] -> {neighbor_key:?}",
@@ -4036,6 +4149,11 @@ where
                 let Some(neighbor_key) = neighbor_key_opt else {
                     continue;
                 };
+
+                // Self-adjacency is valid for periodic quotient triangulations.
+                if *neighbor_key == cell_key {
+                    continue;
+                }
 
                 // Early termination: check if neighbor exists
                 let Some(neighbor_cell) = self.cells.get(*neighbor_key) else {

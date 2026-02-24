@@ -152,6 +152,7 @@ delaunay/
 │   │   │   └── uuid.rs
 │   │   ├── adjacency.rs
 │   │   ├── boundary.rs
+│   │   ├── builder.rs
 │   │   ├── cell.rs
 │   │   ├── delaunay_triangulation.rs
 │   │   ├── edge.rs
@@ -331,6 +332,7 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality, 
 
 - `triangulation_data_structure.rs` - Main `Tds` struct
 - `delaunay_triangulation.rs` - DelaunayTriangulation implementation (top layer)
+- `builder.rs` - Fluent builder API for Euclidean and toroidal/periodic construction
 - `triangulation.rs` - Generic Triangulation layer with kernel
 - `vertex.rs`, `cell.rs`, `facet.rs` - Core geometric primitives
 - `edge.rs` - Canonical `EdgeKey` for topology traversal

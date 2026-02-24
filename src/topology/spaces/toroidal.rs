@@ -89,6 +89,9 @@ impl<const D: usize> ToroidalSpace<D> {
     #[must_use]
     pub fn wrap_coord<T: CoordinateScalar>(&self, axis: usize, value: T) -> Option<T> {
         let period = *self.domain.get(axis)?;
+        if !period.is_finite() || period <= 0.0 {
+            return None;
+        }
         let v_f64 = value.to_f64()?;
         if !v_f64.is_finite() {
             return None;
@@ -111,7 +114,9 @@ impl<const D: usize> TopologicalSpace for ToroidalSpace<D> {
 
     fn canonicalize_point(&self, coords: &mut [f64]) {
         for (coord, &period) in coords.iter_mut().zip(self.domain.iter()) {
-            *coord = coord.rem_euclid(period);
+            if period.is_finite() && period > 0.0 {
+                *coord = coord.rem_euclid(period);
+            }
         }
     }
 
@@ -291,5 +296,12 @@ mod tests {
         let space = ToroidalSpace::<2>::new([1.0, 1.0]);
         assert!(space.wrap_coord::<f64>(0, f64::NAN).is_none());
         assert!(space.wrap_coord::<f64>(0, f64::INFINITY).is_none());
+    }
+
+    #[test]
+    fn test_wrap_coord_zero_period_returns_none() {
+        let space = ToroidalSpace::<2>::new([0.0, 1.0]);
+        assert!(space.wrap_coord::<f64>(0, 0.25).is_none());
+        assert!(space.wrap_coord::<f64>(1, 0.25).is_some());
     }
 }

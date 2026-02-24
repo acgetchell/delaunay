@@ -897,6 +897,45 @@ mod tests {
         let points2_5d = generate_random_points_seeded::<f64, 5>(15, (0.0, 10.0), 2024).unwrap();
         assert_ne!(points1_5d, points2_5d);
     }
+    #[test]
+    fn test_generate_random_points_periodic_2d_in_domain() {
+        let points = generate_random_points_periodic::<f64, 2>(100, [1.0, 2.0], 42).unwrap();
+        assert_eq!(points.len(), 100);
+
+        for point in &points {
+            let coords = *point.coords();
+            assert!((0.0..1.0).contains(&coords[0]));
+            assert!((0.0..2.0).contains(&coords[1]));
+        }
+    }
+
+    #[test]
+    fn test_generate_random_points_periodic_seeded_reproducible() {
+        let points1 = generate_random_points_periodic::<f64, 3>(50, [1.0, 1.0, 1.0], 123).unwrap();
+        let points2 = generate_random_points_periodic::<f64, 3>(50, [1.0, 1.0, 1.0], 123).unwrap();
+        assert_eq!(points1, points2);
+    }
+
+    #[test]
+    fn test_generate_random_points_periodic_invalid_domain() {
+        let zero_period = generate_random_points_periodic::<f64, 2>(10, [1.0, 0.0], 7);
+        assert!(matches!(
+            zero_period,
+            Err(RandomPointGenerationError::InvalidRange { .. })
+        ));
+
+        let negative_period = generate_random_points_periodic::<f64, 2>(10, [1.0, -2.0], 7);
+        assert!(matches!(
+            negative_period,
+            Err(RandomPointGenerationError::InvalidRange { .. })
+        ));
+    }
+
+    #[test]
+    fn test_generate_random_points_periodic_zero_points() {
+        let points = generate_random_points_periodic::<f64, 4>(0, [1.0, 2.0, 3.0, 4.0], 9).unwrap();
+        assert!(points.is_empty());
+    }
 
     // =============================================================================
     // RANDOM POINT GENERATION (UNIFORM IN BALL) TESTS

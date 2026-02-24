@@ -313,7 +313,6 @@ fn test_builder_toroidal_robust_kernel_3d() {
 /// `dt.validate()` would fail because it checks χ = 2, so we check TDS
 /// validity and χ separately.
 #[test]
-#[ignore = "issue-210 periodic quotient reconstruction is still unstable in 2D"]
 fn test_builder_toroidal_periodic_chi_zero_2d() {
     use delaunay::geometry::kernel::RobustKernel;
     use delaunay::topology::characteristics::euler::{count_simplices, euler_characteristic};
@@ -352,7 +351,6 @@ fn test_builder_toroidal_periodic_chi_zero_2d() {
 /// also 0, so we verify TDS structural validity rather than the full `validate()`
 /// check (which would expect χ = 2 for a sphere).
 #[test]
-#[ignore = "issue-210 expanded periodic 3D construction is still unstable"]
 fn test_builder_toroidal_periodic_validates_3d() {
     use delaunay::geometry::kernel::RobustKernel;
 

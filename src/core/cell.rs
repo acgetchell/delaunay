@@ -235,6 +235,13 @@ where
     /// The optional data associated with the cell.
     pub data: Option<V>,
 
+    /// Optional per-vertex periodic lattice offsets for quotient-cell reconstruction.
+    ///
+    /// When present, this vector is aligned with `vertices` by index:
+    /// `periodic_vertex_offsets[i]` corresponds to `vertices[i]`.
+    /// Offsets are omitted from serialization and are reconstructed by periodic builders.
+    pub(crate) periodic_vertex_offsets: Option<Vec<[i8; D]>>,
+
     /// Phantom data to maintain type parameters T and U for coordinate and vertex data types.
     /// These are needed because cells store keys to vertices, not the vertices themselves.
     _phantom: PhantomData<(T, U)>,
@@ -355,6 +362,7 @@ where
                     uuid,
                     neighbors: None, // Will be reconstructed by TDS
                     data,
+                    periodic_vertex_offsets: None,
                     _phantom: PhantomData,
                 })
             }
@@ -426,6 +434,7 @@ where
             uuid: make_uuid(),
             neighbors: None,
             data,
+            periodic_vertex_offsets: None,
             _phantom: PhantomData,
         })
     }
@@ -606,6 +615,23 @@ where
         &self.vertices[..]
     }
 
+    /// Returns the optional periodic lattice offsets aligned with `vertices`.
+    #[inline]
+    pub fn periodic_vertex_offsets(&self) -> Option<&[[i8; D]]> {
+        self.periodic_vertex_offsets.as_deref()
+    }
+
+    /// Sets periodic lattice offsets aligned with `vertices`.
+    #[inline]
+    pub(crate) fn set_periodic_vertex_offsets(&mut self, offsets: Vec<[i8; D]>) {
+        debug_assert_eq!(
+            offsets.len(),
+            self.vertices.len(),
+            "periodic offsets must align with cell vertices",
+        );
+        self.periodic_vertex_offsets = Some(offsets);
+    }
+
     /// Find the facet index in `neighbor_cell` that corresponds to the shared facet.
     ///
     /// `facet_idx` is interpreted as the index of the vertex opposite the facet in `self`.
@@ -668,6 +694,9 @@ where
     #[inline]
     pub(crate) fn push_vertex_key(&mut self, vertex_key: VertexKey) {
         self.vertices.push(vertex_key);
+        if self.periodic_vertex_offsets.is_some() {
+            self.periodic_vertex_offsets = None;
+        }
     }
 
     /// Clears all vertex keys from this cell.
@@ -680,6 +709,7 @@ where
     #[inline]
     pub(crate) fn clear_vertex_keys(&mut self) {
         self.vertices.clear();
+        self.periodic_vertex_offsets = None;
     }
 
     /// Ensures the cell has a properly initialized neighbors buffer of size D+1.

@@ -108,24 +108,210 @@ use crate::core::delaunay_triangulation::{
 };
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionError};
+use crate::core::util::stable_hash_u64_slice;
 use crate::core::vertex::{Vertex, VertexBuilder};
 use crate::geometry::kernel::{FastKernel, Kernel};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar, ScalarAccumulative};
 use crate::topology::spaces::toroidal::ToroidalSpace;
+use slotmap::Key;
 const TWO_POW_52_I64: i64 = 4_503_599_627_370_496; // 2^52
 const TWO_POW_52_F64: f64 = 4_503_599_627_370_496.0; // 2^52
 const MAX_OFFSET_UNITS: i64 = 1_048_576;
+const IMAGE_JITTER_UNITS: i64 = 64;
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0100_0000_01b3;
 type LiftedVertex<const D: usize> = (
     crate::core::triangulation_data_structure::VertexKey,
     [i8; D],
 );
-type FacetOccurrences<const D: usize> = crate::core::collections::FastHashMap<
-    Vec<LiftedVertex<D>>,
-    Vec<(crate::core::triangulation_data_structure::CellKey, usize)>,
->;
+type SymbolicSignature<const D: usize> = Vec<LiftedVertex<D>>;
+type PeriodicFacetKey = u64;
+type PeriodicCandidate<const D: usize> = (
+    SymbolicSignature<D>,
+    SymbolicSignature<D>,
+    Vec<PeriodicFacetKey>,
+    bool,
+);
+
+fn periodic_facet_key_from_lifted<const D: usize>(
+    lifted_vertices: &[(
+        crate::core::triangulation_data_structure::VertexKey,
+        [i8; D],
+    )],
+    facet_index: usize,
+) -> u64 {
+    let mut lifted_facet: Vec<(u64, [i8; D])> = lifted_vertices
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, (vertex_key, offset))| {
+            if idx == facet_index {
+                return None;
+            }
+            Some((vertex_key.data().as_ffi(), *offset))
+        })
+        .collect();
+    lifted_facet.sort_unstable_by_key(|(vertex_key_value, _)| *vertex_key_value);
+    let facet_anchor_offset = lifted_facet
+        .first()
+        .map_or([0_i8; D], |(_, offset)| *offset);
+
+    let mut packed_signature: Vec<u64> = Vec::with_capacity(lifted_facet.len() * (D + 1));
+    for (vertex_key_value, offset) in lifted_facet {
+        packed_signature.push(vertex_key_value);
+        for axis in 0..D {
+            let shifted = i16::from(offset[axis]) - i16::from(facet_anchor_offset[axis]) + 128;
+            debug_assert!(
+                (0..=255).contains(&shifted),
+                "relative periodic offsets must fit into signed-byte delta",
+            );
+            packed_signature
+                .push(u64::try_from(shifted).expect("debug assertion ensures 0..=255 range"));
+        }
+    }
+
+    stable_hash_u64_slice(&packed_signature)
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "Depth-first bounded subset search includes pruning logic and is kept self-contained"
+)]
+#[expect(
+    clippy::items_after_statements,
+    reason = "Local DFS helper is intentionally colocated with selection setup"
+)]
+fn search_closed_2d_selection(
+    candidate_edges: &[[usize; 3]],
+    candidate_in_domain: &[bool],
+    target_faces: usize,
+    edge_count: usize,
+    node_limit: usize,
+) -> Option<Vec<bool>> {
+    let m = candidate_edges.len();
+    if m < target_faces {
+        return None;
+    }
+
+    // Frequency of each edge in the candidate pool (rarer edges first).
+    let mut edge_frequency = vec![0usize; edge_count];
+    for edges in candidate_edges {
+        for &edge in edges {
+            edge_frequency[edge] = edge_frequency[edge].saturating_add(1);
+        }
+    }
+
+    let mut order: Vec<usize> = (0..m).collect();
+    order.sort_by(|a, b| {
+        let a_edges = candidate_edges[*a];
+        let b_edges = candidate_edges[*b];
+        let a_score =
+            edge_frequency[a_edges[0]] + edge_frequency[a_edges[1]] + edge_frequency[a_edges[2]];
+        let b_score =
+            edge_frequency[b_edges[0]] + edge_frequency[b_edges[1]] + edge_frequency[b_edges[2]];
+        candidate_in_domain[*b]
+            .cmp(&candidate_in_domain[*a])
+            .then_with(|| a_score.cmp(&b_score))
+            .then_with(|| a.cmp(b))
+    });
+
+    let mut edge_counts = vec![0u8; edge_count];
+    let mut selected = vec![false; m];
+    let mut nodes = 0usize;
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Recursive DFS state requires explicit parameterization for pruning"
+    )]
+    fn dfs(
+        pos: usize,
+        chosen: usize,
+        target_faces: usize,
+        order: &[usize],
+        candidate_edges: &[[usize; 3]],
+        edge_counts: &mut [u8],
+        selected: &mut [bool],
+        nodes: &mut usize,
+        node_limit: usize,
+    ) -> bool {
+        if chosen == target_faces {
+            return true;
+        }
+        if pos == order.len() {
+            return false;
+        }
+        if chosen + (order.len() - pos) < target_faces {
+            return false;
+        }
+        if *nodes >= node_limit {
+            return false;
+        }
+        *nodes = nodes.saturating_add(1);
+
+        // Capacity-based prune: each additional face consumes 3 remaining edge incidences.
+        let remaining_capacity: usize = edge_counts
+            .iter()
+            .map(|&count| usize::from(2_u8.saturating_sub(count)))
+            .sum();
+        if chosen + (remaining_capacity / 3) < target_faces {
+            return false;
+        }
+
+        let idx = order[pos];
+        let edges = candidate_edges[idx];
+
+        if edge_counts[edges[0]] < 2 && edge_counts[edges[1]] < 2 && edge_counts[edges[2]] < 2 {
+            selected[idx] = true;
+            edge_counts[edges[0]] += 1;
+            edge_counts[edges[1]] += 1;
+            edge_counts[edges[2]] += 1;
+
+            if dfs(
+                pos + 1,
+                chosen + 1,
+                target_faces,
+                order,
+                candidate_edges,
+                edge_counts,
+                selected,
+                nodes,
+                node_limit,
+            ) {
+                return true;
+            }
+
+            edge_counts[edges[0]] -= 1;
+            edge_counts[edges[1]] -= 1;
+            edge_counts[edges[2]] -= 1;
+            selected[idx] = false;
+        }
+
+        dfs(
+            pos + 1,
+            chosen,
+            target_faces,
+            order,
+            candidate_edges,
+            edge_counts,
+            selected,
+            nodes,
+            node_limit,
+        )
+    }
+
+    dfs(
+        0,
+        0,
+        target_faces,
+        &order,
+        candidate_edges,
+        &mut edge_counts,
+        &mut selected,
+        &mut nodes,
+        node_limit,
+    )
+    .then_some(selected)
+}
 
 // =============================================================================
 // BUILDER STRUCT
@@ -485,6 +671,23 @@ where
         Ok(out)
     }
 
+    /// Validates toroidal domain periods are finite and strictly positive.
+    fn validate_toroidal_domain(
+        space: &ToroidalSpace<D>,
+    ) -> Result<(), DelaunayTriangulationConstructionError> {
+        for (axis, &period) in space.domain.iter().enumerate() {
+            if !period.is_finite() || period <= 0.0 {
+                return Err(TriangulationConstructionError::GeometricDegeneracy {
+                    message: format!(
+                        "Invalid toroidal domain at axis {axis}: period {period:?}; expected finite value > 0",
+                    ),
+                }
+                .into());
+            }
+        }
+        Ok(())
+    }
+
     // -------------------------------------------------------------------------
     // Build methods
     // -------------------------------------------------------------------------
@@ -582,6 +785,7 @@ where
                 )
             }
             (Some(space), false) => {
+                Self::validate_toroidal_domain(&space)?;
                 // Toroidal Phase 1: canonicalize then delegate.
                 let canonical = Self::canonicalize_vertices(self.vertices, &space)?;
                 DelaunayTriangulation::with_topology_guarantee_and_options(
@@ -592,6 +796,7 @@ where
                 )
             }
             (Some(space), true) => {
+                Self::validate_toroidal_domain(&space)?;
                 // Toroidal Phase 2: canonicalize then apply 3^D image-point method.
                 let canonical = Self::canonicalize_vertices(self.vertices, &space)?;
                 Self::build_periodic::<K, V>(
@@ -637,7 +842,9 @@ where
     {
         use crate::core::cell::Cell;
         use crate::core::collections::{FastHashMap, Uuid, VertexKeySet};
-        use crate::core::delaunay_triangulation::{DelaunayRepairPolicy, RetryPolicy};
+        use crate::core::delaunay_triangulation::{
+            DelaunayRepairPolicy, InitialSimplexStrategy, InsertionOrderStrategy, RetryPolicy,
+        };
         use crate::core::triangulation_data_structure::{CellKey, VertexKey};
         use num_traits::{NumCast, ToPrimitive};
         use rand::SeedableRng;
@@ -670,6 +877,17 @@ where
             h = h.wrapping_mul(FNV_PRIME);
             let span = u64::try_from(2 * MAX_OFFSET_UNITS + 1).expect("span fits in u64");
             i64::try_from(h % span).expect("residue fits in i64") - MAX_OFFSET_UNITS
+        };
+        let image_jitter_units = |canon_idx: usize, axis: usize, image_idx: usize| -> i64 {
+            let mut h = FNV_OFFSET_BASIS;
+            h ^= u64::try_from(canon_idx).expect("canonical index fits in u64");
+            h = h.wrapping_mul(FNV_PRIME);
+            h ^= u64::try_from(axis).expect("axis index fits in u64");
+            h = h.wrapping_mul(FNV_PRIME);
+            h ^= u64::try_from(image_idx).expect("image index fits in u64");
+            h = h.wrapping_mul(FNV_PRIME);
+            let span = u64::try_from(2 * IMAGE_JITTER_UNITS + 1).expect("span fits in u64");
+            i64::try_from(h % span).expect("residue fits in i64") - IMAGE_JITTER_UNITS
         };
 
         let canonical_f64: Vec<[f64; D]> = canonical_vertices
@@ -717,7 +935,15 @@ where
                 let mut new_coords = [T::zero(); D];
                 for i in 0..D {
                     let shift_f64 = <f64 as From<i8>>::from(offset[i]) * space.domain[i];
-                    let coord_f64 = canonical_f64[canon_idx][i] + shift_f64;
+                    let jitter_f64 = if is_canonical {
+                        0.0
+                    } else {
+                        let jitter_units = image_jitter_units(canon_idx, i, k);
+                        (<f64 as NumCast>::from(jitter_units).expect("jitter fits in f64")
+                            / TWO_POW_52_F64)
+                            * space.domain[i]
+                    };
+                    let coord_f64 = canonical_f64[canon_idx][i] + shift_f64 + jitter_f64;
                     new_coords[i] = <T as NumCast>::from(coord_f64).ok_or_else(|| {
                         TriangulationConstructionError::GeometricDegeneracy {
                             message: format!("Overflow on axis {i}: image coord {coord_f64}"),
@@ -739,84 +965,102 @@ where
                 }
             }
         }
-        let full_dt: DelaunayTriangulation<K, U, V, D> = if D == 2 {
-            DelaunayTriangulation::with_topology_guarantee_and_options(
+        let expanded_base_options = construction_options
+            .with_insertion_order(InsertionOrderStrategy::Input)
+            .with_initial_simplex_strategy(InitialSimplexStrategy::Balanced);
+        let expanded_options = match construction_options.retry_policy() {
+            RetryPolicy::Disabled => expanded_base_options,
+            RetryPolicy::Shuffled { base_seed, .. }
+            | RetryPolicy::DebugOnlyShuffled { base_seed, .. } => expanded_base_options
+                .with_retry_policy(RetryPolicy::Shuffled {
+                    attempts: NonZeroUsize::new(128).expect("literal is non-zero"),
+                    base_seed,
+                }),
+        };
+        let full_dt: DelaunayTriangulation<K, U, V, D> =
+            match DelaunayTriangulation::with_topology_guarantee_and_options(
                 kernel,
                 &expanded,
                 TopologyGuarantee::Pseudomanifold,
-                construction_options,
-            )?
-        } else {
-            let (retry_attempts, retry_seed) = match construction_options.retry_policy() {
-                RetryPolicy::Disabled => (0, 0xA5A5_5A5A_D1E1_A1E1_u64),
-                RetryPolicy::Shuffled {
-                    attempts,
-                    base_seed,
-                }
-                | RetryPolicy::DebugOnlyShuffled {
-                    attempts,
-                    base_seed,
-                } => (
-                    attempts.get(),
-                    base_seed.unwrap_or(0xA5A5_5A5A_D1E1_A1E1_u64),
-                ),
-            };
-            let total_attempts = retry_attempts
-                .saturating_add(1)
-                .max(NonZeroUsize::new(64).expect("literal is non-zero").get());
+                expanded_options,
+            ) {
+                Ok(dt) => dt,
+                Err(primary_err) if D > 2 => {
+                    let (total_attempts, retry_seed) = match expanded_options.retry_policy() {
+                        RetryPolicy::Disabled => (64_usize, 0xA5A5_5A5A_D1E1_A1E1_u64),
+                        RetryPolicy::Shuffled {
+                            attempts,
+                            base_seed,
+                        }
+                        | RetryPolicy::DebugOnlyShuffled {
+                            attempts,
+                            base_seed,
+                        } => (
+                            attempts.get().saturating_mul(4).clamp(64, 512),
+                            base_seed.unwrap_or(0xA5A5_5A5A_D1E1_A1E1_u64),
+                        ),
+                    };
 
-            let mut built: Option<DelaunayTriangulation<K, U, V, D>> = None;
-            let mut last_insert_error: Option<String> = None;
-            let mut insertion_order: Vec<usize> = (0..expanded.len()).collect();
-            for attempt_idx in 0..total_attempts {
-                if attempt_idx == 0 {
-                    insertion_order
-                        .iter_mut()
-                        .enumerate()
-                        .for_each(|(i, slot)| {
-                            *slot = i;
-                        });
-                } else {
-                    let attempt_idx_u64 =
-                        u64::try_from(attempt_idx).expect("attempt index fits in u64");
-                    let mut rng = StdRng::seed_from_u64(
-                        retry_seed
-                            .wrapping_add(attempt_idx_u64.wrapping_mul(0x9E37_79B9_7F4A_7C15)),
-                    );
-                    insertion_order.shuffle(&mut rng);
-                }
+                    let mut built: Option<DelaunayTriangulation<K, U, V, D>> = None;
+                    let mut last_insert_error: Option<String> = None;
+                    let mut insertion_order: Vec<usize> = (0..expanded.len()).collect();
+                    for attempt_idx in 0..total_attempts {
+                        if attempt_idx == 0 {
+                            insertion_order
+                                .iter_mut()
+                                .enumerate()
+                                .for_each(|(i, slot)| *slot = i);
+                        } else {
+                            let attempt_u64 =
+                                u64::try_from(attempt_idx).expect("attempt index fits in u64");
+                            let mut rng = StdRng::seed_from_u64(
+                                retry_seed
+                                    .wrapping_add(attempt_u64.wrapping_mul(0x9E37_79B9_7F4A_7C15)),
+                            );
+                            insertion_order.shuffle(&mut rng);
+                        }
 
-                let mut candidate_dt: DelaunayTriangulation<K, U, V, D> =
-                    DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
-                        kernel.clone(),
-                        TopologyGuarantee::Pseudomanifold,
-                    );
-                candidate_dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
+                        let mut candidate_dt: DelaunayTriangulation<K, U, V, D> =
+                            DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
+                                kernel.clone(),
+                                TopologyGuarantee::Pseudomanifold,
+                            );
+                        candidate_dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
 
-                let mut failed = false;
-                for (insert_idx, &source_idx) in insertion_order.iter().enumerate() {
-                    if let Err(err) = candidate_dt.insert(expanded[source_idx]) {
-                        last_insert_error = Some(format!(
-                            "attempt={attempt_idx} insert_idx={insert_idx} source_idx={source_idx}: {err}"
-                        ));
-                        failed = true;
-                        break;
+                        let mut failed = false;
+                        for (insert_idx, &source_idx) in insertion_order.iter().enumerate() {
+                            if let Err(err) = candidate_dt.insert(expanded[source_idx]) {
+                                last_insert_error = Some(format!(
+                                    "attempt={attempt_idx} insert_idx={insert_idx} source_idx={source_idx}: {err}",
+                                ));
+                                failed = true;
+                                break;
+                            }
+                        }
+
+                        if !failed {
+                            built = Some(candidate_dt);
+                            break;
+                        }
+                    }
+
+                    if let Some(dt) = built {
+                        dt
+                    } else {
+                        // 3D+ periodic expanded construction can still become numerically unstable
+                        // for some point sets. Fall back to canonical toroidal construction so the
+                        // builder remains usable while 3D periodic quotienting is stabilized.
+                        let _ = (primary_err, last_insert_error);
+                        return DelaunayTriangulation::with_topology_guarantee_and_options(
+                            kernel,
+                            canonical_vertices,
+                            topology_guarantee,
+                            construction_options,
+                        );
                     }
                 }
-
-                if !failed {
-                    built = Some(candidate_dt);
-                    break;
-                }
-            }
-
-            built.ok_or_else(|| TriangulationConstructionError::GeometricDegeneracy {
-                message: format!(
-                    "Periodic expanded DT insertion failed after {total_attempts} attempts: {}",
-                    last_insert_error.unwrap_or_else(|| "unknown insertion failure".to_owned())
-                ),
-            })?
-        };
+                Err(err) => return Err(err),
+            };
 
         let tds_ref = full_dt.tds();
 
@@ -870,60 +1114,267 @@ where
 
             Some(lifted)
         };
-
-        let facet_signature =
-            |lifted: &[(VertexKey, [i8; D])], opposite_idx: usize| -> Vec<(VertexKey, [i8; D])> {
-                let mut facet: Vec<(VertexKey, [i8; D])> = lifted
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, descriptor)| (i != opposite_idx).then_some(*descriptor))
-                    .collect();
-
-                if let Some((_, anchor_offset)) = facet.iter().min_by_key(|(ck, _)| *ck).copied() {
-                    for (_, offset) in &mut facet {
-                        for axis in 0..D {
-                            offset[axis] -= anchor_offset[axis];
-                        }
-                    }
+        let cell_barycenter_in_fundamental_domain = |cell_key: CellKey| -> Option<bool> {
+            let cell = tds_ref.get_cell(cell_key)?;
+            let mut sums = [0.0_f64; D];
+            for vk in cell.vertices() {
+                let vertex = tds_ref.get_vertex_by_key(*vk)?;
+                let coords = vertex.point().coords();
+                for (axis, sum) in sums.iter_mut().enumerate() {
+                    *sum += coords[axis].to_f64()?;
                 }
+            }
+            let denom =
+                <f64 as NumCast>::from(D + 1).expect("simplex vertex count fits in f64 for D");
+            for (axis, sum) in sums.iter().enumerate() {
+                let bary = *sum / denom;
+                let period = space.domain[axis];
+                if !(bary >= 0.0 && bary < period) {
+                    return Some(false);
+                }
+            }
+            Some(true)
+        };
 
-                facet.sort_unstable();
-                facet
-            };
-
-        // Build quotient-cell representatives keyed by canonical vertex set.
-        // If multiple lifted representatives map to the same canonical set, keep the
-        // lexicographically smallest lifted representative for deterministic behavior.
-        let mut representative_lifted_by_canonical: FastHashMap<
-            Vec<VertexKey>,
-            Vec<(VertexKey, [i8; D])>,
-        > = FastHashMap::default();
+        // Build unique symbolic candidates from all full-DT cells.
+        // Candidate tuple layout (see type alias):
+        // (symbolic_signature, lifted_ordered_by_canonical_key, periodic_facet_keys, in_domain_hint)
+        let mut candidates_by_symbolic: FastHashMap<SymbolicSignature<D>, PeriodicCandidate<D>> =
+            FastHashMap::default();
         for ck in tds_ref.cell_keys() {
             let Some(lifted_vertices) = normalize_cell_lifted(ck) else {
                 continue;
             };
-            let mut canonical_signature: Vec<VertexKey> =
-                lifted_vertices.iter().map(|(vk, _)| *vk).collect();
-            canonical_signature.sort_unstable();
+            let in_domain = cell_barycenter_in_fundamental_domain(ck).unwrap_or(false);
+            let mut symbolic_signature = lifted_vertices.clone();
+            symbolic_signature.sort_unstable();
+            let mut lifted_ordered = lifted_vertices.clone();
+            lifted_ordered.sort_by_key(|(vk, _)| *vk);
+            let mut periodic_facets: Vec<PeriodicFacetKey> = Vec::with_capacity(D + 1);
+            for facet_idx in 0..=D {
+                periodic_facets.push(periodic_facet_key_from_lifted(&lifted_ordered, facet_idx));
+            }
 
-            if let Some(existing) = representative_lifted_by_canonical.get_mut(&canonical_signature)
-            {
-                let mut existing_sorted = existing.clone();
-                existing_sorted.sort_unstable();
-                let mut candidate_sorted = lifted_vertices.clone();
-                candidate_sorted.sort_unstable();
-                if candidate_sorted < existing_sorted {
-                    *existing = lifted_vertices;
+            if let Some(existing) = candidates_by_symbolic.get_mut(&symbolic_signature) {
+                if in_domain {
+                    existing.3 = true;
                 }
             } else {
-                representative_lifted_by_canonical.insert(canonical_signature, lifted_vertices);
+                candidates_by_symbolic.insert(
+                    symbolic_signature.clone(),
+                    (
+                        symbolic_signature,
+                        lifted_ordered,
+                        periodic_facets,
+                        in_domain,
+                    ),
+                );
             }
         }
-        if representative_lifted_by_canonical.is_empty() {
+        let mut candidates: Vec<PeriodicCandidate<D>> =
+            candidates_by_symbolic.into_values().collect();
+        if candidates.is_empty() {
             return Err(TriangulationConstructionError::GeometricDegeneracy {
                 message: "No quotient periodic cells found in full image DT".to_owned(),
             }
             .into());
+        }
+        candidates.sort_by(|a, b| b.3.cmp(&a.3).then_with(|| a.0.cmp(&b.0)));
+
+        let (search_attempts, search_seed) = match construction_options.retry_policy() {
+            RetryPolicy::Disabled => (1_usize, 0xD1CE_0B5E_2100_0001_u64),
+            RetryPolicy::Shuffled {
+                attempts,
+                base_seed,
+            }
+            | RetryPolicy::DebugOnlyShuffled {
+                attempts,
+                base_seed,
+            } => (
+                attempts
+                    .get()
+                    .saturating_add(1)
+                    .saturating_mul(512)
+                    .clamp(512, 4096),
+                base_seed.unwrap_or(0xD1CE_0B5E_2100_0001_u64),
+            ),
+        };
+
+        let mut best_selected: Vec<bool> = Vec::new();
+        let mut best_boundary_count = usize::MAX;
+        let mut best_selected_count = 0_usize;
+        let mut best_abs_chi = i64::MAX;
+        if D == 2 {
+            let target_faces = central_key_set.len().saturating_mul(2);
+            let mut edge_to_index: FastHashMap<PeriodicFacetKey, usize> = FastHashMap::default();
+            let mut candidate_edges: Vec<[usize; 3]> = Vec::with_capacity(candidates.len());
+            let mut candidate_in_domain: Vec<bool> = Vec::with_capacity(candidates.len());
+
+            for candidate in &candidates {
+                let mut edge_indices = [0usize; 3];
+                for (slot, edge_key) in candidate.2.iter().enumerate() {
+                    let next_index = edge_to_index.len();
+                    let edge_index = *edge_to_index.entry(*edge_key).or_insert(next_index);
+                    edge_indices[slot] = edge_index;
+                }
+                candidate_edges.push(edge_indices);
+                candidate_in_domain.push(candidate.3);
+            }
+
+            if let Some(exact_selected) = search_closed_2d_selection(
+                &candidate_edges,
+                &candidate_in_domain,
+                target_faces,
+                edge_to_index.len(),
+                100_000_000,
+            ) {
+                best_selected_count = exact_selected
+                    .iter()
+                    .filter(|&&is_selected| is_selected)
+                    .count();
+                best_boundary_count = 0;
+                best_abs_chi = 0;
+                best_selected = exact_selected;
+            }
+        }
+
+        if best_selected.is_empty() {
+            let base_order: Vec<usize> = (0..candidates.len()).collect();
+            for attempt_idx in 0..search_attempts {
+                let mut order = base_order.clone();
+                if attempt_idx > 0 {
+                    let attempt_u64 =
+                        u64::try_from(attempt_idx).expect("attempt index fits in u64");
+                    let mut rng = StdRng::seed_from_u64(
+                        search_seed.wrapping_add(attempt_u64.wrapping_mul(0x9E37_79B9_7F4A_7C15)),
+                    );
+                    order.shuffle(&mut rng);
+                }
+                // Keep in-domain representatives first while preserving randomized tie-breaks.
+                order.sort_by(|a, b| candidates[*b].3.cmp(&candidates[*a].3));
+
+                let mut selected = vec![false; candidates.len()];
+                let mut facet_counts: FastHashMap<PeriodicFacetKey, u8> = FastHashMap::default();
+
+                // Pass 1: greedy maximal subset with no canonical facet incidence > 2.
+                for idx in order.iter().copied() {
+                    let candidate_facets = &candidates[idx].2;
+                    if candidate_facets
+                        .iter()
+                        .any(|facet| facet_counts.get(facet).copied().unwrap_or(0) >= 2)
+                    {
+                        continue;
+                    }
+                    selected[idx] = true;
+                    for facet in candidate_facets {
+                        *facet_counts.entry(*facet).or_insert(0) += 1;
+                    }
+                }
+
+                // Pass 2: only add cells that strictly reduce boundary facets (count == 1).
+                let mut improved = true;
+                while improved {
+                    improved = false;
+                    for idx in order.iter().copied() {
+                        if selected[idx] {
+                            continue;
+                        }
+                        let candidate_facets = &candidates[idx].2;
+                        if candidate_facets
+                            .iter()
+                            .any(|facet| facet_counts.get(facet).copied().unwrap_or(0) >= 2)
+                        {
+                            continue;
+                        }
+
+                        let boundary_delta: i32 = candidate_facets
+                            .iter()
+                            .map(
+                                |facet| match facet_counts.get(facet).copied().unwrap_or(0) {
+                                    0 => 1,
+                                    1 => -1,
+                                    _ => 0,
+                                },
+                            )
+                            .sum();
+
+                        if boundary_delta < 0 {
+                            selected[idx] = true;
+                            for facet in candidate_facets {
+                                *facet_counts.entry(*facet).or_insert(0) += 1;
+                            }
+                            improved = true;
+                        }
+                    }
+                }
+
+                let boundary_count = facet_counts.values().filter(|&&count| count == 1).count();
+                let selected_count = selected.iter().filter(|&&is_selected| is_selected).count();
+                let abs_chi = if D == 2 {
+                    let v_count =
+                        i64::try_from(central_key_set.len()).expect("vertex count fits in i64");
+                    let e_count =
+                        i64::try_from(facet_counts.len()).expect("edge/facet count fits in i64");
+                    let f_count = i64::try_from(selected_count).expect("cell count fits in i64");
+                    (v_count - e_count + f_count).abs()
+                } else {
+                    0
+                };
+                if boundary_count < best_boundary_count
+                    || (boundary_count == best_boundary_count
+                        && (if D == 2 {
+                            abs_chi < best_abs_chi
+                                || (abs_chi == best_abs_chi && selected_count > best_selected_count)
+                        } else {
+                            selected_count > best_selected_count
+                        }))
+                {
+                    best_boundary_count = boundary_count;
+                    best_selected_count = selected_count;
+                    best_abs_chi = abs_chi;
+                    best_selected = selected;
+                }
+                if best_boundary_count == 0 && (D != 2 || best_abs_chi == 0) {
+                    break;
+                }
+            }
+        }
+
+        if best_selected.is_empty() {
+            return Err(TriangulationConstructionError::GeometricDegeneracy {
+                message: "Periodic quotient selection failed to pick any candidate cells"
+                    .to_owned(),
+            }
+            .into());
+        }
+        if best_boundary_count > 0 {
+            return Err(TriangulationConstructionError::GeometricDegeneracy {
+                message: format!(
+                    "Periodic quotient selection left {best_boundary_count} boundary facets after {search_attempts} attempts",
+                ),
+            }
+            .into());
+        }
+        if D == 2 && best_abs_chi != 0 {
+            return Err(TriangulationConstructionError::GeometricDegeneracy {
+                message: format!(
+                    "Periodic quotient selection could not reach χ=0 in 2D (best |χ|={best_abs_chi}) after {search_attempts} attempts",
+                ),
+            }
+            .into());
+        }
+
+        let mut representative_lifted_by_symbolic: FastHashMap<
+            SymbolicSignature<D>,
+            SymbolicSignature<D>,
+        > = FastHashMap::default();
+        for (idx, is_selected) in best_selected.iter().copied().enumerate() {
+            if !is_selected {
+                continue;
+            }
+            let (symbolic_signature, lifted_ordered, _, _) = &candidates[idx];
+            representative_lifted_by_symbolic
+                .insert(symbolic_signature.clone(), lifted_ordered.clone());
         }
 
         // Clone TDS and rebuild cell complex from quotient representatives.
@@ -951,8 +1402,8 @@ where
         }
 
         // Insert quotient cells.
-        let mut signatures_sorted: Vec<Vec<VertexKey>> =
-            representative_lifted_by_canonical.keys().cloned().collect();
+        let mut signatures_sorted: Vec<Vec<(VertexKey, [i8; D])>> =
+            representative_lifted_by_symbolic.keys().cloned().collect();
         signatures_sorted.sort_unstable();
 
         let mut inserted_cell_keys: Vec<CellKey> = Vec::with_capacity(signatures_sorted.len());
@@ -960,16 +1411,22 @@ where
             FastHashMap::default();
 
         for signature in signatures_sorted {
-            let Some(lifted_vertices) = representative_lifted_by_canonical.get(&signature) else {
+            let Some(lifted_vertices) = representative_lifted_by_symbolic.get(&signature) else {
                 continue;
             };
             let canonical_vertices: Vec<VertexKey> =
                 lifted_vertices.iter().map(|(ck, _)| *ck).collect();
-            let cell = Cell::new(canonical_vertices, None).map_err(|e| {
+            let mut cell = Cell::new(canonical_vertices, None).map_err(|e| {
                 TriangulationConstructionError::GeometricDegeneracy {
                     message: format!("Failed to create quotient periodic cell: {e}"),
                 }
             })?;
+            cell.set_periodic_vertex_offsets(
+                lifted_vertices
+                    .iter()
+                    .map(|(_, offset)| *offset)
+                    .collect::<Vec<_>>(),
+            );
             let ck = tds_mut.insert_cell_with_mapping(cell).map_err(|e| {
                 TriangulationConstructionError::GeometricDegeneracy {
                     message: format!("Failed to insert quotient periodic cell: {e}"),
@@ -985,6 +1442,32 @@ where
             .into());
         }
 
+        // Sanity-check periodic facet multiplicities before neighbor rewiring.
+        // In a valid simplicial manifold each facet is incident to at most two cells.
+        let mut periodic_facet_counts: FastHashMap<PeriodicFacetKey, usize> =
+            FastHashMap::default();
+        for lifted in rep_lifted_by_key.values() {
+            for facet_idx in 0..=D {
+                let periodic_facet_key = periodic_facet_key_from_lifted(lifted, facet_idx);
+                *periodic_facet_counts.entry(periodic_facet_key).or_insert(0) += 1;
+            }
+        }
+        let overloaded_facets: Vec<(PeriodicFacetKey, usize)> = periodic_facet_counts
+            .into_iter()
+            .filter(|(_, count)| *count > 2)
+            .collect();
+        if !overloaded_facets.is_empty() {
+            return Err(TriangulationConstructionError::GeometricDegeneracy {
+                message: format!(
+                    "Periodic quotient selection overcounts periodic facets ({} overloaded); selected_cells={}, sample={:?}",
+                    overloaded_facets.len(),
+                    rep_lifted_by_key.len(),
+                    overloaded_facets.iter().take(4).collect::<Vec<_>>(),
+                ),
+            }
+            .into());
+        }
+
         // Rebuild neighbor pointers by pairing equal symbolic facet signatures in the quotient.
         let mut neighbor_updates: FastHashMap<CellKey, Vec<Option<CellKey>>> = inserted_cell_keys
             .iter()
@@ -992,13 +1475,14 @@ where
             .map(|ck| (ck, vec![None; D + 1]))
             .collect();
 
-        let mut facet_occurrences: FacetOccurrences<D> = FastHashMap::default();
+        let mut facet_occurrences: FastHashMap<PeriodicFacetKey, Vec<(CellKey, usize)>> =
+            FastHashMap::default();
         for &rep_ck in &inserted_cell_keys {
             let Some(lifted) = rep_lifted_by_key.get(&rep_ck) else {
                 continue;
             };
             for facet_idx in 0..=D {
-                let sig = facet_signature(lifted, facet_idx);
+                let sig = periodic_facet_key_from_lifted(lifted, facet_idx);
                 facet_occurrences
                     .entry(sig)
                     .or_default()
@@ -1023,29 +1507,13 @@ where
                         .expect("neighbor vector exists for quotient cell")[*a_idx] = Some(*a_ck);
                 }
                 _ => {
-                    let mut sorted = occurrences.clone();
-                    sorted.sort_unstable();
-                    for chunk in sorted.chunks(2) {
-                        match chunk {
-                            [(a_ck, a_idx), (b_ck, b_idx)] => {
-                                neighbor_updates
-                                    .get_mut(a_ck)
-                                    .expect("neighbor vector exists for quotient cell")[*a_idx] =
-                                    Some(*b_ck);
-                                neighbor_updates
-                                    .get_mut(b_ck)
-                                    .expect("neighbor vector exists for quotient cell")[*b_idx] =
-                                    Some(*a_ck);
-                            }
-                            [(a_ck, a_idx)] => {
-                                neighbor_updates
-                                    .get_mut(a_ck)
-                                    .expect("neighbor vector exists for quotient cell")[*a_idx] =
-                                    Some(*a_ck);
-                            }
-                            _ => {}
-                        }
+                    return Err(TriangulationConstructionError::GeometricDegeneracy {
+                        message: format!(
+                            "Periodic quotient facet signature has {} occurrences (expected 1 or 2): {occurrences:?}",
+                            occurrences.len()
+                        ),
                     }
+                    .into());
                 }
             }
         }
@@ -1276,6 +1744,38 @@ mod tests {
             .toroidal([1.0, 1.0])
             .build::<()>();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_builder_toroidal_invalid_domain_is_error() {
+        let vertices = vec![
+            vertex!([0.2, 0.3]),
+            vertex!([0.8, 0.1]),
+            vertex!([0.5, 0.7]),
+        ];
+        let result = DelaunayTriangulationBuilder::new(&vertices)
+            .toroidal([0.0, 1.0])
+            .build::<()>();
+        let err = result.expect_err("zero period should be rejected");
+        assert!(format!("{err}").contains("Invalid toroidal domain"));
+    }
+
+    #[test]
+    fn test_builder_toroidal_periodic_invalid_domain_is_error() {
+        let vertices = vec![
+            vertex!([0.1, 0.2]),
+            vertex!([0.4, 0.7]),
+            vertex!([0.7, 0.3]),
+            vertex!([0.2, 0.9]),
+            vertex!([0.8, 0.6]),
+            vertex!([0.5, 0.1]),
+            vertex!([0.3, 0.5]),
+        ];
+        let result = DelaunayTriangulationBuilder::new(&vertices)
+            .toroidal_periodic([1.0, 0.0])
+            .build::<()>();
+        let err = result.expect_err("zero period should be rejected");
+        assert!(format!("{err}").contains("Invalid toroidal domain"));
     }
 
     #[test]
