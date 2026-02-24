@@ -11,6 +11,7 @@ use crate::core::algorithms::flips::{
     repair_delaunay_local_single_pass, repair_delaunay_with_flips_k2_k3,
 };
 use crate::core::algorithms::incremental_insertion::InsertionError;
+use crate::core::builder::DelaunayTriangulationBuilder;
 use crate::core::cell::Cell;
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::collections::{CellKeyBuffer, FastHashMap, FastHasher, SmallBuffer};
@@ -1525,6 +1526,60 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
     #[must_use]
     pub fn empty_with_topology_guarantee(topology_guarantee: TopologyGuarantee) -> Self {
         Self::with_empty_kernel_and_topology_guarantee(FastKernel::<f64>::new(), topology_guarantee)
+    }
+
+    /// Create a fluent builder for constructing a Delaunay triangulation.
+    ///
+    /// This is a convenience entry point that produces a
+    /// [`DelaunayTriangulationBuilder`]
+    /// pre-typed for `f64` coordinates, no vertex data (`()`), and dimension `D`.
+    ///
+    /// For non-`f64` coordinates, vertex data (`U ≠ ()`), or custom kernels, construct
+    /// `DelaunayTriangulationBuilder::new(vertices)` directly.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::triangulation::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    ///
+    /// let dt = DelaunayTriangulation::builder(&vertices)
+    ///     .build::<()>()
+    ///     .unwrap();
+    ///
+    /// assert_eq!(dt.number_of_vertices(), 3);
+    /// ```
+    ///
+    /// ## Toroidal construction
+    ///
+    /// ```rust
+    /// use delaunay::prelude::triangulation::*;
+    ///
+    /// // Vertices outside [0, 1)² are canonicalized before building.
+    /// let vertices = vec![
+    ///     vertex!([0.2, 0.3]),
+    ///     vertex!([1.8, 0.1]), // wraps to (0.8, 0.1)
+    ///     vertex!([0.5, 0.7]),
+    ///     vertex!([-0.4, 0.9]), // wraps to (0.6, 0.9)
+    /// ];
+    ///
+    /// let dt = DelaunayTriangulation::builder(&vertices)
+    ///     .toroidal([1.0, 1.0])
+    ///     .build::<()>()
+    ///     .unwrap();
+    ///
+    /// assert_eq!(dt.number_of_vertices(), 4);
+    /// ```
+    #[must_use]
+    pub fn builder(
+        vertices: &[Vertex<f64, (), D>],
+    ) -> DelaunayTriangulationBuilder<'_, f64, (), D> {
+        DelaunayTriangulationBuilder::new(vertices)
     }
 }
 

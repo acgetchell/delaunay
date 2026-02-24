@@ -318,6 +318,8 @@ pub mod core {
 
     pub mod adjacency;
     pub mod boundary;
+    /// Fluent builder for [`DelaunayTriangulation`] with optional toroidal topology.
+    pub mod builder;
     pub mod cell;
     /// High-performance collection types optimized for computational geometry operations.
     ///
@@ -481,6 +483,7 @@ pub mod core {
 
     // Re-export the `core` modules.
     pub use adjacency::*;
+    pub use builder::DelaunayTriangulationBuilder;
     pub use cell::*;
     pub use delaunay_triangulation::*;
     pub use edge::*;
@@ -868,6 +871,7 @@ pub mod prelude {
 
     /// Focused exports for triangulation construction and inspection.
     pub mod triangulation {
+        pub use crate::core::builder::DelaunayTriangulationBuilder;
         pub use crate::core::{
             adjacency::*,
             cell::*,
