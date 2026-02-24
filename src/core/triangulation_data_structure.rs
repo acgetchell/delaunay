@@ -821,6 +821,11 @@ where
     U: DataType,
     V: DataType,
 {
+    #[inline]
+    fn allows_periodic_self_neighbor(cell: &Cell<T, U, V, D>) -> bool {
+        cell.periodic_vertex_offsets()
+            .is_some_and(|offsets| !offsets.is_empty())
+    }
     fn periodic_facet_key_from_cell_vertices(
         cell: &Cell<T, U, V, D>,
         vertices: &[VertexKey],
@@ -2850,7 +2855,15 @@ where
                 // a torus). In that case the invariant "neighbor[i] shares the facet opposite
                 // vertex[i]" is trivially satisfied by the periodic identification.
                 if *neighbor_key == cell_key {
-                    continue;
+                    if Self::allows_periodic_self_neighbor(cell) {
+                        continue;
+                    }
+                    return Err(TdsError::InvalidNeighbors {
+                        message: format!(
+                            "Cell {:?} has non-periodic self-neighbor at position {i}; self-adjacency is only valid for explicitly periodic cells",
+                            cell.uuid(),
+                        ),
+                    });
                 }
 
                 let neighbor = self.cells.get(*neighbor_key).ok_or_else(|| {
@@ -4050,7 +4063,15 @@ where
                         if let Some(neighbor_key) = neighbor {
                             // Periodic quotient triangulations may encode this as self-adjacency.
                             if neighbor_key == cell_key {
-                                continue;
+                                if Self::allows_periodic_self_neighbor(cell) {
+                                    continue;
+                                }
+                                return Err(TdsError::InvalidNeighbors {
+                                    message: format!(
+                                        "Boundary facet {facet_key} has non-periodic self-neighbor across cell {}[{facet_index}]",
+                                        cell.uuid(),
+                                    ),
+                                });
                             }
                             return Err(TdsError::InvalidNeighbors {
                                 message: format!(
@@ -4152,7 +4173,15 @@ where
 
                 // Self-adjacency is valid for periodic quotient triangulations.
                 if *neighbor_key == cell_key {
-                    continue;
+                    if Self::allows_periodic_self_neighbor(cell) {
+                        continue;
+                    }
+                    return Err(TdsError::InvalidNeighbors {
+                        message: format!(
+                            "Cell {:?} has non-periodic self-neighbor at facet index {facet_idx}",
+                            cell.uuid(),
+                        ),
+                    });
                 }
 
                 // Early termination: check if neighbor exists

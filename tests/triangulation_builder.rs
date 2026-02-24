@@ -224,9 +224,9 @@ fn test_builder_toroidal_2d_euler_dimension() {
     );
 }
 
-/// Building with toroidal wrapping on already-canonical input is idempotent.
+/// Building with toroidal wrapping on already-canonical input matches Euclidean construction.
 #[test]
-fn test_builder_toroidal_idempotent_on_canonical_input() {
+fn test_builder_toroidal_matches_euclidean_on_canonical_input() {
     let vertices = vec![
         vertex!([0.1_f64, 0.2]),
         vertex!([0.8, 0.3]),
@@ -345,13 +345,14 @@ fn test_builder_toroidal_periodic_chi_zero_2d() {
     );
 }
 
-/// `toroidal_periodic` builds a valid 3D periodic triangulation.
+/// `toroidal_periodic` in 3D either builds a valid periodic triangulation or
+/// returns an explicit non-fallback construction error.
 ///
 /// For a 3D periodic triangulation on the 3-torus the Euler characteristic is
 /// also 0, so we verify TDS structural validity rather than the full `validate()`
 /// check (which would expect χ = 2 for a sphere).
 #[test]
-fn test_builder_toroidal_periodic_validates_3d() {
+fn test_builder_toroidal_periodic_3d_success_or_explicit_error() {
     use delaunay::geometry::kernel::RobustKernel;
 
     let vertices = vec![
@@ -372,14 +373,28 @@ fn test_builder_toroidal_periodic_validates_3d() {
     ];
     let n = vertices.len();
     let kernel = RobustKernel::new();
-    let dt = DelaunayTriangulationBuilder::new(&vertices)
+    let result = DelaunayTriangulationBuilder::new(&vertices)
         .toroidal_periodic([1.0_f64, 1.0, 1.0])
-        .build_with_kernel::<_, ()>(&kernel)
-        .expect("periodic 3D build should succeed");
+        .build_with_kernel::<_, ()>(&kernel);
 
-    assert_eq!(dt.number_of_vertices(), n);
-    assert!(
-        dt.tds().is_valid().is_ok(),
-        "TDS structural validity should pass for 3D periodic triangulation"
-    );
+    match result {
+        Ok(dt) => {
+            assert_eq!(dt.number_of_vertices(), n);
+            assert!(
+                dt.tds().is_valid().is_ok(),
+                "TDS structural validity should pass for 3D periodic triangulation"
+            );
+        }
+        Err(err) => {
+            let msg = err.to_string();
+            assert!(
+                msg.contains("Periodic expanded DT construction failed (no fallback)"),
+                "3D periodic failure must be explicit and non-fallback: {msg}"
+            );
+            assert!(
+                msg.contains("primary_err=") && msg.contains("last_insert_error="),
+                "3D periodic failure should include primary/last insert context: {msg}"
+            );
+        }
+    }
 }

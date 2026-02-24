@@ -1686,7 +1686,7 @@ where
     let mut in_a = match kernel.in_sphere(&points_a, opposite_point_b) {
         Ok(value) => value,
         Err(e) => {
-            diagnostics.predicate_failures += 1;
+            diagnostics.record_predicate_failure();
             return Err(FlipError::PredicateFailure {
                 message: format!("in_sphere failed for k=2 cell A: {e}"),
             });
@@ -1696,7 +1696,7 @@ where
     let mut in_b = match kernel.in_sphere(&points_b, opposite_point_a) {
         Ok(value) => value,
         Err(e) => {
-            diagnostics.predicate_failures += 1;
+            diagnostics.record_predicate_failure();
             return Err(FlipError::PredicateFailure {
                 message: format!("in_sphere failed for k=2 cell B: {e}"),
             });
@@ -2128,7 +2128,7 @@ where
         let mut in_sphere = match kernel.in_sphere(&points, missing_point) {
             Ok(value) => value,
             Err(e) => {
-                diagnostics.predicate_failures += 1;
+                diagnostics.record_predicate_failure();
                 return Err(FlipError::PredicateFailure {
                     message: format!("in_sphere failed for k=3 cell: {e}"),
                 });
@@ -3216,6 +3216,10 @@ impl RepairDiagnostics {
         }
     }
 
+    const fn record_predicate_failure(&mut self) {
+        self.predicate_failures = self.predicate_failures.saturating_add(1);
+    }
+
     fn record_flip_signature(&mut self, signature: u64) {
         let count = self.flip_signature_counts.entry(signature).or_insert(0);
         *count = count.saturating_add(1);
@@ -3450,7 +3454,7 @@ where
         Ok(InSphere::OUTSIDE) => -1,
         Ok(InSphere::BOUNDARY) => 0,
         Err(_) => {
-            diagnostics.predicate_failures += 1;
+            diagnostics.record_predicate_failure();
             0
         }
     }

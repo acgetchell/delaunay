@@ -624,10 +624,12 @@ where
     /// Sets periodic lattice offsets aligned with `vertices`.
     #[inline]
     pub(crate) fn set_periodic_vertex_offsets(&mut self, offsets: Vec<[i8; D]>) {
-        debug_assert_eq!(
+        assert_eq!(
             offsets.len(),
             self.vertices.len(),
-            "periodic offsets must align with cell vertices",
+            "set_periodic_vertex_offsets: offsets.len() ({}) must match self.vertices.len() ({}); refusing to update self.periodic_vertex_offsets",
+            offsets.len(),
+            self.vertices.len(),
         );
         self.periodic_vertex_offsets = Some(offsets);
     }
@@ -694,9 +696,7 @@ where
     #[inline]
     pub(crate) fn push_vertex_key(&mut self, vertex_key: VertexKey) {
         self.vertices.push(vertex_key);
-        if self.periodic_vertex_offsets.is_some() {
-            self.periodic_vertex_offsets = None;
-        }
+        self.periodic_vertex_offsets = None;
     }
 
     /// Clears all vertex keys from this cell.

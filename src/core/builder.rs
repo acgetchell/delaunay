@@ -649,21 +649,7 @@ where
             }
 
             let new_point = Point::new(wrapped);
-            let new_vertex = v.data.map_or_else(
-                || {
-                    VertexBuilder::default()
-                        .point(new_point)
-                        .build()
-                        .expect("vertex without data is always valid")
-                },
-                |data| {
-                    VertexBuilder::default()
-                        .point(new_point)
-                        .data(data)
-                        .build()
-                        .expect("vertex with data is always valid")
-                },
-            );
+            let new_vertex = Vertex::new_with_uuid(new_point, v.uuid(), v.data);
 
             out.push(new_vertex);
         }
@@ -1047,16 +1033,19 @@ where
                     if let Some(dt) = built {
                         dt
                     } else {
-                        // 3D+ periodic expanded construction can still become numerically unstable
-                        // for some point sets. Fall back to canonical toroidal construction so the
-                        // builder remains usable while 3D periodic quotienting is stabilized.
-                        let _ = (primary_err, last_insert_error);
-                        return DelaunayTriangulation::with_topology_guarantee_and_options(
-                            kernel,
-                            canonical_vertices,
-                            topology_guarantee,
-                            construction_options,
-                        );
+                        let canonical_vertex_uuid_sample: Vec<Uuid> = canonical_vertices
+                            .iter()
+                            .take(3)
+                            .map(Vertex::uuid)
+                            .collect();
+                        return Err(TriangulationConstructionError::GeometricDegeneracy {
+                            message: format!(
+                                "Periodic expanded DT construction failed (no fallback): canonical_vertices_len={}, canonical_vertex_uuid_sample={canonical_vertex_uuid_sample:?}, primary_err={primary_err}, last_insert_error={:?}, topology_guarantee={topology_guarantee:?}, construction_options={construction_options:?}",
+                                canonical_vertices.len(),
+                                last_insert_error,
+                            ),
+                        }
+                        .into());
                     }
                 }
                 Err(err) => return Err(err),
@@ -1414,9 +1403,9 @@ where
             let Some(lifted_vertices) = representative_lifted_by_symbolic.get(&signature) else {
                 continue;
             };
-            let canonical_vertices: Vec<VertexKey> =
+            let canonical_vertex_keys: Vec<VertexKey> =
                 lifted_vertices.iter().map(|(ck, _)| *ck).collect();
-            let mut cell = Cell::new(canonical_vertices, None).map_err(|e| {
+            let mut cell = Cell::new(canonical_vertex_keys, None).map_err(|e| {
                 TriangulationConstructionError::GeometricDegeneracy {
                     message: format!("Failed to create quotient periodic cell: {e}"),
                 }
