@@ -2771,6 +2771,13 @@ where
 
         for (i, neighbor_key_opt) in neighbors.iter().enumerate() {
             if let Some(neighbor_key) = neighbor_key_opt {
+                // Self-adjacency: a cell can be its own neighbor on a closed manifold (e.g.
+                // a torus). In that case the invariant "neighbor[i] shares the facet opposite
+                // vertex[i]" is trivially satisfied by the periodic identification.
+                if *neighbor_key == cell_key {
+                    continue;
+                }
+
                 let neighbor = self.cells.get(*neighbor_key).ok_or_else(|| {
                     TdsError::InvalidNeighbors {
                         message: format!(

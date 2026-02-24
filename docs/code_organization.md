@@ -210,12 +210,14 @@ delaunay/
 │   ├── proptest_safe_conversions.rs
 │   ├── proptest_serialization.rs
 │   ├── proptest_tds.rs
+│   ├── proptest_toroidal.rs
 │   ├── proptest_triangulation.rs
 │   ├── proptest_vertex.rs
 │   ├── public_topology_api.rs
 │   ├── regression_delaunay_2d.rs
 │   ├── serialization_vertex_preservation.rs
-│   └── storage_backend_compatibility.rs
+│   ├── storage_backend_compatibility.rs
+│   └── triangulation_builder.rs
 ├── .auto-changelog
 ├── .codacy.yml
 ├── .codecov.yml

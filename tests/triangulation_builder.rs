@@ -301,3 +301,87 @@ fn test_builder_toroidal_robust_kernel_3d() {
     assert_eq!(dt.number_of_vertices(), 5);
     assert!(dt.validate().is_ok());
 }
+
+// =============================================================================
+// Periodic (image-point method) path
+// =============================================================================
+
+/// `toroidal_periodic` builds a valid 2D periodic triangulation with χ = 0.
+///
+/// Periodic triangulations tile the torus, so the Euler characteristic of the
+/// resulting combinatorial map must be 0 (torus), not 2 (sphere). Full
+/// `dt.validate()` would fail because it checks χ = 2, so we check TDS
+/// validity and χ separately.
+#[test]
+#[ignore = "issue-210 periodic quotient reconstruction is still unstable in 2D"]
+fn test_builder_toroidal_periodic_chi_zero_2d() {
+    use delaunay::geometry::kernel::RobustKernel;
+    use delaunay::topology::characteristics::euler::{count_simplices, euler_characteristic};
+
+    let vertices = vec![
+        vertex!([0.1_f64, 0.2]),
+        vertex!([0.4, 0.7]),
+        vertex!([0.7, 0.3]),
+        vertex!([0.2, 0.9]),
+        vertex!([0.8, 0.6]),
+        vertex!([0.5, 0.1]),
+        vertex!([0.3, 0.5]),
+    ];
+    let kernel = RobustKernel::new();
+    let dt = DelaunayTriangulationBuilder::new(&vertices)
+        .toroidal_periodic([1.0_f64, 1.0])
+        .build_with_kernel::<_, ()>(&kernel)
+        .expect("periodic 2D build should succeed");
+
+    assert_eq!(dt.number_of_vertices(), 7);
+    assert!(
+        dt.tds().is_valid().is_ok(),
+        "TDS structural validity should pass for periodic triangulation"
+    );
+    let counts = count_simplices(dt.tds()).unwrap();
+    let chi = euler_characteristic(&counts);
+    assert_eq!(
+        chi, 0,
+        "Euler characteristic of periodic 2D triangulation must be 0 (torus)"
+    );
+}
+
+/// `toroidal_periodic` builds a valid 3D periodic triangulation.
+///
+/// For a 3D periodic triangulation on the 3-torus the Euler characteristic is
+/// also 0, so we verify TDS structural validity rather than the full `validate()`
+/// check (which would expect χ = 2 for a sphere).
+#[test]
+#[ignore = "issue-210 expanded periodic 3D construction is still unstable"]
+fn test_builder_toroidal_periodic_validates_3d() {
+    use delaunay::geometry::kernel::RobustKernel;
+
+    let vertices = vec![
+        vertex!([0.1_f64, 0.2, 0.3]),
+        vertex!([0.4, 0.7, 0.1]),
+        vertex!([0.7, 0.3, 0.8]),
+        vertex!([0.2, 0.9, 0.5]),
+        vertex!([0.8, 0.6, 0.2]),
+        vertex!([0.5, 0.1, 0.7]),
+        vertex!([0.3, 0.5, 0.9]),
+        vertex!([0.6, 0.8, 0.4]),
+        vertex!([0.9, 0.2, 0.6]),
+        vertex!([0.0, 0.4, 0.1]),
+        vertex!([0.15, 0.65, 0.45]),
+        vertex!([0.75, 0.15, 0.85]),
+        vertex!([0.45, 0.55, 0.25]),
+        vertex!([0.85, 0.45, 0.65]),
+    ];
+    let n = vertices.len();
+    let kernel = RobustKernel::new();
+    let dt = DelaunayTriangulationBuilder::new(&vertices)
+        .toroidal_periodic([1.0_f64, 1.0, 1.0])
+        .build_with_kernel::<_, ()>(&kernel)
+        .expect("periodic 3D build should succeed");
+
+    assert_eq!(dt.number_of_vertices(), n);
+    assert!(
+        dt.tds().is_valid().is_ok(),
+        "TDS structural validity should pass for 3D periodic triangulation"
+    );
+}
