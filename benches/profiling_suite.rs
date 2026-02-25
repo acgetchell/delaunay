@@ -55,7 +55,6 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::core::builder::DelaunayTriangulationBuilder;
 use delaunay::core::collections::SmallBuffer;
-use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 use delaunay::geometry::util::{
     generate_grid_points, generate_poisson_points, generate_random_points_seeded,
     safe_usize_to_scalar,
@@ -769,7 +768,9 @@ fn benchmark_algorithmic_bottlenecks(c: &mut Criterion) {
                             DEFAULT_SEED,
                         );
                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                        DelaunayTriangulation::<_, (), (), 3>::new(&vertices).unwrap()
+                        DelaunayTriangulationBuilder::new(&vertices)
+                            .build::<()>()
+                            .unwrap()
                     },
                     |dt| {
                         let boundary_facets =
@@ -794,7 +795,9 @@ fn benchmark_algorithmic_bottlenecks(c: &mut Criterion) {
                             DEFAULT_SEED,
                         );
                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                        DelaunayTriangulation::<_, (), (), 3>::new(&vertices).unwrap()
+                        DelaunayTriangulationBuilder::new(&vertices)
+                            .build::<()>()
+                            .unwrap()
                     },
                     |dt| {
                         let hull = delaunay::geometry::algorithms::convex_hull::ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
