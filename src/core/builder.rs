@@ -829,8 +829,9 @@ where
         use crate::core::cell::Cell;
         use crate::core::collections::{FastHashMap, Uuid, VertexKeySet};
         use crate::core::delaunay_triangulation::{
-            DelaunayRepairPolicy, InitialSimplexStrategy, InsertionOrderStrategy, RetryPolicy,
+            DelaunayRepairPolicy, InitialSimplexStrategy, RetryPolicy,
         };
+        use crate::core::operations::InsertionOutcome;
         use crate::core::triangulation_data_structure::{CellKey, VertexKey};
         use num_traits::{NumCast, ToPrimitive};
         use rand::SeedableRng;
@@ -951,15 +952,14 @@ where
                 }
             }
         }
-        let expanded_base_options = construction_options
-            .with_insertion_order(InsertionOrderStrategy::Input)
-            .with_initial_simplex_strategy(InitialSimplexStrategy::Balanced);
+        let expanded_base_options =
+            construction_options.with_initial_simplex_strategy(InitialSimplexStrategy::Balanced);
         let expanded_options = match construction_options.retry_policy() {
             RetryPolicy::Disabled => expanded_base_options,
             RetryPolicy::Shuffled { base_seed, .. }
             | RetryPolicy::DebugOnlyShuffled { base_seed, .. } => expanded_base_options
                 .with_retry_policy(RetryPolicy::Shuffled {
-                    attempts: NonZeroUsize::new(128).expect("literal is non-zero"),
+                    attempts: NonZeroUsize::new(24).expect("literal is non-zero"),
                     base_seed,
                 }),
         };
@@ -973,7 +973,7 @@ where
                 Ok(dt) => dt,
                 Err(primary_err) if D > 2 => {
                     let (total_attempts, retry_seed) = match expanded_options.retry_policy() {
-                        RetryPolicy::Disabled => (64_usize, 0xA5A5_5A5A_D1E1_A1E1_u64),
+                        RetryPolicy::Disabled => (0_usize, None),
                         RetryPolicy::Shuffled {
                             attempts,
                             base_seed,
@@ -982,28 +982,36 @@ where
                             attempts,
                             base_seed,
                         } => (
-                            attempts.get().saturating_mul(4).clamp(64, 512),
-                            base_seed.unwrap_or(0xA5A5_5A5A_D1E1_A1E1_u64),
+                            attempts.get().saturating_mul(4).clamp(24, 256),
+                            Some(base_seed.unwrap_or(0xA5A5_5A5A_D1E1_A1E1_u64)),
                         ),
                     };
 
                     let mut built: Option<DelaunayTriangulation<K, U, V, D>> = None;
                     let mut last_insert_error: Option<String> = None;
-                    let mut insertion_order: Vec<usize> = (0..expanded.len()).collect();
+                    let mut last_skipped_insertion: Option<String> = None;
+                    let mut best_fallback_stats: (usize, usize, usize, usize) = (0, 0, 0, 0);
+                    let mut insertion_order: Vec<usize> = Vec::with_capacity(expanded.len());
+                    let canonical_start = zero_offset_idx * n;
+                    let canonical_end = canonical_start + n;
                     for attempt_idx in 0..total_attempts {
-                        if attempt_idx == 0 {
-                            insertion_order
-                                .iter_mut()
-                                .enumerate()
-                                .for_each(|(i, slot)| *slot = i);
-                        } else {
+                        insertion_order.clear();
+                        insertion_order.extend(canonical_start..canonical_end);
+                        insertion_order.extend(0..canonical_start);
+                        insertion_order.extend(canonical_end..expanded.len());
+
+                        if attempt_idx > 0 {
+                            let retry_seed = retry_seed
+                                .expect("retry_seed is only used when retry attempts are enabled");
                             let attempt_u64 =
                                 u64::try_from(attempt_idx).expect("attempt index fits in u64");
                             let mut rng = StdRng::seed_from_u64(
                                 retry_seed
                                     .wrapping_add(attempt_u64.wrapping_mul(0x9E37_79B9_7F4A_7C15)),
                             );
-                            insertion_order.shuffle(&mut rng);
+                            let (canonical_prefix, image_suffix) = insertion_order.split_at_mut(n);
+                            debug_assert_eq!(canonical_prefix.len(), n);
+                            image_suffix.shuffle(&mut rng);
                         }
 
                         let mut candidate_dt: DelaunayTriangulation<K, U, V, D> =
@@ -1012,19 +1020,45 @@ where
                                 TopologyGuarantee::Pseudomanifold,
                             );
                         candidate_dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
-
-                        let mut failed = false;
+                        let mut inserted = 0_usize;
+                        let mut skipped = 0_usize;
+                        let mut hard_errors = 0_usize;
                         for (insert_idx, &source_idx) in insertion_order.iter().enumerate() {
-                            if let Err(err) = candidate_dt.insert(expanded[source_idx]) {
-                                last_insert_error = Some(format!(
-                                    "attempt={attempt_idx} insert_idx={insert_idx} source_idx={source_idx}: {err}",
-                                ));
-                                failed = true;
-                                break;
+                            match candidate_dt.insert_with_statistics(expanded[source_idx]) {
+                                Ok((InsertionOutcome::Inserted { .. }, _stats)) => {
+                                    inserted = inserted.saturating_add(1);
+                                }
+                                Ok((InsertionOutcome::Skipped { error }, _stats)) => {
+                                    skipped = skipped.saturating_add(1);
+                                    last_skipped_insertion = Some(format!(
+                                        "attempt={attempt_idx} insert_idx={insert_idx} source_idx={source_idx}: {error}",
+                                    ));
+                                }
+                                Err(err) => {
+                                    hard_errors = hard_errors.saturating_add(1);
+                                    last_insert_error = Some(format!(
+                                        "attempt={attempt_idx} insert_idx={insert_idx} source_idx={source_idx}: {err}",
+                                    ));
+                                }
                             }
                         }
 
-                        if !failed {
+                        let canonical_present = canonical_uuids
+                            .iter()
+                            .filter(|uuid| candidate_dt.tds().vertex_key_from_uuid(uuid).is_some())
+                            .count();
+                        if canonical_present > best_fallback_stats.0
+                            || (canonical_present == best_fallback_stats.0
+                                && inserted > best_fallback_stats.1)
+                        {
+                            best_fallback_stats =
+                                (canonical_present, inserted, skipped, hard_errors);
+                        }
+
+                        if canonical_present == n
+                            && candidate_dt.number_of_cells() > 0
+                            && candidate_dt.tds().is_valid().is_ok()
+                        {
                             built = Some(candidate_dt);
                             break;
                         }
@@ -1040,9 +1074,11 @@ where
                             .collect();
                         return Err(TriangulationConstructionError::GeometricDegeneracy {
                             message: format!(
-                                "Periodic expanded DT construction failed (no fallback): canonical_vertices_len={}, canonical_vertex_uuid_sample={canonical_vertex_uuid_sample:?}, primary_err={primary_err}, last_insert_error={:?}, topology_guarantee={topology_guarantee:?}, construction_options={construction_options:?}",
+                                "Periodic expanded DT construction failed (no fallback): canonical_vertices_len={}, canonical_vertex_uuid_sample={canonical_vertex_uuid_sample:?}, primary_err={primary_err}, last_insert_error={:?}, last_skipped_insertion={:?}, best_fallback_stats(canonical_present,inserted,skipped,hard_errors)={:?}, topology_guarantee={topology_guarantee:?}, construction_options={construction_options:?}",
                                 canonical_vertices.len(),
                                 last_insert_error,
+                                last_skipped_insertion,
+                                best_fallback_stats,
                             ),
                         }
                         .into());
@@ -1192,6 +1228,7 @@ where
         let mut best_selected: Vec<bool> = Vec::new();
         let mut best_boundary_count = usize::MAX;
         let mut best_selected_count = 0_usize;
+        let mut best_coverage_count = 0_usize;
         let mut best_abs_chi = i64::MAX;
         if D == 2 {
             let target_faces = central_key_set.len().saturating_mul(2);
@@ -1221,6 +1258,7 @@ where
                     .iter()
                     .filter(|&&is_selected| is_selected)
                     .count();
+                best_coverage_count = central_key_set.len();
                 best_boundary_count = 0;
                 best_abs_chi = 0;
                 best_selected = exact_selected;
@@ -1296,9 +1334,90 @@ where
                         }
                     }
                 }
+                // Pass 3: local refinement with both add and remove moves.
+                // This escapes add-only local minima in D>2 where closure requires swaps.
+                loop {
+                    let mut best_move: Option<(bool, usize, i32)> = None;
+                    for idx in order.iter().copied() {
+                        let candidate_facets = &candidates[idx].2;
+                        if selected[idx] {
+                            let boundary_delta: i32 = candidate_facets
+                                .iter()
+                                .map(
+                                    |facet| match facet_counts.get(facet).copied().unwrap_or(0) {
+                                        1 => -1,
+                                        2 => 1,
+                                        _ => 0,
+                                    },
+                                )
+                                .sum();
+                            if boundary_delta < 0
+                                && best_move
+                                    .is_none_or(|(_, _, best_delta)| boundary_delta < best_delta)
+                            {
+                                best_move = Some((false, idx, boundary_delta));
+                            }
+                        } else {
+                            if candidate_facets
+                                .iter()
+                                .any(|facet| facet_counts.get(facet).copied().unwrap_or(0) >= 2)
+                            {
+                                continue;
+                            }
+
+                            let boundary_delta: i32 = candidate_facets
+                                .iter()
+                                .map(
+                                    |facet| match facet_counts.get(facet).copied().unwrap_or(0) {
+                                        0 => 1,
+                                        1 => -1,
+                                        _ => 0,
+                                    },
+                                )
+                                .sum();
+                            if boundary_delta < 0
+                                && best_move
+                                    .is_none_or(|(_, _, best_delta)| boundary_delta < best_delta)
+                            {
+                                best_move = Some((true, idx, boundary_delta));
+                            }
+                        }
+                    }
+
+                    let Some((is_add, idx, _)) = best_move else {
+                        break;
+                    };
+                    let candidate_facets = &candidates[idx].2;
+                    if is_add {
+                        selected[idx] = true;
+                        for facet in candidate_facets {
+                            *facet_counts.entry(*facet).or_insert(0) += 1;
+                        }
+                    } else {
+                        selected[idx] = false;
+                        for facet in candidate_facets {
+                            if let Some(count) = facet_counts.get_mut(facet) {
+                                *count -= 1;
+                                if *count == 0 {
+                                    facet_counts.remove(facet);
+                                }
+                            }
+                        }
+                    }
+                }
 
                 let boundary_count = facet_counts.values().filter(|&&count| count == 1).count();
                 let selected_count = selected.iter().filter(|&&is_selected| is_selected).count();
+                let mut covered: VertexKeySet = VertexKeySet::default();
+                for (idx, is_selected) in selected.iter().copied().enumerate() {
+                    if !is_selected {
+                        continue;
+                    }
+                    for (vertex_key, _) in &candidates[idx].1 {
+                        covered.insert(*vertex_key);
+                    }
+                }
+                let coverage_count = covered.len();
                 let abs_chi = if D == 2 {
                     let v_count =
                         i64::try_from(central_key_set.len()).expect("vertex count fits in i64");
@@ -1315,11 +1434,14 @@ where
                             abs_chi < best_abs_chi
                                 || (abs_chi == best_abs_chi && selected_count > best_selected_count)
                         } else {
-                            selected_count > best_selected_count
+                            coverage_count > best_coverage_count
+                                || (coverage_count == best_coverage_count
+                                    && selected_count > best_selected_count)
                         }))
                 {
                     best_boundary_count = boundary_count;
                     best_selected_count = selected_count;
+                    best_coverage_count = coverage_count;
                     best_abs_chi = abs_chi;
                     best_selected = selected;
                 }
@@ -1339,7 +1461,12 @@ where
         if best_boundary_count > 0 {
             return Err(TriangulationConstructionError::GeometricDegeneracy {
                 message: format!(
-                    "Periodic quotient selection left {best_boundary_count} boundary facets after {search_attempts} attempts",
+                    "Periodic quotient selection left {best_boundary_count} boundary facets after {search_attempts} attempts (full_vertices={}, full_cells={}, canonical_vertices={}, candidates={}, selected_cells={})",
+                    tds_ref.number_of_vertices(),
+                    tds_ref.number_of_cells(),
+                    central_key_set.len(),
+                    candidates.len(),
+                    best_selected_count,
                 ),
             }
             .into());
@@ -1348,6 +1475,16 @@ where
             return Err(TriangulationConstructionError::GeometricDegeneracy {
                 message: format!(
                     "Periodic quotient selection could not reach χ=0 in 2D (best |χ|={best_abs_chi}) after {search_attempts} attempts",
+                ),
+            }
+            .into());
+        }
+        if D > 2 && best_coverage_count < central_key_set.len() {
+            return Err(TriangulationConstructionError::GeometricDegeneracy {
+                message: format!(
+                    "Periodic quotient selection covered only {} of {} canonical vertices in {D}D",
+                    best_coverage_count,
+                    central_key_set.len(),
                 ),
             }
             .into());

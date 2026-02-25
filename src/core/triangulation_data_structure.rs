@@ -823,8 +823,10 @@ where
 {
     #[inline]
     fn allows_periodic_self_neighbor(cell: &Cell<T, U, V, D>) -> bool {
-        cell.periodic_vertex_offsets()
-            .is_some_and(|offsets| !offsets.is_empty())
+        let Some(offsets) = cell.periodic_vertex_offsets() else {
+            return false;
+        };
+        !offsets.is_empty() && offsets.len() == cell.number_of_vertices()
     }
     fn periodic_facet_key_from_cell_vertices(
         cell: &Cell<T, U, V, D>,
@@ -840,14 +842,15 @@ where
             });
         }
 
-        let Some(periodic_offsets) = cell.periodic_vertex_offsets() else {
-            let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-                SmallBuffer::new();
-            for (i, &vertex_key) in vertices.iter().enumerate() {
-                if i != facet_index {
-                    facet_vertices.push(vertex_key);
-                }
+        let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::new();
+        for (i, &vertex_key) in vertices.iter().enumerate() {
+            if i != facet_index {
+                facet_vertices.push(vertex_key);
             }
+        }
+
+        let Some(periodic_offsets) = cell.periodic_vertex_offsets() else {
             return Ok(facet_key_from_vertices(&facet_vertices));
         };
 
@@ -894,6 +897,51 @@ where
         }
 
         Ok(stable_hash_u64_slice(&packed_signature))
+    }
+
+    fn build_periodic_vertex_uuid_offsets(
+        &self,
+        cell_key: CellKey,
+        vertices: &[VertexKey],
+    ) -> Result<Vec<(Uuid, [i8; D])>, TdsError> {
+        let cell = self
+            .cells
+            .get(cell_key)
+            .ok_or_else(|| TdsError::InconsistentDataStructure {
+                message: format!(
+                    "Cell key {cell_key:?} missing while building periodic vertex key"
+                ),
+            })?;
+
+        let periodic_offsets = cell.periodic_vertex_offsets();
+        if let Some(offsets) = periodic_offsets
+            && offsets.len() != vertices.len()
+        {
+            return Err(TdsError::InconsistentDataStructure {
+                message: format!(
+                    "Cell {cell_key:?} periodic offset count {} does not match vertex count {}",
+                    offsets.len(),
+                    vertices.len(),
+                ),
+            });
+        }
+
+        let mut vertex_uuid_offsets: Vec<(Uuid, [i8; D])> = Vec::with_capacity(vertices.len());
+        for (vertex_idx, &vertex_key) in vertices.iter().enumerate() {
+            let vertex = self
+                .vertices
+                .get(vertex_key)
+                .ok_or_else(|| TdsError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell {cell_key:?} references missing vertex key {vertex_key:?} while building periodic vertex key at index {vertex_idx}",
+                    ),
+                })?;
+            let offset = periodic_offsets.map_or([0_i8; D], |offsets| offsets[vertex_idx]);
+            vertex_uuid_offsets.push((vertex.uuid(), offset));
+        }
+        vertex_uuid_offsets.sort_unstable_by_key(|(uuid, _)| *uuid);
+
+        Ok(vertex_uuid_offsets)
     }
 
     pub(crate) fn facet_key_for_cell_facet(
@@ -3314,42 +3362,8 @@ where
         // First pass: identify duplicate cells
         for cell_key in self.cells.keys() {
             let vertices = self.get_cell_vertices(cell_key)?;
-            let cell =
-                self.cells
-                    .get(cell_key)
-                    .ok_or_else(|| TdsError::InconsistentDataStructure {
-                        message: format!(
-                            "Cell key {cell_key:?} missing during duplicate-cell removal"
-                        ),
-                    })?;
-            let periodic_offsets = cell.periodic_vertex_offsets();
-            if let Some(offsets) = periodic_offsets
-                && offsets.len() != vertices.len()
-            {
-                return Err(TdsError::InconsistentDataStructure {
-                    message: format!(
-                        "Cell {cell_key:?} periodic offset count {} does not match vertex count {} during duplicate-cell removal",
-                        offsets.len(),
-                        vertices.len(),
-                    ),
-                }
-                .into());
-            }
-
-            let mut vertex_uuid_offsets: Vec<_> = vertices
-                .iter()
-                .enumerate()
-                .map(|(idx, &key)| {
-                    (
-                        self.vertices[key].uuid(),
-                        periodic_offsets
-                            .and_then(|offsets| offsets.get(idx))
-                            .copied()
-                            .unwrap_or([0_i8; D]),
-                    )
-                })
-                .collect();
-            vertex_uuid_offsets.sort_unstable_by_key(|(uuid, _)| *uuid);
+            let vertex_uuid_offsets =
+                self.build_periodic_vertex_uuid_offsets(cell_key, &vertices)?;
 
             // Use Entry API for atomic check-and-insert
             match unique_cells.entry(vertex_uuid_offsets) {
@@ -3622,35 +3636,10 @@ where
             crate::core::collections::fast_hash_map_with_capacity(self.cells.len());
         let mut duplicates = Vec::new();
 
-        for (cell_key, cell) in &self.cells {
+        for (cell_key, _cell) in &self.cells {
             let vertices = self.get_cell_vertices(cell_key)?;
-            let periodic_offsets = cell.periodic_vertex_offsets();
-            if let Some(offsets) = periodic_offsets
-                && offsets.len() != vertices.len()
-            {
-                return Err(TdsError::InconsistentDataStructure {
-                    message: format!(
-                        "Cell {cell_key:?} periodic offset count {} does not match vertex count {} during duplicate-cell validation",
-                        offsets.len(),
-                        vertices.len(),
-                    ),
-                });
-            }
-
-            let mut vertex_uuid_offsets: Vec<_> = vertices
-                .iter()
-                .enumerate()
-                .map(|(idx, &vertex_key)| {
-                    (
-                        self.vertices[vertex_key].uuid(),
-                        periodic_offsets
-                            .and_then(|offsets| offsets.get(idx))
-                            .copied()
-                            .unwrap_or([0_i8; D]),
-                    )
-                })
-                .collect();
-            vertex_uuid_offsets.sort_unstable_by_key(|(uuid, _)| *uuid);
+            let vertex_uuid_offsets =
+                self.build_periodic_vertex_uuid_offsets(cell_key, &vertices)?;
 
             if let Some(existing_cell_key) = unique_cells.get(&vertex_uuid_offsets) {
                 // Convert to Vec only for error message payload

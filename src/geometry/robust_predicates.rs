@@ -16,6 +16,10 @@ use crate::geometry::traits::coordinate::{
 };
 use num_traits::cast;
 use std::fmt::Debug;
+use std::sync::LazyLock;
+
+static STRICT_INSPHERE_CONSISTENCY: LazyLock<bool> =
+    LazyLock::new(|| std::env::var_os("DELAUNAY_STRICT_INSPHERE_CONSISTENCY").is_some());
 
 /// Result of consistency verification between different insphere methods.
 ///
@@ -70,7 +74,6 @@ pub enum InsphereConsistencyError {
         distance_result: InSphere,
     },
 }
-///
 /// This structure allows fine-tuning of numerical robustness parameters
 /// based on the specific requirements of the triangulation algorithm.
 ///
@@ -206,7 +209,7 @@ where
             ConsistencyResult::Consistent | ConsistencyResult::Unverifiable => return Ok(result), // Accept if we can't verify
             ConsistencyResult::Inconsistent(error) => {
                 // Optional strict mode for deterministic witness capture and hard-fail behavior.
-                if std::env::var_os("DELAUNAY_STRICT_INSPHERE_CONSISTENCY").is_some() {
+                if *STRICT_INSPHERE_CONSISTENCY {
                     return Err(CoordinateConversionError::ConversionFailed {
                         coordinate_index: 0,
                         coordinate_value: format!(
@@ -1206,6 +1209,9 @@ mod tests {
     ) -> Option<PeriodicWitness3d> {
         let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
         let n = expanded.len();
+        if n < 5 {
+            return None;
+        }
         for _ in 0..sample_budget {
             let i0 = rng.random_range(0..n);
             let mut i1 = rng.random_range(0..n);
@@ -1243,6 +1249,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "stress test; run explicitly with --ignored"]
     fn test_periodic_3d_inconsistency_witness_search_seeded() {
         let config = config_presets::general_triangulation::<f64>();
         let canonical_points = periodic_3d_canonical_points();

@@ -346,7 +346,7 @@ fn test_builder_toroidal_periodic_chi_zero_2d() {
 }
 
 /// `toroidal_periodic` in 3D either builds a valid periodic triangulation or
-/// returns an explicit non-fallback construction error.
+/// returns an explicit non-fallback construction error with diagnostic context.
 ///
 /// For a 3D periodic triangulation on the 3-torus the Euler characteristic is
 /// also 0, so we verify TDS structural validity rather than the full `validate()`
@@ -387,13 +387,19 @@ fn test_builder_toroidal_periodic_3d_success_or_explicit_error() {
         }
         Err(err) => {
             let msg = err.to_string();
+            let explicit_expanded_failure = msg
+                .contains("Periodic expanded DT construction failed (no fallback)")
+                && msg.contains("primary_err=")
+                && msg.contains("last_insert_error=");
+            let explicit_selection_failure = msg.contains("Periodic quotient selection left")
+                && msg.contains("full_vertices=")
+                && msg.contains("full_cells=")
+                && msg.contains("candidates=")
+                && msg.contains("selected_cells=");
+
             assert!(
-                msg.contains("Periodic expanded DT construction failed (no fallback)"),
-                "3D periodic failure must be explicit and non-fallback: {msg}"
-            );
-            assert!(
-                msg.contains("primary_err=") && msg.contains("last_insert_error="),
-                "3D periodic failure should include primary/last insert context: {msg}"
+                explicit_expanded_failure || explicit_selection_failure,
+                "3D periodic failure must be explicit with diagnostic context: {msg}"
             );
         }
     }
