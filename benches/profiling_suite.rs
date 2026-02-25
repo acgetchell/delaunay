@@ -53,6 +53,7 @@
 //! ```
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use delaunay::core::builder::DelaunayTriangulationBuilder;
 use delaunay::core::collections::SmallBuffer;
 use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 use delaunay::geometry::util::{
@@ -265,7 +266,9 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
                             points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                         },
                         |vertices| {
-                            let dt = DelaunayTriangulation::new(&vertices).unwrap();
+                            let dt = DelaunayTriangulationBuilder::new(&vertices)
+                                .build::<()>()
+                                .unwrap();
                             black_box(dt);
                         },
                         BatchSize::LargeInput,
@@ -313,7 +316,9 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
                             points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                         },
                         |vertices| {
-                            let dt = DelaunayTriangulation::new(&vertices).unwrap();
+                            let dt = DelaunayTriangulationBuilder::new(&vertices)
+                                .build::<()>()
+                                .unwrap();
                             black_box(dt);
                         },
                         BatchSize::LargeInput,
@@ -363,7 +368,9 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
                             points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                         },
                         |vertices| {
-                            let dt = DelaunayTriangulation::new(&vertices).unwrap();
+                            let dt = DelaunayTriangulationBuilder::new(&vertices)
+                                .build::<()>()
+                                .unwrap();
                             black_box(dt);
                         },
                         BatchSize::LargeInput,
@@ -412,7 +419,9 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
                             points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                         },
                         |vertices| {
-                            let dt = DelaunayTriangulation::new(&vertices).unwrap();
+                            let dt = DelaunayTriangulationBuilder::new(&vertices)
+                                .build::<()>()
+                                .unwrap();
                             black_box(dt);
                         },
                         BatchSize::LargeInput,
@@ -520,7 +529,9 @@ fn bench_memory_usage<const D: usize>(
                         );
                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                         actual_point_counts.push(points.len()); // Track actual count
-                        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+                        let dt = DelaunayTriangulationBuilder::new(&vertices)
+                            .build::<()>()
+                            .unwrap();
                         black_box(dt);
                     });
 
@@ -651,7 +662,9 @@ fn benchmark_query_latency(c: &mut Criterion) {
                     DEFAULT_SEED,
                 );
                 let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                let dt = DelaunayTriangulation::new(&vertices).unwrap();
+                let dt = DelaunayTriangulationBuilder::new(&vertices)
+                    .build::<()>()
+                    .unwrap();
                 let tds = dt.tds();
 
                 // Generate query points

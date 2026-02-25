@@ -26,6 +26,7 @@ lightweight alternative to [CGAL] for the [Rust] ecosystem.
 - [x]  Copy-able data types associated with vertices and cells (integers, floats, chars, custom enums)
 - [x]  d-dimensional [Delaunay triangulations]
 - [x]  d-dimensional [Convex hulls]
+- [x]  Toroidal (periodic) triangulations via [`DelaunayTriangulationBuilder`] with Phase 1 (canonicalization) and Phase 2 (image-point method) support
 - [x]  Geometry quality metrics for simplices: radius ratio and normalized volume (dimension-agnostic)
 - [x]  Serialization/Deserialization of all data structures to/from [JSON]
 - [x]  Tested for 2-, 3-, 4-, and 5-dimensional triangulations
@@ -43,8 +44,10 @@ See [CHANGELOG.md](CHANGELOG.md) for details.
 
 ## 🟢 Delaunay triangulation (happy path)
 
-The **Builder API** (`DelaunayTriangulation`) is the recommended way to construct and maintain
-Delaunay triangulations.
+The **Builder API** provides two interfaces:
+
+- `DelaunayTriangulation::new()` - Simple constructor for the common case
+- [`DelaunayTriangulationBuilder`] - Advanced configuration (custom options, toroidal topology)
 
 ```rust
 use delaunay::prelude::triangulation::*;
@@ -71,7 +74,32 @@ assert_eq!(dt.number_of_cells(), 5); // 1 simplex from first 5 vertices + 4 new 
 assert!(dt.is_valid().is_ok());
 ```
 
-Need more control?
+### Toroidal (Periodic) Triangulations
+
+For periodic boundary conditions, use `DelaunayTriangulationBuilder`:
+
+```rust
+use delaunay::prelude::triangulation::*;
+
+// Phase 1: Canonicalization (wraps coordinates into [0, 1)²)
+let vertices = vec![
+    vertex!([0.1, 0.2]),
+    vertex!([0.8, 0.3]),
+    vertex!([0.5, 0.7]),
+    vertex!([1.2, 0.4]),  // Wraps to [0.2, 0.4]
+];
+
+let dt = DelaunayTriangulationBuilder::new(&vertices)
+    .toroidal([1.0, 1.0])  // Fundamental domain periods
+    .build::<()>()
+    .unwrap();
+
+assert_eq!(dt.topology_kind(), TopologyKind::Toroidal);
+```
+
+For the full periodic image-point method (Phase 2), see the [`DelaunayTriangulationBuilder`] documentation.
+
+### Need more control?
 
 - **Editing with flips (Edit API)**:
   see [`docs/workflows.md`](docs/workflows.md) for a minimal example and [`docs/api_design.md`](docs/api_design.md) for details.
@@ -207,3 +235,4 @@ Portions of this library were developed with the assistance of these AI tools:
 [PL-manifold]: https://grokipedia.com/page/Piecewise_linear_manifold
 [Delaunay repair]: https://link.springer.com/article/10.1007/BF01975867
 [Pachner moves]: https://grokipedia.com/page/pachner_moves
+[`DelaunayTriangulationBuilder`]: https://docs.rs/delaunay/latest/delaunay/core/builder/struct.DelaunayTriangulationBuilder.html

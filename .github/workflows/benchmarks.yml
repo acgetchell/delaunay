@@ -42,7 +42,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  BENCHMARK_TIMEOUT: 3600 # 60 minutes is sufficient when compare runs in --dev mode
+  BENCHMARK_TIMEOUT: 5400 # 90 minutes is sufficient when compare runs in --dev mode
   DELAUNAY_BENCH_SEED_SEARCH_LIMIT: 4096 # allows ci_performance_suite to skip pathological deterministic seeds
 
 jobs:

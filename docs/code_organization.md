@@ -64,18 +64,19 @@ delaunay/
 │   └── topology_guarantee_construction.rs
 ├── docs/
 │   ├── archive/
+│   │   ├── OPTIMIZATION_ROADMAP.md
 │   │   ├── fix-delaunay.md
 │   │   ├── invariant_validation_plan.md
 │   │   ├── issue_120_investigation.md
 │   │   ├── jaccard.md
-│   │   ├── OPTIMIZATION_ROADMAP.md
 │   │   ├── optimization_recommendations_historical.md
 │   │   ├── phase2_bowyer_watson_optimization.md
 │   │   ├── phase2_uuid_iter_optimization.md
 │   │   ├── phase4.md
 │   │   ├── phase_3a_implementation_guide.md
 │   │   ├── phase_3c_action_plan.md
-│   │   └── testing.md
+│   │   ├── testing.md
+│   │   └── topology_integration_design_historical.md
 │   ├── templates/
 │   │   ├── README.md
 │   │   └── changelog.hbs
@@ -84,10 +85,12 @@ delaunay/
 │   ├── RELEASING.md
 │   ├── api_design.md
 │   ├── code_organization.md
+│   ├── invariants.md
 │   ├── numerical_robustness_guide.md
 │   ├── property_testing_summary.md
 │   ├── topology.md
-│   └── validation.md
+│   ├── validation.md
+│   └── workflows.md
 ├── examples/
 │   ├── README.md
 │   ├── convex_hull_3d_100_points.rs
@@ -166,13 +169,19 @@ delaunay/
 │   │   │   └── convex_hull.rs
 │   │   ├── traits/
 │   │   │   └── coordinate.rs
+│   │   ├── util/
+│   │   │   ├── circumsphere.rs
+│   │   │   ├── conversions.rs
+│   │   │   ├── measures.rs
+│   │   │   ├── norms.rs
+│   │   │   ├── point_generation.rs
+│   │   │   └── triangulation_generation.rs
 │   │   ├── kernel.rs
 │   │   ├── matrix.rs
 │   │   ├── point.rs
 │   │   ├── predicates.rs
 │   │   ├── quality.rs
-│   │   ├── robust_predicates.rs
-│   │   └── util.rs
+│   │   └── robust_predicates.rs
 │   ├── topology/
 │   │   ├── characteristics/
 │   │   │   ├── euler.rs
@@ -199,6 +208,8 @@ delaunay/
 │   ├── delaunay_repair_fallback.rs
 │   ├── euler_characteristic.rs
 │   ├── insert_with_statistics.rs
+│   ├── k3_cycle_predicate.rs
+│   ├── large_scale_debug.rs
 │   ├── proptest_cell.rs
 │   ├── proptest_convex_hull.rs
 │   ├── proptest_delaunay_triangulation.proptest-regressions
@@ -370,7 +381,7 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality, 
   - `circumsphere.rs` - Circumcenter and circumradius calculations for simplices
   - `measures.rs` - Simplex volume, inradius, facet measure, surface measure computations
   - `point_generation.rs` - Random point generation (uniform, grid, Poisson disk sampling)
-- `triangulation_generation.rs` - Random triangulation generation with topology guarantees
+  - `triangulation_generation.rs` - Random triangulation generation with topology guarantees
 
 **`src/triangulation/`** - Triangulation-facing public APIs:
 

@@ -1325,6 +1325,45 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
     ///
     /// No type annotations needed! The compiler can infer everything.
     ///
+    /// # Advanced Configuration
+    ///
+    /// For advanced use cases requiring custom construction options, topology guarantees,
+    /// or toroidal (periodic) triangulations, use [`DelaunayTriangulationBuilder`]:
+    ///
+    /// ```rust
+    /// use delaunay::prelude::triangulation::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// // Advanced: custom topology guarantee
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .topology_guarantee(TopologyGuarantee::Pseudomanifold)
+    ///     .build::<()>()
+    ///     .unwrap();
+    /// ```
+    ///
+    /// For toroidal (periodic) triangulations:
+    /// ```rust
+    /// use delaunay::prelude::triangulation::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.1, 0.2]),
+    ///     vertex!([0.8, 0.3]),
+    ///     vertex!([0.5, 0.7]),
+    /// ];
+    ///
+    /// // Advanced: toroidal (periodic) triangulation
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .toroidal([1.0, 1.0])  // Phase 1: canonicalization
+    ///     .build::<()>()
+    ///     .unwrap();
+    /// ```
+    ///
     /// # Errors
     /// Returns error if initial simplex cannot be constructed or insertion fails.
     ///

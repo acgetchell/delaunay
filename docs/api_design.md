@@ -55,12 +55,14 @@ The library provides two distinct APIs for different use cases:
 
 ## Builder API Reference
 
-The Builder API is exposed directly on `DelaunayTriangulation`:
+### Simple Construction: `DelaunayTriangulation::new()`
+
+For most use cases, the simple constructor is sufficient:
 
 ```rust
 use delaunay::prelude::triangulation::*;
 
-// Construction from a batch of vertices
+// Simple construction from vertices (Euclidean space, default options)
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),
     vertex!([1.0, 0.0, 0.0]),
@@ -78,6 +80,44 @@ dt.insert(new_vertex).unwrap();
 let vertex_key = /* ... */;
 dt.remove_vertex(vertex_key).unwrap();
 ```
+
+### Advanced Construction: `DelaunayTriangulationBuilder`
+
+For advanced configuration (toroidal topology, custom validation policies, etc.),
+use `DelaunayTriangulationBuilder`:
+
+```rust
+use delaunay::prelude::triangulation::*;
+use delaunay::topology::traits::topological_space::ToroidalConstructionMode;
+
+// Toroidal (periodic) triangulation in 2D
+let vertices = vec![
+    vertex!([0.1, 0.1]),
+    vertex!([0.9, 0.9]),
+    vertex!([0.5, 0.5]),
+];
+
+let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+    .with_toroidal_topology([1.0, 1.0], ToroidalConstructionMode::Direct)
+    .with_topology_guarantee(TopologyGuarantee::PLManifoldStrict)
+    .with_validation_policy(ValidationPolicy::Always)
+    .build::<()>()
+    .unwrap();
+
+// Works like any other DelaunayTriangulation
+dt.insert(vertex!([0.25, 0.75])).unwrap();
+```
+
+**When to use the Builder:**
+
+- **Toroidal/periodic triangulations**: Use `.with_toroidal_topology()` to specify
+  domain periods and construction mode
+- **Custom topology guarantees**: Set stricter or more relaxed manifold checks
+- **Custom validation policies**: Control when validation runs during construction
+- **Custom repair policies**: Configure Delaunay repair behavior
+
+See `docs/topology.md` for more on toroidal triangulations and `docs/validation.md`
+for topology guarantee and validation policy details.
 
 ### Key Characteristics
 
