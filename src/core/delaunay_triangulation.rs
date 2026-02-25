@@ -39,6 +39,7 @@ use crate::geometry::traits::coordinate::{
     CoordinateConversionError, CoordinateScalar, ScalarAccumulative, ScalarSummable,
 };
 use crate::topology::manifold::validate_ridge_links_for_cells;
+use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
 use core::cmp::Ordering;
 use num_traits::{NumCast, ToPrimitive, Zero};
 use rand::SeedableRng;
@@ -2596,6 +2597,7 @@ where
             tri: Triangulation {
                 kernel,
                 tds,
+                global_topology: GlobalTopology::DEFAULT,
                 validation_policy: ValidationPolicy::default(),
                 topology_guarantee,
             },
@@ -2699,6 +2701,7 @@ where
             tri: Triangulation {
                 kernel,
                 tds,
+                global_topology: GlobalTopology::DEFAULT,
                 validation_policy: ValidationPolicy::default(),
                 topology_guarantee,
             },
@@ -4091,6 +4094,26 @@ where
         self.tri.topology_guarantee()
     }
 
+    /// Returns runtime global topology metadata associated with this triangulation.
+    #[inline]
+    #[must_use]
+    pub const fn global_topology(&self) -> GlobalTopology<D> {
+        self.tri.global_topology()
+    }
+
+    /// Returns the high-level topology kind (`Euclidean`, `Toroidal`, etc.).
+    #[inline]
+    #[must_use]
+    pub const fn topology_kind(&self) -> TopologyKind {
+        self.tri.topology_kind()
+    }
+
+    /// Sets runtime global topology metadata on this triangulation.
+    #[inline]
+    pub const fn set_global_topology(&mut self, global_topology: GlobalTopology<D>) {
+        self.tri.set_global_topology(global_topology);
+    }
+
     /// Sets the topology guarantee used for Level 3 topology validation.
     ///
     /// # Examples
@@ -5142,6 +5165,10 @@ where
     ///   after loading if you want to relax to `Pseudomanifold` for performance, or use
     ///   [`from_tds_with_topology_guarantee`](Self::from_tds_with_topology_guarantee) to set it
     ///   at construction time.
+    /// - Runtime global topology metadata ([`GlobalTopology`]) is also not serialized. Constructing
+    ///   via `from_tds` resets it to [`GlobalTopology::Euclidean`]. Use
+    ///   [`set_global_topology`](Self::set_global_topology) after loading if you need to restore
+    ///   toroidal metadata.
     ///
     /// # Examples
     ///
@@ -5175,6 +5202,7 @@ where
             tri: Triangulation {
                 kernel,
                 tds,
+                global_topology: GlobalTopology::DEFAULT,
                 validation_policy: ValidationPolicy::OnSuspicion,
                 topology_guarantee: TopologyGuarantee::DEFAULT,
             },
@@ -5197,6 +5225,7 @@ where
             tri: Triangulation {
                 kernel,
                 tds,
+                global_topology: GlobalTopology::DEFAULT,
                 validation_policy: ValidationPolicy::OnSuspicion,
                 topology_guarantee,
             },

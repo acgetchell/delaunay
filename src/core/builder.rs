@@ -119,6 +119,7 @@ use crate::geometry::kernel::{FastKernel, Kernel};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar, ScalarAccumulative};
 use crate::topology::spaces::toroidal::ToroidalSpace;
+use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
 use num_traits::ToPrimitive;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -790,24 +791,34 @@ where
                 Self::validate_toroidal_domain(&space)?;
                 // Toroidal Phase 1: canonicalize then delegate.
                 let canonical = Self::canonicalize_vertices(self.vertices, &space)?;
-                DelaunayTriangulation::with_topology_guarantee_and_options(
+                let mut dt = DelaunayTriangulation::with_topology_guarantee_and_options(
                     kernel,
                     &canonical,
                     self.topology_guarantee,
                     self.construction_options,
-                )
+                )?;
+                dt.set_global_topology(GlobalTopology::Toroidal {
+                    domain: space.domain,
+                    mode: ToroidalConstructionMode::Canonicalized,
+                });
+                Ok(dt)
             }
             (Some(space), true) => {
                 Self::validate_toroidal_domain(&space)?;
                 // Toroidal Phase 2: canonicalize then apply 3^D image-point method.
                 let canonical = Self::canonicalize_vertices(self.vertices, &space)?;
-                Self::build_periodic::<K, V>(
+                let mut dt = Self::build_periodic::<K, V>(
                     kernel,
                     &canonical,
                     &space,
                     self.topology_guarantee,
                     self.construction_options,
-                )
+                )?;
+                dt.set_global_topology(GlobalTopology::Toroidal {
+                    domain: space.domain,
+                    mode: ToroidalConstructionMode::PeriodicImagePoint,
+                });
+                Ok(dt)
             }
         }
     }
@@ -1894,6 +1905,9 @@ mod tests {
 
     #[test]
     fn test_builder_toroidal_build_succeeds_2d() {
+        use crate::topology::traits::topological_space::{
+            GlobalTopology, ToroidalConstructionMode,
+        };
         let vertices = vec![
             vertex!([0.2, 0.3]),
             vertex!([0.8, 0.1]),
@@ -1907,6 +1921,13 @@ mod tests {
         assert_eq!(dt.number_of_vertices(), 4);
         assert_eq!(dt.dim(), 2);
         assert!(dt.as_triangulation().validate().is_ok());
+        assert!(matches!(
+            dt.global_topology(),
+            GlobalTopology::Toroidal {
+                mode: ToroidalConstructionMode::Canonicalized,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -1986,6 +2007,9 @@ mod tests {
     #[test]
     fn test_builder_toroidal_periodic_2d_smoke() {
         use crate::geometry::kernel::RobustKernel;
+        use crate::topology::traits::topological_space::{
+            GlobalTopology, ToroidalConstructionMode,
+        };
 
         let vertices = vec![
             vertex!([0.1_f64, 0.2]),
@@ -2004,6 +2028,13 @@ mod tests {
             .unwrap();
         assert_eq!(dt.number_of_vertices(), n);
         assert!(dt.tds().is_valid().is_ok());
+        assert!(matches!(
+            dt.global_topology(),
+            GlobalTopology::Toroidal {
+                mode: ToroidalConstructionMode::PeriodicImagePoint,
+                ..
+            }
+        ));
     }
 
     #[test]

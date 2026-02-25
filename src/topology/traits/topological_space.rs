@@ -95,6 +95,91 @@ pub enum TopologyKind {
     Hyperbolic,
 }
 
+/// Construction mode metadata for toroidal triangulations.
+///
+/// This distinguishes between:
+/// - Phase 1 canonicalized builds (`.toroidal(...)`) and
+/// - Phase 2 true periodic quotient builds (`.toroidal_periodic(...)`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToroidalConstructionMode {
+    /// Phase 1 toroidal mode: coordinates are wrapped into the fundamental domain
+    /// before Euclidean triangulation construction.
+    Canonicalized,
+    /// Phase 2 toroidal mode: 3^D image-point construction with periodic quotient
+    /// neighbor rewiring.
+    PeriodicImagePoint,
+}
+
+/// Runtime metadata describing the global topological space associated with a triangulation.
+///
+/// This enum is stored on triangulations so callers can query whether a result was
+/// constructed in Euclidean or toroidal mode after construction.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GlobalTopology<const D: usize> {
+    /// Euclidean (flat) space.
+    Euclidean,
+    /// Toroidal (periodic) space with explicit domain and construction mode.
+    Toroidal {
+        /// Fundamental domain periods `[L_0, ..., L_{D-1}]`.
+        domain: [f64; D],
+        /// How the toroidal triangulation was constructed.
+        mode: ToroidalConstructionMode,
+    },
+    /// Spherical space.
+    Spherical,
+    /// Hyperbolic space.
+    Hyperbolic,
+}
+
+impl<const D: usize> Default for GlobalTopology<D> {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl<const D: usize> GlobalTopology<D> {
+    /// Default global-topology metadata for triangulations.
+    pub const DEFAULT: Self = Self::Euclidean;
+
+    /// Returns the corresponding high-level topology kind.
+    #[must_use]
+    pub const fn kind(self) -> TopologyKind {
+        match self {
+            Self::Euclidean => TopologyKind::Euclidean,
+            Self::Toroidal { .. } => TopologyKind::Toroidal,
+            Self::Spherical => TopologyKind::Spherical,
+            Self::Hyperbolic => TopologyKind::Hyperbolic,
+        }
+    }
+
+    /// Returns whether boundary facets are allowed for this global topology.
+    #[must_use]
+    pub const fn allows_boundary(self) -> bool {
+        match self {
+            Self::Euclidean => true,
+            Self::Toroidal { .. } | Self::Spherical | Self::Hyperbolic => false,
+        }
+    }
+
+    /// Returns `true` for toroidal global topology metadata.
+    #[must_use]
+    pub const fn is_toroidal(self) -> bool {
+        matches!(self, Self::Toroidal { .. })
+    }
+
+    /// Returns `true` when this represents a true periodic image-point toroidal build.
+    #[must_use]
+    pub const fn is_periodic(self) -> bool {
+        matches!(
+            self,
+            Self::Toroidal {
+                mode: ToroidalConstructionMode::PeriodicImagePoint,
+                ..
+            }
+        )
+    }
+}
+
 /// Trait for topological spaces that triangulations can inhabit.
 ///
 /// This trait abstracts over different geometric spaces (Euclidean, spherical,
