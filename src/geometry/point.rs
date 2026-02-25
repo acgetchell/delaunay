@@ -3102,7 +3102,8 @@ mod tests {
             } => {
                 assert_eq!(coordinate_index, 0);
             }
-            CoordinateConversionError::ConversionFailed { .. } => {
+            CoordinateConversionError::ConversionFailed { .. }
+            | CoordinateConversionError::InsphereInconsistency { .. } => {
                 panic!("Expected NonFiniteValue error")
             }
         }
@@ -3117,7 +3118,8 @@ mod tests {
             } => {
                 assert_eq!(coordinate_index, 1);
             }
-            CoordinateConversionError::ConversionFailed { .. } => {
+            CoordinateConversionError::ConversionFailed { .. }
+            | CoordinateConversionError::InsphereInconsistency { .. } => {
                 panic!("Expected NonFiniteValue error")
             }
         }
@@ -3221,7 +3223,8 @@ mod tests {
                 } => {
                     assert_eq!(coordinate_index, expected_index);
                 }
-                CoordinateConversionError::ConversionFailed { .. } => {
+                CoordinateConversionError::ConversionFailed { .. }
+                | CoordinateConversionError::InsphereInconsistency { .. } => {
                     panic!("Expected NonFiniteValue error at position {expected_index}")
                 }
             }
@@ -3242,7 +3245,8 @@ mod tests {
                 // Should report the first error (index 0, not 1 or 2)
                 assert_eq!(coordinate_index, 0);
             }
-            CoordinateConversionError::ConversionFailed { .. } => {
+            CoordinateConversionError::ConversionFailed { .. }
+            | CoordinateConversionError::InsphereInconsistency { .. } => {
                 panic!("Expected NonFiniteValue error")
             }
         }

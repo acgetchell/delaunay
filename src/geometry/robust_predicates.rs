@@ -210,13 +210,13 @@ where
             ConsistencyResult::Inconsistent(error) => {
                 // Optional strict mode for deterministic witness capture and hard-fail behavior.
                 if *STRICT_INSPHERE_CONSISTENCY {
-                    return Err(CoordinateConversionError::ConversionFailed {
-                        coordinate_index: 0,
-                        coordinate_value: format!(
-                            "{error}; simplex_points={simplex_points:?}; test_point={test_point:?}"
-                        ),
-                        from_type: "robust_insphere determinant method",
-                        to_type: "robust_insphere distance cross-check",
+                    let details = format!(
+                        "{error}; simplex_points={simplex_points:?}; test_point={test_point:?}"
+                    );
+                    return Err(CoordinateConversionError::InsphereInconsistency {
+                        simplex_points: format!("{simplex_points:?}"),
+                        test_point: format!("{test_point:?}"),
+                        details,
                     });
                 }
                 // Fall through to more robust methods when inconsistent.

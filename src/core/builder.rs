@@ -1984,6 +1984,29 @@ mod tests {
     }
 
     #[test]
+    fn test_builder_toroidal_periodic_2d_smoke() {
+        use crate::geometry::kernel::RobustKernel;
+
+        let vertices = vec![
+            vertex!([0.1_f64, 0.2]),
+            vertex!([0.4, 0.7]),
+            vertex!([0.7, 0.3]),
+            vertex!([0.2, 0.9]),
+            vertex!([0.8, 0.6]),
+            vertex!([0.5, 0.1]),
+            vertex!([0.3, 0.5]),
+        ];
+        let n = vertices.len();
+        let kernel = RobustKernel::new();
+        let dt = DelaunayTriangulationBuilder::new(&vertices)
+            .toroidal_periodic([1.0, 1.0])
+            .build_with_kernel::<_, ()>(&kernel)
+            .unwrap();
+        assert_eq!(dt.number_of_vertices(), n);
+        assert!(dt.tds().is_valid().is_ok());
+    }
+
+    #[test]
     fn test_builder_toroidal_idempotent_on_canonical_input() {
         let vertices = vec![
             vertex!([0.1, 0.2]),
