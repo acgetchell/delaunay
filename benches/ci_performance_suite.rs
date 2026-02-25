@@ -25,6 +25,8 @@
 //! - 3D-5D: Higher-dimensional triangulations as documented in README.md
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use delaunay::core::vertex::Vertex;
+use delaunay::geometry::point::Point;
 use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::prelude::{ConstructionOptions, DelaunayTriangulation, RetryPolicy};
 use delaunay::vertex;
@@ -34,6 +36,35 @@ use tracing::error;
 
 /// Common sample sizes used across all CI performance benchmarks
 const COUNTS: &[usize] = &[10, 25, 50];
+type SeedSearchResult<const D: usize> = Option<(u64, Vec<Point<f64, D>>, Vec<Vertex<f64, (), D>>)>;
+
+fn find_seed_and_vertices<const D: usize>(
+    start_seed: u64,
+    count: usize,
+    bounds: (f64, f64),
+    limit: usize,
+    attempts: NonZeroUsize,
+) -> SeedSearchResult<D> {
+    for offset in 0..limit {
+        let candidate_seed = start_seed.wrapping_add(offset as u64);
+        let points = generate_random_points_seeded::<f64, D>(count, bounds, candidate_seed)
+            .unwrap_or_else(|error| {
+                panic!("generate_random_points_seeded failed for {D}D: {error}");
+            });
+        let vertices = points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>();
+
+        let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
+            attempts,
+            base_seed: Some(candidate_seed),
+        });
+
+        if DelaunayTriangulation::<_, (), (), D>::new_with_options(&vertices, options).is_ok() {
+            return Some((candidate_seed, points, vertices));
+        }
+    }
+
+    None
+}
 
 fn bench_logging_enabled() -> bool {
     std::env::var("DELAUNAY_BENCH_LOG")
@@ -102,40 +133,17 @@ macro_rules! benchmark_tds_new_dimension {
 
                     let seed = ($seed as u64).wrapping_add(count as u64);
                     let limit = bench_seed_search_limit();
+                    let attempts =
+                        NonZeroUsize::new(6).expect("retry attempts must be non-zero");
 
-                    for offset in 0..limit {
-                        let candidate_seed = seed.wrapping_add(offset as u64);
-                        let points = generate_random_points_seeded::<f64, $dim>(
-                            count,
-                            bounds,
-                            candidate_seed,
-                        )
-                        .expect(concat!(
-                            "generate_random_points_seeded failed for ",
-                            stringify!($dim),
-                            "D"
-                        ));
-                        let vertices = points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>();
-
-                        let options =
-                            ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
-                                attempts: NonZeroUsize::new(6)
-                                    .expect("retry attempts must be non-zero"),
-                                base_seed: Some(candidate_seed),
-                            });
-
-                        if DelaunayTriangulation::<_, (), (), $dim>::new_with_options(
-                            &vertices,
-                            options,
-                        )
-                        .is_ok()
-                        {
-                            println!(
-                                "seed_search_found dim={} count={} seed={}",
-                                $dim, count, candidate_seed
-                            );
-                            return;
-                        }
+                    if let Some((candidate_seed, _, _)) =
+                        find_seed_and_vertices::<$dim>(seed, count, bounds, limit, attempts)
+                    {
+                        println!(
+                            "seed_search_found dim={} count={} seed={}",
+                            $dim, count, candidate_seed
+                        );
+                        return;
                     }
 
                     panic!(
@@ -171,15 +179,28 @@ macro_rules! benchmark_tds_new_dimension {
                     // point set. This avoids a single pathological input (e.g. 3D/50) aborting the
                     // entire suite.
                     let bounds = (-100.0, 100.0);
-                    let seed = ($seed as u64).wrapping_add(count as u64);
+                    let base_seed = ($seed as u64).wrapping_add(count as u64);
+                    let search_limit = bench_seed_search_limit();
+                    let attempts =
+                        NonZeroUsize::new(6).expect("retry attempts must be non-zero");
+                    let selected = find_seed_and_vertices::<$dim>(
+                        base_seed,
+                        count,
+                        bounds,
+                        search_limit,
+                        attempts,
+                    );
 
-                    let points = generate_random_points_seeded::<f64, $dim>(count, bounds, seed)
-                        .expect(concat!(
-                            "generate_random_points_seeded failed for ",
-                            stringify!($dim),
-                            "D"
-                        ));
-                    let vertices = points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>();
+                    let (seed, points, vertices) = selected.unwrap_or_else(|| {
+                        panic!(
+                            "No stable benchmark seed found for {}D case: dim={}; count={}; start_seed={}; search_limit={}; bounds={bounds:?}",
+                            $dim,
+                            $dim,
+                            count,
+                            base_seed,
+                            search_limit
+                        )
+                    });
                     let sample_points = points.iter().take(5).collect::<Vec<_>>();
 
                     // In benchmarks we compile in release mode, where the default retry policy is
@@ -187,7 +208,7 @@ macro_rules! benchmark_tds_new_dimension {
                     // shuffled retries to avoid aborting the suite on rare non-convergent repair
                     // cases.
                     let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
-                        attempts: NonZeroUsize::new(6).expect("retry attempts must be non-zero"),
+                        attempts,
                         base_seed: Some(seed),
                     });
 

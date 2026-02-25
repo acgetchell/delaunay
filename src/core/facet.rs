@@ -661,27 +661,11 @@ where
     /// assert!(map.contains_key(&facet_key));
     /// ```
     pub fn key(&self) -> Result<u64, FacetError> {
-        // Get vertex keys for the facet vertices
-        let cell_vertices = self.tds.get_cell_vertices(self.cell_key).map_err(|e| {
-            FacetError::CellOperationFailed {
+        self.tds
+            .facet_key_for_cell_facet(self.cell_key, usize::from(self.facet_index))
+            .map_err(|e| FacetError::CellOperationFailed {
                 source: Arc::new(e),
-            }
-        })?;
-        let facet_index = usize::from(self.facet_index);
-
-        // Collect vertex keys excluding the opposite vertex
-        let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-            SmallBuffer::new();
-        facet_vertices.extend(
-            cell_vertices
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| *i != facet_index)
-                .map(|(_, &key)| key),
-        );
-
-        // Compute canonical key from vertex keys
-        Ok(facet_key_from_vertices(&facet_vertices))
+            })
     }
 }
 

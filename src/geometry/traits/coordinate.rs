@@ -117,6 +117,16 @@ pub enum CoordinateConversionError {
         /// String representation of the non-finite coordinate value
         coordinate_value: String,
     },
+    /// Strict robust-insphere consistency check failed.
+    #[error("Insphere consistency check failed: {details}")]
+    InsphereInconsistency {
+        /// Debug representation of simplex points participating in the check.
+        simplex_points: String,
+        /// Debug representation of the test point participating in the check.
+        test_point: String,
+        /// Detailed inconsistency message.
+        details: String,
+    },
 }
 
 impl From<crate::geometry::matrix::StackMatrixDispatchError> for CoordinateConversionError {

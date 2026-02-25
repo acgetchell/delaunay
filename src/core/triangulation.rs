@@ -147,7 +147,7 @@ use crate::topology::manifold::{
     ManifoldError, validate_closed_boundary, validate_facet_degree, validate_ridge_links,
     validate_vertex_links,
 };
-use crate::topology::traits::topological_space::TopologyError;
+use crate::topology::traits::topological_space::{GlobalTopology, TopologyError, TopologyKind};
 use core::ops::Div;
 use num_traits::{NumCast, One, Zero};
 use std::borrow::Cow;
@@ -712,9 +712,8 @@ where
     pub(crate) kernel: K,
     /// The combinatorial triangulation data structure.
     pub(crate) tds: Tds<K::Scalar, U, V, D>,
-    // TODO: Add after bistellar flips + robust insertion (v0.7.0+)
-    // /// The topological space this triangulation lives in.
-    // pub(crate) topology: Box<dyn TopologicalSpace>,
+    /// Runtime metadata describing the global topological space represented by this triangulation.
+    pub(crate) global_topology: GlobalTopology<D>,
     pub(crate) validation_policy: ValidationPolicy,
     pub(crate) topology_guarantee: TopologyGuarantee,
 }
@@ -817,6 +816,7 @@ where
         Self {
             kernel,
             tds: Tds::empty(),
+            global_topology: GlobalTopology::DEFAULT,
             validation_policy: ValidationPolicy::default(),
             topology_guarantee: TopologyGuarantee::DEFAULT,
         }
@@ -827,6 +827,26 @@ where
     #[must_use]
     pub const fn topology_guarantee(&self) -> TopologyGuarantee {
         self.topology_guarantee
+    }
+
+    /// Returns the runtime global topology metadata associated with this triangulation.
+    #[inline]
+    #[must_use]
+    pub const fn global_topology(&self) -> GlobalTopology<D> {
+        self.global_topology
+    }
+
+    /// Returns the high-level topology kind (`Euclidean`, `Toroidal`, etc.).
+    #[inline]
+    #[must_use]
+    pub const fn topology_kind(&self) -> TopologyKind {
+        self.global_topology.kind()
+    }
+
+    /// Sets runtime global topology metadata on the triangulation.
+    #[inline]
+    pub const fn set_global_topology(&mut self, global_topology: GlobalTopology<D>) {
+        self.global_topology = global_topology;
     }
 
     /// Returns the insertion-time global topology validation policy used by the triangulation.
@@ -1000,6 +1020,7 @@ where
         Self {
             kernel,
             tds,
+            global_topology: GlobalTopology::DEFAULT,
             validation_policy: ValidationPolicy::default(),
             topology_guarantee: TopologyGuarantee::DEFAULT,
         }

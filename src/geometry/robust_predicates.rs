@@ -16,6 +16,10 @@ use crate::geometry::traits::coordinate::{
 };
 use num_traits::cast;
 use std::fmt::Debug;
+use std::sync::LazyLock;
+
+static STRICT_INSPHERE_CONSISTENCY: LazyLock<bool> =
+    LazyLock::new(|| std::env::var_os("DELAUNAY_STRICT_INSPHERE_CONSISTENCY").is_some());
 
 /// Result of consistency verification between different insphere methods.
 ///
@@ -32,7 +36,7 @@ pub enum ConsistencyResult {
     /// The two methods agree on the result
     Consistent,
     /// The two methods disagree (potential numerical issue)
-    Inconsistent,
+    Inconsistent(InsphereConsistencyError),
     /// Cannot verify consistency due to error in verification method
     Unverifiable,
 }
@@ -50,12 +54,26 @@ impl std::fmt::Display for ConsistencyResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Consistent => write!(f, "Consistent"),
-            Self::Inconsistent => write!(f, "Inconsistent"),
+            Self::Inconsistent(error) => write!(f, "{error}"),
             Self::Unverifiable => write!(f, "Unverifiable"),
         }
     }
 }
-///
+
+/// Error details for direct contradiction between insphere implementations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum InsphereConsistencyError {
+    /// Determinant and distance methods classify a point in opposite half-spaces.
+    #[error(
+        "Insphere inconsistency: determinant={determinant_result:?}, distance={distance_result:?}"
+    )]
+    DirectContradiction {
+        /// Result from determinant-based predicate.
+        determinant_result: InSphere,
+        /// Result from distance-based predicate.
+        distance_result: InSphere,
+    },
+}
 /// This structure allows fine-tuning of numerical robustness parameters
 /// based on the specific requirements of the triangulation algorithm.
 ///
@@ -189,8 +207,19 @@ where
         // Strategy 2: Verify consistency with alternative method
         match verify_insphere_consistency(simplex_points, test_point, result, config) {
             ConsistencyResult::Consistent | ConsistencyResult::Unverifiable => return Ok(result), // Accept if we can't verify
-            ConsistencyResult::Inconsistent => {
-                // Fall through to more robust methods when inconsistent
+            ConsistencyResult::Inconsistent(error) => {
+                // Optional strict mode for deterministic witness capture and hard-fail behavior.
+                if *STRICT_INSPHERE_CONSISTENCY {
+                    let details = format!(
+                        "{error}; simplex_points={simplex_points:?}; test_point={test_point:?}"
+                    );
+                    return Err(CoordinateConversionError::InsphereInconsistency {
+                        simplex_points: format!("{simplex_points:?}"),
+                        test_point: format!("{test_point:?}"),
+                        details,
+                    });
+                }
+                // Fall through to more robust methods when inconsistent.
             }
         }
     } else {
@@ -500,23 +529,31 @@ where
     [T; D]: Copy + Sized,
 {
     // Use the existing distance-based insphere test for verification
-    super::predicates::insphere_distance(simplex_points, *test_point).map_or(ConsistencyResult::Unverifiable, |distance_result| match (determinant_result, distance_result) {
-                // Exact matches are always consistent
-                (InSphere::INSIDE, InSphere::INSIDE)
-                | (InSphere::OUTSIDE, InSphere::OUTSIDE)
-                | (InSphere::BOUNDARY, _)
-                | (_, InSphere::BOUNDARY) => ConsistencyResult::Consistent,
+    super::predicates::insphere_distance(simplex_points, *test_point).map_or(
+        ConsistencyResult::Unverifiable,
+        |distance_result| match (determinant_result, distance_result) {
+            // Exact matches are always consistent
+            (InSphere::INSIDE, InSphere::INSIDE)
+            | (InSphere::OUTSIDE, InSphere::OUTSIDE)
+            | (InSphere::BOUNDARY, _)
+            | (_, InSphere::BOUNDARY) => ConsistencyResult::Consistent,
 
-                // Direct contradictions indicate numerical issues
-                (InSphere::INSIDE, InSphere::OUTSIDE) | (InSphere::OUTSIDE, InSphere::INSIDE) => {
-                    // Log the inconsistency for debugging (in debug builds only)
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "Insphere consistency check failed: determinant={determinant_result:?}, distance={distance_result:?}"
-                    );
-                    ConsistencyResult::Inconsistent
-                }
-            })
+            // Direct contradictions indicate numerical issues
+            (InSphere::INSIDE, InSphere::OUTSIDE) | (InSphere::OUTSIDE, InSphere::INSIDE) => {
+                // Log the inconsistency for debugging (in debug builds only)
+                #[cfg(debug_assertions)]
+                tracing::warn!(
+                    determinant_result = ?determinant_result,
+                    distance_result = ?distance_result,
+                    "Insphere consistency check failed"
+                );
+                ConsistencyResult::Inconsistent(InsphereConsistencyError::DirectContradiction {
+                    determinant_result,
+                    distance_result,
+                })
+            }
+        },
+    )
 }
 
 /// Generate perturbation directions for symbolic perturbation.
@@ -819,7 +856,10 @@ pub mod config_presets {
 mod tests {
     use super::*;
     use crate::geometry::point::Point;
+    use crate::geometry::predicates;
     use approx::assert_relative_eq;
+    use num_traits::NumCast;
+    use rand::{RngExt, SeedableRng};
 
     #[test]
     fn test_robust_insphere_general() {
@@ -1033,13 +1073,195 @@ mod tests {
         // Test Display trait implementation for ConsistencyResult
         assert_eq!(format!("{}", ConsistencyResult::Consistent), "Consistent");
         assert_eq!(
-            format!("{}", ConsistencyResult::Inconsistent),
-            "Inconsistent"
+            format!(
+                "{}",
+                ConsistencyResult::Inconsistent(InsphereConsistencyError::DirectContradiction {
+                    determinant_result: InSphere::INSIDE,
+                    distance_result: InSphere::OUTSIDE,
+                })
+            ),
+            "Insphere inconsistency: determinant=INSIDE, distance=OUTSIDE"
         );
         assert_eq!(
             format!("{}", ConsistencyResult::Unverifiable),
             "Unverifiable"
         );
+    }
+
+    const PERIODIC_TWO_POW_52_I64: i64 = 4_503_599_627_370_496;
+    const PERIODIC_TWO_POW_52_F64: f64 = 4_503_599_627_370_496.0;
+    const PERIODIC_MAX_OFFSET_UNITS: i64 = 1_048_576;
+    const PERIODIC_IMAGE_JITTER_UNITS: i64 = 64;
+    const PERIODIC_FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const PERIODIC_FNV_PRIME: u64 = 0x0100_0000_01b3;
+    type PeriodicWitness3d = ([Point<f64, 3>; 4], Point<f64, 3>, InSphere, InSphere);
+
+    fn periodic_builder_perturb_units(canon_idx: usize, axis: usize) -> i64 {
+        let mut h = PERIODIC_FNV_OFFSET_BASIS;
+        h ^= u64::try_from(canon_idx).expect("canonical index fits in u64");
+        h = h.wrapping_mul(PERIODIC_FNV_PRIME);
+        h ^= u64::try_from(axis).expect("axis fits in u64");
+        h = h.wrapping_mul(PERIODIC_FNV_PRIME);
+        let span =
+            u64::try_from(2 * PERIODIC_MAX_OFFSET_UNITS + 1).expect("periodic span fits in u64");
+        i64::try_from(h % span).expect("residue fits in i64") - PERIODIC_MAX_OFFSET_UNITS
+    }
+
+    fn periodic_builder_image_jitter_units(canon_idx: usize, axis: usize, image_idx: usize) -> i64 {
+        let mut h = PERIODIC_FNV_OFFSET_BASIS;
+        h ^= u64::try_from(canon_idx).expect("canonical index fits in u64");
+        h = h.wrapping_mul(PERIODIC_FNV_PRIME);
+        h ^= u64::try_from(axis).expect("axis fits in u64");
+        h = h.wrapping_mul(PERIODIC_FNV_PRIME);
+        h ^= u64::try_from(image_idx).expect("image index fits in u64");
+        h = h.wrapping_mul(PERIODIC_FNV_PRIME);
+        let span = u64::try_from(2 * PERIODIC_IMAGE_JITTER_UNITS + 1)
+            .expect("periodic jitter span fits in u64");
+        i64::try_from(h % span).expect("residue fits in i64") - PERIODIC_IMAGE_JITTER_UNITS
+    }
+
+    fn periodic_3d_canonical_points() -> Vec<Point<f64, 3>> {
+        vec![
+            Point::new([0.1_f64, 0.2, 0.3]),
+            Point::new([0.4, 0.7, 0.1]),
+            Point::new([0.7, 0.3, 0.8]),
+            Point::new([0.2, 0.9, 0.5]),
+            Point::new([0.8, 0.6, 0.2]),
+            Point::new([0.5, 0.1, 0.7]),
+            Point::new([0.3, 0.5, 0.9]),
+            Point::new([0.6, 0.8, 0.4]),
+            Point::new([0.9, 0.2, 0.6]),
+            Point::new([0.0, 0.4, 0.1]),
+            Point::new([0.15, 0.65, 0.45]),
+            Point::new([0.75, 0.15, 0.85]),
+            Point::new([0.45, 0.55, 0.25]),
+            Point::new([0.85, 0.45, 0.65]),
+        ]
+    }
+
+    fn periodic_3d_builder_style_expansion(
+        canonical_points: &[Point<f64, 3>],
+    ) -> Vec<Point<f64, 3>> {
+        let canonical_f64: Vec<[f64; 3]> = canonical_points
+            .iter()
+            .enumerate()
+            .map(|(canon_idx, point)| {
+                let coords = point.coords();
+                let mut quantized = [0.0_f64; 3];
+                for axis in 0..3 {
+                    let normalized = coords[axis].clamp(0.0, 1.0 - f64::EPSILON);
+                    let scaled = (normalized * PERIODIC_TWO_POW_52_F64).floor();
+                    let unit_index = <i64 as NumCast>::from(scaled)
+                        .expect("scaled coordinate index fits in i64");
+                    let min_off = -unit_index.min(PERIODIC_MAX_OFFSET_UNITS);
+                    let max_off =
+                        (PERIODIC_TWO_POW_52_I64 - 1 - unit_index).min(PERIODIC_MAX_OFFSET_UNITS);
+                    let offset =
+                        periodic_builder_perturb_units(canon_idx, axis).clamp(min_off, max_off);
+                    let adjusted = <f64 as NumCast>::from(unit_index + offset)
+                        .expect("adjusted index fits in f64");
+                    quantized[axis] = adjusted / PERIODIC_TWO_POW_52_F64;
+                }
+                quantized
+            })
+            .collect();
+
+        let three_pow_d = 27_usize;
+        let zero_offset_idx = (three_pow_d - 1) / 2;
+        let mut expanded = Vec::with_capacity(canonical_points.len() * three_pow_d);
+
+        for image_idx in 0..three_pow_d {
+            let mut offset = [0_i8; 3];
+            for (axis, offset_val) in offset.iter_mut().enumerate() {
+                let axis_u32 = u32::try_from(axis).expect("axis index fits in u32");
+                let digit = (image_idx / 3_usize.pow(axis_u32)) % 3;
+                *offset_val = i8::try_from(digit).expect("digit fits in i8") - 1;
+            }
+
+            let is_canonical = image_idx == zero_offset_idx;
+            for (canon_idx, quantized) in canonical_f64.iter().enumerate() {
+                let mut image_coords = [0.0_f64; 3];
+                for axis in 0..3 {
+                    let shift = <f64 as std::convert::From<i8>>::from(offset[axis]);
+                    let jitter = if is_canonical {
+                        0.0
+                    } else {
+                        let jitter_units =
+                            periodic_builder_image_jitter_units(canon_idx, axis, image_idx);
+                        let jitter_as_f64 =
+                            <f64 as NumCast>::from(jitter_units).expect("jitter units fit in f64");
+                        jitter_as_f64 / PERIODIC_TWO_POW_52_F64
+                    };
+                    image_coords[axis] = quantized[axis] + shift + jitter;
+                }
+                expanded.push(Point::new(image_coords));
+            }
+        }
+
+        expanded
+    }
+
+    fn find_periodic_3d_inconsistency_witness(
+        expanded: &[Point<f64, 3>],
+        config: &RobustPredicateConfig<f64>,
+        seed: u64,
+        sample_budget: usize,
+    ) -> Option<PeriodicWitness3d> {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let n = expanded.len();
+        if n < 5 {
+            return None;
+        }
+        for _ in 0..sample_budget {
+            let i0 = rng.random_range(0..n);
+            let mut i1 = rng.random_range(0..n);
+            while i1 == i0 {
+                i1 = rng.random_range(0..n);
+            }
+            let mut i2 = rng.random_range(0..n);
+            while i2 == i0 || i2 == i1 {
+                i2 = rng.random_range(0..n);
+            }
+            let mut i3 = rng.random_range(0..n);
+            while i3 == i0 || i3 == i1 || i3 == i2 {
+                i3 = rng.random_range(0..n);
+            }
+            let mut it = rng.random_range(0..n);
+            while it == i0 || it == i1 || it == i2 || it == i3 {
+                it = rng.random_range(0..n);
+            }
+
+            let simplex = [expanded[i0], expanded[i1], expanded[i2], expanded[i3]];
+            let test_point = expanded[it];
+            let det_result = adaptive_tolerance_insphere(&simplex, &test_point, config);
+            let dist_result = predicates::insphere_distance(&simplex, test_point);
+
+            if let (Ok(det), Ok(dist)) = (det_result, dist_result)
+                && matches!(
+                    (det, dist),
+                    (InSphere::INSIDE, InSphere::OUTSIDE) | (InSphere::OUTSIDE, InSphere::INSIDE)
+                )
+            {
+                return Some((simplex, test_point, det, dist));
+            }
+        }
+        None
+    }
+
+    #[test]
+    #[ignore = "stress test; run explicitly with --ignored"]
+    fn test_periodic_3d_inconsistency_witness_search_seeded() {
+        let config = config_presets::general_triangulation::<f64>();
+        let canonical_points = periodic_3d_canonical_points();
+        let expanded = periodic_3d_builder_style_expansion(&canonical_points);
+        let witness =
+            find_periodic_3d_inconsistency_witness(&expanded, &config, 0x2100_0003, 200_000);
+
+        if let Some((simplex, test_point, det, dist)) = witness {
+            panic!(
+                "Found periodic-3D determinant-vs-distance inconsistency: determinant={det:?}, distance={dist:?}, simplex={simplex:?}, test_point={test_point:?}"
+            );
+        }
     }
 
     #[test]

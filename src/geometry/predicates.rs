@@ -251,11 +251,18 @@ where
     }
     let radius = hypot(&diff_coords);
 
-    // Use Float::abs for proper absolute value comparison
-    let tolerance = T::default_tolerance();
-    if Float::abs(circumradius - radius) < tolerance {
+    // Scale tolerance with geometric magnitude to avoid absolute-epsilon
+    // misclassification for large circumradii in near-degenerate simplices.
+    let base_tolerance = T::default_tolerance();
+    let scale = Float::max(
+        T::one(),
+        Float::max(Float::abs(circumradius), Float::abs(radius)),
+    );
+    let tolerance = base_tolerance * scale;
+    let signed_margin = circumradius - radius;
+    if Float::abs(signed_margin) <= tolerance {
         Ok(InSphere::BOUNDARY)
-    } else if circumradius > radius {
+    } else if signed_margin > T::zero() {
         Ok(InSphere::INSIDE)
     } else {
         Ok(InSphere::OUTSIDE)

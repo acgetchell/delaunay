@@ -251,6 +251,67 @@ pub fn generate_random_points_seeded<T: CoordinateScalar + SampleUniform, const 
     Ok(points)
 }
 
+/// Generate random points in a periodic (toroidal) domain with seeded RNG.
+///
+/// Each coordinate is independently sampled from `[T::zero(), domain[i])` using a seeded
+/// random number generator. All `domain[i]` must be strictly positive.
+///
+/// # Arguments
+///
+/// * `n_points` - Number of points to generate
+/// * `domain` - Period length for each dimension (all must be > 0)
+/// * `seed` - Seed for the random number generator
+///
+/// # Returns
+///
+/// Vector of random points with coordinates in `[0, domain[i])` per axis.
+///
+/// # Errors
+///
+/// Returns `RandomPointGenerationError::InvalidRange` if any `domain[i] <= 0`.
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::util::generate_random_points_periodic;
+///
+/// // Generate 100 random 2D points in [0,1) × [0,2)
+/// let points = generate_random_points_periodic::<f64, 2>(100, [1.0, 2.0], 42).unwrap();
+/// assert_eq!(points.len(), 100);
+///
+/// // Reproducible generation
+/// let points1 = generate_random_points_periodic::<f64, 3>(50, [1.0, 1.0, 1.0], 123).unwrap();
+/// let points2 = generate_random_points_periodic::<f64, 3>(50, [1.0, 1.0, 1.0], 123).unwrap();
+/// assert_eq!(points1, points2);
+/// ```
+pub fn generate_random_points_periodic<T: CoordinateScalar + SampleUniform, const D: usize>(
+    n_points: usize,
+    domain: [T; D],
+    seed: u64,
+) -> Result<Vec<Point<T, D>>, RandomPointGenerationError> {
+    use rand::SeedableRng;
+
+    // Validate domain: each dimension must be positive.
+    for period in domain {
+        if period <= T::zero() {
+            return Err(RandomPointGenerationError::InvalidRange {
+                min: String::from("0"),
+                max: format!("{period:?}"),
+            });
+        }
+    }
+
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    let mut points = Vec::with_capacity(n_points);
+
+    for _ in 0..n_points {
+        let coords = domain.map(|period| rng.random_range(T::zero()..period));
+        points.push(Point::new(coords));
+    }
+
+    Ok(points)
+}
+
 fn generate_random_points_in_ball_with_rng<T, R, const D: usize>(
     n_points: usize,
     radius: T,
@@ -835,6 +896,45 @@ mod tests {
         let points1_5d = generate_random_points_seeded::<f64, 5>(15, (0.0, 10.0), 2021).unwrap();
         let points2_5d = generate_random_points_seeded::<f64, 5>(15, (0.0, 10.0), 2024).unwrap();
         assert_ne!(points1_5d, points2_5d);
+    }
+    #[test]
+    fn test_generate_random_points_periodic_2d_in_domain() {
+        let points = generate_random_points_periodic::<f64, 2>(100, [1.0, 2.0], 42).unwrap();
+        assert_eq!(points.len(), 100);
+
+        for point in &points {
+            let coords = *point.coords();
+            assert!((0.0..1.0).contains(&coords[0]));
+            assert!((0.0..2.0).contains(&coords[1]));
+        }
+    }
+
+    #[test]
+    fn test_generate_random_points_periodic_seeded_reproducible() {
+        let points1 = generate_random_points_periodic::<f64, 3>(50, [1.0, 1.0, 1.0], 123).unwrap();
+        let points2 = generate_random_points_periodic::<f64, 3>(50, [1.0, 1.0, 1.0], 123).unwrap();
+        assert_eq!(points1, points2);
+    }
+
+    #[test]
+    fn test_generate_random_points_periodic_invalid_domain() {
+        let zero_period = generate_random_points_periodic::<f64, 2>(10, [1.0, 0.0], 7);
+        assert!(matches!(
+            zero_period,
+            Err(RandomPointGenerationError::InvalidRange { .. })
+        ));
+
+        let negative_period = generate_random_points_periodic::<f64, 2>(10, [1.0, -2.0], 7);
+        assert!(matches!(
+            negative_period,
+            Err(RandomPointGenerationError::InvalidRange { .. })
+        ));
+    }
+
+    #[test]
+    fn test_generate_random_points_periodic_zero_points() {
+        let points = generate_random_points_periodic::<f64, 4>(0, [1.0, 2.0, 3.0, 4.0], 9).unwrap();
+        assert!(points.is_empty());
     }
 
     // =============================================================================
