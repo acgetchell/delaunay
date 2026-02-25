@@ -345,14 +345,13 @@ fn test_builder_toroidal_periodic_chi_zero_2d() {
     );
 }
 
-/// `toroidal_periodic` in 3D either builds a valid periodic triangulation or
-/// returns an explicit non-fallback construction error with diagnostic context.
+/// `toroidal_periodic` in 3D builds a valid periodic triangulation.
 ///
 /// For a 3D periodic triangulation on the 3-torus the Euler characteristic is
 /// also 0, so we verify TDS structural validity rather than the full `validate()`
 /// check (which would expect χ = 2 for a sphere).
 #[test]
-fn test_builder_toroidal_periodic_3d_success_or_explicit_error() {
+fn test_builder_toroidal_periodic_3d_success() {
     use delaunay::geometry::kernel::RobustKernel;
 
     let vertices = vec![
@@ -373,34 +372,13 @@ fn test_builder_toroidal_periodic_3d_success_or_explicit_error() {
     ];
     let n = vertices.len();
     let kernel = RobustKernel::new();
-    let result = DelaunayTriangulationBuilder::new(&vertices)
+    let dt = DelaunayTriangulationBuilder::new(&vertices)
         .toroidal_periodic([1.0_f64, 1.0, 1.0])
-        .build_with_kernel::<_, ()>(&kernel);
-
-    match result {
-        Ok(dt) => {
-            assert_eq!(dt.number_of_vertices(), n);
-            assert!(
-                dt.tds().is_valid().is_ok(),
-                "TDS structural validity should pass for 3D periodic triangulation"
-            );
-        }
-        Err(err) => {
-            let msg = err.to_string();
-            let explicit_expanded_failure = msg
-                .contains("Periodic expanded DT construction failed (no fallback)")
-                && msg.contains("primary_err=")
-                && msg.contains("last_insert_error=");
-            let explicit_selection_failure = msg.contains("Periodic quotient selection left")
-                && msg.contains("full_vertices=")
-                && msg.contains("full_cells=")
-                && msg.contains("candidates=")
-                && msg.contains("selected_cells=");
-
-            assert!(
-                explicit_expanded_failure || explicit_selection_failure,
-                "3D periodic failure must be explicit with diagnostic context: {msg}"
-            );
-        }
-    }
+        .build_with_kernel::<_, ()>(&kernel)
+        .expect("periodic 3D build should succeed");
+    assert_eq!(dt.number_of_vertices(), n);
+    assert!(
+        dt.tds().is_valid().is_ok(),
+        "TDS structural validity should pass for 3D periodic triangulation"
+    );
 }

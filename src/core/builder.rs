@@ -103,18 +103,28 @@
 
 #![forbid(unsafe_code)]
 
+use crate::core::cell::Cell;
+use crate::core::collections::{FastHashMap, Uuid, VertexKeySet};
 use crate::core::delaunay_triangulation::{
-    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError,
+    ConstructionOptions, DelaunayRepairPolicy, DelaunayTriangulation,
+    DelaunayTriangulationConstructionError, InitialSimplexStrategy, RetryPolicy,
 };
+use crate::core::operations::InsertionOutcome;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionError};
+use crate::core::triangulation_data_structure::{CellKey, VertexKey};
 use crate::core::util::stable_hash_u64_slice;
 use crate::core::vertex::{Vertex, VertexBuilder};
 use crate::geometry::kernel::{FastKernel, Kernel};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar, ScalarAccumulative};
 use crate::topology::spaces::toroidal::ToroidalSpace;
+use num_traits::ToPrimitive;
+use rand::SeedableRng;
+use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
 use slotmap::Key;
+use std::num::NonZeroUsize;
 const TWO_POW_52_I64: i64 = 4_503_599_627_370_496; // 2^52
 const TWO_POW_52_F64: f64 = 4_503_599_627_370_496.0; // 2^52
 const MAX_OFFSET_UNITS: i64 = 1_048_576;
@@ -133,12 +143,14 @@ type PeriodicCandidate<const D: usize> = (
     Vec<PeriodicFacetKey>,
     bool,
 );
-
+/// Computes a translation-invariant hash key for one lifted facet of a periodic cell.
+///
+/// `lifted_vertices` stores cell vertices as `(canonical_vertex_key, lattice_offset)` pairs.
+/// The facet opposite `facet_index` is extracted, vertex keys are sorted for permutation
+/// invariance, and offsets are normalized relative to the first facet vertex so that
+/// equivalent periodic facets map to the same signature.
 fn periodic_facet_key_from_lifted<const D: usize>(
-    lifted_vertices: &[(
-        crate::core::triangulation_data_structure::VertexKey,
-        [i8; D],
-    )],
+    lifted_vertices: &[(VertexKey, [i8; D])],
     facet_index: usize,
 ) -> u64 {
     let mut lifted_facet: Vec<(u64, [i8; D])> = lifted_vertices
@@ -172,7 +184,11 @@ fn periodic_facet_key_from_lifted<const D: usize>(
 
     stable_hash_u64_slice(&packed_signature)
 }
-
+/// Finds a bounded-size 2D face subset whose edge incidences can close a quotient boundary.
+///
+/// Returns a boolean mask aligned with `candidate_edges` when a selection of exactly
+/// `target_faces` candidates is found such that no edge is used more than twice. The search
+/// uses a DFS with pruning and a heuristic ordering that prefers in-domain candidates first.
 #[expect(
     clippy::too_many_lines,
     reason = "Depth-first bounded subset search includes pruning logic and is kept self-contained"
@@ -810,6 +826,13 @@ where
     /// 6. Rebuild incident-cell associations and return the result.
     ///
     /// The output is a `Tds` whose `is_valid()` passes at Level 2 (structural validity).
+    ///
+    /// # References
+    ///
+    /// - CGAL, *2D Periodic Triangulations*:
+    ///   <https://doc.cgal.org/latest/Periodic_2_triangulation_2/index.html>
+    /// - CGAL, *3D Periodic Triangulations*:
+    ///   <https://doc.cgal.org/latest/Periodic_3_triangulation_3/index.html>
     #[expect(
         clippy::too_many_lines,
         reason = "Image-point periodic DT algorithm is inherently multi-step; splitting would harm readability"
@@ -826,19 +849,6 @@ where
         K::Scalar: ScalarAccumulative,
         V: DataType,
     {
-        use crate::core::cell::Cell;
-        use crate::core::collections::{FastHashMap, Uuid, VertexKeySet};
-        use crate::core::delaunay_triangulation::{
-            DelaunayRepairPolicy, InitialSimplexStrategy, RetryPolicy,
-        };
-        use crate::core::operations::InsertionOutcome;
-        use crate::core::triangulation_data_structure::{CellKey, VertexKey};
-        use num_traits::{NumCast, ToPrimitive};
-        use rand::SeedableRng;
-        use rand::rngs::StdRng;
-        use rand::seq::SliceRandom;
-        use std::num::NonZeroUsize;
-
         let n = canonical_vertices.len();
         let min_points = 2 * D + 1;
         if n < min_points {
@@ -896,8 +906,8 @@ where
                     let min_off = -u.min(MAX_OFFSET_UNITS);
                     let max_off = (TWO_POW_52_I64 - 1 - u).min(MAX_OFFSET_UNITS);
                     let off = perturb_units(canon_idx, i).clamp(min_off, max_off);
-                    let adjusted_u =
-                        <f64 as NumCast>::from(u + off).expect("adjusted grid index fits in f64");
+                    let adjusted_u = <f64 as num_traits::NumCast>::from(u + off)
+                        .expect("adjusted grid index fits in f64");
                     coords[i] = (adjusted_u / TWO_POW_52_F64) * domain_i;
                 }
                 coords
@@ -926,16 +936,18 @@ where
                         0.0
                     } else {
                         let jitter_units = image_jitter_units(canon_idx, i, k);
-                        (<f64 as NumCast>::from(jitter_units).expect("jitter fits in f64")
+                        (<f64 as num_traits::NumCast>::from(jitter_units)
+                            .expect("jitter fits in f64")
                             / TWO_POW_52_F64)
                             * space.domain[i]
                     };
                     let coord_f64 = canonical_f64[canon_idx][i] + shift_f64 + jitter_f64;
-                    new_coords[i] = <T as NumCast>::from(coord_f64).ok_or_else(|| {
-                        TriangulationConstructionError::GeometricDegeneracy {
-                            message: format!("Overflow on axis {i}: image coord {coord_f64}"),
-                        }
-                    })?;
+                    new_coords[i] =
+                        <T as num_traits::NumCast>::from(coord_f64).ok_or_else(|| {
+                            TriangulationConstructionError::GeometricDegeneracy {
+                                message: format!("Overflow on axis {i}: image coord {coord_f64}"),
+                            }
+                        })?;
                 }
                 let new_point = Point::new(new_coords);
                 if is_canonical {
@@ -1149,8 +1161,8 @@ where
                     *sum += coords[axis].to_f64()?;
                 }
             }
-            let denom =
-                <f64 as NumCast>::from(D + 1).expect("simplex vertex count fits in f64 for D");
+            let denom = <f64 as num_traits::NumCast>::from(D + 1)
+                .expect("simplex vertex count fits in f64 for D");
             for (axis, sum) in sums.iter().enumerate() {
                 let bary = *sum / denom;
                 let period = space.domain[axis];
@@ -1246,13 +1258,18 @@ where
                 candidate_edges.push(edge_indices);
                 candidate_in_domain.push(candidate.3);
             }
+            let exact_search_node_limit = candidate_edges
+                .len()
+                .saturating_mul(edge_to_index.len().max(1))
+                .saturating_mul(512)
+                .clamp(100_000, 5_000_000);
 
             if let Some(exact_selected) = search_closed_2d_selection(
                 &candidate_edges,
                 &candidate_in_domain,
                 target_faces,
                 edge_to_index.len(),
-                100_000_000,
+                exact_search_node_limit,
             ) {
                 best_selected_count = exact_selected
                     .iter()
@@ -1445,7 +1462,11 @@ where
                     best_abs_chi = abs_chi;
                     best_selected = selected;
                 }
-                if best_boundary_count == 0 && (D != 2 || best_abs_chi == 0) {
+                let best_has_full_canonical_coverage = best_coverage_count == central_key_set.len();
+                if best_boundary_count == 0
+                    && ((D == 2 && best_abs_chi == 0)
+                        || (D > 2 && best_has_full_canonical_coverage))
+                {
                     break;
                 }
             }
@@ -1458,7 +1479,7 @@ where
             }
             .into());
         }
-        if best_boundary_count > 0 {
+        if D == 2 && best_boundary_count > 0 {
             return Err(TriangulationConstructionError::GeometricDegeneracy {
                 message: format!(
                     "Periodic quotient selection left {best_boundary_count} boundary facets after {search_attempts} attempts (full_vertices={}, full_cells={}, canonical_vertices={}, candidates={}, selected_cells={})",
@@ -1479,7 +1500,8 @@ where
             }
             .into());
         }
-        if D > 2 && best_coverage_count < central_key_set.len() {
+        let has_full_canonical_coverage = best_coverage_count == central_key_set.len();
+        if D > 2 && !has_full_canonical_coverage {
             return Err(TriangulationConstructionError::GeometricDegeneracy {
                 message: format!(
                     "Periodic quotient selection covered only {} of {} canonical vertices in {D}D",
@@ -1488,6 +1510,44 @@ where
                 ),
             }
             .into());
+        }
+        if D > 2 {
+            // In the quotient TDS, cells that collapse to the same canonical vertex set cannot
+            // be distinct facet-neighbors: they would share all D+1 vertices and violate the
+            // mirror-facet invariant enforced by `set_neighbors_by_key`.
+            //
+            // Keep at most one selected representative per canonical simplex. Prefer in-domain
+            // representatives, then deterministic symbolic ordering.
+            let mut selected_by_canonical: FastHashMap<Vec<VertexKey>, usize> =
+                FastHashMap::default();
+            let mut dedup_selected = vec![false; candidates.len()];
+
+            for (idx, is_selected) in best_selected.iter().copied().enumerate() {
+                if !is_selected {
+                    continue;
+                }
+                let mut canonical_keys: Vec<VertexKey> =
+                    candidates[idx].1.iter().map(|(vk, _)| *vk).collect();
+                canonical_keys.sort_unstable();
+
+                if let Some(existing_idx) = selected_by_canonical.get(&canonical_keys).copied() {
+                    let existing_in_domain = candidates[existing_idx].3;
+                    let candidate_in_domain = candidates[idx].3;
+                    let should_replace = (!existing_in_domain && candidate_in_domain)
+                        || (existing_in_domain == candidate_in_domain
+                            && candidates[idx].0 < candidates[existing_idx].0);
+                    if should_replace {
+                        dedup_selected[existing_idx] = false;
+                        dedup_selected[idx] = true;
+                        selected_by_canonical.insert(canonical_keys, idx);
+                    }
+                } else {
+                    dedup_selected[idx] = true;
+                    selected_by_canonical.insert(canonical_keys, idx);
+                }
+            }
+
+            best_selected = dedup_selected;
         }
 
         let mut representative_lifted_by_symbolic: FastHashMap<
@@ -1619,6 +1679,25 @@ where
         for (_facet_sig, occurrences) in facet_occurrences {
             match occurrences.as_slice() {
                 [(a_ck, a_idx), (b_ck, b_idx)] => {
+                    let a_lifted = rep_lifted_by_key
+                        .get(a_ck)
+                        .expect("lifted representative exists for quotient cell");
+                    let b_lifted = rep_lifted_by_key
+                        .get(b_ck)
+                        .expect("lifted representative exists for quotient cell");
+                    let shares_all_canonical_vertices = a_lifted
+                        .iter()
+                        .zip(b_lifted.iter())
+                        .all(|((a_vk, _), (b_vk, _))| a_vk == b_vk);
+
+                    if shares_all_canonical_vertices {
+                        return Err(TriangulationConstructionError::GeometricDegeneracy {
+                            message: format!(
+                                "Periodic quotient produced distinct cells with identical canonical vertices across a shared facet: {a_ck:?}[{a_idx}] <-> {b_ck:?}[{b_idx}]",
+                            ),
+                        }
+                        .into());
+                    }
                     neighbor_updates
                         .get_mut(a_ck)
                         .expect("neighbor vector exists for quotient cell")[*a_idx] = Some(*b_ck);

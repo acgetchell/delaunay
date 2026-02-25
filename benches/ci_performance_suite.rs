@@ -171,15 +171,52 @@ macro_rules! benchmark_tds_new_dimension {
                     // point set. This avoids a single pathological input (e.g. 3D/50) aborting the
                     // entire suite.
                     let bounds = (-100.0, 100.0);
-                    let seed = ($seed as u64).wrapping_add(count as u64);
+                    let base_seed = ($seed as u64).wrapping_add(count as u64);
+                    let search_limit = bench_seed_search_limit();
+                    let mut selected = None;
 
-                    let points = generate_random_points_seeded::<f64, $dim>(count, bounds, seed)
+                    // Find a deterministic seed/input pair that successfully constructs once.
+                    // This avoids hard CI failures caused by rare geometric-degeneracy seeds.
+                    for offset in 0..search_limit {
+                        let candidate_seed = base_seed.wrapping_add(offset as u64);
+                        let points = generate_random_points_seeded::<f64, $dim>(
+                            count,
+                            bounds,
+                            candidate_seed,
+                        )
                         .expect(concat!(
                             "generate_random_points_seeded failed for ",
                             stringify!($dim),
                             "D"
                         ));
-                    let vertices = points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>();
+                        let vertices = points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>();
+                        let options =
+                            ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
+                                attempts: NonZeroUsize::new(6)
+                                    .expect("retry attempts must be non-zero"),
+                                base_seed: Some(candidate_seed),
+                            });
+                        if DelaunayTriangulation::<_, (), (), $dim>::new_with_options(
+                            &vertices,
+                            options,
+                        )
+                        .is_ok()
+                        {
+                            selected = Some((candidate_seed, points, vertices));
+                            break;
+                        }
+                    }
+
+                    let (seed, points, vertices) = selected.unwrap_or_else(|| {
+                        panic!(
+                            "No stable benchmark seed found for {}D case: dim={}; count={}; start_seed={}; search_limit={}; bounds={bounds:?}",
+                            $dim,
+                            $dim,
+                            count,
+                            base_seed,
+                            search_limit
+                        )
+                    });
                     let sample_points = points.iter().take(5).collect::<Vec<_>>();
 
                     // In benchmarks we compile in release mode, where the default retry policy is

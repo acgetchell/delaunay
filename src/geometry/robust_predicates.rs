@@ -1094,7 +1094,7 @@ mod tests {
     const PERIODIC_IMAGE_JITTER_UNITS: i64 = 64;
     const PERIODIC_FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
     const PERIODIC_FNV_PRIME: u64 = 0x0100_0000_01b3;
-    type PeriodicWitness3d = (Vec<Point<f64, 3>>, Point<f64, 3>, InSphere, InSphere);
+    type PeriodicWitness3d = ([Point<f64, 3>; 4], Point<f64, 3>, InSphere, InSphere);
 
     fn periodic_builder_perturb_units(canon_idx: usize, axis: usize) -> i64 {
         let mut h = PERIODIC_FNV_OFFSET_BASIS;
@@ -1231,7 +1231,7 @@ mod tests {
                 it = rng.random_range(0..n);
             }
 
-            let simplex = vec![expanded[i0], expanded[i1], expanded[i2], expanded[i3]];
+            let simplex = [expanded[i0], expanded[i1], expanded[i2], expanded[i3]];
             let test_point = expanded[it];
             let det_result = adaptive_tolerance_insphere(&simplex, &test_point, config);
             let dist_result = predicates::insphere_distance(&simplex, test_point);

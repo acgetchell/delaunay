@@ -43,6 +43,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   BENCHMARK_TIMEOUT: 5400 # 90 minutes for CI benchmarks (4D/5D triangulations are expensive)
+  DELAUNAY_BENCH_SEED_SEARCH_LIMIT: 4096 # allows ci_performance_suite to skip pathological deterministic seeds
 
 jobs:
   performance-regression:
