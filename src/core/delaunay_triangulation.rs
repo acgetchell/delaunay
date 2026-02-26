@@ -1241,7 +1241,12 @@ where
         // On bulk index computation error, fall back to lexicographic ordering of quantized values
         let mut indexed: Vec<(usize, &[u32; D])> = quantized.iter().enumerate().collect();
         indexed.sort_unstable_by(|(_, a), (_, b)| a.cmp(b));
-        indexed.iter().map(|(i, _)| *i as u128).collect()
+        // Build inverse permutation: output[original_index] = rank
+        let mut output = vec![0_u128; quantized.len()];
+        for (rank, (orig_idx, _)) in indexed.iter().enumerate() {
+            output[*orig_idx] = rank as u128;
+        }
+        output
     });
     // Phase 3: Pair indices with vertices and input indices
     let mut keyed: Vec<(u128, Vertex<T, U, D>, usize)> = vertices
