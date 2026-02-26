@@ -1226,24 +1226,33 @@ where
     // Phase 1: Quantize all coordinates
     let quantized: Vec<[u32; D]> = vertices
         .iter()
-        .map(|vertex| {
-            hilbert_quantize(vertex.point().coords(), bounds, bits_per_coord).unwrap_or([0_u32; D])
+        .enumerate()
+        .map(|(input_index, vertex)| {
+            hilbert_quantize(vertex.point().coords(), bounds, bits_per_coord).unwrap_or_else(|_| {
+                // On quantization error, use input_index as fallback ordering
+                let fallback_val = u32::try_from(input_index).unwrap_or(u32::MAX);
+                [fallback_val; D]
+            })
         })
         .collect();
 
     // Phase 2: Compute all indices in bulk
-    let indices = hilbert_indices_prequantized(&quantized, bits_per_coord)
-        .unwrap_or_else(|_| vec![0_u128; vertices.len()]);
-
+    let indices = hilbert_indices_prequantized(&quantized, bits_per_coord).unwrap_or_else(|_| {
+        // On bulk index computation error, fall back to lexicographic ordering of quantized values
+        let mut indexed: Vec<(usize, &[u32; D])> = quantized.iter().enumerate().collect();
+        indexed.sort_unstable_by(|(_, a), (_, b)| a.cmp(b));
+        indexed.iter().map(|(i, _)| *i as u128).collect()
+    });
     // Phase 3: Pair indices with vertices and input indices
     let mut keyed: Vec<(u128, Vertex<T, U, D>, usize)> = vertices
         .into_iter()
         .enumerate()
         .map(|(input_index, vertex)| {
-            let idx = indices.get(input_index).copied().unwrap_or_else(|| {
-                // Fallback to input index on missing data
-                <u128 as From<u32>>::from(u32::try_from(input_index).unwrap_or(u32::MAX))
-            });
+            let idx = indices
+                .get(input_index)
+                .copied()
+                // Fallback to input index directly as u128 (no u32 truncation)
+                .unwrap_or(input_index as u128);
             (idx, vertex, input_index)
         })
         .collect();
