@@ -137,11 +137,12 @@ jobs:
 
       - name: Upload test results to Codecov
         if: ${{ success() && hashFiles('target/nextest/ci/test-results/junit.xml') != '' }}
-        uses: codecov/test-results-action@6ba3fdeec616fb91fd6a389b788a2366835a0fa2 # v1.2.1
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5.5.2
         with:
           files: target/nextest/ci/test-results/junit.xml
           flags: unittests
           name: test-results
+          report_type: test_results
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

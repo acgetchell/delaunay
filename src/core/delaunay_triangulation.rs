@@ -31,7 +31,8 @@ use crate::core::triangulation_data_structure::{
     TriangulationValidationReport, VertexKey,
 };
 use crate::core::util::{
-    coords_equal_exact, coords_within_epsilon, hilbert_index, stable_hash_u64_slice,
+    coords_equal_exact, coords_within_epsilon, hilbert_indices_prequantized, hilbert_quantize,
+    stable_hash_u64_slice,
 };
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{FastKernel, Kernel, RobustKernel};
@@ -1222,15 +1223,27 @@ where
 
     let bounds = (min_t, max_t);
 
+    // Phase 1: Quantize all coordinates
+    let quantized: Vec<[u32; D]> = vertices
+        .iter()
+        .map(|vertex| {
+            hilbert_quantize(vertex.point().coords(), bounds, bits_per_coord).unwrap_or([0_u32; D])
+        })
+        .collect();
+
+    // Phase 2: Compute all indices in bulk
+    let indices = hilbert_indices_prequantized(&quantized, bits_per_coord)
+        .unwrap_or_else(|_| vec![0_u128; vertices.len()]);
+
+    // Phase 3: Pair indices with vertices and input indices
     let mut keyed: Vec<(u128, Vertex<T, U, D>, usize)> = vertices
         .into_iter()
         .enumerate()
         .map(|(input_index, vertex)| {
-            let idx = hilbert_index(vertex.point().coords(), bounds, bits_per_coord)
-                .unwrap_or_else(|_| {
-                    // On error, fall back to lexicographic ordering based on input index
-                    <u128 as From<u32>>::from(u32::try_from(input_index).unwrap_or(u32::MAX))
-                });
+            let idx = indices.get(input_index).copied().unwrap_or_else(|| {
+                // Fallback to input index on missing data
+                <u128 as From<u32>>::from(u32::try_from(input_index).unwrap_or(u32::MAX))
+            });
             (idx, vertex, input_index)
         })
         .collect();
