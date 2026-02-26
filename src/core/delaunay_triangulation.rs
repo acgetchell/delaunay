@@ -1224,33 +1224,23 @@ where
     let bounds = (min_t, max_t);
 
     // Phase 1: Quantize all coordinates
-    let quantized: Vec<[u32; D]> = vertices
+    let quantized: Result<Vec<[u32; D]>, ()> = vertices
         .iter()
-        .enumerate()
-        .map(|(input_index, vertex)| {
-            hilbert_quantize(vertex.point().coords(), bounds, bits_per_coord).unwrap_or_else(|_| {
-                // On quantization error, use input_index as fallback ordering
-                let fallback_val = u32::try_from(input_index).unwrap_or(u32::MAX);
-                [fallback_val; D]
-            })
+        .map(|vertex| {
+            hilbert_quantize(vertex.point().coords(), bounds, bits_per_coord).map_err(|_| ())
         })
         .collect();
 
+    let Ok(quantized) = quantized else {
+        // On quantization error, fall back to true lexicographic ordering of original coordinates
+        return order_vertices_lexicographic(vertices);
+    };
+
     // Phase 2: Compute all indices in bulk
-    let indices = hilbert_indices_prequantized(&quantized, bits_per_coord).unwrap_or_else(|_| {
-        // On bulk index computation error, fall back to lexicographic ordering of quantized values
-        let mut indexed: Vec<(usize, &[u32; D])> = quantized.iter().enumerate().collect();
-        indexed.sort_unstable_by(|(idx_a, a), (idx_b, b)| {
-            // Sort by quantized values, then by original index for deterministic tie-breaking
-            a.cmp(b).then_with(|| idx_a.cmp(idx_b))
-        });
-        // Build inverse permutation: output[original_index] = rank
-        let mut output = vec![0_u128; quantized.len()];
-        for (rank, (orig_idx, _)) in indexed.iter().enumerate() {
-            output[*orig_idx] = rank as u128;
-        }
-        output
-    });
+    let Ok(indices) = hilbert_indices_prequantized(&quantized, bits_per_coord) else {
+        // On bulk index computation error, fall back to true lexicographic ordering
+        return order_vertices_lexicographic(vertices);
+    };
     // Phase 3: Pair indices with vertices and input indices
     let mut keyed: Vec<(u128, Vertex<T, U, D>, usize)> = vertices
         .into_iter()
