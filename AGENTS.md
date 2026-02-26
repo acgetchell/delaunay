@@ -75,6 +75,24 @@ just examples         # Run all examples
 - Never edit `CHANGELOG.md` directly - it's auto-generated from git commits
 - Use `just changelog` to regenerate
 
+### GitHub Issues
+
+When creating or updating issues:
+
+- **Labels**: Use appropriate labels: `enhancement`, `bug`, `performance`, `documentation`, `rust`, `python`, etc.
+- **Milestones**: Assign to the appropriate milestone (e.g., `v0.7.2`, `v0.7.3`, `v0.8.0`)
+- **Dependencies**: Document relationships in issue body and comments:
+  - "Depends on: #XXX" - this issue cannot start until #XXX is complete
+  - "Blocks: #YYY" - #YYY cannot start until this issue is complete
+  - "Related: #ZZZ" - related work but not blocking
+- **Relationships**: GitHub automatically parses blocking keywords in comments to create visual relationships:
+  - Use `gh issue comment <number> --body "Blocked by #XXX"` to mark an issue as blocked
+  - Use `gh issue comment <number> --body "Blocks #YYY"` to mark an issue as blocking another
+  - GitHub will automatically create the relationship graph in the web UI
+  - Example: `gh issue comment 217 --body "Blocked by #207"` creates a blocking dependency
+- **Issue body format**: Include clear sections: Summary, Current State, Proposed Changes, Benefits, Implementation Notes
+- **Cross-referencing**: Always reference related issues/PRs using #XXX notation for automatic linking
+
 ## Project Context
 
 - **Rust** d-dimensional Delaunay triangulation library (MSRV 1.93.0, Edition 2024)

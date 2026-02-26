@@ -1226,7 +1226,11 @@ where
         .into_iter()
         .enumerate()
         .map(|(input_index, vertex)| {
-            let idx = hilbert_index(vertex.point().coords(), bounds, bits_per_coord);
+            let idx = hilbert_index(vertex.point().coords(), bounds, bits_per_coord)
+                .unwrap_or_else(|_| {
+                    // On error, fall back to lexicographic ordering based on input index
+                    <u128 as From<u32>>::from(u32::try_from(input_index).unwrap_or(u32::MAX))
+                });
             (idx, vertex, input_index)
         })
         .collect();

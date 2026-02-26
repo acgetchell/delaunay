@@ -53,6 +53,38 @@ jobs:
         with:
           tool: just
 
+      - name: Install nextest
+        uses: taiki-e/install-action@cfdb446e391c69574ebc316dfb7d7849ec12b940 # v2.68.8
+        with:
+          tool: nextest
+
+      - name: Run tests with nextest (for JUnit XML)
+        run: |
+          # Note: We run tests twice in this workflow (nextest + tarpaulin).
+          # This is intentional and necessary because:
+          # 1. nextest: Fast parallel execution → high-quality JUnit XML for test analytics
+          # 2. tarpaulin: Instrumented execution → accurate code coverage metrics
+          # Trade-off: ~1-2 extra minutes of CI time for significantly better data quality.
+          # Using tarpaulin's experimental JUnit output would save time but produces
+          # less reliable test analytics data.
+
+          echo "::group::Running tests with nextest"
+          # Generate JUnit XML for Codecov Test Analytics
+          # JUnit path is configured in .config/nextest.toml [profile.ci.junit]
+          cargo nextest run --all-features --profile ci
+          echo "::endgroup::"
+
+          # Verify JUnit XML was generated at the expected location
+          # Nextest outputs to target/nextest/<profile>/<path-from-config>
+          if [ ! -f target/nextest/ci/test-results/junit.xml ]; then
+            echo "::error::target/nextest/ci/test-results/junit.xml not found"
+            exit 2
+          else
+            echo "::notice::Test results generated: $(wc -l < target/nextest/ci/test-results/junit.xml) lines"
+          fi
+        env:
+          RUST_BACKTRACE: 1
+
       - name: Run coverage
         run: |
           # Create coverage directory with proper permissions
@@ -103,6 +135,17 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+      - name: Upload test results to Codecov
+        if: ${{ success() && hashFiles('target/nextest/ci/test-results/junit.xml') != '' }}
+        uses: codecov/test-results-action@6ba3fdeec616fb91fd6a389b788a2366835a0fa2 # v1.2.1
+        with:
+          files: target/nextest/ci/test-results/junit.xml
+          flags: unittests
+          name: test-results
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
       - name: Upload coverage to Codacy
         if: ${{ success() && hashFiles('coverage/cobertura.xml') != '' }}
         uses: codacy/codacy-coverage-reporter-action@89d6c85cfafaec52c72b6c5e8b2878d33104c699 # v1.3.0
@@ -118,3 +161,10 @@ jobs:
         with:
           name: coverage-report
           path: coverage/
+
+      - name: Archive test results
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: test-results
+          path: target/nextest/ci/test-results/
