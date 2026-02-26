@@ -1,0 +1,42 @@
+# nextest configuration for delaunay
+# See: https://nexte.st/book/configuration.html
+
+[profile.default]
+# Run tests in parallel by default
+test-threads = "num-cpus"
+
+# Show test output for failures
+failure-output = "immediate-final"
+success-output = "never"
+
+# Continue running tests after first failure
+fail-fast = false
+
+# Retry flaky tests (useful for proptests)
+retries = 0
+
+[profile.ci]
+# CI profile: optimized for GitHub Actions
+# Inherits from default profile
+
+# Show more verbose output in CI
+failure-output = "immediate-final"
+success-output = "never"
+
+# Continue running all tests even if some fail
+fail-fast = false
+
+# Retry flaky tests once in CI (helps with proptests and timing-sensitive tests)
+retries = 1
+
+# Show slow tests (> 60s) in CI
+slow-timeout = { period = "60s", terminate-after = 2 }
+
+# JUnit report configuration
+[profile.ci.junit]
+# Store reports in test-results directory (matches workflow)
+path = "test-results/junit.xml"
+
+# Store test output in JUnit report
+store-success-output = false
+store-failure-output = true
