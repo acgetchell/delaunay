@@ -17,7 +17,7 @@
 //! ```bash
 //! cargo run --example topology_editing_2d_3d
 //! ```
-//!
+
 use delaunay::core::edge::EdgeKey;
 use delaunay::geometry::Coordinate;
 use delaunay::geometry::kernel::Kernel;

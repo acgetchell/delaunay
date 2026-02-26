@@ -53,13 +53,13 @@
 //! ```
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use delaunay::core::builder::DelaunayTriangulationBuilder;
 use delaunay::core::collections::SmallBuffer;
 use delaunay::geometry::util::{
     generate_grid_points, generate_poisson_points, generate_random_points_seeded,
     safe_usize_to_scalar,
 };
 use delaunay::prelude::query::*;
+use delaunay::prelude::triangulation::DelaunayTriangulationBuilder;
 use delaunay::vertex;
 use num_traits::cast;
 use serde::{Serialize, de::DeserializeOwned};
