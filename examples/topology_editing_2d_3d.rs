@@ -25,6 +25,7 @@ use delaunay::geometry::point::Point;
 use delaunay::geometry::traits::coordinate::ScalarAccumulative;
 use delaunay::geometry::util::{circumcenter, hypot};
 use delaunay::prelude::triangulation::flips::*;
+use delaunay::prelude::triangulation::*;
 
 fn main() {
     println!("============================================================");
@@ -71,8 +72,9 @@ fn builder_api_2d() {
         vertex!([2.0, 3.0]),
     ];
 
-    let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new(&vertices).expect("Failed to construct triangulation");
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+        .build::<()>()
+        .expect("Failed to construct triangulation");
 
     println!("Initial triangle:");
     print_stats_2d(&dt);
@@ -113,8 +115,9 @@ fn edit_api_2d_k1() {
         vertex!([1.5, 2.5]),
     ];
 
-    let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new(&vertices).expect("Failed to construct triangulation");
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+        .build::<()>()
+        .expect("Failed to construct triangulation");
 
     println!("Initial triangle:");
     print_stats_2d(&dt);
@@ -193,8 +196,9 @@ fn edit_api_2d_k2() {
         vertex!([0.0, 2.0]),
     ];
 
-    let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new(&vertices).expect("Failed to construct triangulation");
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+        .build::<()>()
+        .expect("Failed to construct triangulation");
 
     println!("Initial square (2 triangles):");
     print_stats_2d(&dt);
@@ -263,8 +267,9 @@ fn builder_api_3d() {
         vertex!([1.0, 0.5, 1.5]),
     ];
 
-    let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new(&vertices).expect("Failed to construct triangulation");
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+        .build::<()>()
+        .expect("Failed to construct triangulation");
 
     println!("Initial tetrahedron:");
     print_stats_3d(&dt);
@@ -301,8 +306,9 @@ fn edit_api_3d_k1() {
         vertex!([1.0, 0.5, 1.5]),
     ];
 
-    let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new(&vertices).expect("Failed to construct triangulation");
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+        .build::<()>()
+        .expect("Failed to construct triangulation");
 
     println!("Initial tetrahedron:");
     print_stats_3d(&dt);
@@ -377,8 +383,9 @@ fn edit_api_3d_k2() {
         vertex!([1.0, 0.6, 0.4]), // Interior point
     ];
 
-    let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new(&vertices).expect("Failed to construct triangulation");
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+        .build::<()>()
+        .expect("Failed to construct triangulation");
 
     println!("Triangulation with interior point:");
     print_stats_3d(&dt);
@@ -449,7 +456,7 @@ fn edit_api_3d_k3() {
         vertex!([1.0, 0.6, 1.4]),
     ];
 
-    if let Ok(mut dt) = DelaunayTriangulation::new(&vertices) {
+    if let Ok(mut dt) = DelaunayTriangulationBuilder::new(&vertices).build::<()>() {
         print_stats_3d(&dt);
 
         // Try to find and flip a ridge

@@ -1,8 +1,8 @@
 # Topology
 
 This document describes the topology-related parts of the `delaunay` crate:
-Level 3 manifold validation, Euler characteristic checks, and (future) support for
-different topological spaces.
+Level 3 manifold validation, Euler characteristic checks, and support for
+different topological spaces (Euclidean and toroidal, with spherical planned).
 
 If you want the user-facing guide to the full validation stack (Levels 1–4), start
 with `docs/validation.md`.
@@ -130,17 +130,47 @@ PL-manifold invariants (no geometric predicates):
 The module docs explain which conditions are necessary vs sufficient, especially
 for D ≥ 3.
 
-## Topological spaces (future plumbing)
+## Topological spaces
 
-`src/topology/traits/topological_space.rs` defines `TopologicalSpace` and
-`TopologyKind`, with initial implementations in:
+`src/topology/traits/topological_space.rs` defines `TopologicalSpace`,
+`TopologyKind`, and `GlobalTopology`, with implementations in:
 
-- `src/topology/spaces/euclidean.rs`
-- `src/topology/spaces/spherical.rs`
-- `src/topology/spaces/toroidal.rs`
+- `src/topology/spaces/euclidean.rs` - Standard Euclidean space (default)
+- `src/topology/spaces/toroidal.rs` - Toroidal (periodic) space with domain wrapping
+- `src/topology/spaces/spherical.rs` - Spherical space (not yet fully integrated)
 
-These types are currently not wired into `Triangulation`; they are intended for
-future non-Euclidean / periodic topology support (and point canonicalization).
+### Toroidal topology support
+
+Toroidal (periodic) triangulations are **fully implemented and functional**. You can
+construct toroidal triangulations using `DelaunayTriangulationBuilder`:
+
+```rust
+use delaunay::prelude::triangulation::*;
+use delaunay::topology::traits::topological_space::ToroidalConstructionMode;
+
+// 2D periodic triangulation
+let vertices = vec![
+    vertex!([0.1, 0.1]),
+    vertex!([0.9, 0.9]),
+    // ...
+];
+
+let dt = DelaunayTriangulationBuilder::new(&vertices)
+    .with_toroidal_topology([1.0, 1.0], ToroidalConstructionMode::Direct)
+    .build::<()>()
+    .unwrap();
+```
+
+Toroidal triangulations handle point canonicalization (wrapping coordinates to the
+fundamental domain) and distance computations across periodic boundaries. The
+implementation supports both 2D and 3D toroidal spaces.
+
+For more examples, see the toroidal section in the main `README.md`.
+
+### Future work
+
+Spherical space topology is defined but not yet fully integrated with the
+construction and validation pipeline.
 
 ## Triangulation editing (`src/triangulation/`)
 

@@ -50,7 +50,7 @@
 //!     vertex!([0.0, 1.0, 0.0]),
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
-//! let dt = DelaunayTriangulation::new(&vertices).unwrap();
+//! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
 //!
 //! // Levels 1–2: elements + structural (TDS)
 //! assert!(dt.tds().validate().is_ok());
@@ -76,7 +76,7 @@
 //!     vertex!([0.0, 1.0, 0.0]),
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
-//! let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
+//! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
 //!
 //! assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
 //! assert_eq!(dt.validation_policy(), ValidationPolicy::OnSuspicion);
@@ -98,7 +98,7 @@
 //!     vertex!([1.0, 0.0]),
 //!     vertex!([0.0, 1.0]),
 //! ];
-//! let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
+//! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
 //!
 //! let before_vertices = dt.number_of_vertices();
 //! let before_cells = dt.number_of_cells();
@@ -242,7 +242,7 @@
 //!     vertex!([0.0, 1.0, 0.0]),
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
-//! let dt = DelaunayTriangulation::new(&vertices).unwrap();
+//! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
 //!
 //! // For `TopologyGuarantee::PLManifold`, full certification includes a completion-time
 //! // vertex-link validation pass.
@@ -258,7 +258,7 @@
 //!     vertex!([0.0, 1.0, 0.0]),
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
-//! let dt = DelaunayTriangulation::new(&vertices).unwrap();
+//! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
 //!
 //! // `validate()` returns the first violation; `validation_report()` is intended for
 //! // debugging/telemetry where you want the full set of violated invariants.
@@ -279,16 +279,6 @@
 //!   [`InsertionError::DuplicateUuid`](core::algorithms::incremental_insertion::InsertionError::DuplicateUuid).
 //! - **Explicit verification**: Use `dt.validate()` for cumulative verification (Levels 1–4), or
 //!   `dt.is_valid()` for Level 4 only.
-//!
-//! # Further reading
-//! - Documentation index: <https://github.com/acgetchell/delaunay/blob/main/docs/README.md>
-//! - Public API design notes (Builder vs Edit APIs):
-//!   <https://github.com/acgetchell/delaunay/blob/main/docs/api_design.md>
-//! - References: <https://github.com/acgetchell/delaunay/blob/main/REFERENCES.md>
-//! - Theory / rationale for invariants: <https://github.com/acgetchell/delaunay/blob/main/docs/invariants.md>
-//! - Topology guide: <https://github.com/acgetchell/delaunay/blob/main/docs/topology.md>
-//! - Validation guide: <https://github.com/acgetchell/delaunay/blob/main/docs/validation.md>
-//! - Workflows: <https://github.com/acgetchell/delaunay/blob/main/docs/workflows.md>
 
 // Allow multiple crate versions due to transitive dependencies
 #![expect(clippy::multiple_crate_versions)]
@@ -886,6 +876,7 @@ pub mod prelude {
 
         pub use crate::core::algorithms::incremental_insertion::InsertionError;
         pub use crate::core::operations::{InsertionOutcome, InsertionStatistics, SuspicionFlags};
+        pub use crate::topology::traits::{GlobalTopology, TopologyKind};
 
         /// Bistellar (Pachner) flips for explicit triangulation editing.
         pub mod flips {
