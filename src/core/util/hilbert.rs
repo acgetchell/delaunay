@@ -11,6 +11,37 @@
 
 use crate::geometry::traits::coordinate::CoordinateScalar;
 
+/// Errors that can occur during Hilbert curve operations.
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+pub enum HilbertError {
+    /// The `bits` parameter is out of valid range [1, 31].
+    #[error("bits parameter {bits} is out of valid range [1, 31]")]
+    InvalidBitsParameter {
+        /// The invalid bits value provided.
+        bits: u32,
+    },
+
+    /// The combination of dimension and bits would cause index overflow.
+    #[error(
+        "Hilbert index would overflow u128: dimension {dimension} * bits {bits} = {total_bits} > 128"
+    )]
+    IndexOverflow {
+        /// The dimension of the coordinate space.
+        dimension: usize,
+        /// The bits parameter.
+        bits: u32,
+        /// The total number of bits required (dimension * bits).
+        total_bits: u128,
+    },
+
+    /// The dimension is too large to represent.
+    #[error("dimension {dimension} is too large (exceeds u32::MAX)")]
+    DimensionTooLarge {
+        /// The dimension that exceeded representable limits.
+        dimension: usize,
+    },
+}
+
 /// Quantize D-dimensional coordinates into integer grid coordinates in `[0, 2^bits)`.
 ///
 /// The coordinates are normalized using a scalar `(min, max)` bound applied to every
@@ -61,9 +92,8 @@ pub fn hilbert_quantize<T: CoordinateScalar, const D: usize>(
         };
 
         let scaled = normalized * max_val_t;
-        let q: u32 = num_traits::NumCast::from(scaled)
-            .unwrap_or(0)
-            .min(max_val_u32);
+        // Round to nearest grid cell (instead of truncating) for fairer distribution.
+        let q: u32 = scaled.round().to_u32().unwrap_or(0).min(max_val_u32);
         quantized[i] = q;
     }
 
@@ -136,7 +166,7 @@ pub fn hilbert_index<T: CoordinateScalar, const D: usize>(
 
 /// Compute Hilbert index from pre-quantized integer coordinates.
 ///
-/// This uses the Skilling (2004) algorithm (“Programming the Hilbert curve”) to map
+/// This uses the Skilling (2004) algorithm ("Programming the Hilbert curve") to map
 /// `D` integer coordinates (each `bits` bits wide) to a single Hilbert index.
 ///
 /// The resulting ordering is continuous on the integer grid (successive indices move to
@@ -144,6 +174,14 @@ pub fn hilbert_index<T: CoordinateScalar, const D: usize>(
 #[must_use]
 fn hilbert_index_from_quantized<const D: usize>(coords: &[u32; D], bits: u32) -> u128 {
     debug_assert!(D > 0, "caller should handle D==0");
+    debug_assert!(
+        bits > 0 && bits <= 31,
+        "bits must be in range [1, 31], got {bits}"
+    );
+    debug_assert!(
+        (D as u128) * u128::from(bits) <= 128,
+        "Hilbert index would overflow u128 for D={D} and bits={bits}"
+    );
 
     // Work on a local copy in "transposed" form.
     let mut transposed = *coords;
@@ -289,6 +327,92 @@ pub fn hilbert_sort_by_unstable<Item, T, F, const D: usize>(
     });
 }
 
+/// Compute Hilbert indices for a batch of pre-quantized coordinates.
+///
+/// This is a bulk API that avoids recomputing quantization parameters for large
+/// insertion batches. When inserting many points, quantize them once using
+/// [`hilbert_quantize`] and then call this function to compute all indices in bulk.
+///
+/// # Performance
+///
+/// This function validates parameters once and then maps each quantized coordinate
+/// through the internal Hilbert index computation. For large batches, this is significantly
+/// faster than calling [`hilbert_index`] individually for each point.
+///
+/// # Errors
+///
+/// Returns [`HilbertError::InvalidBitsParameter`] if `bits` is 0 or greater than 31.
+///
+/// Returns [`HilbertError::IndexOverflow`] if `D * bits > 128` (index would not fit in `u128`).
+///
+/// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`
+/// (extremely unlikely in practice).
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::util::hilbert::{hilbert_quantize, hilbert_indices_prequantized};
+///
+/// let coords = vec![[0.1_f64, 0.2], [0.5, 0.5], [0.9, 0.8]];
+/// let bounds = (0.0, 1.0);
+/// let bits = 8;
+///
+/// // Quantize once
+/// let quantized: Vec<[u32; 2]> = coords
+///     .iter()
+///     .map(|c| hilbert_quantize(c, bounds, bits))
+///     .collect();
+///
+/// // Compute all indices in bulk
+/// let indices = hilbert_indices_prequantized(&quantized, bits)?;
+/// assert_eq!(indices.len(), coords.len());
+/// # Ok::<(), delaunay::core::util::hilbert::HilbertError>(())
+/// ```
+///
+/// Error handling:
+///
+/// ```rust
+/// use delaunay::core::util::hilbert::{hilbert_indices_prequantized, HilbertError};
+///
+/// let quantized = vec![[1_u32, 2]];
+///
+/// // Invalid bits parameter
+/// let result = hilbert_indices_prequantized(&quantized, 0);
+/// assert!(matches!(result, Err(HilbertError::InvalidBitsParameter { bits: 0 })));
+///
+/// // Overflow (D=5, bits=26 => 130 > 128)
+/// let quantized_5d = vec![[1_u32, 2, 3, 4, 5]];
+/// let result = hilbert_indices_prequantized(&quantized_5d, 26);
+/// assert!(matches!(result, Err(HilbertError::IndexOverflow { .. })));
+/// ```
+pub fn hilbert_indices_prequantized<const D: usize>(
+    quantized: &[[u32; D]],
+    bits: u32,
+) -> Result<Vec<u128>, HilbertError> {
+    // Validate bits parameter
+    if bits == 0 || bits > 31 {
+        return Err(HilbertError::InvalidBitsParameter { bits });
+    }
+
+    // Validate dimension fits in u32
+    let d_u32 = u32::try_from(D).map_err(|_| HilbertError::DimensionTooLarge { dimension: D })?;
+
+    // Validate overflow
+    let total_bits = u128::from(d_u32) * u128::from(bits);
+    if total_bits > 128 {
+        return Err(HilbertError::IndexOverflow {
+            dimension: D,
+            bits,
+            total_bits,
+        });
+    }
+
+    Ok(quantized
+        .iter()
+        .map(|q| hilbert_index_from_quantized(q, bits))
+        .collect())
+}
+
 /// Return the indices that would sort `coords` by Hilbert order.
 ///
 /// # Panics
@@ -397,6 +521,46 @@ mod tests {
     }
 
     #[test]
+    fn test_hilbert_curve_is_continuous_on_4d_grid() {
+        // A defining property of the (discrete) Hilbert curve is continuity:
+        // successive indices correspond to adjacent grid cells.
+        let bits: u32 = 2;
+        let n: u32 = 1_u32 << bits;
+
+        let mut points: Vec<([u32; 4], u128)> = Vec::with_capacity((n * n * n * n) as usize);
+        for x in 0..n {
+            for y in 0..n {
+                for z in 0..n {
+                    for w in 0..n {
+                        let q = [x, y, z, w];
+                        let idx = hilbert_index_from_quantized(&q, bits);
+                        points.push((q, idx));
+                    }
+                }
+            }
+        }
+
+        points.sort_by_key(|(_, idx)| *idx);
+
+        // Indices should form a permutation of 0..n^4.
+        for (i, (_, idx)) in points.iter().enumerate() {
+            let i_u128 = u128::from(u32::try_from(i).expect("grid size should fit in u32"));
+            assert_eq!(*idx, i_u128);
+        }
+
+        // Continuity: successive points differ by Manhattan distance exactly 1.
+        for window in points.windows(2) {
+            let a = window[0].0;
+            let b = window[1].0;
+            let dx = a[0].abs_diff(b[0]);
+            let dy = a[1].abs_diff(b[1]);
+            let dz = a[2].abs_diff(b[2]);
+            let dw = a[3].abs_diff(b[3]);
+            assert_eq!(dx + dy + dz + dw, 1, "Non-adjacent step: a={a:?}, b={b:?}");
+        }
+    }
+
+    #[test]
     fn test_point_coords_work_with_hilbert() {
         let p: Point<f64, 2> = Point::new([0.25, 0.75]);
         let idx = hilbert_index(p.coords(), (0.0, 1.0), 16);
@@ -464,6 +628,157 @@ mod tests {
         assert_eq!(
             idx, idx_clamped,
             "clamped coords should match clamped index"
+        );
+    }
+
+    #[test]
+    fn test_hilbert_indices_prequantized_matches_individual_calls() {
+        let coords = [
+            [0.1_f64, 0.2, 0.3],
+            [0.5, 0.5, 0.5],
+            [0.9, 0.8, 0.7],
+            [0.0, 0.0, 0.0],
+            [1.0, 1.0, 1.0],
+        ];
+        let bounds = (0.0_f64, 1.0_f64);
+        let bits = 8;
+
+        // Quantize all coordinates
+        let quantized: Vec<[u32; 3]> = coords
+            .iter()
+            .map(|c| hilbert_quantize(c, bounds, bits))
+            .collect();
+
+        // Compute indices via bulk API
+        let indices_bulk = hilbert_indices_prequantized(&quantized, bits)
+            .expect("valid parameters should succeed");
+
+        // Compute indices individually
+        let indices_individual: Vec<u128> = coords
+            .iter()
+            .map(|c| hilbert_index(c, bounds, bits))
+            .collect();
+
+        assert_eq!(indices_bulk.len(), coords.len());
+        assert_eq!(indices_bulk, indices_individual);
+    }
+
+    #[test]
+    fn test_hilbert_indices_prequantized_empty_input() {
+        let empty: Vec<[u32; 2]> = vec![];
+        let bits = 4;
+
+        let indices =
+            hilbert_indices_prequantized(&empty, bits).expect("valid parameters should succeed");
+        assert_eq!(indices.len(), 0);
+    }
+
+    #[test]
+    fn test_hilbert_indices_prequantized_validates_bits_zero() {
+        let quantized = vec![[1_u32, 2]];
+        let result = hilbert_indices_prequantized(&quantized, 0);
+        assert!(matches!(
+            result,
+            Err(HilbertError::InvalidBitsParameter { bits: 0 })
+        ));
+    }
+
+    #[test]
+    fn test_hilbert_indices_prequantized_validates_bits_too_large() {
+        let quantized = vec![[1_u32, 2]];
+        let result = hilbert_indices_prequantized(&quantized, 32);
+        assert!(matches!(
+            result,
+            Err(HilbertError::InvalidBitsParameter { bits: 32 })
+        ));
+    }
+
+    #[test]
+    fn test_hilbert_indices_prequantized_validates_overflow() {
+        // With D=5 and bits=26, total_bits = 130 > 128
+        let quantized = vec![[1_u32, 2, 3, 4, 5]];
+        let result = hilbert_indices_prequantized(&quantized, 26);
+        assert!(matches!(
+            result,
+            Err(HilbertError::IndexOverflow {
+                dimension: 5,
+                bits: 26,
+                total_bits: 130
+            })
+        ));
+    }
+
+    #[test]
+    fn test_hilbert_quantize_uses_rounding_not_truncation() {
+        let bounds = (0.0_f64, 1.0_f64);
+        let bits = 2; // Grid has 4 cells: 0, 1, 2, 3
+
+        // With bits=2, max_val = 3, so we scale by 3.0.
+        // coord * 3.0 is then rounded to nearest integer.
+        // Cell boundaries (where rounding changes) are at:
+        // 0.5/3 ≈ 0.167 (rounds from 0 to 1)
+        // 1.5/3 = 0.5 (rounds from 1 to 2)
+        // 2.5/3 ≈ 0.833 (rounds from 2 to 3)
+
+        // Test points that should round to different cells
+        let test_cases = [
+            (0.0, 0),  // 0.0 * 3 = 0.0, rounds to 0
+            (0.1, 0),  // 0.1 * 3 = 0.3, rounds to 0
+            (0.17, 1), // 0.17 * 3 = 0.51, rounds to 1
+            (0.3, 1),  // 0.3 * 3 = 0.9, rounds to 1
+            (0.5, 2),  // 0.5 * 3 = 1.5, rounds to 2
+            (0.7, 2),  // 0.7 * 3 = 2.1, rounds to 2
+            (0.85, 3), // 0.85 * 3 = 2.55, rounds to 3
+            (1.0, 3),  // exactly 1.0 -> cell 3 (clamped)
+        ];
+
+        for (coord, expected_cell) in test_cases {
+            let q = hilbert_quantize(&[coord], bounds, bits);
+            assert_eq!(
+                q[0], expected_cell,
+                "coordinate {coord} should quantize to cell {expected_cell}, got {}",
+                q[0]
+            );
+        }
+
+        // Verify rounding distribution:
+        // With rounding and bits=2 (max_val=3), cell boundaries are at:
+        // - Cell 0: coord * 3 < 0.5 → coord < 0.167 (width 0.167)
+        // - Cell 1: 0.5 <= coord * 3 < 1.5 → 0.167 <= coord < 0.5 (width 0.333)
+        // - Cell 2: 1.5 <= coord * 3 < 2.5 → 0.5 <= coord < 0.833 (width 0.333)
+        // - Cell 3: 2.5 <= coord * 3 <= 3.0 → 0.833 <= coord <= 1.0 (width 0.167)
+        // So cells 1 and 2 should get roughly twice as many samples as cells 0 and 3.
+        let samples = 1000;
+        let mut cell_counts = [0_usize; 4];
+        for i in 0..samples {
+            let coord = f64::from(i) / f64::from(samples);
+            let q = hilbert_quantize(&[coord], bounds, bits);
+            cell_counts[q[0] as usize] += 1;
+        }
+
+        tracing::debug!(?cell_counts, "cell distribution for {samples} samples");
+
+        // Expected distribution: ~167 samples in cells 0 and 3, ~333 in cells 1 and 2.
+        // Allow ±50 tolerance for discrete sampling effects.
+        assert!(
+            cell_counts[0] >= 100 && cell_counts[0] <= 217,
+            "cell 0 should have ~167 samples with rounding, got {}",
+            cell_counts[0]
+        );
+        assert!(
+            cell_counts[1] >= 283 && cell_counts[1] <= 383,
+            "cell 1 should have ~333 samples with rounding, got {}",
+            cell_counts[1]
+        );
+        assert!(
+            cell_counts[2] >= 283 && cell_counts[2] <= 383,
+            "cell 2 should have ~333 samples with rounding, got {}",
+            cell_counts[2]
+        );
+        assert!(
+            cell_counts[3] >= 100 && cell_counts[3] <= 217,
+            "cell 3 should have ~167 samples with rounding, got {}",
+            cell_counts[3]
         );
     }
 }
