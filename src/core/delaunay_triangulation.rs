@@ -31,7 +31,8 @@ use crate::core::triangulation_data_structure::{
     TriangulationValidationReport, VertexKey,
 };
 use crate::core::util::{
-    coords_equal_exact, coords_within_epsilon, hilbert_index, stable_hash_u64_slice,
+    coords_equal_exact, coords_within_epsilon, hilbert_indices_prequantized, hilbert_quantize,
+    stable_hash_u64_slice,
 };
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{FastKernel, Kernel, RobustKernel};
@@ -1222,15 +1223,34 @@ where
 
     let bounds = (min_t, max_t);
 
+    // Phase 1: Quantize all coordinates
+    let quantized: Result<Vec<[u32; D]>, ()> = vertices
+        .iter()
+        .map(|vertex| {
+            hilbert_quantize(vertex.point().coords(), bounds, bits_per_coord).map_err(|_| ())
+        })
+        .collect();
+
+    let Ok(quantized) = quantized else {
+        // On quantization error, fall back to true lexicographic ordering of original coordinates
+        return order_vertices_lexicographic(vertices);
+    };
+
+    // Phase 2: Compute all indices in bulk
+    let Ok(indices) = hilbert_indices_prequantized(&quantized, bits_per_coord) else {
+        // On bulk index computation error, fall back to true lexicographic ordering
+        return order_vertices_lexicographic(vertices);
+    };
+    // Phase 3: Pair indices with vertices and input indices
     let mut keyed: Vec<(u128, Vertex<T, U, D>, usize)> = vertices
         .into_iter()
         .enumerate()
         .map(|(input_index, vertex)| {
-            let idx = hilbert_index(vertex.point().coords(), bounds, bits_per_coord)
-                .unwrap_or_else(|_| {
-                    // On error, fall back to lexicographic ordering based on input index
-                    <u128 as From<u32>>::from(u32::try_from(input_index).unwrap_or(u32::MAX))
-                });
+            let idx = indices
+                .get(input_index)
+                .copied()
+                // Fallback to input index directly as u128 (no u32 truncation)
+                .unwrap_or(input_index as u128);
             (idx, vertex, input_index)
         })
         .collect();
