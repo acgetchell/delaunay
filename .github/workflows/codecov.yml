@@ -68,22 +68,19 @@ jobs:
           # Using tarpaulin's experimental JUnit output would save time but produces
           # less reliable test analytics data.
 
-          # Create test-results directory
-          mkdir -p test-results
-          chmod 755 test-results
-
           echo "::group::Running tests with nextest"
           # Generate JUnit XML for Codecov Test Analytics
-          # Explicitly specify --junit-output to ensure file is created
-          cargo nextest run --all-features --profile ci --junit-output test-results/junit.xml
+          # JUnit path is configured in .config/nextest.toml [profile.ci.junit]
+          cargo nextest run --all-features --profile ci
           echo "::endgroup::"
 
-          # Verify JUnit XML was generated
-          if [ ! -f test-results/junit.xml ]; then
-            echo "::error::test-results/junit.xml not found"
+          # Verify JUnit XML was generated at the expected location
+          # Nextest outputs to target/nextest/<profile>/<path-from-config>
+          if [ ! -f target/nextest/ci/test-results/junit.xml ]; then
+            echo "::error::target/nextest/ci/test-results/junit.xml not found"
             exit 2
           else
-            echo "::notice::Test results generated: $(wc -l < test-results/junit.xml) lines"
+            echo "::notice::Test results generated: $(wc -l < target/nextest/ci/test-results/junit.xml) lines"
           fi
         env:
           RUST_BACKTRACE: 1
@@ -139,10 +136,10 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Upload test results to Codecov
-        if: ${{ success() && hashFiles('test-results/junit.xml') != '' }}
+        if: ${{ success() && hashFiles('target/nextest/ci/test-results/junit.xml') != '' }}
         uses: codecov/test-results-action@6ba3fdeec616fb91fd6a389b788a2366835a0fa2 # v1.2.1
         with:
-          files: test-results/junit.xml
+          files: target/nextest/ci/test-results/junit.xml
           flags: unittests
           name: test-results
           fail_ci_if_error: false
@@ -170,4 +167,4 @@ jobs:
         if: always()
         with:
           name: test-results
-          path: test-results/
+          path: target/nextest/ci/test-results/
