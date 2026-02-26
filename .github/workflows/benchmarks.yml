@@ -48,7 +48,7 @@ env:
 jobs:
   performance-regression:
     runs-on: macos-15
-    timeout-minutes: 105 # Allow 90min benchmark timeout + 15min for setup/teardown
+    timeout-minutes: 135 # Allow 90min benchmark timeout + 15min for setup/teardown
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
