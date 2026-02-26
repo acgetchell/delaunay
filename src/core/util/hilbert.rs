@@ -407,6 +407,11 @@ pub fn hilbert_indices_prequantized<const D: usize>(
         });
     }
 
+    // Handle D == 0 case: zero-dimensional space has only one point, all map to index 0
+    if D == 0 {
+        return Ok(vec![0_u128; quantized.len()]);
+    }
+
     Ok(quantized
         .iter()
         .map(|q| hilbert_index_from_quantized(q, bits))
@@ -706,6 +711,18 @@ mod tests {
                 total_bits: 130
             })
         ));
+    }
+
+    #[test]
+    fn test_hilbert_indices_prequantized_handles_zero_dimension() {
+        // Zero-dimensional space has only one point, all map to index 0
+        let quantized: Vec<[u32; 0]> = vec![[], [], []];
+        let bits = 8;
+
+        let indices = hilbert_indices_prequantized(&quantized, bits).expect("D=0 should succeed");
+
+        assert_eq!(indices.len(), 3);
+        assert_eq!(indices, vec![0_u128, 0_u128, 0_u128]);
     }
 
     #[test]
