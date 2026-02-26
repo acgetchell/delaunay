@@ -1240,7 +1240,10 @@ where
     let indices = hilbert_indices_prequantized(&quantized, bits_per_coord).unwrap_or_else(|_| {
         // On bulk index computation error, fall back to lexicographic ordering of quantized values
         let mut indexed: Vec<(usize, &[u32; D])> = quantized.iter().enumerate().collect();
-        indexed.sort_unstable_by(|(_, a), (_, b)| a.cmp(b));
+        indexed.sort_unstable_by(|(idx_a, a), (idx_b, b)| {
+            // Sort by quantized values, then by original index for deterministic tie-breaking
+            a.cmp(b).then_with(|| idx_a.cmp(idx_b))
+        });
         // Build inverse permutation: output[original_index] = rank
         let mut output = vec![0_u128; quantized.len()];
         for (rank, (orig_idx, _)) in indexed.iter().enumerate() {
