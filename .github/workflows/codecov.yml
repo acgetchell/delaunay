@@ -74,8 +74,8 @@ jobs:
 
           echo "::group::Running tests with nextest"
           # Generate JUnit XML for Codecov Test Analytics
-          # JUnit output path configured in .config/nextest.toml [profile.ci.junit]
-          cargo nextest run --all-features --profile ci
+          # Explicitly specify --junit-output to ensure file is created
+          cargo nextest run --all-features --profile ci --junit-output test-results/junit.xml
           echo "::endgroup::"
 
           # Verify JUnit XML was generated
