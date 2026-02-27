@@ -31,13 +31,18 @@ large or degenerate inputs (not orientation bookkeeping itself).
 Use the debug large-scale test to verify current behavior on a given branch:
 
 ```bash
+# Permissive debug run (allows intentional skips)
 DELAUNAY_LARGE_DEBUG_N_4D=100 DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 \
+  cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
+
+# Strict debug run (no skips allowed)
+DELAUNAY_LARGE_DEBUG_N_4D=100 DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=0 \
   cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
 ```
 
 ### Recommendations
 
-- **3D:** generally robust for moderate sizes; very large degenerate sets may still stress repair.
+- **3D:** generally robust for moderate sizes; large degenerate sets may still stress repair.
 - **4D:** use incremental insertion for critical correctness paths.
 - **5D+:** experimental; incremental insertion strongly recommended.
 
@@ -46,3 +51,5 @@ DELAUNAY_LARGE_DEBUG_N_4D=100 DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 \
 - Test file: `tests/large_scale_debug.rs`
 - Flip/repair implementation: `src/core/algorithms/flips.rs`
 - Triangulation integration: `src/core/triangulation.rs`
+- Orientation specification: `docs/ORIENTATION_SPEC.md`
+- Orientation tests: `tests/tds_orientation.rs`

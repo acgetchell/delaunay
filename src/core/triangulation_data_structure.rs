@@ -3902,14 +3902,6 @@ where
                                 "Neighbor cell {neighbor_key:?} referenced by cell {cell_key:?} is missing during orientation validation",
                             ),
                         })?;
-                // Periodic-lifted adjacencies do not have a unique canonical orientation at this
-                // structural layer because the embedding depends on lattice representative choice.
-                // Skip combinatorial orientation checks for these pairs.
-                if cell.periodic_vertex_offsets().is_some()
-                    || neighbor_cell.periodic_vertex_offsets().is_some()
-                {
-                    continue;
-                }
 
                 let mirror_idx = cell.mirror_facet_index(facet_idx, neighbor_cell).ok_or_else(
                     || TdsError::InvalidNeighbors {
@@ -3945,6 +3937,16 @@ where
                             back_neighbor,
                         ),
                     });
+                }
+
+                // Periodic-lifted adjacencies do not have a unique canonical orientation at this
+                // structural layer because the embedding depends on lattice representative choice.
+                // Skip combinatorial orientation checks for these pairs after validating reciprocal
+                // neighbor wiring above.
+                if cell.periodic_vertex_offsets().is_some()
+                    || neighbor_cell.periodic_vertex_offsets().is_some()
+                {
+                    continue;
                 }
 
                 let cell1_facet_vertices = Self::facet_vertices_in_cell_order(cell, facet_idx)?;

@@ -2093,6 +2093,45 @@ where
 
         Ok(points)
     }
+
+    /// Evaluate a cell's geometric orientation for a specific validation/canonicalization context.
+    ///
+    /// This helper centralizes:
+    /// - periodic domain period caching,
+    /// - lifted-point collection, and
+    /// - kernel orientation predicate invocation with contextual error mapping.
+    fn evaluate_cell_orientation_for_context(
+        &self,
+        cell_key: CellKey,
+        cell: &Cell<K::Scalar, U, V, D>,
+        periodic_periods: &mut Option<[K::Scalar; D]>,
+        purpose: &str,
+        predicate_failure_prefix: &str,
+    ) -> Result<i32, TdsValidationError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        let periodic_ref = if cell.periodic_vertex_offsets().is_some() {
+            if periodic_periods.is_none() {
+                *periodic_periods = Some(self.periodic_domain_periods_for_orientation(purpose)?);
+            }
+            periodic_periods.as_ref()
+        } else {
+            None
+        };
+
+        let points =
+            self.collect_cell_points_for_orientation(cell_key, cell, periodic_ref, purpose)?;
+
+        self.kernel.orientation(&points).map_err(|e| {
+            TdsValidationError::InconsistentDataStructure {
+                message: format!(
+                    "{predicate_failure_prefix} {:?} (key {cell_key:?}): {e}",
+                    cell.uuid(),
+                ),
+            }
+        })
+    }
     /// Validates geometric orientation sign for each stored cell using the kernel's signed
     /// determinant predicate.
     ///
@@ -2109,32 +2148,13 @@ where
     {
         let mut periodic_periods: Option<[K::Scalar; D]> = None;
         for (cell_key, cell) in self.tds.cells() {
-            let periodic_ref = if cell.periodic_vertex_offsets().is_some() {
-                if periodic_periods.is_none() {
-                    periodic_periods = Some(self.periodic_domain_periods_for_orientation(
-                        "geometric orientation validation",
-                    )?);
-                }
-                periodic_periods.as_ref()
-            } else {
-                None
-            };
-
-            let points = self.collect_cell_points_for_orientation(
+            let orientation = self.evaluate_cell_orientation_for_context(
                 cell_key,
                 cell,
-                periodic_ref,
+                &mut periodic_periods,
                 "geometric orientation validation",
+                "Geometric orientation predicate failed for cell",
             )?;
-
-            let orientation = self.kernel.orientation(&points).map_err(|e| {
-                TdsValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Geometric orientation predicate failed for cell {:?} (key {cell_key:?}): {e}",
-                        cell.uuid(),
-                    ),
-                }
-            })?;
             if orientation == 0 {
                 return Err(TdsValidationError::InconsistentDataStructure {
                     message: format!(
@@ -2169,32 +2189,13 @@ where
         let mut periodic_periods: Option<[K::Scalar; D]> = None;
 
         for (cell_key, cell) in self.tds.cells() {
-            let periodic_ref = if cell.periodic_vertex_offsets().is_some() {
-                if periodic_periods.is_none() {
-                    periodic_periods = Some(self.periodic_domain_periods_for_orientation(
-                        "positive-orientation promotion",
-                    )?);
-                }
-                periodic_periods.as_ref()
-            } else {
-                None
-            };
-
-            let points = self.collect_cell_points_for_orientation(
+            let orientation = self.evaluate_cell_orientation_for_context(
                 cell_key,
                 cell,
-                periodic_ref,
+                &mut periodic_periods,
                 "positive-orientation promotion",
+                "Geometric orientation predicate failed while promoting positive orientation for cell",
             )?;
-
-            let orientation = self.kernel.orientation(&points).map_err(|e| {
-                TdsValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Geometric orientation predicate failed while promoting positive orientation for cell {:?} (key {cell_key:?}): {e}",
-                        cell.uuid(),
-                    ),
-                }
-            })?;
             if orientation == 0 {
                 return Err(TdsValidationError::InconsistentDataStructure {
                     message: format!(
@@ -2238,30 +2239,13 @@ where
     {
         let mut periodic_periods: Option<[K::Scalar; D]> = None;
         let representative_sign = if let Some((cell_key, cell)) = self.tds.cells().next() {
-            let periodic_ref = if cell.periodic_vertex_offsets().is_some() {
-                if periodic_periods.is_none() {
-                    periodic_periods = Some(self.periodic_domain_periods_for_orientation(
-                        "global orientation-sign canonicalization",
-                    )?);
-                }
-                periodic_periods.as_ref()
-            } else {
-                None
-            };
-            let points = self.collect_cell_points_for_orientation(
+            let orientation = self.evaluate_cell_orientation_for_context(
                 cell_key,
                 cell,
-                periodic_ref,
+                &mut periodic_periods,
                 "global orientation-sign canonicalization",
+                "Geometric orientation predicate failed while canonicalizing global orientation sign for cell",
             )?;
-            let orientation = self.kernel.orientation(&points).map_err(|e| {
-                TdsValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Geometric orientation predicate failed while canonicalizing global orientation sign for cell {:?} (key {cell_key:?}): {e}",
-                        cell.uuid(),
-                    ),
-                }
-            })?;
             if orientation == 0 {
                 return Err(TdsValidationError::InconsistentDataStructure {
                     message: format!(
@@ -2338,30 +2322,13 @@ where
                         ),
                     }
                 })?;
-                let periodic_ref = if cell.periodic_vertex_offsets().is_some() {
-                    if periodic_periods.is_none() {
-                        periodic_periods = Some(self.periodic_domain_periods_for_orientation(
-                            "insertion orientation canonicalization",
-                        )?);
-                    }
-                    periodic_periods.as_ref()
-                } else {
-                    None
-                };
-                let points = self.collect_cell_points_for_orientation(
+                self.evaluate_cell_orientation_for_context(
                     cell_key,
                     cell,
-                    periodic_ref,
+                    &mut periodic_periods,
                     "insertion orientation canonicalization",
-                )?;
-                self.kernel.orientation(&points).map_err(|e| {
-                    TdsValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Geometric orientation predicate failed while canonicalizing cell {:?} (key {cell_key:?}): {e}",
-                            cell.uuid(),
-                        ),
-                    }
-                })?
+                    "Geometric orientation predicate failed while canonicalizing cell",
+                )?
             };
 
             if orientation == 0 {
@@ -4960,6 +4927,19 @@ where
             TdsValidationError::InconsistentDataStructure {
                 message: format!(
                     "Failed to canonicalize global orientation sign after fan retriangulation: {e}",
+                ),
+            }
+        })?;
+        self.normalize_and_promote_positive_orientation()
+            .map_err(|e| TdsValidationError::InconsistentDataStructure {
+                message: format!(
+                    "Failed to promote positive orientation after fan retriangulation: {e}",
+                ),
+            })?;
+        self.validate_geometric_cell_orientation().map_err(|e| {
+            TdsValidationError::InconsistentDataStructure {
+                message: format!(
+                    "Geometric orientation validation failed after fan retriangulation: {e}",
                 ),
             }
         })?;

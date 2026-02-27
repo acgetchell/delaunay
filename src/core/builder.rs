@@ -1779,16 +1779,12 @@ where
         // constraints that are contradictory for global normalization even when the local
         // adjacency invariants are still structurally valid. Keep this best-effort here and
         // defer hard failure to the subsequent `is_valid()` check.
-        if let Err(error) = tds_mut.normalize_coherent_orientation() {
+        if let Err(_error) = tds_mut.normalize_coherent_orientation() {
             #[cfg(debug_assertions)]
             tracing::debug!(
-                ?error,
+                ?_error,
                 "periodic quotient: skipping coherent-orientation normalization failure"
             );
-            #[cfg(not(debug_assertions))]
-            {
-                let _ = &error;
-            }
         }
         // Rebuild incident-cell pointers after topology surgery.
         tds_mut.assign_incident_cells().map_err(|e| {

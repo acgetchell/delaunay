@@ -4969,7 +4969,30 @@ where
         }
         // Flip-based repair mutates cell orderings; restore canonical positive geometric
         // orientation before exposing the updated triangulation state.
-        self.tri.normalize_and_promote_positive_orientation()?;
+        self.tri
+            .normalize_and_promote_positive_orientation()
+            .map_err(|err| {
+                let source = match err {
+                    InsertionError::TopologyValidation(source) => {
+                        TriangulationValidationError::from(source)
+                    }
+                    InsertionError::TopologyValidationFailed { source, .. } => *source,
+                    other => {
+                        TriangulationValidationError::Tds(
+                            TdsValidationError::InconsistentDataStructure {
+                                message: format!(
+                                    "Geometric orientation normalization failed after Delaunay repair: {other}",
+                                ),
+                            },
+                        )
+                    }
+                };
+                InsertionError::TopologyValidationFailed {
+                    message: "Geometric orientation normalization failed after Delaunay repair"
+                        .to_string(),
+                    source: Box::new(source),
+                }
+            })?;
         self.tri
             .validate_geometric_cell_orientation()
             .map_err(|err| InsertionError::TopologyValidationFailed {
