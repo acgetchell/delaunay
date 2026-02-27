@@ -3341,7 +3341,7 @@ where
                     let Some(neighbor_key) = *neighbor_key_opt else {
                         continue;
                     };
-                    if neighbor_key == cell_key {
+                    if neighbor_key == cell_key && Self::allows_periodic_self_neighbor(cell) {
                         continue;
                     }
 
@@ -3895,7 +3895,7 @@ where
 
                 // Periodic quotient triangulations may use self-neighbors.
                 // Neighbor/topology validation handles admissibility checks.
-                if neighbor_key == cell_key {
+                if neighbor_key == cell_key && Self::allows_periodic_self_neighbor(cell) {
                     continue;
                 }
 
@@ -6512,6 +6512,70 @@ mod tests {
             err,
             TdsError::InvalidNeighbors { message } if message.contains("expected back-reference")
         ));
+    }
+
+    #[test]
+    fn test_orientation_validation_rejects_non_periodic_self_neighbor() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+
+        {
+            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            cell.neighbors = Some(vec![Some(cell_key), None, None].into());
+        }
+
+        let cell = tds.get_cell(cell_key).unwrap();
+        assert!(!Tds::allows_periodic_self_neighbor(cell));
+
+        let err = tds.validate_coherent_orientation().unwrap_err();
+        assert!(matches!(
+            err,
+            TdsError::OrientationViolation {
+                cell1_key,
+                cell2_key,
+                ..
+            } if cell1_key == cell_key && cell2_key == cell_key
+        ));
+        assert!(!tds.is_coherently_oriented());
+
+        let err = tds.normalize_coherent_orientation().unwrap_err();
+        assert!(matches!(
+            err,
+            TdsError::InconsistentDataStructure { message }
+                if message.contains("Contradictory orientation constraints")
+        ));
+    }
+
+    #[test]
+    fn test_orientation_validation_allows_periodic_self_neighbor() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+
+        {
+            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            cell.neighbors = Some(vec![Some(cell_key), None, None].into());
+            cell.set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]]);
+        }
+
+        let cell = tds.get_cell(cell_key).unwrap();
+        assert!(Tds::allows_periodic_self_neighbor(cell));
+        assert!(tds.validate_coherent_orientation().is_ok());
+        assert!(tds.is_coherently_oriented());
+        assert!(tds.normalize_coherent_orientation().is_ok());
     }
 
     #[test]

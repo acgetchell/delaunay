@@ -113,11 +113,17 @@ jobs:
             echo "::error::Check tarpaulin logs above for errors."
             exit 2
           else
-            echo "::notice::Coverage report generated successfully: $(wc -l < coverage/cobertura.xml) lines"
+            echo "::notice::Coverage report generated successfully: $(wc -c < coverage/cobertura.xml) bytes, $(wc -l < coverage/cobertura.xml) lines"
           fi
           # Sanity: ensure benches/examples aren't present (defense-in-depth with .codecov.yml)
-          if rg -n '(^|/)(benches|examples)/' coverage/cobertura.xml; then
-            echo "::warning::benches/ or examples/ paths detected in coverage report"
+          if command -v rg >/dev/null 2>&1; then
+            if rg -n '(^|/)(benches|examples)/' coverage/cobertura.xml; then
+              echo "::warning::benches/ or examples/ paths detected in coverage report"
+            fi
+          else
+            if grep -nE '(^|/)(benches|examples)/' coverage/cobertura.xml; then
+              echo "::warning::benches/ or examples/ paths detected in coverage report"
+            fi
           fi
           echo "::endgroup::"
         env:
