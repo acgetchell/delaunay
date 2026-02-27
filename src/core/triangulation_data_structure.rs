@@ -3988,6 +3988,12 @@ where
         }
         Ok(facet_vertices)
     }
+    /// Build facet vertex identities in cell-local order, including periodic offsets.
+    ///
+    /// Offsets are normalized by subtracting a deterministic anchor offset so the
+    /// same lifted facet can be compared across neighboring cells independent of a
+    /// global translation. The anchor is selected lexicographically by
+    /// `(vertex_key_value, offset)`.
     fn facet_vertex_identities_in_cell_order(
         cell: &Cell<T, U, V, D>,
         omit_idx: usize,
@@ -4036,7 +4042,7 @@ where
         let mut anchor_offset = [0_i16; D];
         for (vkey, offset) in &facet_identities {
             let key_value = vkey.data().as_ffi();
-            if key_value < anchor_key {
+            if key_value < anchor_key || (key_value == anchor_key && *offset < anchor_offset) {
                 anchor_key = key_value;
                 anchor_offset = *offset;
             }
@@ -4049,7 +4055,9 @@ where
 
         Ok(facet_identities)
     }
-
+    /// Returns whether the permutation mapping `source_order` to `target_order` is odd.
+    ///
+    /// Returns `None` if the orders are not permutations of each other.
     fn permutation_is_odd<Id: PartialEq>(source_order: &[Id], target_order: &[Id]) -> Option<bool> {
         if source_order.len() != target_order.len() {
             return None;
@@ -5171,6 +5179,44 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ]
+    }
+
+    #[test]
+    fn test_facet_vertex_identities_anchor_uses_lexicographic_key_offset() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+
+        // Deliberately corrupt for regression coverage: duplicate v_a with a smaller
+        // periodic lift so anchor selection must use the (key, offset) tie-breaker.
+        {
+            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            cell.push_vertex_key(v_a);
+            cell.set_periodic_vertex_offsets(vec![[5, 0], [9, 0], [8, 0], [1, 0]]);
+        }
+
+        let cell = tds.get_cell(cell_key).unwrap();
+        let identities =
+            Tds::<f64, (), (), 2>::facet_vertex_identities_in_cell_order(cell, 2).unwrap();
+        assert_eq!(identities.len(), 3);
+
+        let mut offsets_for_a: Vec<[i16; 2]> = identities
+            .iter()
+            .filter_map(|(vkey, offset)| (*vkey == v_a).then_some(*offset))
+            .collect();
+        offsets_for_a.sort_unstable();
+        assert_eq!(offsets_for_a, vec![[0, 0], [4, 0]]);
+
+        let b_offset = identities
+            .iter()
+            .find_map(|(vkey, offset)| (*vkey == v_b).then_some(*offset))
+            .expect("identity list should include v_b");
+        assert_eq!(b_offset, [8, 0]);
     }
 
     // =============================================================================

@@ -3387,6 +3387,54 @@ mod tests {
     }
 
     #[test]
+    fn cell_swap_vertex_slots_swaps_vertices_neighbors_and_offsets() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let (cell_key, cell_ref) = dt.cells().next().unwrap();
+
+        let mut cell = cell_ref.clone();
+        cell.neighbors = Some(vec![Some(cell_key), None, Some(cell_key)].into());
+        cell.set_periodic_vertex_offsets(vec![[1, 0], [2, 0], [3, 0]]);
+
+        let before_vertices = cell.vertices().to_vec();
+        let before_neighbors = cell.neighbors().unwrap().to_vec();
+        let before_offsets = cell.periodic_vertex_offsets().unwrap().to_vec();
+
+        cell.swap_vertex_slots(0, 2);
+
+        assert_eq!(cell.vertices()[0], before_vertices[2]);
+        assert_eq!(cell.vertices()[2], before_vertices[0]);
+
+        let neighbors = cell.neighbors().unwrap();
+        assert_eq!(neighbors[0], before_neighbors[2]);
+        assert_eq!(neighbors[2], before_neighbors[0]);
+
+        let offsets = cell.periodic_vertex_offsets().unwrap();
+        assert_eq!(offsets[0], before_offsets[2]);
+        assert_eq!(offsets[2], before_offsets[0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "neighbors index out of bounds")]
+    fn cell_swap_vertex_slots_panics_when_neighbors_shorter_than_vertices() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let (_, cell_ref) = dt.cells().next().unwrap();
+
+        let mut cell = cell_ref.clone();
+        cell.neighbors = Some(vec![None, None].into());
+        cell.swap_vertex_slots(0, 2);
+    }
+
+    #[test]
     fn cell_facet_view_helpers_reject_excessive_vertex_count() {
         use crate::core::facet::FacetError;
 

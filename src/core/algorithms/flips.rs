@@ -719,6 +719,11 @@ where
     Ok(())
 }
 
+/// Resolve a possibly stale facet handle by matching its stable facet key.
+///
+/// Slot swaps can invalidate the original facet index while preserving the facet
+/// vertex set (and therefore its hash key). This helper checks the original
+/// index first, then scans the owning cell to recover the correct index for `key`.
 fn resolve_facet_handle_for_key<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     handle: FacetHandle,
@@ -751,6 +756,11 @@ where
     None
 }
 
+/// Resolve a possibly stale ridge handle by matching its stable ridge key.
+///
+/// Slot swaps can invalidate the original omit-index pair while preserving the
+/// ridge vertex set (and therefore its hash key). This helper checks the original
+/// pair first, then scans the owning cell for the pair matching `key`.
 fn resolve_ridge_handle_for_key<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     handle: RidgeHandle,
@@ -5273,6 +5283,95 @@ mod tests {
         }
 
         panic!("face ({face_v0:?}, {face_v1:?}, {face_v2:?}) not found in cell {cell_key:?}");
+    }
+
+    #[test]
+    fn test_resolve_facet_handle_for_key_remaps_after_slot_swap() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let stale_handle = FacetHandle::new(cell_key, 0);
+        let stable_key = {
+            let cell = tds.get_cell(cell_key).unwrap();
+            let facet_vertices =
+                facet_vertices_from_cell(cell, usize::from(stale_handle.facet_index()));
+            facet_key_from_vertices(&facet_vertices)
+        };
+
+        // Reorder slots so the original index no longer identifies the same facet.
+        tds.get_cell_by_key_mut(cell_key)
+            .unwrap()
+            .swap_vertex_slots(0, 1);
+
+        let resolved = resolve_facet_handle_for_key(&tds, stale_handle, stable_key)
+            .expect("facet handle should be recoverable by stable key");
+        assert_eq!(resolved.cell_key(), cell_key);
+        assert_eq!(usize::from(resolved.facet_index()), 1);
+
+        let resolved_key = {
+            let cell = tds.get_cell(cell_key).unwrap();
+            let facet_vertices =
+                facet_vertices_from_cell(cell, usize::from(resolved.facet_index()));
+            facet_key_from_vertices(&facet_vertices)
+        };
+        assert_eq!(resolved_key, stable_key);
+    }
+
+    #[test]
+    fn test_resolve_ridge_handle_for_key_remaps_after_slot_swap() {
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let v0 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v3], None).unwrap())
+            .unwrap();
+        let stale_handle = RidgeHandle::new(cell_key, 0, 1);
+        let stable_key = {
+            let cell = tds.get_cell(cell_key).unwrap();
+            let ridge_vertices = ridge_vertices_from_cell(
+                cell,
+                usize::from(stale_handle.omit_a()),
+                usize::from(stale_handle.omit_b()),
+            );
+            facet_key_from_vertices(&ridge_vertices)
+        };
+
+        // Reorder slots so the original omit pair no longer identifies the same ridge.
+        tds.get_cell_by_key_mut(cell_key)
+            .unwrap()
+            .swap_vertex_slots(0, 2);
+
+        let resolved = resolve_ridge_handle_for_key(&tds, stale_handle, stable_key)
+            .expect("ridge handle should be recoverable by stable key");
+        assert_eq!(resolved.cell_key(), cell_key);
+        assert_eq!((resolved.omit_a(), resolved.omit_b()), (1, 2));
+
+        let resolved_key = {
+            let cell = tds.get_cell(cell_key).unwrap();
+            let ridge_vertices = ridge_vertices_from_cell(
+                cell,
+                usize::from(resolved.omit_a()),
+                usize::from(resolved.omit_b()),
+            );
+            facet_key_from_vertices(&ridge_vertices)
+        };
+        assert_eq!(resolved_key, stable_key);
     }
 
     #[test]
