@@ -720,17 +720,31 @@ where
     /// - `periodic_vertex_offsets` (if present)
     #[inline]
     pub(crate) fn swap_vertex_slots(&mut self, index_a: usize, index_b: usize) {
+        let max_idx = index_a.max(index_b);
+        assert!(
+            max_idx < self.vertices.len(),
+            "swap_vertex_slots vertices index out of bounds: max index {max_idx} >= vertices.len() {}",
+            self.vertices.len(),
+        );
+        if let Some(neighbors) = self.neighbors.as_ref() {
+            assert!(
+                max_idx < neighbors.len(),
+                "swap_vertex_slots neighbors index out of bounds: max index {max_idx} >= neighbors.len() {}",
+                neighbors.len(),
+            );
+        }
+        if let Some(offsets) = self.periodic_vertex_offsets.as_ref() {
+            assert!(
+                max_idx < offsets.len(),
+                "swap_vertex_slots periodic offsets index out of bounds: max index {max_idx} >= periodic_vertex_offsets.len() {}",
+                offsets.len(),
+            );
+        }
         self.vertices.swap(index_a, index_b);
-        if let Some(neighbors) = &mut self.neighbors
-            && index_a < neighbors.len()
-            && index_b < neighbors.len()
-        {
+        if let Some(neighbors) = &mut self.neighbors {
             neighbors.swap(index_a, index_b);
         }
-        if let Some(offsets) = &mut self.periodic_vertex_offsets
-            && index_a < offsets.len()
-            && index_b < offsets.len()
-        {
+        if let Some(offsets) = &mut self.periodic_vertex_offsets {
             offsets.swap(index_a, index_b);
         }
     }

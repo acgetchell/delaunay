@@ -2405,7 +2405,17 @@ where
         // Canonicalize initial simplex orientation: store cells in positive orientation order.
         // Swapping any two vertices flips orientation.
         if orientation < 0 {
-            vertex_keys.swap(0, 1);
+            if vertex_keys.len() >= 2 {
+                vertex_keys.swap(0, 1);
+            } else {
+                return Err(TriangulationConstructionError::FailedToCreateCell {
+                    message: format!(
+                        "Cannot canonicalize orientation for {}D simplex with {} vertex key(s)",
+                        D,
+                        vertex_keys.len(),
+                    ),
+                });
+            }
         }
 
         // Create single D-cell from all vertices in canonicalized order.
@@ -3064,7 +3074,7 @@ where
             return Err(InsertionError::TopologyValidationFailed {
                 message: "Topology invalid after insertion; star-split fallback requires point to re-locate inside a cell"
                     .to_string(),
-                source: validation_err.clone(),
+                source: Box::new(validation_err.clone()),
             });
         };
 
@@ -3083,7 +3093,7 @@ where
                 {
                     return Err(InsertionError::TopologyValidationFailed {
                         message: "Topology invalid after star-split fallback".to_string(),
-                        source: fallback_validation_err,
+                        source: Box::new(fallback_validation_err),
                     });
                 }
 
@@ -3102,7 +3112,7 @@ where
                 message: format!(
                     "Topology invalid after insertion; star-split fallback failed: {fallback_err}"
                 ),
-                source: validation_err.clone(),
+                source: Box::new(validation_err.clone()),
             }),
         }
     }

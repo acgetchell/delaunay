@@ -3300,6 +3300,10 @@ where
     ///
     /// Returns [`TdsValidationError::InconsistentDataStructure`] if neighbor references are
     /// dangling, mirror facets cannot be derived, or orientation constraints are contradictory.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Normalization traversal keeps coherence/parity derivation and error diagnostics together"
+    )]
     pub(crate) fn normalize_coherent_orientation(&mut self) -> Result<(), TdsValidationError> {
         let mut flip_assignment: FastHashMap<CellKey, bool> =
             fast_hash_map_with_capacity(self.cells.len());
@@ -3358,12 +3362,13 @@ where
                         },
                     )?;
 
-                    let this_facet_vertices = Self::facet_vertices_in_cell_order(cell, facet_idx)?;
-                    let neighbor_facet_vertices =
-                        Self::facet_vertices_in_cell_order(neighbor_cell, mirror_idx)?;
+                    let this_facet_identities =
+                        Self::facet_vertex_identities_in_cell_order(cell, facet_idx)?;
+                    let neighbor_facet_identities =
+                        Self::facet_vertex_identities_in_cell_order(neighbor_cell, mirror_idx)?;
                     let observed_odd_permutation = Self::permutation_is_odd(
-                        &this_facet_vertices[..],
-                        &neighbor_facet_vertices[..],
+                        &this_facet_identities[..],
+                        &neighbor_facet_identities[..],
                     )
                     .ok_or_else(|| TdsError::InconsistentDataStructure {
                         message: format!(
@@ -3375,7 +3380,7 @@ where
                     // For opposite induced boundary orientations across a shared facet:
                     // sign(permutation(cell1_facet -> cell2_facet)) = (-1)^(facet_idx + mirror_idx + 1)
                     // so odd parity is expected exactly when (facet_idx + mirror_idx) is even.
-                    let expected_odd_permutation = (facet_idx + mirror_idx) % 2 == 0;
+                    let expected_odd_permutation = (facet_idx + mirror_idx).is_multiple_of(2);
                     let currently_coherent = observed_odd_permutation == expected_odd_permutation;
 
                     // Flipping exactly one endpoint toggles the coherence state for this edge.
@@ -3400,6 +3405,7 @@ where
             }
         }
 
+        let mut flipped_any = false;
         for (cell_key, should_flip) in flip_assignment {
             if !should_flip {
                 continue;
@@ -3413,7 +3419,11 @@ where
             })?;
             if cell.number_of_vertices() >= 2 {
                 cell.swap_vertex_slots(0, 1);
+                flipped_any = true;
             }
+        }
+        if flipped_any {
+            self.bump_generation();
         }
 
         Ok(())
@@ -3916,9 +3926,13 @@ where
                 let cell1_facet_vertices = Self::facet_vertices_in_cell_order(cell, facet_idx)?;
                 let cell2_facet_vertices =
                     Self::facet_vertices_in_cell_order(neighbor_cell, mirror_idx)?;
+                let cell1_facet_identities =
+                    Self::facet_vertex_identities_in_cell_order(cell, facet_idx)?;
+                let cell2_facet_identities =
+                    Self::facet_vertex_identities_in_cell_order(neighbor_cell, mirror_idx)?;
                 let observed_odd_permutation = Self::permutation_is_odd(
-                    &cell1_facet_vertices[..],
-                    &cell2_facet_vertices[..],
+                    &cell1_facet_identities[..],
+                    &cell2_facet_identities[..],
                 )
                 .ok_or_else(|| TdsError::InconsistentDataStructure {
                     message: format!(
@@ -3930,7 +3944,7 @@ where
                 // For opposite induced boundary orientations across a shared facet:
                 // sign(permutation(cell1_facet -> cell2_facet)) = (-1)^(facet_idx + mirror_idx + 1)
                 // so odd parity is expected exactly when (facet_idx + mirror_idx) is even.
-                let expected_odd_permutation = (facet_idx + mirror_idx) % 2 == 0;
+                let expected_odd_permutation = (facet_idx + mirror_idx).is_multiple_of(2);
 
                 if observed_odd_permutation != expected_odd_permutation {
                     return Err(TdsError::OrientationViolation {
@@ -3974,8 +3988,69 @@ where
         }
         Ok(facet_vertices)
     }
+    fn facet_vertex_identities_in_cell_order(
+        cell: &Cell<T, U, V, D>,
+        omit_idx: usize,
+    ) -> Result<SmallBuffer<(VertexKey, [i16; D]), MAX_PRACTICAL_DIMENSION_SIZE>, TdsValidationError>
+    {
+        if omit_idx >= cell.number_of_vertices() {
+            return Err(TdsError::InconsistentDataStructure {
+                message: format!(
+                    "Facet index {omit_idx} out of bounds for cell {:?} with {} vertices during orientation validation",
+                    cell.uuid(),
+                    cell.number_of_vertices(),
+                ),
+            });
+        }
 
-    fn permutation_is_odd(source_order: &[VertexKey], target_order: &[VertexKey]) -> Option<bool> {
+        let periodic_offsets = cell.periodic_vertex_offsets();
+        if let Some(offsets) = periodic_offsets
+            && offsets.len() != cell.number_of_vertices()
+        {
+            return Err(TdsError::InconsistentDataStructure {
+                message: format!(
+                    "Cell {:?} periodic offset count {} does not match vertex count {} during orientation validation",
+                    cell.uuid(),
+                    offsets.len(),
+                    cell.number_of_vertices(),
+                ),
+            });
+        }
+
+        let mut facet_identities: SmallBuffer<(VertexKey, [i16; D]), MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::new();
+        for (idx, &vkey) in cell.vertices().iter().enumerate() {
+            if idx == omit_idx {
+                continue;
+            }
+
+            let raw_offset = periodic_offsets.map_or([0_i8; D], |offsets| offsets[idx]);
+            let mut offset = [0_i16; D];
+            for axis in 0..D {
+                offset[axis] = i16::from(raw_offset[axis]);
+            }
+            facet_identities.push((vkey, offset));
+        }
+
+        let mut anchor_key = u64::MAX;
+        let mut anchor_offset = [0_i16; D];
+        for (vkey, offset) in &facet_identities {
+            let key_value = vkey.data().as_ffi();
+            if key_value < anchor_key {
+                anchor_key = key_value;
+                anchor_offset = *offset;
+            }
+        }
+        for (_, offset) in &mut facet_identities {
+            for axis in 0..D {
+                offset[axis] -= anchor_offset[axis];
+            }
+        }
+
+        Ok(facet_identities)
+    }
+
+    fn permutation_is_odd<Id: PartialEq>(source_order: &[Id], target_order: &[Id]) -> Option<bool> {
         if source_order.len() != target_order.len() {
             return None;
         }
@@ -3985,9 +4060,9 @@ where
         let mut used_target_indices: SmallBuffer<bool, MAX_PRACTICAL_DIMENSION_SIZE> =
             SmallBuffer::from_elem(false, target_order.len());
 
-        for &source_vertex in source_order {
+        for source_vertex in source_order {
             let mut matched_target_position = None;
-            for (target_idx, &target_vertex) in target_order.iter().enumerate() {
+            for (target_idx, target_vertex) in target_order.iter().enumerate() {
                 if target_vertex == source_vertex && !used_target_indices[target_idx] {
                     matched_target_position = Some(target_idx);
                     used_target_indices[target_idx] = true;

@@ -192,7 +192,7 @@ pub enum InsertionError {
 
         /// The underlying Level 3 validation error.
         #[source]
-        source: TriangulationValidationError,
+        source: Box<TriangulationValidationError>,
     },
 }
 
@@ -514,7 +514,7 @@ where
         // The facet order copied above matches the boundary-cell facet order.
         // For coherent orientation across that shared facet, odd permutation is required
         // exactly when (facet_idx + apex_idx) is even (apex_idx = D).
-        let expected_odd_permutation = (facet_idx + D) % 2 == 0;
+        let expected_odd_permutation = (facet_idx + D).is_multiple_of(2);
         if expected_odd_permutation && D >= 2 {
             new_cell_vertices.swap(0, 1);
         }
@@ -2609,7 +2609,7 @@ mod tests {
         assert!(
             InsertionError::TopologyValidationFailed {
                 message: "test".to_string(),
-                source: level3_err,
+                source: Box::new(level3_err),
             }
             .is_retryable()
         );

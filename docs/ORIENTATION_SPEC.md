@@ -2,7 +2,8 @@
 
 ## Overview
 
-This document specifies how to implement coherent orientation as a first-class invariant in the TDS layer, following CGAL's approach of maintaining orientation through vertex ordering.
+This document specifies how to implement coherent orientation as a first-class invariant
+in the TDS layer, following CGAL's approach of maintaining orientation through vertex ordering.
 
 ## Background: Simplicial Orientation
 
@@ -10,7 +11,7 @@ This document specifies how to implement coherent orientation as a first-class i
 
 A D-dimensional simplex with vertices v₀, v₁, ..., vₐ has an **orientation** determined by the sign of the determinant:
 
-```
+```text
 │ x₀   y₀   z₀  ...  1 │
 │ x₁   y₁   z₁  ...  1 │
 │ x₂   y₂   z₂  ...  1 │
@@ -25,6 +26,7 @@ A D-dimensional simplex with vertices v₀, v₁, ..., vₐ has an **orientation
 ### Permutation Parity
 
 Swapping any two vertices **reverses** the orientation:
+
 - Even permutation (0, 2, 4, ... swaps) → same orientation
 - Odd permutation (1, 3, 5, ... swaps) → opposite orientation
 
@@ -41,7 +43,7 @@ CGAL maintains orientation by **ordering vertices in cells**:
 
 ### Example: 2D Triangle Mesh
 
-```
+```text
 Cell C₁: vertices [v0, v1, v2] (counterclockwise = positive)
 Cell C₂: vertices [v0, v2, v3] (counterclockwise = positive)
 
@@ -50,12 +52,12 @@ Shared edge (facet in 2D): {v0, v2}
 From C₁: extract opposite v1 → edge is [v0, v2]
 From C₂: extract opposite v3 → edge is [v2, v0] (reversed!)
 
-[v0, v2] vs [v2, v0] differ by 1 swap → ✓ opposite orientations
+[v0, v2] vs [v2, v0] differ by 1 swap -> ✓ opposite orientations
 ```
 
 ### Example: 3D Tetrahedral Mesh
 
-```
+```text
 Cell C₁: vertices [v0, v1, v2, v3] (positive orientation)
 Cell C₂: vertices [v0, v2, v1, v4] (positive orientation)
 
@@ -64,7 +66,7 @@ Shared triangle (facet in 3D): {v0, v1, v2}
 From C₁: opposite v3 → facet is [v0, v1, v2]
 From C₂: opposite v4 → facet is [v0, v2, v1] (v1 and v2 swapped!)
 
-[v0, v1, v2] vs [v0, v2, v1] differ by 1 swap → ✓ opposite orientations
+[v0, v1, v2] vs [v0, v2, v1] differ by 1 swap -> ✓ opposite orientations
 ```
 
 ## Implementation Strategy
@@ -291,6 +293,7 @@ where
 #### 4.1 Audit Existing Flips
 
 Check all Pachner moves in `src/core/algorithms/flips.rs`:
+
 - k=1 flip (1→D+1)
 - k=2 flip (2→D)
 - k=3 flip (3→D-1)
@@ -328,11 +331,21 @@ where
 
 #### 4.3 Ensure New Cells Use Canonical Ordering
 
-Since `insert_cell()` now canonicalizes, flips automatically preserve orientation **if**:
-1. They delete old cells
-2. They insert new cells via `insert_cell()`
+Flips now apply explicit per-cell orientation handling in `src/core/algorithms/flips.rs`
+(`apply_bistellar_flip_with_k`):
 
-No additional flip-specific logic needed!
+1. Build candidate replacement cells
+2. Compute orientation for each candidate and swap slots when needed so each new cell has canonical local orientation
+3. Insert via `tds.insert_cell_with_mapping(...)` (insertion keeps the provided slot order; it does not canonicalize orientation implicitly)
+
+After rewiring and removing old cells, flips run:
+
+- `tds.normalize_coherent_orientation()` to reconcile residual neighbor-parity inconsistencies
+- `debug_assert!(tds.is_coherently_oriented())` as a post-flip invariant check
+
+So a flip must: (a) delete old cells, (b) insert new cells with explicit per-cell
+orientation handling before insertion, and (c) run coherence normalization/assertion
+after topology updates.
 
 ## Testing Strategy
 
@@ -400,7 +413,7 @@ proptest! {
 
 1. **Cell creation**: O(D) for canonicalization (one orientation test + possible swap)
    - Negligible compared to circumsphere tests during insertion
-   
+
 2. **Validation**: O(N×D³) for full orientation check
    - Only runs on-demand via `validate()`
    - Zero cost in release builds (debug_assert in flips)
@@ -425,13 +438,14 @@ proptest! {
 
 ### Q3: Performance in 5D?
 
-**Answer**: 
+**Answer**:
+
 - Cell creation: O(6) orientation test = acceptable
 - Validation: O(N×5³) = O(125N) = acceptable for validation (not hot path)
 - Debug assertions compile out in release
 
 ## References
 
-- CGAL Triangulation Documentation: https://doc.cgal.org/latest/Triangulation/index.html
+- CGAL Triangulation Documentation: <https://doc.cgal.org/latest/Triangulation/index.html>
 - Orientation predicates: `src/geometry/predicates.rs::simplex_orientation()`
-- Permutation parity: https://en.wikipedia.org/wiki/Parity_of_a_permutation
+- Permutation parity: <https://en.wikipedia.org/wiki/Parity_of_a_permutation>

@@ -506,7 +506,7 @@ pub struct ConstructionSkipSample {
 pub struct DelaunayTriangulationConstructionErrorWithStatistics {
     /// Underlying construction error.
     #[source]
-    pub error: DelaunayTriangulationConstructionError,
+    pub error: Box<DelaunayTriangulationConstructionError>,
     /// Aggregate construction statistics collected before the error occurred.
     pub statistics: Box<ConstructionStatistics>,
 }
@@ -1986,7 +1986,7 @@ where
         )
         .map_err(
             |error| DelaunayTriangulationConstructionErrorWithStatistics {
-                error,
+                error: Box::new(error),
                 statistics: Box::new(ConstructionStatistics::default()),
             },
         )?;
@@ -2357,7 +2357,7 @@ where
                     // Some construction errors are deterministic and should not be masked
                     // by shuffled retry logic (e.g. duplicate UUIDs).
                     if matches!(
-                        &error,
+                        error.as_ref(),
                         DelaunayTriangulationConstructionError::Triangulation(
                             TriangulationConstructionError::Tds(
                                 TdsConstructionError::DuplicateUuid { .. }
@@ -2431,7 +2431,7 @@ where
                     let DelaunayTriangulationConstructionErrorWithStatistics { error, statistics } =
                         err;
                     if matches!(
-                        &error,
+                        error.as_ref(),
                         DelaunayTriangulationConstructionError::Triangulation(
                             TriangulationConstructionError::Tds(
                                 TdsConstructionError::DuplicateUuid { .. }
@@ -2464,12 +2464,14 @@ where
         // errors so callers can deterministically reject.
         let statistics = Box::new(last_stats.unwrap_or_default());
         Err(DelaunayTriangulationConstructionErrorWithStatistics {
-            error: TriangulationConstructionError::GeometricDegeneracy {
-                message: format!(
-                    "Delaunay construction failed after shuffled reconstruction attempts: {last_error}"
-                ),
-            }
-            .into(),
+            error: Box::new(
+                TriangulationConstructionError::GeometricDegeneracy {
+                    message: format!(
+                        "Delaunay construction failed after shuffled reconstruction attempts: {last_error}"
+                    ),
+                }
+                .into(),
+            ),
             statistics,
         })
     }
@@ -2589,10 +2591,14 @@ where
             );
             if let Err(err) = validation_result {
                 return Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                    error: TriangulationConstructionError::GeometricDegeneracy {
-                        message: format!("PL-manifold validation failed after construction: {err}"),
-                    }
-                    .into(),
+                    error: Box::new(
+                        TriangulationConstructionError::GeometricDegeneracy {
+                            message: format!(
+                                "PL-manifold validation failed after construction: {err}"
+                            ),
+                        }
+                        .into(),
+                    ),
                     statistics: Box::new(stats),
                 });
             }
@@ -2610,10 +2616,12 @@ where
         );
         if let Err(err) = delaunay_result {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                error: TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!("Delaunay property violated after construction: {err}"),
-                }
-                .into(),
+                error: Box::new(
+                    TriangulationConstructionError::GeometricDegeneracy {
+                        message: format!("Delaunay property violated after construction: {err}"),
+                    }
+                    .into(),
+                ),
                 statistics: Box::new(stats),
             });
         }
@@ -2634,15 +2642,17 @@ where
     {
         if vertices.len() < D + 1 {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                error: TriangulationConstructionError::InsufficientVertices {
-                    dimension: D,
-                    source: crate::core::cell::CellValidationError::InsufficientVertices {
-                        actual: vertices.len(),
-                        expected: D + 1,
+                error: Box::new(
+                    TriangulationConstructionError::InsufficientVertices {
                         dimension: D,
-                    },
-                }
-                .into(),
+                        source: crate::core::cell::CellValidationError::InsufficientVertices {
+                            actual: vertices.len(),
+                            expected: D + 1,
+                            dimension: D,
+                        },
+                    }
+                    .into(),
+                ),
                 statistics: Box::new(ConstructionStatistics::default()),
             });
         }
@@ -2651,7 +2661,7 @@ where
         let initial_vertices = &vertices[..=D];
         let tds = Triangulation::<K, U, V, D>::build_initial_simplex(initial_vertices).map_err(
             |error| DelaunayTriangulationConstructionErrorWithStatistics {
-                error: error.into(),
+                error: Box::new(error.into()),
                 statistics: Box::new(ConstructionStatistics::default()),
             },
         )?;
@@ -2713,7 +2723,7 @@ where
             &mut soft_fail_seeds,
         ) {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                error,
+                error: Box::new(error),
                 statistics: Box::new(stats),
             });
         }
@@ -2725,7 +2735,7 @@ where
             &soft_fail_seeds,
         ) {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                error,
+                error: Box::new(error),
                 statistics: Box::new(stats),
             });
         }
@@ -4949,7 +4959,7 @@ where
             {
                 return Err(InsertionError::TopologyValidationFailed {
                     message: "Topology invalid after Delaunay repair".to_string(),
-                    source: TriangulationValidationError::from(err),
+                    source: Box::new(TriangulationValidationError::from(err)),
                 });
             }
         }

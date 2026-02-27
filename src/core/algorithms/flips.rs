@@ -332,8 +332,7 @@ where
             .map_err(|e| FlipError::PredicateFailure {
                 message: format!("orientation failed for flip cell: {e}"),
             })?;
-        let mut orientation_sign = orientation;
-        if orientation == 0 {
+        let orientation_sign = if orientation == 0 {
             let config = config_presets::high_precision::<K::Scalar>();
             let robust_orientation =
                 robust_orientation(&points, &config).map_err(|e| FlipError::PredicateFailure {
@@ -352,12 +351,14 @@ where
                 }
                 return Err(FlipError::DegenerateCell);
             }
-            orientation_sign = match robust_orientation {
+            match robust_orientation {
                 Orientation::POSITIVE => 1,
                 Orientation::NEGATIVE => -1,
                 Orientation::DEGENERATE => 0,
-            };
-        }
+            }
+        } else {
+            orientation
+        };
 
         // Canonicalize to positive orientation by swapping two vertices when needed.
         if orientation_sign < 0 {
@@ -716,6 +717,82 @@ where
         return Err(non_convergent_error(max_flips, stats, diagnostics, config));
     }
     Ok(())
+}
+
+fn resolve_facet_handle_for_key<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    handle: FacetHandle,
+    key: u64,
+) -> Option<FacetHandle>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let cell_key = handle.cell_key();
+    let cell = tds.get_cell(cell_key)?;
+
+    let facet_index = usize::from(handle.facet_index());
+    if facet_index < cell.number_of_vertices() {
+        let facet_vertices = facet_vertices_from_cell(cell, facet_index);
+        if facet_key_from_vertices(&facet_vertices) == key {
+            return Some(handle);
+        }
+    }
+
+    for candidate_idx in 0..cell.number_of_vertices() {
+        let facet_vertices = facet_vertices_from_cell(cell, candidate_idx);
+        if facet_key_from_vertices(&facet_vertices) == key {
+            let facet_index = u8::try_from(candidate_idx).ok()?;
+            return Some(FacetHandle::new(cell_key, facet_index));
+        }
+    }
+
+    None
+}
+
+fn resolve_ridge_handle_for_key<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    handle: RidgeHandle,
+    key: u64,
+) -> Option<RidgeHandle>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    if D < 3 {
+        return None;
+    }
+
+    let cell_key = handle.cell_key();
+    let cell = tds.get_cell(cell_key)?;
+    let vertex_count = cell.number_of_vertices();
+
+    let omit_a = usize::from(handle.omit_a());
+    let omit_b = usize::from(handle.omit_b());
+    if omit_a < vertex_count && omit_b < vertex_count && omit_a != omit_b {
+        let ridge_vertices = ridge_vertices_from_cell(cell, omit_a, omit_b);
+        if ridge_vertices.len() == D - 1 && facet_key_from_vertices(&ridge_vertices) == key {
+            return Some(handle);
+        }
+    }
+
+    for i in 0..vertex_count {
+        for j in (i + 1)..vertex_count {
+            let ridge_vertices = ridge_vertices_from_cell(cell, i, j);
+            if ridge_vertices.len() != D - 1 {
+                continue;
+            }
+            if facet_key_from_vertices(&ridge_vertices) == key {
+                let omit_a = u8::try_from(i).ok()?;
+                let omit_b = u8::try_from(j).ok()?;
+                return Some(RidgeHandle::new(cell_key, omit_a, omit_b));
+            }
+        }
+    }
+
+    None
 }
 
 impl BistellarFlipKind {
@@ -2343,6 +2420,9 @@ where
     while let Some((facet, key)) = pop_queue(&mut queue, config.queue_order) {
         queued.remove(&key);
         let facet = facet_handles.remove(&key).unwrap_or(facet);
+        let Some(facet) = resolve_facet_handle_for_key(tds, facet, key) else {
+            continue;
+        };
         stats.facets_checked += 1;
 
         let context = match build_k2_flip_context(tds, facet) {
@@ -3790,6 +3870,9 @@ where
     };
     queues.ridge_queued.remove(&key);
     let ridge = queues.ridge_handles.remove(&key).unwrap_or(ridge);
+    let Some(ridge) = resolve_ridge_handle_for_key(tds, ridge, key) else {
+        return Ok(true);
+    };
     stats.facets_checked += 1;
 
     let context = match build_k3_flip_context(tds, ridge) {
@@ -4296,6 +4379,9 @@ where
     };
     queues.facet_queued.remove(&key);
     let facet = queues.facet_handles.remove(&key).unwrap_or(facet);
+    let Some(facet) = resolve_facet_handle_for_key(tds, facet, key) else {
+        return Ok(true);
+    };
     stats.facets_checked += 1;
 
     let context = match build_k2_flip_context(tds, facet) {
