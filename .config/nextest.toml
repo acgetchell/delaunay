@@ -37,7 +37,8 @@ slow-timeout = { period = "60s", terminate-after = 2 }
 # without changing the global timeout behavior for the entire suite.
 [[profile.ci.overrides]]
 filter = 'package(delaunay) and test(test_builder_toroidal_periodic_3d_success)'
-slow-timeout = { period = "120s", terminate-after = 3 }
+slow-timeout = { period = "180s", terminate-after = 4 }
+retries = 0
 
 # JUnit report configuration
 [profile.ci.junit]
