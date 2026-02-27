@@ -41,6 +41,8 @@ The delaunay project follows a standard Rust library structure with additional t
 delaunay/
 ├── .cargo/
 │   └── config.toml
+├── .config/
+│   └── nextest.toml
 ├── .github/
 │   ├── workflows/
 │   │   ├── audit.yml
@@ -218,6 +220,7 @@ delaunay/
 │   ├── proptest_euler_characteristic.rs
 │   ├── proptest_facet.rs
 │   ├── proptest_geometry.rs
+│   ├── proptest_orientation.rs
 │   ├── proptest_point.rs
 │   ├── proptest_predicates.rs
 │   ├── proptest_safe_conversions.rs
@@ -587,7 +590,9 @@ This `justfile`-based workflow provides consistent, cross-platform development c
 
 ## Module Organization Patterns
 
-The canonical organizational patterns found across key modules in the codebase: `cell.rs`, `vertex.rs`, `facet.rs`, `boundary.rs`, and `util.rs`.
+The canonical organizational patterns found across key modules in the codebase:
+`cell.rs`, `vertex.rs`, `facet.rs`, `boundary.rs`, and the `util/` submodules
+under `src/core/util/`.
 
 ### Canonical Section Sequence
 

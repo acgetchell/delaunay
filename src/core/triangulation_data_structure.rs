@@ -3300,10 +3300,6 @@ where
     ///
     /// Returns [`TdsValidationError::InconsistentDataStructure`] if neighbor references are
     /// dangling, mirror facets cannot be derived, or orientation constraints are contradictory.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "Normalization traversal keeps coherence/parity derivation and error diagnostics together"
-    )]
     pub(crate) fn normalize_coherent_orientation(&mut self) -> Result<(), TdsValidationError> {
         let mut flip_assignment: FastHashMap<CellKey, bool> =
             fast_hash_map_with_capacity(self.cells.len());
@@ -3362,26 +3358,8 @@ where
                         },
                     )?;
 
-                    let this_facet_identities =
-                        Self::facet_vertex_identities_in_cell_order(cell, facet_idx)?;
-                    let neighbor_facet_identities =
-                        Self::facet_vertex_identities_in_cell_order(neighbor_cell, mirror_idx)?;
-                    let observed_odd_permutation = Self::permutation_is_odd(
-                        &this_facet_identities[..],
-                        &neighbor_facet_identities[..],
-                    )
-                    .ok_or_else(|| TdsError::InconsistentDataStructure {
-                        message: format!(
-                            "Could not derive facet-order permutation parity while normalizing cells {:?} and {:?}",
-                            cell.uuid(),
-                            neighbor_cell.uuid(),
-                        ),
-                    })?;
-                    // For opposite induced boundary orientations across a shared facet:
-                    // sign(permutation(cell1_facet -> cell2_facet)) = (-1)^(facet_idx + mirror_idx + 1)
-                    // so odd parity is expected exactly when (facet_idx + mirror_idx) is even.
-                    let expected_odd_permutation = (facet_idx + mirror_idx).is_multiple_of(2);
-                    let currently_coherent = observed_odd_permutation == expected_odd_permutation;
+                    let (currently_coherent, _, _) =
+                        Self::facet_permutation_parity(cell, facet_idx, neighbor_cell, mirror_idx)?;
 
                     // Flipping exactly one endpoint toggles the coherence state for this edge.
                     let requires_relative_flip = !currently_coherent;
@@ -3926,27 +3904,10 @@ where
                 let cell1_facet_vertices = Self::facet_vertices_in_cell_order(cell, facet_idx)?;
                 let cell2_facet_vertices =
                     Self::facet_vertices_in_cell_order(neighbor_cell, mirror_idx)?;
-                let cell1_facet_identities =
-                    Self::facet_vertex_identities_in_cell_order(cell, facet_idx)?;
-                let cell2_facet_identities =
-                    Self::facet_vertex_identities_in_cell_order(neighbor_cell, mirror_idx)?;
-                let observed_odd_permutation = Self::permutation_is_odd(
-                    &cell1_facet_identities[..],
-                    &cell2_facet_identities[..],
-                )
-                .ok_or_else(|| TdsError::InconsistentDataStructure {
-                    message: format!(
-                        "Could not derive facet-order permutation parity between cells {:?} and {:?}",
-                        cell.uuid(),
-                        neighbor_cell.uuid(),
-                    ),
-                })?;
-                // For opposite induced boundary orientations across a shared facet:
-                // sign(permutation(cell1_facet -> cell2_facet)) = (-1)^(facet_idx + mirror_idx + 1)
-                // so odd parity is expected exactly when (facet_idx + mirror_idx) is even.
-                let expected_odd_permutation = (facet_idx + mirror_idx).is_multiple_of(2);
+                let (currently_coherent, observed_odd_permutation, expected_odd_permutation) =
+                    Self::facet_permutation_parity(cell, facet_idx, neighbor_cell, mirror_idx)?;
 
-                if observed_odd_permutation != expected_odd_permutation {
+                if !currently_coherent {
                     return Err(TdsError::OrientationViolation {
                         cell1_key: cell_key,
                         cell1_uuid: cell.uuid(),
@@ -4054,6 +4015,41 @@ where
         }
 
         Ok(facet_identities)
+    }
+
+    /// Derive observed and expected facet permutation parity between neighboring cells.
+    ///
+    /// Returns `(currently_coherent, observed_odd_permutation, expected_odd_permutation)`.
+    /// The expected odd parity follows the coherent boundary-orientation convention:
+    /// odd is expected exactly when `(facet_idx + mirror_idx)` is even.
+    fn facet_permutation_parity(
+        cell: &Cell<T, U, V, D>,
+        facet_idx: usize,
+        neighbor_cell: &Cell<T, U, V, D>,
+        mirror_idx: usize,
+    ) -> Result<(bool, bool, bool), TdsValidationError> {
+        let cell_facet_identities = Self::facet_vertex_identities_in_cell_order(cell, facet_idx)?;
+        let neighbor_facet_identities =
+            Self::facet_vertex_identities_in_cell_order(neighbor_cell, mirror_idx)?;
+
+        let observed_odd_permutation = Self::permutation_is_odd(
+            &cell_facet_identities[..],
+            &neighbor_facet_identities[..],
+        )
+        .ok_or_else(|| TdsError::InconsistentDataStructure {
+            message: format!(
+                "Could not derive facet-order permutation parity between cells {:?} and {:?}",
+                cell.uuid(),
+                neighbor_cell.uuid(),
+            ),
+        })?;
+
+        let expected_odd_permutation = (facet_idx + mirror_idx).is_multiple_of(2);
+        Ok((
+            observed_odd_permutation == expected_odd_permutation,
+            observed_odd_permutation,
+            expected_odd_permutation,
+        ))
     }
     /// Returns whether the permutation mapping `source_order` to `target_order` is odd.
     ///
@@ -5217,6 +5213,87 @@ mod tests {
             .find_map(|(vkey, offset)| (*vkey == v_b).then_some(*offset))
             .expect("identity list should include v_b");
         assert_eq!(b_offset, [8, 0]);
+    }
+
+    #[test]
+    fn test_facet_permutation_parity_derives_coherent_and_incoherent_cases() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        // Shared edge for facet_idx=2 is (v_a, v_b).
+        let cell: Cell<f64, (), (), 2> = Cell::new(vec![v_a, v_b, v_c], None).unwrap();
+
+        // Coherent case: neighbor lists the shared edge in opposite order.
+        let coherent_neighbor: Cell<f64, (), (), 2> = Cell::new(vec![v_b, v_a, v_d], None).unwrap();
+        let coherent_mirror_idx = cell.mirror_facet_index(2, &coherent_neighbor).unwrap();
+        let (currently_coherent, observed_odd_permutation, expected_odd_permutation) =
+            Tds::facet_permutation_parity(&cell, 2, &coherent_neighbor, coherent_mirror_idx)
+                .unwrap();
+        assert!(currently_coherent);
+        assert!(observed_odd_permutation);
+        assert!(expected_odd_permutation);
+
+        // Incoherent case: neighbor lists the shared edge in the same order.
+        let incoherent_neighbor: Cell<f64, (), (), 2> =
+            Cell::new(vec![v_a, v_b, v_d], None).unwrap();
+        let incoherent_mirror_idx = cell.mirror_facet_index(2, &incoherent_neighbor).unwrap();
+        let (currently_coherent, observed_odd_permutation, expected_odd_permutation) =
+            Tds::facet_permutation_parity(&cell, 2, &incoherent_neighbor, incoherent_mirror_idx)
+                .unwrap();
+        assert!(!currently_coherent);
+        assert!(!observed_odd_permutation);
+        assert!(expected_odd_permutation);
+    }
+
+    #[test]
+    fn test_facet_permutation_parity_smoke_4d() {
+        let mut tds: Tds<f64, (), (), 4> = Tds::empty();
+        let v_a = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0]))
+            .unwrap();
+        let v_b = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0, 0.0]))
+            .unwrap();
+        let v_c = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0, 0.0]))
+            .unwrap();
+        let v_d = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0, 0.0]))
+            .unwrap();
+        let v_e = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 1.0]))
+            .unwrap();
+        let v_f = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0, 1.0, 1.0]))
+            .unwrap();
+
+        // Shared 3-face for facet_idx=4 is [v_a, v_b, v_c, v_d].
+        let cell: Cell<f64, (), (), 4> = Cell::new(vec![v_a, v_b, v_c, v_d, v_e], None).unwrap();
+
+        // Coherent case: odd permutation of the shared face.
+        let coherent_neighbor: Cell<f64, (), (), 4> =
+            Cell::new(vec![v_b, v_a, v_c, v_d, v_f], None).unwrap();
+        let coherent_mirror_idx = cell.mirror_facet_index(4, &coherent_neighbor).unwrap();
+        let (currently_coherent, observed_odd_permutation, expected_odd_permutation) =
+            Tds::facet_permutation_parity(&cell, 4, &coherent_neighbor, coherent_mirror_idx)
+                .unwrap();
+        assert!(currently_coherent);
+        assert!(observed_odd_permutation);
+        assert!(expected_odd_permutation);
+
+        // Incoherent case: identity ordering of the shared face.
+        let incoherent_neighbor: Cell<f64, (), (), 4> =
+            Cell::new(vec![v_a, v_b, v_c, v_d, v_f], None).unwrap();
+        let incoherent_mirror_idx = cell.mirror_facet_index(4, &incoherent_neighbor).unwrap();
+        let (currently_coherent, observed_odd_permutation, expected_odd_permutation) =
+            Tds::facet_permutation_parity(&cell, 4, &incoherent_neighbor, incoherent_mirror_idx)
+                .unwrap();
+        assert!(!currently_coherent);
+        assert!(!observed_odd_permutation);
+        assert!(expected_odd_permutation);
     }
 
     // =============================================================================
@@ -6577,6 +6654,69 @@ mod tests {
         assert!(tds.is_coherently_oriented());
         assert!(tds.normalize_coherent_orientation().is_ok());
     }
+
+    macro_rules! test_normalize_repairs_incoherent_adjacent_pair {
+        ($name:ident, $dim:literal) => {
+            #[test]
+            fn $name() {
+                let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+
+                let mut vertex_keys = Vec::with_capacity($dim + 2);
+                let mut seed = 1.0_f64;
+                for idx in 0..($dim + 2) {
+                    let mut coords = [0.0_f64; $dim];
+                    if idx < $dim {
+                        coords[idx] = 1.0;
+                    } else {
+                        for coord in &mut coords {
+                            *coord = seed;
+                            seed += 1.0;
+                        }
+                    }
+                    vertex_keys.push(tds.insert_vertex_with_mapping(vertex!(coords)).unwrap());
+                }
+
+                // Construct two adjacent cells that share a facet but induce the same shared-facet
+                // ordering, making orientation incoherent before normalization:
+                // cell1 = [v0..vD], cell2 = [v0..v(D-1), v(D+1)].
+                let cell1_vertices: Vec<_> = vertex_keys.iter().take($dim + 1).copied().collect();
+                let mut cell2_vertices: Vec<_> = vertex_keys.iter().take($dim).copied().collect();
+                cell2_vertices.push(vertex_keys[$dim + 1]);
+
+                let cell1: Cell<f64, (), (), $dim> = Cell::new(cell1_vertices, None).unwrap();
+                let cell2: Cell<f64, (), (), $dim> = Cell::new(cell2_vertices, None).unwrap();
+
+                tds.insert_cell_with_mapping(cell1).unwrap();
+                tds.insert_cell_with_mapping(cell2).unwrap();
+                tds.assign_neighbors().unwrap();
+
+                let err = tds.validate_coherent_orientation().unwrap_err();
+                assert!(matches!(err, TdsError::OrientationViolation { .. }));
+                assert!(!tds.is_coherently_oriented());
+
+                tds.normalize_coherent_orientation().unwrap();
+                assert!(tds.validate_coherent_orientation().is_ok());
+                assert!(tds.is_coherently_oriented());
+            }
+        };
+    }
+
+    test_normalize_repairs_incoherent_adjacent_pair!(
+        test_normalize_repairs_incoherent_adjacent_pair_2d,
+        2
+    );
+    test_normalize_repairs_incoherent_adjacent_pair!(
+        test_normalize_repairs_incoherent_adjacent_pair_3d,
+        3
+    );
+    test_normalize_repairs_incoherent_adjacent_pair!(
+        test_normalize_repairs_incoherent_adjacent_pair_4d,
+        4
+    );
+    test_normalize_repairs_incoherent_adjacent_pair!(
+        test_normalize_repairs_incoherent_adjacent_pair_5d,
+        5
+    );
 
     #[test]
     fn test_assign_incident_cells_clears_incident_cell_when_no_cells() {
