@@ -267,6 +267,10 @@ where
             message: "removed-face and inserted-face must be disjoint".to_string(),
         });
     }
+    debug_assert!(
+        tds.is_coherently_oriented(),
+        "TDS coherent orientation invariant violated before bistellar flip (k={k_move}, direction={direction:?})",
+    );
 
     // Bistellar move legality: the inserted simplex must not already exist in the complex.
     //

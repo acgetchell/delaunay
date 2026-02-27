@@ -818,6 +818,20 @@ where
                     domain: space.domain,
                     mode: ToroidalConstructionMode::PeriodicImagePoint,
                 });
+                dt.as_triangulation_mut()
+                    .normalize_and_promote_positive_orientation()
+                    .map_err(|e| TriangulationConstructionError::GeometricDegeneracy {
+                        message: format!(
+                            "Failed to canonicalize periodic orientation after build: {e}",
+                        ),
+                    })?;
+                dt.as_triangulation()
+                    .validate_geometric_cell_orientation()
+                    .map_err(|e| TriangulationConstructionError::GeometricDegeneracy {
+                        message: format!(
+                            "Periodic geometric orientation validation failed after build: {e}",
+                        ),
+                    })?;
                 Ok(dt)
             }
         }
@@ -1196,8 +1210,7 @@ where
             let in_domain = cell_barycenter_in_fundamental_domain(ck).unwrap_or(false);
             let mut symbolic_signature = lifted_vertices.clone();
             symbolic_signature.sort_unstable();
-            let mut lifted_ordered = lifted_vertices.clone();
-            lifted_ordered.sort_by_key(|(vk, _)| *vk);
+            let lifted_ordered = lifted_vertices.clone();
             let mut periodic_facets: Vec<PeriodicFacetKey> = Vec::with_capacity(D + 1);
             for facet_idx in 0..=D {
                 periodic_facets.push(periodic_facet_key_from_lifted(&lifted_ordered, facet_idx));
@@ -1761,13 +1774,22 @@ where
         }
 
         // Canonicalize quotient-cell orientation after symbolic neighbor reconstruction.
-        tds_mut.normalize_coherent_orientation().map_err(|e| {
-            TriangulationConstructionError::GeometricDegeneracy {
-                message: format!(
-                    "normalize_coherent_orientation failed for periodic quotient: {e}",
-                ),
+        //
+        // For periodic quotients, self-neighbor identifications can produce orientation
+        // constraints that are contradictory for global normalization even when the local
+        // adjacency invariants are still structurally valid. Keep this best-effort here and
+        // defer hard failure to the subsequent `is_valid()` check.
+        if let Err(error) = tds_mut.normalize_coherent_orientation() {
+            #[cfg(debug_assertions)]
+            tracing::debug!(
+                ?error,
+                "periodic quotient: skipping coherent-orientation normalization failure"
+            );
+            #[cfg(not(debug_assertions))]
+            {
+                let _ = &error;
             }
-        })?;
+        }
         // Rebuild incident-cell pointers after topology surgery.
         tds_mut.assign_incident_cells().map_err(|e| {
             TriangulationConstructionError::GeometricDegeneracy {

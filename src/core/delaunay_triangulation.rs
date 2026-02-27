@@ -4843,6 +4843,10 @@ where
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Post-repair safety/rollback checks are intentionally centralized for transactional correctness"
+    )]
     fn maybe_repair_after_insertion(
         &mut self,
         mut vertex_key: VertexKey,
@@ -4963,6 +4967,15 @@ where
                 });
             }
         }
+        // Flip-based repair mutates cell orderings; restore canonical positive geometric
+        // orientation before exposing the updated triangulation state.
+        self.tri.normalize_and_promote_positive_orientation()?;
+        self.tri
+            .validate_geometric_cell_orientation()
+            .map_err(|err| InsertionError::TopologyValidationFailed {
+                message: "Geometric orientation invalid after Delaunay repair".to_string(),
+                source: Box::new(err),
+            })?;
         Ok((vertex_key, used_heuristic))
     }
 

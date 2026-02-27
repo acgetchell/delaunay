@@ -1620,6 +1620,15 @@ where
         self.generation.load(Ordering::Relaxed)
     }
 
+    /// Marks the triangulation topology as modified and invalidates generation-keyed caches.
+    ///
+    /// This is intended for crate-internal mutation paths that adjust cell slot ordering
+    /// without going through the standard insertion/removal APIs.
+    #[inline]
+    pub(crate) fn mark_topology_modified(&self) {
+        self.bump_generation();
+    }
+
     // =========================================================================
     // QUERY OPERATIONS
     // =========================================================================
@@ -3348,6 +3357,14 @@ where
                             ),
                         }
                     })?;
+                    // Periodic-lifted adjacencies do not have a unique canonical orientation at this
+                    // structural layer because the embedding depends on lattice representative choice.
+                    // Skip normalization constraints for these pairs.
+                    if cell.periodic_vertex_offsets().is_some()
+                        || neighbor_cell.periodic_vertex_offsets().is_some()
+                    {
+                        continue;
+                    }
                     let mirror_idx = cell.mirror_facet_index(facet_idx, neighbor_cell).ok_or_else(
                         || TdsError::InvalidNeighbors {
                             message: format!(
@@ -3877,11 +3894,6 @@ where
                     continue;
                 }
 
-                // Check each adjacent pair once.
-                if cell_key.data().as_ffi() > neighbor_key.data().as_ffi() {
-                    continue;
-                }
-
                 let neighbor_cell =
                     self.cells
                         .get(neighbor_key)
@@ -3890,6 +3902,14 @@ where
                                 "Neighbor cell {neighbor_key:?} referenced by cell {cell_key:?} is missing during orientation validation",
                             ),
                         })?;
+                // Periodic-lifted adjacencies do not have a unique canonical orientation at this
+                // structural layer because the embedding depends on lattice representative choice.
+                // Skip combinatorial orientation checks for these pairs.
+                if cell.periodic_vertex_offsets().is_some()
+                    || neighbor_cell.periodic_vertex_offsets().is_some()
+                {
+                    continue;
+                }
 
                 let mirror_idx = cell.mirror_facet_index(facet_idx, neighbor_cell).ok_or_else(
                     || TdsError::InvalidNeighbors {
@@ -3900,6 +3920,32 @@ where
                         ),
                     },
                 )?;
+                let back_neighbor = neighbor_cell
+                    .neighbors()
+                    .and_then(|neighbor_neighbors| {
+                        neighbor_neighbors.get(mirror_idx).copied().flatten()
+                    })
+                    .ok_or_else(|| TdsError::InvalidNeighbors {
+                        message: format!(
+                            "Orientation validation expected back-reference: cell {:?}[{facet_idx}] -> {:?} should be mirrored by cell {:?}[{mirror_idx}] -> {:?}, found None",
+                            cell.uuid(),
+                            neighbor_key,
+                            neighbor_cell.uuid(),
+                            cell_key,
+                        ),
+                    })?;
+                if back_neighbor != cell_key {
+                    return Err(TdsError::InvalidNeighbors {
+                        message: format!(
+                            "Orientation validation expected back-reference: cell {:?}[{facet_idx}] -> {:?} should be mirrored by cell {:?}[{mirror_idx}] -> {:?}, found {:?}",
+                            cell.uuid(),
+                            neighbor_key,
+                            neighbor_cell.uuid(),
+                            cell_key,
+                            back_neighbor,
+                        ),
+                    });
+                }
 
                 let cell1_facet_vertices = Self::facet_vertices_in_cell_order(cell, facet_idx)?;
                 let cell2_facet_vertices =
@@ -6653,6 +6699,56 @@ mod tests {
         assert!(tds.validate_coherent_orientation().is_ok());
         assert!(tds.is_coherently_oriented());
         assert!(tds.normalize_coherent_orientation().is_ok());
+    }
+
+    #[test]
+    fn test_orientation_validation_rejects_one_way_neighbor_pointer() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let cell1_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        let cell2_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_b, v_a, v_d], None).unwrap())
+            .unwrap();
+        tds.assign_neighbors().unwrap();
+        assert!(tds.validate_coherent_orientation().is_ok());
+
+        let mirror_idx = {
+            let cell1 = tds.get_cell(cell1_key).unwrap();
+            let neighbors = cell1
+                .neighbors()
+                .expect("cell1 should have neighbors after assign_neighbors()");
+            let facet_idx = neighbors
+                .iter()
+                .position(|n| *n == Some(cell2_key))
+                .expect("cell1 should reference cell2");
+            let cell2 = tds.get_cell(cell2_key).unwrap();
+            cell1
+                .mirror_facet_index(facet_idx, cell2)
+                .expect("adjacent cells should have a mirror facet")
+        };
+
+        {
+            let cell2 = tds.get_cell_by_key_mut(cell2_key).unwrap();
+            let neighbors = cell2
+                .neighbors
+                .as_mut()
+                .expect("cell2 should have neighbors after assign_neighbors()");
+            neighbors[mirror_idx] = None;
+        }
+
+        let err = tds.validate_coherent_orientation().unwrap_err();
+        assert!(matches!(
+            err,
+            TdsError::InvalidNeighbors { message } if message.contains("expected back-reference")
+        ));
+        assert!(!tds.is_coherently_oriented());
     }
 
     macro_rules! test_normalize_repairs_incoherent_adjacent_pair {

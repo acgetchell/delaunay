@@ -38,6 +38,7 @@ Target a single proptest module:
 
 ```bash
 cargo test --test proptest_predicates
+cargo test --test proptest_orientation
 cargo test --test proptest_tds
 ```
 
