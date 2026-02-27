@@ -511,6 +511,13 @@ where
 
         // Add the new vertex as the apex
         new_cell_vertices.push(new_vertex_key);
+        // The facet order copied above matches the boundary-cell facet order.
+        // For coherent orientation across that shared facet, odd permutation is required
+        // exactly when (facet_idx + apex_idx) is even (apex_idx = D).
+        let expected_odd_permutation = (facet_idx + D) % 2 == 0;
+        if expected_odd_permutation && D >= 2 {
+            new_cell_vertices.swap(0, 1);
+        }
 
         // Create and insert the new cell
         let new_cell =
@@ -1259,6 +1266,9 @@ where
         neighbor_pointers_updated = total_neighbor_slots_fixed,
         "repair_neighbor_pointers: neighbor rebuild complete"
     );
+    // Ensure rebuilt topology is also coherently oriented (used by fixtures/tests that
+    // construct cells manually and rely on this utility to produce a fully valid TDS).
+    tds.normalize_coherent_orientation()?;
 
     // Validate no cycles were introduced (debug mode only)
     #[cfg(debug_assertions)]

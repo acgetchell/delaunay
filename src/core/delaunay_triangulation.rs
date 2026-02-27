@@ -5020,13 +5020,19 @@ where
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
-    ///     vertex!([1.0, 1.0]),
+    ///     vertex!([0.3, 0.3]), // interior vertex
     /// ];
     /// let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
     ///
-    /// // Get a vertex to remove
-    /// let vertex_to_remove = dt.vertices().next().unwrap().1.clone();
-    /// let cells_before = dt.number_of_cells();
+    /// // Remove a known interior vertex.
+    /// let vertex_to_remove = dt
+    ///     .vertices()
+    ///     .find(|(_, v)| {
+    ///         let coords = v.point().coords();
+    ///         (coords[0] - 0.3).abs() < 1e-10 && (coords[1] - 0.3).abs() < 1e-10
+    ///     })
+    ///     .map(|(_, v)| *v)
+    ///     .unwrap();
     ///
     /// // Remove the vertex and all cells containing it
     /// let cells_removed = dt.remove_vertex(&vertex_to_remove).unwrap();

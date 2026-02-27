@@ -318,7 +318,7 @@ where
         inserted_face_vertices,
     );
 
-    for vertices in &new_cell_vertices {
+    for vertices in &mut new_cell_vertices {
         if flip_would_duplicate_cell_any(tds, vertices, &topology_index) {
             return Err(FlipError::DuplicateCell);
         }
@@ -332,6 +332,7 @@ where
             .map_err(|e| FlipError::PredicateFailure {
                 message: format!("orientation failed for flip cell: {e}"),
             })?;
+        let mut orientation_sign = orientation;
         if orientation == 0 {
             let config = config_presets::high_precision::<K::Scalar>();
             let robust_orientation =
@@ -351,6 +352,16 @@ where
                 }
                 return Err(FlipError::DegenerateCell);
             }
+            orientation_sign = match robust_orientation {
+                Orientation::POSITIVE => 1,
+                Orientation::NEGATIVE => -1,
+                Orientation::DEGENERATE => 0,
+            };
+        }
+
+        // Canonicalize to positive orientation by swapping two vertices when needed.
+        if orientation_sign < 0 {
+            vertices.swap(0, 1);
         }
     }
 
@@ -385,6 +396,15 @@ where
     })?;
 
     tds.remove_cells_by_keys(removed_cells);
+    tds.normalize_coherent_orientation()
+        .map_err(|e| FlipError::TdsMutation {
+            message: e.to_string(),
+        })?;
+
+    debug_assert!(
+        tds.is_coherently_oriented(),
+        "TDS coherent orientation invariant violated after bistellar flip (k={k_move}, direction={direction:?})",
+    );
 
     Ok(FlipInfo {
         kind: BistellarFlipKind { k: k_move, d: D },

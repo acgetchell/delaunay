@@ -2402,8 +2402,13 @@ where
             vertex_keys.push(vkey);
         }
 
-        // Create single D-cell from all vertices
-        // Note: Cell::new() handles vertex ordering/orientation internally
+        // Canonicalize initial simplex orientation: store cells in positive orientation order.
+        // Swapping any two vertices flips orientation.
+        if orientation < 0 {
+            vertex_keys.swap(0, 1);
+        }
+
+        // Create single D-cell from all vertices in canonicalized order.
         let cell = Cell::new(vertex_keys, None).map_err(|e| {
             TriangulationConstructionError::FailedToCreateCell {
                 message: format!("Failed to create initial simplex cell: {e}"),
@@ -3721,6 +3726,9 @@ where
             suspicion.neighbor_pointers_rebuilt = repaired > 0;
         }
 
+        // Canonicalize cell ordering to satisfy coherent-orientation invariants.
+        self.tds.normalize_coherent_orientation()?;
+
         // Assign an incident cell for the inserted vertex without a global rebuild.
         let hint = new_cells.iter().copied().find(|&ck| {
             self.tds
@@ -4292,6 +4300,9 @@ where
                     suspicion.neighbor_pointers_rebuilt = repaired > 0;
                 }
 
+                // Canonicalize cell ordering to satisfy coherent-orientation invariants.
+                self.tds.normalize_coherent_orientation()?;
+
                 // Assign an incident cell for the inserted vertex without a global rebuild.
                 let hint = new_cells.iter().copied().find(|&ck| {
                     self.tds
@@ -4480,6 +4491,9 @@ where
                 })?;
             }
         }
+        // Fan retriangulation may produce locally inconsistent slot orderings; normalize
+        // orientation before rebuilding incidence and removing the vertex.
+        self.tds.normalize_coherent_orientation()?;
 
         // Rebuild vertex-cell incidence for all vertices
         self.tds.assign_incident_cells()?;

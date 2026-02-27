@@ -1760,6 +1760,14 @@ where
             })?;
         }
 
+        // Canonicalize quotient-cell orientation after symbolic neighbor reconstruction.
+        tds_mut.normalize_coherent_orientation().map_err(|e| {
+            TriangulationConstructionError::GeometricDegeneracy {
+                message: format!(
+                    "normalize_coherent_orientation failed for periodic quotient: {e}",
+                ),
+            }
+        })?;
         // Rebuild incident-cell pointers after topology surgery.
         tds_mut.assign_incident_cells().map_err(|e| {
             TriangulationConstructionError::GeometricDegeneracy {

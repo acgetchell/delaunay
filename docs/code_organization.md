@@ -81,6 +81,7 @@ delaunay/
 │   │   ├── README.md
 │   │   └── changelog.hbs
 │   ├── KNOWN_ISSUES_4D.md
+│   ├── ORIENTATION_SPEC.md
 │   ├── README.md
 │   ├── RELEASING.md
 │   ├── api_design.md
@@ -229,6 +230,7 @@ delaunay/
 │   ├── regression_delaunay_2d.rs
 │   ├── serialization_vertex_preservation.rs
 │   ├── storage_backend_compatibility.rs
+│   ├── tds_orientation.rs
 │   └── triangulation_builder.rs
 ├── .auto-changelog
 ├── .codacy.yml

@@ -70,6 +70,7 @@
 //! | **Facet Sharing** | `Tds::is_valid()` / `Tds::validate()` | Each facet shared by ≤ 2 cells |
 //! | **No Duplicate Cells** | `Tds::is_valid()` / `Tds::validate()` | No cells with identical vertex sets |
 //! | **Neighbor Consistency** | `Tds::is_valid()` / `Tds::validate()` | Mutual neighbor relationships |
+//! | **Coherent Orientation** | `Tds::is_valid()` / `Tds::validate()` | Adjacent cells induce opposite facet orientations |
 //! | **Cell Vertex Keys** | `Tds::is_valid()` / `Tds::validate()` | Cells reference only valid vertex keys |
 //! | **Vertex Incidence** | `Tds::is_valid()` / `Tds::validate()` | `Vertex::incident_cell` is non-dangling and consistent (when present) |
 //! | **Cell Validity** | `CellBuilder::validate()` (vertex count) + `cell.is_valid()` (comprehensive) | Construction + runtime validation |
@@ -94,6 +95,7 @@
 //!    - `Vertex::incident_cell`, when present, must point at an existing cell that contains the vertex
 //!    - Isolated vertices (not referenced by any cell) are allowed at this layer (`incident_cell` may be `None`)
 //!    - No duplicate cells
+//!    - Coherent orientation (adjacent cells induce opposite facet orientations)
 //!    - Facet sharing invariant (≤2 cells per facet)
 //!    - Neighbor consistency
 //! 3. **Level 3: Manifold Topology** - [`Triangulation::is_valid()`]
@@ -248,6 +250,7 @@ use serde::{
 use slotmap::{Key, new_key_type};
 use std::{
     cmp::Ordering as CmpOrdering,
+    collections::VecDeque,
     fmt::{self, Debug},
     marker::PhantomData,
     sync::{
@@ -392,6 +395,32 @@ pub enum TdsValidationError {
     InvalidNeighbors {
         /// Description of the neighbor validation failure.
         message: String,
+    },
+    /// Coherent orientation invariant violated between adjacent cells.
+    #[error(
+        "Orientation invariant violated between cells {cell1_uuid} and {cell2_uuid}; shared facet orderings {facet_vertices:?} vs {cell2_facet_vertices:?} (cell1 facet index {cell1_facet_index}, cell2 facet index {cell2_facet_index}, observed_odd_permutation={observed_odd_permutation}, expected_odd_permutation={expected_odd_permutation})"
+    )]
+    OrientationViolation {
+        /// Key of the first cell.
+        cell1_key: CellKey,
+        /// UUID of the first cell.
+        cell1_uuid: Uuid,
+        /// Key of the second cell.
+        cell2_key: CellKey,
+        /// UUID of the second cell.
+        cell2_uuid: Uuid,
+        /// Facet index in the first cell.
+        cell1_facet_index: usize,
+        /// Facet index in the second cell.
+        cell2_facet_index: usize,
+        /// Vertex keys of the shared facet in `cell1` ordering (excluding `cell1_facet_index`).
+        facet_vertices: Vec<VertexKey>,
+        /// Vertex keys of the shared facet in `cell2` ordering (excluding `cell2_facet_index`).
+        cell2_facet_vertices: Vec<VertexKey>,
+        /// Observed parity of the permutation from `facet_vertices` to `cell2_facet_vertices`.
+        observed_odd_permutation: bool,
+        /// Expected odd-permutation parity under the coherent boundary-orientation convention.
+        expected_odd_permutation: bool,
     },
     /// The triangulation contains duplicate cells.
     #[error("Duplicate cells detected: {message}")]
@@ -547,6 +576,8 @@ pub enum InvariantKind {
     FacetSharing,
     /// Neighbor topology and mutual-consistency invariants.
     NeighborConsistency,
+    /// Coherent combinatorial orientation (adjacent cells induce opposite facet orientations).
+    CoherentOrientation,
     /// Cell neighbor graph connectivity (single connected component).
     Connectedness,
     /// Triangulation/topology invariants (manifold-with-boundary, Euler characteristic).
@@ -3260,6 +3291,134 @@ where
         self.bump_generation();
     }
 
+    /// Normalizes cell vertex ordering so all adjacent cells satisfy coherent orientation.
+    ///
+    /// This computes a per-cell flip assignment over each connected component of the
+    /// cell-neighbor graph, then applies slot swaps (`0 <-> 1`) to cells that must flip.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TdsValidationError::InconsistentDataStructure`] if neighbor references are
+    /// dangling, mirror facets cannot be derived, or orientation constraints are contradictory.
+    pub(crate) fn normalize_coherent_orientation(&mut self) -> Result<(), TdsValidationError> {
+        let mut flip_assignment: FastHashMap<CellKey, bool> =
+            fast_hash_map_with_capacity(self.cells.len());
+
+        for root_cell_key in self.cells.keys() {
+            if flip_assignment.contains_key(&root_cell_key) {
+                continue;
+            }
+
+            flip_assignment.insert(root_cell_key, false);
+            let mut queue = VecDeque::new();
+            queue.push_back(root_cell_key);
+
+            while let Some(cell_key) = queue.pop_front() {
+                let this_flip_state = *flip_assignment.get(&cell_key).ok_or_else(|| {
+                    TdsError::InconsistentDataStructure {
+                        message: format!(
+                            "Missing flip assignment for cell {cell_key:?} during orientation normalization",
+                        ),
+                    }
+                })?;
+
+                let cell = self.cells.get(cell_key).ok_or_else(|| {
+                    TdsError::InconsistentDataStructure {
+                        message: format!(
+                            "Cell {cell_key:?} missing during orientation normalization traversal",
+                        ),
+                    }
+                })?;
+                let Some(neighbors) = cell.neighbors() else {
+                    continue;
+                };
+
+                for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
+                    let Some(neighbor_key) = *neighbor_key_opt else {
+                        continue;
+                    };
+                    if neighbor_key == cell_key {
+                        continue;
+                    }
+
+                    let neighbor_cell = self.cells.get(neighbor_key).ok_or_else(|| {
+                        TdsError::InconsistentDataStructure {
+                            message: format!(
+                                "Neighbor cell {neighbor_key:?} referenced by {cell_key:?} missing during orientation normalization",
+                            ),
+                        }
+                    })?;
+                    let mirror_idx = cell.mirror_facet_index(facet_idx, neighbor_cell).ok_or_else(
+                        || TdsError::InvalidNeighbors {
+                            message: format!(
+                                "Could not determine mirror facet while normalizing orientation: cell {:?}[{facet_idx}] -> neighbor {:?}",
+                                cell.uuid(),
+                                neighbor_cell.uuid(),
+                            ),
+                        },
+                    )?;
+
+                    let this_facet_vertices = Self::facet_vertices_in_cell_order(cell, facet_idx)?;
+                    let neighbor_facet_vertices =
+                        Self::facet_vertices_in_cell_order(neighbor_cell, mirror_idx)?;
+                    let observed_odd_permutation = Self::permutation_is_odd(
+                        &this_facet_vertices[..],
+                        &neighbor_facet_vertices[..],
+                    )
+                    .ok_or_else(|| TdsError::InconsistentDataStructure {
+                        message: format!(
+                            "Could not derive facet-order permutation parity while normalizing cells {:?} and {:?}",
+                            cell.uuid(),
+                            neighbor_cell.uuid(),
+                        ),
+                    })?;
+                    // For opposite induced boundary orientations across a shared facet:
+                    // sign(permutation(cell1_facet -> cell2_facet)) = (-1)^(facet_idx + mirror_idx + 1)
+                    // so odd parity is expected exactly when (facet_idx + mirror_idx) is even.
+                    let expected_odd_permutation = (facet_idx + mirror_idx) % 2 == 0;
+                    let currently_coherent = observed_odd_permutation == expected_odd_permutation;
+
+                    // Flipping exactly one endpoint toggles the coherence state for this edge.
+                    let requires_relative_flip = !currently_coherent;
+                    let required_neighbor_flip_state = this_flip_state ^ requires_relative_flip;
+
+                    if let Some(existing_neighbor_flip_state) = flip_assignment.get(&neighbor_key) {
+                        if *existing_neighbor_flip_state != required_neighbor_flip_state {
+                            return Err(TdsError::InconsistentDataStructure {
+                                message: format!(
+                                    "Contradictory orientation constraints while normalizing cells {:?} and {:?}",
+                                    cell.uuid(),
+                                    neighbor_cell.uuid(),
+                                ),
+                            });
+                        }
+                    } else {
+                        flip_assignment.insert(neighbor_key, required_neighbor_flip_state);
+                        queue.push_back(neighbor_key);
+                    }
+                }
+            }
+        }
+
+        for (cell_key, should_flip) in flip_assignment {
+            if !should_flip {
+                continue;
+            }
+            let cell = self.cells.get_mut(cell_key).ok_or_else(|| {
+                TdsError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell {cell_key:?} missing while applying orientation normalization",
+                    ),
+                }
+            })?;
+            if cell.number_of_vertices() >= 2 {
+                cell.swap_vertex_slots(0, 1);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Builds a `FacetToCellsMap` with strict error handling.
     ///
     /// This method returns an error if any cell has missing vertex keys, ensuring
@@ -3692,6 +3851,168 @@ where
         Self::validate_facet_sharing_with_facet_to_cells_map(&facet_to_cells)
     }
 
+    /// Checks whether all adjacent cells induce opposite orientations on shared facets.
+    ///
+    /// This is a combinatorial check based on cell vertex ordering and neighbor slots.
+    /// It does not evaluate geometric predicates.
+    ///
+    /// Returns `false` on the first detected inconsistency or data-structure error.
+    #[must_use]
+    pub fn is_coherently_oriented(&self) -> bool {
+        self.validate_coherent_orientation().is_ok()
+    }
+
+    /// Validates coherent combinatorial orientation for all adjacent cell pairs.
+    ///
+    /// For two neighboring cells that share a facet, this verifies the induced
+    /// facet orientations are opposite (boundary-orientation convention).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TdsValidationError::OrientationViolation`] on the first violating pair.
+    /// Returns [`TdsValidationError::InconsistentDataStructure`] if neighbor pointers
+    /// reference missing cells or malformed facet indices.
+    fn validate_coherent_orientation(&self) -> Result<(), TdsValidationError> {
+        for (cell_key, cell) in &self.cells {
+            let Some(neighbors) = cell.neighbors() else {
+                continue;
+            };
+
+            for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
+                let Some(neighbor_key) = *neighbor_key_opt else {
+                    continue; // Boundary facet
+                };
+
+                // Periodic quotient triangulations may use self-neighbors.
+                // Neighbor/topology validation handles admissibility checks.
+                if neighbor_key == cell_key {
+                    continue;
+                }
+
+                // Check each adjacent pair once.
+                if cell_key.data().as_ffi() > neighbor_key.data().as_ffi() {
+                    continue;
+                }
+
+                let neighbor_cell =
+                    self.cells
+                        .get(neighbor_key)
+                        .ok_or_else(|| TdsError::InconsistentDataStructure {
+                            message: format!(
+                                "Neighbor cell {neighbor_key:?} referenced by cell {cell_key:?} is missing during orientation validation",
+                            ),
+                        })?;
+
+                let mirror_idx = cell.mirror_facet_index(facet_idx, neighbor_cell).ok_or_else(
+                    || TdsError::InvalidNeighbors {
+                        message: format!(
+                            "Could not determine mirror facet: cell {:?}[{facet_idx}] -> neighbor {:?}",
+                            cell.uuid(),
+                            neighbor_cell.uuid(),
+                        ),
+                    },
+                )?;
+
+                let cell1_facet_vertices = Self::facet_vertices_in_cell_order(cell, facet_idx)?;
+                let cell2_facet_vertices =
+                    Self::facet_vertices_in_cell_order(neighbor_cell, mirror_idx)?;
+                let observed_odd_permutation = Self::permutation_is_odd(
+                    &cell1_facet_vertices[..],
+                    &cell2_facet_vertices[..],
+                )
+                .ok_or_else(|| TdsError::InconsistentDataStructure {
+                    message: format!(
+                        "Could not derive facet-order permutation parity between cells {:?} and {:?}",
+                        cell.uuid(),
+                        neighbor_cell.uuid(),
+                    ),
+                })?;
+                // For opposite induced boundary orientations across a shared facet:
+                // sign(permutation(cell1_facet -> cell2_facet)) = (-1)^(facet_idx + mirror_idx + 1)
+                // so odd parity is expected exactly when (facet_idx + mirror_idx) is even.
+                let expected_odd_permutation = (facet_idx + mirror_idx) % 2 == 0;
+
+                if observed_odd_permutation != expected_odd_permutation {
+                    return Err(TdsError::OrientationViolation {
+                        cell1_key: cell_key,
+                        cell1_uuid: cell.uuid(),
+                        cell2_key: neighbor_key,
+                        cell2_uuid: neighbor_cell.uuid(),
+                        cell1_facet_index: facet_idx,
+                        cell2_facet_index: mirror_idx,
+                        facet_vertices: cell1_facet_vertices.into_iter().collect(),
+                        cell2_facet_vertices: cell2_facet_vertices.into_iter().collect(),
+                        observed_odd_permutation,
+                        expected_odd_permutation,
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn facet_vertices_in_cell_order(
+        cell: &Cell<T, U, V, D>,
+        omit_idx: usize,
+    ) -> Result<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>, TdsValidationError> {
+        if omit_idx >= cell.number_of_vertices() {
+            return Err(TdsError::InconsistentDataStructure {
+                message: format!(
+                    "Facet index {omit_idx} out of bounds for cell {:?} with {} vertices during orientation validation",
+                    cell.uuid(),
+                    cell.number_of_vertices(),
+                ),
+            });
+        }
+
+        let mut facet_vertices = SmallBuffer::new();
+        for (idx, &vkey) in cell.vertices().iter().enumerate() {
+            if idx != omit_idx {
+                facet_vertices.push(vkey);
+            }
+        }
+        Ok(facet_vertices)
+    }
+
+    fn permutation_is_odd(source_order: &[VertexKey], target_order: &[VertexKey]) -> Option<bool> {
+        if source_order.len() != target_order.len() {
+            return None;
+        }
+
+        let mut target_positions: SmallBuffer<usize, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(source_order.len());
+        let mut used_target_indices: SmallBuffer<bool, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::from_elem(false, target_order.len());
+
+        for &source_vertex in source_order {
+            let mut matched_target_position = None;
+            for (target_idx, &target_vertex) in target_order.iter().enumerate() {
+                if target_vertex == source_vertex && !used_target_indices[target_idx] {
+                    matched_target_position = Some(target_idx);
+                    used_target_indices[target_idx] = true;
+                    break;
+                }
+            }
+            target_positions.push(matched_target_position?);
+        }
+
+        if used_target_indices.iter().any(|used| !*used) {
+            return None;
+        }
+
+        let mut is_odd = false;
+        for i in 0..target_positions.len() {
+            for j in (i + 1)..target_positions.len() {
+                if target_positions[i] > target_positions[j] {
+                    is_odd = !is_odd;
+                }
+            }
+        }
+
+        Some(is_odd)
+    }
+
     fn validate_facet_sharing_with_facet_to_cells_map(
         facet_to_cells: &FacetToCellsMap,
     ) -> Result<(), TdsValidationError> {
@@ -3725,6 +4046,7 @@ where
     /// - No duplicate cells (same vertex set)
     /// - Facet sharing invariant (each facet is shared by at most 2 cells)
     /// - Neighbor consistency (topology + mutual neighbors)
+    /// - Coherent orientation (adjacent cells induce opposite facet orientations)
     ///
     /// # ⚠️ Performance Warning
     ///
@@ -3776,6 +4098,7 @@ where
         let facet_to_cells = self.build_facet_to_cells_map()?;
         Self::validate_facet_sharing_with_facet_to_cells_map(&facet_to_cells)?;
         self.validate_neighbors_with_facet_to_cells_map(&facet_to_cells)?;
+        self.validate_coherent_orientation()?;
 
         Ok(())
     }
@@ -3920,7 +4243,8 @@ where
             });
         }
 
-        // 5–6. Facet sharing + neighbor consistency share the facet-to-cells map.
+        // 5–7. Facet sharing + neighbor consistency + coherent orientation.
+        let mut neighbor_consistency_ok = false;
         match self.build_facet_to_cells_map() {
             Ok(facet_to_cells) => {
                 if let Err(e) =
@@ -3937,6 +4261,8 @@ where
                         kind: InvariantKind::NeighborConsistency,
                         error: e.into(),
                     });
+                } else {
+                    neighbor_consistency_ok = true;
                 }
             }
             Err(e) => {
@@ -3957,7 +4283,14 @@ where
             }
         }
 
-        // 7. Connectivity (topology-layer invariant; reported here for comprehensive diagnostics).
+        if neighbor_consistency_ok && let Err(e) = self.validate_coherent_orientation() {
+            violations.push(InvariantViolation {
+                kind: InvariantKind::CoherentOrientation,
+                error: e.into(),
+            });
+        }
+
+        // 8. Connectivity (topology-layer invariant; reported here for comprehensive diagnostics).
         //
         // Note: connectivity is NOT part of Level-2 `is_valid()` — it belongs at Level 3
         // (Triangulation::is_valid). It is included here in the diagnostic report so that

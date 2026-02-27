@@ -712,6 +712,29 @@ where
         self.periodic_vertex_offsets = None;
     }
 
+    /// Swaps two vertex slots and keeps aligned per-slot buffers consistent.
+    ///
+    /// This updates:
+    /// - `vertices`
+    /// - `neighbors` (if present)
+    /// - `periodic_vertex_offsets` (if present)
+    #[inline]
+    pub(crate) fn swap_vertex_slots(&mut self, index_a: usize, index_b: usize) {
+        self.vertices.swap(index_a, index_b);
+        if let Some(neighbors) = &mut self.neighbors
+            && index_a < neighbors.len()
+            && index_b < neighbors.len()
+        {
+            neighbors.swap(index_a, index_b);
+        }
+        if let Some(offsets) = &mut self.periodic_vertex_offsets
+            && index_a < offsets.len()
+            && index_b < offsets.len()
+        {
+            offsets.swap(index_a, index_b);
+        }
+    }
+
     /// Ensures the cell has a properly initialized neighbors buffer of size D+1.
     ///
     /// This helper centralizes neighbor buffer initialization logic to avoid code duplication
