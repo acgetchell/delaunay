@@ -1,6 +1,6 @@
 # Known Issues: 4D Bulk Construction
 
-## Status (as of v0.7.1)
+## Status (targeting v0.7.2)
 
 ### Current issue
 

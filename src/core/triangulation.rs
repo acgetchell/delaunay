@@ -4866,6 +4866,10 @@ where
     /// (Note: `TdsMutationError` is currently a thin wrapper around
     /// [`TdsValidationError`]; the wrapper exists to make mutation call sites/docs more semantically explicit.)
     ///
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Vertex removal keeps rollback, retriangulation, repair, and orientation finalization in one explicit transactional flow"
+    )]
     pub(crate) fn remove_vertex(
         &mut self,
         vertex: &Vertex<K::Scalar, U, D>,
@@ -4917,89 +4921,103 @@ where
             }
         })?;
 
-        // Fill cavity with fan triangulation BEFORE removing old cells
-        // Use fan triangulation that skips boundary facets which already include the apex
-        let new_cells = self
-            .fan_fill_cavity(apex_vertex_key, &boundary_facets)
-            .map_err(|e| TdsValidationError::InconsistentDataStructure {
-                message: format!("Fan triangulation failed: {e}"),
-            })?;
-        self.canonicalize_positive_orientation_for_cells(&new_cells)
-            .map_err(|e| TdsValidationError::InconsistentDataStructure {
-                message: format!(
-                    "Failed to canonicalize positive orientation during fan retriangulation: {e}",
-                ),
-            })?;
-
-        // Wire neighbors for the new cells (while both old and new cells exist)
-        let external_facets =
-            external_facets_for_boundary(&self.tds, &cells_to_remove, &boundary_facets).map_err(
-                |e| TdsValidationError::InconsistentDataStructure {
-                    message: format!("External-facet collection failed: {e}"),
-                },
-            )?;
-        wire_cavity_neighbors(
-            &mut self.tds,
-            &new_cells,
-            external_facets.iter().copied(),
-            Some(&cells_to_remove),
-        )
-        .map_err(|e| TdsValidationError::InconsistentDataStructure {
-            message: format!("Neighbor wiring failed: {e}"),
-        })?;
-
-        // Remove the cells containing the vertex (now that new cells are wired up)
-        // Note: remove_cells_by_keys() automatically clears neighbor pointers in surviving
-        // cells that reference removed cells (sets them to None/boundary)
-        let mut cells_removed = self.tds.remove_cells_by_keys(&cells_to_remove);
-
-        // Validate facet topology for newly created cells (O(k*D) localized check)
-        if let Some(issues) = self.detect_local_facet_issues(&new_cells)? {
-            #[cfg(debug_assertions)]
-            tracing::warn!(
-                "Warning: {} over-shared facets detected after vertex removal, repairing...",
-                issues.len()
-            );
-            let removed = self.repair_local_facet_issues(&issues)?;
-            cells_removed += removed;
-            #[cfg(debug_assertions)]
-            tracing::debug!("Repaired by removing {removed} additional cells");
-
-            // Repair neighbor pointers after removing additional cells
-            // This ensures neighbor consistency after repair operations
-            if removed > 0 {
-                repair_neighbor_pointers(&mut self.tds).map_err(|e| {
-                    TdsValidationError::InconsistentDataStructure {
-                        message: format!("Neighbor repair after facet issue repair failed: {e}"),
-                    }
+        // Snapshot before destructive retriangulation edits so we can roll back if any
+        // subsequent orientation/finalization step fails.
+        let tds_snapshot = self.tds.clone();
+        let retriangulation_result = (|| -> Result<usize, TdsMutationError> {
+            // Fill cavity with fan triangulation BEFORE removing old cells
+            // Use fan triangulation that skips boundary facets which already include the apex
+            let new_cells = self
+                .fan_fill_cavity(apex_vertex_key, &boundary_facets)
+                .map_err(|e| TdsValidationError::InconsistentDataStructure {
+                    message: format!("Fan triangulation failed: {e}"),
                 })?;
+            self.canonicalize_positive_orientation_for_cells(&new_cells)
+                .map_err(|e| TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Failed to canonicalize positive orientation during fan retriangulation: {e}",
+                    ),
+                })?;
+
+            // Wire neighbors for the new cells (while both old and new cells exist)
+            let external_facets =
+                external_facets_for_boundary(&self.tds, &cells_to_remove, &boundary_facets)
+                    .map_err(|e| TdsValidationError::InconsistentDataStructure {
+                        message: format!("External-facet collection failed: {e}"),
+                    })?;
+            wire_cavity_neighbors(
+                &mut self.tds,
+                &new_cells,
+                external_facets.iter().copied(),
+                Some(&cells_to_remove),
+            )
+            .map_err(|e| TdsValidationError::InconsistentDataStructure {
+                message: format!("Neighbor wiring failed: {e}"),
+            })?;
+
+            // Remove the cells containing the vertex (now that new cells are wired up)
+            // Note: remove_cells_by_keys() automatically clears neighbor pointers in surviving
+            // cells that reference removed cells (sets them to None/boundary)
+            let mut cells_removed = self.tds.remove_cells_by_keys(&cells_to_remove);
+
+            // Validate facet topology for newly created cells (O(k*D) localized check)
+            if let Some(issues) = self.detect_local_facet_issues(&new_cells)? {
+                #[cfg(debug_assertions)]
+                tracing::warn!(
+                    "Warning: {} over-shared facets detected after vertex removal, repairing...",
+                    issues.len()
+                );
+                let removed = self.repair_local_facet_issues(&issues)?;
+                cells_removed += removed;
+                #[cfg(debug_assertions)]
+                tracing::debug!("Repaired by removing {removed} additional cells");
+
+                // Repair neighbor pointers after removing additional cells
+                // This ensures neighbor consistency after repair operations
+                if removed > 0 {
+                    repair_neighbor_pointers(&mut self.tds).map_err(|e| {
+                        TdsValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Neighbor repair after facet issue repair failed: {e}"
+                            ),
+                        }
+                    })?;
+                }
+            }
+            // Fan retriangulation may produce locally inconsistent slot orderings; normalize
+            // orientation before rebuilding incidence and removing the vertex.
+            self.tds.normalize_coherent_orientation()?;
+            self.canonicalize_global_orientation_sign().map_err(|e| {
+                TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Failed to canonicalize global orientation sign after fan retriangulation: {e}",
+                    ),
+                }
+            })?;
+            self.validate_geometric_cell_orientation().map_err(|e| {
+                TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Geometric orientation validation failed after fan retriangulation: {e}",
+                    ),
+                }
+            })?;
+
+            // Rebuild vertex-cell incidence for all vertices
+            self.tds.assign_incident_cells()?;
+
+            // Remove the vertex using Tds method (handles internal bookkeeping)
+            self.tds.remove_vertex(vertex)?;
+
+            Ok(cells_removed)
+        })();
+
+        match retriangulation_result {
+            Ok(cells_removed) => Ok(cells_removed),
+            Err(error) => {
+                self.tds = tds_snapshot;
+                Err(error)
             }
         }
-        // Fan retriangulation may produce locally inconsistent slot orderings; normalize
-        // orientation before rebuilding incidence and removing the vertex.
-        self.tds.normalize_coherent_orientation()?;
-        self.canonicalize_global_orientation_sign().map_err(|e| {
-            TdsValidationError::InconsistentDataStructure {
-                message: format!(
-                    "Failed to canonicalize global orientation sign after fan retriangulation: {e}",
-                ),
-            }
-        })?;
-        self.validate_geometric_cell_orientation().map_err(|e| {
-            TdsValidationError::InconsistentDataStructure {
-                message: format!(
-                    "Geometric orientation validation failed after fan retriangulation: {e}",
-                ),
-            }
-        })?;
-
-        // Rebuild vertex-cell incidence for all vertices
-        self.tds.assign_incident_cells()?;
-
-        // Remove the vertex using Tds method (handles internal bookkeeping)
-        self.tds.remove_vertex(vertex)?;
-
-        Ok(cells_removed)
     }
 
     /// Pick an apex vertex for fan triangulation.
