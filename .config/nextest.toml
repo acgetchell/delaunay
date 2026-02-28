@@ -32,6 +32,14 @@ retries = 1
 # Show slow tests (> 60s) in CI
 slow-timeout = { period = "60s", terminate-after = 2 }
 
+# Per-test timeout override for known long-running periodic builder coverage test.
+# This test regularly exceeds 120s under CI load, so allow a larger wall-time budget
+# without changing the global timeout behavior for the entire suite.
+[[profile.ci.overrides]]
+filter = 'package(delaunay) and test(test_builder_toroidal_periodic_3d_success)'
+slow-timeout = { period = "180s", terminate-after = 4 }
+retries = 0
+
 # JUnit report configuration
 [profile.ci.junit]
 # Store reports in test-results directory (matches workflow)

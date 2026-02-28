@@ -1984,11 +1984,446 @@ where
         edges
     }
 
+    /// Resolve toroidal domain periods in scalar form for periodic lifted-orientation checks.
+    fn periodic_domain_periods_for_orientation(
+        &self,
+        purpose: &str,
+    ) -> Result<[K::Scalar; D], TdsValidationError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        let GlobalTopology::Toroidal { domain, .. } = self.global_topology else {
+            return Err(TdsValidationError::InconsistentDataStructure {
+                message: format!(
+                    "Encountered periodic cell offsets during {purpose}, but triangulation global topology is not toroidal",
+                ),
+            });
+        };
+
+        let mut periods = [K::Scalar::zero(); D];
+        for axis in 0..D {
+            let period = domain[axis];
+            if !period.is_finite() || period <= 0.0 {
+                return Err(TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Invalid toroidal period {period:?} on axis {axis} during {purpose}",
+                    ),
+                });
+            }
+            periods[axis] =
+                <K::Scalar as NumCast>::from(period).ok_or_else(|| {
+                    TdsValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Could not convert toroidal period {period:?} on axis {axis} into scalar type during {purpose}",
+                        ),
+                    }
+                })?;
+        }
+
+        Ok(periods)
+    }
+    /// Collect cell points for orientation evaluation.
+    ///
+    /// For periodic cells, this applies per-vertex lattice offsets against toroidal periods
+    /// to recover lifted coordinates before invoking geometric predicates.
+    fn collect_cell_points_for_orientation(
+        &self,
+        cell_key: CellKey,
+        cell: &Cell<K::Scalar, U, V, D>,
+        periodic_periods: Option<&[K::Scalar; D]>,
+        purpose: &str,
+    ) -> Result<SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>, TdsValidationError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        let periodic_offsets = cell.periodic_vertex_offsets();
+        if let Some(offsets) = periodic_offsets
+            && offsets.len() != cell.number_of_vertices()
+        {
+            return Err(TdsValidationError::InconsistentDataStructure {
+                message: format!(
+                    "Cell {:?} (key {cell_key:?}) periodic offset count {} does not match vertex count {} during {purpose}",
+                    cell.uuid(),
+                    offsets.len(),
+                    cell.number_of_vertices(),
+                ),
+            });
+        }
+
+        let mut points: SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(cell.number_of_vertices());
+
+        for (vertex_idx, &vertex_key) in cell.vertices().iter().enumerate() {
+            let vertex = self.tds.get_vertex_by_key(vertex_key).ok_or_else(|| {
+                TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell {:?} (key {cell_key:?}) references missing vertex key {vertex_key:?} at position {vertex_idx} during {purpose}",
+                        cell.uuid(),
+                    ),
+                }
+            })?;
+
+            let mut lifted_coords = *vertex.point().coords();
+            if let Some(offsets) = periodic_offsets {
+                let Some(periods) = periodic_periods else {
+                    return Err(TdsValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Cell {:?} (key {cell_key:?}) has periodic offsets but no toroidal domain periods available during {purpose}",
+                            cell.uuid(),
+                        ),
+                    });
+                };
+                let offset = offsets[vertex_idx];
+                for axis in 0..D {
+                    let offset_scalar = <K::Scalar as NumCast>::from(offset[axis]).ok_or_else(|| {
+                        TdsValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Could not convert periodic offset {} for axis {axis} in cell {:?} (key {cell_key:?}) during {purpose}",
+                                offset[axis],
+                                cell.uuid(),
+                            ),
+                        }
+                    })?;
+                    lifted_coords[axis] = lifted_coords[axis] + offset_scalar * periods[axis];
+                }
+            }
+
+            points.push(Point::new(lifted_coords));
+        }
+
+        Ok(points)
+    }
+
+    /// Evaluate a cell's geometric orientation for a specific validation/canonicalization context.
+    ///
+    /// This helper centralizes:
+    /// - periodic domain period caching,
+    /// - lifted-point collection, and
+    /// - kernel orientation predicate invocation with contextual error mapping.
+    fn evaluate_cell_orientation_for_context(
+        &self,
+        cell_key: CellKey,
+        cell: &Cell<K::Scalar, U, V, D>,
+        periodic_periods: &mut Option<[K::Scalar; D]>,
+        purpose: &str,
+        predicate_failure_prefix: &str,
+    ) -> Result<i32, TdsValidationError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        let periodic_ref = if cell.periodic_vertex_offsets().is_some() {
+            if periodic_periods.is_none() {
+                *periodic_periods = Some(self.periodic_domain_periods_for_orientation(purpose)?);
+            }
+            periodic_periods.as_ref()
+        } else {
+            None
+        };
+
+        let points =
+            self.collect_cell_points_for_orientation(cell_key, cell, periodic_ref, purpose)?;
+
+        self.kernel.orientation(&points).map_err(|e| {
+            TdsValidationError::InconsistentDataStructure {
+                message: format!(
+                    "{predicate_failure_prefix} {:?} (key {cell_key:?}): {e}",
+                    cell.uuid(),
+                ),
+            }
+        })
+    }
+    /// Validates geometric orientation sign for each stored cell using the kernel's signed
+    /// determinant predicate.
+    ///
+    /// Cells are stored in canonical positive orientation order by construction and mutation
+    /// paths; a negative sign indicates geometric/combinatorial mismatch.
+    ///
+    /// Periodic-lifted cells are validated in lifted coordinates using per-vertex periodic
+    /// offsets and toroidal domain periods.
+    pub(in crate::core) fn validate_geometric_cell_orientation(
+        &self,
+    ) -> Result<(), TriangulationValidationError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        let mut periodic_periods: Option<[K::Scalar; D]> = None;
+        for (cell_key, cell) in self.tds.cells() {
+            let orientation = self.evaluate_cell_orientation_for_context(
+                cell_key,
+                cell,
+                &mut periodic_periods,
+                "geometric orientation validation",
+                "Geometric orientation predicate failed for cell",
+            )?;
+            if orientation == 0 {
+                return Err(TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell {:?} (key {cell_key:?}) has degenerate geometric orientation",
+                        cell.uuid(),
+                    ),
+                }
+                .into());
+            }
+            if orientation < 0 {
+                return Err(TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell {:?} (key {cell_key:?}) has negative geometric orientation; expected positive canonical orientation",
+                        cell.uuid(),
+                    ),
+                }
+                .into());
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Flip all negatively oriented cells to positive orientation.
+    ///
+    /// This applies to both Euclidean cells and periodic-lifted cells (when present).
+    ///
+    /// Returns `true` if at least one cell was flipped.
+    fn promote_cells_to_positive_orientation(&mut self) -> Result<bool, InsertionError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        let mut negative_cells = CellKeyBuffer::new();
+        let mut periodic_periods: Option<[K::Scalar; D]> = None;
+
+        for (cell_key, cell) in self.tds.cells() {
+            let orientation = self.evaluate_cell_orientation_for_context(
+                cell_key,
+                cell,
+                &mut periodic_periods,
+                "positive-orientation promotion",
+                "Geometric orientation predicate failed while promoting positive orientation for cell",
+            )?;
+            if orientation == 0 {
+                return Err(TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell {:?} (key {cell_key:?}) has degenerate geometric orientation while promoting positive orientation",
+                        cell.uuid(),
+                    ),
+                }
+                .into());
+            }
+            if orientation < 0 {
+                negative_cells.push(cell_key);
+            }
+        }
+
+        if negative_cells.is_empty() {
+            return Ok(false);
+        }
+
+        for cell_key in negative_cells {
+            let cell = self.tds.get_cell_by_key_mut(cell_key).ok_or_else(|| {
+                TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell {cell_key:?} missing while applying positive-orientation promotion",
+                    ),
+                }
+            })?;
+            if cell.number_of_vertices() >= 2 {
+                cell.swap_vertex_slots(0, 1);
+            }
+        }
+
+        self.tds.mark_topology_modified();
+        Ok(true)
+    }
+
+    /// Check whether any cell still requires positive-orientation promotion.
+    ///
+    /// This performs the same orientation inspection as promotion, but does not mutate any cells.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(true)` if at least one cell has negative geometric orientation.
+    /// - `Ok(false)` if all cells are already positively oriented.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`InsertionError`] if orientation evaluation fails or if any cell is
+    /// geometrically degenerate (`orientation == 0`).
+    fn cells_require_positive_orientation_promotion(&self) -> Result<bool, InsertionError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        let mut periodic_periods: Option<[K::Scalar; D]> = None;
+        for (cell_key, cell) in self.tds.cells() {
+            let orientation = self.evaluate_cell_orientation_for_context(
+                cell_key,
+                cell,
+                &mut periodic_periods,
+                "positive-orientation convergence check",
+                "Geometric orientation predicate failed while checking positive-orientation convergence for cell",
+            )?;
+            if orientation == 0 {
+                return Err(TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell {:?} (key {cell_key:?}) has degenerate geometric orientation while checking positive-orientation convergence",
+                        cell.uuid(),
+                    ),
+                }
+                .into());
+            }
+            if orientation < 0 {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    /// For connected non-periodic triangulations, coherent orientation has two equivalent global
+    /// sign choices. Canonicalize that global sign to positive by flipping all cells when needed.
+    fn canonicalize_global_orientation_sign(&mut self) -> Result<(), InsertionError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        let mut periodic_periods: Option<[K::Scalar; D]> = None;
+        let representative_sign = if let Some((cell_key, cell)) = self.tds.cells().next() {
+            let orientation = self.evaluate_cell_orientation_for_context(
+                cell_key,
+                cell,
+                &mut periodic_periods,
+                "global orientation-sign canonicalization",
+                "Geometric orientation predicate failed while canonicalizing global orientation sign for cell",
+            )?;
+            if orientation == 0 {
+                return Err(TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell {:?} (key {cell_key:?}) has degenerate geometric orientation during global orientation-sign canonicalization",
+                        cell.uuid(),
+                    ),
+                }
+                .into());
+            }
+            Some(orientation)
+        } else {
+            None
+        };
+
+        if representative_sign != Some(-1) {
+            return Ok(());
+        }
+
+        let cell_keys: CellKeyBuffer = self.tds.cell_keys().collect();
+        let mut flipped_any = false;
+        for cell_key in cell_keys {
+            let Some(cell) = self.tds.get_cell_by_key_mut(cell_key) else {
+                continue;
+            };
+            if cell.number_of_vertices() >= 2 {
+                cell.swap_vertex_slots(0, 1);
+                flipped_any = true;
+            }
+        }
+
+        if flipped_any {
+            self.tds.mark_topology_modified();
+        }
+
+        Ok(())
+    }
+
+    /// Normalize coherent orientation and promote geometric orientation to the positive
+    /// canonical sign.
+    pub(in crate::core) fn normalize_and_promote_positive_orientation(
+        &mut self,
+    ) -> Result<(), InsertionError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        self.tds.normalize_coherent_orientation()?;
+        for _ in 0..3 {
+            if !self.promote_cells_to_positive_orientation()? {
+                break;
+            }
+            self.tds.normalize_coherent_orientation()?;
+        }
+        // Hard post-condition: after bounded promotion passes, no further promotion should be
+        // needed. This check is intentionally non-mutating so the error path does not leave any
+        // partial orientation flips applied.
+        if self.cells_require_positive_orientation_promotion()? {
+            return Err(InsertionError::TopologyValidation(
+                TdsValidationError::InconsistentDataStructure {
+                    message:
+                        "Failed to converge to positive geometric orientation after bounded promotion passes"
+                            .to_string(),
+                },
+            ));
+        }
+        self.canonicalize_global_orientation_sign()?;
+        Ok(())
+    }
+    /// Canonicalize a set of newly created cells to positive geometric orientation.
+    ///
+    /// This preserves cell-local slot alignment (vertices/neighbors/periodic offsets) by using
+    /// `swap_vertex_slots(0, 1)` for negatively oriented cells.
+    fn canonicalize_positive_orientation_for_cells(
+        &mut self,
+        cells: &CellKeyBuffer,
+    ) -> Result<(), InsertionError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        let mut periodic_periods: Option<[K::Scalar; D]> = None;
+        for &cell_key in cells {
+            let orientation = {
+                let cell = self.tds.get_cell(cell_key).ok_or_else(|| {
+                    TdsValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Cell {cell_key:?} missing while canonicalizing insertion orientation",
+                        ),
+                    }
+                })?;
+                self.evaluate_cell_orientation_for_context(
+                    cell_key,
+                    cell,
+                    &mut periodic_periods,
+                    "insertion orientation canonicalization",
+                    "Geometric orientation predicate failed while canonicalizing cell",
+                )?
+            };
+
+            if orientation == 0 {
+                // Keep temporary degenerate cells unchanged here. Downstream local-repair and
+                // topology/geometry validation decide whether they are removed or rejected.
+                continue;
+            }
+
+            if orientation < 0 {
+                let cell = self.tds.get_cell_by_key_mut(cell_key).ok_or_else(|| {
+                    TdsValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Cell {cell_key:?} missing while applying insertion orientation canonicalization",
+                        ),
+                    }
+                })?;
+                if cell.number_of_vertices() < 2 {
+                    return Err(TdsValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Cannot canonicalize orientation for cell {cell_key:?} with {} vertex slot(s)",
+                            cell.number_of_vertices(),
+                        ),
+                    }
+                    .into());
+                }
+                cell.swap_vertex_slots(0, 1);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Validates topological invariants of the triangulation (Level 3).
     ///
     /// This checks the triangulation/topology layer **only**:
     /// - Codimension-1 pseudomanifold condition: each facet is incident to 1 (boundary) or 2 (interior) cells
     /// - Codimension-2 boundary manifoldness: the boundary must be closed ("no boundary of boundary")
+    /// - Geometric orientation-sign consistency for stored cells (signed determinant > 0)
     /// - Ridge-link validation (when `topology_guarantee.requires_ridge_links()`)
     /// - Vertex-link validation during insertion (when `topology_guarantee.requires_vertex_links_during_insertion()`)
     /// - Connectedness (single component in the cell neighbor graph)
@@ -2029,7 +2464,10 @@ where
     /// // Level 3: topology validation (manifold-with-boundary + Euler characteristic)
     /// assert!(dt.as_triangulation().is_valid().is_ok());
     /// ```
-    pub fn is_valid(&self) -> Result<(), TriangulationValidationError> {
+    pub fn is_valid(&self) -> Result<(), TriangulationValidationError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
         // 1. Connectedness — O(N·D) BFS over neighbor pointers.
         //
         // Checked first because it is cheaper than building the facet-to-cells map
@@ -2075,6 +2513,9 @@ where
                 classification: topology_result.classification,
             });
         }
+        // Check geometric orientation after manifold/link checks so topology-specific
+        // diagnostics surface first when multiple invariants are violated.
+        self.validate_geometric_cell_orientation()?;
 
         Ok(())
     }
@@ -2150,7 +2591,10 @@ where
     /// // Levels 1–3: elements + TDS structure + topology
     /// assert!(dt.as_triangulation().validate().is_ok());
     /// ```
-    pub fn validate(&self) -> Result<(), TriangulationValidationError> {
+    pub fn validate(&self) -> Result<(), TriangulationValidationError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
         self.tds.validate()?;
         self.is_valid()?;
         self.validate_at_completion()
@@ -2169,7 +2613,10 @@ where
     /// # Errors
     ///
     /// Returns `Err(TriangulationValidationReport)` containing all invariant violations.
-    pub(crate) fn validation_report(&self) -> Result<(), TriangulationValidationReport> {
+    pub(crate) fn validation_report(&self) -> Result<(), TriangulationValidationReport>
+    where
+        K::Scalar: CoordinateScalar,
+    {
         let mut violations: Vec<InvariantViolation> = Vec::new();
 
         // Level 2 (structural): reuse the TDS report.
@@ -2402,8 +2849,23 @@ where
             vertex_keys.push(vkey);
         }
 
-        // Create single D-cell from all vertices
-        // Note: Cell::new() handles vertex ordering/orientation internally
+        // Canonicalize initial simplex orientation: store cells in positive orientation order.
+        // Swapping any two vertices flips orientation.
+        if orientation < 0 {
+            if vertex_keys.len() >= 2 {
+                vertex_keys.swap(0, 1);
+            } else {
+                return Err(TriangulationConstructionError::FailedToCreateCell {
+                    message: format!(
+                        "Cannot canonicalize orientation for {}D simplex with {} vertex key(s)",
+                        D,
+                        vertex_keys.len(),
+                    ),
+                });
+            }
+        }
+
+        // Create single D-cell from all vertices in canonicalized order.
         let cell = Cell::new(vertex_keys, None).map_err(|e| {
             TriangulationConstructionError::FailedToCreateCell {
                 message: format!("Failed to create initial simplex cell: {e}"),
@@ -2611,7 +3073,9 @@ where
 
                 let perturbation_scale = epsilon * local_scale;
                 for (idx, coord) in perturbed_coords.iter_mut().enumerate() {
-                    let perturbation = if perturbation_seed == 0 {
+                    let coord_scale =
+                        <K::Scalar as NumCast>::from(idx + 1).unwrap_or_else(K::Scalar::one);
+                    let signed_perturbation = if perturbation_seed == 0 {
                         if (attempt + idx) % 2 == 0 {
                             perturbation_scale
                         } else {
@@ -2627,7 +3091,7 @@ where
                             -perturbation_scale
                         }
                     };
-                    *coord += perturbation;
+                    *coord += signed_perturbation * coord_scale;
                 }
 
                 // Preserve the caller-provided vertex UUID across perturbation retries.
@@ -2940,12 +3404,14 @@ where
     }
 
     /// Runs mandatory link checks required by the topology guarantee.
-    fn validate_required_topology_links(&self) -> Result<(), TriangulationValidationError> {
+    fn validate_required_topology_links(&self) -> Result<(), TriangulationValidationError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
         if self.tds.number_of_cells() == 0 {
             return Ok(());
         }
-
-        if self
+        let need_orientation_check = if self
             .topology_guarantee
             .requires_vertex_links_during_insertion()
         {
@@ -2956,16 +3422,24 @@ where
             validate_ridge_links(&self.tds).map_err(TriangulationValidationError::from)?;
             validate_vertex_links(&self.tds, &facet_to_cells)
                 .map_err(TriangulationValidationError::from)?;
-            return Ok(());
-        }
-
-        if self.topology_guarantee.requires_ridge_links() {
+            true
+        } else if self.topology_guarantee.requires_ridge_links() {
             // Ridge-link checks assume the pseudomanifold invariants already hold.
             let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
             validate_facet_degree(&facet_to_cells).map_err(TriangulationValidationError::from)?;
             validate_closed_boundary(&self.tds, &facet_to_cells)
                 .map_err(TriangulationValidationError::from)?;
             validate_ridge_links(&self.tds).map_err(TriangulationValidationError::from)?;
+            true
+        } else {
+            false
+        };
+
+        if need_orientation_check {
+            // Keep geometric orientation non-negotiable during incremental insertion for
+            // manifold-guaranteed modes, even when global validation is throttled.
+            // Run this after manifold/link checks so topology diagnostics still surface first.
+            self.validate_geometric_cell_orientation()?;
         }
 
         Ok(())
@@ -2974,7 +3448,10 @@ where
     fn validate_after_insertion(
         &self,
         suspicion: SuspicionFlags,
-    ) -> Result<(), TriangulationValidationError> {
+    ) -> Result<(), TriangulationValidationError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
         if self.tds.number_of_cells() == 0 {
             return Ok(());
         }
@@ -3059,7 +3536,7 @@ where
             return Err(InsertionError::TopologyValidationFailed {
                 message: "Topology invalid after insertion; star-split fallback requires point to re-locate inside a cell"
                     .to_string(),
-                source: validation_err.clone(),
+                source: Box::new(validation_err.clone()),
             });
         };
 
@@ -3078,7 +3555,7 @@ where
                 {
                     return Err(InsertionError::TopologyValidationFailed {
                         message: "Topology invalid after star-split fallback".to_string(),
-                        source: fallback_validation_err,
+                        source: Box::new(fallback_validation_err),
                     });
                 }
 
@@ -3097,7 +3574,7 @@ where
                 message: format!(
                     "Topology invalid after insertion; star-split fallback failed: {fallback_err}"
                 ),
-                source: validation_err.clone(),
+                source: Box::new(validation_err.clone()),
             }),
         }
     }
@@ -3605,6 +4082,12 @@ where
 
         // Fill cavity BEFORE removing old cells
         let new_cells = fill_cavity(&mut self.tds, v_key, &boundary_facets)?;
+        self.canonicalize_positive_orientation_for_cells(&new_cells)
+            .map_err(|e| TdsValidationError::InconsistentDataStructure {
+                message: format!(
+                    "Failed to canonicalize positive orientation for cavity cells: {e}",
+                ),
+            })?;
 
         // Wire neighbors (while both old and new cells exist)
         let external_facets =
@@ -3720,6 +4203,9 @@ where
             })?;
             suspicion.neighbor_pointers_rebuilt = repaired > 0;
         }
+
+        // Canonicalize cell ordering and geometric orientation invariants.
+        self.normalize_and_promote_positive_orientation()?;
 
         // Assign an incident cell for the inserted vertex without a global rebuild.
         let hint = new_cells.iter().copied().find(|&ck| {
@@ -4141,6 +4627,7 @@ where
                         return Err(err);
                     }
                 };
+                self.canonicalize_positive_orientation_for_cells(&new_cells)?;
                 #[cfg(debug_assertions)]
                 if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
                     tracing::debug!(
@@ -4292,6 +4779,9 @@ where
                     suspicion.neighbor_pointers_rebuilt = repaired > 0;
                 }
 
+                // Canonicalize cell ordering and geometric orientation invariants.
+                self.normalize_and_promote_positive_orientation()?;
+
                 // Assign an incident cell for the inserted vertex without a global rebuild.
                 let hint = new_cells.iter().copied().find(|&ck| {
                     self.tds
@@ -4377,6 +4867,10 @@ where
     /// (Note: `TdsMutationError` is currently a thin wrapper around
     /// [`TdsValidationError`]; the wrapper exists to make mutation call sites/docs more semantically explicit.)
     ///
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Vertex removal keeps rollback, retriangulation, repair, and orientation finalization in one explicit transactional flow"
+    )]
     pub(crate) fn remove_vertex(
         &mut self,
         vertex: &Vertex<K::Scalar, U, D>,
@@ -4428,66 +4922,103 @@ where
             }
         })?;
 
-        // Fill cavity with fan triangulation BEFORE removing old cells
-        // Use fan triangulation that skips boundary facets which already include the apex
-        let new_cells = self
-            .fan_fill_cavity(apex_vertex_key, &boundary_facets)
+        // Snapshot before destructive retriangulation edits so we can roll back if any
+        // subsequent orientation/finalization step fails.
+        let tds_snapshot = self.tds.clone();
+        let retriangulation_result = (|| -> Result<usize, TdsMutationError> {
+            // Fill cavity with fan triangulation BEFORE removing old cells
+            // Use fan triangulation that skips boundary facets which already include the apex
+            let new_cells = self
+                .fan_fill_cavity(apex_vertex_key, &boundary_facets)
+                .map_err(|e| TdsValidationError::InconsistentDataStructure {
+                    message: format!("Fan triangulation failed: {e}"),
+                })?;
+            self.canonicalize_positive_orientation_for_cells(&new_cells)
+                .map_err(|e| TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Failed to canonicalize positive orientation during fan retriangulation: {e}",
+                    ),
+                })?;
+
+            // Wire neighbors for the new cells (while both old and new cells exist)
+            let external_facets =
+                external_facets_for_boundary(&self.tds, &cells_to_remove, &boundary_facets)
+                    .map_err(|e| TdsValidationError::InconsistentDataStructure {
+                        message: format!("External-facet collection failed: {e}"),
+                    })?;
+            wire_cavity_neighbors(
+                &mut self.tds,
+                &new_cells,
+                external_facets.iter().copied(),
+                Some(&cells_to_remove),
+            )
             .map_err(|e| TdsValidationError::InconsistentDataStructure {
-                message: format!("Fan triangulation failed: {e}"),
+                message: format!("Neighbor wiring failed: {e}"),
             })?;
 
-        // Wire neighbors for the new cells (while both old and new cells exist)
-        let external_facets =
-            external_facets_for_boundary(&self.tds, &cells_to_remove, &boundary_facets).map_err(
-                |e| TdsValidationError::InconsistentDataStructure {
-                    message: format!("External-facet collection failed: {e}"),
-                },
-            )?;
-        wire_cavity_neighbors(
-            &mut self.tds,
-            &new_cells,
-            external_facets.iter().copied(),
-            Some(&cells_to_remove),
-        )
-        .map_err(|e| TdsValidationError::InconsistentDataStructure {
-            message: format!("Neighbor wiring failed: {e}"),
-        })?;
+            // Remove the cells containing the vertex (now that new cells are wired up)
+            // Note: remove_cells_by_keys() automatically clears neighbor pointers in surviving
+            // cells that reference removed cells (sets them to None/boundary)
+            let mut cells_removed = self.tds.remove_cells_by_keys(&cells_to_remove);
 
-        // Remove the cells containing the vertex (now that new cells are wired up)
-        // Note: remove_cells_by_keys() automatically clears neighbor pointers in surviving
-        // cells that reference removed cells (sets them to None/boundary)
-        let mut cells_removed = self.tds.remove_cells_by_keys(&cells_to_remove);
+            // Validate facet topology for newly created cells (O(k*D) localized check)
+            if let Some(issues) = self.detect_local_facet_issues(&new_cells)? {
+                #[cfg(debug_assertions)]
+                tracing::warn!(
+                    "Warning: {} over-shared facets detected after vertex removal, repairing...",
+                    issues.len()
+                );
+                let removed = self.repair_local_facet_issues(&issues)?;
+                cells_removed += removed;
+                #[cfg(debug_assertions)]
+                tracing::debug!("Repaired by removing {removed} additional cells");
 
-        // Validate facet topology for newly created cells (O(k*D) localized check)
-        if let Some(issues) = self.detect_local_facet_issues(&new_cells)? {
-            #[cfg(debug_assertions)]
-            tracing::warn!(
-                "Warning: {} over-shared facets detected after vertex removal, repairing...",
-                issues.len()
-            );
-            let removed = self.repair_local_facet_issues(&issues)?;
-            cells_removed += removed;
-            #[cfg(debug_assertions)]
-            tracing::debug!("Repaired by removing {removed} additional cells");
+                // Repair neighbor pointers after removing additional cells
+                // This ensures neighbor consistency after repair operations
+                if removed > 0 {
+                    repair_neighbor_pointers(&mut self.tds).map_err(|e| {
+                        TdsValidationError::InconsistentDataStructure {
+                            message: format!(
+                                "Neighbor repair after facet issue repair failed: {e}"
+                            ),
+                        }
+                    })?;
+                }
+            }
+            // Fan retriangulation may produce locally inconsistent slot orderings; normalize
+            // orientation before rebuilding incidence and removing the vertex.
+            self.tds.normalize_coherent_orientation()?;
+            self.canonicalize_global_orientation_sign().map_err(|e| {
+                TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Failed to canonicalize global orientation sign after fan retriangulation: {e}",
+                    ),
+                }
+            })?;
+            self.validate_geometric_cell_orientation().map_err(|e| {
+                TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Geometric orientation validation failed after fan retriangulation: {e}",
+                    ),
+                }
+            })?;
 
-            // Repair neighbor pointers after removing additional cells
-            // This ensures neighbor consistency after repair operations
-            if removed > 0 {
-                repair_neighbor_pointers(&mut self.tds).map_err(|e| {
-                    TdsValidationError::InconsistentDataStructure {
-                        message: format!("Neighbor repair after facet issue repair failed: {e}"),
-                    }
-                })?;
+            // Rebuild vertex-cell incidence for all vertices
+            self.tds.assign_incident_cells()?;
+
+            // Remove the vertex using Tds method (handles internal bookkeeping)
+            self.tds.remove_vertex(vertex)?;
+
+            Ok(cells_removed)
+        })();
+
+        match retriangulation_result {
+            Ok(cells_removed) => Ok(cells_removed),
+            Err(error) => {
+                self.tds = tds_snapshot;
+                Err(error)
             }
         }
-
-        // Rebuild vertex-cell incidence for all vertices
-        self.tds.assign_incident_cells()?;
-
-        // Remove the vertex using Tds method (handles internal bookkeeping)
-        self.tds.remove_vertex(vertex)?;
-
-        Ok(cells_removed)
     }
 
     /// Pick an apex vertex for fan triangulation.
@@ -4830,6 +5361,7 @@ mod tests {
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
     use crate::topology::characteristics::validation::validate_triangulation_euler;
+    use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
     use crate::vertex;
 
     use slotmap::KeyData;
@@ -6516,6 +7048,146 @@ mod tests {
             }
             _ => panic!("Expected GeometricDegeneracy error for coplanar points"),
         }
+    }
+
+    #[test]
+    fn test_is_valid_rejects_negative_geometric_cell_orientation() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+
+        let cell_key = tds.cell_keys().next().unwrap();
+        let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+        cell.swap_vertex_slots(0, 1);
+
+        let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        let err = tri.is_valid().unwrap_err();
+        assert!(matches!(
+            err,
+            TriangulationValidationError::Tds(TdsValidationError::InconsistentDataStructure { message })
+                if message.contains("negative geometric orientation")
+        ));
+    }
+
+    #[test]
+    fn test_cells_require_positive_orientation_promotion_detects_negative_without_mutating() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
+        tds.get_cell_by_key_mut(cell_key)
+            .unwrap()
+            .swap_vertex_slots(0, 1);
+
+        let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        let before: Vec<_> = tri.tds.get_cell(cell_key).unwrap().vertices().to_vec();
+
+        assert!(
+            tri.cells_require_positive_orientation_promotion().unwrap(),
+            "Negative orientation should be detected"
+        );
+
+        let after: Vec<_> = tri.tds.get_cell(cell_key).unwrap().vertices().to_vec();
+        assert_eq!(
+            before, after,
+            "Convergence check must not mutate cell slot ordering"
+        );
+    }
+
+    #[test]
+    fn test_cells_require_positive_orientation_promotion_false_for_positive_without_mutating() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
+
+        let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        let before: Vec<_> = tri.tds.get_cell(cell_key).unwrap().vertices().to_vec();
+
+        assert!(
+            !tri.cells_require_positive_orientation_promotion().unwrap(),
+            "Already-positive orientation should not require promotion"
+        );
+
+        let after: Vec<_> = tri.tds.get_cell(cell_key).unwrap().vertices().to_vec();
+        assert_eq!(
+            before, after,
+            "Convergence check must not mutate already-positive cells"
+        );
+    }
+
+    #[test]
+    fn test_periodic_geometric_orientation_validation_uses_lifted_coordinates() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([0.8, 0.0]),
+            vertex!([0.0, 0.8]),
+        ];
+        let mut tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
+        {
+            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            cell.set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [1, 0]]);
+        }
+
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        tri.set_global_topology(GlobalTopology::Toroidal {
+            domain: [1.0, 1.0],
+            mode: ToroidalConstructionMode::PeriodicImagePoint,
+        });
+
+        // In lifted coordinates this cell is positively oriented.
+        assert!(tri.validate_geometric_cell_orientation().is_ok());
+
+        // Flipping two slots should invert lifted orientation and be rejected.
+        {
+            let cell = tri.tds.get_cell_by_key_mut(cell_key).unwrap();
+            cell.swap_vertex_slots(0, 1);
+        }
+        let err = tri.validate_geometric_cell_orientation().unwrap_err();
+        assert!(matches!(
+            err,
+            TriangulationValidationError::Tds(TdsValidationError::InconsistentDataStructure { message })
+                if message.contains("negative geometric orientation")
+        ));
+    }
+
+    #[test]
+    fn test_periodic_geometric_orientation_validation_requires_toroidal_metadata() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([0.8, 0.0]),
+            vertex!([0.0, 0.8]),
+        ];
+        let mut tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
+        {
+            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            cell.set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [1, 0]]);
+        }
+
+        let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        let err = tri.validate_geometric_cell_orientation().unwrap_err();
+        assert!(matches!(
+            err,
+            TriangulationValidationError::Tds(TdsValidationError::InconsistentDataStructure { message })
+                if message.contains("global topology is not toroidal")
+        ));
     }
 
     /// Consolidated macro for facet validation tests across dimensions.

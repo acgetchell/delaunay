@@ -18,6 +18,7 @@ Core modules (by layer):
 - `tests/proptest_predicates.rs`: geometric predicate properties (orientation, insphere).
 - `tests/proptest_point.rs`: `Point` semantics (NaN-aware equality/ordering, hashing).
 - `tests/proptest_tds.rs`: TDS combinatorial invariants (mappings, neighbor consistency, duplicate-cell prevention).
+- `tests/proptest_orientation.rs`: coherent-orientation invariants (construction, tamper detection, incremental insertion coherence).
 - `tests/proptest_triangulation.rs`: triangulation-layer invariants and quality metrics.
 - `tests/proptest_delaunay_triangulation.rs`: Delaunay-layer properties (insertion, repair, validation).
 
@@ -37,6 +38,7 @@ Target a single proptest module:
 
 ```bash
 cargo test --test proptest_predicates
+cargo test --test proptest_orientation
 cargo test --test proptest_tds
 ```
 

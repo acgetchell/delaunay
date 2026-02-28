@@ -82,6 +82,20 @@ Property-based tests for Tds (Triangulation Data Structure) combinatorial/topolo
 
 **Run with:** `cargo test --test proptest_tds` or included in `just test`
 
+#### [`proptest_orientation.rs`](./proptest_orientation.rs)
+
+Property-based tests focused on coherent orientation invariants in the TDS layer.
+
+**Test Coverage:**
+
+- **Construction coherence**: successfully-built triangulations are coherently oriented
+- **Tamper detection**: cell-order tampering is detected as `OrientationViolation`
+- **Incremental coherence**: orientation remains coherent after each successful insertion
+
+**Dimensions Tested:** 2D-5D (4D/5D marked slow/ignored in test-integration profile)
+
+**Run with:** `cargo test --test proptest_orientation` or included in `just test`
+
 #### [`proptest_triangulation.rs`](./proptest_triangulation.rs)
 
 Property-based tests for Triangulation layer invariants (generic geometric layer with kernel).
@@ -195,28 +209,6 @@ Property-based tests for geometric utilities and predicates.
 
 **Run with:** `cargo test --release --test proptest_geometry`
 
-#### [`proptest_quality.rs`](./proptest_quality.rs)
-
-Property-based tests for geometry quality metrics (radius ratio and normalized volume).
-
-**Test Coverage:**
-
-- **Valid Ranges**: Metrics produce finite, positive values for valid simplices
-- **Scale Invariance**: Metrics remain unchanged under uniform scaling
-- **Translation Invariance**: Metrics remain unchanged under translation
-- **Degeneracy Sensitivity**: Metrics detect and handle degenerate configurations
-- **Cross-dimensional Consistency**: Metrics behave correctly across dimensions
-
-**Run with:**
-
-```bash
-# Standard test run
-cargo test --release --test proptest_quality
-
-# With increased test cases for thorough validation
-PROPTEST_CASES=1024 cargo test --release --test proptest_quality -- --nocapture
-```
-
 #### [`proptest_serialization.rs`](./proptest_serialization.rs)
 
 Property-based tests for serialization and deserialization verifying data preservation via randomized structures.
@@ -253,7 +245,7 @@ Proptest automatically captures minimal failing test cases in `.proptest-regress
 - **Reproduction**: To debug a failure, copy the seed from test output:
 
   ```bash
-  PROPTEST_SEED=12345 cargo test --release --test proptest_quality -- --nocapture
+  PROPTEST_SEED=12345 cargo test --release --test proptest_triangulation -- --nocapture
   ```
 
 - **Performance Note**: Regression cases run before random cases; many entries can slow tests
@@ -263,7 +255,6 @@ Proptest automatically captures minimal failing test cases in `.proptest-regress
 **Current Regression Files:**
 
 - `proptest_convex_hull.proptest-regressions`
-- `proptest_quality.proptest-regressions`
 - `proptest_serialization.proptest-regressions`
 
 ### 🔧 Debugging and Analysis Tools

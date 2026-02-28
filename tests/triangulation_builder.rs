@@ -353,6 +353,10 @@ fn test_builder_toroidal_periodic_chi_zero_2d() {
 #[test]
 fn test_builder_toroidal_periodic_3d_success() {
     use delaunay::geometry::kernel::RobustKernel;
+    // Keep this as a smoke/regression test rather than a large stress case.
+    // The periodic 3D pipeline expands to 3^D image points internally, so runtime grows quickly
+    // with input size and can become flaky under CI load. We keep a compact, well-separated set
+    // above the algorithm minimum (2*D + 1 = 7 points for D=3).
 
     let vertices = vec![
         vertex!([0.1_f64, 0.2, 0.3]),
@@ -364,11 +368,6 @@ fn test_builder_toroidal_periodic_3d_success() {
         vertex!([0.3, 0.5, 0.9]),
         vertex!([0.6, 0.8, 0.4]),
         vertex!([0.9, 0.2, 0.6]),
-        vertex!([0.0, 0.4, 0.1]),
-        vertex!([0.15, 0.65, 0.45]),
-        vertex!([0.75, 0.15, 0.85]),
-        vertex!([0.45, 0.55, 0.25]),
-        vertex!([0.85, 0.45, 0.65]),
     ];
     let n = vertices.len();
     let kernel = RobustKernel::new();

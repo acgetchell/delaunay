@@ -70,6 +70,7 @@
 //! | **Facet Sharing** | `Tds::is_valid()` / `Tds::validate()` | Each facet shared by ≤ 2 cells |
 //! | **No Duplicate Cells** | `Tds::is_valid()` / `Tds::validate()` | No cells with identical vertex sets |
 //! | **Neighbor Consistency** | `Tds::is_valid()` / `Tds::validate()` | Mutual neighbor relationships |
+//! | **Coherent Orientation** | `Tds::is_valid()` / `Tds::validate()` | Adjacent cells induce opposite facet orientations |
 //! | **Cell Vertex Keys** | `Tds::is_valid()` / `Tds::validate()` | Cells reference only valid vertex keys |
 //! | **Vertex Incidence** | `Tds::is_valid()` / `Tds::validate()` | `Vertex::incident_cell` is non-dangling and consistent (when present) |
 //! | **Cell Validity** | `CellBuilder::validate()` (vertex count) + `cell.is_valid()` (comprehensive) | Construction + runtime validation |
@@ -94,6 +95,7 @@
 //!    - `Vertex::incident_cell`, when present, must point at an existing cell that contains the vertex
 //!    - Isolated vertices (not referenced by any cell) are allowed at this layer (`incident_cell` may be `None`)
 //!    - No duplicate cells
+//!    - Coherent orientation (adjacent cells induce opposite facet orientations)
 //!    - Facet sharing invariant (≤2 cells per facet)
 //!    - Neighbor consistency
 //! 3. **Level 3: Manifold Topology** - [`Triangulation::is_valid()`]
@@ -248,6 +250,7 @@ use serde::{
 use slotmap::{Key, new_key_type};
 use std::{
     cmp::Ordering as CmpOrdering,
+    collections::VecDeque,
     fmt::{self, Debug},
     marker::PhantomData,
     sync::{
@@ -392,6 +395,32 @@ pub enum TdsValidationError {
     InvalidNeighbors {
         /// Description of the neighbor validation failure.
         message: String,
+    },
+    /// Coherent orientation invariant violated between adjacent cells.
+    #[error(
+        "Orientation invariant violated between cells {cell1_uuid} and {cell2_uuid}; shared facet orderings {facet_vertices:?} vs {cell2_facet_vertices:?} (cell1 facet index {cell1_facet_index}, cell2 facet index {cell2_facet_index}, observed_odd_permutation={observed_odd_permutation}, expected_odd_permutation={expected_odd_permutation})"
+    )]
+    OrientationViolation {
+        /// Key of the first cell.
+        cell1_key: CellKey,
+        /// UUID of the first cell.
+        cell1_uuid: Uuid,
+        /// Key of the second cell.
+        cell2_key: CellKey,
+        /// UUID of the second cell.
+        cell2_uuid: Uuid,
+        /// Facet index in the first cell.
+        cell1_facet_index: usize,
+        /// Facet index in the second cell.
+        cell2_facet_index: usize,
+        /// Vertex keys of the shared facet in `cell1` ordering (excluding `cell1_facet_index`).
+        facet_vertices: Vec<VertexKey>,
+        /// Vertex keys of the shared facet in `cell2` ordering (excluding `cell2_facet_index`).
+        cell2_facet_vertices: Vec<VertexKey>,
+        /// Observed parity of the permutation from `facet_vertices` to `cell2_facet_vertices`.
+        observed_odd_permutation: bool,
+        /// Expected odd-permutation parity under the coherent boundary-orientation convention.
+        expected_odd_permutation: bool,
     },
     /// The triangulation contains duplicate cells.
     #[error("Duplicate cells detected: {message}")]
@@ -547,6 +576,8 @@ pub enum InvariantKind {
     FacetSharing,
     /// Neighbor topology and mutual-consistency invariants.
     NeighborConsistency,
+    /// Coherent combinatorial orientation (adjacent cells induce opposite facet orientations).
+    CoherentOrientation,
     /// Cell neighbor graph connectivity (single connected component).
     Connectedness,
     /// Triangulation/topology invariants (manifold-with-boundary, Euler characteristic).
@@ -1587,6 +1618,15 @@ where
     #[must_use]
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::Relaxed)
+    }
+
+    /// Marks the triangulation topology as modified and invalidates generation-keyed caches.
+    ///
+    /// This is intended for crate-internal mutation paths that adjust cell slot ordering
+    /// without going through the standard insertion/removal APIs.
+    #[inline]
+    pub(crate) fn mark_topology_modified(&self) {
+        self.bump_generation();
     }
 
     // =========================================================================
@@ -3260,6 +3300,130 @@ where
         self.bump_generation();
     }
 
+    /// Normalizes cell vertex ordering so all adjacent cells satisfy coherent orientation.
+    ///
+    /// This computes a per-cell flip assignment over each connected component of the
+    /// cell-neighbor graph, then applies slot swaps (`0 <-> 1`) to cells that must flip.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TdsValidationError::InconsistentDataStructure`] if neighbor references are
+    /// dangling, mirror facets cannot be derived, or orientation constraints are contradictory.
+    pub(crate) fn normalize_coherent_orientation(&mut self) -> Result<(), TdsValidationError> {
+        let mut flip_assignment: FastHashMap<CellKey, bool> =
+            fast_hash_map_with_capacity(self.cells.len());
+
+        for root_cell_key in self.cells.keys() {
+            if flip_assignment.contains_key(&root_cell_key) {
+                continue;
+            }
+
+            flip_assignment.insert(root_cell_key, false);
+            let mut queue = VecDeque::new();
+            queue.push_back(root_cell_key);
+
+            while let Some(cell_key) = queue.pop_front() {
+                let this_flip_state = *flip_assignment.get(&cell_key).ok_or_else(|| {
+                    TdsError::InconsistentDataStructure {
+                        message: format!(
+                            "Missing flip assignment for cell {cell_key:?} during orientation normalization",
+                        ),
+                    }
+                })?;
+
+                let cell = self.cells.get(cell_key).ok_or_else(|| {
+                    TdsError::InconsistentDataStructure {
+                        message: format!(
+                            "Cell {cell_key:?} missing during orientation normalization traversal",
+                        ),
+                    }
+                })?;
+                let Some(neighbors) = cell.neighbors() else {
+                    continue;
+                };
+
+                for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
+                    let Some(neighbor_key) = *neighbor_key_opt else {
+                        continue;
+                    };
+                    if neighbor_key == cell_key && Self::allows_periodic_self_neighbor(cell) {
+                        continue;
+                    }
+
+                    let neighbor_cell = self.cells.get(neighbor_key).ok_or_else(|| {
+                        TdsError::InconsistentDataStructure {
+                            message: format!(
+                                "Neighbor cell {neighbor_key:?} referenced by {cell_key:?} missing during orientation normalization",
+                            ),
+                        }
+                    })?;
+                    // Periodic-lifted adjacencies do not have a unique canonical orientation at this
+                    // structural layer because the embedding depends on lattice representative choice.
+                    // Skip normalization constraints for these pairs.
+                    if cell.periodic_vertex_offsets().is_some()
+                        || neighbor_cell.periodic_vertex_offsets().is_some()
+                    {
+                        continue;
+                    }
+                    let mirror_idx = cell.mirror_facet_index(facet_idx, neighbor_cell).ok_or_else(
+                        || TdsError::InvalidNeighbors {
+                            message: format!(
+                                "Could not determine mirror facet while normalizing orientation: cell {:?}[{facet_idx}] -> neighbor {:?}",
+                                cell.uuid(),
+                                neighbor_cell.uuid(),
+                            ),
+                        },
+                    )?;
+
+                    let (currently_coherent, _, _) =
+                        Self::facet_permutation_parity(cell, facet_idx, neighbor_cell, mirror_idx)?;
+
+                    // Flipping exactly one endpoint toggles the coherence state for this edge.
+                    let requires_relative_flip = !currently_coherent;
+                    let required_neighbor_flip_state = this_flip_state ^ requires_relative_flip;
+
+                    if let Some(existing_neighbor_flip_state) = flip_assignment.get(&neighbor_key) {
+                        if *existing_neighbor_flip_state != required_neighbor_flip_state {
+                            return Err(TdsError::InconsistentDataStructure {
+                                message: format!(
+                                    "Contradictory orientation constraints while normalizing cells {:?} and {:?}",
+                                    cell.uuid(),
+                                    neighbor_cell.uuid(),
+                                ),
+                            });
+                        }
+                    } else {
+                        flip_assignment.insert(neighbor_key, required_neighbor_flip_state);
+                        queue.push_back(neighbor_key);
+                    }
+                }
+            }
+        }
+
+        let mut flipped_any = false;
+        for (cell_key, should_flip) in flip_assignment {
+            if !should_flip {
+                continue;
+            }
+            let cell = self.cells.get_mut(cell_key).ok_or_else(|| {
+                TdsError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell {cell_key:?} missing while applying orientation normalization",
+                    ),
+                }
+            })?;
+            if cell.number_of_vertices() >= 2 {
+                cell.swap_vertex_slots(0, 1);
+                flipped_any = true;
+            }
+        }
+        if flipped_any {
+            self.bump_generation();
+        }
+
+        Ok(())
+    }
+
     /// Builds a `FacetToCellsMap` with strict error handling.
     ///
     /// This method returns an error if any cell has missing vertex keys, ensuring
@@ -3692,6 +3856,290 @@ where
         Self::validate_facet_sharing_with_facet_to_cells_map(&facet_to_cells)
     }
 
+    /// Checks whether all adjacent cells induce opposite orientations on shared facets.
+    ///
+    /// This is a combinatorial check based on cell vertex ordering and neighbor slots.
+    /// It does not evaluate geometric predicates.
+    ///
+    /// Returns `false` on the first detected inconsistency or data-structure error.
+    #[must_use]
+    pub fn is_coherently_oriented(&self) -> bool {
+        self.validate_coherent_orientation().is_ok()
+    }
+
+    /// Validates coherent combinatorial orientation for all adjacent cell pairs.
+    ///
+    /// For two neighboring cells that share a facet, this verifies the induced
+    /// facet orientations are opposite (boundary-orientation convention).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TdsValidationError::OrientationViolation`] on the first violating pair.
+    /// Returns [`TdsValidationError::InconsistentDataStructure`] if neighbor pointers
+    /// reference missing cells or malformed facet indices.
+    fn validate_coherent_orientation(&self) -> Result<(), TdsValidationError> {
+        for (cell_key, cell) in &self.cells {
+            let Some(neighbors) = cell.neighbors() else {
+                continue;
+            };
+
+            for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
+                let Some(neighbor_key) = *neighbor_key_opt else {
+                    continue; // Boundary facet
+                };
+
+                // Periodic quotient triangulations may use self-neighbors.
+                // Neighbor/topology validation handles admissibility checks.
+                if neighbor_key == cell_key && Self::allows_periodic_self_neighbor(cell) {
+                    continue;
+                }
+
+                let neighbor_cell =
+                    self.cells
+                        .get(neighbor_key)
+                        .ok_or_else(|| TdsError::InconsistentDataStructure {
+                            message: format!(
+                                "Neighbor cell {neighbor_key:?} referenced by cell {cell_key:?} is missing during orientation validation",
+                            ),
+                        })?;
+
+                let mirror_idx = cell.mirror_facet_index(facet_idx, neighbor_cell).ok_or_else(
+                    || TdsError::InvalidNeighbors {
+                        message: format!(
+                            "Could not determine mirror facet: cell {:?}[{facet_idx}] -> neighbor {:?}",
+                            cell.uuid(),
+                            neighbor_cell.uuid(),
+                        ),
+                    },
+                )?;
+                let back_neighbor = neighbor_cell
+                    .neighbors()
+                    .and_then(|neighbor_neighbors| {
+                        neighbor_neighbors.get(mirror_idx).copied().flatten()
+                    })
+                    .ok_or_else(|| TdsError::InvalidNeighbors {
+                        message: format!(
+                            "Orientation validation expected back-reference: cell {:?}[{facet_idx}] -> {:?} should be mirrored by cell {:?}[{mirror_idx}] -> {:?}, found None",
+                            cell.uuid(),
+                            neighbor_key,
+                            neighbor_cell.uuid(),
+                            cell_key,
+                        ),
+                    })?;
+                if back_neighbor != cell_key {
+                    return Err(TdsError::InvalidNeighbors {
+                        message: format!(
+                            "Orientation validation expected back-reference: cell {:?}[{facet_idx}] -> {:?} should be mirrored by cell {:?}[{mirror_idx}] -> {:?}, found {:?}",
+                            cell.uuid(),
+                            neighbor_key,
+                            neighbor_cell.uuid(),
+                            cell_key,
+                            back_neighbor,
+                        ),
+                    });
+                }
+
+                // Periodic-lifted adjacencies do not have a unique canonical orientation at this
+                // structural layer because the embedding depends on lattice representative choice.
+                // Skip combinatorial orientation checks for these pairs after validating reciprocal
+                // neighbor wiring above.
+                if cell.periodic_vertex_offsets().is_some()
+                    || neighbor_cell.periodic_vertex_offsets().is_some()
+                {
+                    continue;
+                }
+
+                let cell1_facet_vertices = Self::facet_vertices_in_cell_order(cell, facet_idx)?;
+                let cell2_facet_vertices =
+                    Self::facet_vertices_in_cell_order(neighbor_cell, mirror_idx)?;
+                let (currently_coherent, observed_odd_permutation, expected_odd_permutation) =
+                    Self::facet_permutation_parity(cell, facet_idx, neighbor_cell, mirror_idx)?;
+
+                if !currently_coherent {
+                    return Err(TdsError::OrientationViolation {
+                        cell1_key: cell_key,
+                        cell1_uuid: cell.uuid(),
+                        cell2_key: neighbor_key,
+                        cell2_uuid: neighbor_cell.uuid(),
+                        cell1_facet_index: facet_idx,
+                        cell2_facet_index: mirror_idx,
+                        facet_vertices: cell1_facet_vertices.into_iter().collect(),
+                        cell2_facet_vertices: cell2_facet_vertices.into_iter().collect(),
+                        observed_odd_permutation,
+                        expected_odd_permutation,
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn facet_vertices_in_cell_order(
+        cell: &Cell<T, U, V, D>,
+        omit_idx: usize,
+    ) -> Result<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>, TdsValidationError> {
+        if omit_idx >= cell.number_of_vertices() {
+            return Err(TdsError::InconsistentDataStructure {
+                message: format!(
+                    "Facet index {omit_idx} out of bounds for cell {:?} with {} vertices during orientation validation",
+                    cell.uuid(),
+                    cell.number_of_vertices(),
+                ),
+            });
+        }
+
+        let mut facet_vertices = SmallBuffer::new();
+        for (idx, &vkey) in cell.vertices().iter().enumerate() {
+            if idx != omit_idx {
+                facet_vertices.push(vkey);
+            }
+        }
+        Ok(facet_vertices)
+    }
+    /// Build facet vertex identities in cell-local order, including periodic offsets.
+    ///
+    /// Offsets are normalized by subtracting a deterministic anchor offset so the
+    /// same lifted facet can be compared across neighboring cells independent of a
+    /// global translation. The anchor is selected lexicographically by
+    /// `(vertex_key_value, offset)`.
+    fn facet_vertex_identities_in_cell_order(
+        cell: &Cell<T, U, V, D>,
+        omit_idx: usize,
+    ) -> Result<SmallBuffer<(VertexKey, [i16; D]), MAX_PRACTICAL_DIMENSION_SIZE>, TdsValidationError>
+    {
+        if omit_idx >= cell.number_of_vertices() {
+            return Err(TdsError::InconsistentDataStructure {
+                message: format!(
+                    "Facet index {omit_idx} out of bounds for cell {:?} with {} vertices during orientation validation",
+                    cell.uuid(),
+                    cell.number_of_vertices(),
+                ),
+            });
+        }
+
+        let periodic_offsets = cell.periodic_vertex_offsets();
+        if let Some(offsets) = periodic_offsets
+            && offsets.len() != cell.number_of_vertices()
+        {
+            return Err(TdsError::InconsistentDataStructure {
+                message: format!(
+                    "Cell {:?} periodic offset count {} does not match vertex count {} during orientation validation",
+                    cell.uuid(),
+                    offsets.len(),
+                    cell.number_of_vertices(),
+                ),
+            });
+        }
+
+        let mut facet_identities: SmallBuffer<(VertexKey, [i16; D]), MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::new();
+        for (idx, &vkey) in cell.vertices().iter().enumerate() {
+            if idx == omit_idx {
+                continue;
+            }
+
+            let raw_offset = periodic_offsets.map_or([0_i8; D], |offsets| offsets[idx]);
+            let mut offset = [0_i16; D];
+            for axis in 0..D {
+                offset[axis] = i16::from(raw_offset[axis]);
+            }
+            facet_identities.push((vkey, offset));
+        }
+
+        let mut anchor_key = u64::MAX;
+        let mut anchor_offset = [0_i16; D];
+        for (vkey, offset) in &facet_identities {
+            let key_value = vkey.data().as_ffi();
+            if key_value < anchor_key || (key_value == anchor_key && *offset < anchor_offset) {
+                anchor_key = key_value;
+                anchor_offset = *offset;
+            }
+        }
+        for (_, offset) in &mut facet_identities {
+            for axis in 0..D {
+                offset[axis] -= anchor_offset[axis];
+            }
+        }
+
+        Ok(facet_identities)
+    }
+
+    /// Derive observed and expected facet permutation parity between neighboring cells.
+    ///
+    /// Returns `(currently_coherent, observed_odd_permutation, expected_odd_permutation)`.
+    /// The expected odd parity follows the coherent boundary-orientation convention:
+    /// odd is expected exactly when `(facet_idx + mirror_idx)` is even.
+    fn facet_permutation_parity(
+        cell: &Cell<T, U, V, D>,
+        facet_idx: usize,
+        neighbor_cell: &Cell<T, U, V, D>,
+        mirror_idx: usize,
+    ) -> Result<(bool, bool, bool), TdsValidationError> {
+        let cell_facet_identities = Self::facet_vertex_identities_in_cell_order(cell, facet_idx)?;
+        let neighbor_facet_identities =
+            Self::facet_vertex_identities_in_cell_order(neighbor_cell, mirror_idx)?;
+
+        let observed_odd_permutation = Self::permutation_is_odd(
+            &cell_facet_identities[..],
+            &neighbor_facet_identities[..],
+        )
+        .ok_or_else(|| TdsError::InconsistentDataStructure {
+            message: format!(
+                "Could not derive facet-order permutation parity between cells {:?} and {:?}",
+                cell.uuid(),
+                neighbor_cell.uuid(),
+            ),
+        })?;
+
+        let expected_odd_permutation = (facet_idx + mirror_idx).is_multiple_of(2);
+        Ok((
+            observed_odd_permutation == expected_odd_permutation,
+            observed_odd_permutation,
+            expected_odd_permutation,
+        ))
+    }
+    /// Returns whether the permutation mapping `source_order` to `target_order` is odd.
+    ///
+    /// Returns `None` if the orders are not permutations of each other.
+    fn permutation_is_odd<Id: PartialEq>(source_order: &[Id], target_order: &[Id]) -> Option<bool> {
+        if source_order.len() != target_order.len() {
+            return None;
+        }
+
+        let mut target_positions: SmallBuffer<usize, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(source_order.len());
+        let mut used_target_indices: SmallBuffer<bool, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::from_elem(false, target_order.len());
+
+        for source_vertex in source_order {
+            let mut matched_target_position = None;
+            for (target_idx, target_vertex) in target_order.iter().enumerate() {
+                if target_vertex == source_vertex && !used_target_indices[target_idx] {
+                    matched_target_position = Some(target_idx);
+                    used_target_indices[target_idx] = true;
+                    break;
+                }
+            }
+            target_positions.push(matched_target_position?);
+        }
+
+        if used_target_indices.iter().any(|used| !*used) {
+            return None;
+        }
+
+        let mut is_odd = false;
+        for i in 0..target_positions.len() {
+            for j in (i + 1)..target_positions.len() {
+                if target_positions[i] > target_positions[j] {
+                    is_odd = !is_odd;
+                }
+            }
+        }
+
+        Some(is_odd)
+    }
+
     fn validate_facet_sharing_with_facet_to_cells_map(
         facet_to_cells: &FacetToCellsMap,
     ) -> Result<(), TdsValidationError> {
@@ -3725,6 +4173,7 @@ where
     /// - No duplicate cells (same vertex set)
     /// - Facet sharing invariant (each facet is shared by at most 2 cells)
     /// - Neighbor consistency (topology + mutual neighbors)
+    /// - Coherent orientation (adjacent cells induce opposite facet orientations)
     ///
     /// # ⚠️ Performance Warning
     ///
@@ -3776,6 +4225,7 @@ where
         let facet_to_cells = self.build_facet_to_cells_map()?;
         Self::validate_facet_sharing_with_facet_to_cells_map(&facet_to_cells)?;
         self.validate_neighbors_with_facet_to_cells_map(&facet_to_cells)?;
+        self.validate_coherent_orientation()?;
 
         Ok(())
     }
@@ -3920,7 +4370,8 @@ where
             });
         }
 
-        // 5–6. Facet sharing + neighbor consistency share the facet-to-cells map.
+        // 5–7. Facet sharing + neighbor consistency + coherent orientation.
+        let mut neighbor_consistency_ok = false;
         match self.build_facet_to_cells_map() {
             Ok(facet_to_cells) => {
                 if let Err(e) =
@@ -3937,6 +4388,8 @@ where
                         kind: InvariantKind::NeighborConsistency,
                         error: e.into(),
                     });
+                } else {
+                    neighbor_consistency_ok = true;
                 }
             }
             Err(e) => {
@@ -3957,7 +4410,14 @@ where
             }
         }
 
-        // 7. Connectivity (topology-layer invariant; reported here for comprehensive diagnostics).
+        if neighbor_consistency_ok && let Err(e) = self.validate_coherent_orientation() {
+            violations.push(InvariantViolation {
+                kind: InvariantKind::CoherentOrientation,
+                error: e.into(),
+            });
+        }
+
+        // 8. Connectivity (topology-layer invariant; reported here for comprehensive diagnostics).
         //
         // Note: connectivity is NOT part of Level-2 `is_valid()` — it belongs at Level 3
         // (Triangulation::is_valid). It is included here in the diagnostic report so that
@@ -4763,6 +5223,125 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ]
+    }
+
+    #[test]
+    fn test_facet_vertex_identities_anchor_uses_lexicographic_key_offset() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+
+        // Deliberately corrupt for regression coverage: duplicate v_a with a smaller
+        // periodic lift so anchor selection must use the (key, offset) tie-breaker.
+        {
+            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            cell.push_vertex_key(v_a);
+            cell.set_periodic_vertex_offsets(vec![[5, 0], [9, 0], [8, 0], [1, 0]]);
+        }
+
+        let cell = tds.get_cell(cell_key).unwrap();
+        let identities =
+            Tds::<f64, (), (), 2>::facet_vertex_identities_in_cell_order(cell, 2).unwrap();
+        assert_eq!(identities.len(), 3);
+
+        let mut offsets_for_a: Vec<[i16; 2]> = identities
+            .iter()
+            .filter_map(|(vkey, offset)| (*vkey == v_a).then_some(*offset))
+            .collect();
+        offsets_for_a.sort_unstable();
+        assert_eq!(offsets_for_a, vec![[0, 0], [4, 0]]);
+
+        let b_offset = identities
+            .iter()
+            .find_map(|(vkey, offset)| (*vkey == v_b).then_some(*offset))
+            .expect("identity list should include v_b");
+        assert_eq!(b_offset, [8, 0]);
+    }
+
+    #[test]
+    fn test_facet_permutation_parity_derives_coherent_and_incoherent_cases() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        // Shared edge for facet_idx=2 is (v_a, v_b).
+        let cell: Cell<f64, (), (), 2> = Cell::new(vec![v_a, v_b, v_c], None).unwrap();
+
+        // Coherent case: neighbor lists the shared edge in opposite order.
+        let coherent_neighbor: Cell<f64, (), (), 2> = Cell::new(vec![v_b, v_a, v_d], None).unwrap();
+        let coherent_mirror_idx = cell.mirror_facet_index(2, &coherent_neighbor).unwrap();
+        let (currently_coherent, observed_odd_permutation, expected_odd_permutation) =
+            Tds::facet_permutation_parity(&cell, 2, &coherent_neighbor, coherent_mirror_idx)
+                .unwrap();
+        assert!(currently_coherent);
+        assert!(observed_odd_permutation);
+        assert!(expected_odd_permutation);
+
+        // Incoherent case: neighbor lists the shared edge in the same order.
+        let incoherent_neighbor: Cell<f64, (), (), 2> =
+            Cell::new(vec![v_a, v_b, v_d], None).unwrap();
+        let incoherent_mirror_idx = cell.mirror_facet_index(2, &incoherent_neighbor).unwrap();
+        let (currently_coherent, observed_odd_permutation, expected_odd_permutation) =
+            Tds::facet_permutation_parity(&cell, 2, &incoherent_neighbor, incoherent_mirror_idx)
+                .unwrap();
+        assert!(!currently_coherent);
+        assert!(!observed_odd_permutation);
+        assert!(expected_odd_permutation);
+    }
+
+    #[test]
+    fn test_facet_permutation_parity_smoke_4d() {
+        let mut tds: Tds<f64, (), (), 4> = Tds::empty();
+        let v_a = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0]))
+            .unwrap();
+        let v_b = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0, 0.0]))
+            .unwrap();
+        let v_c = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0, 0.0]))
+            .unwrap();
+        let v_d = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0, 0.0]))
+            .unwrap();
+        let v_e = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 1.0]))
+            .unwrap();
+        let v_f = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0, 1.0, 1.0]))
+            .unwrap();
+
+        // Shared 3-face for facet_idx=4 is [v_a, v_b, v_c, v_d].
+        let cell: Cell<f64, (), (), 4> = Cell::new(vec![v_a, v_b, v_c, v_d, v_e], None).unwrap();
+
+        // Coherent case: odd permutation of the shared face.
+        let coherent_neighbor: Cell<f64, (), (), 4> =
+            Cell::new(vec![v_b, v_a, v_c, v_d, v_f], None).unwrap();
+        let coherent_mirror_idx = cell.mirror_facet_index(4, &coherent_neighbor).unwrap();
+        let (currently_coherent, observed_odd_permutation, expected_odd_permutation) =
+            Tds::facet_permutation_parity(&cell, 4, &coherent_neighbor, coherent_mirror_idx)
+                .unwrap();
+        assert!(currently_coherent);
+        assert!(observed_odd_permutation);
+        assert!(expected_odd_permutation);
+
+        // Incoherent case: identity ordering of the shared face.
+        let incoherent_neighbor: Cell<f64, (), (), 4> =
+            Cell::new(vec![v_a, v_b, v_c, v_d, v_f], None).unwrap();
+        let incoherent_mirror_idx = cell.mirror_facet_index(4, &incoherent_neighbor).unwrap();
+        let (currently_coherent, observed_odd_permutation, expected_odd_permutation) =
+            Tds::facet_permutation_parity(&cell, 4, &incoherent_neighbor, incoherent_mirror_idx)
+                .unwrap();
+        assert!(!currently_coherent);
+        assert!(!observed_odd_permutation);
+        assert!(expected_odd_permutation);
     }
 
     // =============================================================================
@@ -6059,6 +6638,183 @@ mod tests {
             TdsError::InvalidNeighbors { message } if message.contains("expected back-reference")
         ));
     }
+
+    #[test]
+    fn test_orientation_validation_rejects_non_periodic_self_neighbor() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+
+        {
+            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            cell.neighbors = Some(vec![Some(cell_key), None, None].into());
+        }
+
+        let cell = tds.get_cell(cell_key).unwrap();
+        assert!(!Tds::allows_periodic_self_neighbor(cell));
+
+        let err = tds.validate_coherent_orientation().unwrap_err();
+        assert!(matches!(
+            err,
+            TdsError::OrientationViolation {
+                cell1_key,
+                cell2_key,
+                ..
+            } if cell1_key == cell_key && cell2_key == cell_key
+        ));
+        assert!(!tds.is_coherently_oriented());
+
+        let err = tds.normalize_coherent_orientation().unwrap_err();
+        assert!(matches!(
+            err,
+            TdsError::InconsistentDataStructure { message }
+                if message.contains("Contradictory orientation constraints")
+        ));
+    }
+
+    #[test]
+    fn test_orientation_validation_allows_periodic_self_neighbor() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+
+        {
+            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            cell.neighbors = Some(vec![Some(cell_key), None, None].into());
+            cell.set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]]);
+        }
+
+        let cell = tds.get_cell(cell_key).unwrap();
+        assert!(Tds::allows_periodic_self_neighbor(cell));
+        assert!(tds.validate_coherent_orientation().is_ok());
+        assert!(tds.is_coherently_oriented());
+        assert!(tds.normalize_coherent_orientation().is_ok());
+    }
+
+    #[test]
+    fn test_orientation_validation_rejects_one_way_neighbor_pointer() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let cell1_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        let cell2_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_b, v_a, v_d], None).unwrap())
+            .unwrap();
+        tds.assign_neighbors().unwrap();
+        assert!(tds.validate_coherent_orientation().is_ok());
+
+        let mirror_idx = {
+            let cell1 = tds.get_cell(cell1_key).unwrap();
+            let neighbors = cell1
+                .neighbors()
+                .expect("cell1 should have neighbors after assign_neighbors()");
+            let facet_idx = neighbors
+                .iter()
+                .position(|n| *n == Some(cell2_key))
+                .expect("cell1 should reference cell2");
+            let cell2 = tds.get_cell(cell2_key).unwrap();
+            cell1
+                .mirror_facet_index(facet_idx, cell2)
+                .expect("adjacent cells should have a mirror facet")
+        };
+
+        {
+            let cell2 = tds.get_cell_by_key_mut(cell2_key).unwrap();
+            let neighbors = cell2
+                .neighbors
+                .as_mut()
+                .expect("cell2 should have neighbors after assign_neighbors()");
+            neighbors[mirror_idx] = None;
+        }
+
+        let err = tds.validate_coherent_orientation().unwrap_err();
+        assert!(matches!(
+            err,
+            TdsError::InvalidNeighbors { message } if message.contains("expected back-reference")
+        ));
+        assert!(!tds.is_coherently_oriented());
+    }
+
+    macro_rules! test_normalize_repairs_incoherent_adjacent_pair {
+        ($name:ident, $dim:literal) => {
+            #[test]
+            fn $name() {
+                let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+
+                let mut vertex_keys = Vec::with_capacity($dim + 2);
+                let mut seed = 1.0_f64;
+                for idx in 0..($dim + 2) {
+                    let mut coords = [0.0_f64; $dim];
+                    if idx < $dim {
+                        coords[idx] = 1.0;
+                    } else {
+                        for coord in &mut coords {
+                            *coord = seed;
+                            seed += 1.0;
+                        }
+                    }
+                    vertex_keys.push(tds.insert_vertex_with_mapping(vertex!(coords)).unwrap());
+                }
+
+                // Construct two adjacent cells that share a facet but induce the same shared-facet
+                // ordering, making orientation incoherent before normalization:
+                // cell1 = [v0..vD], cell2 = [v0..v(D-1), v(D+1)].
+                let cell1_vertices: Vec<_> = vertex_keys.iter().take($dim + 1).copied().collect();
+                let mut cell2_vertices: Vec<_> = vertex_keys.iter().take($dim).copied().collect();
+                cell2_vertices.push(vertex_keys[$dim + 1]);
+
+                let cell1: Cell<f64, (), (), $dim> = Cell::new(cell1_vertices, None).unwrap();
+                let cell2: Cell<f64, (), (), $dim> = Cell::new(cell2_vertices, None).unwrap();
+
+                tds.insert_cell_with_mapping(cell1).unwrap();
+                tds.insert_cell_with_mapping(cell2).unwrap();
+                tds.assign_neighbors().unwrap();
+
+                let err = tds.validate_coherent_orientation().unwrap_err();
+                assert!(matches!(err, TdsError::OrientationViolation { .. }));
+                assert!(!tds.is_coherently_oriented());
+
+                tds.normalize_coherent_orientation().unwrap();
+                assert!(tds.validate_coherent_orientation().is_ok());
+                assert!(tds.is_coherently_oriented());
+            }
+        };
+    }
+
+    test_normalize_repairs_incoherent_adjacent_pair!(
+        test_normalize_repairs_incoherent_adjacent_pair_2d,
+        2
+    );
+    test_normalize_repairs_incoherent_adjacent_pair!(
+        test_normalize_repairs_incoherent_adjacent_pair_3d,
+        3
+    );
+    test_normalize_repairs_incoherent_adjacent_pair!(
+        test_normalize_repairs_incoherent_adjacent_pair_4d,
+        4
+    );
+    test_normalize_repairs_incoherent_adjacent_pair!(
+        test_normalize_repairs_incoherent_adjacent_pair_5d,
+        5
+    );
 
     #[test]
     fn test_assign_incident_cells_clears_incident_cell_when_no_cells() {

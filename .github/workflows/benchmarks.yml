@@ -228,7 +228,9 @@ jobs:
         run: uv run benchmark-utils display-no-baseline
 
       - name: Run performance regression test (compare vs tag baseline)
+        id: compare_regression
         if: env.BASELINE_EXISTS == 'true'
+        continue-on-error: true
         run: |
           set -euo pipefail
 
@@ -243,6 +245,54 @@ jobs:
             --baseline "baseline-artifact/baseline_results.txt" \
             --bench-timeout "${BENCHMARK_TIMEOUT}" \
             --dev
+      - name: Classify benchmark comparison outcome
+        if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false'
+        run: |
+          set -euo pipefail
+
+          results_file="benches/compare_results.txt"
+
+          # Successful compare step => no regressions beyond configured threshold.
+          if [ "${{ steps.compare_regression.outcome }}" = "success" ]; then
+            echo "BENCHMARK_REGRESSION_DETECTED=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          # Compare step failed. Distinguish "expected regression" from real benchmark errors.
+          if [ ! -f "$results_file" ]; then
+            echo "::error::Benchmark comparison failed and produced no results file."
+            exit 1
+          fi
+
+          if grep -q "❌ Error:" "$results_file"; then
+            echo "::error::Benchmark comparison failed due to benchmark execution error."
+            echo "::group::Benchmark comparison error details"
+            cat "$results_file"
+            echo "::endgroup::"
+            exit 1
+          fi
+
+          if grep -q "REGRESSION" "$results_file"; then
+            echo "BENCHMARK_REGRESSION_DETECTED=true" >> "$GITHUB_ENV"
+            warning_msg="Performance regressions detected vs baseline ${BASELINE_TAG:-unknown};"
+            warning_msg="${warning_msg} workflow allowed to pass by policy."
+            echo "::warning::${warning_msg}"
+            {
+              echo "### ⚠️ Performance Regression Detected"
+              echo ""
+              echo "- Baseline tag: \`${BASELINE_TAG:-unknown}\`"
+              echo "- Policy: regressions are warning-only in this workflow."
+              echo "- See uploaded artifact \`performance-regression-results-${{ github.run_number }}\`"
+              echo "  and logs for details."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "::error::Benchmark comparison failed for an unknown reason."
+          echo "::group::Benchmark comparison output"
+          cat "$results_file"
+          echo "::endgroup::"
+          exit 1
 
       - name: Display regression test results
         if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false' && always()

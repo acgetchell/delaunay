@@ -712,6 +712,43 @@ where
         self.periodic_vertex_offsets = None;
     }
 
+    /// Swaps two vertex slots and keeps aligned per-slot buffers consistent.
+    ///
+    /// This updates:
+    /// - `vertices`
+    /// - `neighbors` (if present)
+    /// - `periodic_vertex_offsets` (if present)
+    #[inline]
+    pub(crate) fn swap_vertex_slots(&mut self, index_a: usize, index_b: usize) {
+        let max_idx = index_a.max(index_b);
+        assert!(
+            max_idx < self.vertices.len(),
+            "swap_vertex_slots vertices index out of bounds: max index {max_idx} >= vertices.len() {}",
+            self.vertices.len(),
+        );
+        if let Some(neighbors) = self.neighbors.as_ref() {
+            assert!(
+                max_idx < neighbors.len(),
+                "swap_vertex_slots neighbors index out of bounds: max index {max_idx} >= neighbors.len() {}",
+                neighbors.len(),
+            );
+        }
+        if let Some(offsets) = self.periodic_vertex_offsets.as_ref() {
+            assert!(
+                max_idx < offsets.len(),
+                "swap_vertex_slots periodic offsets index out of bounds: max index {max_idx} >= periodic_vertex_offsets.len() {}",
+                offsets.len(),
+            );
+        }
+        self.vertices.swap(index_a, index_b);
+        if let Some(neighbors) = &mut self.neighbors {
+            neighbors.swap(index_a, index_b);
+        }
+        if let Some(offsets) = &mut self.periodic_vertex_offsets {
+            offsets.swap(index_a, index_b);
+        }
+    }
+
     /// Ensures the cell has a properly initialized neighbors buffer of size D+1.
     ///
     /// This helper centralizes neighbor buffer initialization logic to avoid code duplication
@@ -3347,6 +3384,54 @@ mod tests {
         buf[0] = Some(cell_key);
         let buf2 = cell.ensure_neighbors_buffer_mut();
         assert_eq!(buf2[0], Some(cell_key));
+    }
+
+    #[test]
+    fn cell_swap_vertex_slots_swaps_vertices_neighbors_and_offsets() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let (cell_key, cell_ref) = dt.cells().next().unwrap();
+
+        let mut cell = cell_ref.clone();
+        cell.neighbors = Some(vec![Some(cell_key), None, Some(cell_key)].into());
+        cell.set_periodic_vertex_offsets(vec![[1, 0], [2, 0], [3, 0]]);
+
+        let before_vertices = cell.vertices().to_vec();
+        let before_neighbors = cell.neighbors().unwrap().to_vec();
+        let before_offsets = cell.periodic_vertex_offsets().unwrap().to_vec();
+
+        cell.swap_vertex_slots(0, 2);
+
+        assert_eq!(cell.vertices()[0], before_vertices[2]);
+        assert_eq!(cell.vertices()[2], before_vertices[0]);
+
+        let neighbors = cell.neighbors().unwrap();
+        assert_eq!(neighbors[0], before_neighbors[2]);
+        assert_eq!(neighbors[2], before_neighbors[0]);
+
+        let offsets = cell.periodic_vertex_offsets().unwrap();
+        assert_eq!(offsets[0], before_offsets[2]);
+        assert_eq!(offsets[2], before_offsets[0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "neighbors index out of bounds")]
+    fn cell_swap_vertex_slots_panics_when_neighbors_shorter_than_vertices() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let (_, cell_ref) = dt.cells().next().unwrap();
+
+        let mut cell = cell_ref.clone();
+        cell.neighbors = Some(vec![None, None].into());
+        cell.swap_vertex_slots(0, 2);
     }
 
     #[test]

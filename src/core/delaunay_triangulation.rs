@@ -508,7 +508,7 @@ pub struct DelaunayTriangulationConstructionErrorWithStatistics {
     #[source]
     pub error: DelaunayTriangulationConstructionError,
     /// Aggregate construction statistics collected before the error occurred.
-    pub statistics: Box<ConstructionStatistics>,
+    pub statistics: ConstructionStatistics,
 }
 
 impl ConstructionStatistics {
@@ -1424,6 +1424,10 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
     /// Returns [`DelaunayTriangulationConstructionErrorWithStatistics`] if construction fails.
     /// The returned error includes the partial [`ConstructionStatistics`] collected up to the
     /// failure point.
+    #[expect(
+        clippy::result_large_err,
+        reason = "Public API intentionally returns by-value construction statistics for compatibility"
+    )]
     pub fn new_with_construction_statistics(
         vertices: &[Vertex<f64, (), D>],
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
@@ -1444,6 +1448,10 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
     /// Returns [`DelaunayTriangulationConstructionErrorWithStatistics`] if construction fails.
     /// The returned error includes the partial [`ConstructionStatistics`] collected up to the
     /// failure point.
+    #[expect(
+        clippy::result_large_err,
+        reason = "Public API intentionally returns by-value construction statistics for compatibility"
+    )]
     pub fn new_with_options_and_construction_statistics(
         vertices: &[Vertex<f64, (), D>],
         options: ConstructionOptions,
@@ -1962,6 +1970,10 @@ where
     /// Returns [`DelaunayTriangulationConstructionErrorWithStatistics`] if construction fails.
     /// The returned error includes the partial [`ConstructionStatistics`] collected up to the
     /// failure point.
+    #[expect(
+        clippy::result_large_err,
+        reason = "Public API intentionally returns by-value construction statistics for compatibility"
+    )]
     pub fn with_topology_guarantee_and_options_with_construction_statistics(
         kernel: &K,
         vertices: &[Vertex<K::Scalar, U, D>],
@@ -1987,7 +1999,7 @@ where
         .map_err(
             |error| DelaunayTriangulationConstructionErrorWithStatistics {
                 error,
-                statistics: Box::new(ConstructionStatistics::default()),
+                statistics: ConstructionStatistics::default(),
             },
         )?;
         let grid_cell_size = preprocessed.grid_cell_size();
@@ -2304,6 +2316,10 @@ where
     }
 
     #[allow(clippy::too_many_lines)]
+    #[expect(
+        clippy::result_large_err,
+        reason = "Internal helper propagates public by-value construction-statistics error type"
+    )]
     fn build_with_shuffled_retries_with_construction_statistics(
         kernel: &K,
         vertices: &[Vertex<K::Scalar, U, D>],
@@ -2369,7 +2385,7 @@ where
                             statistics,
                         });
                     }
-                    last_stats.replace(*statistics);
+                    last_stats.replace(statistics);
                     error.to_string()
                 }
             };
@@ -2443,7 +2459,7 @@ where
                             statistics,
                         });
                     }
-                    last_stats.replace(*statistics);
+                    last_stats.replace(statistics);
                     last_error = error.to_string();
                 }
             }
@@ -2462,7 +2478,7 @@ where
 
         // Treat persistent construction failures or Delaunay violations as hard construction
         // errors so callers can deterministically reject.
-        let statistics = Box::new(last_stats.unwrap_or_default());
+        let statistics = last_stats.unwrap_or_default();
         Err(DelaunayTriangulationConstructionErrorWithStatistics {
             error: TriangulationConstructionError::GeometricDegeneracy {
                 message: format!(
@@ -2553,6 +2569,10 @@ where
         Ok(dt)
     }
 
+    #[expect(
+        clippy::result_large_err,
+        reason = "Internal helper propagates public by-value construction-statistics error type"
+    )]
     fn build_with_kernel_inner_with_construction_statistics(
         kernel: K,
         vertices: &[Vertex<K::Scalar, U, D>],
@@ -2593,7 +2613,7 @@ where
                         message: format!("PL-manifold validation failed after construction: {err}"),
                     }
                     .into(),
-                    statistics: Box::new(stats),
+                    statistics: stats,
                 });
             }
         }
@@ -2614,13 +2634,17 @@ where
                     message: format!("Delaunay property violated after construction: {err}"),
                 }
                 .into(),
-                statistics: Box::new(stats),
+                statistics: stats,
             });
         }
 
         Ok((dt, stats))
     }
 
+    #[expect(
+        clippy::result_large_err,
+        reason = "Internal helper propagates public by-value construction-statistics error type"
+    )]
     fn build_with_kernel_inner_seeded_with_construction_statistics(
         kernel: K,
         vertices: &[Vertex<K::Scalar, U, D>],
@@ -2643,7 +2667,7 @@ where
                     },
                 }
                 .into(),
-                statistics: Box::new(ConstructionStatistics::default()),
+                statistics: ConstructionStatistics::default(),
             });
         }
 
@@ -2652,7 +2676,7 @@ where
         let tds = Triangulation::<K, U, V, D>::build_initial_simplex(initial_vertices).map_err(
             |error| DelaunayTriangulationConstructionErrorWithStatistics {
                 error: error.into(),
-                statistics: Box::new(ConstructionStatistics::default()),
+                statistics: ConstructionStatistics::default(),
             },
         )?;
 
@@ -2714,7 +2738,7 @@ where
         ) {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                 error,
-                statistics: Box::new(stats),
+                statistics: stats,
             });
         }
 
@@ -2726,7 +2750,7 @@ where
         ) {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                 error,
-                statistics: Box::new(stats),
+                statistics: stats,
             });
         }
 
@@ -4833,6 +4857,10 @@ where
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Post-repair safety/rollback checks are intentionally centralized for transactional correctness"
+    )]
     fn maybe_repair_after_insertion(
         &mut self,
         mut vertex_key: VertexKey,
@@ -4949,10 +4977,42 @@ where
             {
                 return Err(InsertionError::TopologyValidationFailed {
                     message: "Topology invalid after Delaunay repair".to_string(),
-                    source: TriangulationValidationError::from(err),
+                    source: Box::new(TriangulationValidationError::from(err)),
                 });
             }
         }
+        // Flip-based repair mutates cell orderings; restore canonical positive geometric
+        // orientation before exposing the updated triangulation state.
+        self.tri
+            .normalize_and_promote_positive_orientation()
+            .map_err(|err| {
+                let source = match err {
+                    InsertionError::TopologyValidation(source) => {
+                        TriangulationValidationError::from(source)
+                    }
+                    InsertionError::TopologyValidationFailed { source, .. } => *source,
+                    other => {
+                        TriangulationValidationError::Tds(
+                            TdsValidationError::InconsistentDataStructure {
+                                message: format!(
+                                    "Geometric orientation normalization failed after Delaunay repair: {other}",
+                                ),
+                            },
+                        )
+                    }
+                };
+                InsertionError::TopologyValidationFailed {
+                    message: "Geometric orientation normalization failed after Delaunay repair"
+                        .to_string(),
+                    source: Box::new(source),
+                }
+            })?;
+        self.tri
+            .validate_geometric_cell_orientation()
+            .map_err(|err| InsertionError::TopologyValidationFailed {
+                message: "Geometric orientation invalid after Delaunay repair".to_string(),
+                source: Box::new(err),
+            })?;
         Ok((vertex_key, used_heuristic))
     }
 
@@ -5020,13 +5080,19 @@ where
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
-    ///     vertex!([1.0, 1.0]),
+    ///     vertex!([0.3, 0.3]), // interior vertex
     /// ];
     /// let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
     ///
-    /// // Get a vertex to remove
-    /// let vertex_to_remove = dt.vertices().next().unwrap().1.clone();
-    /// let cells_before = dt.number_of_cells();
+    /// // Remove a known interior vertex.
+    /// let vertex_to_remove = dt
+    ///     .vertices()
+    ///     .find(|(_, v)| {
+    ///         let coords = v.point().coords();
+    ///         (coords[0] - 0.3).abs() < 1e-10 && (coords[1] - 0.3).abs() < 1e-10
+    ///     })
+    ///     .map(|(_, v)| *v)
+    ///     .unwrap();
     ///
     /// // Remove the vertex and all cells containing it
     /// let cells_removed = dt.remove_vertex(&vertex_to_remove).unwrap();

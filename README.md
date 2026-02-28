@@ -36,9 +36,15 @@ lightweight alternative to [CGAL] for the [Rust] ecosystem.
 - [x]  Incremental construction APIs: insertion plus vertex removal (`remove_vertex`)
 - [x]  4-level validation hierarchy (elements → structure → topology → Delaunay), including full diagnostics via `validation_report`
 - [x]  Local topology validation ([PL-manifold] default, [Pseudomanifold] opt-out)
+- [x]  Coherent combinatorial orientation validation/normalization for cells, maintaining oriented simplicial complexes
 - [x]  The complete set of [Pachner moves] up to 5D implemented as bistellar k-flips for k = 1, 2, 3 plus inverse moves
 - [x]  [Delaunay repair] using bistellar flips for k=2/k=3 with inverse edge/triangle queues in 4D/5D
 - [x]  Safe Rust: `#![forbid(unsafe_code)]`
+
+In practice, we treat coherent orientation + PL-manifold validity as the core
+topological invariant for editing and repair. That oriented PL-manifold
+invariant is what the Pachner-move (`k=2`/`k=3`) Delaunay repair pipeline uses
+to converge toward a Delaunay triangulation in supported workflows.
 
 See [CHANGELOG.md](CHANGELOG.md) for details.
 

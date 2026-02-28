@@ -267,6 +267,10 @@ where
             message: "removed-face and inserted-face must be disjoint".to_string(),
         });
     }
+    debug_assert!(
+        tds.is_coherently_oriented(),
+        "TDS coherent orientation invariant violated before bistellar flip (k={k_move}, direction={direction:?})",
+    );
 
     // Bistellar move legality: the inserted simplex must not already exist in the complex.
     //
@@ -318,7 +322,7 @@ where
         inserted_face_vertices,
     );
 
-    for vertices in &new_cell_vertices {
+    for vertices in &mut new_cell_vertices {
         if flip_would_duplicate_cell_any(tds, vertices, &topology_index) {
             return Err(FlipError::DuplicateCell);
         }
@@ -332,7 +336,7 @@ where
             .map_err(|e| FlipError::PredicateFailure {
                 message: format!("orientation failed for flip cell: {e}"),
             })?;
-        if orientation == 0 {
+        let orientation_sign = if orientation == 0 {
             let config = config_presets::high_precision::<K::Scalar>();
             let robust_orientation =
                 robust_orientation(&points, &config).map_err(|e| FlipError::PredicateFailure {
@@ -351,6 +355,18 @@ where
                 }
                 return Err(FlipError::DegenerateCell);
             }
+            match robust_orientation {
+                Orientation::POSITIVE => 1,
+                Orientation::NEGATIVE => -1,
+                Orientation::DEGENERATE => 0,
+            }
+        } else {
+            orientation
+        };
+
+        // Canonicalize to positive orientation by swapping two vertices when needed.
+        if orientation_sign < 0 {
+            vertices.swap(0, 1);
         }
     }
 
@@ -385,6 +401,15 @@ where
     })?;
 
     tds.remove_cells_by_keys(removed_cells);
+    tds.normalize_coherent_orientation()
+        .map_err(|e| FlipError::TdsMutation {
+            message: e.to_string(),
+        })?;
+
+    debug_assert!(
+        tds.is_coherently_oriented(),
+        "TDS coherent orientation invariant violated after bistellar flip (k={k_move}, direction={direction:?})",
+    );
 
     Ok(FlipInfo {
         kind: BistellarFlipKind { k: k_move, d: D },
@@ -696,6 +721,92 @@ where
         return Err(non_convergent_error(max_flips, stats, diagnostics, config));
     }
     Ok(())
+}
+
+/// Resolve a possibly stale facet handle by matching its stable facet key.
+///
+/// Slot swaps can invalidate the original facet index while preserving the facet
+/// vertex set (and therefore its hash key). This helper checks the original
+/// index first, then scans the owning cell to recover the correct index for `key`.
+fn resolve_facet_handle_for_key<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    handle: FacetHandle,
+    key: u64,
+) -> Option<FacetHandle>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let cell_key = handle.cell_key();
+    let cell = tds.get_cell(cell_key)?;
+
+    let facet_index = usize::from(handle.facet_index());
+    if facet_index < cell.number_of_vertices() {
+        let facet_vertices = facet_vertices_from_cell(cell, facet_index);
+        if facet_key_from_vertices(&facet_vertices) == key {
+            return Some(handle);
+        }
+    }
+
+    for candidate_idx in 0..cell.number_of_vertices() {
+        let facet_vertices = facet_vertices_from_cell(cell, candidate_idx);
+        if facet_key_from_vertices(&facet_vertices) == key {
+            let facet_index = u8::try_from(candidate_idx).ok()?;
+            return Some(FacetHandle::new(cell_key, facet_index));
+        }
+    }
+
+    None
+}
+
+/// Resolve a possibly stale ridge handle by matching its stable ridge key.
+///
+/// Slot swaps can invalidate the original omit-index pair while preserving the
+/// ridge vertex set (and therefore its hash key). This helper checks the original
+/// pair first, then scans the owning cell for the pair matching `key`.
+fn resolve_ridge_handle_for_key<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    handle: RidgeHandle,
+    key: u64,
+) -> Option<RidgeHandle>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    if D < 3 {
+        return None;
+    }
+
+    let cell_key = handle.cell_key();
+    let cell = tds.get_cell(cell_key)?;
+    let vertex_count = cell.number_of_vertices();
+
+    let omit_a = usize::from(handle.omit_a());
+    let omit_b = usize::from(handle.omit_b());
+    if omit_a < vertex_count && omit_b < vertex_count && omit_a != omit_b {
+        let ridge_vertices = ridge_vertices_from_cell(cell, omit_a, omit_b);
+        if ridge_vertices.len() == D - 1 && facet_key_from_vertices(&ridge_vertices) == key {
+            return Some(handle);
+        }
+    }
+
+    for i in 0..vertex_count {
+        for j in (i + 1)..vertex_count {
+            let ridge_vertices = ridge_vertices_from_cell(cell, i, j);
+            if ridge_vertices.len() != D - 1 {
+                continue;
+            }
+            if facet_key_from_vertices(&ridge_vertices) == key {
+                let omit_a = u8::try_from(i).ok()?;
+                let omit_b = u8::try_from(j).ok()?;
+                return Some(RidgeHandle::new(cell_key, omit_a, omit_b));
+            }
+        }
+    }
+
+    None
 }
 
 impl BistellarFlipKind {
@@ -2323,6 +2434,9 @@ where
     while let Some((facet, key)) = pop_queue(&mut queue, config.queue_order) {
         queued.remove(&key);
         let facet = facet_handles.remove(&key).unwrap_or(facet);
+        let Some(facet) = resolve_facet_handle_for_key(tds, facet, key) else {
+            continue;
+        };
         stats.facets_checked += 1;
 
         let context = match build_k2_flip_context(tds, facet) {
@@ -3770,6 +3884,9 @@ where
     };
     queues.ridge_queued.remove(&key);
     let ridge = queues.ridge_handles.remove(&key).unwrap_or(ridge);
+    let Some(ridge) = resolve_ridge_handle_for_key(tds, ridge, key) else {
+        return Ok(true);
+    };
     stats.facets_checked += 1;
 
     let context = match build_k3_flip_context(tds, ridge) {
@@ -4276,6 +4393,9 @@ where
     };
     queues.facet_queued.remove(&key);
     let facet = queues.facet_handles.remove(&key).unwrap_or(facet);
+    let Some(facet) = resolve_facet_handle_for_key(tds, facet, key) else {
+        return Ok(true);
+    };
     stats.facets_checked += 1;
 
     let context = match build_k2_flip_context(tds, facet) {
@@ -5167,6 +5287,95 @@ mod tests {
         }
 
         panic!("face ({face_v0:?}, {face_v1:?}, {face_v2:?}) not found in cell {cell_key:?}");
+    }
+
+    #[test]
+    fn test_resolve_facet_handle_for_key_remaps_after_slot_swap() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let stale_handle = FacetHandle::new(cell_key, 0);
+        let stable_key = {
+            let cell = tds.get_cell(cell_key).unwrap();
+            let facet_vertices =
+                facet_vertices_from_cell(cell, usize::from(stale_handle.facet_index()));
+            facet_key_from_vertices(&facet_vertices)
+        };
+
+        // Reorder slots so the original index no longer identifies the same facet.
+        tds.get_cell_by_key_mut(cell_key)
+            .unwrap()
+            .swap_vertex_slots(0, 1);
+
+        let resolved = resolve_facet_handle_for_key(&tds, stale_handle, stable_key)
+            .expect("facet handle should be recoverable by stable key");
+        assert_eq!(resolved.cell_key(), cell_key);
+        assert_eq!(usize::from(resolved.facet_index()), 1);
+
+        let resolved_key = {
+            let cell = tds.get_cell(cell_key).unwrap();
+            let facet_vertices =
+                facet_vertices_from_cell(cell, usize::from(resolved.facet_index()));
+            facet_key_from_vertices(&facet_vertices)
+        };
+        assert_eq!(resolved_key, stable_key);
+    }
+
+    #[test]
+    fn test_resolve_ridge_handle_for_key_remaps_after_slot_swap() {
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let v0 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v3], None).unwrap())
+            .unwrap();
+        let stale_handle = RidgeHandle::new(cell_key, 0, 1);
+        let stable_key = {
+            let cell = tds.get_cell(cell_key).unwrap();
+            let ridge_vertices = ridge_vertices_from_cell(
+                cell,
+                usize::from(stale_handle.omit_a()),
+                usize::from(stale_handle.omit_b()),
+            );
+            facet_key_from_vertices(&ridge_vertices)
+        };
+
+        // Reorder slots so the original omit pair no longer identifies the same ridge.
+        tds.get_cell_by_key_mut(cell_key)
+            .unwrap()
+            .swap_vertex_slots(0, 2);
+
+        let resolved = resolve_ridge_handle_for_key(&tds, stale_handle, stable_key)
+            .expect("ridge handle should be recoverable by stable key");
+        assert_eq!(resolved.cell_key(), cell_key);
+        assert_eq!((resolved.omit_a(), resolved.omit_b()), (1, 2));
+
+        let resolved_key = {
+            let cell = tds.get_cell(cell_key).unwrap();
+            let ridge_vertices = ridge_vertices_from_cell(
+                cell,
+                usize::from(resolved.omit_a()),
+                usize::from(resolved.omit_b()),
+            );
+            facet_key_from_vertices(&ridge_vertices)
+        };
+        assert_eq!(resolved_key, stable_key);
     }
 
     #[test]
