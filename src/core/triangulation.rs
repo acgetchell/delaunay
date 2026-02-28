@@ -2178,7 +2178,9 @@ where
         Ok(())
     }
 
-    /// Flip all negatively oriented non-periodic cells to positive orientation.
+    /// Flip all negatively oriented cells to positive orientation.
+    ///
+    /// This applies to both Euclidean cells and periodic-lifted cells (when present).
     ///
     /// Returns `true` if at least one cell was flipped.
     fn promote_cells_to_positive_orientation(&mut self) -> Result<bool, InsertionError>
@@ -3409,8 +3411,7 @@ where
         if self.tds.number_of_cells() == 0 {
             return Ok(());
         }
-
-        if self
+        let need_orientation_check = if self
             .topology_guarantee
             .requires_vertex_links_during_insertion()
         {
@@ -3421,20 +3422,20 @@ where
             validate_ridge_links(&self.tds).map_err(TriangulationValidationError::from)?;
             validate_vertex_links(&self.tds, &facet_to_cells)
                 .map_err(TriangulationValidationError::from)?;
-            // Keep geometric orientation non-negotiable during incremental insertion for
-            // manifold-guaranteed modes, even when global validation is throttled.
-            // Run this after manifold/link checks so topology diagnostics still surface first.
-            self.validate_geometric_cell_orientation()?;
-            return Ok(());
-        }
-
-        if self.topology_guarantee.requires_ridge_links() {
+            true
+        } else if self.topology_guarantee.requires_ridge_links() {
             // Ridge-link checks assume the pseudomanifold invariants already hold.
             let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
             validate_facet_degree(&facet_to_cells).map_err(TriangulationValidationError::from)?;
             validate_closed_boundary(&self.tds, &facet_to_cells)
                 .map_err(TriangulationValidationError::from)?;
             validate_ridge_links(&self.tds).map_err(TriangulationValidationError::from)?;
+            true
+        } else {
+            false
+        };
+
+        if need_orientation_check {
             // Keep geometric orientation non-negotiable during incremental insertion for
             // manifold-guaranteed modes, even when global validation is throttled.
             // Run this after manifold/link checks so topology diagnostics still surface first.
