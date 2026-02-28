@@ -8,7 +8,7 @@ Large-scale 4D bulk construction can still produce final Delaunay-validation fai
 adversarial/degenerate point sets, even when local repair steps appear to succeed.
 
 **Severity:** High (correctness)  
-**Affects:** primarily large 4D bulk runs (historically 100+ vertices)  
+**Affects:** primarily large 4D bulk runs (typically 100+ vertices)  
 **Recommended workaround:** prefer incremental insertion for production 4D workloads
 
 ### What has been fixed

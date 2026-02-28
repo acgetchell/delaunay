@@ -555,7 +555,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
                         statistics,
                         ..
                     } = e;
-                    let summary: InsertionSummary<D> = (*statistics).into();
+                    let summary: InsertionSummary<D> = statistics.into();
                     print_insertion_summary(&summary, t_insert.elapsed());
                     println!("Batch construction failed after {:?}", t_batch.elapsed());
                     println!("construction failed: {error}");

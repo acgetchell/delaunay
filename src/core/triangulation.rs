@@ -2231,6 +2231,49 @@ where
         Ok(true)
     }
 
+    /// Check whether any cell still requires positive-orientation promotion.
+    ///
+    /// This performs the same orientation inspection as promotion, but does not mutate any cells.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(true)` if at least one cell has negative geometric orientation.
+    /// - `Ok(false)` if all cells are already positively oriented.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`InsertionError`] if orientation evaluation fails or if any cell is
+    /// geometrically degenerate (`orientation == 0`).
+    fn cells_require_positive_orientation_promotion(&self) -> Result<bool, InsertionError>
+    where
+        K::Scalar: CoordinateScalar,
+    {
+        let mut periodic_periods: Option<[K::Scalar; D]> = None;
+        for (cell_key, cell) in self.tds.cells() {
+            let orientation = self.evaluate_cell_orientation_for_context(
+                cell_key,
+                cell,
+                &mut periodic_periods,
+                "positive-orientation convergence check",
+                "Geometric orientation predicate failed while checking positive-orientation convergence for cell",
+            )?;
+            if orientation == 0 {
+                return Err(TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell {:?} (key {cell_key:?}) has degenerate geometric orientation while checking positive-orientation convergence",
+                        cell.uuid(),
+                    ),
+                }
+                .into());
+            }
+            if orientation < 0 {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
     /// For connected non-periodic triangulations, coherent orientation has two equivalent global
     /// sign choices. Canonicalize that global sign to positive by flipping all cells when needed.
     fn canonicalize_global_orientation_sign(&mut self) -> Result<(), InsertionError>
@@ -2299,8 +2342,9 @@ where
             self.tds.normalize_coherent_orientation()?;
         }
         // Hard post-condition: after bounded promotion passes, no further promotion should be
-        // needed. If this still returns `true`, orientation normalization failed to converge.
-        if self.promote_cells_to_positive_orientation()? {
+        // needed. This check is intentionally non-mutating so the error path does not leave any
+        // partial orientation flips applied.
+        if self.cells_require_positive_orientation_promotion()? {
             return Err(InsertionError::TopologyValidation(
                 TdsValidationError::InconsistentDataStructure {
                     message:
@@ -7008,6 +7052,61 @@ mod tests {
             TriangulationValidationError::Tds(TdsValidationError::InconsistentDataStructure { message })
                 if message.contains("negative geometric orientation")
         ));
+    }
+
+    #[test]
+    fn test_cells_require_positive_orientation_promotion_detects_negative_without_mutating() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
+        tds.get_cell_by_key_mut(cell_key)
+            .unwrap()
+            .swap_vertex_slots(0, 1);
+
+        let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        let before: Vec<_> = tri.tds.get_cell(cell_key).unwrap().vertices().to_vec();
+
+        assert!(
+            tri.cells_require_positive_orientation_promotion().unwrap(),
+            "Negative orientation should be detected"
+        );
+
+        let after: Vec<_> = tri.tds.get_cell(cell_key).unwrap().vertices().to_vec();
+        assert_eq!(
+            before, after,
+            "Convergence check must not mutate cell slot ordering"
+        );
+    }
+
+    #[test]
+    fn test_cells_require_positive_orientation_promotion_false_for_positive_without_mutating() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
+
+        let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        let before: Vec<_> = tri.tds.get_cell(cell_key).unwrap().vertices().to_vec();
+
+        assert!(
+            !tri.cells_require_positive_orientation_promotion().unwrap(),
+            "Already-positive orientation should not require promotion"
+        );
+
+        let after: Vec<_> = tri.tds.get_cell(cell_key).unwrap().vertices().to_vec();
+        assert_eq!(
+            before, after,
+            "Convergence check must not mutate already-positive cells"
+        );
     }
 
     #[test]

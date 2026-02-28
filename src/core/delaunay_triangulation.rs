@@ -506,9 +506,9 @@ pub struct ConstructionSkipSample {
 pub struct DelaunayTriangulationConstructionErrorWithStatistics {
     /// Underlying construction error.
     #[source]
-    pub error: Box<DelaunayTriangulationConstructionError>,
+    pub error: DelaunayTriangulationConstructionError,
     /// Aggregate construction statistics collected before the error occurred.
-    pub statistics: Box<ConstructionStatistics>,
+    pub statistics: ConstructionStatistics,
 }
 
 impl ConstructionStatistics {
@@ -1424,6 +1424,10 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
     /// Returns [`DelaunayTriangulationConstructionErrorWithStatistics`] if construction fails.
     /// The returned error includes the partial [`ConstructionStatistics`] collected up to the
     /// failure point.
+    #[expect(
+        clippy::result_large_err,
+        reason = "Public API intentionally returns by-value construction statistics for compatibility"
+    )]
     pub fn new_with_construction_statistics(
         vertices: &[Vertex<f64, (), D>],
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
@@ -1444,6 +1448,10 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
     /// Returns [`DelaunayTriangulationConstructionErrorWithStatistics`] if construction fails.
     /// The returned error includes the partial [`ConstructionStatistics`] collected up to the
     /// failure point.
+    #[expect(
+        clippy::result_large_err,
+        reason = "Public API intentionally returns by-value construction statistics for compatibility"
+    )]
     pub fn new_with_options_and_construction_statistics(
         vertices: &[Vertex<f64, (), D>],
         options: ConstructionOptions,
@@ -1962,6 +1970,10 @@ where
     /// Returns [`DelaunayTriangulationConstructionErrorWithStatistics`] if construction fails.
     /// The returned error includes the partial [`ConstructionStatistics`] collected up to the
     /// failure point.
+    #[expect(
+        clippy::result_large_err,
+        reason = "Public API intentionally returns by-value construction statistics for compatibility"
+    )]
     pub fn with_topology_guarantee_and_options_with_construction_statistics(
         kernel: &K,
         vertices: &[Vertex<K::Scalar, U, D>],
@@ -1986,8 +1998,8 @@ where
         )
         .map_err(
             |error| DelaunayTriangulationConstructionErrorWithStatistics {
-                error: Box::new(error),
-                statistics: Box::new(ConstructionStatistics::default()),
+                error,
+                statistics: ConstructionStatistics::default(),
             },
         )?;
         let grid_cell_size = preprocessed.grid_cell_size();
@@ -2304,6 +2316,10 @@ where
     }
 
     #[allow(clippy::too_many_lines)]
+    #[expect(
+        clippy::result_large_err,
+        reason = "Internal helper propagates public by-value construction-statistics error type"
+    )]
     fn build_with_shuffled_retries_with_construction_statistics(
         kernel: &K,
         vertices: &[Vertex<K::Scalar, U, D>],
@@ -2357,7 +2373,7 @@ where
                     // Some construction errors are deterministic and should not be masked
                     // by shuffled retry logic (e.g. duplicate UUIDs).
                     if matches!(
-                        error.as_ref(),
+                        &error,
                         DelaunayTriangulationConstructionError::Triangulation(
                             TriangulationConstructionError::Tds(
                                 TdsConstructionError::DuplicateUuid { .. }
@@ -2369,7 +2385,7 @@ where
                             statistics,
                         });
                     }
-                    last_stats.replace(*statistics);
+                    last_stats.replace(statistics);
                     error.to_string()
                 }
             };
@@ -2431,7 +2447,7 @@ where
                     let DelaunayTriangulationConstructionErrorWithStatistics { error, statistics } =
                         err;
                     if matches!(
-                        error.as_ref(),
+                        &error,
                         DelaunayTriangulationConstructionError::Triangulation(
                             TriangulationConstructionError::Tds(
                                 TdsConstructionError::DuplicateUuid { .. }
@@ -2443,7 +2459,7 @@ where
                             statistics,
                         });
                     }
-                    last_stats.replace(*statistics);
+                    last_stats.replace(statistics);
                     last_error = error.to_string();
                 }
             }
@@ -2462,19 +2478,16 @@ where
 
         // Treat persistent construction failures or Delaunay violations as hard construction
         // errors so callers can deterministically reject.
-        let statistics = Box::new(last_stats.unwrap_or_default());
+        let statistics = last_stats.unwrap_or_default();
         Err(DelaunayTriangulationConstructionErrorWithStatistics {
-            error: Self::boxed_geometric_degeneracy_error(format!(
-                "Delaunay construction failed after shuffled reconstruction attempts: {last_error}"
-            )),
+            error: TriangulationConstructionError::GeometricDegeneracy {
+                message: format!(
+                    "Delaunay construction failed after shuffled reconstruction attempts: {last_error}"
+                ),
+            }
+            .into(),
             statistics,
         })
-    }
-
-    fn boxed_geometric_degeneracy_error(
-        message: String,
-    ) -> Box<DelaunayTriangulationConstructionError> {
-        Box::new(TriangulationConstructionError::GeometricDegeneracy { message }.into())
     }
 
     const fn should_retry_construction(vertices: &[Vertex<K::Scalar, U, D>]) -> bool {
@@ -2556,6 +2569,10 @@ where
         Ok(dt)
     }
 
+    #[expect(
+        clippy::result_large_err,
+        reason = "Internal helper propagates public by-value construction-statistics error type"
+    )]
     fn build_with_kernel_inner_with_construction_statistics(
         kernel: K,
         vertices: &[Vertex<K::Scalar, U, D>],
@@ -2592,10 +2609,11 @@ where
             );
             if let Err(err) = validation_result {
                 return Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                    error: Self::boxed_geometric_degeneracy_error(format!(
-                        "PL-manifold validation failed after construction: {err}"
-                    )),
-                    statistics: Box::new(stats),
+                    error: TriangulationConstructionError::GeometricDegeneracy {
+                        message: format!("PL-manifold validation failed after construction: {err}"),
+                    }
+                    .into(),
+                    statistics: stats,
                 });
             }
         }
@@ -2612,16 +2630,21 @@ where
         );
         if let Err(err) = delaunay_result {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                error: Self::boxed_geometric_degeneracy_error(format!(
-                    "Delaunay property violated after construction: {err}"
-                )),
-                statistics: Box::new(stats),
+                error: TriangulationConstructionError::GeometricDegeneracy {
+                    message: format!("Delaunay property violated after construction: {err}"),
+                }
+                .into(),
+                statistics: stats,
             });
         }
 
         Ok((dt, stats))
     }
 
+    #[expect(
+        clippy::result_large_err,
+        reason = "Internal helper propagates public by-value construction-statistics error type"
+    )]
     fn build_with_kernel_inner_seeded_with_construction_statistics(
         kernel: K,
         vertices: &[Vertex<K::Scalar, U, D>],
@@ -2635,18 +2658,16 @@ where
     {
         if vertices.len() < D + 1 {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                error: Box::new(
-                    TriangulationConstructionError::InsufficientVertices {
+                error: TriangulationConstructionError::InsufficientVertices {
+                    dimension: D,
+                    source: crate::core::cell::CellValidationError::InsufficientVertices {
+                        actual: vertices.len(),
+                        expected: D + 1,
                         dimension: D,
-                        source: crate::core::cell::CellValidationError::InsufficientVertices {
-                            actual: vertices.len(),
-                            expected: D + 1,
-                            dimension: D,
-                        },
-                    }
-                    .into(),
-                ),
-                statistics: Box::new(ConstructionStatistics::default()),
+                    },
+                }
+                .into(),
+                statistics: ConstructionStatistics::default(),
             });
         }
 
@@ -2654,8 +2675,8 @@ where
         let initial_vertices = &vertices[..=D];
         let tds = Triangulation::<K, U, V, D>::build_initial_simplex(initial_vertices).map_err(
             |error| DelaunayTriangulationConstructionErrorWithStatistics {
-                error: Box::new(error.into()),
-                statistics: Box::new(ConstructionStatistics::default()),
+                error: error.into(),
+                statistics: ConstructionStatistics::default(),
             },
         )?;
 
@@ -2716,8 +2737,8 @@ where
             &mut soft_fail_seeds,
         ) {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                error: Box::new(error),
-                statistics: Box::new(stats),
+                error,
+                statistics: stats,
             });
         }
 
@@ -2728,8 +2749,8 @@ where
             &soft_fail_seeds,
         ) {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                error: Box::new(error),
-                statistics: Box::new(stats),
+                error,
+                statistics: stats,
             });
         }
 
