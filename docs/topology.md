@@ -30,6 +30,7 @@ src/
 │   │   ├── spherical.rs
 │   │   └── toroidal.rs
 │   └── traits/
+│       ├── global_topology_model.rs
 │       └── topological_space.rs
 └── triangulation/
     └── flips.rs
@@ -133,7 +134,9 @@ for D ≥ 3.
 ## Topological spaces
 
 `src/topology/traits/topological_space.rs` defines `TopologicalSpace`,
-`TopologyKind`, and `GlobalTopology`, with implementations in:
+`TopologyKind`, and `GlobalTopology` runtime metadata. Internal behavior is
+implemented via scalar-generic models in
+`src/topology/traits/global_topology_model.rs`, with implementations in:
 
 - `src/topology/spaces/euclidean.rs` - Standard Euclidean space (default)
 - `src/topology/spaces/toroidal.rs` - Toroidal (periodic) space with domain wrapping

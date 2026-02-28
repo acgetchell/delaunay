@@ -769,7 +769,9 @@ pub mod triangulation {
 pub mod topology {
     /// Traits for topological spaces and error types
     pub mod traits {
+        pub mod global_topology_model;
         pub mod topological_space;
+        pub use global_topology_model::*;
         pub use topological_space::*;
     }
     /// Topological invariants and their computation

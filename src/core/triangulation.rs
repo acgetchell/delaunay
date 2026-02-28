@@ -147,6 +147,7 @@ use crate::topology::manifold::{
     ManifoldError, validate_closed_boundary, validate_facet_degree, validate_ridge_links,
     validate_vertex_links,
 };
+use crate::topology::traits::global_topology_model::GlobalTopologyModel;
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyError, TopologyKind};
 use core::ops::Div;
 use num_traits::{NumCast, One, Zero};
@@ -1984,58 +1985,20 @@ where
         edges
     }
 
-    /// Resolve toroidal domain periods in scalar form for periodic lifted-orientation checks.
-    fn periodic_domain_periods_for_orientation(
-        &self,
-        purpose: &str,
-    ) -> Result<[K::Scalar; D], TdsValidationError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
-        let GlobalTopology::Toroidal { domain, .. } = self.global_topology else {
-            return Err(TdsValidationError::InconsistentDataStructure {
-                message: format!(
-                    "Encountered periodic cell offsets during {purpose}, but triangulation global topology is not toroidal",
-                ),
-            });
-        };
-
-        let mut periods = [K::Scalar::zero(); D];
-        for axis in 0..D {
-            let period = domain[axis];
-            if !period.is_finite() || period <= 0.0 {
-                return Err(TdsValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Invalid toroidal period {period:?} on axis {axis} during {purpose}",
-                    ),
-                });
-            }
-            periods[axis] =
-                <K::Scalar as NumCast>::from(period).ok_or_else(|| {
-                    TdsValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Could not convert toroidal period {period:?} on axis {axis} into scalar type during {purpose}",
-                        ),
-                    }
-                })?;
-        }
-
-        Ok(periods)
-    }
     /// Collect cell points for orientation evaluation.
     ///
-    /// For periodic cells, this applies per-vertex lattice offsets against toroidal periods
-    /// to recover lifted coordinates before invoking geometric predicates.
+    /// For periodic cells, this delegates per-vertex lattice-offset lifting to the active
+    /// [`GlobalTopology`] behavior model.
     fn collect_cell_points_for_orientation(
         &self,
         cell_key: CellKey,
         cell: &Cell<K::Scalar, U, V, D>,
-        periodic_periods: Option<&[K::Scalar; D]>,
         purpose: &str,
     ) -> Result<SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>, TdsValidationError>
     where
         K::Scalar: CoordinateScalar,
     {
+        let topology_model = self.global_topology.model();
         let periodic_offsets = cell.periodic_vertex_offsets();
         if let Some(offsets) = periodic_offsets
             && offsets.len() != cell.number_of_vertices()
@@ -2046,6 +2009,13 @@ where
                     cell.uuid(),
                     offsets.len(),
                     cell.number_of_vertices(),
+                ),
+            });
+        }
+        if periodic_offsets.is_some() && topology_model.kind() != TopologyKind::Toroidal {
+            return Err(TdsValidationError::InconsistentDataStructure {
+                message: format!(
+                    "Encountered periodic cell offsets during {purpose}, but triangulation global topology is not toroidal",
                 ),
             });
         }
@@ -2062,31 +2032,15 @@ where
                     ),
                 }
             })?;
-
-            let mut lifted_coords = *vertex.point().coords();
-            if let Some(offsets) = periodic_offsets {
-                let Some(periods) = periodic_periods else {
-                    return Err(TdsValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Cell {:?} (key {cell_key:?}) has periodic offsets but no toroidal domain periods available during {purpose}",
-                            cell.uuid(),
-                        ),
-                    });
-                };
-                let offset = offsets[vertex_idx];
-                for axis in 0..D {
-                    let offset_scalar = <K::Scalar as NumCast>::from(offset[axis]).ok_or_else(|| {
-                        TdsValidationError::InconsistentDataStructure {
-                            message: format!(
-                                "Could not convert periodic offset {} for axis {axis} in cell {:?} (key {cell_key:?}) during {purpose}",
-                                offset[axis],
-                                cell.uuid(),
-                            ),
-                        }
-                    })?;
-                    lifted_coords[axis] = lifted_coords[axis] + offset_scalar * periods[axis];
-                }
-            }
+            let periodic_offset = periodic_offsets.map(|offsets| offsets[vertex_idx]);
+            let lifted_coords = topology_model
+                .lift_for_orientation(*vertex.point().coords(), periodic_offset)
+                .map_err(|error| TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Failed to lift coordinates for vertex key {vertex_key:?} at slot {vertex_idx} in cell {:?} (key {cell_key:?}) during {purpose}: {error}",
+                        cell.uuid(),
+                    ),
+                })?;
 
             points.push(Point::new(lifted_coords));
         }
@@ -2097,31 +2051,19 @@ where
     /// Evaluate a cell's geometric orientation for a specific validation/canonicalization context.
     ///
     /// This helper centralizes:
-    /// - periodic domain period caching,
     /// - lifted-point collection, and
     /// - kernel orientation predicate invocation with contextual error mapping.
     fn evaluate_cell_orientation_for_context(
         &self,
         cell_key: CellKey,
         cell: &Cell<K::Scalar, U, V, D>,
-        periodic_periods: &mut Option<[K::Scalar; D]>,
         purpose: &str,
         predicate_failure_prefix: &str,
     ) -> Result<i32, TdsValidationError>
     where
         K::Scalar: CoordinateScalar,
     {
-        let periodic_ref = if cell.periodic_vertex_offsets().is_some() {
-            if periodic_periods.is_none() {
-                *periodic_periods = Some(self.periodic_domain_periods_for_orientation(purpose)?);
-            }
-            periodic_periods.as_ref()
-        } else {
-            None
-        };
-
-        let points =
-            self.collect_cell_points_for_orientation(cell_key, cell, periodic_ref, purpose)?;
+        let points = self.collect_cell_points_for_orientation(cell_key, cell, purpose)?;
 
         self.kernel.orientation(&points).map_err(|e| {
             TdsValidationError::InconsistentDataStructure {
@@ -2146,12 +2088,10 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
-        let mut periodic_periods: Option<[K::Scalar; D]> = None;
         for (cell_key, cell) in self.tds.cells() {
             let orientation = self.evaluate_cell_orientation_for_context(
                 cell_key,
                 cell,
-                &mut periodic_periods,
                 "geometric orientation validation",
                 "Geometric orientation predicate failed for cell",
             )?;
@@ -2188,13 +2128,11 @@ where
         K::Scalar: CoordinateScalar,
     {
         let mut negative_cells = CellKeyBuffer::new();
-        let mut periodic_periods: Option<[K::Scalar; D]> = None;
 
         for (cell_key, cell) in self.tds.cells() {
             let orientation = self.evaluate_cell_orientation_for_context(
                 cell_key,
                 cell,
-                &mut periodic_periods,
                 "positive-orientation promotion",
                 "Geometric orientation predicate failed while promoting positive orientation for cell",
             )?;
@@ -2250,12 +2188,10 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
-        let mut periodic_periods: Option<[K::Scalar; D]> = None;
         for (cell_key, cell) in self.tds.cells() {
             let orientation = self.evaluate_cell_orientation_for_context(
                 cell_key,
                 cell,
-                &mut periodic_periods,
                 "positive-orientation convergence check",
                 "Geometric orientation predicate failed while checking positive-orientation convergence for cell",
             )?;
@@ -2282,12 +2218,10 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
-        let mut periodic_periods: Option<[K::Scalar; D]> = None;
         let representative_sign = if let Some((cell_key, cell)) = self.tds.cells().next() {
             let orientation = self.evaluate_cell_orientation_for_context(
                 cell_key,
                 cell,
-                &mut periodic_periods,
                 "global orientation-sign canonicalization",
                 "Geometric orientation predicate failed while canonicalizing global orientation sign for cell",
             )?;
@@ -2369,7 +2303,6 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
-        let mut periodic_periods: Option<[K::Scalar; D]> = None;
         for &cell_key in cells {
             let orientation = {
                 let cell = self.tds.get_cell(cell_key).ok_or_else(|| {
@@ -2382,7 +2315,6 @@ where
                 self.evaluate_cell_orientation_for_context(
                     cell_key,
                     cell,
-                    &mut periodic_periods,
                     "insertion orientation canonicalization",
                     "Geometric orientation predicate failed while canonicalizing cell",
                 )?

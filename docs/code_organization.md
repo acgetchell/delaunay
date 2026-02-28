@@ -194,6 +194,7 @@ delaunay/
 │   │   │   ├── spherical.rs
 │   │   │   └── toroidal.rs
 │   │   ├── traits/
+│   │   │   ├── global_topology_model.rs
 │   │   │   └── topological_space.rs
 │   │   └── manifold.rs
 │   ├── triangulation/

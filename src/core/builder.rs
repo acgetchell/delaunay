@@ -119,6 +119,9 @@ use crate::geometry::kernel::{FastKernel, Kernel};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar, ScalarAccumulative};
 use crate::topology::spaces::toroidal::ToroidalSpace;
+use crate::topology::traits::global_topology_model::{
+    GlobalTopologyModel, GlobalTopologyModelError,
+};
 use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
 use num_traits::ToPrimitive;
 use rand::SeedableRng;
@@ -637,58 +640,55 @@ where
     // Internal helpers
     // -------------------------------------------------------------------------
 
-    /// Canonicalizes the vertex slice into the toroidal fundamental domain.
-    ///
-    /// Returns a new `Vec<Vertex<T, U, D>>` where every coordinate `c` in axis `i`
-    /// has been replaced by `c.rem_euclid(domain[i])`. If any coordinate cannot be
-    /// wrapped (non-finite or type-conversion failure), returns an error.
-    fn canonicalize_vertices(
+    /// Validates the topology model configuration before using it in construction.
+    fn validate_topology_model<M>(model: &M) -> Result<(), DelaunayTriangulationConstructionError>
+    where
+        M: GlobalTopologyModel<D>,
+    {
+        model.validate_configuration().map_err(|error| match error {
+            GlobalTopologyModelError::InvalidToroidalPeriod { axis, period } => {
+                TriangulationConstructionError::GeometricDegeneracy {
+                    message: format!(
+                        "Invalid toroidal domain at axis {axis}: period {period:?}; expected finite value > 0",
+                    ),
+                }
+                .into()
+            }
+            other => TriangulationConstructionError::GeometricDegeneracy {
+                message: format!("Invalid topology model configuration: {other}"),
+            }
+            .into(),
+        })
+    }
+
+    /// Canonicalizes vertices using a topology behavior model.
+    fn canonicalize_vertices<M>(
         vertices: &[Vertex<T, U, D>],
-        space: &ToroidalSpace<D>,
-    ) -> Result<Vec<Vertex<T, U, D>>, DelaunayTriangulationConstructionError> {
+        model: &M,
+    ) -> Result<Vec<Vertex<T, U, D>>, DelaunayTriangulationConstructionError>
+    where
+        M: GlobalTopologyModel<D>,
+    {
         let mut out = Vec::with_capacity(vertices.len());
 
         for (idx, v) in vertices.iter().enumerate() {
-            let original_coords = v.point().coords();
-            let mut wrapped = [T::zero(); D];
+            let mut canonicalized_coords = *v.point().coords();
+            model
+                .canonicalize_point_in_place(&mut canonicalized_coords)
+                .map_err(|error| TriangulationConstructionError::GeometricDegeneracy {
+                    message: format!(
+                        "Failed to canonicalize vertex {idx}: original coords {:?}; reason: {error}",
+                        v.point().coords(),
+                    ),
+                })?;
 
-            for axis in 0..D {
-                wrapped[axis] = space
-                    .wrap_coord::<T>(axis, original_coords[axis])
-                    .ok_or_else(|| TriangulationConstructionError::GeometricDegeneracy {
-                        message: format!(
-                            "Failed to canonicalize vertex {idx}: coordinate at axis \
-                                     {axis} ({:?}) is not finite or cannot be wrapped into \
-                                     the domain {:?}",
-                            original_coords[axis], space.domain,
-                        ),
-                    })?;
-            }
-
-            let new_point = Point::new(wrapped);
+            let new_point = Point::new(canonicalized_coords);
             let new_vertex = Vertex::new_with_uuid(new_point, v.uuid(), v.data);
 
             out.push(new_vertex);
         }
 
         Ok(out)
-    }
-
-    /// Validates toroidal domain periods are finite and strictly positive.
-    fn validate_toroidal_domain(
-        space: &ToroidalSpace<D>,
-    ) -> Result<(), DelaunayTriangulationConstructionError> {
-        for (axis, &period) in space.domain.iter().enumerate() {
-            if !period.is_finite() || period <= 0.0 {
-                return Err(TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!(
-                        "Invalid toroidal domain at axis {axis}: period {period:?}; expected finite value > 0",
-                    ),
-                }
-                .into());
-            }
-        }
-        Ok(())
     }
 
     // -------------------------------------------------------------------------
@@ -788,25 +788,32 @@ where
                 )
             }
             (Some(space), false) => {
-                Self::validate_toroidal_domain(&space)?;
+                let topology = GlobalTopology::Toroidal {
+                    domain: space.domain,
+                    mode: ToroidalConstructionMode::Canonicalized,
+                };
+                let topology_model = topology.model();
+                Self::validate_topology_model(&topology_model)?;
                 // Toroidal Phase 1: canonicalize then delegate.
-                let canonical = Self::canonicalize_vertices(self.vertices, &space)?;
+                let canonical = Self::canonicalize_vertices(self.vertices, &topology_model)?;
                 let mut dt = DelaunayTriangulation::with_topology_guarantee_and_options(
                     kernel,
                     &canonical,
                     self.topology_guarantee,
                     self.construction_options,
                 )?;
-                dt.set_global_topology(GlobalTopology::Toroidal {
-                    domain: space.domain,
-                    mode: ToroidalConstructionMode::Canonicalized,
-                });
+                dt.set_global_topology(topology);
                 Ok(dt)
             }
             (Some(space), true) => {
-                Self::validate_toroidal_domain(&space)?;
+                let topology = GlobalTopology::Toroidal {
+                    domain: space.domain,
+                    mode: ToroidalConstructionMode::PeriodicImagePoint,
+                };
+                let topology_model = topology.model();
+                Self::validate_topology_model(&topology_model)?;
                 // Toroidal Phase 2: canonicalize then apply 3^D image-point method.
-                let canonical = Self::canonicalize_vertices(self.vertices, &space)?;
+                let canonical = Self::canonicalize_vertices(self.vertices, &topology_model)?;
                 let mut dt = Self::build_periodic::<K, V>(
                     kernel,
                     &canonical,
@@ -814,10 +821,7 @@ where
                     self.topology_guarantee,
                     self.construction_options,
                 )?;
-                dt.set_global_topology(GlobalTopology::Toroidal {
-                    domain: space.domain,
-                    mode: ToroidalConstructionMode::PeriodicImagePoint,
-                });
+                dt.set_global_topology(topology);
                 dt.as_triangulation_mut()
                     .normalize_and_promote_positive_orientation()
                     .map_err(|e| TriangulationConstructionError::GeometricDegeneracy {
