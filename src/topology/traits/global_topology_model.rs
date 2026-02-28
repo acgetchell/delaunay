@@ -1,9 +1,22 @@
 //! Internal behavior models for [`GlobalTopology`] metadata.
 //!
-//! Public APIs continue to expose
-//! [`GlobalTopology`]
-//! as runtime metadata. This module provides scalar-generic behavior models used by
-//! core triangulation/build paths to avoid ad-hoc topology branching.
+//! Public APIs continue to expose [`GlobalTopology`] as runtime metadata. This module provides
+//! scalar-generic behavior models used by core triangulation/build paths to avoid ad-hoc topology
+//! branching.
+//!
+//! # Overview
+//!
+//! The [`GlobalTopologyModel`] trait abstracts topology-specific behavior for coordinate
+//! canonicalization and orientation predicate lifting. Concrete implementations include:
+//!
+//! - [`EuclideanModel`]: Identity operations (no wrapping or lifting)
+//! - [`ToroidalModel`]: Domain wrapping and lattice-offset lifting for periodic boundaries
+//! - [`SphericalModel`]: Scaffold for future sphere-constrained projection
+//! - [`HyperbolicModel`]: Scaffold for future hyperbolic projection
+//!
+//! The [`GlobalTopologyModelAdapter`] enum provides dynamic dispatch over these models and is
+//! obtained via [`GlobalTopology::model()`].
+//!
 
 #![forbid(unsafe_code)]
 
@@ -112,11 +125,18 @@ pub trait GlobalTopologyModel<const D: usize> {
         T: CoordinateScalar;
 
     /// Returns the periodic domain when relevant.
+    ///
+    /// For periodic topologies (e.g., toroidal), this returns the fundamental domain periods.
+    /// For non-periodic topologies, returns `None`.
     fn periodic_domain(&self) -> Option<&[f64; D]> {
         None
     }
 
-    /// Optional hook indicating that periodic facet/signature behavior is available.
+    /// Indicates whether periodic facet/signature behavior is available.
+    ///
+    /// Returns `true` for periodic topologies that support lattice-offset tracking on cells.
+    /// This is used internally by the triangulation to determine whether periodic vertex offsets
+    /// should be stored and processed.
     fn supports_periodic_facet_signatures(&self) -> bool {
         false
     }
@@ -171,6 +191,8 @@ pub struct ToroidalModel<const D: usize> {
 
 impl<const D: usize> ToroidalModel<D> {
     /// Creates a toroidal model for the provided domain periods.
+    ///
+    /// Note: `ToroidalModel` is internal; users should access via [`GlobalTopology::model()`].
     #[must_use]
     pub const fn new(domain: [f64; D]) -> Self {
         Self { domain }
@@ -246,6 +268,17 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
         };
 
         self.validate_configuration()?;
+        // Validate finiteness before performing arithmetic
+        for (axis, coord_ref) in coords.iter().enumerate().take(D) {
+            if let Some(coord_f64) = coord_ref.to_f64()
+                && !coord_f64.is_finite()
+            {
+                return Err(GlobalTopologyModelError::NonFiniteCoordinate {
+                    axis,
+                    value: coord_f64,
+                });
+            }
+        }
         for axis in 0..D {
             let period = self.domain[axis];
             let period_scalar =
@@ -371,6 +404,9 @@ pub enum GlobalTopologyModelAdapter<const D: usize> {
 
 impl<const D: usize> GlobalTopologyModelAdapter<D> {
     /// Builds a behavior adapter from public topology metadata.
+    ///
+    /// This constructor is used internally by [`GlobalTopology::model()`] to convert public
+    /// topology metadata into an internal behavior model.
     #[must_use]
     pub const fn from_global_topology(topology: GlobalTopology<D>) -> Self {
         match topology {
@@ -390,6 +426,10 @@ impl<const D: usize> From<GlobalTopology<D>> for GlobalTopologyModelAdapter<D> {
 
 impl<const D: usize> GlobalTopology<D> {
     /// Returns the internal behavior adapter corresponding to this metadata.
+    ///
+    /// This method converts the public [`GlobalTopology`] metadata into an internal behavior model
+    /// that implements the `GlobalTopologyModel` trait. The returned adapter can be used internally
+    /// to perform topology-specific operations like coordinate canonicalization and orientation lifting.
     #[must_use]
     pub const fn model(self) -> GlobalTopologyModelAdapter<D> {
         GlobalTopologyModelAdapter::from_global_topology(self)
@@ -399,17 +439,27 @@ impl<const D: usize> GlobalTopology<D> {
 impl<const D: usize> GlobalTopologyModel<D> for GlobalTopologyModelAdapter<D> {
     fn kind(&self) -> TopologyKind {
         match self {
-            Self::Euclidean(..) => TopologyKind::Euclidean,
-            Self::Toroidal(..) => TopologyKind::Toroidal,
-            Self::Spherical(..) => TopologyKind::Spherical,
-            Self::Hyperbolic(..) => TopologyKind::Hyperbolic,
+            Self::Euclidean(model) => <EuclideanModel as GlobalTopologyModel<D>>::kind(model),
+            Self::Toroidal(model) => <ToroidalModel<D> as GlobalTopologyModel<D>>::kind(model),
+            Self::Spherical(model) => <SphericalModel as GlobalTopologyModel<D>>::kind(model),
+            Self::Hyperbolic(model) => <HyperbolicModel as GlobalTopologyModel<D>>::kind(model),
         }
     }
 
     fn allows_boundary(&self) -> bool {
         match self {
-            Self::Euclidean(..) => true,
-            Self::Toroidal(..) | Self::Spherical(..) | Self::Hyperbolic(..) => false,
+            Self::Euclidean(model) => {
+                <EuclideanModel as GlobalTopologyModel<D>>::allows_boundary(model)
+            }
+            Self::Toroidal(model) => {
+                <ToroidalModel<D> as GlobalTopologyModel<D>>::allows_boundary(model)
+            }
+            Self::Spherical(model) => {
+                <SphericalModel as GlobalTopologyModel<D>>::allows_boundary(model)
+            }
+            Self::Hyperbolic(model) => {
+                <HyperbolicModel as GlobalTopologyModel<D>>::allows_boundary(model)
+            }
         }
     }
 
@@ -587,6 +637,18 @@ mod tests {
     }
 
     #[test]
+    fn toroidal_model_canonicalization_rejects_nan_coordinates() {
+        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let mut coords = [f64::NAN, 1.0_f64];
+        let err = model.canonicalize_point_in_place(&mut coords).unwrap_err();
+        assert!(matches!(
+            err,
+            GlobalTopologyModelError::NonFiniteCoordinate { axis: 0, value }
+                if value.is_nan()
+        ));
+    }
+
+    #[test]
     fn toroidal_model_lift_applies_lattice_offset() {
         let model = ToroidalModel::<2>::new([2.0, 3.0]);
         let lifted = model
@@ -594,6 +656,19 @@ mod tests {
             .unwrap();
         assert_relative_eq!(lifted[0], 2.5);
         assert_relative_eq!(lifted[1], -2.75);
+    }
+
+    #[test]
+    fn toroidal_model_lift_rejects_non_finite_coordinates() {
+        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let err = model
+            .lift_for_orientation([f64::NAN, 0.5_f64], Some([1, 0]))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            GlobalTopologyModelError::NonFiniteCoordinate { axis: 0, value }
+                if value.is_nan()
+        ));
     }
 
     #[test]
@@ -608,5 +683,353 @@ mod tests {
                 kind: TopologyKind::Euclidean,
             }
         ));
+    }
+
+    // =========================================================================
+    // EuclideanModel tests
+    // =========================================================================
+
+    #[test]
+    fn euclidean_model_returns_correct_kind() {
+        let model = EuclideanModel;
+        assert_eq!(
+            <EuclideanModel as GlobalTopologyModel<2>>::kind(&model),
+            TopologyKind::Euclidean
+        );
+    }
+
+    #[test]
+    fn euclidean_model_allows_boundary() {
+        let model = EuclideanModel;
+        assert!(<EuclideanModel as GlobalTopologyModel<2>>::allows_boundary(
+            &model
+        ));
+    }
+
+    #[test]
+    fn euclidean_model_validation_always_succeeds() {
+        let model = EuclideanModel;
+        assert!(<EuclideanModel as GlobalTopologyModel<2>>::validate_configuration(&model).is_ok());
+    }
+
+    #[test]
+    fn euclidean_model_canonicalization_is_identity() {
+        let model = EuclideanModel;
+        let mut coords = [1.5_f64, 2.5_f64, 3.5_f64];
+        <EuclideanModel as GlobalTopologyModel<3>>::canonicalize_point_in_place(
+            &model,
+            &mut coords,
+        )
+        .unwrap();
+        assert_relative_eq!(coords[0], 1.5);
+        assert_relative_eq!(coords[1], 2.5);
+        assert_relative_eq!(coords[2], 3.5);
+    }
+
+    #[test]
+    fn euclidean_model_lift_without_offset_is_identity() {
+        let model = EuclideanModel;
+        let coords = [1.5_f64, 2.5_f64];
+        let lifted =
+            <EuclideanModel as GlobalTopologyModel<2>>::lift_for_orientation(&model, coords, None)
+                .unwrap();
+        assert_relative_eq!(lifted[0], 1.5);
+        assert_relative_eq!(lifted[1], 2.5);
+    }
+
+    #[test]
+    fn euclidean_model_has_no_periodic_domain() {
+        let model = EuclideanModel;
+        assert_eq!(
+            <EuclideanModel as GlobalTopologyModel<2>>::periodic_domain(&model),
+            None
+        );
+    }
+
+    #[test]
+    fn euclidean_model_does_not_support_periodic_signatures() {
+        let model = EuclideanModel;
+        assert!(
+            !<EuclideanModel as GlobalTopologyModel<2>>::supports_periodic_facet_signatures(&model)
+        );
+    }
+
+    // =========================================================================
+    // SphericalModel and HyperbolicModel tests
+    // =========================================================================
+
+    #[test]
+    fn spherical_model_returns_correct_kind() {
+        let model = SphericalModel;
+        assert_eq!(
+            <SphericalModel as GlobalTopologyModel<2>>::kind(&model),
+            TopologyKind::Spherical
+        );
+    }
+
+    #[test]
+    fn spherical_model_does_not_allow_boundary() {
+        let model = SphericalModel;
+        assert!(!<SphericalModel as GlobalTopologyModel<2>>::allows_boundary(&model));
+    }
+
+    #[test]
+    fn spherical_model_rejects_periodic_offsets() {
+        let model = SphericalModel;
+        let err = <SphericalModel as GlobalTopologyModel<2>>::lift_for_orientation(
+            &model,
+            [1.0_f64, 0.0_f64],
+            Some([1, 0]),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            GlobalTopologyModelError::PeriodicOffsetsUnsupported {
+                kind: TopologyKind::Spherical,
+            }
+        ));
+    }
+
+    #[test]
+    fn spherical_model_has_no_periodic_domain() {
+        let model = SphericalModel;
+        assert_eq!(
+            <SphericalModel as GlobalTopologyModel<2>>::periodic_domain(&model),
+            None
+        );
+    }
+
+    #[test]
+    fn hyperbolic_model_returns_correct_kind() {
+        let model = HyperbolicModel;
+        assert_eq!(
+            <HyperbolicModel as GlobalTopologyModel<2>>::kind(&model),
+            TopologyKind::Hyperbolic
+        );
+    }
+
+    #[test]
+    fn hyperbolic_model_does_not_allow_boundary() {
+        let model = HyperbolicModel;
+        assert!(!<HyperbolicModel as GlobalTopologyModel<2>>::allows_boundary(&model));
+    }
+
+    #[test]
+    fn hyperbolic_model_rejects_periodic_offsets() {
+        let model = HyperbolicModel;
+        let err = <HyperbolicModel as GlobalTopologyModel<2>>::lift_for_orientation(
+            &model,
+            [1.0_f64, 0.0_f64],
+            Some([1, 0]),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            GlobalTopologyModelError::PeriodicOffsetsUnsupported {
+                kind: TopologyKind::Hyperbolic,
+            }
+        ));
+    }
+
+    #[test]
+    fn hyperbolic_model_has_no_periodic_domain() {
+        let model = HyperbolicModel;
+        assert_eq!(
+            <HyperbolicModel as GlobalTopologyModel<2>>::periodic_domain(&model),
+            None
+        );
+    }
+
+    // =========================================================================
+    // GlobalTopologyModelAdapter delegation tests
+    // =========================================================================
+
+    #[test]
+    fn adapter_delegates_kind_to_euclidean_model() {
+        let adapter = GlobalTopologyModelAdapter::<2>::Euclidean(EuclideanModel);
+        assert_eq!(adapter.kind(), TopologyKind::Euclidean);
+    }
+
+    #[test]
+    fn adapter_delegates_allows_boundary_to_toroidal_model() {
+        let adapter = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new([2.0, 3.0]));
+        assert!(!adapter.allows_boundary());
+    }
+
+    #[test]
+    fn adapter_delegates_validate_configuration_to_toroidal_model() {
+        let adapter = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new([2.0, 3.0]));
+        assert!(adapter.validate_configuration().is_ok());
+
+        let bad_adapter = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new([0.0, 3.0]));
+        assert!(bad_adapter.validate_configuration().is_err());
+    }
+
+    #[test]
+    fn adapter_delegates_canonicalize_to_toroidal_model() {
+        let adapter = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new([2.0, 3.0]));
+        let mut coords = [2.5_f64, -1.0_f64];
+        adapter.canonicalize_point_in_place(&mut coords).unwrap();
+        assert_relative_eq!(coords[0], 0.5);
+        assert_relative_eq!(coords[1], 2.0);
+    }
+
+    #[test]
+    fn adapter_delegates_lift_to_toroidal_model() {
+        let adapter = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new([2.0, 3.0]));
+        let lifted = adapter
+            .lift_for_orientation([0.5_f64, 0.25_f64], Some([1, -1]))
+            .unwrap();
+        assert_relative_eq!(lifted[0], 2.5);
+        assert_relative_eq!(lifted[1], -2.75);
+    }
+
+    #[test]
+    fn adapter_delegates_periodic_domain_to_models() {
+        let euclidean = GlobalTopologyModelAdapter::<2>::Euclidean(EuclideanModel);
+        assert_eq!(euclidean.periodic_domain(), None);
+
+        let toroidal = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new([2.0, 3.0]));
+        assert_eq!(toroidal.periodic_domain(), Some(&[2.0, 3.0]));
+    }
+
+    #[test]
+    fn adapter_delegates_periodic_signatures_to_models() {
+        let euclidean = GlobalTopologyModelAdapter::<2>::Euclidean(EuclideanModel);
+        assert!(!euclidean.supports_periodic_facet_signatures());
+
+        let toroidal = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new([2.0, 3.0]));
+        assert!(toroidal.supports_periodic_facet_signatures());
+    }
+
+    // =========================================================================
+    // Error handling tests
+    // =========================================================================
+
+    #[test]
+    fn toroidal_model_rejects_zero_period() {
+        let model = ToroidalModel::<2>::new([0.0, 3.0]);
+        let err = model.validate_configuration().unwrap_err();
+        assert!(matches!(
+            err,
+            GlobalTopologyModelError::InvalidToroidalPeriod { axis: 0, period }
+                if period.abs() < f64::EPSILON
+        ));
+    }
+
+    #[test]
+    fn toroidal_model_rejects_negative_period() {
+        let model = ToroidalModel::<2>::new([2.0, -1.0]);
+        let err = model.validate_configuration().unwrap_err();
+        assert!(matches!(
+            err,
+            GlobalTopologyModelError::InvalidToroidalPeriod { axis: 1, period }
+                if period < 0.0
+        ));
+    }
+
+    #[test]
+    fn toroidal_model_rejects_infinite_period() {
+        let model = ToroidalModel::<2>::new([f64::INFINITY, 3.0]);
+        let err = model.validate_configuration().unwrap_err();
+        assert!(matches!(
+            err,
+            GlobalTopologyModelError::InvalidToroidalPeriod { axis: 0, period }
+                if period.is_infinite()
+        ));
+    }
+
+    #[test]
+    fn toroidal_model_rejects_nan_period() {
+        let model = ToroidalModel::<2>::new([f64::NAN, 3.0]);
+        let err = model.validate_configuration().unwrap_err();
+        assert!(matches!(
+            err,
+            GlobalTopologyModelError::InvalidToroidalPeriod { axis: 0, period }
+                if period.is_nan()
+        ));
+    }
+
+    #[test]
+    fn toroidal_model_canonicalization_rejects_negative_infinity() {
+        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let mut coords = [f64::NEG_INFINITY, 1.0_f64];
+        let err = model.canonicalize_point_in_place(&mut coords).unwrap_err();
+        assert!(matches!(
+            err,
+            GlobalTopologyModelError::NonFiniteCoordinate { axis: 0, value }
+                if value.is_infinite() && value.is_sign_negative()
+        ));
+    }
+
+    // =========================================================================
+    // Edge case tests
+    // =========================================================================
+
+    #[test]
+    fn toroidal_model_canonicalization_handles_large_coordinates() {
+        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let mut coords = [1e10_f64, -1e10_f64];
+        model.canonicalize_point_in_place(&mut coords).unwrap();
+        // Should wrap into [0, 2.0) and [0, 3.0)
+        assert!(coords[0] >= 0.0 && coords[0] < 2.0);
+        assert!(coords[1] >= 0.0 && coords[1] < 3.0);
+    }
+
+    #[test]
+    fn toroidal_model_canonicalization_handles_exact_period() {
+        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let mut coords = [2.0_f64, 3.0_f64];
+        model.canonicalize_point_in_place(&mut coords).unwrap();
+        assert_relative_eq!(coords[0], 0.0);
+        assert_relative_eq!(coords[1], 0.0);
+    }
+
+    #[test]
+    fn toroidal_model_lift_with_zero_offset_is_identity() {
+        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let coords = [0.5_f64, 1.5_f64];
+        let lifted = model.lift_for_orientation(coords, Some([0, 0])).unwrap();
+        assert_relative_eq!(lifted[0], 0.5);
+        assert_relative_eq!(lifted[1], 1.5);
+    }
+
+    #[test]
+    fn toroidal_model_lift_with_large_offset() {
+        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let coords = [0.5_f64, 0.25_f64];
+        let lifted = model
+            .lift_for_orientation(coords, Some([127, -128]))
+            .unwrap();
+        assert_relative_eq!(lifted[0], 127.0_f64.mul_add(2.0, 0.5));
+        assert_relative_eq!(lifted[1], (-128.0_f64).mul_add(3.0, 0.25));
+    }
+
+    #[test]
+    fn toroidal_model_works_with_f32() {
+        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let mut coords = [2.5_f32, -1.0_f32];
+        model.canonicalize_point_in_place(&mut coords).unwrap();
+        assert!((coords[0] - 0.5).abs() < 1e-6);
+        assert!((coords[1] - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn toroidal_model_works_in_higher_dimensions() {
+        let model = ToroidalModel::<5>::new([2.0, 3.0, 4.0, 5.0, 6.0]);
+        let mut coords = [2.5_f64, -1.0_f64, 8.5_f64, 10.5_f64, 12.5_f64];
+        model.canonicalize_point_in_place(&mut coords).unwrap();
+        assert_relative_eq!(coords[0], 0.5);
+        assert_relative_eq!(coords[1], 2.0);
+        assert_relative_eq!(coords[2], 0.5);
+        assert_relative_eq!(coords[3], 0.5);
+        assert_relative_eq!(coords[4], 0.5);
+    }
+
+    #[test]
+    fn global_topology_model_adapter_from_trait_conversion() {
+        let topology = GlobalTopology::<2>::Euclidean;
+        let adapter: GlobalTopologyModelAdapter<2> = topology.into();
+        assert_eq!(adapter.kind(), TopologyKind::Euclidean);
     }
 }

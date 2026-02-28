@@ -5,7 +5,10 @@
 use crate::core::facet::FacetError;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation_data_structure::{CellKey, Tds, VertexKey};
+use crate::core::util::hashing::stable_hash_u64_slice;
 use crate::geometry::traits::coordinate::CoordinateScalar;
+use slotmap::Key;
+use thiserror::Error;
 
 /// Derives a facet key directly from vertex keys.
 ///
@@ -78,6 +81,78 @@ pub fn checked_facet_key_from_vertex_keys<const D: usize>(
     // Directly compute the facet key from vertex keys
     // facet_key_from_vertices handles the sorting internally
     Ok(facet_key_from_vertices(facet_vertex_keys))
+}
+
+/// Errors that can occur while deriving a periodic facet signature from lifted vertices.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub(crate) enum PeriodicFacetKeyDerivationError {
+    /// The requested facet index exceeds the lifted-vertex count.
+    #[error("Facet index {facet_index} out of bounds for lifted vertex count {vertex_count}")]
+    FacetIndexOutOfBounds {
+        /// Requested facet index.
+        facet_index: usize,
+        /// Number of lifted vertices available.
+        vertex_count: usize,
+    },
+
+    /// Relative periodic offset component is outside the encodable byte-delta range.
+    #[error(
+        "Periodic offset component {component} (axis {axis}) is out of encodable range 0..=255"
+    )]
+    RelativeOffsetOutOfRange {
+        /// Axis whose shifted component failed.
+        axis: usize,
+        /// Shifted component value.
+        component: i16,
+    },
+}
+
+/// Computes a translation-invariant periodic facet key from lifted cell vertices.
+///
+/// `lifted_vertices` must represent one full lifted cell as `(vertex_key, lattice_offset)` pairs.
+/// The facet opposite `facet_index` is selected, vertex keys are sorted for permutation
+/// invariance, and offsets are normalized against the first facet vertex so equivalent
+/// periodic facets hash identically.
+pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
+    lifted_vertices: &[(VertexKey, [i8; D])],
+    facet_index: usize,
+) -> Result<u64, PeriodicFacetKeyDerivationError> {
+    if facet_index >= lifted_vertices.len() {
+        return Err(PeriodicFacetKeyDerivationError::FacetIndexOutOfBounds {
+            facet_index,
+            vertex_count: lifted_vertices.len(),
+        });
+    }
+
+    let mut lifted_facet: Vec<(u64, [i8; D])> =
+        Vec::with_capacity(lifted_vertices.len().saturating_sub(1));
+    for (idx, (vertex_key, offset)) in lifted_vertices.iter().enumerate() {
+        if idx != facet_index {
+            lifted_facet.push((vertex_key.data().as_ffi(), *offset));
+        }
+    }
+    lifted_facet.sort_unstable_by_key(|(vertex_key_value, _)| *vertex_key_value);
+    let facet_anchor_offset = lifted_facet
+        .first()
+        .map_or([0_i8; D], |(_, offset)| *offset);
+
+    let mut packed_signature: Vec<u64> = Vec::with_capacity(lifted_facet.len() * (D + 1));
+    for (vertex_key_value, offset) in lifted_facet {
+        packed_signature.push(vertex_key_value);
+        for axis in 0..D {
+            let shifted = i16::from(offset[axis]) - i16::from(facet_anchor_offset[axis]) + 128;
+            if !(0..=255).contains(&shifted) {
+                return Err(PeriodicFacetKeyDerivationError::RelativeOffsetOutOfRange {
+                    axis,
+                    component: shifted,
+                });
+            }
+            packed_signature
+                .push(u64::try_from(shifted).expect("validated shifted offset is in 0..=255"));
+        }
+    }
+
+    Ok(stable_hash_u64_slice(&packed_signature))
 }
 
 /// Verifies facet index consistency between two neighboring cells.

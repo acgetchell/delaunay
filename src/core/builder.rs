@@ -113,7 +113,7 @@ use crate::core::operations::InsertionOutcome;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionError};
 use crate::core::triangulation_data_structure::{CellKey, VertexKey};
-use crate::core::util::stable_hash_u64_slice;
+use crate::core::util::periodic_facet_key_from_lifted_vertices;
 use crate::core::vertex::{Vertex, VertexBuilder};
 use crate::geometry::kernel::{FastKernel, Kernel};
 use crate::geometry::point::Point;
@@ -127,7 +127,6 @@ use num_traits::ToPrimitive;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
-use slotmap::Key;
 use std::num::NonZeroUsize;
 const TWO_POW_52_I64: i64 = 4_503_599_627_370_496; // 2^52
 const TWO_POW_52_F64: f64 = 4_503_599_627_370_496.0; // 2^52
@@ -147,47 +146,6 @@ type PeriodicCandidate<const D: usize> = (
     Vec<PeriodicFacetKey>,
     bool,
 );
-/// Computes a translation-invariant hash key for one lifted facet of a periodic cell.
-///
-/// `lifted_vertices` stores cell vertices as `(canonical_vertex_key, lattice_offset)` pairs.
-/// The facet opposite `facet_index` is extracted, vertex keys are sorted for permutation
-/// invariance, and offsets are normalized relative to the first facet vertex so that
-/// equivalent periodic facets map to the same signature.
-fn periodic_facet_key_from_lifted<const D: usize>(
-    lifted_vertices: &[(VertexKey, [i8; D])],
-    facet_index: usize,
-) -> u64 {
-    let mut lifted_facet: Vec<(u64, [i8; D])> = lifted_vertices
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, (vertex_key, offset))| {
-            if idx == facet_index {
-                return None;
-            }
-            Some((vertex_key.data().as_ffi(), *offset))
-        })
-        .collect();
-    lifted_facet.sort_unstable_by_key(|(vertex_key_value, _)| *vertex_key_value);
-    let facet_anchor_offset = lifted_facet
-        .first()
-        .map_or([0_i8; D], |(_, offset)| *offset);
-
-    let mut packed_signature: Vec<u64> = Vec::with_capacity(lifted_facet.len() * (D + 1));
-    for (vertex_key_value, offset) in lifted_facet {
-        packed_signature.push(vertex_key_value);
-        for axis in 0..D {
-            let shifted = i16::from(offset[axis]) - i16::from(facet_anchor_offset[axis]) + 128;
-            debug_assert!(
-                (0..=255).contains(&shifted),
-                "relative periodic offsets must fit into signed-byte delta",
-            );
-            packed_signature
-                .push(u64::try_from(shifted).expect("debug assertion ensures 0..=255 range"));
-        }
-    }
-
-    stable_hash_u64_slice(&packed_signature)
-}
 /// Finds a bounded-size 2D face subset whose edge incidences can close a quotient boundary.
 ///
 /// Returns a boolean mask aligned with `candidate_edges` when a selection of exactly
@@ -812,12 +770,21 @@ where
                 };
                 let topology_model = topology.model();
                 Self::validate_topology_model(&topology_model)?;
+                if !topology_model.supports_periodic_facet_signatures() {
+                    return Err(TriangulationConstructionError::GeometricDegeneracy {
+                        message: format!(
+                            "Topology {:?} does not support periodic facet signatures required for periodic image-point construction",
+                            topology_model.kind(),
+                        ),
+                    }
+                    .into());
+                }
                 // Toroidal Phase 2: canonicalize then apply 3^D image-point method.
                 let canonical = Self::canonicalize_vertices(self.vertices, &topology_model)?;
-                let mut dt = Self::build_periodic::<K, V>(
+                let mut dt = Self::build_periodic(
                     kernel,
                     &canonical,
-                    &space,
+                    &topology_model,
                     self.topology_guarantee,
                     self.construction_options,
                 )?;
@@ -866,10 +833,10 @@ where
         clippy::too_many_lines,
         reason = "Image-point periodic DT algorithm is inherently multi-step; splitting would harm readability"
     )]
-    fn build_periodic<K, V>(
+    fn build_periodic<K, V, M>(
         kernel: &K,
         canonical_vertices: &[Vertex<T, U, D>],
-        space: &ToroidalSpace<D>,
+        topology_model: &M,
         topology_guarantee: TopologyGuarantee,
         construction_options: ConstructionOptions,
     ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
@@ -877,7 +844,16 @@ where
         K: Kernel<D, Scalar = T>,
         K::Scalar: ScalarAccumulative,
         V: DataType,
+        M: GlobalTopologyModel<D>,
     {
+        let domain = topology_model.periodic_domain().ok_or_else(|| {
+            TriangulationConstructionError::GeometricDegeneracy {
+                message: format!(
+                    "Topology {:?} does not expose a periodic domain required for periodic image-point construction",
+                    topology_model.kind(),
+                ),
+            }
+        })?;
         let n = canonical_vertices.len();
         let min_points = 2 * D + 1;
         if n < min_points {
@@ -923,7 +899,7 @@ where
                 let orig_coords = v.point().coords();
                 let mut coords = [0_f64; D];
                 for i in 0..D {
-                    let domain_i = space.domain[i];
+                    let domain_i = domain[i];
                     let orig = orig_coords[i]
                         .to_f64()
                         .expect("canonical coordinate is finite and convertible");
@@ -960,7 +936,7 @@ where
             for (canon_idx, v) in canonical_vertices.iter().enumerate() {
                 let mut new_coords = [T::zero(); D];
                 for i in 0..D {
-                    let shift_f64 = <f64 as From<i8>>::from(offset[i]) * space.domain[i];
+                    let shift_f64 = <f64 as From<i8>>::from(offset[i]) * domain[i];
                     let jitter_f64 = if is_canonical {
                         0.0
                     } else {
@@ -968,7 +944,7 @@ where
                         (<f64 as num_traits::NumCast>::from(jitter_units)
                             .expect("jitter fits in f64")
                             / TWO_POW_52_F64)
-                            * space.domain[i]
+                            * domain[i]
                     };
                     let coord_f64 = canonical_f64[canon_idx][i] + shift_f64 + jitter_f64;
                     new_coords[i] =
@@ -1194,7 +1170,7 @@ where
                 .expect("simplex vertex count fits in f64 for D");
             for (axis, sum) in sums.iter().enumerate() {
                 let bary = *sum / denom;
-                let period = space.domain[axis];
+                let period = domain[axis];
                 if !(bary >= 0.0 && bary < period) {
                     return Some(false);
                 }
@@ -1219,7 +1195,16 @@ where
             let lifted_ordered = lifted_vertices.clone();
             let mut periodic_facets: Vec<PeriodicFacetKey> = Vec::with_capacity(D + 1);
             for facet_idx in 0..=D {
-                periodic_facets.push(periodic_facet_key_from_lifted(&lifted_ordered, facet_idx));
+                periodic_facets.push(
+                    periodic_facet_key_from_lifted_vertices::<D>(&lifted_ordered, facet_idx)
+                        .map_err(|error| {
+                            TriangulationConstructionError::GeometricDegeneracy {
+                                message: format!(
+                                    "Failed to derive periodic candidate facet signature for index {facet_idx}: {error}",
+                                ),
+                            }
+                        })?,
+                );
             }
 
             if let Some(existing) = candidates_by_symbolic.get_mut(&symbolic_signature) {
@@ -1664,7 +1649,14 @@ where
             FastHashMap::default();
         for lifted in rep_lifted_by_key.values() {
             for facet_idx in 0..=D {
-                let periodic_facet_key = periodic_facet_key_from_lifted(lifted, facet_idx);
+                let periodic_facet_key =
+                    periodic_facet_key_from_lifted_vertices::<D>(lifted, facet_idx).map_err(
+                        |error| TriangulationConstructionError::GeometricDegeneracy {
+                            message: format!(
+                                "Failed to derive periodic multiplicity facet signature for index {facet_idx}: {error}",
+                            ),
+                        },
+                    )?;
                 *periodic_facet_counts.entry(periodic_facet_key).or_insert(0) += 1;
             }
         }
@@ -1698,7 +1690,14 @@ where
                 continue;
             };
             for facet_idx in 0..=D {
-                let sig = periodic_facet_key_from_lifted(lifted, facet_idx);
+                let sig =
+                    periodic_facet_key_from_lifted_vertices::<D>(lifted, facet_idx).map_err(
+                        |error| TriangulationConstructionError::GeometricDegeneracy {
+                            message: format!(
+                                "Failed to derive periodic neighbor facet signature for cell {rep_ck:?} facet {facet_idx}: {error}",
+                            ),
+                        },
+                    )?;
                 facet_occurrences
                     .entry(sig)
                     .or_default()
