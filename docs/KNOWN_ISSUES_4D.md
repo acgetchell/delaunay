@@ -1,6 +1,6 @@
 # Known Issues: 4D Bulk Construction
 
-## Status: v0.7.1
+## Status (as of v0.7.1)
 
 ### Current issue
 
@@ -28,15 +28,24 @@ large or degenerate inputs (not orientation bookkeeping itself).
 
 ### Reproduction / verification command
 
-Use the debug large-scale test to verify current behavior on a given branch:
+Use the debug large-scale test to verify current behavior on a given branch.
+The examples below cover both the historical `N=100` case and a larger `N=200`
+case aligned with the "100+ vertices" scope:
 
 ```bash
-# Permissive debug run (allows intentional skips)
+# Permissive debug run (allows intentional skips) — N=100
 DELAUNAY_LARGE_DEBUG_N_4D=100 DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 \
   cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
-
-# Strict debug run (no skips allowed)
+# Strict debug run (no skips allowed) — N=100
 DELAUNAY_LARGE_DEBUG_N_4D=100 DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=0 \
+  cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
+
+# Permissive debug run (allows intentional skips) — N=200
+DELAUNAY_LARGE_DEBUG_N_4D=200 DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 \
+  cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
+
+# Strict debug run (no skips allowed) — N=200
+DELAUNAY_LARGE_DEBUG_N_4D=200 DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=0 \
   cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
 ```
 

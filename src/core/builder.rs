@@ -1200,7 +1200,9 @@ where
 
         // Build unique symbolic candidates from all full-DT cells.
         // Candidate tuple layout (see type alias):
-        // (symbolic_signature, lifted_ordered_by_canonical_key, periodic_facet_keys, in_domain_hint)
+        // (symbolic_signature, lifted_ordered, periodic_facet_keys, in_domain_hint)
+        // where `lifted_ordered` preserves the observed per-cell vertex order from
+        // `normalize_cell_lifted` (it is not canonical-key-sorted).
         let mut candidates_by_symbolic: FastHashMap<SymbolicSignature<D>, PeriodicCandidate<D>> =
             FastHashMap::default();
         for ck in tds_ref.cell_keys() {

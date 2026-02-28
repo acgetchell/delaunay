@@ -2298,6 +2298,17 @@ where
             }
             self.tds.normalize_coherent_orientation()?;
         }
+        // Hard post-condition: after bounded promotion passes, no further promotion should be
+        // needed. If this still returns `true`, orientation normalization failed to converge.
+        if self.promote_cells_to_positive_orientation()? {
+            return Err(InsertionError::TopologyValidation(
+                TdsValidationError::InconsistentDataStructure {
+                    message:
+                        "Failed to converge to positive geometric orientation after bounded promotion passes"
+                            .to_string(),
+                },
+            ));
+        }
         self.canonicalize_global_orientation_sign()?;
         Ok(())
     }
@@ -4930,12 +4941,6 @@ where
                 ),
             }
         })?;
-        self.normalize_and_promote_positive_orientation()
-            .map_err(|e| TdsValidationError::InconsistentDataStructure {
-                message: format!(
-                    "Failed to promote positive orientation after fan retriangulation: {e}",
-                ),
-            })?;
         self.validate_geometric_cell_orientation().map_err(|e| {
             TdsValidationError::InconsistentDataStructure {
                 message: format!(

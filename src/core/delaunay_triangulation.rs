@@ -2464,16 +2464,17 @@ where
         // errors so callers can deterministically reject.
         let statistics = Box::new(last_stats.unwrap_or_default());
         Err(DelaunayTriangulationConstructionErrorWithStatistics {
-            error: Box::new(
-                TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!(
-                        "Delaunay construction failed after shuffled reconstruction attempts: {last_error}"
-                    ),
-                }
-                .into(),
-            ),
+            error: Self::boxed_geometric_degeneracy_error(format!(
+                "Delaunay construction failed after shuffled reconstruction attempts: {last_error}"
+            )),
             statistics,
         })
+    }
+
+    fn boxed_geometric_degeneracy_error(
+        message: String,
+    ) -> Box<DelaunayTriangulationConstructionError> {
+        Box::new(TriangulationConstructionError::GeometricDegeneracy { message }.into())
     }
 
     const fn should_retry_construction(vertices: &[Vertex<K::Scalar, U, D>]) -> bool {
@@ -2591,14 +2592,9 @@ where
             );
             if let Err(err) = validation_result {
                 return Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                    error: Box::new(
-                        TriangulationConstructionError::GeometricDegeneracy {
-                            message: format!(
-                                "PL-manifold validation failed after construction: {err}"
-                            ),
-                        }
-                        .into(),
-                    ),
+                    error: Self::boxed_geometric_degeneracy_error(format!(
+                        "PL-manifold validation failed after construction: {err}"
+                    )),
                     statistics: Box::new(stats),
                 });
             }
@@ -2616,12 +2612,9 @@ where
         );
         if let Err(err) = delaunay_result {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                error: Box::new(
-                    TriangulationConstructionError::GeometricDegeneracy {
-                        message: format!("Delaunay property violated after construction: {err}"),
-                    }
-                    .into(),
-                ),
+                error: Self::boxed_geometric_degeneracy_error(format!(
+                    "Delaunay property violated after construction: {err}"
+                )),
                 statistics: Box::new(stats),
             });
         }
