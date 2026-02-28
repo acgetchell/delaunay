@@ -2012,10 +2012,18 @@ where
                 ),
             });
         }
-        if periodic_offsets.is_some() && topology_model.kind() != TopologyKind::Toroidal {
+        if let Some(offsets) = periodic_offsets
+            && !topology_model.supports_periodic_facet_signatures()
+        {
             return Err(TdsValidationError::InconsistentDataStructure {
                 message: format!(
-                    "Encountered periodic cell offsets during {purpose}, but triangulation global topology is not toroidal",
+                    "Cell {:?} (key {cell_key:?}) has periodic offsets (count {}) during {purpose}, but triangulation global topology is {:?} (kind {:?}, allows_boundary: {}, periodic_domain: {:?}); expected periodic-offset-capable topology",
+                    cell.uuid(),
+                    offsets.len(),
+                    self.global_topology,
+                    topology_model.kind(),
+                    topology_model.allows_boundary(),
+                    topology_model.periodic_domain(),
                 ),
             });
         }
@@ -7118,7 +7126,8 @@ mod tests {
         assert!(matches!(
             err,
             TriangulationValidationError::Tds(TdsValidationError::InconsistentDataStructure { message })
-                if message.contains("global topology is not toroidal")
+                if message.contains("has periodic offsets")
+                    && message.contains("expected periodic-offset-capable topology")
         ));
     }
 

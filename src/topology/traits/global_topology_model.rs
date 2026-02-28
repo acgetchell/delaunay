@@ -34,6 +34,15 @@ pub enum GlobalTopologyModelError {
         value: f64,
     },
 
+    /// A coordinate is non-finite and cannot be canonicalized.
+    #[error("Non-finite coordinate encountered while processing axis {axis}: {value:?}")]
+    NonFiniteCoordinate {
+        /// Axis index where non-finite coordinate was encountered.
+        axis: usize,
+        /// Non-finite coordinate value.
+        value: f64,
+    },
+
     /// Periodic offsets were requested for a non-periodic topology model.
     #[error("Periodic offsets are unsupported for {kind:?} topology")]
     PeriodicOffsetsUnsupported {
@@ -69,6 +78,8 @@ pub trait GlobalTopologyModel<const D: usize> {
     /// Returns:
     /// - [`GlobalTopologyModelError::InvalidToroidalPeriod`] when toroidal
     ///   domain periods are invalid.
+    /// - [`GlobalTopologyModelError::NonFiniteCoordinate`] when a coordinate is
+    ///   `NaN` or infinite.
     /// - [`GlobalTopologyModelError::ScalarConversion`] when scalar
     ///   conversion to/from `f64` fails.
     fn canonicalize_point_in_place<T>(
@@ -101,7 +112,7 @@ pub trait GlobalTopologyModel<const D: usize> {
         T: CoordinateScalar;
 
     /// Returns the periodic domain when relevant.
-    fn periodic_domain(&self) -> Option<[f64; D]> {
+    fn periodic_domain(&self) -> Option<&[f64; D]> {
         None
     }
 
@@ -194,12 +205,23 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
         self.validate_configuration()?;
         for (axis, coord_ref) in coords.iter_mut().enumerate().take(D) {
             let period = self.domain[axis];
-            let coord = coord_ref
-                .to_f64()
-                .ok_or(GlobalTopologyModelError::ScalarConversion {
-                    axis,
-                    value: period,
-                })?;
+            let Some(coord) = coord_ref.to_f64() else {
+                let value = if coord_ref.is_nan() {
+                    f64::NAN
+                } else if coord_ref.is_infinite() {
+                    if coord_ref.is_sign_negative() {
+                        f64::NEG_INFINITY
+                    } else {
+                        f64::INFINITY
+                    }
+                } else {
+                    f64::NAN
+                };
+                return Err(GlobalTopologyModelError::ScalarConversion { axis, value });
+            };
+            if !coord.is_finite() {
+                return Err(GlobalTopologyModelError::NonFiniteCoordinate { axis, value: coord });
+            }
             let wrapped = coord.rem_euclid(period);
             *coord_ref = <T as NumCast>::from(wrapped).ok_or(
                 GlobalTopologyModelError::ScalarConversion {
@@ -243,8 +265,8 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
         Ok(coords)
     }
 
-    fn periodic_domain(&self) -> Option<[f64; D]> {
-        Some(self.domain)
+    fn periodic_domain(&self) -> Option<&[f64; D]> {
+        Some(&self.domain)
     }
 
     fn supports_periodic_facet_signatures(&self) -> bool {
@@ -393,9 +415,17 @@ impl<const D: usize> GlobalTopologyModel<D> for GlobalTopologyModelAdapter<D> {
 
     fn validate_configuration(&self) -> Result<(), GlobalTopologyModelError> {
         match self {
-            Self::Euclidean(..) | Self::Spherical(..) | Self::Hyperbolic(..) => Ok(()),
+            Self::Euclidean(model) => {
+                <EuclideanModel as GlobalTopologyModel<D>>::validate_configuration(model)
+            }
             Self::Toroidal(model) => {
                 <ToroidalModel<D> as GlobalTopologyModel<D>>::validate_configuration(model)
+            }
+            Self::Spherical(model) => {
+                <SphericalModel as GlobalTopologyModel<D>>::validate_configuration(model)
+            }
+            Self::Hyperbolic(model) => {
+                <HyperbolicModel as GlobalTopologyModel<D>>::validate_configuration(model)
             }
         }
     }
@@ -408,9 +438,23 @@ impl<const D: usize> GlobalTopologyModel<D> for GlobalTopologyModelAdapter<D> {
         T: CoordinateScalar,
     {
         match self {
-            Self::Euclidean(..) | Self::Spherical(..) | Self::Hyperbolic(..) => Ok(()),
+            Self::Euclidean(model) => {
+                <EuclideanModel as GlobalTopologyModel<D>>::canonicalize_point_in_place(
+                    model, coords,
+                )
+            }
             Self::Toroidal(model) => {
                 <ToroidalModel<D> as GlobalTopologyModel<D>>::canonicalize_point_in_place(
+                    model, coords,
+                )
+            }
+            Self::Spherical(model) => {
+                <SphericalModel as GlobalTopologyModel<D>>::canonicalize_point_in_place(
+                    model, coords,
+                )
+            }
+            Self::Hyperbolic(model) => {
+                <HyperbolicModel as GlobalTopologyModel<D>>::canonicalize_point_in_place(
                     model, coords,
                 )
             }
@@ -426,29 +470,12 @@ impl<const D: usize> GlobalTopologyModel<D> for GlobalTopologyModelAdapter<D> {
         T: CoordinateScalar,
     {
         match self {
-            Self::Euclidean(..) => {
-                if periodic_offset.is_some() {
-                    return Err(GlobalTopologyModelError::PeriodicOffsetsUnsupported {
-                        kind: TopologyKind::Euclidean,
-                    });
-                }
-                Ok(coords)
-            }
-            Self::Spherical(..) => {
-                if periodic_offset.is_some() {
-                    return Err(GlobalTopologyModelError::PeriodicOffsetsUnsupported {
-                        kind: TopologyKind::Spherical,
-                    });
-                }
-                Ok(coords)
-            }
-            Self::Hyperbolic(..) => {
-                if periodic_offset.is_some() {
-                    return Err(GlobalTopologyModelError::PeriodicOffsetsUnsupported {
-                        kind: TopologyKind::Hyperbolic,
-                    });
-                }
-                Ok(coords)
+            Self::Euclidean(model) => {
+                <EuclideanModel as GlobalTopologyModel<D>>::lift_for_orientation(
+                    model,
+                    coords,
+                    periodic_offset,
+                )
             }
             Self::Toroidal(model) => {
                 <ToroidalModel<D> as GlobalTopologyModel<D>>::lift_for_orientation(
@@ -457,18 +484,63 @@ impl<const D: usize> GlobalTopologyModel<D> for GlobalTopologyModelAdapter<D> {
                     periodic_offset,
                 )
             }
+            Self::Spherical(model) => {
+                <SphericalModel as GlobalTopologyModel<D>>::lift_for_orientation(
+                    model,
+                    coords,
+                    periodic_offset,
+                )
+            }
+            Self::Hyperbolic(model) => {
+                <HyperbolicModel as GlobalTopologyModel<D>>::lift_for_orientation(
+                    model,
+                    coords,
+                    periodic_offset,
+                )
+            }
         }
     }
 
-    fn periodic_domain(&self) -> Option<[f64; D]> {
+    fn periodic_domain(&self) -> Option<&[f64; D]> {
         match self {
-            Self::Euclidean(..) | Self::Spherical(..) | Self::Hyperbolic(..) => None,
-            Self::Toroidal(model) => Some(model.domain),
+            Self::Euclidean(model) => {
+                <EuclideanModel as GlobalTopologyModel<D>>::periodic_domain(model)
+            }
+            Self::Toroidal(model) => {
+                <ToroidalModel<D> as GlobalTopologyModel<D>>::periodic_domain(model)
+            }
+            Self::Spherical(model) => {
+                <SphericalModel as GlobalTopologyModel<D>>::periodic_domain(model)
+            }
+            Self::Hyperbolic(model) => {
+                <HyperbolicModel as GlobalTopologyModel<D>>::periodic_domain(model)
+            }
         }
     }
 
     fn supports_periodic_facet_signatures(&self) -> bool {
-        matches!(self, Self::Toroidal(..))
+        match self {
+            Self::Euclidean(model) => {
+                <EuclideanModel as GlobalTopologyModel<D>>::supports_periodic_facet_signatures(
+                    model,
+                )
+            }
+            Self::Toroidal(model) => {
+                <ToroidalModel<D> as GlobalTopologyModel<D>>::supports_periodic_facet_signatures(
+                    model,
+                )
+            }
+            Self::Spherical(model) => {
+                <SphericalModel as GlobalTopologyModel<D>>::supports_periodic_facet_signatures(
+                    model,
+                )
+            }
+            Self::Hyperbolic(model) => {
+                <HyperbolicModel as GlobalTopologyModel<D>>::supports_periodic_facet_signatures(
+                    model,
+                )
+            }
+        }
     }
 }
 
@@ -500,6 +572,18 @@ mod tests {
         model.canonicalize_point_in_place(&mut coords).unwrap();
         assert_relative_eq!(coords[0], 0.5);
         assert_relative_eq!(coords[1], 2.0);
+    }
+
+    #[test]
+    fn toroidal_model_canonicalization_rejects_non_finite_coordinates() {
+        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let mut coords = [f64::INFINITY, 1.0_f64];
+        let err = model.canonicalize_point_in_place(&mut coords).unwrap_err();
+        assert!(matches!(
+            err,
+            GlobalTopologyModelError::NonFiniteCoordinate { axis: 0, value }
+                if value.is_infinite() && value.is_sign_positive()
+        ));
     }
 
     #[test]
