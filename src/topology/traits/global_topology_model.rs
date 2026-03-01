@@ -278,6 +278,9 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
     where
         T: CoordinateScalar,
     {
+        if !self.supports_periodic_orientation_offsets() {
+            return Ok(coords);
+        }
         let Some(offset) = periodic_offset else {
             return Ok(coords);
         };
@@ -696,7 +699,8 @@ mod tests {
 
     #[test]
     fn toroidal_model_lift_applies_lattice_offset() {
-        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let model =
+            ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::PeriodicImagePoint);
         let lifted = model
             .lift_for_orientation([0.5_f64, 0.25_f64], Some([1, -1]))
             .unwrap();
@@ -706,7 +710,8 @@ mod tests {
 
     #[test]
     fn toroidal_model_lift_rejects_non_finite_coordinates() {
-        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let model =
+            ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::PeriodicImagePoint);
         let err = model
             .lift_for_orientation([f64::NAN, 0.5_f64], Some([1, 0]))
             .unwrap_err();
@@ -715,6 +720,15 @@ mod tests {
             GlobalTopologyModelError::NonFiniteCoordinate { axis: 0, value }
                 if value.is_nan()
         ));
+    }
+
+    #[test]
+    fn toroidal_model_lift_ignores_offset_when_orientation_offsets_unsupported() {
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let coords = [0.5_f64, 0.25_f64];
+        let lifted = model.lift_for_orientation(coords, Some([1, -1])).unwrap();
+        assert_relative_eq!(lifted[0], coords[0]);
+        assert_relative_eq!(lifted[1], coords[1]);
     }
 
     #[test]
@@ -936,7 +950,7 @@ mod tests {
     fn adapter_delegates_lift_to_toroidal_model() {
         let adapter = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new(
             [2.0, 3.0],
-            ToroidalConstructionMode::Canonicalized,
+            ToroidalConstructionMode::PeriodicImagePoint,
         ));
         let lifted = adapter
             .lift_for_orientation([0.5_f64, 0.25_f64], Some([1, -1]))
@@ -1109,7 +1123,8 @@ mod tests {
 
     #[test]
     fn toroidal_model_lift_with_zero_offset_is_identity() {
-        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let model =
+            ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::PeriodicImagePoint);
         let coords = [0.5_f64, 1.5_f64];
         let lifted = model.lift_for_orientation(coords, Some([0, 0])).unwrap();
         assert_relative_eq!(lifted[0], 0.5);
@@ -1118,7 +1133,8 @@ mod tests {
 
     #[test]
     fn toroidal_model_lift_with_large_offset() {
-        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let model =
+            ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::PeriodicImagePoint);
         let coords = [0.5_f64, 0.25_f64];
         let lifted = model
             .lift_for_orientation(coords, Some([127, -128]))
@@ -1233,8 +1249,10 @@ mod tests {
 
     #[test]
     fn toroidal_model_lift_with_mixed_offsets() {
-        let model =
-            ToroidalModel::<3>::new([2.0, 3.0, 4.0], ToroidalConstructionMode::Canonicalized);
+        let model = ToroidalModel::<3>::new(
+            [2.0, 3.0, 4.0],
+            ToroidalConstructionMode::PeriodicImagePoint,
+        );
 
         let lifted = model
             .lift_for_orientation([0.5_f64, 1.0_f64, 2.0_f64], Some([1, 0, -1]))
@@ -1368,7 +1386,8 @@ mod tests {
 
     #[test]
     fn toroidal_model_lift_works_with_different_float_types() {
-        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let model =
+            ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::PeriodicImagePoint);
 
         // Test with f32
         let lifted_f32 = model
