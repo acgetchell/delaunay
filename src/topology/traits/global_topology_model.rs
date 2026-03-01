@@ -278,6 +278,9 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
     where
         T: CoordinateScalar,
     {
+        // Canonicalized toroidal mode intentionally accepts optional periodic offsets but
+        // does not apply them. This differs from `EuclideanModel`, which treats any
+        // provided periodic offset as unsupported and returns an error.
         if !self.supports_periodic_orientation_offsets() {
             return Ok(coords);
         }
@@ -288,12 +291,16 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
         self.validate_configuration()?;
         // Validate finiteness before performing arithmetic
         for (axis, coord_ref) in coords.iter().enumerate().take(D) {
-            if let Some(coord_f64) = coord_ref.to_f64()
-                && !coord_f64.is_finite()
-            {
+            let Some(coord_f64) = coord_ref.to_f64() else {
                 return Err(GlobalTopologyModelError::NonFiniteCoordinate {
                     axis,
-                    value: coord_f64,
+                    value: f64::NAN,
+                });
+            };
+            if !coord_f64.is_finite() {
+                return Err(GlobalTopologyModelError::NonFiniteCoordinate {
+                    axis,
+                    value: f64::NAN,
                 });
             }
         }

@@ -352,6 +352,46 @@ mod tests {
             PeriodicFacetKeyDerivationError::RelativeOffsetOutOfRange { axis: 0, .. }
         ));
     }
+    #[test]
+    fn periodic_facet_key_happy_path_translation_invariance_and_distinctness() {
+        let lifted_base = vec![
+            (VertexKey::null(), [0_i8, 0_i8]),
+            (VertexKey::null(), [1_i8, 0_i8]),
+            (VertexKey::null(), [0_i8, 1_i8]),
+        ];
+        let lifted_translated = vec![
+            (VertexKey::null(), [7_i8, -3_i8]),
+            (VertexKey::null(), [8_i8, -3_i8]),
+            (VertexKey::null(), [7_i8, -2_i8]),
+        ];
+        let lifted_distinct = vec![
+            (VertexKey::null(), [0_i8, 0_i8]),
+            (VertexKey::null(), [2_i8, 0_i8]),
+            (VertexKey::null(), [0_i8, 1_i8]),
+        ];
+
+        let base_key: Result<u64, PeriodicFacetKeyDerivationError> =
+            periodic_facet_key_from_lifted_vertices::<2>(&lifted_base, 0);
+        let translated_key: Result<u64, PeriodicFacetKeyDerivationError> =
+            periodic_facet_key_from_lifted_vertices::<2>(&lifted_translated, 0);
+        let distinct_key: Result<u64, PeriodicFacetKeyDerivationError> =
+            periodic_facet_key_from_lifted_vertices::<2>(&lifted_distinct, 0);
+
+        assert!(base_key.is_ok());
+        assert!(translated_key.is_ok());
+        assert!(distinct_key.is_ok());
+        let base_key = base_key.unwrap();
+        let translated_key = translated_key.unwrap();
+        let distinct_key = distinct_key.unwrap();
+        assert_eq!(
+            base_key, translated_key,
+            "uniform global translation should preserve periodic facet key",
+        );
+        assert_ne!(
+            base_key, distinct_key,
+            "different relative offsets should produce a distinct periodic facet key",
+        );
+    }
 
     #[test]
     fn periodic_facet_key_rejects_out_of_bounds_facet_index() {
