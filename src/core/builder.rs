@@ -642,6 +642,38 @@ where
         })
     }
 
+    /// Derives a periodic facet key from a lifted simplex and maps derivation
+    /// failures into construction-level geometric-degeneracy errors.
+    ///
+    /// This helper centralizes error conversion for
+    /// [`periodic_facet_key_from_lifted_vertices`] so all call sites produce
+    /// consistent diagnostics.
+    ///
+    /// # Parameters
+    ///
+    /// * `lifted_ordered` - Lifted simplex vertices as `(VertexKey, lattice_offset)`
+    ///   pairs (expected arity: `D + 1`).
+    /// * `facet_idx` - Index of the facet opposite a vertex in the simplex.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DelaunayTriangulationConstructionError`] wrapping
+    /// [`TriangulationConstructionError::GeometricDegeneracy`] when periodic
+    /// facet key derivation fails (e.g., invalid arity/index or offset encoding).
+    fn derive_periodic_facet_key(
+        lifted_ordered: &[(VertexKey, [i8; D])],
+        facet_idx: usize,
+    ) -> Result<PeriodicFacetKey, DelaunayTriangulationConstructionError> {
+        periodic_facet_key_from_lifted_vertices::<D>(lifted_ordered, facet_idx).map_err(|error| {
+            TriangulationConstructionError::GeometricDegeneracy {
+                message: format!(
+                    "Failed to derive periodic candidate facet signature for index {facet_idx}: {error}",
+                ),
+            }
+            .into()
+        })
+    }
+
     /// Canonicalizes vertices using a topology behavior model.
     ///
     /// For each input vertex, calls [`GlobalTopologyModel::canonicalize_point_in_place`] to wrap
@@ -901,6 +933,15 @@ where
     {
         // Keep `build_periodic` self-protecting even if future call paths bypass outer validation.
         Self::validate_topology_model(topology_model)?;
+        if !topology_model.supports_periodic_facet_signatures() {
+            return Err(TriangulationConstructionError::GeometricDegeneracy {
+                message: format!(
+                    "Topology {:?} does not support periodic facet signatures required for periodic image-point construction",
+                    topology_model.kind(),
+                ),
+            }
+            .into());
+        }
 
         let domain = topology_model.periodic_domain().ok_or_else(|| {
             TriangulationConstructionError::GeometricDegeneracy {
@@ -1251,16 +1292,7 @@ where
             let lifted_ordered = lifted_vertices.clone();
             let mut periodic_facets: Vec<PeriodicFacetKey> = Vec::with_capacity(D + 1);
             for facet_idx in 0..=D {
-                periodic_facets.push(
-                    periodic_facet_key_from_lifted_vertices::<D>(&lifted_ordered, facet_idx)
-                        .map_err(|error| {
-                            TriangulationConstructionError::GeometricDegeneracy {
-                                message: format!(
-                                    "Failed to derive periodic candidate facet signature for index {facet_idx}: {error}",
-                                ),
-                            }
-                        })?,
-                );
+                periodic_facets.push(Self::derive_periodic_facet_key(&lifted_ordered, facet_idx)?);
             }
 
             if let Some(existing) = candidates_by_symbolic.get_mut(&symbolic_signature) {
@@ -1705,14 +1737,7 @@ where
             FastHashMap::default();
         for lifted in rep_lifted_by_key.values() {
             for facet_idx in 0..=D {
-                let periodic_facet_key =
-                    periodic_facet_key_from_lifted_vertices::<D>(lifted, facet_idx).map_err(
-                        |error| TriangulationConstructionError::GeometricDegeneracy {
-                            message: format!(
-                                "Failed to derive periodic multiplicity facet signature for index {facet_idx}: {error}",
-                            ),
-                        },
-                    )?;
+                let periodic_facet_key = Self::derive_periodic_facet_key(lifted, facet_idx)?;
                 *periodic_facet_counts.entry(periodic_facet_key).or_insert(0) += 1;
             }
         }
@@ -1746,14 +1771,7 @@ where
                 continue;
             };
             for facet_idx in 0..=D {
-                let sig =
-                    periodic_facet_key_from_lifted_vertices::<D>(lifted, facet_idx).map_err(
-                        |error| TriangulationConstructionError::GeometricDegeneracy {
-                            message: format!(
-                                "Failed to derive periodic neighbor facet signature for cell {rep_ck:?} facet {facet_idx}: {error}",
-                            ),
-                        },
-                    )?;
+                let sig = Self::derive_periodic_facet_key(lifted, facet_idx)?;
                 facet_occurrences
                     .entry(sig)
                     .or_default()
@@ -1880,6 +1898,7 @@ mod tests {
     };
     use crate::topology::traits::topological_space::TopologyKind;
     use crate::vertex;
+    use slotmap::Key;
 
     #[derive(Clone, Copy, Debug)]
     struct ValidationFailureModel;
@@ -2362,6 +2381,53 @@ mod tests {
         let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_derive_periodic_facet_key_happy_path_matches_core_derivation() {
+        let lifted_ordered = vec![
+            (VertexKey::null(), [0_i8, 0_i8]),
+            (VertexKey::null(), [1_i8, 0_i8]),
+            (VertexKey::null(), [0_i8, 1_i8]),
+        ];
+        let expected = periodic_facet_key_from_lifted_vertices::<2>(&lifted_ordered, 1).unwrap();
+        let derived = DelaunayTriangulationBuilder::<f64, (), 2>::derive_periodic_facet_key(
+            &lifted_ordered,
+            1,
+        )
+        .unwrap();
+        assert_eq!(derived, expected);
+    }
+
+    #[test]
+    fn test_derive_periodic_facet_key_maps_errors_to_geometric_degeneracy() {
+        let lifted_ordered = vec![
+            (VertexKey::null(), [-128_i8, 0_i8]),
+            (VertexKey::null(), [0_i8, 0_i8]),
+            (VertexKey::null(), [127_i8, 0_i8]),
+        ];
+        let err = DelaunayTriangulationBuilder::<f64, (), 2>::derive_periodic_facet_key(
+            &lifted_ordered,
+            1,
+        )
+        .unwrap_err();
+        match err {
+            DelaunayTriangulationConstructionError::Triangulation(
+                TriangulationConstructionError::GeometricDegeneracy { message },
+            ) => {
+                assert!(
+                    message.contains(
+                        "Failed to derive periodic candidate facet signature for index 1"
+                    ),
+                    "unexpected message prefix: {message}"
+                );
+                assert!(
+                    message.contains("out of encodable range"),
+                    "expected wrapped derivation detail in message: {message}"
+                );
+            }
+            other => panic!("expected GeometricDegeneracy mapping, got: {other:?}"),
+        }
     }
 
     #[test]

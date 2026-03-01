@@ -292,7 +292,7 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
         // Validate finiteness before performing arithmetic
         for (axis, coord_ref) in coords.iter().enumerate().take(D) {
             let Some(coord_f64) = coord_ref.to_f64() else {
-                return Err(GlobalTopologyModelError::NonFiniteCoordinate {
+                return Err(GlobalTopologyModelError::ScalarConversion {
                     axis,
                     value: f64::NAN,
                 });
@@ -300,7 +300,7 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
             if !coord_f64.is_finite() {
                 return Err(GlobalTopologyModelError::NonFiniteCoordinate {
                     axis,
-                    value: f64::NAN,
+                    value: coord_f64,
                 });
             }
         }
