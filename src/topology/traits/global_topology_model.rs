@@ -21,7 +21,9 @@
 #![forbid(unsafe_code)]
 
 use crate::geometry::traits::coordinate::CoordinateScalar;
-use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
+use crate::topology::traits::topological_space::{
+    GlobalTopology, TopologyKind, ToroidalConstructionMode,
+};
 use num_traits::NumCast;
 use thiserror::Error;
 
@@ -187,15 +189,17 @@ impl<const D: usize> GlobalTopologyModel<D> for EuclideanModel {
 pub struct ToroidalModel<const D: usize> {
     /// Fundamental-domain periods.
     pub domain: [f64; D],
+    /// Construction mode (Phase 1 canonicalized vs Phase 2 periodic image-point).
+    pub mode: ToroidalConstructionMode,
 }
 
 impl<const D: usize> ToroidalModel<D> {
-    /// Creates a toroidal model for the provided domain periods.
+    /// Creates a toroidal model for the provided domain periods and construction mode.
     ///
     /// Note: `ToroidalModel` is internal; users should access via [`GlobalTopology::model()`].
     #[must_use]
-    pub const fn new(domain: [f64; D]) -> Self {
-        Self { domain }
+    pub const fn new(domain: [f64; D], mode: ToroidalConstructionMode) -> Self {
+        Self { domain, mode }
     }
 }
 
@@ -303,7 +307,7 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
     }
 
     fn supports_periodic_facet_signatures(&self) -> bool {
-        true
+        matches!(self.mode, ToroidalConstructionMode::PeriodicImagePoint)
     }
 }
 
@@ -411,7 +415,9 @@ impl<const D: usize> GlobalTopologyModelAdapter<D> {
     pub const fn from_global_topology(topology: GlobalTopology<D>) -> Self {
         match topology {
             GlobalTopology::Euclidean => Self::Euclidean(EuclideanModel),
-            GlobalTopology::Toroidal { domain, .. } => Self::Toroidal(ToroidalModel::new(domain)),
+            GlobalTopology::Toroidal { domain, mode } => {
+                Self::Toroidal(ToroidalModel::new(domain, mode))
+            }
             GlobalTopology::Spherical => Self::Spherical(SphericalModel),
             GlobalTopology::Hyperbolic => Self::Hyperbolic(HyperbolicModel),
         }
@@ -617,7 +623,7 @@ mod tests {
 
     #[test]
     fn toroidal_model_canonicalization_wraps_coordinates_into_domain() {
-        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let mut coords = [2.5_f64, -1.0_f64];
         model.canonicalize_point_in_place(&mut coords).unwrap();
         assert_relative_eq!(coords[0], 0.5);
@@ -626,7 +632,7 @@ mod tests {
 
     #[test]
     fn toroidal_model_canonicalization_rejects_non_finite_coordinates() {
-        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let mut coords = [f64::INFINITY, 1.0_f64];
         let err = model.canonicalize_point_in_place(&mut coords).unwrap_err();
         assert!(matches!(
@@ -638,7 +644,7 @@ mod tests {
 
     #[test]
     fn toroidal_model_canonicalization_rejects_nan_coordinates() {
-        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let mut coords = [f64::NAN, 1.0_f64];
         let err = model.canonicalize_point_in_place(&mut coords).unwrap_err();
         assert!(matches!(
@@ -650,7 +656,7 @@ mod tests {
 
     #[test]
     fn toroidal_model_lift_applies_lattice_offset() {
-        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let lifted = model
             .lift_for_orientation([0.5_f64, 0.25_f64], Some([1, -1]))
             .unwrap();
@@ -660,7 +666,7 @@ mod tests {
 
     #[test]
     fn toroidal_model_lift_rejects_non_finite_coordinates() {
-        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let err = model
             .lift_for_orientation([f64::NAN, 0.5_f64], Some([1, 0]))
             .unwrap_err();
@@ -852,22 +858,34 @@ mod tests {
 
     #[test]
     fn adapter_delegates_allows_boundary_to_toroidal_model() {
-        let adapter = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new([2.0, 3.0]));
+        let adapter = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new(
+            [2.0, 3.0],
+            ToroidalConstructionMode::Canonicalized,
+        ));
         assert!(!adapter.allows_boundary());
     }
 
     #[test]
     fn adapter_delegates_validate_configuration_to_toroidal_model() {
-        let adapter = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new([2.0, 3.0]));
+        let adapter = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new(
+            [2.0, 3.0],
+            ToroidalConstructionMode::Canonicalized,
+        ));
         assert!(adapter.validate_configuration().is_ok());
 
-        let bad_adapter = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new([0.0, 3.0]));
+        let bad_adapter = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new(
+            [0.0, 3.0],
+            ToroidalConstructionMode::Canonicalized,
+        ));
         assert!(bad_adapter.validate_configuration().is_err());
     }
 
     #[test]
     fn adapter_delegates_canonicalize_to_toroidal_model() {
-        let adapter = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new([2.0, 3.0]));
+        let adapter = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new(
+            [2.0, 3.0],
+            ToroidalConstructionMode::Canonicalized,
+        ));
         let mut coords = [2.5_f64, -1.0_f64];
         adapter.canonicalize_point_in_place(&mut coords).unwrap();
         assert_relative_eq!(coords[0], 0.5);
@@ -876,7 +894,10 @@ mod tests {
 
     #[test]
     fn adapter_delegates_lift_to_toroidal_model() {
-        let adapter = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new([2.0, 3.0]));
+        let adapter = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new(
+            [2.0, 3.0],
+            ToroidalConstructionMode::Canonicalized,
+        ));
         let lifted = adapter
             .lift_for_orientation([0.5_f64, 0.25_f64], Some([1, -1]))
             .unwrap();
@@ -889,7 +910,10 @@ mod tests {
         let euclidean = GlobalTopologyModelAdapter::<2>::Euclidean(EuclideanModel);
         assert_eq!(euclidean.periodic_domain(), None);
 
-        let toroidal = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new([2.0, 3.0]));
+        let toroidal = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new(
+            [2.0, 3.0],
+            ToroidalConstructionMode::Canonicalized,
+        ));
         assert_eq!(toroidal.periodic_domain(), Some(&[2.0, 3.0]));
     }
 
@@ -898,8 +922,19 @@ mod tests {
         let euclidean = GlobalTopologyModelAdapter::<2>::Euclidean(EuclideanModel);
         assert!(!euclidean.supports_periodic_facet_signatures());
 
-        let toroidal = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new([2.0, 3.0]));
-        assert!(toroidal.supports_periodic_facet_signatures());
+        // Canonicalized mode does not support periodic facet signatures
+        let toroidal_canon = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new(
+            [2.0, 3.0],
+            ToroidalConstructionMode::Canonicalized,
+        ));
+        assert!(!toroidal_canon.supports_periodic_facet_signatures());
+
+        // PeriodicImagePoint mode supports periodic facet signatures
+        let toroidal_periodic = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new(
+            [2.0, 3.0],
+            ToroidalConstructionMode::PeriodicImagePoint,
+        ));
+        assert!(toroidal_periodic.supports_periodic_facet_signatures());
     }
 
     // =========================================================================
@@ -908,7 +943,7 @@ mod tests {
 
     #[test]
     fn toroidal_model_rejects_zero_period() {
-        let model = ToroidalModel::<2>::new([0.0, 3.0]);
+        let model = ToroidalModel::<2>::new([0.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let err = model.validate_configuration().unwrap_err();
         assert!(matches!(
             err,
@@ -919,7 +954,7 @@ mod tests {
 
     #[test]
     fn toroidal_model_rejects_negative_period() {
-        let model = ToroidalModel::<2>::new([2.0, -1.0]);
+        let model = ToroidalModel::<2>::new([2.0, -1.0], ToroidalConstructionMode::Canonicalized);
         let err = model.validate_configuration().unwrap_err();
         assert!(matches!(
             err,
@@ -930,7 +965,10 @@ mod tests {
 
     #[test]
     fn toroidal_model_rejects_infinite_period() {
-        let model = ToroidalModel::<2>::new([f64::INFINITY, 3.0]);
+        let model = ToroidalModel::<2>::new(
+            [f64::INFINITY, 3.0],
+            ToroidalConstructionMode::Canonicalized,
+        );
         let err = model.validate_configuration().unwrap_err();
         assert!(matches!(
             err,
@@ -941,7 +979,8 @@ mod tests {
 
     #[test]
     fn toroidal_model_rejects_nan_period() {
-        let model = ToroidalModel::<2>::new([f64::NAN, 3.0]);
+        let model =
+            ToroidalModel::<2>::new([f64::NAN, 3.0], ToroidalConstructionMode::Canonicalized);
         let err = model.validate_configuration().unwrap_err();
         assert!(matches!(
             err,
@@ -952,7 +991,7 @@ mod tests {
 
     #[test]
     fn toroidal_model_canonicalization_rejects_negative_infinity() {
-        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let mut coords = [f64::NEG_INFINITY, 1.0_f64];
         let err = model.canonicalize_point_in_place(&mut coords).unwrap_err();
         assert!(matches!(
@@ -968,7 +1007,7 @@ mod tests {
 
     #[test]
     fn toroidal_model_canonicalization_handles_large_coordinates() {
-        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let mut coords = [1e10_f64, -1e10_f64];
         model.canonicalize_point_in_place(&mut coords).unwrap();
         // Should wrap into [0, 2.0) and [0, 3.0)
@@ -978,7 +1017,7 @@ mod tests {
 
     #[test]
     fn toroidal_model_canonicalization_handles_exact_period() {
-        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let mut coords = [2.0_f64, 3.0_f64];
         model.canonicalize_point_in_place(&mut coords).unwrap();
         assert_relative_eq!(coords[0], 0.0);
@@ -987,7 +1026,7 @@ mod tests {
 
     #[test]
     fn toroidal_model_lift_with_zero_offset_is_identity() {
-        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let coords = [0.5_f64, 1.5_f64];
         let lifted = model.lift_for_orientation(coords, Some([0, 0])).unwrap();
         assert_relative_eq!(lifted[0], 0.5);
@@ -996,7 +1035,7 @@ mod tests {
 
     #[test]
     fn toroidal_model_lift_with_large_offset() {
-        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let coords = [0.5_f64, 0.25_f64];
         let lifted = model
             .lift_for_orientation(coords, Some([127, -128]))
@@ -1007,7 +1046,7 @@ mod tests {
 
     #[test]
     fn toroidal_model_works_with_f32() {
-        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let mut coords = [2.5_f32, -1.0_f32];
         model.canonicalize_point_in_place(&mut coords).unwrap();
         assert!((coords[0] - 0.5).abs() < 1e-6);
@@ -1016,7 +1055,10 @@ mod tests {
 
     #[test]
     fn toroidal_model_works_in_higher_dimensions() {
-        let model = ToroidalModel::<5>::new([2.0, 3.0, 4.0, 5.0, 6.0]);
+        let model = ToroidalModel::<5>::new(
+            [2.0, 3.0, 4.0, 5.0, 6.0],
+            ToroidalConstructionMode::Canonicalized,
+        );
         let mut coords = [2.5_f64, -1.0_f64, 8.5_f64, 10.5_f64, 12.5_f64];
         model.canonicalize_point_in_place(&mut coords).unwrap();
         assert_relative_eq!(coords[0], 0.5);
@@ -1039,7 +1081,10 @@ mod tests {
 
     #[test]
     fn toroidal_model_handles_very_small_periods() {
-        let model = ToroidalModel::<2>::new([1e-6_f64, 1e-6_f64]);
+        let model = ToroidalModel::<2>::new(
+            [1e-6_f64, 1e-6_f64],
+            ToroidalConstructionMode::Canonicalized,
+        );
         assert!(model.validate_configuration().is_ok());
 
         let mut coords = [5e-7_f64, 1.5e-6_f64];
@@ -1050,7 +1095,7 @@ mod tests {
 
     #[test]
     fn toroidal_model_handles_boundary_coordinates() {
-        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
 
         // Coordinate exactly at zero
         let mut coords = [0.0_f64, 0.0_f64];
@@ -1070,7 +1115,7 @@ mod tests {
 
     #[test]
     fn toroidal_model_handles_multi_wrap_coordinates() {
-        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
 
         // Coordinate requiring multiple wraps
         let mut coords = [10.5_f64, -15.25_f64];
@@ -1093,7 +1138,8 @@ mod tests {
 
     #[test]
     fn toroidal_model_handles_mixed_positive_negative_wrapping() {
-        let model = ToroidalModel::<3>::new([2.0, 3.0, 4.0]);
+        let model =
+            ToroidalModel::<3>::new([2.0, 3.0, 4.0], ToroidalConstructionMode::Canonicalized);
 
         let mut coords = [5.5_f64, -1.0_f64, 0.5_f64];
         model.canonicalize_point_in_place(&mut coords).unwrap();
@@ -1104,7 +1150,8 @@ mod tests {
 
     #[test]
     fn toroidal_model_lift_with_mixed_offsets() {
-        let model = ToroidalModel::<3>::new([2.0, 3.0, 4.0]);
+        let model =
+            ToroidalModel::<3>::new([2.0, 3.0, 4.0], ToroidalConstructionMode::Canonicalized);
 
         let lifted = model
             .lift_for_orientation([0.5_f64, 1.0_f64, 2.0_f64], Some([1, 0, -1]))
@@ -1120,7 +1167,8 @@ mod tests {
 
     #[test]
     fn invalid_toroidal_period_error_includes_axis_and_value() {
-        let model = ToroidalModel::<3>::new([2.0, -5.0, 3.0]);
+        let model =
+            ToroidalModel::<3>::new([2.0, -5.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let err = model.validate_configuration().unwrap_err();
 
         let err_str = err.to_string();
@@ -1140,7 +1188,10 @@ mod tests {
 
     #[test]
     fn non_finite_coordinate_error_includes_axis_and_value() {
-        let model = ToroidalModel::<4>::new([2.0, 3.0, 4.0, 5.0]);
+        let model = ToroidalModel::<4>::new(
+            [2.0, 3.0, 4.0, 5.0],
+            ToroidalConstructionMode::Canonicalized,
+        );
         let mut coords = [1.0_f64, 2.0_f64, f64::INFINITY, 3.0_f64];
         let err = model.canonicalize_point_in_place(&mut coords).unwrap_err();
 
@@ -1200,7 +1251,7 @@ mod tests {
 
     #[test]
     fn toroidal_model_works_with_different_float_types() {
-        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
 
         // Test with f32
         let mut coords_f32 = [2.5_f32, -1.0_f32];
@@ -1234,7 +1285,7 @@ mod tests {
 
     #[test]
     fn toroidal_model_lift_works_with_different_float_types() {
-        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
 
         // Test with f32
         let lifted_f32 = model

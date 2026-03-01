@@ -2214,7 +2214,7 @@ mod tests {
     #[test]
     fn test_validate_topology_model_accepts_valid_toroidal() {
         use crate::topology::traits::global_topology_model::ToroidalModel;
-        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
         assert!(result.is_ok());
     }
@@ -2222,7 +2222,7 @@ mod tests {
     #[test]
     fn test_validate_topology_model_rejects_zero_period() {
         use crate::topology::traits::global_topology_model::ToroidalModel;
-        let model = ToroidalModel::<2>::new([0.0, 3.0]);
+        let model = ToroidalModel::<2>::new([0.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
         assert!(result.is_err());
         let err_str = format!("{}", result.unwrap_err());
@@ -2239,7 +2239,8 @@ mod tests {
     #[test]
     fn test_validate_topology_model_rejects_negative_period() {
         use crate::topology::traits::global_topology_model::ToroidalModel;
-        let model = ToroidalModel::<3>::new([2.0, -1.0, 3.0]);
+        let model =
+            ToroidalModel::<3>::new([2.0, -1.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let result = DelaunayTriangulationBuilder::<f64, (), 3>::validate_topology_model(&model);
         assert!(result.is_err());
         let err_str = format!("{}", result.unwrap_err());
@@ -2250,7 +2251,10 @@ mod tests {
     #[test]
     fn test_validate_topology_model_rejects_infinite_period() {
         use crate::topology::traits::global_topology_model::ToroidalModel;
-        let model = ToroidalModel::<2>::new([f64::INFINITY, 3.0]);
+        let model = ToroidalModel::<2>::new(
+            [f64::INFINITY, 3.0],
+            ToroidalConstructionMode::Canonicalized,
+        );
         let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
         assert!(result.is_err());
         let err_str = format!("{}", result.unwrap_err());
@@ -2260,7 +2264,8 @@ mod tests {
     #[test]
     fn test_validate_topology_model_rejects_nan_period() {
         use crate::topology::traits::global_topology_model::ToroidalModel;
-        let model = ToroidalModel::<2>::new([f64::NAN, 3.0]);
+        let model =
+            ToroidalModel::<2>::new([f64::NAN, 3.0], ToroidalConstructionMode::Canonicalized);
         let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
         assert!(result.is_err());
         let err_str = format!("{}", result.unwrap_err());
@@ -2284,7 +2289,7 @@ mod tests {
             vertex!([0.5, 0.7]),
         ];
         let original_uuids: Vec<_> = vertices.iter().map(Vertex::uuid).collect();
-        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let canonical =
             DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model)
                 .unwrap();
@@ -2314,7 +2319,7 @@ mod tests {
                 .build()
                 .unwrap(),
         ];
-        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let canonical =
             DelaunayTriangulationBuilder::<f64, i32, 2>::canonicalize_vertices(&vertices, &model)
                 .unwrap();
@@ -2334,7 +2339,7 @@ mod tests {
             vertex!([1.8, -0.5]), // → (1.8, 2.5)
             vertex!([0.3, 0.2]),  // → (0.3, 0.2)
         ];
-        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let canonical =
             DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model)
                 .unwrap();
@@ -2386,7 +2391,7 @@ mod tests {
                 .build()
                 .unwrap(),
         ];
-        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let result =
             DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model);
 
@@ -2419,7 +2424,7 @@ mod tests {
                 .build()
                 .unwrap(),
         ];
-        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let result =
             DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model);
 
@@ -2438,7 +2443,7 @@ mod tests {
                 .build()
                 .unwrap(),
         ];
-        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let result =
             DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model);
 
