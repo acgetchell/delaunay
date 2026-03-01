@@ -5207,6 +5207,29 @@ mod tests {
     }
 
     #[test]
+    fn test_facet_key_for_cell_facet_maps_periodic_derivation_errors() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        tds.get_cell_by_key_mut(cell_key)
+            .unwrap()
+            .set_periodic_vertex_offsets(vec![[-128_i8, 0_i8], [127_i8, 0_i8], [0_i8, 0_i8]]);
+
+        let err = tds.facet_key_for_cell_facet(cell_key, 2).unwrap_err();
+        assert!(matches!(
+            err,
+            TdsValidationError::InconsistentDataStructure { message }
+                if message.contains("Failed to derive periodic facet key")
+                    && message.contains("facet 2")
+        ));
+    }
+
+    #[test]
     fn test_facet_vertex_identities_anchor_uses_lexicographic_key_offset() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();

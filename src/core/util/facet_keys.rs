@@ -340,6 +340,20 @@ mod tests {
     }
 
     #[test]
+    fn periodic_facet_key_rejects_relative_offset_out_of_range() {
+        let lifted_vertices = vec![
+            (VertexKey::null(), [-128_i8, 0_i8]),
+            (VertexKey::null(), [0_i8, 0_i8]),
+            (VertexKey::null(), [127_i8, 0_i8]),
+        ];
+        let err = periodic_facet_key_from_lifted_vertices::<2>(&lifted_vertices, 1).unwrap_err();
+        assert!(matches!(
+            err,
+            PeriodicFacetKeyDerivationError::RelativeOffsetOutOfRange { axis: 0, .. }
+        ));
+    }
+
+    #[test]
     fn periodic_facet_key_rejects_out_of_bounds_facet_index() {
         let lifted_vertices = vec![
             (VertexKey::null(), [0_i8; 2]),

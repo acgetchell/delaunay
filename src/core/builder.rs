@@ -1875,7 +1875,149 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::topology::traits::global_topology_model::{
+        GlobalTopologyModel, GlobalTopologyModelError,
+    };
+    use crate::topology::traits::topological_space::TopologyKind;
     use crate::vertex;
+
+    #[derive(Clone, Copy, Debug)]
+    struct ValidationFailureModel;
+
+    impl GlobalTopologyModel<2> for ValidationFailureModel {
+        fn kind(&self) -> TopologyKind {
+            TopologyKind::Euclidean
+        }
+
+        fn allows_boundary(&self) -> bool {
+            true
+        }
+
+        fn validate_configuration(&self) -> Result<(), GlobalTopologyModelError> {
+            Err(GlobalTopologyModelError::NonFiniteCoordinate {
+                axis: 0,
+                value: f64::NAN,
+            })
+        }
+
+        fn canonicalize_point_in_place<T>(
+            &self,
+            _coords: &mut [T; 2],
+        ) -> Result<(), GlobalTopologyModelError>
+        where
+            T: CoordinateScalar,
+        {
+            Ok(())
+        }
+
+        fn lift_for_orientation<T>(
+            &self,
+            coords: [T; 2],
+            periodic_offset: Option<[i8; 2]>,
+        ) -> Result<[T; 2], GlobalTopologyModelError>
+        where
+            T: CoordinateScalar,
+        {
+            if periodic_offset.is_some() {
+                return Err(GlobalTopologyModelError::PeriodicOffsetsUnsupported {
+                    kind: TopologyKind::Euclidean,
+                });
+            }
+            Ok(coords)
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct CanonicalizationFailureModel;
+
+    impl GlobalTopologyModel<2> for CanonicalizationFailureModel {
+        fn kind(&self) -> TopologyKind {
+            TopologyKind::Euclidean
+        }
+
+        fn allows_boundary(&self) -> bool {
+            true
+        }
+
+        fn validate_configuration(&self) -> Result<(), GlobalTopologyModelError> {
+            Ok(())
+        }
+
+        fn canonicalize_point_in_place<T>(
+            &self,
+            _coords: &mut [T; 2],
+        ) -> Result<(), GlobalTopologyModelError>
+        where
+            T: CoordinateScalar,
+        {
+            Err(GlobalTopologyModelError::NonFiniteCoordinate {
+                axis: 0,
+                value: f64::NAN,
+            })
+        }
+
+        fn lift_for_orientation<T>(
+            &self,
+            coords: [T; 2],
+            periodic_offset: Option<[i8; 2]>,
+        ) -> Result<[T; 2], GlobalTopologyModelError>
+        where
+            T: CoordinateScalar,
+        {
+            if periodic_offset.is_some() {
+                return Err(GlobalTopologyModelError::PeriodicOffsetsUnsupported {
+                    kind: TopologyKind::Euclidean,
+                });
+            }
+            Ok(coords)
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct MissingPeriodicDomainModel;
+
+    impl GlobalTopologyModel<2> for MissingPeriodicDomainModel {
+        fn kind(&self) -> TopologyKind {
+            TopologyKind::Toroidal
+        }
+
+        fn allows_boundary(&self) -> bool {
+            false
+        }
+
+        fn validate_configuration(&self) -> Result<(), GlobalTopologyModelError> {
+            Ok(())
+        }
+
+        fn canonicalize_point_in_place<T>(
+            &self,
+            _coords: &mut [T; 2],
+        ) -> Result<(), GlobalTopologyModelError>
+        where
+            T: CoordinateScalar,
+        {
+            Ok(())
+        }
+
+        fn lift_for_orientation<T>(
+            &self,
+            coords: [T; 2],
+            _periodic_offset: Option<[i8; 2]>,
+        ) -> Result<[T; 2], GlobalTopologyModelError>
+        where
+            T: CoordinateScalar,
+        {
+            Ok(coords)
+        }
+
+        fn supports_periodic_facet_signatures(&self) -> bool {
+            true
+        }
+
+        fn periodic_domain(&self) -> Option<&[f64; 2]> {
+            None
+        }
+    }
 
     // -------------------------------------------------------------------------
     // Euclidean path — `new` is specialized for f64/(), no type annotations needed
@@ -2284,6 +2426,16 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_topology_model_maps_non_period_errors() {
+        let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(
+            &ValidationFailureModel,
+        );
+        let err = result.expect_err("non-period validation failure should be mapped");
+        let err_str = err.to_string();
+        assert!(err_str.contains("Invalid topology model configuration"));
+    }
+
+    #[test]
     fn test_canonicalize_vertices_preserves_uuids() {
         use crate::topology::traits::global_topology_model::ToroidalModel;
         let vertices = vec![
@@ -2354,6 +2506,42 @@ mod tests {
         assert_relative_eq!(canonical[1].point().coords()[1], 2.5);
         assert_relative_eq!(canonical[2].point().coords()[0], 0.3);
         assert_relative_eq!(canonical[2].point().coords()[1], 0.2);
+    }
+
+    #[test]
+    fn test_canonicalize_vertices_includes_vertex_context_on_error() {
+        let vertices = vec![vertex!([0.25_f64, 0.75_f64]), vertex!([0.9_f64, 0.1_f64])];
+        let result = DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(
+            &vertices,
+            &CanonicalizationFailureModel,
+        );
+        let err = result.expect_err("canonicalization failure should be reported");
+        let err_str = err.to_string();
+        assert!(err_str.contains("Failed to canonicalize vertex 0"));
+        assert!(err_str.contains("reason"));
+    }
+
+    #[test]
+    fn test_build_periodic_requires_periodic_domain() {
+        let kernel = FastKernel::new();
+        let canonical_vertices = vec![
+            vertex!([0.1_f64, 0.1_f64]),
+            vertex!([0.9_f64, 0.2_f64]),
+            vertex!([0.2_f64, 0.8_f64]),
+            vertex!([0.7_f64, 0.9_f64]),
+            vertex!([0.5_f64, 0.4_f64]),
+        ];
+        let result = DelaunayTriangulationBuilder::<f64, (), 2>::build_periodic::<_, (), _>(
+            &kernel,
+            &canonical_vertices,
+            &MissingPeriodicDomainModel,
+            TopologyGuarantee::default(),
+            ConstructionOptions::default(),
+        );
+        let err = result.expect_err("missing periodic domain must fail");
+        assert!(err.to_string().contains(
+            "does not expose a periodic domain required for periodic image-point construction"
+        ));
     }
 
     #[test]

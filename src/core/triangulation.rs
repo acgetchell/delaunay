@@ -7131,6 +7131,61 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn test_periodic_geometric_orientation_validation_rejects_offset_count_mismatch() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([0.8, 0.0]),
+            vertex!([0.0, 0.8]),
+        ];
+        let mut tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
+        tds.get_cell_by_key_mut(cell_key)
+            .unwrap()
+            .periodic_vertex_offsets = Some(vec![[0, 0], [1, 0]]);
+
+        let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        let err = tri.validate_geometric_cell_orientation().unwrap_err();
+        assert!(matches!(
+            err,
+            TriangulationValidationError::Tds(TdsValidationError::InconsistentDataStructure { message })
+                if message.contains("periodic offset count")
+                    && message.contains("does not match vertex count")
+                    && message.contains("geometric orientation validation")
+        ));
+    }
+
+    #[test]
+    fn test_periodic_geometric_orientation_validation_maps_lift_errors() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([0.8, 0.0]),
+            vertex!([0.0, 0.8]),
+        ];
+        let mut tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
+        tds.get_cell_by_key_mut(cell_key)
+            .unwrap()
+            .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [1, 0]]);
+
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        tri.set_global_topology(GlobalTopology::Toroidal {
+            domain: [0.0, 1.0],
+            mode: ToroidalConstructionMode::PeriodicImagePoint,
+        });
+
+        let err = tri.validate_geometric_cell_orientation().unwrap_err();
+        assert!(matches!(
+            err,
+            TriangulationValidationError::Tds(TdsValidationError::InconsistentDataStructure { message })
+                if message.contains("Failed to lift coordinates")
+                    && message.contains("Invalid toroidal period")
+        ));
+    }
+
     /// Consolidated macro for facet validation tests across dimensions.
     ///
     /// Verifies the manifold topology invariant: each facet shared by at most 2 cells.

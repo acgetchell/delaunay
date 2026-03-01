@@ -463,44 +463,28 @@ impl<const D: usize> GlobalTopology<D> {
 impl<const D: usize> GlobalTopologyModel<D> for GlobalTopologyModelAdapter<D> {
     fn kind(&self) -> TopologyKind {
         match self {
-            Self::Euclidean(model) => <EuclideanModel as GlobalTopologyModel<D>>::kind(model),
-            Self::Toroidal(model) => <ToroidalModel<D> as GlobalTopologyModel<D>>::kind(model),
-            Self::Spherical(model) => <SphericalModel as GlobalTopologyModel<D>>::kind(model),
-            Self::Hyperbolic(model) => <HyperbolicModel as GlobalTopologyModel<D>>::kind(model),
+            Self::Euclidean(model) => GlobalTopologyModel::<D>::kind(model),
+            Self::Toroidal(model) => GlobalTopologyModel::<D>::kind(model),
+            Self::Spherical(model) => GlobalTopologyModel::<D>::kind(model),
+            Self::Hyperbolic(model) => GlobalTopologyModel::<D>::kind(model),
         }
     }
 
     fn allows_boundary(&self) -> bool {
         match self {
-            Self::Euclidean(model) => {
-                <EuclideanModel as GlobalTopologyModel<D>>::allows_boundary(model)
-            }
-            Self::Toroidal(model) => {
-                <ToroidalModel<D> as GlobalTopologyModel<D>>::allows_boundary(model)
-            }
-            Self::Spherical(model) => {
-                <SphericalModel as GlobalTopologyModel<D>>::allows_boundary(model)
-            }
-            Self::Hyperbolic(model) => {
-                <HyperbolicModel as GlobalTopologyModel<D>>::allows_boundary(model)
-            }
+            Self::Euclidean(model) => GlobalTopologyModel::<D>::allows_boundary(model),
+            Self::Toroidal(model) => GlobalTopologyModel::<D>::allows_boundary(model),
+            Self::Spherical(model) => GlobalTopologyModel::<D>::allows_boundary(model),
+            Self::Hyperbolic(model) => GlobalTopologyModel::<D>::allows_boundary(model),
         }
     }
 
     fn validate_configuration(&self) -> Result<(), GlobalTopologyModelError> {
         match self {
-            Self::Euclidean(model) => {
-                <EuclideanModel as GlobalTopologyModel<D>>::validate_configuration(model)
-            }
-            Self::Toroidal(model) => {
-                <ToroidalModel<D> as GlobalTopologyModel<D>>::validate_configuration(model)
-            }
-            Self::Spherical(model) => {
-                <SphericalModel as GlobalTopologyModel<D>>::validate_configuration(model)
-            }
-            Self::Hyperbolic(model) => {
-                <HyperbolicModel as GlobalTopologyModel<D>>::validate_configuration(model)
-            }
+            Self::Euclidean(model) => GlobalTopologyModel::<D>::validate_configuration(model),
+            Self::Toroidal(model) => GlobalTopologyModel::<D>::validate_configuration(model),
+            Self::Spherical(model) => GlobalTopologyModel::<D>::validate_configuration(model),
+            Self::Hyperbolic(model) => GlobalTopologyModel::<D>::validate_configuration(model),
         }
     }
 
@@ -513,24 +497,16 @@ impl<const D: usize> GlobalTopologyModel<D> for GlobalTopologyModelAdapter<D> {
     {
         match self {
             Self::Euclidean(model) => {
-                <EuclideanModel as GlobalTopologyModel<D>>::canonicalize_point_in_place(
-                    model, coords,
-                )
+                GlobalTopologyModel::<D>::canonicalize_point_in_place(model, coords)
             }
             Self::Toroidal(model) => {
-                <ToroidalModel<D> as GlobalTopologyModel<D>>::canonicalize_point_in_place(
-                    model, coords,
-                )
+                GlobalTopologyModel::<D>::canonicalize_point_in_place(model, coords)
             }
             Self::Spherical(model) => {
-                <SphericalModel as GlobalTopologyModel<D>>::canonicalize_point_in_place(
-                    model, coords,
-                )
+                GlobalTopologyModel::<D>::canonicalize_point_in_place(model, coords)
             }
             Self::Hyperbolic(model) => {
-                <HyperbolicModel as GlobalTopologyModel<D>>::canonicalize_point_in_place(
-                    model, coords,
-                )
+                GlobalTopologyModel::<D>::canonicalize_point_in_place(model, coords)
             }
         }
     }
@@ -545,74 +521,42 @@ impl<const D: usize> GlobalTopologyModel<D> for GlobalTopologyModelAdapter<D> {
     {
         match self {
             Self::Euclidean(model) => {
-                <EuclideanModel as GlobalTopologyModel<D>>::lift_for_orientation(
-                    model,
-                    coords,
-                    periodic_offset,
-                )
+                GlobalTopologyModel::<D>::lift_for_orientation(model, coords, periodic_offset)
             }
             Self::Toroidal(model) => {
-                <ToroidalModel<D> as GlobalTopologyModel<D>>::lift_for_orientation(
-                    model,
-                    coords,
-                    periodic_offset,
-                )
+                GlobalTopologyModel::<D>::lift_for_orientation(model, coords, periodic_offset)
             }
             Self::Spherical(model) => {
-                <SphericalModel as GlobalTopologyModel<D>>::lift_for_orientation(
-                    model,
-                    coords,
-                    periodic_offset,
-                )
+                GlobalTopologyModel::<D>::lift_for_orientation(model, coords, periodic_offset)
             }
             Self::Hyperbolic(model) => {
-                <HyperbolicModel as GlobalTopologyModel<D>>::lift_for_orientation(
-                    model,
-                    coords,
-                    periodic_offset,
-                )
+                GlobalTopologyModel::<D>::lift_for_orientation(model, coords, periodic_offset)
             }
         }
     }
 
     fn periodic_domain(&self) -> Option<&[f64; D]> {
         match self {
-            Self::Euclidean(model) => {
-                <EuclideanModel as GlobalTopologyModel<D>>::periodic_domain(model)
-            }
-            Self::Toroidal(model) => {
-                <ToroidalModel<D> as GlobalTopologyModel<D>>::periodic_domain(model)
-            }
-            Self::Spherical(model) => {
-                <SphericalModel as GlobalTopologyModel<D>>::periodic_domain(model)
-            }
-            Self::Hyperbolic(model) => {
-                <HyperbolicModel as GlobalTopologyModel<D>>::periodic_domain(model)
-            }
+            Self::Euclidean(model) => GlobalTopologyModel::<D>::periodic_domain(model),
+            Self::Toroidal(model) => GlobalTopologyModel::<D>::periodic_domain(model),
+            Self::Spherical(model) => GlobalTopologyModel::<D>::periodic_domain(model),
+            Self::Hyperbolic(model) => GlobalTopologyModel::<D>::periodic_domain(model),
         }
     }
 
     fn supports_periodic_facet_signatures(&self) -> bool {
         match self {
             Self::Euclidean(model) => {
-                <EuclideanModel as GlobalTopologyModel<D>>::supports_periodic_facet_signatures(
-                    model,
-                )
+                GlobalTopologyModel::<D>::supports_periodic_facet_signatures(model)
             }
             Self::Toroidal(model) => {
-                <ToroidalModel<D> as GlobalTopologyModel<D>>::supports_periodic_facet_signatures(
-                    model,
-                )
+                GlobalTopologyModel::<D>::supports_periodic_facet_signatures(model)
             }
             Self::Spherical(model) => {
-                <SphericalModel as GlobalTopologyModel<D>>::supports_periodic_facet_signatures(
-                    model,
-                )
+                GlobalTopologyModel::<D>::supports_periodic_facet_signatures(model)
             }
             Self::Hyperbolic(model) => {
-                <HyperbolicModel as GlobalTopologyModel<D>>::supports_periodic_facet_signatures(
-                    model,
-                )
+                GlobalTopologyModel::<D>::supports_periodic_facet_signatures(model)
             }
         }
     }
@@ -620,24 +564,16 @@ impl<const D: usize> GlobalTopologyModel<D> for GlobalTopologyModelAdapter<D> {
     fn supports_periodic_orientation_offsets(&self) -> bool {
         match self {
             Self::Euclidean(model) => {
-                <EuclideanModel as GlobalTopologyModel<D>>::supports_periodic_orientation_offsets(
-                    model,
-                )
+                GlobalTopologyModel::<D>::supports_periodic_orientation_offsets(model)
             }
             Self::Toroidal(model) => {
-                <ToroidalModel<D> as GlobalTopologyModel<D>>::supports_periodic_orientation_offsets(
-                    model,
-                )
+                GlobalTopologyModel::<D>::supports_periodic_orientation_offsets(model)
             }
             Self::Spherical(model) => {
-                <SphericalModel as GlobalTopologyModel<D>>::supports_periodic_orientation_offsets(
-                    model,
-                )
+                GlobalTopologyModel::<D>::supports_periodic_orientation_offsets(model)
             }
             Self::Hyperbolic(model) => {
-                <HyperbolicModel as GlobalTopologyModel<D>>::supports_periodic_orientation_offsets(
-                    model,
-                )
+                GlobalTopologyModel::<D>::supports_periodic_orientation_offsets(model)
             }
         }
     }
@@ -1009,6 +945,85 @@ mod tests {
             ToroidalConstructionMode::PeriodicImagePoint,
         ));
         assert!(toroidal_periodic.supports_periodic_orientation_offsets());
+    }
+
+    #[test]
+    fn spherical_and_hyperbolic_models_are_identity_without_offsets() {
+        let spherical = SphericalModel;
+        let mut spherical_coords = [1.25_f64, -0.5_f64];
+        spherical
+            .canonicalize_point_in_place(&mut spherical_coords)
+            .unwrap();
+        let spherical_lifted = spherical
+            .lift_for_orientation(spherical_coords, None)
+            .unwrap();
+        assert_relative_eq!(spherical_lifted[0], 1.25);
+        assert_relative_eq!(spherical_lifted[1], -0.5);
+
+        let hyperbolic = HyperbolicModel;
+        let mut hyperbolic_coords = [-2.0_f64, 3.5_f64];
+        hyperbolic
+            .canonicalize_point_in_place(&mut hyperbolic_coords)
+            .unwrap();
+        let hyperbolic_lifted = hyperbolic
+            .lift_for_orientation(hyperbolic_coords, None)
+            .unwrap();
+        assert_relative_eq!(hyperbolic_lifted[0], -2.0);
+        assert_relative_eq!(hyperbolic_lifted[1], 3.5);
+    }
+
+    #[test]
+    fn adapter_dispatch_covers_all_topology_variants() {
+        let euclidean = GlobalTopology::<2>::Euclidean.model();
+        assert_eq!(euclidean.kind(), TopologyKind::Euclidean);
+        assert!(euclidean.allows_boundary());
+        assert!(euclidean.validate_configuration().is_ok());
+        let mut euclidean_coords = [0.2_f64, 0.7_f64];
+        euclidean
+            .canonicalize_point_in_place(&mut euclidean_coords)
+            .unwrap();
+        let euclidean_lifted = euclidean
+            .lift_for_orientation(euclidean_coords, None)
+            .unwrap();
+        assert_relative_eq!(euclidean_lifted[0], 0.2);
+        assert_relative_eq!(euclidean_lifted[1], 0.7);
+        assert_eq!(euclidean.periodic_domain(), None);
+        assert!(!euclidean.supports_periodic_facet_signatures());
+        assert!(!euclidean.supports_periodic_orientation_offsets());
+
+        let spherical = GlobalTopology::<2>::Spherical.model();
+        assert_eq!(spherical.kind(), TopologyKind::Spherical);
+        assert!(!spherical.allows_boundary());
+        assert!(spherical.validate_configuration().is_ok());
+        let mut spherical_coords = [1.1_f64, -0.4_f64];
+        spherical
+            .canonicalize_point_in_place(&mut spherical_coords)
+            .unwrap();
+        let spherical_lifted = spherical
+            .lift_for_orientation(spherical_coords, None)
+            .unwrap();
+        assert_relative_eq!(spherical_lifted[0], 1.1);
+        assert_relative_eq!(spherical_lifted[1], -0.4);
+        assert_eq!(spherical.periodic_domain(), None);
+        assert!(!spherical.supports_periodic_facet_signatures());
+        assert!(!spherical.supports_periodic_orientation_offsets());
+
+        let hyperbolic = GlobalTopology::<2>::Hyperbolic.model();
+        assert_eq!(hyperbolic.kind(), TopologyKind::Hyperbolic);
+        assert!(!hyperbolic.allows_boundary());
+        assert!(hyperbolic.validate_configuration().is_ok());
+        let mut hyperbolic_coords = [-0.9_f64, 2.6_f64];
+        hyperbolic
+            .canonicalize_point_in_place(&mut hyperbolic_coords)
+            .unwrap();
+        let hyperbolic_lifted = hyperbolic
+            .lift_for_orientation(hyperbolic_coords, None)
+            .unwrap();
+        assert_relative_eq!(hyperbolic_lifted[0], -0.9);
+        assert_relative_eq!(hyperbolic_lifted[1], 2.6);
+        assert_eq!(hyperbolic.periodic_domain(), None);
+        assert!(!hyperbolic.supports_periodic_facet_signatures());
+        assert!(!hyperbolic.supports_periodic_orientation_offsets());
     }
 
     // =========================================================================
