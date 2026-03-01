@@ -2,7 +2,8 @@
 
 This document describes the topology-related parts of the `delaunay` crate:
 Level 3 manifold validation, Euler characteristic checks, and support for
-different topological spaces (Euclidean and toroidal, with spherical planned).
+different topological spaces (Euclidean and toroidal are fully integrated;
+spherical and hyperbolic are currently scaffolded for future integration).
 
 If you want the user-facing guide to the full validation stack (Levels 1–4), start
 with `docs/validation.md`.
@@ -200,8 +201,9 @@ For more examples, see the toroidal section in the main `README.md`.
 
 ### Future work
 
-Spherical space topology is defined but not yet fully integrated with the
-construction and validation pipeline.
+Spherical and hyperbolic topologies are defined in metadata/behavior-model
+layers but are not yet fully integrated with the construction and validation
+pipeline.
 
 ## Triangulation editing (`src/triangulation/`)
 
