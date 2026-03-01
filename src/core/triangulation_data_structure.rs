@@ -233,7 +233,7 @@ use super::{
     cell::{Cell, CellValidationError},
     facet::{FacetHandle, facet_key_from_vertices},
     traits::data_type::DataType,
-    util::{stable_hash_u64_slice, usize_to_u8},
+    util::{periodic_facet_key_from_lifted_vertices, usize_to_u8},
     vertex::{Vertex, VertexValidationError},
 };
 use crate::core::collections::{
@@ -873,15 +873,15 @@ where
             });
         }
 
-        let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-            SmallBuffer::new();
-        for (i, &vertex_key) in vertices.iter().enumerate() {
-            if i != facet_index {
-                facet_vertices.push(vertex_key);
-            }
-        }
-
         let Some(periodic_offsets) = cell.periodic_vertex_offsets() else {
+            // Non-periodic path: build facet_vertices only when needed
+            let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                SmallBuffer::new();
+            for (i, &vertex_key) in vertices.iter().enumerate() {
+                if i != facet_index {
+                    facet_vertices.push(vertex_key);
+                }
+            }
             return Ok(facet_key_from_vertices(&facet_vertices));
         };
 
@@ -895,39 +895,20 @@ where
             });
         }
 
-        let mut lifted_facet: SmallBuffer<(u64, [i8; D]), MAX_PRACTICAL_DIMENSION_SIZE> =
+        let mut lifted_vertices: SmallBuffer<(VertexKey, [i8; D]), MAX_PRACTICAL_DIMENSION_SIZE> =
             SmallBuffer::new();
         for (vertex_idx, &vertex_key) in vertices.iter().enumerate() {
-            if vertex_idx == facet_index {
-                continue;
-            }
-            lifted_facet.push((vertex_key.data().as_ffi(), periodic_offsets[vertex_idx]));
+            lifted_vertices.push((vertex_key, periodic_offsets[vertex_idx]));
         }
 
-        lifted_facet.sort_unstable_by_key(|(vertex_key_value, _)| *vertex_key_value);
-        let facet_anchor_offset = lifted_facet
-            .first()
-            .map_or([0_i8; D], |(_, offset)| *offset);
-
-        let mut packed_signature: SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> =
-            SmallBuffer::new();
-        for (vertex_key_value, offset) in lifted_facet {
-            packed_signature.push(vertex_key_value);
-            for axis in 0..D {
-                let shifted = i16::from(offset[axis]) - i16::from(facet_anchor_offset[axis]) + 128;
-                if !(0..=255).contains(&shifted) {
-                    return Err(TdsError::InconsistentDataStructure {
-                        message: format!(
-                            "Periodic offset component {shifted} (axis {axis}) is out of encodable range 0..=255",
-                        ),
-                    });
-                }
-                packed_signature
-                    .push(u64::try_from(shifted).expect("validated shifted offset is in 0..=255"));
-            }
-        }
-
-        Ok(stable_hash_u64_slice(&packed_signature))
+        periodic_facet_key_from_lifted_vertices::<D>(&lifted_vertices, facet_index).map_err(
+            |error| TdsError::InconsistentDataStructure {
+                message: format!(
+                    "Failed to derive periodic facet key for cell {:?} facet {facet_index}: {error}",
+                    cell.uuid()
+                ),
+            },
+        )
     }
 
     fn build_periodic_vertex_uuid_offsets(
@@ -5223,6 +5204,29 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ]
+    }
+
+    #[test]
+    fn test_facet_key_for_cell_facet_maps_periodic_derivation_errors() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        tds.get_cell_by_key_mut(cell_key)
+            .unwrap()
+            .set_periodic_vertex_offsets(vec![[-128_i8, 0_i8], [127_i8, 0_i8], [0_i8, 0_i8]]);
+
+        let err = tds.facet_key_for_cell_facet(cell_key, 2).unwrap_err();
+        assert!(matches!(
+            err,
+            TdsValidationError::InconsistentDataStructure { message }
+                if message.contains("Failed to derive periodic facet key")
+                    && message.contains("facet 2")
+        ));
     }
 
     #[test]

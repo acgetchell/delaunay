@@ -88,7 +88,7 @@ use `DelaunayTriangulationBuilder`:
 
 ```rust
 use delaunay::prelude::triangulation::*;
-use delaunay::topology::traits::topological_space::ToroidalConstructionMode;
+use delaunay::core::triangulation::{TopologyGuarantee, ValidationPolicy};
 
 // Toroidal (periodic) triangulation in 2D
 let vertices = vec![
@@ -98,11 +98,12 @@ let vertices = vec![
 ];
 
 let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-    .with_toroidal_topology([1.0, 1.0], ToroidalConstructionMode::Direct)
-    .with_topology_guarantee(TopologyGuarantee::PLManifoldStrict)
-    .with_validation_policy(ValidationPolicy::Always)
+    .toroidal([1.0, 1.0]) // Phase 1: canonicalized toroidal construction
+    .topology_guarantee(TopologyGuarantee::PLManifoldStrict)
     .build::<()>()
     .unwrap();
+
+dt.set_validation_policy(ValidationPolicy::Always);
 
 // Works like any other DelaunayTriangulation
 dt.insert(vertex!([0.25, 0.75])).unwrap();
@@ -110,10 +111,13 @@ dt.insert(vertex!([0.25, 0.75])).unwrap();
 
 **When to use the Builder:**
 
-- **Toroidal/periodic triangulations**: Use `.with_toroidal_topology()` to specify
-  domain periods and construction mode
+- **Toroidal/periodic triangulations**: Use `.toroidal()` (Phase 1 canonicalized) or
+  `.toroidal_periodic()` (Phase 2 periodic image-point) with explicit domain periods
 - **Custom topology guarantees**: Set stricter or more relaxed manifold checks
-- **Custom validation policies**: Control when validation runs during construction
+- **Custom validation policies**: Configure `ValidationPolicy` via
+  `dt.set_validation_policy(...)` before or after build; the active policy controls
+  automatic topology validation for subsequent insert/remove and other modification
+  operations
 - **Custom repair policies**: Configure Delaunay repair behavior
 
 See `docs/topology.md` for more on toroidal triangulations and `docs/validation.md`
@@ -126,7 +130,9 @@ for topology guarantee and validation policy details.
 - **Fan retriangulation**: Vertex removal uses fan-based retriangulation of the vertex star
 - **Error handling**: Operations fail gracefully if they would violate invariants (see
   [`invariants.md`](invariants.md)).
-- **Validation**: Use `ValidationPolicy` to control automatic topology validation during construction
+- **Validation**: The active `ValidationPolicy` (set with
+  `dt.set_validation_policy(...)`) governs automatic topology validation for
+  subsequent construction/modification operations
 
 ## Edit API Reference
 

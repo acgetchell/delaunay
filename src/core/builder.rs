@@ -113,18 +113,20 @@ use crate::core::operations::InsertionOutcome;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionError};
 use crate::core::triangulation_data_structure::{CellKey, VertexKey};
-use crate::core::util::stable_hash_u64_slice;
+use crate::core::util::periodic_facet_key_from_lifted_vertices;
 use crate::core::vertex::{Vertex, VertexBuilder};
 use crate::geometry::kernel::{FastKernel, Kernel};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar, ScalarAccumulative};
 use crate::topology::spaces::toroidal::ToroidalSpace;
+use crate::topology::traits::global_topology_model::{
+    GlobalTopologyModel, GlobalTopologyModelError,
+};
 use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
 use num_traits::ToPrimitive;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
-use slotmap::Key;
 use std::num::NonZeroUsize;
 const TWO_POW_52_I64: i64 = 4_503_599_627_370_496; // 2^52
 const TWO_POW_52_F64: f64 = 4_503_599_627_370_496.0; // 2^52
@@ -144,47 +146,6 @@ type PeriodicCandidate<const D: usize> = (
     Vec<PeriodicFacetKey>,
     bool,
 );
-/// Computes a translation-invariant hash key for one lifted facet of a periodic cell.
-///
-/// `lifted_vertices` stores cell vertices as `(canonical_vertex_key, lattice_offset)` pairs.
-/// The facet opposite `facet_index` is extracted, vertex keys are sorted for permutation
-/// invariance, and offsets are normalized relative to the first facet vertex so that
-/// equivalent periodic facets map to the same signature.
-fn periodic_facet_key_from_lifted<const D: usize>(
-    lifted_vertices: &[(VertexKey, [i8; D])],
-    facet_index: usize,
-) -> u64 {
-    let mut lifted_facet: Vec<(u64, [i8; D])> = lifted_vertices
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, (vertex_key, offset))| {
-            if idx == facet_index {
-                return None;
-            }
-            Some((vertex_key.data().as_ffi(), *offset))
-        })
-        .collect();
-    lifted_facet.sort_unstable_by_key(|(vertex_key_value, _)| *vertex_key_value);
-    let facet_anchor_offset = lifted_facet
-        .first()
-        .map_or([0_i8; D], |(_, offset)| *offset);
-
-    let mut packed_signature: Vec<u64> = Vec::with_capacity(lifted_facet.len() * (D + 1));
-    for (vertex_key_value, offset) in lifted_facet {
-        packed_signature.push(vertex_key_value);
-        for axis in 0..D {
-            let shifted = i16::from(offset[axis]) - i16::from(facet_anchor_offset[axis]) + 128;
-            debug_assert!(
-                (0..=255).contains(&shifted),
-                "relative periodic offsets must fit into signed-byte delta",
-            );
-            packed_signature
-                .push(u64::try_from(shifted).expect("debug assertion ensures 0..=255 range"));
-        }
-    }
-
-    stable_hash_u64_slice(&packed_signature)
-}
 /// Finds a bounded-size 2D face subset whose edge incidences can close a quotient boundary.
 ///
 /// Returns a boolean mask aligned with `candidate_edges` when a selection of exactly
@@ -637,58 +598,140 @@ where
     // Internal helpers
     // -------------------------------------------------------------------------
 
-    /// Canonicalizes the vertex slice into the toroidal fundamental domain.
+    /// Validates the topology model configuration before using it in construction.
     ///
-    /// Returns a new `Vec<Vertex<T, U, D>>` where every coordinate `c` in axis `i`
-    /// has been replaced by `c.rem_euclid(domain[i])`. If any coordinate cannot be
-    /// wrapped (non-finite or type-conversion failure), returns an error.
-    fn canonicalize_vertices(
+    /// This helper is called before any topology-based canonicalization or lifting operations
+    /// to ensure that the model's runtime parameters (e.g., toroidal domain periods) are valid.
+    ///
+    /// # Parameters
+    ///
+    /// * `model` - The topology behavior model to validate.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if the model configuration is valid.
+    /// - `Err(DelaunayTriangulationConstructionError)` if validation fails.
+    ///
+    /// # Errors
+    ///
+    /// Maps [`GlobalTopologyModelError`] to [`DelaunayTriangulationConstructionError`]:
+    /// - [`GlobalTopologyModelError::InvalidToroidalPeriod`] → detailed message with axis and period.
+    /// - Other errors → generic configuration error message.
+    ///
+    /// # Usage
+    ///
+    /// Called internally by [`build_with_kernel`](Self::build_with_kernel) before
+    /// canonicalization in both Phase 1 (canonicalized) and Phase 2 (image-point) paths.
+    fn validate_topology_model<M>(model: &M) -> Result<(), DelaunayTriangulationConstructionError>
+    where
+        M: GlobalTopologyModel<D>,
+    {
+        model.validate_configuration().map_err(|error| match error {
+            GlobalTopologyModelError::InvalidToroidalPeriod { axis, period } => {
+                TriangulationConstructionError::GeometricDegeneracy {
+                    message: format!(
+                        "Invalid toroidal domain at axis {axis}: period {period:?}; expected finite value > 0",
+                    ),
+                }
+                .into()
+            }
+            other => TriangulationConstructionError::GeometricDegeneracy {
+                message: format!("Invalid topology model configuration: {other}"),
+            }
+            .into(),
+        })
+    }
+
+    /// Derives a periodic facet key from a lifted simplex and maps derivation
+    /// failures into construction-level geometric-degeneracy errors.
+    ///
+    /// This helper centralizes error conversion for
+    /// [`periodic_facet_key_from_lifted_vertices`] so all call sites produce
+    /// consistent diagnostics.
+    ///
+    /// # Parameters
+    ///
+    /// * `lifted_ordered` - Lifted simplex vertices as `(VertexKey, lattice_offset)`
+    ///   pairs (expected arity: `D + 1`).
+    /// * `facet_idx` - Index of the facet opposite a vertex in the simplex.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DelaunayTriangulationConstructionError`] wrapping
+    /// [`TriangulationConstructionError::GeometricDegeneracy`] when periodic
+    /// facet key derivation fails (e.g., invalid arity/index or offset encoding).
+    fn derive_periodic_facet_key(
+        lifted_ordered: &[(VertexKey, [i8; D])],
+        facet_idx: usize,
+    ) -> Result<PeriodicFacetKey, DelaunayTriangulationConstructionError> {
+        periodic_facet_key_from_lifted_vertices::<D>(lifted_ordered, facet_idx).map_err(|error| {
+            TriangulationConstructionError::GeometricDegeneracy {
+                message: format!(
+                    "Failed to derive periodic candidate facet signature for index {facet_idx}: {error}",
+                ),
+            }
+            .into()
+        })
+    }
+
+    /// Canonicalizes vertices using a topology behavior model.
+    ///
+    /// For each input vertex, calls [`GlobalTopologyModel::canonicalize_point_in_place`] to wrap
+    /// coordinates into the model's fundamental domain (e.g., [0, L) for toroidal topologies).
+    /// Preserves vertex UUIDs and data while transforming coordinates.
+    ///
+    /// # Parameters
+    ///
+    /// * `vertices` - Slice of input vertices with potentially out-of-domain coordinates.
+    /// * `model` - The topology behavior model that defines canonicalization logic.
+    ///
+    /// # Returns
+    ///
+    /// A new vector of vertices with canonicalized coordinates. Each output vertex has:
+    /// - The same UUID as the corresponding input vertex (for tracking through construction).
+    /// - The same associated data as the input vertex.
+    /// - Coordinates transformed according to the model's canonicalization rules.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DelaunayTriangulationConstructionError`] if canonicalization fails for any vertex:
+    /// - Non-finite coordinates (NaN, infinity).
+    /// - Invalid toroidal periods.
+    /// - Scalar conversion failures.
+    ///
+    /// Error messages include the failing vertex index and original coordinates for debugging.
+    ///
+    /// # Usage
+    ///
+    /// Called internally by [`build_with_kernel`](Self::build_with_kernel) before delegating
+    /// to the underlying triangulation construction.
+    fn canonicalize_vertices<M>(
         vertices: &[Vertex<T, U, D>],
-        space: &ToroidalSpace<D>,
-    ) -> Result<Vec<Vertex<T, U, D>>, DelaunayTriangulationConstructionError> {
+        model: &M,
+    ) -> Result<Vec<Vertex<T, U, D>>, DelaunayTriangulationConstructionError>
+    where
+        M: GlobalTopologyModel<D>,
+    {
         let mut out = Vec::with_capacity(vertices.len());
 
         for (idx, v) in vertices.iter().enumerate() {
-            let original_coords = v.point().coords();
-            let mut wrapped = [T::zero(); D];
+            let mut canonicalized_coords = *v.point().coords();
+            model
+                .canonicalize_point_in_place(&mut canonicalized_coords)
+                .map_err(|error| TriangulationConstructionError::GeometricDegeneracy {
+                    message: format!(
+                        "Failed to canonicalize vertex {idx}: original coords {:?}; reason: {error}",
+                        v.point().coords(),
+                    ),
+                })?;
 
-            for axis in 0..D {
-                wrapped[axis] = space
-                    .wrap_coord::<T>(axis, original_coords[axis])
-                    .ok_or_else(|| TriangulationConstructionError::GeometricDegeneracy {
-                        message: format!(
-                            "Failed to canonicalize vertex {idx}: coordinate at axis \
-                                     {axis} ({:?}) is not finite or cannot be wrapped into \
-                                     the domain {:?}",
-                            original_coords[axis], space.domain,
-                        ),
-                    })?;
-            }
-
-            let new_point = Point::new(wrapped);
+            let new_point = Point::new(canonicalized_coords);
             let new_vertex = Vertex::new_with_uuid(new_point, v.uuid(), v.data);
 
             out.push(new_vertex);
         }
 
         Ok(out)
-    }
-
-    /// Validates toroidal domain periods are finite and strictly positive.
-    fn validate_toroidal_domain(
-        space: &ToroidalSpace<D>,
-    ) -> Result<(), DelaunayTriangulationConstructionError> {
-        for (axis, &period) in space.domain.iter().enumerate() {
-            if !period.is_finite() || period <= 0.0 {
-                return Err(TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!(
-                        "Invalid toroidal domain at axis {axis}: period {period:?}; expected finite value > 0",
-                    ),
-                }
-                .into());
-            }
-        }
-        Ok(())
     }
 
     // -------------------------------------------------------------------------
@@ -788,36 +831,49 @@ where
                 )
             }
             (Some(space), false) => {
-                Self::validate_toroidal_domain(&space)?;
+                let topology = GlobalTopology::Toroidal {
+                    domain: space.domain,
+                    mode: ToroidalConstructionMode::Canonicalized,
+                };
+                let topology_model = topology.model();
+                Self::validate_topology_model(&topology_model)?;
                 // Toroidal Phase 1: canonicalize then delegate.
-                let canonical = Self::canonicalize_vertices(self.vertices, &space)?;
+                let canonical = Self::canonicalize_vertices(self.vertices, &topology_model)?;
                 let mut dt = DelaunayTriangulation::with_topology_guarantee_and_options(
                     kernel,
                     &canonical,
                     self.topology_guarantee,
                     self.construction_options,
                 )?;
-                dt.set_global_topology(GlobalTopology::Toroidal {
-                    domain: space.domain,
-                    mode: ToroidalConstructionMode::Canonicalized,
-                });
+                dt.set_global_topology(topology);
                 Ok(dt)
             }
             (Some(space), true) => {
-                Self::validate_toroidal_domain(&space)?;
+                let topology = GlobalTopology::Toroidal {
+                    domain: space.domain,
+                    mode: ToroidalConstructionMode::PeriodicImagePoint,
+                };
+                let topology_model = topology.model();
+                Self::validate_topology_model(&topology_model)?;
+                if !topology_model.supports_periodic_facet_signatures() {
+                    return Err(TriangulationConstructionError::GeometricDegeneracy {
+                        message: format!(
+                            "Topology {:?} does not support periodic facet signatures required for periodic image-point construction",
+                            topology_model.kind(),
+                        ),
+                    }
+                    .into());
+                }
                 // Toroidal Phase 2: canonicalize then apply 3^D image-point method.
-                let canonical = Self::canonicalize_vertices(self.vertices, &space)?;
-                let mut dt = Self::build_periodic::<K, V>(
+                let canonical = Self::canonicalize_vertices(self.vertices, &topology_model)?;
+                let mut dt = Self::build_periodic(
                     kernel,
                     &canonical,
-                    &space,
+                    &topology_model,
                     self.topology_guarantee,
                     self.construction_options,
                 )?;
-                dt.set_global_topology(GlobalTopology::Toroidal {
-                    domain: space.domain,
-                    mode: ToroidalConstructionMode::PeriodicImagePoint,
-                });
+                dt.set_global_topology(topology);
                 dt.as_triangulation_mut()
                     .normalize_and_promote_positive_orientation()
                     .map_err(|e| TriangulationConstructionError::GeometricDegeneracy {
@@ -862,10 +918,10 @@ where
         clippy::too_many_lines,
         reason = "Image-point periodic DT algorithm is inherently multi-step; splitting would harm readability"
     )]
-    fn build_periodic<K, V>(
+    fn build_periodic<K, V, M>(
         kernel: &K,
         canonical_vertices: &[Vertex<T, U, D>],
-        space: &ToroidalSpace<D>,
+        topology_model: &M,
         topology_guarantee: TopologyGuarantee,
         construction_options: ConstructionOptions,
     ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
@@ -873,7 +929,28 @@ where
         K: Kernel<D, Scalar = T>,
         K::Scalar: ScalarAccumulative,
         V: DataType,
+        M: GlobalTopologyModel<D>,
     {
+        // Keep `build_periodic` self-protecting even if future call paths bypass outer validation.
+        Self::validate_topology_model(topology_model)?;
+        if !topology_model.supports_periodic_facet_signatures() {
+            return Err(TriangulationConstructionError::GeometricDegeneracy {
+                message: format!(
+                    "Topology {:?} does not support periodic facet signatures required for periodic image-point construction",
+                    topology_model.kind(),
+                ),
+            }
+            .into());
+        }
+
+        let domain = topology_model.periodic_domain().ok_or_else(|| {
+            TriangulationConstructionError::GeometricDegeneracy {
+                message: format!(
+                    "Topology {:?} does not expose a periodic domain required for periodic image-point construction",
+                    topology_model.kind(),
+                ),
+            }
+        })?;
         let n = canonical_vertices.len();
         let min_points = 2 * D + 1;
         if n < min_points {
@@ -919,7 +996,7 @@ where
                 let orig_coords = v.point().coords();
                 let mut coords = [0_f64; D];
                 for i in 0..D {
-                    let domain_i = space.domain[i];
+                    let domain_i = domain[i];
                     let orig = orig_coords[i]
                         .to_f64()
                         .expect("canonical coordinate is finite and convertible");
@@ -956,7 +1033,7 @@ where
             for (canon_idx, v) in canonical_vertices.iter().enumerate() {
                 let mut new_coords = [T::zero(); D];
                 for i in 0..D {
-                    let shift_f64 = <f64 as From<i8>>::from(offset[i]) * space.domain[i];
+                    let shift_f64 = <f64 as From<i8>>::from(offset[i]) * domain[i];
                     let jitter_f64 = if is_canonical {
                         0.0
                     } else {
@@ -964,7 +1041,7 @@ where
                         (<f64 as num_traits::NumCast>::from(jitter_units)
                             .expect("jitter fits in f64")
                             / TWO_POW_52_F64)
-                            * space.domain[i]
+                            * domain[i]
                     };
                     let coord_f64 = canonical_f64[canon_idx][i] + shift_f64 + jitter_f64;
                     new_coords[i] =
@@ -1190,7 +1267,7 @@ where
                 .expect("simplex vertex count fits in f64 for D");
             for (axis, sum) in sums.iter().enumerate() {
                 let bary = *sum / denom;
-                let period = space.domain[axis];
+                let period = domain[axis];
                 if !(bary >= 0.0 && bary < period) {
                     return Some(false);
                 }
@@ -1215,7 +1292,7 @@ where
             let lifted_ordered = lifted_vertices.clone();
             let mut periodic_facets: Vec<PeriodicFacetKey> = Vec::with_capacity(D + 1);
             for facet_idx in 0..=D {
-                periodic_facets.push(periodic_facet_key_from_lifted(&lifted_ordered, facet_idx));
+                periodic_facets.push(Self::derive_periodic_facet_key(&lifted_ordered, facet_idx)?);
             }
 
             if let Some(existing) = candidates_by_symbolic.get_mut(&symbolic_signature) {
@@ -1660,7 +1737,7 @@ where
             FastHashMap::default();
         for lifted in rep_lifted_by_key.values() {
             for facet_idx in 0..=D {
-                let periodic_facet_key = periodic_facet_key_from_lifted(lifted, facet_idx);
+                let periodic_facet_key = Self::derive_periodic_facet_key(lifted, facet_idx)?;
                 *periodic_facet_counts.entry(periodic_facet_key).or_insert(0) += 1;
             }
         }
@@ -1694,7 +1771,7 @@ where
                 continue;
             };
             for facet_idx in 0..=D {
-                let sig = periodic_facet_key_from_lifted(lifted, facet_idx);
+                let sig = Self::derive_periodic_facet_key(lifted, facet_idx)?;
                 facet_occurrences
                     .entry(sig)
                     .or_default()
@@ -1816,7 +1893,150 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::topology::traits::global_topology_model::{
+        GlobalTopologyModel, GlobalTopologyModelError,
+    };
+    use crate::topology::traits::topological_space::TopologyKind;
     use crate::vertex;
+    use slotmap::Key;
+
+    #[derive(Clone, Copy, Debug)]
+    struct ValidationFailureModel;
+
+    impl GlobalTopologyModel<2> for ValidationFailureModel {
+        fn kind(&self) -> TopologyKind {
+            TopologyKind::Euclidean
+        }
+
+        fn allows_boundary(&self) -> bool {
+            true
+        }
+
+        fn validate_configuration(&self) -> Result<(), GlobalTopologyModelError> {
+            Err(GlobalTopologyModelError::NonFiniteCoordinate {
+                axis: 0,
+                value: f64::NAN,
+            })
+        }
+
+        fn canonicalize_point_in_place<T>(
+            &self,
+            _coords: &mut [T; 2],
+        ) -> Result<(), GlobalTopologyModelError>
+        where
+            T: CoordinateScalar,
+        {
+            Ok(())
+        }
+
+        fn lift_for_orientation<T>(
+            &self,
+            coords: [T; 2],
+            periodic_offset: Option<[i8; 2]>,
+        ) -> Result<[T; 2], GlobalTopologyModelError>
+        where
+            T: CoordinateScalar,
+        {
+            if periodic_offset.is_some() {
+                return Err(GlobalTopologyModelError::PeriodicOffsetsUnsupported {
+                    kind: TopologyKind::Euclidean,
+                });
+            }
+            Ok(coords)
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct CanonicalizationFailureModel;
+
+    impl GlobalTopologyModel<2> for CanonicalizationFailureModel {
+        fn kind(&self) -> TopologyKind {
+            TopologyKind::Euclidean
+        }
+
+        fn allows_boundary(&self) -> bool {
+            true
+        }
+
+        fn validate_configuration(&self) -> Result<(), GlobalTopologyModelError> {
+            Ok(())
+        }
+
+        fn canonicalize_point_in_place<T>(
+            &self,
+            _coords: &mut [T; 2],
+        ) -> Result<(), GlobalTopologyModelError>
+        where
+            T: CoordinateScalar,
+        {
+            Err(GlobalTopologyModelError::NonFiniteCoordinate {
+                axis: 0,
+                value: f64::NAN,
+            })
+        }
+
+        fn lift_for_orientation<T>(
+            &self,
+            coords: [T; 2],
+            periodic_offset: Option<[i8; 2]>,
+        ) -> Result<[T; 2], GlobalTopologyModelError>
+        where
+            T: CoordinateScalar,
+        {
+            if periodic_offset.is_some() {
+                return Err(GlobalTopologyModelError::PeriodicOffsetsUnsupported {
+                    kind: TopologyKind::Euclidean,
+                });
+            }
+            Ok(coords)
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct MissingPeriodicDomainModel;
+
+    impl GlobalTopologyModel<2> for MissingPeriodicDomainModel {
+        fn kind(&self) -> TopologyKind {
+            TopologyKind::Toroidal
+        }
+
+        fn allows_boundary(&self) -> bool {
+            false
+        }
+
+        fn validate_configuration(&self) -> Result<(), GlobalTopologyModelError> {
+            Ok(())
+        }
+
+        fn canonicalize_point_in_place<T>(
+            &self,
+            _coords: &mut [T; 2],
+        ) -> Result<(), GlobalTopologyModelError>
+        where
+            T: CoordinateScalar,
+        {
+            Ok(())
+        }
+
+        fn lift_for_orientation<T>(
+            &self,
+            coords: [T; 2],
+            _periodic_offset: Option<[i8; 2]>,
+        ) -> Result<[T; 2], GlobalTopologyModelError>
+        where
+            T: CoordinateScalar,
+        {
+            Ok(coords)
+        }
+
+        fn supports_periodic_facet_signatures(&self) -> bool {
+            true
+        }
+
+        fn periodic_domain(&self) -> Option<&[f64; 2]> {
+            None
+        }
+    }
 
     // -------------------------------------------------------------------------
     // Euclidean path — `new` is specialized for f64/(), no type annotations needed
@@ -2149,5 +2369,346 @@ mod tests {
             .unwrap();
         assert_eq!(dt.number_of_vertices(), 4);
         assert!(dt.validate().is_ok());
+    }
+
+    // -------------------------------------------------------------------------
+    // Private helper function tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_topology_model_accepts_valid_toroidal() {
+        use crate::topology::traits::global_topology_model::ToroidalModel;
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_derive_periodic_facet_key_happy_path_matches_core_derivation() {
+        let lifted_ordered = vec![
+            (VertexKey::null(), [0_i8, 0_i8]),
+            (VertexKey::null(), [1_i8, 0_i8]),
+            (VertexKey::null(), [0_i8, 1_i8]),
+        ];
+        let expected = periodic_facet_key_from_lifted_vertices::<2>(&lifted_ordered, 1).unwrap();
+        let derived = DelaunayTriangulationBuilder::<f64, (), 2>::derive_periodic_facet_key(
+            &lifted_ordered,
+            1,
+        )
+        .unwrap();
+        assert_eq!(derived, expected);
+    }
+
+    #[test]
+    fn test_derive_periodic_facet_key_maps_errors_to_geometric_degeneracy() {
+        let lifted_ordered = vec![
+            (VertexKey::null(), [-128_i8, 0_i8]),
+            (VertexKey::null(), [0_i8, 0_i8]),
+            (VertexKey::null(), [127_i8, 0_i8]),
+        ];
+        let err = DelaunayTriangulationBuilder::<f64, (), 2>::derive_periodic_facet_key(
+            &lifted_ordered,
+            1,
+        )
+        .unwrap_err();
+        match err {
+            DelaunayTriangulationConstructionError::Triangulation(
+                TriangulationConstructionError::GeometricDegeneracy { message },
+            ) => {
+                assert!(
+                    message.contains(
+                        "Failed to derive periodic candidate facet signature for index 1"
+                    ),
+                    "unexpected message prefix: {message}"
+                );
+                assert!(
+                    message.contains("out of encodable range"),
+                    "expected wrapped derivation detail in message: {message}"
+                );
+            }
+            other => panic!("expected GeometricDegeneracy mapping, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_topology_model_rejects_zero_period() {
+        use crate::topology::traits::global_topology_model::ToroidalModel;
+        let model = ToroidalModel::<2>::new([0.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
+        assert!(result.is_err());
+        let err_str = format!("{}", result.unwrap_err());
+        assert!(
+            err_str.contains("Invalid toroidal domain"),
+            "Error message should mention invalid toroidal domain: {err_str}"
+        );
+        assert!(
+            err_str.contains("axis 0"),
+            "Error message should mention axis: {err_str}"
+        );
+    }
+
+    #[test]
+    fn test_validate_topology_model_rejects_negative_period() {
+        use crate::topology::traits::global_topology_model::ToroidalModel;
+        let model =
+            ToroidalModel::<3>::new([2.0, -1.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let result = DelaunayTriangulationBuilder::<f64, (), 3>::validate_topology_model(&model);
+        assert!(result.is_err());
+        let err_str = format!("{}", result.unwrap_err());
+        assert!(err_str.contains("Invalid toroidal domain"));
+        assert!(err_str.contains("axis 1"));
+    }
+
+    #[test]
+    fn test_validate_topology_model_rejects_infinite_period() {
+        use crate::topology::traits::global_topology_model::ToroidalModel;
+        let model = ToroidalModel::<2>::new(
+            [f64::INFINITY, 3.0],
+            ToroidalConstructionMode::Canonicalized,
+        );
+        let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
+        assert!(result.is_err());
+        let err_str = format!("{}", result.unwrap_err());
+        assert!(err_str.contains("Invalid toroidal domain"));
+    }
+
+    #[test]
+    fn test_validate_topology_model_rejects_nan_period() {
+        use crate::topology::traits::global_topology_model::ToroidalModel;
+        let model =
+            ToroidalModel::<2>::new([f64::NAN, 3.0], ToroidalConstructionMode::Canonicalized);
+        let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
+        assert!(result.is_err());
+        let err_str = format!("{}", result.unwrap_err());
+        assert!(err_str.contains("Invalid toroidal domain"));
+    }
+
+    #[test]
+    fn test_validate_topology_model_accepts_euclidean() {
+        use crate::topology::traits::global_topology_model::EuclideanModel;
+        let model = EuclideanModel;
+        let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_topology_model_maps_non_period_errors() {
+        let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(
+            &ValidationFailureModel,
+        );
+        let err = result.expect_err("non-period validation failure should be mapped");
+        let err_str = err.to_string();
+        assert!(err_str.contains("Invalid topology model configuration"));
+    }
+
+    #[test]
+    fn test_canonicalize_vertices_preserves_uuids() {
+        use crate::topology::traits::global_topology_model::ToroidalModel;
+        let vertices = vec![
+            vertex!([2.5, 3.7]),
+            vertex!([1.8, -0.5]),
+            vertex!([0.5, 0.7]),
+        ];
+        let original_uuids: Vec<_> = vertices.iter().map(Vertex::uuid).collect();
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let canonical =
+            DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model)
+                .unwrap();
+
+        assert_eq!(canonical.len(), vertices.len());
+        let canonical_uuids: Vec<_> = canonical.iter().map(Vertex::uuid).collect();
+        assert_eq!(canonical_uuids, original_uuids);
+    }
+
+    #[test]
+    fn test_canonicalize_vertices_preserves_data() {
+        use crate::topology::traits::global_topology_model::ToroidalModel;
+        let vertices: Vec<Vertex<f64, i32, 2>> = vec![
+            VertexBuilder::default()
+                .point(Point::new([2.5_f64, 3.7]))
+                .data(10_i32)
+                .build()
+                .unwrap(),
+            VertexBuilder::default()
+                .point(Point::new([1.8_f64, -0.5]))
+                .data(20_i32)
+                .build()
+                .unwrap(),
+            VertexBuilder::default()
+                .point(Point::new([0.5_f64, 0.7]))
+                .data(30_i32)
+                .build()
+                .unwrap(),
+        ];
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let canonical =
+            DelaunayTriangulationBuilder::<f64, i32, 2>::canonicalize_vertices(&vertices, &model)
+                .unwrap();
+
+        assert_eq!(canonical.len(), vertices.len());
+        for (orig, canon) in vertices.iter().zip(canonical.iter()) {
+            assert_eq!(orig.data, canon.data);
+        }
+    }
+
+    #[test]
+    fn test_canonicalize_vertices_transforms_coordinates() {
+        use crate::topology::traits::global_topology_model::ToroidalModel;
+        use approx::assert_relative_eq;
+        let vertices = vec![
+            vertex!([2.5, 3.7]),  // → (0.5, 0.7)
+            vertex!([1.8, -0.5]), // → (1.8, 2.5)
+            vertex!([0.3, 0.2]),  // → (0.3, 0.2)
+        ];
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let canonical =
+            DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model)
+                .unwrap();
+
+        assert_eq!(canonical.len(), 3);
+        assert_relative_eq!(canonical[0].point().coords()[0], 0.5);
+        assert_relative_eq!(canonical[0].point().coords()[1], 0.7);
+        assert_relative_eq!(canonical[1].point().coords()[0], 1.8);
+        assert_relative_eq!(canonical[1].point().coords()[1], 2.5);
+        assert_relative_eq!(canonical[2].point().coords()[0], 0.3);
+        assert_relative_eq!(canonical[2].point().coords()[1], 0.2);
+    }
+
+    #[test]
+    fn test_canonicalize_vertices_includes_vertex_context_on_error() {
+        let vertices = vec![vertex!([0.25_f64, 0.75_f64]), vertex!([0.9_f64, 0.1_f64])];
+        let result = DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(
+            &vertices,
+            &CanonicalizationFailureModel,
+        );
+        let err = result.expect_err("canonicalization failure should be reported");
+        let err_str = err.to_string();
+        assert!(err_str.contains("Failed to canonicalize vertex 0"));
+        assert!(err_str.contains("reason"));
+    }
+
+    #[test]
+    fn test_build_periodic_requires_periodic_domain() {
+        let kernel = FastKernel::new();
+        let canonical_vertices = vec![
+            vertex!([0.1_f64, 0.1_f64]),
+            vertex!([0.9_f64, 0.2_f64]),
+            vertex!([0.2_f64, 0.8_f64]),
+            vertex!([0.7_f64, 0.9_f64]),
+            vertex!([0.5_f64, 0.4_f64]),
+        ];
+        let result = DelaunayTriangulationBuilder::<f64, (), 2>::build_periodic::<_, (), _>(
+            &kernel,
+            &canonical_vertices,
+            &MissingPeriodicDomainModel,
+            TopologyGuarantee::default(),
+            ConstructionOptions::default(),
+        );
+        let err = result.expect_err("missing periodic domain must fail");
+        assert!(err.to_string().contains(
+            "does not expose a periodic domain required for periodic image-point construction"
+        ));
+    }
+
+    #[test]
+    fn test_canonicalize_vertices_euclidean_identity() {
+        use crate::topology::traits::global_topology_model::EuclideanModel;
+        use approx::assert_relative_eq;
+        let vertices = vec![
+            vertex!([1.5, 2.5]),
+            vertex!([3.7, 4.2]),
+            vertex!([-1.0, -2.0]),
+        ];
+        let model = EuclideanModel;
+        let canonical =
+            DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model)
+                .unwrap();
+
+        assert_eq!(canonical.len(), vertices.len());
+        for (orig, canon) in vertices.iter().zip(canonical.iter()) {
+            assert_relative_eq!(orig.point().coords()[0], canon.point().coords()[0]);
+            assert_relative_eq!(orig.point().coords()[1], canon.point().coords()[1]);
+        }
+    }
+
+    #[test]
+    fn test_canonicalize_vertices_propagates_nan_error() {
+        use crate::topology::traits::global_topology_model::ToroidalModel;
+        let vertices = vec![
+            VertexBuilder::default()
+                .point(Point::new([0.5_f64, 0.5]))
+                .build()
+                .unwrap(),
+            VertexBuilder::default()
+                .point(Point::new([f64::NAN, 0.5]))
+                .build()
+                .unwrap(),
+            VertexBuilder::default()
+                .point(Point::new([0.3_f64, 0.2]))
+                .build()
+                .unwrap(),
+        ];
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let result =
+            DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model);
+
+        assert!(result.is_err());
+        let err_str = format!("{}", result.unwrap_err());
+        assert!(
+            err_str.contains("Failed to canonicalize vertex"),
+            "Error should mention canonicalization failure: {err_str}"
+        );
+        assert!(
+            err_str.contains("vertex 1"),
+            "Error should mention vertex index: {err_str}"
+        );
+    }
+
+    #[test]
+    fn test_canonicalize_vertices_propagates_infinity_error() {
+        use crate::topology::traits::global_topology_model::ToroidalModel;
+        let vertices = vec![
+            VertexBuilder::default()
+                .point(Point::new([0.5_f64, 0.5]))
+                .build()
+                .unwrap(),
+            VertexBuilder::default()
+                .point(Point::new([0.3_f64, 0.2]))
+                .build()
+                .unwrap(),
+            VertexBuilder::default()
+                .point(Point::new([f64::INFINITY, 0.5]))
+                .build()
+                .unwrap(),
+        ];
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let result =
+            DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model);
+
+        assert!(result.is_err());
+        let err_str = format!("{}", result.unwrap_err());
+        assert!(err_str.contains("Failed to canonicalize vertex"));
+        assert!(err_str.contains("vertex 2"));
+    }
+
+    #[test]
+    fn test_canonicalize_vertices_includes_original_coords_in_error() {
+        use crate::topology::traits::global_topology_model::ToroidalModel;
+        let vertices = vec![
+            VertexBuilder::default()
+                .point(Point::new([f64::NAN, 1.5_f64]))
+                .build()
+                .unwrap(),
+        ];
+        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let result =
+            DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model);
+
+        assert!(result.is_err());
+        let err_str = format!("{}", result.unwrap_err());
+        assert!(
+            err_str.contains("original coords"),
+            "Error should mention original coords: {err_str}"
+        );
     }
 }

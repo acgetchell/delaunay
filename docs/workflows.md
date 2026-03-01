@@ -197,7 +197,6 @@ Toroidal triangulations handle periodic boundary conditions. Use
 
 ```rust
 use delaunay::prelude::triangulation::*;
-use delaunay::topology::traits::topological_space::ToroidalConstructionMode;
 
 // 2D periodic triangulation with unit square domain
 let vertices = vec![
@@ -207,7 +206,7 @@ let vertices = vec![
 ];
 
 let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-    .with_toroidal_topology([1.0, 1.0], ToroidalConstructionMode::Direct)
+    .toroidal([1.0, 1.0]) // Phase 1: canonicalized toroidal construction
     .build::<()>()
     .unwrap();
 
@@ -223,9 +222,8 @@ dt.insert(vertex!([-0.1, 0.7])).unwrap(); // wraps to [0.9, 0.7]
 - **Distance computation**: Distances are computed accounting for periodic boundaries (toroidal
   metric)
 - **Construction modes**:
-  - `ToroidalConstructionMode::Direct`: Construct directly in toroidal space
-  - `ToroidalConstructionMode::ReplicateAndRestrict`: Replicate the domain to handle near-boundary
-    interactions, then restrict back (more robust for challenging point distributions)
+  - `.toroidal([..])`: Phase 1 canonicalized construction (wrap into fundamental domain)
+  - `.toroidal_periodic([..])`: Phase 2 periodic image-point construction (true toroidal quotient)
 
 For more details, see `docs/topology.md` and the toroidal section in the main `README.md`.
 

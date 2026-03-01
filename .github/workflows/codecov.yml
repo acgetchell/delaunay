@@ -114,8 +114,34 @@ jobs:
             exit 2
           else
             coverage_bytes=$(wc -c < coverage/cobertura.xml)
-            coverage_lines=$(wc -l < coverage/cobertura.xml)
-            echo "::notice::Coverage report generated successfully: ${coverage_bytes} bytes, ${coverage_lines} lines"
+            coverage_newlines=$(wc -l < coverage/cobertura.xml)
+            coverage_lines_covered=$(
+              grep -oE 'lines-covered="[0-9]+"' coverage/cobertura.xml \
+                | head -n1 \
+                | cut -d'"' -f2 || true
+            )
+            coverage_lines_valid=$(
+              grep -oE 'lines-valid="[0-9]+"' coverage/cobertura.xml \
+                | head -n1 \
+                | cut -d'"' -f2 || true
+            )
+            coverage_line_rate=$(
+              grep -oE 'line-rate="[0-9.]+"' coverage/cobertura.xml \
+                | head -n1 \
+                | cut -d'"' -f2 || true
+            )
+
+            if [ -n "${coverage_lines_covered}" ] \
+              && [ -n "${coverage_lines_valid}" ] \
+              && [ -n "${coverage_line_rate}" ]; then
+              echo "::notice::Coverage report generated successfully:"
+              echo "::notice::  bytes=${coverage_bytes}, xml_newlines=${coverage_newlines}"
+              echo "::notice::  covered=${coverage_lines_covered}, valid=${coverage_lines_valid}"
+              echo "::notice::  rate=${coverage_line_rate}"
+            else
+              echo "::warning::Coverage report generated (${coverage_bytes} bytes),"
+              echo "::warning::  could not parse Cobertura metrics; XML newlines=${coverage_newlines}"
+            fi
           fi
           # Sanity: ensure benches/examples aren't present (defense-in-depth with .codecov.yml)
           if command -v rg >/dev/null 2>&1; then

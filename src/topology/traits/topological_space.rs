@@ -2,8 +2,9 @@
 //!
 //! This module defines the fundamental abstraction for different topological
 //! spaces (planar, spherical, toroidal) that triangulations can inhabit.
-//! NOTE: As of now, Triangulation does NOT use this. It is future plumbing
-//! for topological spaces (spherical, toroidal, and possibly hyperbolic).
+//! `GlobalTopology` metadata from this module is used by triangulation/build paths.
+//! Topology-specific behavior is delegated through the internal
+//! `global_topology_model` adapter layer.
 
 use thiserror::Error;
 

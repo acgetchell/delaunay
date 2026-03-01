@@ -30,6 +30,7 @@ src/
 │   │   ├── spherical.rs
 │   │   └── toroidal.rs
 │   └── traits/
+│       ├── global_topology_model.rs
 │       └── topological_space.rs
 └── triangulation/
     └── flips.rs
@@ -132,12 +133,42 @@ for D ≥ 3.
 
 ## Topological spaces
 
-`src/topology/traits/topological_space.rs` defines `TopologicalSpace`,
-`TopologyKind`, and `GlobalTopology`, with implementations in:
+### Architecture: Metadata vs Behavior Models
 
-- `src/topology/spaces/euclidean.rs` - Standard Euclidean space (default)
-- `src/topology/spaces/toroidal.rs` - Toroidal (periodic) space with domain wrapping
-- `src/topology/spaces/spherical.rs` - Spherical space (not yet fully integrated)
+The topology system uses a two-layer architecture to separate public API stability from
+internal implementation flexibility:
+
+**Public metadata layer**: `GlobalTopology<D>` (in `src/topology/traits/topological_space.rs`)
+
+- Runtime enum exposed through public API
+- Stores topology configuration (e.g., toroidal domain periods)
+- Remains stable across implementation refactoring
+- Accessible via `Triangulation::global_topology()` and `DelaunayTriangulation::global_topology()`
+
+**Internal behavior layer**: `GlobalTopologyModel<D>` trait
+(in `src/topology/traits/global_topology_model.rs`)
+
+- Scalar-generic trait defining topology-specific operations:
+  - `canonicalize_point_in_place`: normalize coordinates to fundamental domain
+  - `lift_for_orientation`: apply periodic offsets for orientation predicates
+  - `periodic_domain`: expose domain periods for periodic topologies
+  - `supports_periodic_facet_signatures`: indicate periodic cell support
+- Concrete implementations:
+  - `EuclideanModel`: identity operations (no wrapping or lifting)
+  - `ToroidalModel`: domain wrapping and lattice-offset lifting
+  - `SphericalModel`: scaffold for sphere-constrained operations (future work)
+  - `HyperbolicModel`: scaffold for hyperbolic model operations (future work)
+- Accessed internally via `GlobalTopology::model()` adapter method
+
+This separation allows core triangulation and builder code to delegate topology-specific
+behavior to model implementations without branching on the `GlobalTopology` enum throughout
+the codebase.
+
+**Space helper types** (in `src/topology/spaces/`):
+
+- `EuclideanSpace`, `ToroidalSpace`, `SphericalSpace`: `f64`-oriented helper types
+- Not directly used by scalar-generic core algorithms
+- Provide utilities for specific topology computations
 
 ### Toroidal topology support
 
@@ -146,7 +177,6 @@ construct toroidal triangulations using `DelaunayTriangulationBuilder`:
 
 ```rust
 use delaunay::prelude::triangulation::*;
-use delaunay::topology::traits::topological_space::ToroidalConstructionMode;
 
 // 2D periodic triangulation
 let vertices = vec![
@@ -156,14 +186,15 @@ let vertices = vec![
 ];
 
 let dt = DelaunayTriangulationBuilder::new(&vertices)
-    .with_toroidal_topology([1.0, 1.0], ToroidalConstructionMode::Direct)
+    .toroidal([1.0, 1.0]) // Phase 1: canonicalized toroidal construction
     .build::<()>()
     .unwrap();
 ```
 
 Toroidal triangulations handle point canonicalization (wrapping coordinates to the
 fundamental domain) and distance computations across periodic boundaries. The
-implementation supports both 2D and 3D toroidal spaces.
+implementation supports both 2D and 3D toroidal spaces. For true periodic
+image-point construction, use `.toroidal_periodic([..])`.
 
 For more examples, see the toroidal section in the main `README.md`.
 

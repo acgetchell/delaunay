@@ -194,6 +194,7 @@ delaunay/
 │   │   │   ├── spherical.rs
 │   │   │   └── toroidal.rs
 │   │   ├── traits/
+│   │   │   ├── global_topology_model.rs
 │   │   │   └── topological_space.rs
 │   │   └── manifold.rs
 │   ├── triangulation/
@@ -398,10 +399,14 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality, 
 - `characteristics/validation.rs` - Topological validation functions
 - `manifold.rs` - Topology-only manifold invariants (e.g., closed boundary checks; see
   [`invariants.md`](invariants.md))
-- `spaces/euclidean.rs` - Euclidean space topology implementation
-- `spaces/spherical.rs` - Spherical space topology implementation
-- `spaces/toroidal.rs` - Toroidal space topology implementation
-- `traits/topological_space.rs` - Core TopologicalSpace trait and error types
+- `spaces/euclidean.rs` - Euclidean space topology helper implementation (f64-oriented)
+- `spaces/spherical.rs` - Spherical space topology helper implementation (f64-oriented)
+- `spaces/toroidal.rs` - Toroidal space topology helper implementation (f64-oriented)
+- `traits/topological_space.rs` - Public `GlobalTopology<D>` metadata enum and `TopologyKind`
+- `traits/global_topology_model.rs` - Internal scalar-generic `GlobalTopologyModel<D>` trait with
+  concrete implementations (`EuclideanModel`, `ToroidalModel`, `SphericalModel`, `HyperbolicModel`);
+  provides topology-specific behavior (canonicalization, lifting, periodic domain) used by core
+  triangulation and builder code
 
 #### Development Infrastructure
 

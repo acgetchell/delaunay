@@ -769,6 +769,7 @@ pub mod triangulation {
 pub mod topology {
     /// Traits for topological spaces and error types
     pub mod traits {
+        pub(crate) mod global_topology_model;
         pub mod topological_space;
         pub use topological_space::*;
     }
@@ -876,7 +877,7 @@ pub mod prelude {
 
         pub use crate::core::algorithms::incremental_insertion::InsertionError;
         pub use crate::core::operations::{InsertionOutcome, InsertionStatistics, SuspicionFlags};
-        pub use crate::topology::traits::{GlobalTopology, TopologyKind};
+        pub use crate::topology::traits::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
 
         /// Bistellar (Pachner) flips for explicit triangulation editing.
         pub mod flips {
