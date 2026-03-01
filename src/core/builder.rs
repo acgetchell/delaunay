@@ -899,6 +899,9 @@ where
         V: DataType,
         M: GlobalTopologyModel<D>,
     {
+        // Keep `build_periodic` self-protecting even if future call paths bypass outer validation.
+        Self::validate_topology_model(topology_model)?;
+
         let domain = topology_model.periodic_domain().ok_or_else(|| {
             TriangulationConstructionError::GeometricDegeneracy {
                 message: format!(

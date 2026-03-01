@@ -142,6 +142,17 @@ pub trait GlobalTopologyModel<const D: usize> {
     fn supports_periodic_facet_signatures(&self) -> bool {
         false
     }
+
+    /// Indicates whether periodic offsets are supported for orientation lifting.
+    ///
+    /// This is checked when validating/using per-vertex periodic offsets while preparing
+    /// points for orientation predicates.
+    ///
+    /// By default this mirrors [`supports_periodic_facet_signatures`](Self::supports_periodic_facet_signatures)
+    /// to preserve current behavior.
+    fn supports_periodic_orientation_offsets(&self) -> bool {
+        self.supports_periodic_facet_signatures()
+    }
 }
 
 /// Euclidean behavior model (identity canonicalization/lifting).
@@ -308,6 +319,10 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
 
     fn supports_periodic_facet_signatures(&self) -> bool {
         matches!(self.mode, ToroidalConstructionMode::PeriodicImagePoint)
+    }
+
+    fn supports_periodic_orientation_offsets(&self) -> bool {
+        self.supports_periodic_facet_signatures()
     }
 }
 
@@ -593,6 +608,31 @@ impl<const D: usize> GlobalTopologyModel<D> for GlobalTopologyModelAdapter<D> {
             }
             Self::Hyperbolic(model) => {
                 <HyperbolicModel as GlobalTopologyModel<D>>::supports_periodic_facet_signatures(
+                    model,
+                )
+            }
+        }
+    }
+
+    fn supports_periodic_orientation_offsets(&self) -> bool {
+        match self {
+            Self::Euclidean(model) => {
+                <EuclideanModel as GlobalTopologyModel<D>>::supports_periodic_orientation_offsets(
+                    model,
+                )
+            }
+            Self::Toroidal(model) => {
+                <ToroidalModel<D> as GlobalTopologyModel<D>>::supports_periodic_orientation_offsets(
+                    model,
+                )
+            }
+            Self::Spherical(model) => {
+                <SphericalModel as GlobalTopologyModel<D>>::supports_periodic_orientation_offsets(
+                    model,
+                )
+            }
+            Self::Hyperbolic(model) => {
+                <HyperbolicModel as GlobalTopologyModel<D>>::supports_periodic_orientation_offsets(
                     model,
                 )
             }
@@ -935,6 +975,26 @@ mod tests {
             ToroidalConstructionMode::PeriodicImagePoint,
         ));
         assert!(toroidal_periodic.supports_periodic_facet_signatures());
+    }
+
+    #[test]
+    fn adapter_delegates_periodic_orientation_offsets_to_models() {
+        let euclidean = GlobalTopologyModelAdapter::<2>::Euclidean(EuclideanModel);
+        assert!(!euclidean.supports_periodic_orientation_offsets());
+
+        // Canonicalized mode does not support periodic orientation offsets
+        let toroidal_canon = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new(
+            [2.0, 3.0],
+            ToroidalConstructionMode::Canonicalized,
+        ));
+        assert!(!toroidal_canon.supports_periodic_orientation_offsets());
+
+        // PeriodicImagePoint mode supports periodic orientation offsets
+        let toroidal_periodic = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new(
+            [2.0, 3.0],
+            ToroidalConstructionMode::PeriodicImagePoint,
+        ));
+        assert!(toroidal_periodic.supports_periodic_orientation_offsets());
     }
 
     // =========================================================================

@@ -2013,11 +2013,11 @@ where
             });
         }
         if let Some(offsets) = periodic_offsets
-            && !topology_model.supports_periodic_facet_signatures()
+            && !topology_model.supports_periodic_orientation_offsets()
         {
             return Err(TdsValidationError::InconsistentDataStructure {
                 message: format!(
-                    "Cell {:?} (key {cell_key:?}) has periodic offsets (count {}) during {purpose}, but triangulation global topology is {:?} (kind {:?}, allows_boundary: {}, periodic_domain: {:?}); expected periodic-offset-capable topology",
+                    "Cell {:?} (key {cell_key:?}) has periodic offsets (count {}) during {purpose}, but triangulation global topology is {:?} (kind {:?}, allows_boundary: {}, periodic_domain: {:?}); expected periodic-orientation-offset-capable topology",
                     cell.uuid(),
                     offsets.len(),
                     self.global_topology,
@@ -7127,7 +7127,7 @@ mod tests {
             err,
             TriangulationValidationError::Tds(TdsValidationError::InconsistentDataStructure { message })
                 if message.contains("has periodic offsets")
-                    && message.contains("expected periodic-offset-capable topology")
+                    && message.contains("expected periodic-orientation-offset-capable topology")
         ));
     }
 

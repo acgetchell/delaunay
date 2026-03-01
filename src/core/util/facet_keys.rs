@@ -86,6 +86,15 @@ pub fn checked_facet_key_from_vertex_keys<const D: usize>(
 /// Errors that can occur while deriving a periodic facet signature from lifted vertices.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub(crate) enum PeriodicFacetKeyDerivationError {
+    /// The lifted cell does not have the expected simplex arity (`D + 1` vertices).
+    #[error("Invalid lifted cell arity: expected {expected} vertices, got {actual}")]
+    InvalidLiftedCellArity {
+        /// Expected number of lifted vertices (`D + 1`).
+        expected: usize,
+        /// Actual lifted vertex count provided by the caller.
+        actual: usize,
+    },
+
     /// The requested facet index exceeds the lifted-vertex count.
     #[error("Facet index {facet_index} out of bounds for lifted vertex count {vertex_count}")]
     FacetIndexOutOfBounds {
@@ -117,6 +126,14 @@ pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
     lifted_vertices: &[(VertexKey, [i8; D])],
     facet_index: usize,
 ) -> Result<u64, PeriodicFacetKeyDerivationError> {
+    let expected_arity = D + 1;
+    if lifted_vertices.len() != expected_arity {
+        return Err(PeriodicFacetKeyDerivationError::InvalidLiftedCellArity {
+            expected: expected_arity,
+            actual: lifted_vertices.len(),
+        });
+    }
+
     if facet_index >= lifted_vertices.len() {
         return Err(PeriodicFacetKeyDerivationError::FacetIndexOutOfBounds {
             facet_index,
@@ -305,6 +322,39 @@ mod tests {
 
     use std::thread;
     use std::time::Instant;
+
+    #[test]
+    fn periodic_facet_key_rejects_invalid_lifted_cell_arity() {
+        let lifted_vertices = vec![
+            (VertexKey::null(), [0_i8; 2]),
+            (VertexKey::null(), [0_i8; 2]),
+        ];
+        let err = periodic_facet_key_from_lifted_vertices::<2>(&lifted_vertices, 0).unwrap_err();
+        assert!(matches!(
+            err,
+            PeriodicFacetKeyDerivationError::InvalidLiftedCellArity {
+                expected: 3,
+                actual: 2
+            }
+        ));
+    }
+
+    #[test]
+    fn periodic_facet_key_rejects_out_of_bounds_facet_index() {
+        let lifted_vertices = vec![
+            (VertexKey::null(), [0_i8; 2]),
+            (VertexKey::null(), [0_i8; 2]),
+            (VertexKey::null(), [0_i8; 2]),
+        ];
+        let err = periodic_facet_key_from_lifted_vertices::<2>(&lifted_vertices, 3).unwrap_err();
+        assert!(matches!(
+            err,
+            PeriodicFacetKeyDerivationError::FacetIndexOutOfBounds {
+                facet_index: 3,
+                vertex_count: 3
+            }
+        ));
+    }
 
     #[test]
     #[expect(clippy::too_many_lines)]
