@@ -2000,32 +2000,32 @@ where
     {
         let topology_model = self.global_topology.model();
         let periodic_offsets = cell.periodic_vertex_offsets();
-        if let Some(offsets) = periodic_offsets
-            && offsets.len() != cell.number_of_vertices()
-        {
-            return Err(TdsValidationError::InconsistentDataStructure {
-                message: format!(
-                    "Cell {:?} (key {cell_key:?}) periodic offset count {} does not match vertex count {} during {purpose}",
-                    cell.uuid(),
-                    offsets.len(),
-                    cell.number_of_vertices(),
-                ),
-            });
-        }
-        if let Some(offsets) = periodic_offsets
-            && !topology_model.supports_periodic_orientation_offsets()
-        {
-            return Err(TdsValidationError::InconsistentDataStructure {
-                message: format!(
-                    "Cell {:?} (key {cell_key:?}) has periodic offsets (count {}) during {purpose}, but triangulation global topology is {:?} (kind {:?}, allows_boundary: {}, periodic_domain: {:?}); expected periodic-orientation-offset-capable topology",
-                    cell.uuid(),
-                    offsets.len(),
-                    self.global_topology,
-                    topology_model.kind(),
-                    topology_model.allows_boundary(),
-                    topology_model.periodic_domain(),
-                ),
-            });
+        if let Some(offsets) = periodic_offsets {
+            // Check length invariant
+            if offsets.len() != cell.number_of_vertices() {
+                return Err(TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell {:?} (key {cell_key:?}) periodic offset count {} does not match vertex count {} during {purpose}",
+                        cell.uuid(),
+                        offsets.len(),
+                        cell.number_of_vertices(),
+                    ),
+                });
+            }
+            // Check topology capabilities
+            if !topology_model.supports_periodic_orientation_offsets() {
+                return Err(TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell {:?} (key {cell_key:?}) has periodic offsets (count {}) during {purpose}, but triangulation global topology is {:?} (kind {:?}, allows_boundary: {}, periodic_domain: {:?}); expected periodic-orientation-offset-capable topology",
+                        cell.uuid(),
+                        offsets.len(),
+                        self.global_topology,
+                        topology_model.kind(),
+                        topology_model.allows_boundary(),
+                        topology_model.periodic_domain(),
+                    ),
+                });
+            }
         }
 
         let mut points: SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE> =

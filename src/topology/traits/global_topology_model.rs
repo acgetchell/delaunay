@@ -1067,10 +1067,33 @@ mod tests {
 
     #[test]
     fn toroidal_model_canonicalization_handles_large_coordinates() {
+        const EPS: f64 = 1e-12;
+
         let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let mut coords = [1e10_f64, -1e10_f64];
         model.canonicalize_point_in_place(&mut coords).unwrap();
-        // Should wrap into [0, 2.0) and [0, 3.0)
+
+        // Compute expected wrapped values
+        let expected_x = (1e10_f64).rem_euclid(2.0);
+        let expected_y = (-1e10_f64).rem_euclid(3.0);
+
+        // Verify wrapped values within tolerance (floating-point precision)
+        assert!(
+            (coords[0] - expected_x).abs() < EPS,
+            "x coordinate {} should be approximately {} (diff: {})",
+            coords[0],
+            expected_x,
+            (coords[0] - expected_x).abs()
+        );
+        assert!(
+            (coords[1] - expected_y).abs() < EPS,
+            "y coordinate {} should be approximately {} (diff: {})",
+            coords[1],
+            expected_y,
+            (coords[1] - expected_y).abs()
+        );
+
+        // Also verify range membership
         assert!(coords[0] >= 0.0 && coords[0] < 2.0);
         assert!(coords[1] >= 0.0 && coords[1] < 3.0);
     }
