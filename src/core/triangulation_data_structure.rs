@@ -873,15 +873,15 @@ where
             });
         }
 
-        let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-            SmallBuffer::new();
-        for (i, &vertex_key) in vertices.iter().enumerate() {
-            if i != facet_index {
-                facet_vertices.push(vertex_key);
-            }
-        }
-
         let Some(periodic_offsets) = cell.periodic_vertex_offsets() else {
+            // Non-periodic path: build facet_vertices only when needed
+            let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                SmallBuffer::new();
+            for (i, &vertex_key) in vertices.iter().enumerate() {
+                if i != facet_index {
+                    facet_vertices.push(vertex_key);
+                }
+            }
             return Ok(facet_key_from_vertices(&facet_vertices));
         };
 

@@ -131,7 +131,10 @@ pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
             lifted_facet.push((vertex_key.data().as_ffi(), *offset));
         }
     }
-    lifted_facet.sort_unstable_by_key(|(vertex_key_value, _)| *vertex_key_value);
+    // Sort by (vertex_key_value, offset) to make ordering deterministic when keys are equal
+    lifted_facet.sort_unstable_by(|(key_a, offset_a), (key_b, offset_b)| {
+        key_a.cmp(key_b).then_with(|| offset_a.cmp(offset_b))
+    });
     let facet_anchor_offset = lifted_facet
         .first()
         .map_or([0_i8; D], |(_, offset)| *offset);
