@@ -1032,4 +1032,222 @@ mod tests {
         let adapter: GlobalTopologyModelAdapter<2> = topology.into();
         assert_eq!(adapter.kind(), TopologyKind::Euclidean);
     }
+
+    // =========================================================================
+    // ToroidalModel edge case tests
+    // =========================================================================
+
+    #[test]
+    fn toroidal_model_handles_very_small_periods() {
+        let model = ToroidalModel::<2>::new([1e-6_f64, 1e-6_f64]);
+        assert!(model.validate_configuration().is_ok());
+
+        let mut coords = [5e-7_f64, 1.5e-6_f64];
+        model.canonicalize_point_in_place(&mut coords).unwrap();
+        assert!(coords[0] >= 0.0 && coords[0] < 1e-6);
+        assert!(coords[1] >= 0.0 && coords[1] < 1e-6);
+    }
+
+    #[test]
+    fn toroidal_model_handles_boundary_coordinates() {
+        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+
+        // Coordinate exactly at zero
+        let mut coords = [0.0_f64, 0.0_f64];
+        model.canonicalize_point_in_place(&mut coords).unwrap();
+        assert_relative_eq!(coords[0], 0.0);
+        assert_relative_eq!(coords[1], 0.0);
+
+        // Coordinate just below period
+        let epsilon = 1e-10_f64;
+        let mut coords = [2.0 - epsilon, 3.0 - epsilon];
+        model.canonicalize_point_in_place(&mut coords).unwrap();
+        assert!(coords[0] >= 0.0 && coords[0] < 2.0);
+        assert!(coords[1] >= 0.0 && coords[1] < 3.0);
+        assert_relative_eq!(coords[0], 2.0 - epsilon);
+        assert_relative_eq!(coords[1], 3.0 - epsilon);
+    }
+
+    #[test]
+    fn toroidal_model_handles_multi_wrap_coordinates() {
+        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+
+        // Coordinate requiring multiple wraps
+        let mut coords = [10.5_f64, -15.25_f64];
+        model.canonicalize_point_in_place(&mut coords).unwrap();
+        assert_relative_eq!(coords[0], 0.5);
+        assert_relative_eq!(coords[1], 2.75);
+
+        // Very large positive coordinate
+        let mut coords = [1000.75_f64, 2000.5_f64];
+        model.canonicalize_point_in_place(&mut coords).unwrap();
+        assert!(coords[0] >= 0.0 && coords[0] < 2.0);
+        assert!(coords[1] >= 0.0 && coords[1] < 3.0);
+
+        // Very large negative coordinate
+        let mut coords = [-1000.75_f64, -2000.5_f64];
+        model.canonicalize_point_in_place(&mut coords).unwrap();
+        assert!(coords[0] >= 0.0 && coords[0] < 2.0);
+        assert!(coords[1] >= 0.0 && coords[1] < 3.0);
+    }
+
+    #[test]
+    fn toroidal_model_handles_mixed_positive_negative_wrapping() {
+        let model = ToroidalModel::<3>::new([2.0, 3.0, 4.0]);
+
+        let mut coords = [5.5_f64, -1.0_f64, 0.5_f64];
+        model.canonicalize_point_in_place(&mut coords).unwrap();
+        assert_relative_eq!(coords[0], 1.5);
+        assert_relative_eq!(coords[1], 2.0);
+        assert_relative_eq!(coords[2], 0.5);
+    }
+
+    #[test]
+    fn toroidal_model_lift_with_mixed_offsets() {
+        let model = ToroidalModel::<3>::new([2.0, 3.0, 4.0]);
+
+        let lifted = model
+            .lift_for_orientation([0.5_f64, 1.0_f64, 2.0_f64], Some([1, 0, -1]))
+            .unwrap();
+        assert_relative_eq!(lifted[0], 2.5);
+        assert_relative_eq!(lifted[1], 1.0);
+        assert_relative_eq!(lifted[2], -2.0);
+    }
+
+    // =========================================================================
+    // Error message quality tests
+    // =========================================================================
+
+    #[test]
+    fn invalid_toroidal_period_error_includes_axis_and_value() {
+        let model = ToroidalModel::<3>::new([2.0, -5.0, 3.0]);
+        let err = model.validate_configuration().unwrap_err();
+
+        let err_str = err.to_string();
+        assert!(
+            err_str.contains("axis 1"),
+            "Error should mention axis: {err_str}"
+        );
+        assert!(
+            err_str.contains("-5") || err_str.contains("5.0"),
+            "Error should include period value: {err_str}"
+        );
+        assert!(
+            err_str.contains("expected finite value > 0") || err_str.contains("> 0"),
+            "Error should explain expected range: {err_str}"
+        );
+    }
+
+    #[test]
+    fn non_finite_coordinate_error_includes_axis_and_value() {
+        let model = ToroidalModel::<4>::new([2.0, 3.0, 4.0, 5.0]);
+        let mut coords = [1.0_f64, 2.0_f64, f64::INFINITY, 3.0_f64];
+        let err = model.canonicalize_point_in_place(&mut coords).unwrap_err();
+
+        let err_str = err.to_string();
+        assert!(
+            err_str.contains("axis 2"),
+            "Error should mention axis: {err_str}"
+        );
+        assert!(
+            err_str.contains("inf") || err_str.contains("Infinity"),
+            "Error should indicate non-finite value: {err_str}"
+        );
+    }
+
+    #[test]
+    fn periodic_offsets_unsupported_error_includes_topology_kind() {
+        let model = SphericalModel;
+        let err = model
+            .lift_for_orientation([1.0_f64, 2.0_f64, 3.0_f64], Some([1, 0, -1]))
+            .unwrap_err();
+
+        let err_str = err.to_string();
+        assert!(
+            err_str.contains("Spherical") || err_str.contains("spherical"),
+            "Error should mention topology kind: {err_str}"
+        );
+        assert!(
+            err_str.contains("unsupported") || err_str.contains("not supported"),
+            "Error should indicate unsupported operation: {err_str}"
+        );
+    }
+
+    #[test]
+    fn scalar_conversion_error_includes_axis_context() {
+        // This test verifies the error structure for scalar conversion failures.
+        // In practice, conversion failures are rare with f64/f32, but the error
+        // variant exists for completeness and custom scalar types.
+        let err = GlobalTopologyModelError::ScalarConversion {
+            axis: 2,
+            value: 1.5e308_f64,
+        };
+
+        let err_str = err.to_string();
+        assert!(
+            err_str.contains("axis 2"),
+            "Error should mention axis: {err_str}"
+        );
+        assert!(
+            err_str.contains("1.5e308") || err_str.contains("value"),
+            "Error should include problematic value: {err_str}"
+        );
+    }
+
+    // =========================================================================
+    // Trait bounds and scalar type tests
+    // =========================================================================
+
+    #[test]
+    fn toroidal_model_works_with_different_float_types() {
+        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+
+        // Test with f32
+        let mut coords_f32 = [2.5_f32, -1.0_f32];
+        model.canonicalize_point_in_place(&mut coords_f32).unwrap();
+        assert!((coords_f32[0] - 0.5).abs() < 1e-6);
+        assert!((coords_f32[1] - 2.0).abs() < 1e-6);
+
+        // Test with f64
+        let mut coords_f64 = [2.5_f64, -1.0_f64];
+        model.canonicalize_point_in_place(&mut coords_f64).unwrap();
+        assert_relative_eq!(coords_f64[0], 0.5);
+        assert_relative_eq!(coords_f64[1], 2.0);
+    }
+
+    #[test]
+    fn euclidean_model_works_with_different_float_types() {
+        let model = EuclideanModel;
+
+        // Test with f32
+        let coords_f32 = [1.5_f32, 2.5_f32];
+        let lifted = model.lift_for_orientation(coords_f32, None).unwrap();
+        assert!((lifted[0] - 1.5).abs() < 1e-6);
+        assert!((lifted[1] - 2.5).abs() < 1e-6);
+
+        // Test with f64
+        let coords_f64 = [1.5_f64, 2.5_f64];
+        let lifted = model.lift_for_orientation(coords_f64, None).unwrap();
+        assert_relative_eq!(lifted[0], 1.5);
+        assert_relative_eq!(lifted[1], 2.5);
+    }
+
+    #[test]
+    fn toroidal_model_lift_works_with_different_float_types() {
+        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+
+        // Test with f32
+        let lifted_f32 = model
+            .lift_for_orientation([0.5_f32, 0.25_f32], Some([1, -1]))
+            .unwrap();
+        assert!((lifted_f32[0] - 2.5).abs() < 1e-6);
+        assert!((lifted_f32[1] - (-2.75)).abs() < 1e-6);
+
+        // Test with f64
+        let lifted_f64 = model
+            .lift_for_orientation([0.5_f64, 0.25_f64], Some([1, -1]))
+            .unwrap();
+        assert_relative_eq!(lifted_f64[0], 2.5);
+        assert_relative_eq!(lifted_f64[1], -2.75);
+    }
 }

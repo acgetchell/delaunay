@@ -11,49 +11,64 @@
 [![Audit dependencies](https://github.com/acgetchell/delaunay/actions/workflows/audit.yml/badge.svg)](https://github.com/acgetchell/delaunay/actions/workflows/audit.yml)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/3cad94f994f5434d877ae77f0daee692)](https://app.codacy.com/gh/acgetchell/delaunay/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 
-D-dimensional Delaunay triangulations in [Rust], inspired by [CGAL].
+D-dimensional Delaunay triangulations and convex hulls in [Rust], with explicit invariants,
+multi-level validation, and theory-backed flip workflows inspired by [CGAL].
 
 ## 📐 Introduction
 
-This library implements d-dimensional Delaunay triangulations in [Rust]. It is
-inspired by [CGAL], which is a [C++] library for computational geometry,
-and [Spade], a [Rust] library that implements 2D [Delaunay triangulations],
-[Constrained Delaunay triangulations], and [Voronoi diagrams]. The goal of this library is to provide a
-lightweight alternative to [CGAL] for the [Rust] ecosystem.
+This library implements d-dimensional Delaunay triangulations in [Rust] for computational geometry and scientific workflows.
+It is inspired by [CGAL], which is a [C++] library for computational geometry, and [Spade], a [Rust] library that
+implements 2D [Delaunay triangulations], [Constrained Delaunay triangulations], and [Voronoi diagrams].
+The goal is to provide a lightweight but rigorous alternative to [CGAL] in the [Rust] ecosystem, with explicit
+topology settings, validation levels, and repair behavior.
+
+## 🧪 Scientific Basis
+
+This crate models triangulations of finite point sets in `R^d` as oriented simplicial complexes with explicit
+combinatorial and geometric checks.
+
+- Core operational invariant for editing/repair: coherent orientation + PL-manifold validity
+- Local move system: bistellar flips (`k = 1, 2, 3` and inverses), providing the supported [Pachner moves] set in dimensions ≤ 5
+- Geometric convergence basis in finite-point workflows: Herbert Edelsbrunner and Nina R. Shah,
+  *Incremental Topological Flipping Works for Regular Triangulations*, **Discrete & Computational Geometry (1996)**,
+  <https://doi.org/10.1007/BF01975867>
+- Scope of claims: guarantees apply to supported library workflows (construction, flip-based repair, and validation APIs),
+  not arbitrary external mutation of internal structures
 
 ## ✨ Features
 
-- [x]  Copy-able data types associated with vertices and cells (integers, floats, chars, custom enums)
+- [x]  Copyable data types associated with vertices and cells (integers, floats, chars, custom enums)
 - [x]  d-dimensional [Delaunay triangulations]
 - [x]  d-dimensional [Convex hulls]
 - [x]  Toroidal (periodic) triangulations via [`DelaunayTriangulationBuilder`] with Phase 1 (canonicalization) and Phase 2 (image-point method) support
 - [x]  Geometry quality metrics for simplices: radius ratio and normalized volume (dimension-agnostic)
-- [x]  Serialization/Deserialization of all data structures to/from [JSON]
+- [x]  Serialization/deserialization of all data structures to/from [JSON]
 - [x]  Tested for 2-, 3-, 4-, and 5-dimensional triangulations
 - [x]  Configurable predicate kernels: `FastKernel` (speed) vs `RobustKernel` (degenerate / near-degenerate robustness)
 - [x]  Bulk insertion ordering (`InsertionOrderStrategy`): [Hilbert curve] (default), [Z-order curve] / Morton, lexicographic, or input order
 - [x]  Batch construction options (`ConstructionOptions`): optional deduplication and deterministic retries
 - [x]  Incremental construction APIs: insertion plus vertex removal (`remove_vertex`)
-- [x]  4-level validation hierarchy (elements → structure → topology → Delaunay), including full diagnostics via `validation_report`
+- [x]  4-level validation hierarchy (element validity → TDS structural validity → manifold topology → Delaunay property), including full diagnostics via `validation_report`
 - [x]  Local topology validation ([PL-manifold] default, [Pseudomanifold] opt-out)
 - [x]  Coherent combinatorial orientation validation/normalization for cells, maintaining oriented simplicial complexes
 - [x]  The complete set of [Pachner moves] up to 5D implemented as bistellar k-flips for k = 1, 2, 3 plus inverse moves
 - [x]  [Delaunay repair] using bistellar flips for k=2/k=3 with inverse edge/triangle queues in 4D/5D
 - [x]  Safe Rust: `#![forbid(unsafe_code)]`
 
-In practice, we treat coherent orientation + PL-manifold validity as the core
-topological invariant for editing and repair. That oriented PL-manifold
-invariant is what the Pachner-move (`k=2`/`k=3`) Delaunay repair pipeline uses
-to converge toward a Delaunay triangulation in supported workflows.
-
 See [CHANGELOG.md](CHANGELOG.md) for details.
 
-## 🟢 Delaunay triangulation (happy path)
+## 🟢 Minimal Construction Example
 
-The **Builder API** provides two interfaces:
+The construction API has two entry points:
 
-- `DelaunayTriangulation::new()` - Simple constructor for the common case
+- `DelaunayTriangulation::new(&vertices)` - simple constructor for the common case
 - [`DelaunayTriangulationBuilder`] - Advanced configuration (custom options, toroidal topology)
+
+Add the library to your crate:
+
+```bash
+cargo add delaunay
+```
 
 ```rust
 use delaunay::prelude::triangulation::*;
@@ -116,6 +131,66 @@ For the full periodic image-point method (Phase 2), see the [`DelaunayTriangulat
 - **Topology guarantees** (`TopologyGuarantee`) and **automatic topology validation** (`ValidationPolicy`):
   see [`docs/validation.md`](docs/validation.md) and [`docs/topology.md`](docs/topology.md).
 
+## ✅ Validation and Guarantees
+
+| Level | What is validated | Primary API |
+|---|---|---|
+| 1 | Element validity (vertex/cell primitives) | `dt.validate()` / `dt.validation_report()` |
+| 2 | TDS structural validity (keys, incidences, neighbors) | `dt.tds().is_valid()` |
+| 3 | Manifold topology (link checks, Euler/topological consistency) | `dt.as_triangulation().is_valid()` |
+| 4 | Delaunay property (empty-circumsphere via local predicates) | `dt.is_valid()` |
+| 1-4 | Cumulative checks with diagnostics | `dt.validate()` or `dt.validation_report()` |
+
+`TopologyGuarantee` controls which Level 3 manifold constraints are enforced, and `ValidationPolicy`
+controls when Level 3 checks run automatically during incremental insertion.
+
+## 🔬 Reproducibility
+
+The construction pipeline exposes deterministic controls for experiments and regression testing:
+
+- Deterministic insertion ordering via `InsertionOrderStrategy`:
+  `Hilbert` (default), `Morton` (Z-order), `Lexicographic`, or `Input`
+  (use `Input` to preserve caller-provided order exactly)
+- Deterministic preprocessing via `DedupPolicy`
+- Deterministic retry behavior via `RetryPolicy` (including seeded shuffled retries) or `RetryPolicy::Disabled`
+- Explicit topology/validation configuration via `TopologyGuarantee` and `ValidationPolicy`
+
+```rust
+use delaunay::core::delaunay_triangulation::{
+    ConstructionOptions, DedupPolicy, InsertionOrderStrategy, RetryPolicy,
+};
+use delaunay::core::triangulation::{TopologyGuarantee, ValidationPolicy};
+use delaunay::prelude::triangulation::*;
+
+let vertices = vec![
+    vertex!([0.0, 0.0]),
+    vertex!([1.0, 0.0]),
+    vertex!([0.0, 1.0]),
+];
+
+let options = ConstructionOptions::default()
+    .with_insertion_order(InsertionOrderStrategy::Input)
+    .with_dedup_policy(DedupPolicy::Exact)
+    .with_retry_policy(RetryPolicy::Disabled);
+
+let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+    .topology_guarantee(TopologyGuarantee::PLManifold)
+    .construction_options(options)
+    .build::<()>()
+    .unwrap();
+
+dt.set_validation_policy(ValidationPolicy::Always);
+assert!(dt.validate().is_ok());
+```
+
+For reproducible checks in CI/local runs, use `just check`, `just test`, `just doc-check`, or `just ci`.
+
+## ⚠️ Limitations
+
+- CI and property-test coverage currently targets 2D-5D.
+- Large-scale and 4D bulk-construction caveats are documented in [Known Issues](docs/KNOWN_ISSUES_4D.md).
+- Validation/repair guarantees assume the library-managed construction/editing pipeline.
+
 ## 🚧 Project History
 
 This crate was originally maintained at [https://github.com/oovm/shape-rs](https://github.com/oovm/shape-rs) through version `0.1.0`.
@@ -124,12 +199,12 @@ The original implementation provided basic Delaunay triangulation functionality.
 Starting with version `0.3.4`, maintenance transferred to [this repository](https://github.com/acgetchell/delaunay), which hosts a completely
 rewritten d-dimensional implementation focused on computational geometry research applications.
 
-- 📚 Docs for old versions (≤ 0.1.0): <https://docs.rs/delaunay/0.1.0/delaunay/>
-- 📚 Docs for current version (≥ 0.3.4): <https://docs.rs/delaunay>
+- 📚 Docs for the original implementation (`0.1.0`): <https://docs.rs/delaunay/0.1.0/delaunay/>
+- 📚 Docs for the rewritten implementation (`0.3.4+`): <https://docs.rs/delaunay>
 
 ## 🤝 How to Contribute
 
-We welcome contributions! Here's a 30-second quickstart:
+We welcome contributions! Here's a quickstart:
 
 ```bash
 # Clone and setup
@@ -196,6 +271,25 @@ This includes information about:
 - **[Topology](docs/topology.md)** - Level 3 topology validation (manifoldness + Euler characteristic) and module overview
 - **[Validation Guide](docs/validation.md)** - Comprehensive 4-level validation hierarchy guide (element → structural → manifold → Delaunay)
 - **[Workflows](docs/workflows.md)** - Happy-path construction plus practical Builder/Edit recipes (stats, repairs, and minimal flips)
+
+## 📎 How to Cite
+
+If you use this software in academic work, cite the Zenodo DOI and include the software
+metadata from [`CITATION.cff`](CITATION.cff).
+
+- DOI: <https://doi.org/10.5281/zenodo.16931097>
+- Citation metadata: [`CITATION.cff`](CITATION.cff)
+
+```bibtex
+@software{getchell_delaunay,
+  author = {Adam Getchell},
+  title = {delaunay: A d-dimensional Delaunay triangulation library},
+  doi = {10.5281/zenodo.16931097},
+  url = {https://github.com/acgetchell/delaunay}
+}
+```
+
+For release-specific fields (version, release date, ORCID), prefer `CITATION.cff`.
 
 ## 📚 References
 

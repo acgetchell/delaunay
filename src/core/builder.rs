@@ -599,6 +599,29 @@ where
     // -------------------------------------------------------------------------
 
     /// Validates the topology model configuration before using it in construction.
+    ///
+    /// This helper is called before any topology-based canonicalization or lifting operations
+    /// to ensure that the model's runtime parameters (e.g., toroidal domain periods) are valid.
+    ///
+    /// # Parameters
+    ///
+    /// * `model` - The topology behavior model to validate.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if the model configuration is valid.
+    /// - `Err(DelaunayTriangulationConstructionError)` if validation fails.
+    ///
+    /// # Errors
+    ///
+    /// Maps [`GlobalTopologyModelError`] to [`DelaunayTriangulationConstructionError`]:
+    /// - [`GlobalTopologyModelError::InvalidToroidalPeriod`] → detailed message with axis and period.
+    /// - Other errors → generic configuration error message.
+    ///
+    /// # Usage
+    ///
+    /// Called internally by [`build_with_kernel`](Self::build_with_kernel) before
+    /// canonicalization in both Phase 1 (canonicalized) and Phase 2 (image-point) paths.
     fn validate_topology_model<M>(model: &M) -> Result<(), DelaunayTriangulationConstructionError>
     where
         M: GlobalTopologyModel<D>,
@@ -620,6 +643,36 @@ where
     }
 
     /// Canonicalizes vertices using a topology behavior model.
+    ///
+    /// For each input vertex, calls [`GlobalTopologyModel::canonicalize_point_in_place`] to wrap
+    /// coordinates into the model's fundamental domain (e.g., [0, L) for toroidal topologies).
+    /// Preserves vertex UUIDs and data while transforming coordinates.
+    ///
+    /// # Parameters
+    ///
+    /// * `vertices` - Slice of input vertices with potentially out-of-domain coordinates.
+    /// * `model` - The topology behavior model that defines canonicalization logic.
+    ///
+    /// # Returns
+    ///
+    /// A new vector of vertices with canonicalized coordinates. Each output vertex has:
+    /// - The same UUID as the corresponding input vertex (for tracking through construction).
+    /// - The same associated data as the input vertex.
+    /// - Coordinates transformed according to the model's canonicalization rules.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DelaunayTriangulationConstructionError`] if canonicalization fails for any vertex:
+    /// - Non-finite coordinates (NaN, infinity).
+    /// - Invalid toroidal periods.
+    /// - Scalar conversion failures.
+    ///
+    /// Error messages include the failing vertex index and original coordinates for debugging.
+    ///
+    /// # Usage
+    ///
+    /// Called internally by [`build_with_kernel`](Self::build_with_kernel) before delegating
+    /// to the underlying triangulation construction.
     fn canonicalize_vertices<M>(
         vertices: &[Vertex<T, U, D>],
         model: &M,
@@ -2152,5 +2205,248 @@ mod tests {
             .unwrap();
         assert_eq!(dt.number_of_vertices(), 4);
         assert!(dt.validate().is_ok());
+    }
+
+    // -------------------------------------------------------------------------
+    // Private helper function tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_topology_model_accepts_valid_toroidal() {
+        use crate::topology::traits::global_topology_model::ToroidalModel;
+        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_topology_model_rejects_zero_period() {
+        use crate::topology::traits::global_topology_model::ToroidalModel;
+        let model = ToroidalModel::<2>::new([0.0, 3.0]);
+        let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
+        assert!(result.is_err());
+        let err_str = format!("{}", result.unwrap_err());
+        assert!(
+            err_str.contains("Invalid toroidal domain"),
+            "Error message should mention invalid toroidal domain: {err_str}"
+        );
+        assert!(
+            err_str.contains("axis 0"),
+            "Error message should mention axis: {err_str}"
+        );
+    }
+
+    #[test]
+    fn test_validate_topology_model_rejects_negative_period() {
+        use crate::topology::traits::global_topology_model::ToroidalModel;
+        let model = ToroidalModel::<3>::new([2.0, -1.0, 3.0]);
+        let result = DelaunayTriangulationBuilder::<f64, (), 3>::validate_topology_model(&model);
+        assert!(result.is_err());
+        let err_str = format!("{}", result.unwrap_err());
+        assert!(err_str.contains("Invalid toroidal domain"));
+        assert!(err_str.contains("axis 1"));
+    }
+
+    #[test]
+    fn test_validate_topology_model_rejects_infinite_period() {
+        use crate::topology::traits::global_topology_model::ToroidalModel;
+        let model = ToroidalModel::<2>::new([f64::INFINITY, 3.0]);
+        let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
+        assert!(result.is_err());
+        let err_str = format!("{}", result.unwrap_err());
+        assert!(err_str.contains("Invalid toroidal domain"));
+    }
+
+    #[test]
+    fn test_validate_topology_model_rejects_nan_period() {
+        use crate::topology::traits::global_topology_model::ToroidalModel;
+        let model = ToroidalModel::<2>::new([f64::NAN, 3.0]);
+        let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
+        assert!(result.is_err());
+        let err_str = format!("{}", result.unwrap_err());
+        assert!(err_str.contains("Invalid toroidal domain"));
+    }
+
+    #[test]
+    fn test_validate_topology_model_accepts_euclidean() {
+        use crate::topology::traits::global_topology_model::EuclideanModel;
+        let model = EuclideanModel;
+        let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_canonicalize_vertices_preserves_uuids() {
+        use crate::topology::traits::global_topology_model::ToroidalModel;
+        let vertices = vec![
+            vertex!([2.5, 3.7]),
+            vertex!([1.8, -0.5]),
+            vertex!([0.5, 0.7]),
+        ];
+        let original_uuids: Vec<_> = vertices.iter().map(Vertex::uuid).collect();
+        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let canonical =
+            DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model)
+                .unwrap();
+
+        assert_eq!(canonical.len(), vertices.len());
+        let canonical_uuids: Vec<_> = canonical.iter().map(Vertex::uuid).collect();
+        assert_eq!(canonical_uuids, original_uuids);
+    }
+
+    #[test]
+    fn test_canonicalize_vertices_preserves_data() {
+        use crate::topology::traits::global_topology_model::ToroidalModel;
+        let vertices: Vec<Vertex<f64, i32, 2>> = vec![
+            VertexBuilder::default()
+                .point(Point::new([2.5_f64, 3.7]))
+                .data(10_i32)
+                .build()
+                .unwrap(),
+            VertexBuilder::default()
+                .point(Point::new([1.8_f64, -0.5]))
+                .data(20_i32)
+                .build()
+                .unwrap(),
+            VertexBuilder::default()
+                .point(Point::new([0.5_f64, 0.7]))
+                .data(30_i32)
+                .build()
+                .unwrap(),
+        ];
+        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let canonical =
+            DelaunayTriangulationBuilder::<f64, i32, 2>::canonicalize_vertices(&vertices, &model)
+                .unwrap();
+
+        assert_eq!(canonical.len(), vertices.len());
+        for (orig, canon) in vertices.iter().zip(canonical.iter()) {
+            assert_eq!(orig.data, canon.data);
+        }
+    }
+
+    #[test]
+    fn test_canonicalize_vertices_transforms_coordinates() {
+        use crate::topology::traits::global_topology_model::ToroidalModel;
+        use approx::assert_relative_eq;
+        let vertices = vec![
+            vertex!([2.5, 3.7]),  // → (0.5, 0.7)
+            vertex!([1.8, -0.5]), // → (1.8, 2.5)
+            vertex!([0.3, 0.2]),  // → (0.3, 0.2)
+        ];
+        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let canonical =
+            DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model)
+                .unwrap();
+
+        assert_eq!(canonical.len(), 3);
+        assert_relative_eq!(canonical[0].point().coords()[0], 0.5);
+        assert_relative_eq!(canonical[0].point().coords()[1], 0.7);
+        assert_relative_eq!(canonical[1].point().coords()[0], 1.8);
+        assert_relative_eq!(canonical[1].point().coords()[1], 2.5);
+        assert_relative_eq!(canonical[2].point().coords()[0], 0.3);
+        assert_relative_eq!(canonical[2].point().coords()[1], 0.2);
+    }
+
+    #[test]
+    fn test_canonicalize_vertices_euclidean_identity() {
+        use crate::topology::traits::global_topology_model::EuclideanModel;
+        use approx::assert_relative_eq;
+        let vertices = vec![
+            vertex!([1.5, 2.5]),
+            vertex!([3.7, 4.2]),
+            vertex!([-1.0, -2.0]),
+        ];
+        let model = EuclideanModel;
+        let canonical =
+            DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model)
+                .unwrap();
+
+        assert_eq!(canonical.len(), vertices.len());
+        for (orig, canon) in vertices.iter().zip(canonical.iter()) {
+            assert_relative_eq!(orig.point().coords()[0], canon.point().coords()[0]);
+            assert_relative_eq!(orig.point().coords()[1], canon.point().coords()[1]);
+        }
+    }
+
+    #[test]
+    fn test_canonicalize_vertices_propagates_nan_error() {
+        use crate::topology::traits::global_topology_model::ToroidalModel;
+        let vertices = vec![
+            VertexBuilder::default()
+                .point(Point::new([0.5_f64, 0.5]))
+                .build()
+                .unwrap(),
+            VertexBuilder::default()
+                .point(Point::new([f64::NAN, 0.5]))
+                .build()
+                .unwrap(),
+            VertexBuilder::default()
+                .point(Point::new([0.3_f64, 0.2]))
+                .build()
+                .unwrap(),
+        ];
+        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let result =
+            DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model);
+
+        assert!(result.is_err());
+        let err_str = format!("{}", result.unwrap_err());
+        assert!(
+            err_str.contains("Failed to canonicalize vertex"),
+            "Error should mention canonicalization failure: {err_str}"
+        );
+        assert!(
+            err_str.contains("vertex 1"),
+            "Error should mention vertex index: {err_str}"
+        );
+    }
+
+    #[test]
+    fn test_canonicalize_vertices_propagates_infinity_error() {
+        use crate::topology::traits::global_topology_model::ToroidalModel;
+        let vertices = vec![
+            VertexBuilder::default()
+                .point(Point::new([0.5_f64, 0.5]))
+                .build()
+                .unwrap(),
+            VertexBuilder::default()
+                .point(Point::new([0.3_f64, 0.2]))
+                .build()
+                .unwrap(),
+            VertexBuilder::default()
+                .point(Point::new([f64::INFINITY, 0.5]))
+                .build()
+                .unwrap(),
+        ];
+        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let result =
+            DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model);
+
+        assert!(result.is_err());
+        let err_str = format!("{}", result.unwrap_err());
+        assert!(err_str.contains("Failed to canonicalize vertex"));
+        assert!(err_str.contains("vertex 2"));
+    }
+
+    #[test]
+    fn test_canonicalize_vertices_includes_original_coords_in_error() {
+        use crate::topology::traits::global_topology_model::ToroidalModel;
+        let vertices = vec![
+            VertexBuilder::default()
+                .point(Point::new([f64::NAN, 1.5_f64]))
+                .build()
+                .unwrap(),
+        ];
+        let model = ToroidalModel::<2>::new([2.0, 3.0]);
+        let result =
+            DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model);
+
+        assert!(result.is_err());
+        let err_str = format!("{}", result.unwrap_err());
+        assert!(
+            err_str.contains("original coords"),
+            "Error should mention original coords: {err_str}"
+        );
     }
 }
