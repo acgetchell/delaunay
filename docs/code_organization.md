@@ -80,8 +80,7 @@ delaunay/
 │   │   ├── testing.md
 │   │   └── topology_integration_design_historical.md
 │   ├── templates/
-│   │   ├── README.md
-│   │   └── changelog.hbs
+│   │   └── README.md
 │   ├── KNOWN_ISSUES_4D.md
 │   ├── ORIENTATION_SPEC.md
 │   ├── README.md
@@ -236,7 +235,6 @@ delaunay/
 │   ├── storage_backend_compatibility.rs
 │   ├── tds_orientation.rs
 │   └── triangulation_builder.rs
-├── .auto-changelog
 ├── .codacy.yml
 ├── .codecov.yml
 ├── .coderabbit.yml

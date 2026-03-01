@@ -2,14 +2,10 @@
 
 This directory contains templates used for automated documentation and changelog generation.
 
-## Files
+## Status
 
-### `changelog.hbs` (legacy)
+This repository uses [`git-cliff`](https://github.com/orhun/git-cliff) for
+changelog generation via `cliff.toml` at the repository root (invoked through
+`just changelog` / `uv run changelog-utils generate`).
 
-Legacy Handlebars template for [`auto-changelog`](https://github.com/CookPete/auto-changelog).
-
-This repository has migrated changelog generation to [`git-cliff`](https://github.com/orhun/git-cliff)
-using `cliff.toml` at the repository root (invoked via `just changelog` /
-`uv run changelog-utils generate`).
-
-The file is kept for reference while the migration stabilizes.
+There are currently no active template files in this directory.

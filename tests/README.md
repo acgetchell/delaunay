@@ -254,8 +254,7 @@ Proptest automatically captures minimal failing test cases in `.proptest-regress
 
 **Current Regression Files:**
 
-- `proptest_convex_hull.proptest-regressions`
-- `proptest_serialization.proptest-regressions`
+- `proptest_delaunay_triangulation.proptest-regressions`
 
 ### 🔧 Debugging and Analysis Tools
 
@@ -295,99 +294,20 @@ just test-debug
 
 [View source](./circumsphere_debug_tools.rs)
 
-### 🧪 Algorithm Integration Testing
+### 🧪 Core Integration Testing
 
-#### [`tds_basic_integration.rs`](./tds_basic_integration.rs)
+Core integration coverage currently includes:
 
-Fundamental integration tests for triangulation data structure (TDS) operations, verifying core functionality with simple, well-understood geometries.
-
-**Test Coverage:**
-
-- **TDS Creation**: Validates basic TDS construction with various vertex configurations
-  - Single cell (minimal 3D simplex/tetrahedron)
-  - Multiple adjacent cells sharing facets
-- **Neighbor Assignment**: Verifies correct neighbor connectivity between cells
-  - Initial simplex neighbor initialization
-  - Shared facet neighbor relationships
-- **Boundary Analysis**: Tests boundary facet computation
-  - Single cell boundary identification (4 facets for tetrahedron)
-  - Multi-cell boundary detection (shared facets excluded)
-- **Basic Validation**: Establishes baseline correctness for simple geometries
-
-**Test Functions:**
-
-- `test_tds_creates_one_cell` - Single tetrahedron creation
-- `test_tds_creates_two_cells` - Two adjacent tetrahedra
-- `test_initial_simplex_has_neighbors` - Neighbor assignment validation
-- `test_two_cells_share_facet` - Shared facet connectivity
-
-**Run with:** `cargo test --test tds_basic_integration` or `just test-release`
-
-**Purpose:** These tests establish foundational TDS behavior. For complex scenarios involving algorithms like Bowyer-Watson or convex hull
-operations, see other integration tests.
-
-#### [`test_insertion_algorithm_utils.rs`](./test_insertion_algorithm_utils.rs)
-
-Integration tests for insertion algorithm utility types (`InsertionBuffers` and `InsertionStatistics`) that support vertex insertion algorithms.
-
-**Test Coverage:**
-
-- **InsertionBuffers** (9 tests):
-  - Buffer creation and initialization (new, default, with_capacity)
-  - Buffer management (clear_all, prepare methods)
-  - Vec compatibility methods for legacy API support
-  - FacetView conversion for boundary analysis
-- **InsertionStatistics** (4 tests):
-  - Statistics initialization and recording
-  - Vertex insertion tracking
-  - Fallback strategy usage tracking
-  - Rate calculation methods (fallback_usage_rate)
-
-**Run with:** `cargo test --test test_insertion_algorithm_utils --release`
-
-**Purpose:** These tests ensure the utility types used by insertion algorithms (Bowyer-Watson, robust variants) work correctly
-for performance optimization (buffer reuse) and algorithm instrumentation (statistics tracking).
-
-#### [`convex_hull_bowyer_watson_integration.rs`](./convex_hull_bowyer_watson_integration.rs)
-
-Integration tests for convex hull algorithms with Bowyer-Watson triangulation, focusing on the interaction between hull computation and triangulation construction.
-
-**Test Coverage:**
-
-- Hull extension execution and validation
-- Cache behavior and reset operations
-- Multiple hull extension scenarios
-- Triangulation validity after hull operations
-- Mixed insertion strategy testing
-
-**Run with:** `cargo test --test convex_hull_bowyer_watson_integration` or `just test-release`
-
-#### [`robust_predicates_comparison.rs`](./robust_predicates_comparison.rs)
-
-Comparative testing between robust and standard geometric predicates, focusing on numerical accuracy and edge case handling.
-
-**Test Scenarios:**
-
-- Cocircular and nearly coplanar points
-- High precision coordinate handling
-- Extreme aspect ratio configurations
-- Vertex insertion robustness analysis
-- Performance cost-benefit analysis
-
-**Run with:** `cargo test --test robust_predicates_comparison` or `just test-release`
-
-#### [`robust_predicates_showcase.rs`](./robust_predicates_showcase.rs)
-
-Demonstration and stress testing of robust geometric predicates with focus on numerical edge cases and degenerate configurations.
-
-**Features:**
-
-- Degenerate failure recovery demonstrations
-- Tolerance limit stress testing
-- Real-world triangulation scenarios
-- Performance impact analysis
-
-**Run with:** `cargo test --test robust_predicates_showcase` or `just test-release`
+- [`delaunay_incremental_insertion.rs`](./delaunay_incremental_insertion.rs)
+- [`delaunay_repair_fallback.rs`](./delaunay_repair_fallback.rs)
+- [`delaunay_edge_cases.rs`](./delaunay_edge_cases.rs)
+- [`triangulation_builder.rs`](./triangulation_builder.rs)
+- [`public_topology_api.rs`](./public_topology_api.rs)
+- [`tds_orientation.rs`](./tds_orientation.rs)
+- [`euler_characteristic.rs`](./euler_characteristic.rs)
+- [`insert_with_statistics.rs`](./insert_with_statistics.rs)
+- [`k3_cycle_predicate.rs`](./k3_cycle_predicate.rs)
+- [`regression_delaunay_2d.rs`](./regression_delaunay_2d.rs)
 
 #### [`serialization_vertex_preservation.rs`](./serialization_vertex_preservation.rs)
 
@@ -421,170 +341,19 @@ Integration tests verifying equivalence of triangulation behavior across differe
 cargo test --release --features <backend_feature> --test storage_backend_compatibility
 ```
 
-#### [`integration_robust_bowyer_watson.rs`](./integration_robust_bowyer_watson.rs)
-
-End-to-end integration tests for `RobustBowyerWatson` algorithm verifying robust insertion behavior across dimensions 2D-5D.
-
-**Test Coverage:**
-
-- **Large Random Point Sets**: Insertion of 50-100 random points with TDS validity maintained throughout
-- **Exterior Vertex Insertion**: Hull extension scenarios with vertices inserted along each axis
-- **Clustered Point Patterns**: Mixed clustered (near-origin) and scattered point distributions
-- **Algorithm Reset and Reuse**: Statistics tracking and algorithm state management
-- **Cross-dimensional Testing**: Generated tests for 2D, 3D, 4D, and 5D using macro-based approach
-
-**Run with:** `cargo test --test integration_robust_bowyer_watson` or `just test-release`
-
-**Purpose:** Verifies that the robust insertion algorithm handles real-world point distributions while maintaining TDS validity and
-geometric correctness across varying dimensions and insertion patterns.
-
-#### [`test_insertion_algorithm_trait.rs`](./test_insertion_algorithm_trait.rs)
-
-Integration tests for public API methods of `InsertionAlgorithm` trait and supporting types.
-
-**Test Coverage:**
-
-- **InsertionBuffers Public API** (14 tests):
-  - Buffer creation methods (new, default, with_capacity)
-  - Buffer management (clear_all, prepare methods)
-  - Vec compatibility helpers (bad_cells_as_vec, set_bad_cells_from_vec)
-  - FacetView conversion (boundary_facets_as_views, visible_facets_as_views)
-  - Accessor methods for all buffer types
-- **Error Type Conversions**:
-  - InsertionError display formatting
-  - BadCellsError conversion and context
-  - TriangulationValidationError integration
-
-**Run with:** `cargo test --test test_insertion_algorithm_trait --release`
-
-**Purpose:** Verifies public accessor methods and API contracts. Complements unit tests in source (which use private field access) by
-testing only through public interfaces.
-
-#### [`test_facet_cache_integration.rs`](./test_facet_cache_integration.rs)
-
-Integration tests for facet cache behavior under concurrent access, TDS modifications, and algorithmic usage patterns.
-
-**Test Coverage:**
-
-- **Concurrent Cache Access**: Multi-threaded cache building and querying during vertex insertions
-- **Cache Invalidation**: Cache rebuilding after TDS generation changes
-- **RCU Contention**: Multiple threads simultaneously building cache with Read-Copy-Update mechanism
-- **Generation Tracking**: Verification of cache staleness detection and retry loops
-- **Algorithm Integration**: Cache behavior through `IncrementalBowyerWatson` operations
-
-**Run with:** `cargo test --test test_facet_cache_integration` or `just test-release`
-
-**Purpose:** Exercises complex cache synchronization code paths (retry loops, RCU, generation tracking) that are difficult to trigger
-via unit tests. Validates thread-safe cache operations during real algorithm usage.
-
-#### [`test_geometry_util.rs`](./test_geometry_util.rs)
-
-Integration tests for geometry utility functions focusing on error paths, edge cases, and multi-dimensional behavior.
-
-**Test Coverage:**
-
-- **Random Point Generation Errors**:
-  - Invalid ranges (min >= max)
-  - Zero point counts for grid generation
-  - Impossible Poisson spacing constraints
-  - Reproducibility with seeded generation
-- **Circumcenter/Circumradius Errors**:
-  - Empty point sets
-  - Invalid simplex dimensions (wrong vertex count)
-  - Degenerate simplices (collinear, coincident points)
-- **Simplex Volume Edge Cases**:
-  - Multi-dimensional degenerate cases (1D-2D)
-  - Coordinate conversion failures
-  - Invalid simplex configurations
-
-**Run with:** `cargo test --test test_geometry_util` or `just test-release`
-
-**Purpose:** Tests error handling and edge cases for geometric utilities that complement doctest coverage, ensuring robust behavior with
-invalid inputs and degenerate configurations.
-
-#### [`test_robust_fallbacks.rs`](./test_robust_fallbacks.rs)
-
-Configuration API tests for `RobustBowyerWatson` algorithm, documenting constructor variants and predicate configuration presets.
-
-**Test Coverage:**
-
-- **Constructor Variants**:
-  - `new()` - Default constructor with general_triangulation config
-  - `with_config()` - Custom configuration with various presets
-  - `for_degenerate_cases()` - Degenerate-optimized constructor
-- **Configuration Presets**:
-  - `general_triangulation` - Balanced performance/robustness
-  - `high_precision` - Maximum numerical accuracy
-  - `degenerate_robust` - Optimized for near-degenerate cases
-- **Multi-dimensional Configuration**: Testing presets across 2D-4D
-- **Custom Tolerance Settings**: User-defined tolerance configurations
-
-**Run with:** `cargo test --test test_robust_fallbacks` or `just test-release`
-
-**Purpose:** Serves as API documentation and contract validation for configuration system. Minimal coverage impact (implementation already
-covered) but ensures public API contracts work correctly.
-
-#### [`test_tds_edge_cases.rs`](./test_tds_edge_cases.rs)
-
-Edge case integration tests for Triangulation Data Structure (TDS) operations, focusing on removal operations and topology consistency.
-
-**Test Coverage:**
-
-- **Cell Removal Operations**:
-  - Single cell removal (remove_cell_by_key)
-  - Multiple cell removal (remove_cells_by_keys)
-  - Nonexistent cell handling
-  - Partial removal with invalid keys
-- **Duplicate Cell Removal**:
-  - Detection of duplicate cells
-  - Clean TDS validation (no duplicates)
-- **Neighbor Clearing**:
-  - Clear all neighbor relationships
-  - Neighbor reassignment after clearing
-  - Topology validation after operations
-
-**Run with:** `cargo test --test test_tds_edge_cases` or `just test-release`
-
-**Purpose:** Tests TDS removal operations and topology maintenance that are not covered by basic integration tests. Complements
-`tds_basic_integration.rs` which focuses on construction and validation.
-
-#### [`test_convex_hull_error_paths.rs`](./test_convex_hull_error_paths.rs)
-
-Error path tests for ConvexHull module targeting uncovered error conditions and edge cases.
-
-**Test Coverage:**
-
-- **Construction Errors**:
-  - InsufficientData - Empty triangulations (0 vertices, 0 cells)
-  - No boundary facets scenarios
-- **Stale Hull Detection**:
-  - Using hull with modified TDS (generation mismatch)
-  - StaleHull error in visibility checks
-  - StaleHull error in find_visible_facets
-- **Cache Invalidation**:
-  - Cache rebuilding after invalidation
-  - Generation consistency verification
-
-**Run with:** `cargo test --test test_convex_hull_error_paths` or `just test-release`
-
-**Purpose:** Improves coverage of `src/geometry/algorithms/convex_hull.rs` by testing error paths that are difficult to trigger through
-normal usage. Focuses on defensive validation and staleness detection.
-
 ### 🐛 Regression and Error Reproduction
 
-#### [`test_cavity_boundary_error.rs`](./test_cavity_boundary_error.rs)
+#### [`large_scale_debug.rs`](./large_scale_debug.rs)
 
-Reproduces and tests specific cavity boundary errors encountered during triangulation, ensuring fixes remain effective.
+Reproduction-oriented debug harnesses for larger 3D/4D datasets, including ignored tests and bisect-style workflows.
 
-**Note**: This test can be slow (~3 minutes locally, longer in CI). The comprehensive test is gated behind `EXPENSIVE_TESTS=1` to avoid excessive CI time.
+**Run with:** `cargo test --test large_scale_debug -- --ignored --nocapture` (or the `just debug-large-scale-*` helpers)
 
-**Purpose:**
+#### [`check_perturbation_stats.rs`](./check_perturbation_stats.rs)
 
-- Systematic reproduction of reported boundary errors
-- Geometric degeneracy case testing
-- Error condition validation and recovery
+Regression checks around insertion perturbation telemetry and statistics reporting behavior.
 
-**Run with:** `cargo test --test test_cavity_boundary_error` or `just test-release`
+**Run with:** `cargo test --test check_perturbation_stats` or `just test-release`
 
 #### [`coordinate_conversion_errors.rs`](./coordinate_conversion_errors.rs)
 
@@ -637,7 +406,7 @@ cargo test --test <test_file_name>
 
 # Examples
 just test-debug                                  # circumsphere_debug_tools
-cargo test --test robust_predicates_comparison   # specific integration test
+cargo test --test delaunay_incremental_insertion # specific integration test
 just test-allocation                             # allocation profiling
 ```
 

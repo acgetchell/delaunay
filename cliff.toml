@@ -106,6 +106,6 @@ topo_order = false
 sort_commits = "newest"
 
 [[git.commit_parsers]]
-# Mirror the previous `.auto-changelog.ignoreCommitPattern` exclusions.
+# Mirror the legacy auto-changelog ignore pattern to preserve output behavior.
 message = '^(chore\(release\)|ci\(minor\)|style\(fmt\)|build\(deps\)):'
 skip = true

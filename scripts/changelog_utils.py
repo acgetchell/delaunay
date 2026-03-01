@@ -1311,8 +1311,8 @@ For detailed release notes, refer to CHANGELOG.md in the repository.
 def main() -> None:
     """
     Main entry point for changelog-utils CLI.
-
-    This provides a Python replacement for generate_changelog.sh with the same
+    This runs the current changelog workflow (git-cliff + post-processing)
+    with robust error handling and cross-platform support.
     functionality but better error handling and cross-platform support.
     """
 
@@ -1329,7 +1329,7 @@ def main() -> None:
         _handle_tag_command()
         return
 
-    # Handle generate command or legacy mode
+    # Handle generate command (or default mode)
     args = _parse_generate_args()
 
     if args.help:
@@ -1418,7 +1418,7 @@ Intermediate files (when using --debug with generate):
   - CHANGELOG.md.processed.expanded (after PR expansion)
   - CHANGELOG.md.tmp2 (after AI enhancement)
 
-This tool replaces both generate_changelog.sh and tag-from-changelog.sh.
+This tool supersedes the previous shell-based changelog/tag helpers.
 """)
 
 
