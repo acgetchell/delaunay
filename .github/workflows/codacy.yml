@@ -63,6 +63,9 @@ jobs:
       # Execute Codacy Analysis CLI and generate a SARIF output with
       # the security issues identified during the analysis
       - name: Run Codacy Analysis CLI
+        # Codacy's opengrep/semgrep engine can fail intermittently;
+        # allow the workflow to continue so we can still upload a fallback SARIF.
+        continue-on-error: true
         uses: codacy/codacy-analysis-cli-action@562ee3e92b8e92df8b67e0a5ff8aa8e261919c08
         with:
           # Check https://github.com/codacy/codacy-analysis-cli#project-token
