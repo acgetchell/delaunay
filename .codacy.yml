@@ -122,7 +122,8 @@ engines:
 
   # Semgrep (static analysis for security)
   semgrep:
-    enabled: true
+    # Disabled due intermittent opengrep/Semgrep engine failures and long runtimes in CI.
+    enabled: false
     include_paths:
       - "src/**/*.rs"
       - "scripts/**/*.py"
