@@ -241,6 +241,11 @@ pub(crate) struct DelaunayInsertionState {
     pub delaunay_check_policy: DelaunayCheckPolicy,
     /// Count of successful insertions (used to schedule repairs/checks).
     pub delaunay_repair_insertion_count: usize,
+    /// When `true` (default), D<4 per-insertion repair falls back to global
+    /// `repair_delaunay_with_flips_k2_k3` when the bounded local pass cycles.
+    /// Set to `false` for constructions where global repair could disrupt
+    /// the triangulation topology (e.g. periodic image-point builds).
+    pub use_global_repair_fallback: bool,
 }
 
 impl DelaunayInsertionState {
@@ -252,6 +257,7 @@ impl DelaunayInsertionState {
             delaunay_repair_policy: DelaunayRepairPolicy::EveryInsertion,
             delaunay_check_policy: DelaunayCheckPolicy::EndOnly,
             delaunay_repair_insertion_count: 0,
+            use_global_repair_fallback: true,
         }
     }
 }
