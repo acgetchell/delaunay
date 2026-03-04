@@ -1066,8 +1066,9 @@ where
                 }
             }
         }
-        let expanded_base_options =
-            construction_options.with_initial_simplex_strategy(InitialSimplexStrategy::Balanced);
+        let expanded_base_options = construction_options
+            .with_initial_simplex_strategy(InitialSimplexStrategy::Balanced)
+            .without_global_repair_fallback();
         let expanded_options = match construction_options.retry_policy() {
             RetryPolicy::Disabled => expanded_base_options,
             RetryPolicy::Shuffled { base_seed, .. }

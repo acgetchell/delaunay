@@ -380,13 +380,30 @@ impl Default for RetryPolicy {
 ///
 /// assert_eq!(options.insertion_order(), InsertionOrderStrategy::Hilbert);
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct ConstructionOptions {
     insertion_order: InsertionOrderStrategy,
     dedup_policy: DedupPolicy,
     initial_simplex: InitialSimplexStrategy,
     retry_policy: RetryPolicy,
+    /// When `true` (default), D<4 per-insertion repair falls back to a global
+    /// `repair_delaunay_with_flips_k2_k3` pass when the bounded local pass
+    /// cycles.  Set to `false` for constructions where global repair could
+    /// disrupt the triangulation topology (e.g. periodic image-point builds).
+    pub(crate) use_global_repair_fallback: bool,
+}
+
+impl Default for ConstructionOptions {
+    fn default() -> Self {
+        Self {
+            insertion_order: InsertionOrderStrategy::default(),
+            dedup_policy: DedupPolicy::default(),
+            initial_simplex: InitialSimplexStrategy::default(),
+            retry_policy: RetryPolicy::default(),
+            use_global_repair_fallback: true,
+        }
+    }
 }
 
 impl ConstructionOptions {
@@ -440,6 +457,13 @@ impl ConstructionOptions {
     #[must_use]
     pub const fn with_retry_policy(mut self, retry_policy: RetryPolicy) -> Self {
         self.retry_policy = retry_policy;
+        self
+    }
+
+    /// Disables the D<4 global repair fallback.
+    #[must_use]
+    pub(crate) const fn without_global_repair_fallback(mut self) -> Self {
+        self.use_global_repair_fallback = false;
         self
     }
 }
@@ -1896,6 +1920,7 @@ where
             dedup_policy,
             initial_simplex,
             retry_policy,
+            use_global_repair_fallback,
         } = options;
 
         let preprocessed = Self::preprocess_vertices_for_construction(
@@ -1923,6 +1948,7 @@ where
                             attempts,
                             base_seed,
                             grid_cell_size,
+                            use_global_repair_fallback,
                         );
                     }
                 }
@@ -1940,6 +1966,7 @@ where
                             attempts,
                             base_seed,
                             grid_cell_size,
+                            use_global_repair_fallback,
                         );
                     }
                 }
@@ -1950,6 +1977,7 @@ where
                 vertices,
                 topology_guarantee,
                 grid_cell_size,
+                use_global_repair_fallback,
             )
         };
 
@@ -1988,6 +2016,7 @@ where
             dedup_policy,
             initial_simplex,
             retry_policy,
+            use_global_repair_fallback,
         } = options;
 
         let preprocessed = Self::preprocess_vertices_for_construction(
@@ -2021,6 +2050,7 @@ where
                             attempts,
                             base_seed,
                             grid_cell_size,
+                            use_global_repair_fallback,
                         );
                     }
                 }
@@ -2038,6 +2068,7 @@ where
                             attempts,
                             base_seed,
                             grid_cell_size,
+                            use_global_repair_fallback,
                         );
                     }
                 }
@@ -2048,6 +2079,7 @@ where
                 vertices,
                 topology_guarantee,
                 grid_cell_size,
+                use_global_repair_fallback,
             )
         };
 
@@ -2176,6 +2208,7 @@ where
         attempts: NonZeroUsize,
         base_seed: Option<u64>,
         grid_cell_size: Option<K::Scalar>,
+        use_global_repair_fallback: bool,
     ) -> Result<Self, DelaunayTriangulationConstructionError>
     where
         K::Scalar: ScalarSummable,
@@ -2203,6 +2236,7 @@ where
             0_u64,
             true,
             grid_cell_size,
+            use_global_repair_fallback,
         ) {
             Ok(candidate) => match crate::core::util::is_delaunay_property_only(&candidate.tri.tds)
             {
@@ -2268,6 +2302,7 @@ where
                 perturbation_seed,
                 true,
                 grid_cell_size,
+                use_global_repair_fallback,
             ) {
                 Ok(candidate) => {
                     match crate::core::util::is_delaunay_property_only(&candidate.tri.tds) {
@@ -2327,6 +2362,7 @@ where
         attempts: NonZeroUsize,
         base_seed: Option<u64>,
         grid_cell_size: Option<K::Scalar>,
+        use_global_repair_fallback: bool,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     where
         K::Scalar: ScalarSummable,
@@ -2357,6 +2393,7 @@ where
                 0_u64,
                 true,
                 grid_cell_size,
+                use_global_repair_fallback,
             ) {
                 Ok((candidate, stats)) => {
                     match crate::core::util::is_delaunay_property_only(&candidate.tri.tds) {
@@ -2432,6 +2469,7 @@ where
                 perturbation_seed,
                 true,
                 grid_cell_size,
+                use_global_repair_fallback,
             ) {
                 Ok((candidate, stats)) => {
                     match crate::core::util::is_delaunay_property_only(&candidate.tri.tds) {
@@ -2515,6 +2553,7 @@ where
         vertices: &[Vertex<K::Scalar, U, D>],
         topology_guarantee: TopologyGuarantee,
         grid_cell_size: Option<K::Scalar>,
+        use_global_repair_fallback: bool,
     ) -> Result<Self, DelaunayTriangulationConstructionError>
     where
         K::Scalar: ScalarSummable,
@@ -2526,6 +2565,7 @@ where
             0,
             true,
             grid_cell_size,
+            use_global_repair_fallback,
         )?;
 
         // Final validation at construction completion for PLManifold/PLManifoldStrict.
@@ -2578,6 +2618,7 @@ where
         vertices: &[Vertex<K::Scalar, U, D>],
         topology_guarantee: TopologyGuarantee,
         grid_cell_size: Option<K::Scalar>,
+        use_global_repair_fallback: bool,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     where
         K::Scalar: ScalarSummable,
@@ -2589,6 +2630,7 @@ where
             0,
             true,
             grid_cell_size,
+            use_global_repair_fallback,
         )?;
 
         // Final validation at construction completion for PLManifold/PLManifoldStrict.
@@ -2652,6 +2694,7 @@ where
         perturbation_seed: u64,
         run_final_repair: bool,
         grid_cell_size: Option<K::Scalar>,
+        use_global_repair_fallback: bool,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     where
         K::Scalar: ScalarSummable,
@@ -2718,6 +2761,7 @@ where
         // no soft-fails occurred the seed is empty and finalize skips the repair entirely.
         let original_repair_policy = dt.insertion_state.delaunay_repair_policy;
         dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
+        dt.insertion_state.use_global_repair_fallback = use_global_repair_fallback;
 
         let mut stats = ConstructionStatistics::default();
         let simplex_stats = InsertionStatistics {
@@ -2764,6 +2808,7 @@ where
         perturbation_seed: u64,
         run_final_repair: bool,
         grid_cell_size: Option<K::Scalar>,
+        use_global_repair_fallback: bool,
     ) -> Result<Self, DelaunayTriangulationConstructionError>
     where
         K::Scalar: ScalarSummable,
@@ -2815,6 +2860,7 @@ where
         // See the _with_construction_statistics variant for the repair policy rationale.
         let original_repair_policy = dt.insertion_state.delaunay_repair_policy;
         dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
+        dt.insertion_state.use_global_repair_fallback = use_global_repair_fallback;
         let mut soft_fail_seeds: Vec<CellKey> = Vec::new();
         dt.insert_remaining_vertices_seeded(
             vertices,
@@ -2928,8 +2974,9 @@ where
                             // the inserted vertex with a seed-proportional flip budget.
                             //
                             // For D<4: the flip graph is proven convergent (Lawson 1977 for
-                            // D=2, Rajan 1991/Joe 1991 for D=3); hard-fail on non-convergence
-                            // triggers a shuffle retry at the outer level.
+                            // D=2, Rajan 1991/Joe 1991 for D=3).  On cycling (FP noise near
+                            // co-spherical configurations), roll back the insertion and retry
+                            // with perturbation to break the co-sphericity.
                             //
                             // For D≥4: Bowyer-Watson with the fast kernel can produce
                             // non-Delaunay facets when the conflict region is detected
@@ -2946,9 +2993,6 @@ where
                                 let seed_cells: Vec<CellKey> =
                                     self.tri.adjacent_cells(v_key).collect();
                                 if !seed_cells.is_empty() {
-                                    // D≥4: smaller budget to fail fast on cycling (not
-                                    // guaranteed convergent; soft-fail path handles it).
-                                    // D<4: larger budget; convergence is proven.
                                     let max_flips = if D >= 4 {
                                         (seed_cells.len() * (D + 1) * 2).max(8)
                                     } else {
@@ -2965,13 +3009,51 @@ where
                                     };
                                     if let Err(repair_err) = repair_result {
                                         if D < 4 {
-                                            // Hard-fail for D<4: proven convergent, so a
-                                            // failure here is a real numerical problem.
+                                            if self.insertion_state.use_global_repair_fallback {
+                                                // Local repair cycling (likely FP
+                                                // co-spherical configuration).  Fall
+                                                // back to global multi-attempt repair.
+                                                tracing::debug!(
+                                                    error = %repair_err,
+                                                    idx = index,
+                                                    "bulk D<4: local repair cycling; \
+                                                     falling back to global repair"
+                                                );
+                                                let global_result = {
+                                                    let (tds, kernel) =
+                                                        (&mut self.tri.tds, &self.tri.kernel);
+                                                    repair_delaunay_with_flips_k2_k3(
+                                                        tds, kernel, None, topology,
+                                                    )
+                                                };
+                                                if let Err(global_err) = global_result {
+                                                    tracing::debug!(
+                                                        error = %global_err,
+                                                        idx = index,
+                                                        "bulk D<4: global repair also failed; \
+                                                         aborting this vertex ordering"
+                                                    );
+                                                    return Err(
+                                                        TriangulationConstructionError::GeometricDegeneracy {
+                                                            message: format!(
+                                                                "per-insertion Delaunay repair \
+                                                                 failed at index {index}: \
+                                                                 {global_err}"
+                                                            ),
+                                                        }
+                                                        .into(),
+                                                    );
+                                                }
+                                                continue;
+                                            }
+                                            // Global repair disabled (e.g. periodic
+                                            // build): hard-fail to trigger shuffle
+                                            // retry with a different vertex ordering.
                                             tracing::debug!(
                                                 error = %repair_err,
                                                 idx = index,
-                                                "bulk: per-insertion repair failed; \
-                                                 aborting this vertex ordering"
+                                                "bulk D<4: local repair cycling \
+                                                 (global fallback disabled); aborting"
                                             );
                                             return Err(
                                                 TriangulationConstructionError::GeometricDegeneracy {
@@ -2984,16 +3066,12 @@ where
                                                 .into(),
                                             );
                                         }
-                                        // Soft-fail for D≥4: non-convergence is expected in
-                                        // degenerate configurations; continue building.
                                         tracing::debug!(
                                             error = %repair_err,
                                             idx = index,
                                             "bulk D≥4: per-insertion repair non-convergent; \
                                              continuing (both_positive_artifact handled)"
                                         );
-                                        // Record affected cells so finalize_bulk_construction
-                                        // can run a targeted seeded repair on them.
                                         soft_fail_seeds.extend(seed_cells.iter().copied());
                                     }
                                 }
@@ -3120,11 +3198,51 @@ where
                                     };
                                     if let Err(repair_err) = repair_result {
                                         if D < 4 {
+                                            if self.insertion_state.use_global_repair_fallback {
+                                                // Local repair cycling (likely FP
+                                                // co-spherical configuration).  Fall
+                                                // back to global multi-attempt repair.
+                                                tracing::debug!(
+                                                    error = %repair_err,
+                                                    idx = index,
+                                                    "bulk D<4: local repair cycling; \
+                                                     falling back to global repair"
+                                                );
+                                                let global_result = {
+                                                    let (tds, kernel) =
+                                                        (&mut self.tri.tds, &self.tri.kernel);
+                                                    repair_delaunay_with_flips_k2_k3(
+                                                        tds, kernel, None, topology,
+                                                    )
+                                                };
+                                                if let Err(global_err) = global_result {
+                                                    tracing::debug!(
+                                                        error = %global_err,
+                                                        idx = index,
+                                                        "bulk D<4: global repair also failed; \
+                                                         aborting this vertex ordering"
+                                                    );
+                                                    return Err(
+                                                        TriangulationConstructionError::GeometricDegeneracy {
+                                                            message: format!(
+                                                                "per-insertion Delaunay repair \
+                                                                 failed at index {index}: \
+                                                                 {global_err}"
+                                                            ),
+                                                        }
+                                                        .into(),
+                                                    );
+                                                }
+                                                continue;
+                                            }
+                                            // Global repair disabled (e.g. periodic
+                                            // build): hard-fail to trigger shuffle
+                                            // retry with a different vertex ordering.
                                             tracing::debug!(
                                                 error = %repair_err,
                                                 idx = index,
-                                                "bulk: per-insertion repair failed; \
-                                                 aborting this vertex ordering"
+                                                "bulk D<4: local repair cycling \
+                                                 (global fallback disabled); aborting"
                                             );
                                             return Err(
                                                 TriangulationConstructionError::GeometricDegeneracy {
@@ -3228,9 +3346,10 @@ where
             //   Non-convergence is a soft-fail; correctness is validated by
             //   is_delaunay_property_only() in build_with_shuffled_retries.
             //
-            // For D<4: repair is proven convergent but soft_fail_seeds is always
-            //   empty in practice (per-insertion repair hard-fails for D<4, preventing
-            //   any seeds from accumulating), so this path is a no-op for D<4.
+            // For D<4: repair is proven convergent; per-insertion repair now
+            //   falls back to global repair_delaunay_with_flips_k2_k3 on
+            //   local non-convergence, so soft_fail_seeds is typically empty
+            //   for D<4.  The seeded path below is kept for completeness.
             if D >= 4 {
                 let cell_count = self.tri.tds.number_of_cells();
                 if cell_count > 0 {
