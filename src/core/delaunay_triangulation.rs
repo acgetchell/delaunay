@@ -2879,6 +2879,58 @@ where
         Ok(dt)
     }
 
+    /// Handle D<4 local repair non-convergence by falling back to global repair or
+    /// hard-failing to trigger shuffle retry.
+    ///
+    /// Returns `Ok(())` if global repair succeeded (caller should `continue` the
+    /// insertion loop).  Returns `Err(...)` if the caller should propagate the
+    /// construction error.
+    fn try_d_lt4_global_repair_fallback(
+        tds: &mut Tds<K::Scalar, U, V, D>,
+        kernel: &K,
+        topology: TopologyGuarantee,
+        use_global_repair_fallback: bool,
+        index: usize,
+        repair_err: &DelaunayRepairError,
+    ) -> Result<(), DelaunayTriangulationConstructionError>
+    where
+        K::Scalar: ScalarSummable,
+    {
+        if use_global_repair_fallback {
+            tracing::debug!(
+                error = %repair_err,
+                idx = index,
+                "bulk D<4: local repair cycling; falling back to global repair"
+            );
+            let global_result = repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology);
+            if let Err(global_err) = global_result {
+                tracing::debug!(
+                    error = %global_err,
+                    idx = index,
+                    "bulk D<4: global repair also failed; aborting this vertex ordering"
+                );
+                return Err(TriangulationConstructionError::GeometricDegeneracy {
+                    message: format!(
+                        "per-insertion Delaunay repair failed at index {index}: {global_err}"
+                    ),
+                }
+                .into());
+            }
+            return Ok(());
+        }
+        // Global repair disabled (e.g. periodic build): hard-fail to trigger
+        // shuffle retry with a different vertex ordering.
+        tracing::debug!(
+            error = %repair_err,
+            idx = index,
+            "bulk D<4: local repair cycling (global fallback disabled); aborting"
+        );
+        Err(TriangulationConstructionError::GeometricDegeneracy {
+            message: format!("per-insertion Delaunay repair failed at index {index}: {repair_err}"),
+        }
+        .into())
+    }
+
     #[allow(clippy::too_many_lines)]
     fn insert_remaining_vertices_seeded(
         &mut self,
@@ -3009,62 +3061,15 @@ where
                                     };
                                     if let Err(repair_err) = repair_result {
                                         if D < 4 {
-                                            if self.insertion_state.use_global_repair_fallback {
-                                                // Local repair cycling (likely FP
-                                                // co-spherical configuration).  Fall
-                                                // back to global multi-attempt repair.
-                                                tracing::debug!(
-                                                    error = %repair_err,
-                                                    idx = index,
-                                                    "bulk D<4: local repair cycling; \
-                                                     falling back to global repair"
-                                                );
-                                                let global_result = {
-                                                    let (tds, kernel) =
-                                                        (&mut self.tri.tds, &self.tri.kernel);
-                                                    repair_delaunay_with_flips_k2_k3(
-                                                        tds, kernel, None, topology,
-                                                    )
-                                                };
-                                                if let Err(global_err) = global_result {
-                                                    tracing::debug!(
-                                                        error = %global_err,
-                                                        idx = index,
-                                                        "bulk D<4: global repair also failed; \
-                                                         aborting this vertex ordering"
-                                                    );
-                                                    return Err(
-                                                        TriangulationConstructionError::GeometricDegeneracy {
-                                                            message: format!(
-                                                                "per-insertion Delaunay repair \
-                                                                 failed at index {index}: \
-                                                                 {global_err}"
-                                                            ),
-                                                        }
-                                                        .into(),
-                                                    );
-                                                }
-                                                continue;
-                                            }
-                                            // Global repair disabled (e.g. periodic
-                                            // build): hard-fail to trigger shuffle
-                                            // retry with a different vertex ordering.
-                                            tracing::debug!(
-                                                error = %repair_err,
-                                                idx = index,
-                                                "bulk D<4: local repair cycling \
-                                                 (global fallback disabled); aborting"
-                                            );
-                                            return Err(
-                                                TriangulationConstructionError::GeometricDegeneracy {
-                                                    message: format!(
-                                                        "per-insertion Delaunay repair \
-                                                         failed at index {index}: \
-                                                         {repair_err}"
-                                                    ),
-                                                }
-                                                .into(),
-                                            );
+                                            Self::try_d_lt4_global_repair_fallback(
+                                                &mut self.tri.tds,
+                                                &self.tri.kernel,
+                                                topology,
+                                                self.insertion_state.use_global_repair_fallback,
+                                                index,
+                                                &repair_err,
+                                            )?;
+                                            continue;
                                         }
                                         tracing::debug!(
                                             error = %repair_err,
@@ -3198,62 +3203,15 @@ where
                                     };
                                     if let Err(repair_err) = repair_result {
                                         if D < 4 {
-                                            if self.insertion_state.use_global_repair_fallback {
-                                                // Local repair cycling (likely FP
-                                                // co-spherical configuration).  Fall
-                                                // back to global multi-attempt repair.
-                                                tracing::debug!(
-                                                    error = %repair_err,
-                                                    idx = index,
-                                                    "bulk D<4: local repair cycling; \
-                                                     falling back to global repair"
-                                                );
-                                                let global_result = {
-                                                    let (tds, kernel) =
-                                                        (&mut self.tri.tds, &self.tri.kernel);
-                                                    repair_delaunay_with_flips_k2_k3(
-                                                        tds, kernel, None, topology,
-                                                    )
-                                                };
-                                                if let Err(global_err) = global_result {
-                                                    tracing::debug!(
-                                                        error = %global_err,
-                                                        idx = index,
-                                                        "bulk D<4: global repair also failed; \
-                                                         aborting this vertex ordering"
-                                                    );
-                                                    return Err(
-                                                        TriangulationConstructionError::GeometricDegeneracy {
-                                                            message: format!(
-                                                                "per-insertion Delaunay repair \
-                                                                 failed at index {index}: \
-                                                                 {global_err}"
-                                                            ),
-                                                        }
-                                                        .into(),
-                                                    );
-                                                }
-                                                continue;
-                                            }
-                                            // Global repair disabled (e.g. periodic
-                                            // build): hard-fail to trigger shuffle
-                                            // retry with a different vertex ordering.
-                                            tracing::debug!(
-                                                error = %repair_err,
-                                                idx = index,
-                                                "bulk D<4: local repair cycling \
-                                                 (global fallback disabled); aborting"
-                                            );
-                                            return Err(
-                                                TriangulationConstructionError::GeometricDegeneracy {
-                                                    message: format!(
-                                                        "per-insertion Delaunay repair \
-                                                         failed at index {index}: \
-                                                         {repair_err}"
-                                                    ),
-                                                }
-                                                .into(),
-                                            );
+                                            Self::try_d_lt4_global_repair_fallback(
+                                                &mut self.tri.tds,
+                                                &self.tri.kernel,
+                                                topology,
+                                                self.insertion_state.use_global_repair_fallback,
+                                                index,
+                                                &repair_err,
+                                            )?;
+                                            continue;
                                         }
                                         tracing::debug!(
                                             error = %repair_err,
@@ -5882,6 +5840,34 @@ mod tests {
         assert_eq!(opts.insertion_order(), InsertionOrderStrategy::Input);
         assert_eq!(opts.dedup_policy(), DedupPolicy::Exact);
         assert_eq!(opts.retry_policy(), RetryPolicy::Disabled);
+    }
+
+    #[test]
+    fn test_construction_options_global_repair_fallback_toggle() {
+        init_tracing();
+        let default_opts = ConstructionOptions::default();
+        assert!(
+            default_opts.use_global_repair_fallback,
+            "default should enable global repair fallback"
+        );
+
+        let disabled_opts = default_opts.without_global_repair_fallback();
+        assert!(
+            !disabled_opts.use_global_repair_fallback,
+            "without_global_repair_fallback should disable the flag"
+        );
+
+        // Chaining with other builders should preserve the flag.
+        let chained_opts = ConstructionOptions::default()
+            .with_insertion_order(InsertionOrderStrategy::Input)
+            .without_global_repair_fallback()
+            .with_retry_policy(RetryPolicy::Disabled);
+        assert!(!chained_opts.use_global_repair_fallback);
+        assert_eq!(
+            chained_opts.insertion_order(),
+            InsertionOrderStrategy::Input
+        );
+        assert_eq!(chained_opts.retry_policy(), RetryPolicy::Disabled);
     }
 
     #[test]
