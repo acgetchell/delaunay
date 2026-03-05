@@ -7041,7 +7041,7 @@ mod tests {
             vertex!([0.0, 1.0]),
             vertex!([1.0, 0.2]),
         ];
-        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
         let mut tds = dt.tds().clone();
         let kernel = FastKernel::<f64>::new();

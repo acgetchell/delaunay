@@ -382,7 +382,6 @@ mod tests {
     #[test]
     fn adjacency_index_query_helpers_are_consistent() {
         use crate::core::delaunay_triangulation::DelaunayTriangulation;
-        use crate::geometry::kernel::FastKernel;
         use crate::vertex;
 
         // Two tetrahedra sharing a triangular facet.
@@ -396,7 +395,7 @@ mod tests {
             vertex!([1.0, 0.7, -1.5]),
         ];
 
-        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+        let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
         let tri = dt.as_triangulation();
         let index = tri.build_adjacency_index().unwrap();

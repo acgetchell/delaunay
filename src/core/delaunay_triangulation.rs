@@ -35,7 +35,7 @@ use crate::core::util::{
     stable_hash_u64_slice,
 };
 use crate::core::vertex::Vertex;
-use crate::geometry::kernel::{FastKernel, Kernel, RobustKernel};
+use crate::geometry::kernel::{Kernel, RobustKernel};
 use crate::geometry::traits::coordinate::{
     CoordinateConversionError, CoordinateScalar, ScalarAccumulative, ScalarSummable,
 };
@@ -1361,13 +1361,13 @@ where
     spatial_index: Option<HashGridIndex<K::Scalar, D>>,
 }
 
-// Most common case: f64 with FastKernel, no vertex or cell data
-impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
+// Most common case: f64 with RobustKernel, no vertex or cell data
+impl<const D: usize> DelaunayTriangulation<RobustKernel<f64>, (), (), D> {
     /// Create a Delaunay triangulation from vertices with no data (most common case).
     ///
     /// This is the simplest constructor for the most common use case:
     /// - f64 coordinates
-    /// - Fast floating-point predicates  
+    /// - Robust adaptive predicates (exact for degenerate/co-spherical configurations)
     /// - No vertex data
     /// - No cell data
     ///
@@ -1435,7 +1435,7 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
     pub fn new(
         vertices: &[Vertex<f64, (), D>],
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
-        Self::with_kernel(&FastKernel::<f64>::new(), vertices)
+        Self::with_kernel(&RobustKernel::<f64>::new(), vertices)
     }
 
     /// Create a Delaunay triangulation and return aggregate construction statistics.
@@ -1456,7 +1456,7 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
         vertices: &[Vertex<f64, (), D>],
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
-        let kernel = FastKernel::<f64>::new();
+        let kernel = RobustKernel::<f64>::new();
         Self::with_topology_guarantee_and_options_with_construction_statistics(
             &kernel,
             vertices,
@@ -1481,7 +1481,7 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
         options: ConstructionOptions,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
-        let kernel = FastKernel::<f64>::new();
+        let kernel = RobustKernel::<f64>::new();
         Self::with_topology_guarantee_and_options_with_construction_statistics(
             &kernel,
             vertices,
@@ -1524,7 +1524,7 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
         vertices: &[Vertex<f64, (), D>],
         options: ConstructionOptions,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
-        let kernel = FastKernel::<f64>::new();
+        let kernel = RobustKernel::<f64>::new();
         Self::with_topology_guarantee_and_options(
             &kernel,
             vertices,
@@ -1567,7 +1567,7 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
         vertices: &[Vertex<f64, (), D>],
         topology_guarantee: TopologyGuarantee,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
-        let kernel = FastKernel::<f64>::new();
+        let kernel = RobustKernel::<f64>::new();
         Self::with_topology_guarantee(&kernel, vertices, topology_guarantee)
     }
 
@@ -1598,7 +1598,7 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
     /// ```
     #[must_use]
     pub fn empty() -> Self {
-        Self::with_empty_kernel(FastKernel::<f64>::new())
+        Self::with_empty_kernel(RobustKernel::<f64>::new())
     }
 
     /// Create an empty Delaunay triangulation with an explicit topology guarantee (fast-kernel convenience).
@@ -1621,7 +1621,10 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
     /// ```
     #[must_use]
     pub fn empty_with_topology_guarantee(topology_guarantee: TopologyGuarantee) -> Self {
-        Self::with_empty_kernel_and_topology_guarantee(FastKernel::<f64>::new(), topology_guarantee)
+        Self::with_empty_kernel_and_topology_guarantee(
+            RobustKernel::<f64>::new(),
+            topology_guarantee,
+        )
     }
 
     /// Create a fluent builder for constructing a Delaunay triangulation.
@@ -5534,10 +5537,10 @@ where
     }
 }
 
-/// Custom `Deserialize` implementation for the common case: `FastKernel<f64>` with no custom data.
+/// Custom `Deserialize` implementation for the common case: `RobustKernel<f64>` with no custom data.
 ///
 /// This specialization provides convenient deserialization for the most common use case:
-/// triangulations with `f64` coordinates, `FastKernel`, and no custom vertex/cell data.
+/// triangulations with `f64` coordinates, `RobustKernel`, and no custom vertex/cell data.
 ///
 /// # Why This Specialization?
 ///
@@ -5545,7 +5548,7 @@ where
 /// the `Tds` (which contains all the geometric and topological data), then reconstruct
 /// the kernel wrapper on deserialization.
 ///
-/// This specialization is limited to `FastKernel<f64>` because:
+/// This specialization is limited to `RobustKernel<f64>` because:
 /// - It's the most common configuration (matches `DelaunayTriangulation::new()` default)
 /// - Rust doesn't allow overlapping `impl` blocks for generic types
 /// - Custom kernels are rare and can deserialize manually
@@ -5558,7 +5561,7 @@ where
 ///
 /// # Usage with Custom Kernels
 ///
-/// If you're using a custom kernel (e.g., `RobustKernel`) or custom data types,
+/// If you're using a custom kernel (e.g., `FastKernel`) or custom data types,
 /// deserialize the `Tds` directly and reconstruct with [`from_tds()`](Self::from_tds):
 ///
 /// ```rust
@@ -5572,16 +5575,16 @@ where
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new(&vertices)?;
+/// let dt = DelaunayTriangulation::<_, (), (), 3>::new(&vertices)?;
 /// let json = serde_json::to_string(&dt)?;
 ///
-/// // Deserialize with custom kernel
+/// // Deserialize with different kernel
 /// let tds: Tds<f64, (), (), 3> = serde_json::from_str(&json)?;
-/// let dt_robust = DelaunayTriangulation::from_tds(tds, RobustKernel::new());
+/// let dt_fast = DelaunayTriangulation::from_tds(tds, FastKernel::new());
 /// # Ok(())
 /// # }
 /// ```
-impl<'de, const D: usize> Deserialize<'de> for DelaunayTriangulation<FastKernel<f64>, (), (), D>
+impl<'de, const D: usize> Deserialize<'de> for DelaunayTriangulation<RobustKernel<f64>, (), (), D>
 where
     Tds<f64, (), (), D>: Deserialize<'de>,
 {
@@ -5590,7 +5593,7 @@ where
         De: Deserializer<'de>,
     {
         let tds = Tds::deserialize(deserializer)?;
-        Ok(Self::from_tds(tds, FastKernel::new()))
+        Ok(Self::from_tds(tds, RobustKernel::new()))
     }
 }
 
@@ -5881,7 +5884,7 @@ mod tests {
         ];
 
         let opts = ConstructionOptions::default().with_retry_policy(RetryPolicy::Disabled);
-        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+        let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new_with_options(&vertices, opts).unwrap();
 
         assert_eq!(dt.number_of_vertices(), 4);
@@ -6182,7 +6185,7 @@ mod tests {
         let opts = ConstructionOptions::default()
             .with_dedup_policy(DedupPolicy::Epsilon { tolerance: 1e-10 })
             .with_retry_policy(RetryPolicy::Disabled);
-        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+        let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new_with_options(&vertices, opts).unwrap();
 
         assert_eq!(dt.number_of_vertices(), 5);
@@ -6306,7 +6309,7 @@ mod tests {
                 .with_insertion_order(insertion_order)
                 .with_retry_policy(RetryPolicy::Disabled);
 
-            let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+            let dt: DelaunayTriangulation<_, (), (), 3> =
                 DelaunayTriangulation::new_with_options(&vertices, opts).unwrap();
 
             assert_eq!(dt.number_of_vertices(), 5);
@@ -6332,7 +6335,7 @@ mod tests {
                 base_seed: Some(123),
             });
 
-        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+        let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new_with_options(&vertices, opts).unwrap();
 
         assert_eq!(dt.number_of_vertices(), 5);
@@ -6348,15 +6351,14 @@ mod tests {
             vertex!([0.0, 1.0]),
         ];
 
-        let dt_new: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let dt_new: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
         assert_eq!(dt_new.topology_guarantee(), TopologyGuarantee::PLManifold);
 
-        let dt_empty: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::empty();
+        let dt_empty: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
         assert_eq!(dt_empty.topology_guarantee(), TopologyGuarantee::PLManifold);
 
-        let dt_with_kernel: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let dt_with_kernel: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
 
         assert_eq!(
@@ -6364,7 +6366,7 @@ mod tests {
             TopologyGuarantee::PLManifold
         );
 
-        let dt_from_tds: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let dt_from_tds: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::from_tds(dt_new.tds().clone(), FastKernel::new());
         assert_eq!(
             dt_from_tds.topology_guarantee(),
@@ -6375,8 +6377,7 @@ mod tests {
     #[test]
     fn test_set_topology_guarantee_updates_underlying_triangulation() {
         init_tracing();
-        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::empty();
+        let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
 
         assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
         assert_eq!(dt.tri.topology_guarantee, TopologyGuarantee::PLManifold);
@@ -6395,7 +6396,7 @@ mod tests {
             vertex!([0.0, 1.0]),
         ];
 
-        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new_with_topology_guarantee(
                 &vertices,
                 TopologyGuarantee::PLManifold,
@@ -6420,8 +6421,7 @@ mod tests {
     #[test]
     fn test_set_delaunay_check_policy_updates_state() {
         init_tracing();
-        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::empty();
+        let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
         assert_eq!(dt.delaunay_check_policy(), DelaunayCheckPolicy::EndOnly);
 
         let policy = DelaunayCheckPolicy::EveryN(NonZeroUsize::new(3).unwrap());
@@ -6437,7 +6437,7 @@ mod tests {
     fn test_should_run_delaunay_repair_for_skips_for_dimension_lt_2() {
         init_tracing();
         let vertices: Vec<Vertex<f64, (), 1>> = vec![vertex!([0.0]), vertex!([1.0])];
-        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 1> =
+        let dt: DelaunayTriangulation<_, (), (), 1> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
         assert_eq!(dt.number_of_cells(), 1);
@@ -6451,7 +6451,7 @@ mod tests {
     #[test]
     fn test_should_run_delaunay_repair_for_skips_when_no_cells() {
         init_tracing();
-        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> = DelaunayTriangulation::empty();
+        let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
 
         assert_eq!(dt.number_of_cells(), 0);
         assert_eq!(
@@ -6469,7 +6469,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
         assert_eq!(dt.number_of_cells(), 1);
@@ -6485,7 +6485,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
         dt.set_delaunay_repair_policy(DelaunayRepairPolicy::EveryN(NonZeroUsize::new(2).unwrap()));
@@ -6504,7 +6504,7 @@ mod tests {
             vertex!([0.0, 1.0]),
             vertex!([1.0, 0.2]),
         ];
-        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
         let before_vertices = dt.number_of_vertices();
@@ -6529,7 +6529,7 @@ mod tests {
             vertex!([0.0, 1.0]),
             vertex!([1.0, 1.0]),
         ];
-        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
         let inserted = vertex!([0.25, 0.25]);
@@ -6584,7 +6584,8 @@ mod tests {
                 vertices.push(vertex!(coords));
             }
 
-            let Ok(mut dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), DIM>::new(&vertices)
+            let Ok(mut dt) =
+                DelaunayTriangulation::<RobustKernel<f64>, (), (), DIM>::new(&vertices)
             else {
                 continue;
             };
@@ -6633,7 +6634,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+        let mut dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
         dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
         let original_vertex_count = dt.number_of_vertices();
@@ -6673,7 +6674,7 @@ mod tests {
             vertex!([1.0, 1.0]),
         ];
 
-        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
         dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
@@ -6904,7 +6905,7 @@ mod tests {
         assert_eq!(dt_new.validation_policy(), ValidationPolicy::OnSuspicion);
 
         // with_kernel() constructor path should also use the default policy
-        let dt_with_kernel: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let dt_with_kernel: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
         assert_eq!(
             dt_with_kernel.validation_policy(),
@@ -6915,7 +6916,7 @@ mod tests {
         // default to OnSuspicion.
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
-        let dt_from_tds: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let dt_from_tds: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::from_tds(tds, FastKernel::new());
         assert_eq!(
             dt_from_tds.validation_policy(),
@@ -7501,12 +7502,11 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+        let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
         let json = serde_json::to_string(&dt).unwrap();
-        let roundtrip: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
-            serde_json::from_str(&json).unwrap();
+        let roundtrip: DelaunayTriangulation<_, (), (), 3> = serde_json::from_str(&json).unwrap();
 
         assert_eq!(roundtrip.number_of_vertices(), dt.number_of_vertices());
         assert_eq!(roundtrip.number_of_cells(), dt.number_of_cells());
@@ -7604,7 +7604,7 @@ mod tests {
             // 5th vertex: triggers one iteration of insert_remaining_vertices_seeded
             vertex!([0.3, 0.3, 0.3]),
         ];
-        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+        let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
         assert_eq!(dt.number_of_vertices(), 5);
         assert!(dt.validate().is_ok());
@@ -7624,10 +7624,8 @@ mod tests {
             vertex!([0.3, 0.3, 0.3]),
         ];
         let (dt, stats) =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new_with_construction_statistics(
-                &vertices,
-            )
-            .unwrap();
+            DelaunayTriangulation::<_, (), (), 3>::new_with_construction_statistics(&vertices)
+                .unwrap();
         assert_eq!(dt.number_of_vertices(), 5);
         assert_eq!(stats.inserted, 5);
         assert!(dt.validate().is_ok());

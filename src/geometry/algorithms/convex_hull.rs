@@ -699,7 +699,6 @@ where
     /// ```rust
     /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
     /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
-    /// use delaunay::geometry::kernel::FastKernel;
     /// use delaunay::vertex;
     ///
     /// // 3D example
@@ -710,7 +709,7 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     /// let dt_3d: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices_3d).unwrap();
-    /// let hull_3d: ConvexHull<FastKernel<f64>, (), (), 3> =
+    /// let hull_3d: ConvexHull<_, (), (), 3> =
     ///     ConvexHull::from_triangulation(dt_3d.as_triangulation()).unwrap();
     /// assert_eq!(hull_3d.number_of_facets(), 4); // Tetrahedron has 4 faces
     ///
@@ -1472,7 +1471,7 @@ where
     /// assert!(hull.validate(dt.as_triangulation()).is_ok());
     ///
     /// // Empty hull should also validate
-    /// let empty_hull: ConvexHull<delaunay::geometry::kernel::FastKernel<f64>, (), (), 3> = ConvexHull::default();
+    /// let empty_hull: ConvexHull<delaunay::geometry::kernel::RobustKernel<f64>, (), (), 3> = ConvexHull::default();
     /// // Note: validate() requires a TDS, so use an empty TDS for validation
     /// assert!(empty_hull.validate(dt.as_triangulation()).is_ok());
     /// ```
@@ -1631,7 +1630,7 @@ mod tests {
     fn create_triangulation<const D: usize>(
         vertices: &[crate::core::vertex::Vertex<f64, (), D>],
     ) -> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
-        DelaunayTriangulation::new(vertices).unwrap()
+        DelaunayTriangulation::with_kernel(&FastKernel::new(), vertices).unwrap()
     }
 
     /// Helper function to extract vertices from a facet handle.
@@ -2727,12 +2726,12 @@ mod tests {
         ];
 
         for (vertices, desc) in extreme_vertices {
-            let dt_result: Result<DelaunayTriangulation<FastKernel<f64>, (), (), 3>, _> =
+            let dt_result: Result<DelaunayTriangulation<_, (), (), 3>, _> =
                 DelaunayTriangulation::new(&vertices);
 
             match dt_result {
                 Ok(dt) => {
-                    let hull: ConvexHull<FastKernel<f64>, (), (), 3> =
+                    let hull: ConvexHull<_, (), (), 3> =
                         ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
                     assert!(
                         hull.validate(dt.as_triangulation()).is_ok(),
@@ -3215,7 +3214,7 @@ mod tests {
     #[test]
     fn test_from_triangulation_empty_vertices_error() {
         // Test error path when triangulation has no vertices
-        let empty_dt = DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::empty();
+        let empty_dt = DelaunayTriangulation::<_, (), (), 3>::empty();
         let result = ConvexHull::from_triangulation(empty_dt.as_triangulation());
 
         assert!(result.is_err());
@@ -6571,7 +6570,7 @@ mod tests {
         );
 
         // Step 6: Verify that creating a new hull works correctly
-        let new_hull: ConvexHull<FastKernel<f64>, (), (), 3> =
+        let new_hull: ConvexHull<_, (), (), 3> =
             ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
         assert!(
             new_hull.is_valid_for_triangulation(dt.as_triangulation()),
@@ -6814,7 +6813,7 @@ mod tests {
                     $dim,
                     vertices_vec.len()
                 );
-                let dt = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new(&vertices_vec)
+                let dt = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices_vec)
                     .expect(&format!("Failed to create {}D DelaunayTriangulation", $dim));
 
                 println!("  Constructing {}D convex hull...", $dim);

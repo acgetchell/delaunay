@@ -31,6 +31,7 @@
 //! local flip configurations (O(cells)) instead of the naive O(cells × vertices) brute-force.
 //! This provides ~40-100x speedup for property-based testing while remaining equally correct.
 
+use delaunay::geometry::kernel::RobustKernel;
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::triangulation::*;
 use proptest::prelude::*;
@@ -355,7 +356,7 @@ enum InsertionOrder3dRunStatus {
 }
 
 fn insert_vertices_3d_no_retry_or_skip(
-    dt: &mut DelaunayTriangulation<FastKernel<f64>, (), (), 3>,
+    dt: &mut DelaunayTriangulation<RobustKernel<f64>, (), (), 3>,
     vertices: &[Vertex<f64, (), 3>],
 ) -> InsertionOrder3dRunStatus {
     for (idx, v) in vertices.iter().enumerate() {
@@ -434,7 +435,7 @@ fn regression_insertion_order_3d_case_001() {
         ]),
     ];
     let vertices = Vertex::from_points(&points);
-    let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+    let mut dt: DelaunayTriangulation<_, (), (), 3> =
         DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     for (idx, v) in vertices.iter().enumerate() {
@@ -672,7 +673,7 @@ macro_rules! gen_duplicate_coords_test {
                 ) {
                     let options = ConstructionOptions::default()
                         .with_dedup_policy(DedupPolicy::Exact);
-                    let dt = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new_with_options(
+                    let dt = DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::new_with_options(
                         &vertices,
                         options,
                     );
@@ -1073,7 +1074,7 @@ fn prop_insertion_order_robustness_3d() {
         // Build triangulation A via incremental insertion, requiring a "clean run":
         // - no retry/perturbation (stats.attempts == 1 for all insertions)
         // - no skipped vertices
-        let mut dt_a: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+        let mut dt_a: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
         let run_a = insert_vertices_3d_no_retry_or_skip(&mut dt_a, &points);
         match run_a {
@@ -1111,7 +1112,7 @@ fn prop_insertion_order_robustness_3d() {
         let mut points_shuffled = points.clone();
         points_shuffled.shuffle(&mut rng);
 
-        let mut dt_b: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+        let mut dt_b: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
         let run_b = insert_vertices_3d_no_retry_or_skip(&mut dt_b, &points_shuffled);
         match run_b {
@@ -1170,7 +1171,7 @@ fn prop_insertion_order_robustness_3d() {
         // Parity check: the high-level constructor path (`DelaunayTriangulation::new_with_topology_guarantee`) should also
         // succeed for the same generated inputs. This helps prevent maintenance drift vs the
         // 2D/4D/5D insertion-order tests which use `new()` directly.
-        let dt_new_a = match DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new_with_topology_guarantee(
+        let dt_new_a = match DelaunayTriangulation::<_, (), (), 3>::new_with_topology_guarantee(
             &points,
             TopologyGuarantee::PLManifold,
         ) {
@@ -1183,7 +1184,7 @@ fn prop_insertion_order_robustness_3d() {
             }
         };
 
-        let dt_new_b = match DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new_with_topology_guarantee(
+        let dt_new_b = match DelaunayTriangulation::<_, (), (), 3>::new_with_topology_guarantee(
             &points_shuffled,
             TopologyGuarantee::PLManifold,
         ) {
