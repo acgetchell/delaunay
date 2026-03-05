@@ -330,7 +330,7 @@ mod tests {
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
     use crate::core::triangulation_data_structure::Tds;
     use crate::core::vertex;
-    use crate::geometry::kernel::FastKernel;
+    use crate::geometry::kernel::RobustKernel;
     use std::sync::Arc;
     use std::sync::Barrier;
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -363,7 +363,7 @@ mod tests {
     }
 
     /// Create a simple test triangulation for testing
-    fn create_test_triangulation() -> DelaunayTriangulation<FastKernel<f64>, (), (), 3> {
+    fn create_test_triangulation() -> DelaunayTriangulation<RobustKernel<f64>, (), (), 3> {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),

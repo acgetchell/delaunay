@@ -2694,7 +2694,7 @@ mod tests {
         assert!(serialized.contains("cells"));
 
         // Deserialize back to DT
-        let deserialized: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+        let deserialized: DelaunayTriangulation<_, (), (), 3> =
             serde_json::from_str(&serialized).unwrap();
 
         // Verify DT properties match

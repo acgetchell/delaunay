@@ -2304,10 +2304,29 @@ where
         // not fail — the BFS normalization guarantees coherent orientation and
         // the global canonicalization ensures the dominant sign is positive.
         if self.cells_require_positive_orientation_promotion()? {
+            let mut residual_count = 0_usize;
+            let mut sample_keys: [Option<CellKey>; 5] = [None; 5];
+            for (cell_key, cell) in self.tds.cells() {
+                let orientation = self.evaluate_cell_orientation_for_context(
+                    cell_key,
+                    cell,
+                    "residual negative-orientation sampling",
+                    "Geometric orientation predicate failed while sampling residual negatives for cell",
+                )?;
+                if orientation < 0 {
+                    if residual_count < sample_keys.len() {
+                        sample_keys[residual_count] = Some(cell_key);
+                    }
+                    residual_count += 1;
+                }
+            }
+            let sampled: Vec<CellKey> = sample_keys.into_iter().flatten().collect();
             tracing::debug!(
+                residual_count,
+                sampled_keys = ?sampled,
                 "normalize_and_promote_positive_orientation: \
-                 some cells still appear negative after bounded promotion passes \
-                 (likely near-degenerate FP noise); accepting coherent orientation"
+                 {residual_count} cells still appear negative after bounded promotion \
+                 passes (likely near-degenerate FP noise); accepting coherent orientation"
             );
         }
         self.canonicalize_global_orientation_sign()?;

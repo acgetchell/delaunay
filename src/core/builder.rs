@@ -115,7 +115,7 @@ use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionErr
 use crate::core::triangulation_data_structure::{CellKey, VertexKey};
 use crate::core::util::periodic_facet_key_from_lifted_vertices;
 use crate::core::vertex::{Vertex, VertexBuilder};
-use crate::geometry::kernel::{FastKernel, Kernel};
+use crate::geometry::kernel::{Kernel, RobustKernel};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar, ScalarAccumulative};
 use crate::topology::spaces::toroidal::ToroidalSpace;
@@ -489,10 +489,11 @@ where
     ///
     /// **Requires at least `2*D + 1` input points** after canonicalization.
     ///
-    /// **Use [`RobustKernel`](crate::geometry::kernel::RobustKernel) or
-    /// [`build_with_kernel`](Self::build_with_kernel)** for reliable results; numerical
-    /// near-degeneracies in the expanded set can cause construction failures with
-    /// `FastKernel`.
+    /// **Use [`RobustKernel`]** for reliable results — pass it via
+    /// [`build_with_kernel`](Self::build_with_kernel). The `build_with_kernel` method
+    /// itself does not provide robustness; reliability depends entirely on the kernel
+    /// type passed. Numerical near-degeneracies in the expanded set can cause
+    /// construction failures with `FastKernel`.
     ///
     /// # Arguments
     ///
@@ -738,7 +739,7 @@ where
     // Build methods
     // -------------------------------------------------------------------------
 
-    /// Builds the triangulation using [`FastKernel<T>`].
+    /// Builds the triangulation using [`RobustKernel<T>`](crate::geometry::kernel::RobustKernel).
     ///
     /// This is the most common build path. Cell data type `V` is inferred or
     /// specified at the call site; it is independent of the vertex data type `U`.
@@ -772,18 +773,22 @@ where
     /// ```
     pub fn build<V>(
         self,
-    ) -> Result<DelaunayTriangulation<FastKernel<T>, U, V, D>, DelaunayTriangulationConstructionError>
+    ) -> Result<
+        DelaunayTriangulation<RobustKernel<T>, U, V, D>,
+        DelaunayTriangulationConstructionError,
+    >
     where
         T: ScalarAccumulative,
         V: DataType,
     {
-        self.build_with_kernel(&FastKernel::new())
+        self.build_with_kernel(&RobustKernel::new())
     }
 
     /// Builds the triangulation using a caller-supplied kernel.
     ///
-    /// Use this when you need [`RobustKernel`](crate::geometry::kernel::RobustKernel) or
-    /// a custom kernel implementation.
+    /// [`build()`](Self::build) already defaults to [`RobustKernel`], so this method is
+    /// only needed when you want a different kernel (e.g. [`FastKernel`](crate::geometry::kernel::FastKernel)
+    /// for 2D-only workloads or a custom implementation).
     ///
     /// # Errors
     ///
@@ -1894,6 +1899,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geometry::kernel::FastKernel;
     use crate::topology::traits::global_topology_model::{
         GlobalTopologyModel, GlobalTopologyModelError,
     };
