@@ -785,8 +785,9 @@ where
 
     /// Builds the triangulation using a caller-supplied kernel.
     ///
-    /// Use this when you need [`RobustKernel`] or
-    /// a custom kernel implementation.
+    /// [`build()`](Self::build) already defaults to [`RobustKernel`], so this method is
+    /// only needed when you want a different kernel (e.g. [`FastKernel`](crate::geometry::kernel::FastKernel)
+    /// for 2D-only workloads or a custom implementation).
     ///
     /// # Errors
     ///

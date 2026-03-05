@@ -2914,7 +2914,7 @@ where
                 );
                 return Err(TriangulationConstructionError::GeometricDegeneracy {
                     message: format!(
-                        "per-insertion Delaunay repair failed at index {index}: {global_err}"
+                        "per-insertion Delaunay repair failed at index {index}: local error: {repair_err}; global fallback: {global_err}"
                     ),
                 }
                 .into());
@@ -7629,5 +7629,154 @@ mod tests {
         assert_eq!(dt.number_of_vertices(), 5);
         assert_eq!(stats.inserted, 5);
         assert!(dt.validate().is_ok());
+    }
+
+    // =========================================================================
+    // Tests for try_d_lt4_global_repair_fallback
+    // =========================================================================
+
+    /// When `use_global_repair_fallback` is false the helper should return an error
+    /// immediately without attempting global repair.
+    #[test]
+    fn test_try_d_lt4_global_repair_fallback_disabled_returns_error() {
+        use crate::core::algorithms::flips::{DelaunayRepairDiagnostics, RepairQueueOrder};
+        init_tracing();
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let repair_err = DelaunayRepairError::NonConvergent {
+            max_flips: 16,
+            diagnostics: DelaunayRepairDiagnostics {
+                facets_checked: 0,
+                flips_performed: 0,
+                max_queue_len: 0,
+                ambiguous_predicates: 0,
+                ambiguous_predicate_samples: Vec::new(),
+                predicate_failures: 0,
+                cycle_detections: 0,
+                cycle_signature_samples: Vec::new(),
+                attempt: 1,
+                queue_order: RepairQueueOrder::Fifo,
+                used_robust_predicates: false,
+            },
+        };
+
+        let result =
+            DelaunayTriangulation::<RobustKernel<f64>, (), (), 3>::try_d_lt4_global_repair_fallback(
+                &mut dt.tri.tds,
+                &dt.tri.kernel,
+                TopologyGuarantee::PLManifold,
+                false, // disabled
+                5,
+                &repair_err,
+            );
+
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("per-insertion Delaunay repair failed at index 5"),
+            "error should mention the index: {err_msg}"
+        );
+    }
+
+    /// When `use_global_repair_fallback` is true and the TDS is already valid,
+    /// global repair succeeds and the helper returns `Ok(())`.
+    #[test]
+    fn test_try_d_lt4_global_repair_fallback_enabled_succeeds_on_valid_tds() {
+        use crate::core::algorithms::flips::{DelaunayRepairDiagnostics, RepairQueueOrder};
+        init_tracing();
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.3, 0.3, 0.3]),
+        ];
+        let mut dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let repair_err = DelaunayRepairError::NonConvergent {
+            max_flips: 16,
+            diagnostics: DelaunayRepairDiagnostics {
+                facets_checked: 0,
+                flips_performed: 0,
+                max_queue_len: 0,
+                ambiguous_predicates: 0,
+                ambiguous_predicate_samples: Vec::new(),
+                predicate_failures: 0,
+                cycle_detections: 0,
+                cycle_signature_samples: Vec::new(),
+                attempt: 1,
+                queue_order: RepairQueueOrder::Fifo,
+                used_robust_predicates: false,
+            },
+        };
+
+        // TDS is valid, so global repair should succeed (nothing to fix).
+        let result =
+            DelaunayTriangulation::<RobustKernel<f64>, (), (), 3>::try_d_lt4_global_repair_fallback(
+                &mut dt.tri.tds,
+                &dt.tri.kernel,
+                TopologyGuarantee::PLManifold,
+                true, // enabled
+                5,
+                &repair_err,
+            );
+
+        assert!(
+            result.is_ok(),
+            "global repair on valid TDS should succeed: {:?}",
+            result.err()
+        );
+    }
+
+    /// Verify the error message includes both local and global error details when
+    /// global repair also fails.
+    #[test]
+    fn test_try_d_lt4_global_repair_fallback_error_includes_both_messages() {
+        init_tracing();
+
+        // Build a 1D triangulation — repair_delaunay_with_flips_k2_k3 returns
+        // UnsupportedDimension for D<2, guaranteeing the global repair fails.
+        let vertices = vec![vertex!([0.0]), vertex!([1.0])];
+        let mut dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 1> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let repair_err = DelaunayRepairError::PostconditionFailed {
+            message: "synthetic local error".to_string(),
+        };
+
+        let result =
+            DelaunayTriangulation::<RobustKernel<f64>, (), (), 1>::try_d_lt4_global_repair_fallback(
+                &mut dt.tri.tds,
+                &dt.tri.kernel,
+                TopologyGuarantee::PLManifold,
+                true, // enabled — but global repair will fail (D=1)
+                7,
+                &repair_err,
+            );
+
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("local error:"),
+            "error should contain local error detail: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("global fallback:"),
+            "error should contain global fallback detail: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("index 7"),
+            "error should contain the index: {err_msg}"
+        );
     }
 }
