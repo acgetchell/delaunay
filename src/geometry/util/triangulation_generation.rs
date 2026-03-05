@@ -116,6 +116,14 @@ where
         .collect()
 }
 
+/// Creates a [`RobustKernel`] configured for degenerate-input handling.
+///
+/// All code paths that build a non-empty triangulation with `RobustKernel` should
+/// use this factory so they share the same predicate configuration.
+fn make_robust_kernel<T: ScalarAccumulative>() -> RobustKernel<T> {
+    RobustKernel::with_config(config_presets::degenerate_robust::<T>())
+}
+
 fn random_triangulation_try_with_vertices<T, U, V, const D: usize>(
     vertices: &[Vertex<T, U, D>],
     min_vertices: usize,
@@ -127,8 +135,7 @@ where
     U: DataType,
     V: DataType,
 {
-    let robust_config = config_presets::degenerate_robust::<T>();
-    let robust_kernel = RobustKernel::with_config(robust_config);
+    let robust_kernel = make_robust_kernel::<T>();
 
     if let Some(dt) =
         random_triangulation_try_build(&robust_kernel, vertices, min_vertices, topology_guarantee)
@@ -362,10 +369,9 @@ where
 {
     // Handle empty triangulation case (0 points)
     if n_points == 0 {
-        let kernel = RobustKernel::new();
         return Ok(
             DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
-                kernel,
+                make_robust_kernel::<T>(),
                 topology_guarantee,
             ),
         );
@@ -648,10 +654,9 @@ where
     {
         // Handle empty triangulation case (0 points)
         if self.n_points == 0 {
-            let kernel = RobustKernel::new();
             return Ok(
                 DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
-                    kernel,
+                    make_robust_kernel::<T>(),
                     self.topology_guarantee,
                 ),
             );
@@ -701,7 +706,7 @@ where
             );
         }
         let dt = DelaunayTriangulation::with_topology_guarantee_and_options(
-            &RobustKernel::new(),
+            &make_robust_kernel::<T>(),
             &vertices,
             self.topology_guarantee,
             self.construction_options,

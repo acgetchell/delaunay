@@ -2738,10 +2738,13 @@ where
             spatial_index: None,
         };
 
-        // During batch construction, enforce topology guarantees:
-        // - PLManifoldStrict: always validate (vertex-link checks) on each insertion
-        // - PLManifold: always validate (ridge-link checks) on each insertion
-        // - Pseudomanifold: keep debug-only strictness for safety without release overhead
+        // During batch construction, use suspicion-driven validation instead of
+        // per-insertion validation.  Running a full O(cells) topology check after
+        // every insertion is prohibitively expensive at scale (O(n²) total).  The
+        // OnSuspicion policy only validates when the insertion logic itself flags a
+        // potential issue (e.g. after rollback/retry).  A comprehensive post-
+        // construction validation in finalize_bulk_construction catches any issues
+        // that slip through.
         let original_validation_policy = dt.tri.validation_policy;
         dt.tri.validation_policy = if dt
             .tri
@@ -2749,7 +2752,7 @@ where
             .requires_vertex_links_during_insertion()
             || dt.tri.topology_guarantee.requires_ridge_links()
         {
-            ValidationPolicy::Always
+            ValidationPolicy::OnSuspicion
         } else {
             ValidationPolicy::DebugOnly
         };
@@ -2844,10 +2847,9 @@ where
             spatial_index: None,
         };
 
-        // During batch construction, enforce topology guarantees:
-        // - PLManifoldStrict: always validate (vertex-link checks) on each insertion
-        // - PLManifold: always validate (ridge-link checks) on each insertion
-        // - Pseudomanifold: keep debug-only strictness for safety without release overhead
+        // During batch construction, use suspicion-driven validation instead of
+        // per-insertion validation (see _with_construction_statistics variant for
+        // rationale: O(n²) avoidance + post-construction catch-all).
         let original_validation_policy = dt.tri.validation_policy;
         dt.tri.validation_policy = if dt
             .tri
@@ -2855,7 +2857,7 @@ where
             .requires_vertex_links_during_insertion()
             || dt.tri.topology_guarantee.requires_ridge_links()
         {
-            ValidationPolicy::Always
+            ValidationPolicy::OnSuspicion
         } else {
             ValidationPolicy::DebugOnly
         };

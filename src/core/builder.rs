@@ -489,10 +489,11 @@ where
     ///
     /// **Requires at least `2*D + 1` input points** after canonicalization.
     ///
-    /// **Use [`RobustKernel`] or
-    /// [`build_with_kernel`](Self::build_with_kernel)** for reliable results; numerical
-    /// near-degeneracies in the expanded set can cause construction failures with
-    /// `FastKernel`.
+    /// **Use [`RobustKernel`]** for reliable results — pass it via
+    /// [`build_with_kernel`](Self::build_with_kernel). The `build_with_kernel` method
+    /// itself does not provide robustness; reliability depends entirely on the kernel
+    /// type passed. Numerical near-degeneracies in the expanded set can cause
+    /// construction failures with `FastKernel`.
     ///
     /// # Arguments
     ///
