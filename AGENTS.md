@@ -46,8 +46,11 @@ When user requests commit message generation:
   take references (`&T`, `&mut T`, `&[T]`) as arguments and return borrowed views (`&T`, `&[T]`) when possible.
   Only take ownership or return `Vec`/allocated data when required.
 - **Error handling**:
-  - All public functions must return `Result` types
-  - Private functions should return `Result` if called from public functions to surface errors properly
+  - Fallible public functions (constructors, I/O, parsing, operations that can fail) must return `Result` types
+  - Infallible public APIs (accessors, `len()`, `is_empty()`, iterators, builder setters) should return values directly
+  - Use `Option` for fallible lookups (e.g., "find vertex by key" returns `Option<&Vertex>`)
+  - Builder setters return `self` for chaining; report fallibility via the final `build()` method
+  - Private functions should return `Result` if called from public fallible functions to surface errors properly
   - As a scientific library, panics are rarely acceptable - prefer explicit error propagation
   - Define error types at the top of the relevant module/file (module-local errors, not centralized)
 - **Preludes**: Keep minimal and orthogonal by function. Users should be able to import well-named preludes to accomplish
