@@ -2745,13 +2745,17 @@ where
         // potential issue (e.g. after rollback/retry).  A comprehensive post-
         // construction validation in finalize_bulk_construction catches any issues
         // that slip through.
+        //
+        // Exception: PLManifoldStrict requires per-insertion vertex-link validation,
+        // so we must use ValidationPolicy::Always to satisfy that guarantee.
         let original_validation_policy = dt.tri.validation_policy;
         dt.tri.validation_policy = if dt
             .tri
             .topology_guarantee
             .requires_vertex_links_during_insertion()
-            || dt.tri.topology_guarantee.requires_ridge_links()
         {
+            ValidationPolicy::Always
+        } else if dt.tri.topology_guarantee.requires_ridge_links() {
             ValidationPolicy::OnSuspicion
         } else {
             ValidationPolicy::DebugOnly
@@ -2850,13 +2854,17 @@ where
         // During batch construction, use suspicion-driven validation instead of
         // per-insertion validation (see _with_construction_statistics variant for
         // rationale: O(n²) avoidance + post-construction catch-all).
+        //
+        // Exception: PLManifoldStrict requires per-insertion vertex-link validation,
+        // so we must use ValidationPolicy::Always to satisfy that guarantee.
         let original_validation_policy = dt.tri.validation_policy;
         dt.tri.validation_policy = if dt
             .tri
             .topology_guarantee
             .requires_vertex_links_during_insertion()
-            || dt.tri.topology_guarantee.requires_ridge_links()
         {
+            ValidationPolicy::Always
+        } else if dt.tri.topology_guarantee.requires_ridge_links() {
             ValidationPolicy::OnSuspicion
         } else {
             ValidationPolicy::DebugOnly
