@@ -37,6 +37,7 @@ use crate::core::collections::{
 };
 use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, FacetHandle, facet_key_from_vertices};
+use crate::core::operations::TopologicalOperation;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::TopologyGuarantee;
 use crate::core::triangulation_data_structure::{CellKey, Tds, VertexKey};
@@ -2569,7 +2570,7 @@ pub(crate) fn repair_delaunay_with_flips_k2_k3<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
     seed_cells: Option<&[CellKey]>,
-    _topology: TopologyGuarantee,
+    topology: TopologyGuarantee,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -2579,6 +2580,15 @@ where
 {
     if D < 2 {
         return Err(FlipError::UnsupportedDimension { dimension: D }.into());
+    }
+
+    let operation = TopologicalOperation::FacetFlip;
+    if !operation.is_admissible_under(topology) {
+        return Err(DelaunayRepairError::InvalidTopology {
+            required: operation.required_topology(),
+            found: topology,
+            message: "flip-based Delaunay repair requires admissible topology",
+        });
     }
 
     // In debug/test builds (especially for 3D+), prefer a fully-robust predicate pass.
@@ -7041,7 +7051,7 @@ mod tests {
             vertex!([0.0, 1.0]),
             vertex!([1.0, 0.2]),
         ];
-        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
         let mut tds = dt.tds().clone();
         let kernel = FastKernel::<f64>::new();

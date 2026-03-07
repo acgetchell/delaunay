@@ -45,9 +45,19 @@ When user requests commit message generation:
 - Prefer borrowed APIs by default:
   take references (`&T`, `&mut T`, `&[T]`) as arguments and return borrowed views (`&T`, `&[T]`) when possible.
   Only take ownership or return `Vec`/allocated data when required.
+- **Error handling**:
+  - Fallible public functions (constructors, I/O, parsing, operations that can fail) must return `Result` types
+  - Infallible public APIs (accessors, `len()`, `is_empty()`, iterators, builder setters) should return values directly
+  - Use `Option` for fallible lookups (e.g., "find vertex by key" returns `Option<&Vertex>`)
+  - Builder setters return `self` for chaining; report fallibility via the final `build()` method
+  - Private functions should return `Result` if called from public fallible functions to surface errors properly
+  - As a scientific library, panics are rarely acceptable - prefer explicit error propagation
+  - Define error types at the top of the relevant module/file (module-local errors, not centralized)
+- **Preludes**: Keep minimal and orthogonal by function. Users should be able to import well-named preludes to accomplish
+  specific goals without bringing in unrelated items.
 - Integration tests in `tests/*.rs` are separate crates; add a crate-level doc comment (`//! ...`) at the top to satisfy clippy `missing_docs` (CI uses `-D warnings`).
 - **Module layout**: Never use `mod.rs`.
-  Declare modules in `src/lib.rs` (and `src/main.rs` for binaries), including nested modules via inline `pub mod foo { pub mod bar; }` when needed.
+  Declare modules in `src/lib.rs`, including nested modules via inline `pub mod foo { pub mod bar; }` when needed.
 
 ### Python
 
@@ -59,21 +69,27 @@ When user requests commit message generation:
 ## Common Commands
 
 ```bash
-just fix              # Apply formatters/auto-fixes (mutating)
+just fix              # Apply formatters/auto-fixes (mutating) - most formatters run automatically
 just check            # Lint/validators (non-mutating)
 just ci               # Full CI run (checks + all tests + examples + bench compile)
-just ci-slow          # CI + slow tests (100+ vertices)
+just ci-slow          # CI + slow tests (100+ vertices) - long-running
 just lint             # All linting
 just test             # Lib and doc tests
 just test-integration # Integration tests (includes proptests)
 just test-all         # All tests (Rust + Python)
 just examples         # Run all examples
+just changelog        # Regenerate CHANGELOG.md from git commits
 ```
+
+## Testing Guidance
+
+- **Property tests**: Integration tests include proptests; failures show seed for reproduction
+- **Documentation**: After Rust changes, run `just doc-check` to verify docs build
+- **Validation order**: Run formatters (`just fix`) before tests to avoid formatting noise in diffs
 
 ### Changelog
 
-- Never edit `CHANGELOG.md` directly - it's auto-generated from git commits
-- Use `just changelog` to regenerate
+- Never edit `CHANGELOG.md` directly - it's auto-generated from git commits via `just changelog`
 
 ### GitHub Issues
 
@@ -95,7 +111,7 @@ When creating or updating issues:
 
 ## Project Context
 
-- **Rust** d-dimensional Delaunay triangulation library (MSRV 1.93.1, Edition 2024)
+- **Rust** d-dimensional Delaunay triangulation library (MSRV 1.94, Edition 2024)
 - **No unsafe code**: `#![forbid(unsafe_code)]`
 - **Architecture**: Generic with `const D: usize` for dimension (tested 2D-5D)
 - **Modules**: `src/core/` (data structures), `src/geometry/` (predicates)

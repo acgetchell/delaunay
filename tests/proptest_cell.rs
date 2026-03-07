@@ -41,7 +41,7 @@ macro_rules! test_cell_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new_with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -62,7 +62,7 @@ macro_rules! test_cell_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new_with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -81,7 +81,7 @@ macro_rules! test_cell_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new_with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -102,7 +102,7 @@ macro_rules! test_cell_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new_with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -122,7 +122,7 @@ macro_rules! test_cell_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), $dim>::new_with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {

@@ -503,9 +503,9 @@ dependencies = [
 
 [[package]]
 name = "la-stack"
-version = "0.1.3"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c3b7c7033c7756d49559f77f0310a2db4c766300a8a968c73c65ec69e0bd834"
+checksum = "c43f3ae1ca1d8304e2f760bf8653ee71520607219b11f0ea30ea761da7245c31"
 
 [[package]]
 name = "lazy_static"
@@ -1155,13 +1155,13 @@ checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
 name = "uuid"
-version = "1.21.0"
+version = "1.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b672338555252d43fd2240c714dc444b8c6fb0a5c5335e65a07bba7742735ddb"
+checksum = "a68d3c8f01c0cfa54a75291d83601161799e4a89a39e0929f4b0354d88757a37"
 dependencies = [
  "getrandom 0.4.1",
  "js-sys",
- "rand 0.9.2",
+ "rand 0.10.0",
  "serde_core",
  "wasm-bindgen",
 ]

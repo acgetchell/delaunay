@@ -156,6 +156,19 @@ pub trait Kernel<const D: usize>: Clone + Default {
 /// For applications requiring guaranteed correctness in degenerate cases,
 /// use [`RobustKernel`] instead.
 ///
+/// # ⚠️ Warning: Unreliable in 3D and Higher Dimensions
+///
+/// **`FastKernel` should not be used for bulk Delaunay triangulation in 3D or higher
+/// dimensions.** Random point sets in 3D+ routinely produce near-co-spherical
+/// configurations that cause `FastKernel`'s in-sphere predicate to misclassify
+/// points, leading to incorrect conflict zones, invalid topology, and construction
+/// failures.
+///
+/// Use [`RobustKernel`] (the default) for all 3D+ work. `FastKernel` remains
+/// suitable for 2D triangulations with well-conditioned input, or when explicitly
+/// opted into via [`DelaunayTriangulation::with_kernel`](crate::core::delaunay_triangulation::DelaunayTriangulation::with_kernel) for advanced use cases
+/// where the caller has verified the input is non-degenerate.
+///
 /// # Performance
 ///
 /// `FastKernel` wraps the standard predicates from [`crate::geometry::predicates`]

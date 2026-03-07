@@ -35,7 +35,7 @@ use crate::core::util::{
     stable_hash_u64_slice,
 };
 use crate::core::vertex::Vertex;
-use crate::geometry::kernel::{FastKernel, Kernel, RobustKernel};
+use crate::geometry::kernel::{Kernel, RobustKernel};
 use crate::geometry::traits::coordinate::{
     CoordinateConversionError, CoordinateScalar, ScalarAccumulative, ScalarSummable,
 };
@@ -1361,13 +1361,13 @@ where
     spatial_index: Option<HashGridIndex<K::Scalar, D>>,
 }
 
-// Most common case: f64 with FastKernel, no vertex or cell data
-impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
+// Most common case: f64 with RobustKernel, no vertex or cell data
+impl<const D: usize> DelaunayTriangulation<RobustKernel<f64>, (), (), D> {
     /// Create a Delaunay triangulation from vertices with no data (most common case).
     ///
     /// This is the simplest constructor for the most common use case:
     /// - f64 coordinates
-    /// - Fast floating-point predicates  
+    /// - Robust adaptive predicates (exact for degenerate/co-spherical configurations)
     /// - No vertex data
     /// - No cell data
     ///
@@ -1435,7 +1435,7 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
     pub fn new(
         vertices: &[Vertex<f64, (), D>],
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
-        Self::with_kernel(&FastKernel::<f64>::new(), vertices)
+        Self::with_kernel(&RobustKernel::<f64>::new(), vertices)
     }
 
     /// Create a Delaunay triangulation and return aggregate construction statistics.
@@ -1456,7 +1456,7 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
         vertices: &[Vertex<f64, (), D>],
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
-        let kernel = FastKernel::<f64>::new();
+        let kernel = RobustKernel::<f64>::new();
         Self::with_topology_guarantee_and_options_with_construction_statistics(
             &kernel,
             vertices,
@@ -1481,7 +1481,7 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
         options: ConstructionOptions,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
-        let kernel = FastKernel::<f64>::new();
+        let kernel = RobustKernel::<f64>::new();
         Self::with_topology_guarantee_and_options_with_construction_statistics(
             &kernel,
             vertices,
@@ -1524,7 +1524,7 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
         vertices: &[Vertex<f64, (), D>],
         options: ConstructionOptions,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
-        let kernel = FastKernel::<f64>::new();
+        let kernel = RobustKernel::<f64>::new();
         Self::with_topology_guarantee_and_options(
             &kernel,
             vertices,
@@ -1567,7 +1567,7 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
         vertices: &[Vertex<f64, (), D>],
         topology_guarantee: TopologyGuarantee,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
-        let kernel = FastKernel::<f64>::new();
+        let kernel = RobustKernel::<f64>::new();
         Self::with_topology_guarantee(&kernel, vertices, topology_guarantee)
     }
 
@@ -1598,7 +1598,7 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
     /// ```
     #[must_use]
     pub fn empty() -> Self {
-        Self::with_empty_kernel(FastKernel::<f64>::new())
+        Self::with_empty_kernel(RobustKernel::<f64>::new())
     }
 
     /// Create an empty Delaunay triangulation with an explicit topology guarantee (fast-kernel convenience).
@@ -1621,7 +1621,10 @@ impl<const D: usize> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
     /// ```
     #[must_use]
     pub fn empty_with_topology_guarantee(topology_guarantee: TopologyGuarantee) -> Self {
-        Self::with_empty_kernel_and_topology_guarantee(FastKernel::<f64>::new(), topology_guarantee)
+        Self::with_empty_kernel_and_topology_guarantee(
+            RobustKernel::<f64>::new(),
+            topology_guarantee,
+        )
     }
 
     /// Create a fluent builder for constructing a Delaunay triangulation.
@@ -2735,18 +2738,25 @@ where
             spatial_index: None,
         };
 
-        // During batch construction, enforce topology guarantees:
-        // - PLManifoldStrict: always validate (vertex-link checks) on each insertion
-        // - PLManifold: always validate (ridge-link checks) on each insertion
-        // - Pseudomanifold: keep debug-only strictness for safety without release overhead
+        // During batch construction, use suspicion-driven validation instead of
+        // per-insertion validation.  Running a full O(cells) topology check after
+        // every insertion is prohibitively expensive at scale (O(n²) total).  The
+        // OnSuspicion policy only validates when the insertion logic itself flags a
+        // potential issue (e.g. after rollback/retry).  A comprehensive post-
+        // construction validation in finalize_bulk_construction catches any issues
+        // that slip through.
+        //
+        // Exception: PLManifoldStrict requires per-insertion vertex-link validation,
+        // so we must use ValidationPolicy::Always to satisfy that guarantee.
         let original_validation_policy = dt.tri.validation_policy;
         dt.tri.validation_policy = if dt
             .tri
             .topology_guarantee
             .requires_vertex_links_during_insertion()
-            || dt.tri.topology_guarantee.requires_ridge_links()
         {
             ValidationPolicy::Always
+        } else if dt.tri.topology_guarantee.requires_ridge_links() {
+            ValidationPolicy::OnSuspicion
         } else {
             ValidationPolicy::DebugOnly
         };
@@ -2841,18 +2851,21 @@ where
             spatial_index: None,
         };
 
-        // During batch construction, enforce topology guarantees:
-        // - PLManifoldStrict: always validate (vertex-link checks) on each insertion
-        // - PLManifold: always validate (ridge-link checks) on each insertion
-        // - Pseudomanifold: keep debug-only strictness for safety without release overhead
+        // During batch construction, use suspicion-driven validation instead of
+        // per-insertion validation (see _with_construction_statistics variant for
+        // rationale: O(n²) avoidance + post-construction catch-all).
+        //
+        // Exception: PLManifoldStrict requires per-insertion vertex-link validation,
+        // so we must use ValidationPolicy::Always to satisfy that guarantee.
         let original_validation_policy = dt.tri.validation_policy;
         dt.tri.validation_policy = if dt
             .tri
             .topology_guarantee
             .requires_vertex_links_during_insertion()
-            || dt.tri.topology_guarantee.requires_ridge_links()
         {
             ValidationPolicy::Always
+        } else if dt.tri.topology_guarantee.requires_ridge_links() {
+            ValidationPolicy::OnSuspicion
         } else {
             ValidationPolicy::DebugOnly
         };
@@ -2877,6 +2890,58 @@ where
         )?;
 
         Ok(dt)
+    }
+
+    /// Handle D<4 local repair non-convergence by falling back to global repair or
+    /// hard-failing to trigger shuffle retry.
+    ///
+    /// Returns `Ok(())` if global repair succeeded (caller should `continue` the
+    /// insertion loop).  Returns `Err(...)` if the caller should propagate the
+    /// construction error.
+    fn try_d_lt4_global_repair_fallback(
+        tds: &mut Tds<K::Scalar, U, V, D>,
+        kernel: &K,
+        topology: TopologyGuarantee,
+        use_global_repair_fallback: bool,
+        index: usize,
+        repair_err: &DelaunayRepairError,
+    ) -> Result<(), DelaunayTriangulationConstructionError>
+    where
+        K::Scalar: ScalarSummable,
+    {
+        if use_global_repair_fallback {
+            tracing::debug!(
+                error = %repair_err,
+                idx = index,
+                "bulk D<4: local repair cycling; falling back to global repair"
+            );
+            let global_result = repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology);
+            if let Err(global_err) = global_result {
+                tracing::debug!(
+                    error = %global_err,
+                    idx = index,
+                    "bulk D<4: global repair also failed; aborting this vertex ordering"
+                );
+                return Err(TriangulationConstructionError::GeometricDegeneracy {
+                    message: format!(
+                        "per-insertion Delaunay repair failed at index {index}: local error: {repair_err}; global fallback: {global_err}"
+                    ),
+                }
+                .into());
+            }
+            return Ok(());
+        }
+        // Global repair disabled (e.g. periodic build): hard-fail to trigger
+        // shuffle retry with a different vertex ordering.
+        tracing::debug!(
+            error = %repair_err,
+            idx = index,
+            "bulk D<4: local repair cycling (global fallback disabled); aborting"
+        );
+        Err(TriangulationConstructionError::GeometricDegeneracy {
+            message: format!("per-insertion Delaunay repair failed at index {index}: {repair_err}"),
+        }
+        .into())
     }
 
     #[allow(clippy::too_many_lines)]
@@ -3009,62 +3074,15 @@ where
                                     };
                                     if let Err(repair_err) = repair_result {
                                         if D < 4 {
-                                            if self.insertion_state.use_global_repair_fallback {
-                                                // Local repair cycling (likely FP
-                                                // co-spherical configuration).  Fall
-                                                // back to global multi-attempt repair.
-                                                tracing::debug!(
-                                                    error = %repair_err,
-                                                    idx = index,
-                                                    "bulk D<4: local repair cycling; \
-                                                     falling back to global repair"
-                                                );
-                                                let global_result = {
-                                                    let (tds, kernel) =
-                                                        (&mut self.tri.tds, &self.tri.kernel);
-                                                    repair_delaunay_with_flips_k2_k3(
-                                                        tds, kernel, None, topology,
-                                                    )
-                                                };
-                                                if let Err(global_err) = global_result {
-                                                    tracing::debug!(
-                                                        error = %global_err,
-                                                        idx = index,
-                                                        "bulk D<4: global repair also failed; \
-                                                         aborting this vertex ordering"
-                                                    );
-                                                    return Err(
-                                                        TriangulationConstructionError::GeometricDegeneracy {
-                                                            message: format!(
-                                                                "per-insertion Delaunay repair \
-                                                                 failed at index {index}: \
-                                                                 {global_err}"
-                                                            ),
-                                                        }
-                                                        .into(),
-                                                    );
-                                                }
-                                                continue;
-                                            }
-                                            // Global repair disabled (e.g. periodic
-                                            // build): hard-fail to trigger shuffle
-                                            // retry with a different vertex ordering.
-                                            tracing::debug!(
-                                                error = %repair_err,
-                                                idx = index,
-                                                "bulk D<4: local repair cycling \
-                                                 (global fallback disabled); aborting"
-                                            );
-                                            return Err(
-                                                TriangulationConstructionError::GeometricDegeneracy {
-                                                    message: format!(
-                                                        "per-insertion Delaunay repair \
-                                                         failed at index {index}: \
-                                                         {repair_err}"
-                                                    ),
-                                                }
-                                                .into(),
-                                            );
+                                            Self::try_d_lt4_global_repair_fallback(
+                                                &mut self.tri.tds,
+                                                &self.tri.kernel,
+                                                topology,
+                                                self.insertion_state.use_global_repair_fallback,
+                                                index,
+                                                &repair_err,
+                                            )?;
+                                            continue;
                                         }
                                         tracing::debug!(
                                             error = %repair_err,
@@ -3198,62 +3216,15 @@ where
                                     };
                                     if let Err(repair_err) = repair_result {
                                         if D < 4 {
-                                            if self.insertion_state.use_global_repair_fallback {
-                                                // Local repair cycling (likely FP
-                                                // co-spherical configuration).  Fall
-                                                // back to global multi-attempt repair.
-                                                tracing::debug!(
-                                                    error = %repair_err,
-                                                    idx = index,
-                                                    "bulk D<4: local repair cycling; \
-                                                     falling back to global repair"
-                                                );
-                                                let global_result = {
-                                                    let (tds, kernel) =
-                                                        (&mut self.tri.tds, &self.tri.kernel);
-                                                    repair_delaunay_with_flips_k2_k3(
-                                                        tds, kernel, None, topology,
-                                                    )
-                                                };
-                                                if let Err(global_err) = global_result {
-                                                    tracing::debug!(
-                                                        error = %global_err,
-                                                        idx = index,
-                                                        "bulk D<4: global repair also failed; \
-                                                         aborting this vertex ordering"
-                                                    );
-                                                    return Err(
-                                                        TriangulationConstructionError::GeometricDegeneracy {
-                                                            message: format!(
-                                                                "per-insertion Delaunay repair \
-                                                                 failed at index {index}: \
-                                                                 {global_err}"
-                                                            ),
-                                                        }
-                                                        .into(),
-                                                    );
-                                                }
-                                                continue;
-                                            }
-                                            // Global repair disabled (e.g. periodic
-                                            // build): hard-fail to trigger shuffle
-                                            // retry with a different vertex ordering.
-                                            tracing::debug!(
-                                                error = %repair_err,
-                                                idx = index,
-                                                "bulk D<4: local repair cycling \
-                                                 (global fallback disabled); aborting"
-                                            );
-                                            return Err(
-                                                TriangulationConstructionError::GeometricDegeneracy {
-                                                    message: format!(
-                                                        "per-insertion Delaunay repair \
-                                                         failed at index {index}: \
-                                                         {repair_err}"
-                                                    ),
-                                                }
-                                                .into(),
-                                            );
+                                            Self::try_d_lt4_global_repair_fallback(
+                                                &mut self.tri.tds,
+                                                &self.tri.kernel,
+                                                topology,
+                                                self.insertion_state.use_global_repair_fallback,
+                                                index,
+                                                &repair_err,
+                                            )?;
+                                            continue;
                                         }
                                         tracing::debug!(
                                             error = %repair_err,
@@ -5576,10 +5547,10 @@ where
     }
 }
 
-/// Custom `Deserialize` implementation for the common case: `FastKernel<f64>` with no custom data.
+/// Custom `Deserialize` implementation for the common case: `RobustKernel<f64>` with no custom data.
 ///
 /// This specialization provides convenient deserialization for the most common use case:
-/// triangulations with `f64` coordinates, `FastKernel`, and no custom vertex/cell data.
+/// triangulations with `f64` coordinates, `RobustKernel`, and no custom vertex/cell data.
 ///
 /// # Why This Specialization?
 ///
@@ -5587,7 +5558,7 @@ where
 /// the `Tds` (which contains all the geometric and topological data), then reconstruct
 /// the kernel wrapper on deserialization.
 ///
-/// This specialization is limited to `FastKernel<f64>` because:
+/// This specialization is limited to `RobustKernel<f64>` because:
 /// - It's the most common configuration (matches `DelaunayTriangulation::new()` default)
 /// - Rust doesn't allow overlapping `impl` blocks for generic types
 /// - Custom kernels are rare and can deserialize manually
@@ -5600,7 +5571,7 @@ where
 ///
 /// # Usage with Custom Kernels
 ///
-/// If you're using a custom kernel (e.g., `RobustKernel`) or custom data types,
+/// If you're using a custom kernel (e.g., `FastKernel`) or custom data types,
 /// deserialize the `Tds` directly and reconstruct with [`from_tds()`](Self::from_tds):
 ///
 /// ```rust
@@ -5614,16 +5585,16 @@ where
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new(&vertices)?;
+/// let dt = DelaunayTriangulation::<_, (), (), 3>::new(&vertices)?;
 /// let json = serde_json::to_string(&dt)?;
 ///
-/// // Deserialize with custom kernel
+/// // Deserialize with different kernel
 /// let tds: Tds<f64, (), (), 3> = serde_json::from_str(&json)?;
-/// let dt_robust = DelaunayTriangulation::from_tds(tds, RobustKernel::new());
+/// let dt_fast = DelaunayTriangulation::from_tds(tds, FastKernel::new());
 /// # Ok(())
 /// # }
 /// ```
-impl<'de, const D: usize> Deserialize<'de> for DelaunayTriangulation<FastKernel<f64>, (), (), D>
+impl<'de, const D: usize> Deserialize<'de> for DelaunayTriangulation<RobustKernel<f64>, (), (), D>
 where
     Tds<f64, (), (), D>: Deserialize<'de>,
 {
@@ -5632,7 +5603,7 @@ where
         De: Deserializer<'de>,
     {
         let tds = Tds::deserialize(deserializer)?;
-        Ok(Self::from_tds(tds, FastKernel::new()))
+        Ok(Self::from_tds(tds, RobustKernel::new()))
     }
 }
 
@@ -5885,6 +5856,34 @@ mod tests {
     }
 
     #[test]
+    fn test_construction_options_global_repair_fallback_toggle() {
+        init_tracing();
+        let default_opts = ConstructionOptions::default();
+        assert!(
+            default_opts.use_global_repair_fallback,
+            "default should enable global repair fallback"
+        );
+
+        let disabled_opts = default_opts.without_global_repair_fallback();
+        assert!(
+            !disabled_opts.use_global_repair_fallback,
+            "without_global_repair_fallback should disable the flag"
+        );
+
+        // Chaining with other builders should preserve the flag.
+        let chained_opts = ConstructionOptions::default()
+            .with_insertion_order(InsertionOrderStrategy::Input)
+            .without_global_repair_fallback()
+            .with_retry_policy(RetryPolicy::Disabled);
+        assert!(!chained_opts.use_global_repair_fallback);
+        assert_eq!(
+            chained_opts.insertion_order(),
+            InsertionOrderStrategy::Input
+        );
+        assert_eq!(chained_opts.retry_policy(), RetryPolicy::Disabled);
+    }
+
+    #[test]
     fn test_new_with_options_smoke_3d() {
         init_tracing();
         let vertices: Vec<Vertex<f64, (), 3>> = vec![
@@ -5895,7 +5894,7 @@ mod tests {
         ];
 
         let opts = ConstructionOptions::default().with_retry_policy(RetryPolicy::Disabled);
-        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+        let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new_with_options(&vertices, opts).unwrap();
 
         assert_eq!(dt.number_of_vertices(), 4);
@@ -6196,7 +6195,7 @@ mod tests {
         let opts = ConstructionOptions::default()
             .with_dedup_policy(DedupPolicy::Epsilon { tolerance: 1e-10 })
             .with_retry_policy(RetryPolicy::Disabled);
-        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+        let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new_with_options(&vertices, opts).unwrap();
 
         assert_eq!(dt.number_of_vertices(), 5);
@@ -6320,7 +6319,7 @@ mod tests {
                 .with_insertion_order(insertion_order)
                 .with_retry_policy(RetryPolicy::Disabled);
 
-            let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+            let dt: DelaunayTriangulation<_, (), (), 3> =
                 DelaunayTriangulation::new_with_options(&vertices, opts).unwrap();
 
             assert_eq!(dt.number_of_vertices(), 5);
@@ -6346,7 +6345,7 @@ mod tests {
                 base_seed: Some(123),
             });
 
-        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+        let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new_with_options(&vertices, opts).unwrap();
 
         assert_eq!(dt.number_of_vertices(), 5);
@@ -6362,15 +6361,14 @@ mod tests {
             vertex!([0.0, 1.0]),
         ];
 
-        let dt_new: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let dt_new: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
         assert_eq!(dt_new.topology_guarantee(), TopologyGuarantee::PLManifold);
 
-        let dt_empty: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::empty();
+        let dt_empty: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
         assert_eq!(dt_empty.topology_guarantee(), TopologyGuarantee::PLManifold);
 
-        let dt_with_kernel: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let dt_with_kernel: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
 
         assert_eq!(
@@ -6378,7 +6376,7 @@ mod tests {
             TopologyGuarantee::PLManifold
         );
 
-        let dt_from_tds: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let dt_from_tds: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::from_tds(dt_new.tds().clone(), FastKernel::new());
         assert_eq!(
             dt_from_tds.topology_guarantee(),
@@ -6389,8 +6387,7 @@ mod tests {
     #[test]
     fn test_set_topology_guarantee_updates_underlying_triangulation() {
         init_tracing();
-        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::empty();
+        let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
 
         assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
         assert_eq!(dt.tri.topology_guarantee, TopologyGuarantee::PLManifold);
@@ -6409,7 +6406,7 @@ mod tests {
             vertex!([0.0, 1.0]),
         ];
 
-        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new_with_topology_guarantee(
                 &vertices,
                 TopologyGuarantee::PLManifold,
@@ -6434,8 +6431,7 @@ mod tests {
     #[test]
     fn test_set_delaunay_check_policy_updates_state() {
         init_tracing();
-        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::empty();
+        let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
         assert_eq!(dt.delaunay_check_policy(), DelaunayCheckPolicy::EndOnly);
 
         let policy = DelaunayCheckPolicy::EveryN(NonZeroUsize::new(3).unwrap());
@@ -6451,7 +6447,7 @@ mod tests {
     fn test_should_run_delaunay_repair_for_skips_for_dimension_lt_2() {
         init_tracing();
         let vertices: Vec<Vertex<f64, (), 1>> = vec![vertex!([0.0]), vertex!([1.0])];
-        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 1> =
+        let dt: DelaunayTriangulation<_, (), (), 1> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
         assert_eq!(dt.number_of_cells(), 1);
@@ -6465,7 +6461,7 @@ mod tests {
     #[test]
     fn test_should_run_delaunay_repair_for_skips_when_no_cells() {
         init_tracing();
-        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> = DelaunayTriangulation::empty();
+        let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
 
         assert_eq!(dt.number_of_cells(), 0);
         assert_eq!(
@@ -6483,7 +6479,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
         assert_eq!(dt.number_of_cells(), 1);
@@ -6499,7 +6495,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
-        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
         dt.set_delaunay_repair_policy(DelaunayRepairPolicy::EveryN(NonZeroUsize::new(2).unwrap()));
@@ -6518,7 +6514,7 @@ mod tests {
             vertex!([0.0, 1.0]),
             vertex!([1.0, 0.2]),
         ];
-        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
         let before_vertices = dt.number_of_vertices();
@@ -6543,7 +6539,7 @@ mod tests {
             vertex!([0.0, 1.0]),
             vertex!([1.0, 1.0]),
         ];
-        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
         let inserted = vertex!([0.25, 0.25]);
@@ -6598,7 +6594,8 @@ mod tests {
                 vertices.push(vertex!(coords));
             }
 
-            let Ok(mut dt) = DelaunayTriangulation::<FastKernel<f64>, (), (), DIM>::new(&vertices)
+            let Ok(mut dt) =
+                DelaunayTriangulation::<RobustKernel<f64>, (), (), DIM>::new(&vertices)
             else {
                 continue;
             };
@@ -6647,7 +6644,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+        let mut dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
         dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
         let original_vertex_count = dt.number_of_vertices();
@@ -6687,7 +6684,7 @@ mod tests {
             vertex!([1.0, 1.0]),
         ];
 
-        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
         dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
@@ -6918,7 +6915,7 @@ mod tests {
         assert_eq!(dt_new.validation_policy(), ValidationPolicy::OnSuspicion);
 
         // with_kernel() constructor path should also use the default policy
-        let dt_with_kernel: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let dt_with_kernel: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
         assert_eq!(
             dt_with_kernel.validation_policy(),
@@ -6929,7 +6926,7 @@ mod tests {
         // default to OnSuspicion.
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
-        let dt_from_tds: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+        let dt_from_tds: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::from_tds(tds, FastKernel::new());
         assert_eq!(
             dt_from_tds.validation_policy(),
@@ -7515,12 +7512,11 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+        let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
         let json = serde_json::to_string(&dt).unwrap();
-        let roundtrip: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
-            serde_json::from_str(&json).unwrap();
+        let roundtrip: DelaunayTriangulation<_, (), (), 3> = serde_json::from_str(&json).unwrap();
 
         assert_eq!(roundtrip.number_of_vertices(), dt.number_of_vertices());
         assert_eq!(roundtrip.number_of_cells(), dt.number_of_cells());
@@ -7618,7 +7614,7 @@ mod tests {
             // 5th vertex: triggers one iteration of insert_remaining_vertices_seeded
             vertex!([0.3, 0.3, 0.3]),
         ];
-        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 3> =
+        let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
         assert_eq!(dt.number_of_vertices(), 5);
         assert!(dt.validate().is_ok());
@@ -7638,12 +7634,159 @@ mod tests {
             vertex!([0.3, 0.3, 0.3]),
         ];
         let (dt, stats) =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::new_with_construction_statistics(
-                &vertices,
-            )
-            .unwrap();
+            DelaunayTriangulation::<_, (), (), 3>::new_with_construction_statistics(&vertices)
+                .unwrap();
         assert_eq!(dt.number_of_vertices(), 5);
         assert_eq!(stats.inserted, 5);
         assert!(dt.validate().is_ok());
+    }
+
+    // =========================================================================
+    // Tests for try_d_lt4_global_repair_fallback
+    // =========================================================================
+
+    /// When `use_global_repair_fallback` is false the helper should return an error
+    /// immediately without attempting global repair.
+    #[test]
+    fn test_try_d_lt4_global_repair_fallback_disabled_returns_error() {
+        use crate::core::algorithms::flips::{DelaunayRepairDiagnostics, RepairQueueOrder};
+        init_tracing();
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let repair_err = DelaunayRepairError::NonConvergent {
+            max_flips: 16,
+            diagnostics: DelaunayRepairDiagnostics {
+                facets_checked: 0,
+                flips_performed: 0,
+                max_queue_len: 0,
+                ambiguous_predicates: 0,
+                ambiguous_predicate_samples: Vec::new(),
+                predicate_failures: 0,
+                cycle_detections: 0,
+                cycle_signature_samples: Vec::new(),
+                attempt: 1,
+                queue_order: RepairQueueOrder::Fifo,
+                used_robust_predicates: false,
+            },
+        };
+
+        let result =
+            DelaunayTriangulation::<RobustKernel<f64>, (), (), 3>::try_d_lt4_global_repair_fallback(
+                &mut dt.tri.tds,
+                &dt.tri.kernel,
+                TopologyGuarantee::PLManifold,
+                false, // disabled
+                5,
+                &repair_err,
+            );
+
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("per-insertion Delaunay repair failed at index 5"),
+            "error should mention the index: {err_msg}"
+        );
+    }
+
+    /// When `use_global_repair_fallback` is true and the TDS is already valid,
+    /// global repair succeeds and the helper returns `Ok(())`.
+    #[test]
+    fn test_try_d_lt4_global_repair_fallback_enabled_succeeds_on_valid_tds() {
+        use crate::core::algorithms::flips::{DelaunayRepairDiagnostics, RepairQueueOrder};
+        init_tracing();
+
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.3, 0.3, 0.3]),
+        ];
+        let mut dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let repair_err = DelaunayRepairError::NonConvergent {
+            max_flips: 16,
+            diagnostics: DelaunayRepairDiagnostics {
+                facets_checked: 0,
+                flips_performed: 0,
+                max_queue_len: 0,
+                ambiguous_predicates: 0,
+                ambiguous_predicate_samples: Vec::new(),
+                predicate_failures: 0,
+                cycle_detections: 0,
+                cycle_signature_samples: Vec::new(),
+                attempt: 1,
+                queue_order: RepairQueueOrder::Fifo,
+                used_robust_predicates: false,
+            },
+        };
+
+        // TDS is valid, so global repair should succeed (nothing to fix).
+        let result =
+            DelaunayTriangulation::<RobustKernel<f64>, (), (), 3>::try_d_lt4_global_repair_fallback(
+                &mut dt.tri.tds,
+                &dt.tri.kernel,
+                TopologyGuarantee::PLManifold,
+                true, // enabled
+                5,
+                &repair_err,
+            );
+
+        assert!(
+            result.is_ok(),
+            "global repair on valid TDS should succeed: {:?}",
+            result.err()
+        );
+    }
+
+    /// Verify the error message includes both local and global error details when
+    /// global repair also fails.
+    #[test]
+    fn test_try_d_lt4_global_repair_fallback_error_includes_both_messages() {
+        init_tracing();
+
+        // Build a 1D triangulation — repair_delaunay_with_flips_k2_k3 returns
+        // UnsupportedDimension for D<2, guaranteeing the global repair fails.
+        let vertices = vec![vertex!([0.0]), vertex!([1.0])];
+        let mut dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 1> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let repair_err = DelaunayRepairError::PostconditionFailed {
+            message: "synthetic local error".to_string(),
+        };
+
+        let result =
+            DelaunayTriangulation::<RobustKernel<f64>, (), (), 1>::try_d_lt4_global_repair_fallback(
+                &mut dt.tri.tds,
+                &dt.tri.kernel,
+                TopologyGuarantee::PLManifold,
+                true, // enabled — but global repair will fail (D=1)
+                7,
+                &repair_err,
+            );
+
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("local error:"),
+            "error should contain local error detail: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("global fallback:"),
+            "error should contain global fallback detail: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("index 7"),
+            "error should contain the index: {err_msg}"
+        );
     }
 }

@@ -56,6 +56,10 @@ macro_rules! generate_memory_analysis {
             clippy::too_many_lines,
             reason = "Example keeps analysis flow in one function for readability"
         )]
+        #[expect(
+            clippy::result_large_err,
+            reason = "ConvexHullConstructionError contains TdsValidationError which is large; performance impact is negligible in this example"
+        )]
         fn $name(point_counts: &[usize], seeds: &[u64]) {
             let mut any_success = false;
             for &n_points in point_counts {
