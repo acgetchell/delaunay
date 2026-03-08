@@ -248,11 +248,15 @@ where
     ) -> Result<i32, CoordinateConversionError> {
         // Use insphere_lifted for optimal performance (5.3x faster in 3D)
         let result = insphere_lifted(simplex_points, *test_point).map_err(|e| {
-            CoordinateConversionError::ConversionFailed {
-                coordinate_index: 0,
-                coordinate_value: format!("{e}"),
-                from_type: "insphere_lifted",
-                to_type: "in_sphere",
+            // Preserve original CoordinateConversionError if present
+            match e {
+                crate::core::cell::CellValidationError::CoordinateConversion { source } => source,
+                _ => CoordinateConversionError::ConversionFailed {
+                    coordinate_index: 0,
+                    coordinate_value: format!("{e}"),
+                    from_type: "insphere_lifted",
+                    to_type: "in_sphere",
+                },
             }
         })?;
         Ok(match result {
