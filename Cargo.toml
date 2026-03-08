@@ -53,6 +53,10 @@ dense-slotmap = [  ] # Use DenseSlotMap-backed internal storage (default)
 slow-tests = [
 ] # Enable slow-running integration tests (100+ vertices, multiple dimensions)
 
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
 [[bench]]
 name = "circumsphere_containment"
 path = "benches/circumsphere_containment.rs"

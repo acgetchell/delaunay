@@ -7,7 +7,7 @@
 #![forbid(unsafe_code)]
 
 use crate::geometry::point::Point;
-use crate::geometry::predicates::{InSphere, Orientation, insphere, simplex_orientation};
+use crate::geometry::predicates::{InSphere, Orientation, insphere_lifted, simplex_orientation};
 use crate::geometry::robust_predicates::{
     RobustPredicateConfig, config_presets, robust_insphere, robust_orientation,
 };
@@ -246,7 +246,15 @@ where
         simplex_points: &[Point<Self::Scalar, D>],
         test_point: &Point<Self::Scalar, D>,
     ) -> Result<i32, CoordinateConversionError> {
-        let result = insphere(simplex_points, *test_point)?;
+        // Use insphere_lifted for optimal performance (5.3x faster in 3D)
+        let result = insphere_lifted(simplex_points, *test_point).map_err(|e| {
+            CoordinateConversionError::ConversionFailed {
+                coordinate_index: 0,
+                coordinate_value: format!("{e}"),
+                from_type: "insphere_lifted",
+                to_type: "in_sphere",
+            }
+        })?;
         Ok(match result {
             InSphere::OUTSIDE => -1,
             InSphere::BOUNDARY => 0,
