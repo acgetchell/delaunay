@@ -19,7 +19,7 @@ readme = "README.md"
 allocation-counter = { version = "0.8.1", optional = true } # for memory profiling
 arc-swap = "1.8.2"
 derive_builder = "0.20.2"
-la-stack = "0.2.0"
+la-stack = { version = "0.2.1", features = [ "exact" ] }
 tracing = "0.1.44"
 rustc-hash = "2.1.1" # Fast non-cryptographic hashing for performance
 smallvec = { version = "1.15.1", features = [ "serde" ] } # Stack allocation for small collections

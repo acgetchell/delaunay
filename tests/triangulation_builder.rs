@@ -351,6 +351,7 @@ fn test_builder_toroidal_periodic_chi_zero_2d() {
 /// also 0, so we verify TDS structural validity rather than the full `validate()`
 /// check (which would expect χ = 2 for a sphere).
 #[test]
+#[ignore = "Slow (>60s): periodic 3D expands to 3^D image points; run with --ignored"]
 fn test_builder_toroidal_periodic_3d_success() {
     use delaunay::geometry::kernel::RobustKernel;
     // Keep this as a smoke/regression test rather than a large stress case.

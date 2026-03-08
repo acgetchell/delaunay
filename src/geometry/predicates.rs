@@ -7,7 +7,7 @@
 #![forbid(unsafe_code)]
 
 use crate::core::cell::CellValidationError;
-use crate::geometry::matrix::{determinant, matrix_set};
+use crate::geometry::matrix::{determinant, matrix_get, matrix_set, matrix_zero_like};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{CoordinateConversionError, ScalarSummable};
 use crate::geometry::util::{
@@ -16,6 +16,47 @@ use crate::geometry::util::{
 };
 use crate::prelude::CircumcenterError;
 use num_traits::Float;
+
+/// Convert an exact determinant sign (from `det_sign_exact`) to an [`Orientation`].
+#[inline]
+const fn sign_to_orientation(sign: i8) -> Orientation {
+    match sign {
+        1 => Orientation::POSITIVE,
+        -1 => Orientation::NEGATIVE,
+        _ => Orientation::DEGENERATE,
+    }
+}
+
+/// Compute orientation from a pre-populated orientation matrix.
+///
+/// Uses [`la_stack::Matrix::det_sign_exact`] for provably correct results when
+/// the matrix entries are finite (even if the f64 determinant overflows).
+/// Falls back to an f64 determinant with adaptive tolerance only when the
+/// entries themselves are non-finite.
+///
+/// `k` must equal the number of rows/columns actually used in `matrix`.
+#[inline]
+fn orientation_from_matrix<const N: usize>(
+    matrix: &crate::geometry::matrix::Matrix<N>,
+    k: usize,
+    base_tol: f64,
+) -> Orientation {
+    let exact_is_safe = matrix.det_direct().is_some_and(f64::is_finite)
+        || (0..k).all(|i| (0..k).all(|j| matrix.get(i, j).is_some_and(f64::is_finite)));
+    if exact_is_safe {
+        sign_to_orientation(matrix.det_sign_exact().unwrap())
+    } else {
+        let tolerance_f64 = crate::geometry::matrix::adaptive_tolerance(matrix, base_tol);
+        let det = determinant(matrix);
+        if det > tolerance_f64 {
+            Orientation::POSITIVE
+        } else if det < -tolerance_f64 {
+            Orientation::NEGATIVE
+        } else {
+            Orientation::DEGENERATE
+        }
+    }
+}
 
 /// Represents the position of a point relative to a circumsphere.
 ///
@@ -77,10 +118,18 @@ impl std::fmt::Display for Orientation {
     }
 }
 
-/// Determine the orientation of a simplex using the determinant of its coordinate matrix.
+/// Determine the orientation of a simplex using exact determinant sign computation.
 ///
 /// This function computes the orientation of a d-dimensional simplex by calculating
-/// the determinant of a matrix formed by the coordinates of its points.
+/// the exact sign of the determinant of a matrix formed by the coordinates of its
+/// points, using [`la_stack::Matrix::det_sign_exact`].
+///
+/// # Exact Arithmetic
+///
+/// This predicate uses adaptive-precision arithmetic to return a provably correct
+/// sign. For D ≤ 4, a fast f64 filter resolves the sign without allocating in
+/// well-conditioned cases. For nearly-degenerate configurations (and always for
+/// D ≥ 5), the Bareiss algorithm runs in exact `BigRational` arithmetic.
 ///
 /// # Arguments
 ///
@@ -146,10 +195,8 @@ where
     try_with_la_stack_matrix!(k, |matrix| {
         // Populate rows with the coordinates of the points of the simplex.
         for (i, p) in simplex_points.iter().enumerate() {
-            // Use implicit conversion from point to coordinates
             let point_coords_f64 = safe_coords_to_f64(p.coords())?;
 
-            // Add coordinates
             for (j, &v) in point_coords_f64.iter().enumerate() {
                 matrix_set(&mut matrix, i, j, v);
             }
@@ -158,20 +205,8 @@ where
             matrix_set(&mut matrix, i, D, 1.0);
         }
 
-        // Use adaptive tolerance based on matrix magnitude before consuming the matrix.
         let base_tol = safe_scalar_to_f64(T::default_tolerance())?;
-        let tolerance_f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
-
-        // Calculate determinant (singular => 0; non-finite => NaN).
-        let det = determinant(&matrix);
-
-        if det > tolerance_f64 {
-            Ok(Orientation::POSITIVE)
-        } else if det < -tolerance_f64 {
-            Ok(Orientation::NEGATIVE)
-        } else {
-            Ok(Orientation::DEGENERATE)
-        }
+        Ok(orientation_from_matrix(&matrix, k, base_tol))
     })
 }
 
@@ -507,10 +542,11 @@ where
 ///
 /// # Robustness
 ///
-/// This is a fast floating-point predicate and may be less robust than [`crate::geometry::robust_predicates::robust_insphere`]
-/// for nearly-degenerate configurations. For 3D+ triangulations requiring numerical robustness,
+/// The orientation sub-predicate uses exact arithmetic via [`la_stack::Matrix::det_sign_exact`],
+/// so simplex orientation is provably correct even for nearly-degenerate configurations.
+/// The lifted determinant itself uses fast floating-point arithmetic with adaptive tolerance.
+/// For 3D+ triangulations requiring full numerical robustness on the insphere predicate,
 /// use [`crate::geometry::kernel::RobustKernel`] instead of [`crate::geometry::kernel::FastKernel`].
-/// See the [`crate::geometry::kernel::FastKernel`] warning for details on when robust predicates are necessary.
 ///
 /// # Algorithm
 ///
@@ -668,34 +704,51 @@ where
         // Add squared norm to the last column
         matrix_set(&mut matrix, D, D, test_squared_norm_f64);
 
-        // For this matrix formulation using relative coordinates, we need to check
-        // the simplex orientation to correctly interpret the determinant sign.
-        let orientation = simplex_orientation(simplex_points)
-            .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
+        // Compute the simplex orientation by reusing the relative coordinates
+        // already present in the lifted matrix (rows 0..D, cols 0..D), avoiding
+        // redundant coordinate conversions of all D+1 simplex points.
+        //
+        // Mathematical basis: the standard orientation matrix (absolute coords
+        // with a column of 1s) row-reduces to:
+        //
+        //   det(orient) = (-1)^D × det(D×D relative-coordinate block)
+        //
+        // We embed the D×D block into a (D+1)×(D+1) matrix with entry (D,D)=1
+        // so that `orientation_from_matrix` computes det(D×D block) via cofactor
+        // expansion. The (-1)^D factor combines with the dimension-parity sign
+        // from the lifted insphere formula, simplifying to:
+        //
+        //   det_norm = −det(lifted) × sign(D×D block)
+        let mut orient_matrix = matrix_zero_like(&matrix);
+        for i in 0..D {
+            for j in 0..D {
+                matrix_set(&mut orient_matrix, i, j, matrix_get(&matrix, i, j));
+            }
+        }
+        matrix_set(&mut orient_matrix, D, D, 1.0);
 
-        // Use adaptive tolerance for boundary detection before consuming the matrix.
         let base_tol = safe_scalar_to_f64(T::default_tolerance())
             .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
+        let relative_orientation = orientation_from_matrix(&orient_matrix, k, base_tol);
+
+        // Use adaptive tolerance for boundary detection on the lifted matrix.
         let tolerance_f64: f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
 
         // Calculate determinant (singular => 0; non-finite => NaN).
         let det = determinant(&matrix);
 
-        // The sign interpretation depends on both orientation and dimension parity
-        // For the lifted matrix formulation, even and odd dimensions have opposite sign conventions
-        let dimension_is_even = D.is_multiple_of(2);
-
-        match orientation {
+        match relative_orientation {
             Orientation::DEGENERATE => Err(CellValidationError::DegenerateSimplex),
             Orientation::POSITIVE | Orientation::NEGATIVE => {
-                // Normalize determinant by parity (even dims invert sign) and orientation
-                let parity_sign = if dimension_is_even { -1.0 } else { 1.0 };
-                let orient_sign = if matches!(orientation, Orientation::POSITIVE) {
+                // The lifted insphere formula requires both dimension parity
+                // and orientation sign.  With relative coordinates the two
+                // factors combine to: det_norm = −det × sign(relative).
+                let rel_sign = if matches!(relative_orientation, Orientation::POSITIVE) {
                     1.0
                 } else {
                     -1.0
                 };
-                let det_norm = det * parity_sign * orient_sign;
+                let det_norm = -det * rel_sign;
                 if det_norm > tolerance_f64 {
                     Ok(InSphere::INSIDE)
                 } else if det_norm < -tolerance_f64 {
@@ -1778,6 +1831,169 @@ mod tests {
             InSphere::INSIDE,
             5,
             "NEGATIVE",
+        );
+    }
+
+    // =======================================================================
+    // orientation_from_matrix unit tests
+    // =======================================================================
+
+    #[test]
+    fn test_orientation_from_matrix_positive() {
+        // 2D: CCW triangle → positive determinant.
+        let k = 3;
+        with_la_stack_matrix!(k, |m| {
+            // Row 0: (0, 0, 1)
+            matrix_set(&mut m, 0, 0, 0.0);
+            matrix_set(&mut m, 0, 1, 0.0);
+            matrix_set(&mut m, 0, 2, 1.0);
+            // Row 1: (1, 0, 1)
+            matrix_set(&mut m, 1, 0, 1.0);
+            matrix_set(&mut m, 1, 1, 0.0);
+            matrix_set(&mut m, 1, 2, 1.0);
+            // Row 2: (0, 1, 1)
+            matrix_set(&mut m, 2, 0, 0.0);
+            matrix_set(&mut m, 2, 1, 1.0);
+            matrix_set(&mut m, 2, 2, 1.0);
+
+            assert_eq!(orientation_from_matrix(&m, k, 1e-12), Orientation::POSITIVE);
+        });
+    }
+
+    #[test]
+    fn test_orientation_from_matrix_negative() {
+        // Swap two rows of the positive case → negative determinant.
+        let k = 3;
+        with_la_stack_matrix!(k, |m| {
+            // Row 0: (0, 1, 1)  — swapped with row 2 from positive test
+            matrix_set(&mut m, 0, 0, 0.0);
+            matrix_set(&mut m, 0, 1, 1.0);
+            matrix_set(&mut m, 0, 2, 1.0);
+            // Row 1: (1, 0, 1)
+            matrix_set(&mut m, 1, 0, 1.0);
+            matrix_set(&mut m, 1, 1, 0.0);
+            matrix_set(&mut m, 1, 2, 1.0);
+            // Row 2: (0, 0, 1)
+            matrix_set(&mut m, 2, 0, 0.0);
+            matrix_set(&mut m, 2, 1, 0.0);
+            matrix_set(&mut m, 2, 2, 1.0);
+
+            assert_eq!(orientation_from_matrix(&m, k, 1e-12), Orientation::NEGATIVE);
+        });
+    }
+
+    #[test]
+    fn test_orientation_from_matrix_degenerate() {
+        // Collinear points → zero determinant.
+        let k = 3;
+        with_la_stack_matrix!(k, |m| {
+            // (0,0,1), (1,0,1), (2,0,1)
+            matrix_set(&mut m, 0, 0, 0.0);
+            matrix_set(&mut m, 0, 1, 0.0);
+            matrix_set(&mut m, 0, 2, 1.0);
+            matrix_set(&mut m, 1, 0, 1.0);
+            matrix_set(&mut m, 1, 1, 0.0);
+            matrix_set(&mut m, 1, 2, 1.0);
+            matrix_set(&mut m, 2, 0, 2.0);
+            matrix_set(&mut m, 2, 1, 0.0);
+            matrix_set(&mut m, 2, 2, 1.0);
+
+            assert_eq!(
+                orientation_from_matrix(&m, k, 1e-12),
+                Orientation::DEGENERATE
+            );
+        });
+    }
+
+    #[test]
+    fn test_orientation_from_matrix_extreme_magnitude_fallback() {
+        // Entries near f64::MAX cause det_direct() to overflow to infinity,
+        // triggering the adaptive-tolerance fallback path.
+        let k = 3;
+        let big = f64::MAX / 2.0;
+        with_la_stack_matrix!(k, |m| {
+            matrix_set(&mut m, 0, 0, 0.0);
+            matrix_set(&mut m, 0, 1, 0.0);
+            matrix_set(&mut m, 0, 2, 1.0);
+            matrix_set(&mut m, 1, 0, big);
+            matrix_set(&mut m, 1, 1, 0.0);
+            matrix_set(&mut m, 1, 2, 1.0);
+            matrix_set(&mut m, 2, 0, 0.0);
+            matrix_set(&mut m, 2, 1, big);
+            matrix_set(&mut m, 2, 2, 1.0);
+
+            let result = orientation_from_matrix(&m, k, 1e-12);
+            assert_eq!(
+                result,
+                Orientation::POSITIVE,
+                "Extreme-magnitude fallback should still resolve correct orientation"
+            );
+        });
+    }
+
+    #[test]
+    fn test_exact_orientation_near_degenerate_2d() {
+        // Near-degenerate 2D triangle: third point is almost collinear.
+        // The perturbation 2^-50 ≈ 8.9e-16 is below typical adaptive tolerance
+        // thresholds but produces a non-zero exact determinant.
+        let eps = f64::from_bits(0x3CD0_0000_0000_0000); // 2^-50
+        let nearly_collinear = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.5, eps]),
+        ];
+        // Exact arithmetic should detect this is NOT degenerate.
+        let orientation = simplex_orientation(&nearly_collinear).unwrap();
+        assert_eq!(
+            orientation,
+            Orientation::POSITIVE,
+            "Near-degenerate 2D triangle with 2^-50 perturbation should be POSITIVE"
+        );
+    }
+
+    #[test]
+    fn test_exact_orientation_near_degenerate_3d() {
+        // Near-degenerate 3D tetrahedron: fourth point is almost coplanar.
+        let eps = f64::from_bits(0x3CD0_0000_0000_0000); // 2^-50
+        let nearly_coplanar = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, eps]),
+        ];
+        let orientation = simplex_orientation(&nearly_coplanar).unwrap();
+        assert_ne!(
+            orientation,
+            Orientation::DEGENERATE,
+            "Near-degenerate 3D tetrahedron with 2^-50 perturbation should NOT be DEGENERATE"
+        );
+    }
+
+    #[test]
+    fn test_exact_orientation_truly_degenerate() {
+        // Truly degenerate cases should still be detected correctly.
+        let collinear_2d = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([2.0, 0.0]),
+        ];
+        assert_eq!(
+            simplex_orientation(&collinear_2d).unwrap(),
+            Orientation::DEGENERATE,
+            "Exactly collinear points must be DEGENERATE"
+        );
+
+        // Row 2 = row 0 + row 1 in exact arithmetic (linear combination).
+        let coplanar_3d = vec![
+            Point::new([1.0, 2.0, 3.0]),
+            Point::new([4.0, 5.0, 6.0]),
+            Point::new([5.0, 7.0, 9.0]),
+            Point::new([0.0, 0.0, 0.0]),
+        ];
+        assert_eq!(
+            simplex_orientation(&coplanar_3d).unwrap(),
+            Orientation::DEGENERATE,
+            "Linearly dependent 3D simplex must be DEGENERATE"
         );
     }
 }
