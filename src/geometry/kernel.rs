@@ -843,4 +843,30 @@ mod tests {
         let _fast: FastKernel<f64> = FastKernel::default();
         let _robust: RobustKernel<f64> = RobustKernel::default();
     }
+
+    #[test]
+    fn test_fast_kernel_in_sphere_insufficient_vertices() {
+        // Exercises the non-CoordinateConversion error path (InsufficientVertices)
+        let kernel = FastKernel::<f64>::new();
+        let simplex: [Point<f64, 3>; 2] =
+            [Point::new([0.0, 0.0, 0.0]), Point::new([1.0, 0.0, 0.0])];
+        let test_point = Point::new([0.5, 0.5, 0.5]);
+        let result = kernel.in_sphere(&simplex, &test_point);
+        assert!(result.is_err(), "Should error with insufficient vertices");
+    }
+
+    #[test]
+    fn test_fast_kernel_in_sphere_degenerate_simplex() {
+        // Exercises the DegenerateSimplex error → CoordinateConversion path
+        let kernel = FastKernel::<f64>::new();
+        let simplex = [
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([1.0, 1.0, 0.0]), // Coplanar — degenerate
+        ];
+        let test_point = Point::new([0.5, 0.5, 0.5]);
+        let result = kernel.in_sphere(&simplex, &test_point);
+        assert!(result.is_err(), "Should error with degenerate simplex");
+    }
 }

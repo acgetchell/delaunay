@@ -1611,111 +1611,105 @@ mod tests {
         );
     }
 
+    /// Helper to test `insphere_lifted` parity branch for a given simplex configuration.
+    ///
+    /// Validates:
+    /// 1. Simplex has expected orientation
+    /// 2. `insphere_lifted` and insphere produce identical results
+    /// 3. Test point produces expected `InSphere` result
+    fn check_insphere_parity<T, const D: usize>(
+        simplex: &[Point<T, D>],
+        test_point: Point<T, D>,
+        expected_orientation: Orientation,
+        expected_result: InSphere,
+        dimension: usize,
+        orientation_label: &str,
+    ) where
+        T: ScalarSummable,
+    {
+        let orientation = simplex_orientation(simplex).unwrap();
+        assert_eq!(
+            orientation, expected_orientation,
+            "{dimension}D simplex should be {orientation_label}"
+        );
+
+        let result_lifted = insphere_lifted(simplex, test_point).unwrap();
+        let result_std = insphere(simplex, test_point).unwrap();
+        assert_eq!(
+            result_lifted, result_std,
+            "{dimension}D {orientation_label}: insphere_lifted should match insphere"
+        );
+        assert_eq!(
+            result_lifted, expected_result,
+            "{dimension}D {orientation_label}: test point should be {expected_result:?}"
+        );
+    }
+
     #[test]
     fn test_insphere_lifted_parity_branch_positive_orientation() {
         // Test parity branch for even and odd dimensions with POSITIVE orientation
         // This exercises the parity_sign * orient_sign computation path
 
         // 2D (even dimension) with POSITIVE orientation
-        let simplex_2d_pos = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.0, 1.0]),
-        ];
-        assert_eq!(
-            simplex_orientation(&simplex_2d_pos).unwrap(),
+        check_insphere_parity(
+            &[
+                Point::new([0.0, 0.0]),
+                Point::new([1.0, 0.0]),
+                Point::new([0.0, 1.0]),
+            ],
+            Point::new([0.1, 0.1]),
             Orientation::POSITIVE,
-            "2D simplex should be POSITIVE"
-        );
-        let test_inside_2d = Point::new([0.1, 0.1]);
-        let result_lifted_2d = insphere_lifted(&simplex_2d_pos, test_inside_2d).unwrap();
-        let result_std_2d = insphere(&simplex_2d_pos, test_inside_2d).unwrap();
-        assert_eq!(
-            result_lifted_2d, result_std_2d,
-            "2D POSITIVE: insphere_lifted should match insphere"
-        );
-        assert_eq!(
-            result_lifted_2d,
             InSphere::INSIDE,
-            "2D POSITIVE: test point should be INSIDE"
+            2,
+            "POSITIVE",
         );
 
         // 3D (odd dimension) with POSITIVE orientation
-        let simplex_3d_pos = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-        assert_eq!(
-            simplex_orientation(&simplex_3d_pos).unwrap(),
+        check_insphere_parity(
+            &[
+                Point::new([0.0, 0.0, 0.0]),
+                Point::new([0.0, 1.0, 0.0]),
+                Point::new([1.0, 0.0, 0.0]),
+                Point::new([0.0, 0.0, 1.0]),
+            ],
+            Point::new([0.1, 0.1, 0.1]),
             Orientation::POSITIVE,
-            "3D simplex should be POSITIVE"
-        );
-        let test_inside_3d = Point::new([0.1, 0.1, 0.1]);
-        let result_lifted_3d = insphere_lifted(&simplex_3d_pos, test_inside_3d).unwrap();
-        let result_std_3d = insphere(&simplex_3d_pos, test_inside_3d).unwrap();
-        assert_eq!(
-            result_lifted_3d, result_std_3d,
-            "3D POSITIVE: insphere_lifted should match insphere"
-        );
-        assert_eq!(
-            result_lifted_3d,
             InSphere::INSIDE,
-            "3D POSITIVE: test point should be INSIDE"
+            3,
+            "POSITIVE",
         );
 
         // 4D (even dimension) with POSITIVE orientation
-        let simplex_4d_pos = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0]),
-        ];
-        assert_eq!(
-            simplex_orientation(&simplex_4d_pos).unwrap(),
+        check_insphere_parity(
+            &[
+                Point::new([0.0, 0.0, 0.0, 0.0]),
+                Point::new([1.0, 0.0, 0.0, 0.0]),
+                Point::new([0.0, 1.0, 0.0, 0.0]),
+                Point::new([0.0, 0.0, 1.0, 0.0]),
+                Point::new([0.0, 0.0, 0.0, 1.0]),
+            ],
+            Point::new([0.1, 0.1, 0.1, 0.1]),
             Orientation::POSITIVE,
-            "4D simplex should be POSITIVE"
-        );
-        let test_inside_4d = Point::new([0.1, 0.1, 0.1, 0.1]);
-        let result_lifted_4d = insphere_lifted(&simplex_4d_pos, test_inside_4d).unwrap();
-        let result_std_4d = insphere(&simplex_4d_pos, test_inside_4d).unwrap();
-        assert_eq!(
-            result_lifted_4d, result_std_4d,
-            "4D POSITIVE: insphere_lifted should match insphere"
-        );
-        assert_eq!(
-            result_lifted_4d,
             InSphere::INSIDE,
-            "4D POSITIVE: test point should be INSIDE"
+            4,
+            "POSITIVE",
         );
 
         // 5D (odd dimension) with POSITIVE orientation
-        let simplex_5d_pos = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 0.0, 1.0]),
-        ];
-        assert_eq!(
-            simplex_orientation(&simplex_5d_pos).unwrap(),
+        check_insphere_parity(
+            &[
+                Point::new([0.0, 0.0, 0.0, 0.0, 0.0]),
+                Point::new([0.0, 1.0, 0.0, 0.0, 0.0]),
+                Point::new([1.0, 0.0, 0.0, 0.0, 0.0]),
+                Point::new([0.0, 0.0, 1.0, 0.0, 0.0]),
+                Point::new([0.0, 0.0, 0.0, 1.0, 0.0]),
+                Point::new([0.0, 0.0, 0.0, 0.0, 1.0]),
+            ],
+            Point::new([0.1, 0.1, 0.1, 0.1, 0.1]),
             Orientation::POSITIVE,
-            "5D simplex should be POSITIVE"
-        );
-        let test_inside_5d = Point::new([0.1, 0.1, 0.1, 0.1, 0.1]);
-        let result_lifted_5d = insphere_lifted(&simplex_5d_pos, test_inside_5d).unwrap();
-        let result_std_5d = insphere(&simplex_5d_pos, test_inside_5d).unwrap();
-        assert_eq!(
-            result_lifted_5d, result_std_5d,
-            "5D POSITIVE: insphere_lifted should match insphere"
-        );
-        assert_eq!(
-            result_lifted_5d,
             InSphere::INSIDE,
-            "5D POSITIVE: test point should be INSIDE"
+            5,
+            "POSITIVE",
         );
     }
 
@@ -1725,105 +1719,65 @@ mod tests {
         // This exercises the parity_sign * orient_sign computation path
 
         // 2D (even dimension) with NEGATIVE orientation
-        let simplex_2d_neg = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([0.0, 1.0]),
-            Point::new([1.0, 0.0]),
-        ];
-        assert_eq!(
-            simplex_orientation(&simplex_2d_neg).unwrap(),
+        check_insphere_parity(
+            &[
+                Point::new([0.0, 0.0]),
+                Point::new([0.0, 1.0]),
+                Point::new([1.0, 0.0]),
+            ],
+            Point::new([0.1, 0.1]),
             Orientation::NEGATIVE,
-            "2D simplex should be NEGATIVE"
-        );
-        let test_inside_2d = Point::new([0.1, 0.1]);
-        let result_lifted_2d = insphere_lifted(&simplex_2d_neg, test_inside_2d).unwrap();
-        let result_std_2d = insphere(&simplex_2d_neg, test_inside_2d).unwrap();
-        assert_eq!(
-            result_lifted_2d, result_std_2d,
-            "2D NEGATIVE: insphere_lifted should match insphere"
-        );
-        assert_eq!(
-            result_lifted_2d,
             InSphere::INSIDE,
-            "2D NEGATIVE: test point should be INSIDE"
+            2,
+            "NEGATIVE",
         );
 
         // 3D (odd dimension) with NEGATIVE orientation
-        let simplex_3d_neg = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-        assert_eq!(
-            simplex_orientation(&simplex_3d_neg).unwrap(),
+        check_insphere_parity(
+            &[
+                Point::new([0.0, 0.0, 0.0]),
+                Point::new([1.0, 0.0, 0.0]),
+                Point::new([0.0, 1.0, 0.0]),
+                Point::new([0.0, 0.0, 1.0]),
+            ],
+            Point::new([0.1, 0.1, 0.1]),
             Orientation::NEGATIVE,
-            "3D simplex should be NEGATIVE"
-        );
-        let test_inside_3d = Point::new([0.1, 0.1, 0.1]);
-        let result_lifted_3d = insphere_lifted(&simplex_3d_neg, test_inside_3d).unwrap();
-        let result_std_3d = insphere(&simplex_3d_neg, test_inside_3d).unwrap();
-        assert_eq!(
-            result_lifted_3d, result_std_3d,
-            "3D NEGATIVE: insphere_lifted should match insphere"
-        );
-        assert_eq!(
-            result_lifted_3d,
             InSphere::INSIDE,
-            "3D NEGATIVE: test point should be INSIDE"
+            3,
+            "NEGATIVE",
         );
 
         // 4D (even dimension) with NEGATIVE orientation
-        let simplex_4d_neg = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0]),
-        ];
-        assert_eq!(
-            simplex_orientation(&simplex_4d_neg).unwrap(),
+        check_insphere_parity(
+            &[
+                Point::new([0.0, 0.0, 0.0, 0.0]),
+                Point::new([0.0, 1.0, 0.0, 0.0]),
+                Point::new([1.0, 0.0, 0.0, 0.0]),
+                Point::new([0.0, 0.0, 1.0, 0.0]),
+                Point::new([0.0, 0.0, 0.0, 1.0]),
+            ],
+            Point::new([0.1, 0.1, 0.1, 0.1]),
             Orientation::NEGATIVE,
-            "4D simplex should be NEGATIVE"
-        );
-        let test_inside_4d = Point::new([0.1, 0.1, 0.1, 0.1]);
-        let result_lifted_4d = insphere_lifted(&simplex_4d_neg, test_inside_4d).unwrap();
-        let result_std_4d = insphere(&simplex_4d_neg, test_inside_4d).unwrap();
-        assert_eq!(
-            result_lifted_4d, result_std_4d,
-            "4D NEGATIVE: insphere_lifted should match insphere"
-        );
-        assert_eq!(
-            result_lifted_4d,
             InSphere::INSIDE,
-            "4D NEGATIVE: test point should be INSIDE"
+            4,
+            "NEGATIVE",
         );
 
         // 5D (odd dimension) with NEGATIVE orientation
-        let simplex_5d_neg = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 0.0, 1.0]),
-        ];
-        assert_eq!(
-            simplex_orientation(&simplex_5d_neg).unwrap(),
+        check_insphere_parity(
+            &[
+                Point::new([0.0, 0.0, 0.0, 0.0, 0.0]),
+                Point::new([1.0, 0.0, 0.0, 0.0, 0.0]),
+                Point::new([0.0, 1.0, 0.0, 0.0, 0.0]),
+                Point::new([0.0, 0.0, 1.0, 0.0, 0.0]),
+                Point::new([0.0, 0.0, 0.0, 1.0, 0.0]),
+                Point::new([0.0, 0.0, 0.0, 0.0, 1.0]),
+            ],
+            Point::new([0.1, 0.1, 0.1, 0.1, 0.1]),
             Orientation::NEGATIVE,
-            "5D simplex should be NEGATIVE"
-        );
-        let test_inside_5d = Point::new([0.1, 0.1, 0.1, 0.1, 0.1]);
-        let result_lifted_5d = insphere_lifted(&simplex_5d_neg, test_inside_5d).unwrap();
-        let result_std_5d = insphere(&simplex_5d_neg, test_inside_5d).unwrap();
-        assert_eq!(
-            result_lifted_5d, result_std_5d,
-            "5D NEGATIVE: insphere_lifted should match insphere"
-        );
-        assert_eq!(
-            result_lifted_5d,
             InSphere::INSIDE,
-            "5D NEGATIVE: test point should be INSIDE"
+            5,
+            "NEGATIVE",
         );
     }
 }
