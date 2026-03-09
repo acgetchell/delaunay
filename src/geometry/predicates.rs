@@ -41,11 +41,7 @@ fn orientation_from_matrix<const N: usize>(
     k: usize,
     base_tol: f64,
 ) -> Orientation {
-    let exact_is_safe = matrix.det_direct().is_some_and(f64::is_finite)
-        || (0..k).all(|i| (0..k).all(|j| matrix.get(i, j).is_some_and(f64::is_finite)));
-    if exact_is_safe {
-        sign_to_orientation(matrix.det_sign_exact().unwrap())
-    } else {
+    let fallback_orientation = || {
         let tolerance_f64 = crate::geometry::matrix::adaptive_tolerance(matrix, base_tol);
         let det = determinant(matrix);
         if det > tolerance_f64 {
@@ -55,6 +51,17 @@ fn orientation_from_matrix<const N: usize>(
         } else {
             Orientation::DEGENERATE
         }
+    };
+
+    let exact_is_safe = matrix.det_direct().is_some_and(f64::is_finite)
+        || (0..k).all(|i| (0..k).all(|j| matrix.get(i, j).is_some_and(f64::is_finite)));
+    if exact_is_safe {
+        match matrix.det_sign_exact() {
+            Ok(sign) => sign_to_orientation(sign),
+            Err(_) => fallback_orientation(),
+        }
+    } else {
+        fallback_orientation()
     }
 }
 
@@ -1927,6 +1934,34 @@ mod tests {
                 result,
                 Orientation::POSITIVE,
                 "Extreme-magnitude fallback should still resolve correct orientation"
+            );
+        });
+    }
+
+    #[test]
+    fn test_orientation_from_matrix_nonfinite_outside_k_does_not_panic() {
+        // A valid 3×3 orientation block with a non-finite value outside k×k.
+        // `det_sign_exact` inspects the full matrix and returns Err here.
+        let k = 3;
+        with_la_stack_matrix!(4, |m| {
+            matrix_set(&mut m, 0, 0, 0.0);
+            matrix_set(&mut m, 0, 1, 0.0);
+            matrix_set(&mut m, 0, 2, 1.0);
+            matrix_set(&mut m, 1, 0, 1.0);
+            matrix_set(&mut m, 1, 1, 0.0);
+            matrix_set(&mut m, 1, 2, 1.0);
+            matrix_set(&mut m, 2, 0, 0.0);
+            matrix_set(&mut m, 2, 1, 1.0);
+            matrix_set(&mut m, 2, 2, 1.0);
+
+            // Outside the k×k block.
+            matrix_set(&mut m, 3, 3, f64::NAN);
+
+            let result = orientation_from_matrix(&m, k, 1e-12);
+            assert_eq!(
+                result,
+                Orientation::DEGENERATE,
+                "non-finite entries outside k×k should trigger fallback without panic"
             );
         });
     }
