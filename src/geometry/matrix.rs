@@ -14,8 +14,8 @@ use thiserror::Error;
 /// - orientation: (D+1)×(D+1)
 /// - insphere: (D+2)×(D+2)
 ///
-/// With `MAX_STACK_MATRIX_DIM = 18`, we support up to `D = 16` for insphere.
-pub const MAX_STACK_MATRIX_DIM: usize = 18;
+/// With `MAX_STACK_MATRIX_DIM = 7`, we support up to `D = 5` for insphere.
+pub const MAX_STACK_MATRIX_DIM: usize = 7;
 
 /// Internal linear algebra matrix type used by this crate for fixed-size operations.
 pub type Matrix<const D: usize> = LaMatrix<D>;
@@ -66,86 +66,21 @@ pub const SINGULARITY_TOLERANCE: f64 = 1e-12;
 ///
 /// # Panics
 ///
-/// Panics if `k` exceeds [`MAX_STACK_MATRIX_DIM`] (18).
+/// Panics if `k` exceeds [`MAX_STACK_MATRIX_DIM`] (7).
 macro_rules! with_la_stack_matrix {
     ($k:expr, |$m:ident| $body:block) => {{
+        with_la_stack_matrix!(@dispatch $k, $m, $body,
+            0, 1, 2, 3, 4, 5, 6, 7)
+    }};
+    (@dispatch $k:expr, $m:ident, $body:block, $($n:literal),+) => {{
         match $k {
-            0 => {
-                let mut $m = $crate::geometry::matrix::Matrix::<0>::zero();
-                $body
-            }
-            1 => {
-                let mut $m = $crate::geometry::matrix::Matrix::<1>::zero();
-                $body
-            }
-            2 => {
-                let mut $m = $crate::geometry::matrix::Matrix::<2>::zero();
-                $body
-            }
-            3 => {
-                let mut $m = $crate::geometry::matrix::Matrix::<3>::zero();
-                $body
-            }
-            4 => {
-                let mut $m = $crate::geometry::matrix::Matrix::<4>::zero();
-                $body
-            }
-            5 => {
-                let mut $m = $crate::geometry::matrix::Matrix::<5>::zero();
-                $body
-            }
-            6 => {
-                let mut $m = $crate::geometry::matrix::Matrix::<6>::zero();
-                $body
-            }
-            7 => {
-                let mut $m = $crate::geometry::matrix::Matrix::<7>::zero();
-                $body
-            }
-            8 => {
-                let mut $m = $crate::geometry::matrix::Matrix::<8>::zero();
-                $body
-            }
-            9 => {
-                let mut $m = $crate::geometry::matrix::Matrix::<9>::zero();
-                $body
-            }
-            10 => {
-                let mut $m = $crate::geometry::matrix::Matrix::<10>::zero();
-                $body
-            }
-            11 => {
-                let mut $m = $crate::geometry::matrix::Matrix::<11>::zero();
-                $body
-            }
-            12 => {
-                let mut $m = $crate::geometry::matrix::Matrix::<12>::zero();
-                $body
-            }
-            13 => {
-                let mut $m = $crate::geometry::matrix::Matrix::<13>::zero();
-                $body
-            }
-            14 => {
-                let mut $m = $crate::geometry::matrix::Matrix::<14>::zero();
-                $body
-            }
-            15 => {
-                let mut $m = $crate::geometry::matrix::Matrix::<15>::zero();
-                $body
-            }
-            16 => {
-                let mut $m = $crate::geometry::matrix::Matrix::<16>::zero();
-                $body
-            }
-            17 => {
-                let mut $m = $crate::geometry::matrix::Matrix::<17>::zero();
-                $body
-            }
-            18 => {
-                let mut $m = $crate::geometry::matrix::Matrix::<18>::zero();
-                $body
-            }
+            $(
+                $n => {
+                    #[allow(unused_mut)]
+                    let mut $m = $crate::geometry::matrix::Matrix::<$n>::zero();
+                    $body
+                }
+            )+
             _ => panic!(
                 "unsupported stack matrix size: {k} (max {max})",
                 k = $k,
@@ -174,6 +109,16 @@ macro_rules! try_with_la_stack_matrix {
             with_la_stack_matrix!(k, |$m| $body)
         }
     }};
+}
+
+/// Create a zero matrix with the same const-generic dimension as `_template`.
+///
+/// This is useful inside `with_la_stack_matrix!` bodies where the concrete `N`
+/// is hidden by the macro dispatch: calling `matrix_zero_like(&existing)` lets
+/// the compiler infer `N` without a second macro expansion.
+#[inline]
+pub(crate) fn matrix_zero_like<const D: usize>(_template: &Matrix<D>) -> Matrix<D> {
+    Matrix::<D>::zero()
 }
 
 #[inline]
@@ -315,4 +260,49 @@ mod tests {
     gen_adaptive_tol_tests!(3);
     gen_adaptive_tol_tests!(4);
     gen_adaptive_tol_tests!(5);
+
+    #[test]
+    fn matrix_zero_like_returns_zero_matrix_of_same_size() {
+        let k = 4;
+        with_la_stack_matrix!(k, |original| {
+            // Populate with non-zero data using an f64 counter (avoids usize→f64 cast).
+            let mut val = 1.0_f64;
+            for i in 0..k {
+                for j in 0..k {
+                    matrix_set(&mut original, i, j, val);
+                    val += 1.0;
+                }
+            }
+
+            let zero = matrix_zero_like(&original);
+
+            // All entries must be zero.
+            for i in 0..k {
+                for j in 0..k {
+                    assert_relative_eq!(matrix_get(&zero, i, j), 0.0);
+                }
+            }
+
+            // Original must be unchanged.
+            let mut expected = 1.0_f64;
+            for i in 0..k {
+                for j in 0..k {
+                    assert_relative_eq!(matrix_get(&original, i, j), expected);
+                    expected += 1.0;
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn matrix_zero_like_works_across_dispatch_sizes() {
+        // Verify it compiles and returns zero for several representative sizes.
+        for &k in &[2_usize, 3, 6, MAX_STACK_MATRIX_DIM] {
+            with_la_stack_matrix!(k, |m| {
+                let zero = matrix_zero_like(&m);
+                assert_relative_eq!(matrix_get(&zero, 0, 0), 0.0);
+                assert_relative_eq!(matrix_get(&zero, k - 1, k - 1), 0.0);
+            });
+        }
+    }
 }
