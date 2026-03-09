@@ -33,7 +33,7 @@ making changes.
 
 ### Code Editing
 
-- **NEVER** use `sed`, `awk`, `perl`, or `python`to modify code
+- **NEVER** use `sed`, `awk`, `perl`, or `python` to modify code
 - **ALWAYS** use the patch editing mechanism provided by the agent
 - Shell text tools may be used for **read‑only analysis only**
 

@@ -27,7 +27,7 @@ Tests should focus on validating invariants rather than merely executing code.
 
 The project uses several categories of tests.
 
-## Unit Tests
+### Unit Tests
 
 Location:
 
@@ -52,7 +52,7 @@ They should be small, deterministic, and fast.
 
 ---
 
-## Integration Tests
+### Integration Tests
 
 Location:
 
@@ -78,7 +78,7 @@ Integration tests should validate:
 
 ---
 
-## Property Tests
+### Property Tests
 
 Property tests are strongly preferred for geometric structures.
 
@@ -108,7 +108,7 @@ Typical invariants include:
 
 ---
 
-## Floating Point Comparisons
+## Floating-Point Comparisons
 
 Never compare floating-point values using `assert_eq!`.
 
@@ -197,8 +197,6 @@ specifically verifying error behavior.
 
 Clippy's `unwrap_used` lint may be relaxed or allowed in test code when
 appropriate.
-
-Deterministic seeds allow failures to be reproduced.
 
 ---
 
