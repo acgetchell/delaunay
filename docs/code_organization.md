@@ -79,6 +79,10 @@ delaunay/
 │   │   ├── phase_3c_action_plan.md
 │   │   ├── testing.md
 │   │   └── topology_integration_design_historical.md
+│   ├── dev/
+│   │   ├── rust.md
+│   │   ├── testing.md
+│   │   └── workflows.md
 │   ├── templates/
 │   │   └── README.md
 │   ├── KNOWN_ISSUES_4D.md
@@ -416,7 +420,8 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality, 
 - **`tests/`** - Integration tests including basic TDS validation (creation, neighbor assignment, boundary analysis),
   debugging utilities, regression testing, allocation profiling tools
   (see: [tests/allocation_api.rs](../tests/README.md#allocation_apirs)), and robust predicates validation
-- **`docs/`** - Architecture guides, performance documentation, numerical robustness guide, and templates
+- **`docs/`** - User and contributor documentation, including architecture/reference guides,
+  `docs/dev/` workflow rules for agents, archived design notes, and templates
 - **`scripts/`** - Python utilities for automation and CI integration
   - **`changelog_utils.py`** - Changelog generation and git tag management with automatic 125KB limit handling
   - **`benchmark_utils.py`** - Performance benchmarking, regression testing, and baseline management
