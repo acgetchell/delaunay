@@ -2,125 +2,133 @@
 
 Essential guidance for AI assistants working in this repository.
 
+This file is the **entry point for all coding agents**. Detailed rules are
+split into additional documents under `docs/dev/`. Agents MUST read the
+referenced files before making changes.
+
+---
+
+## Required Reading
+
+Before modifying code, agents MUST read:
+
+- `AGENTS.md` (this file)
+- **All files in `docs/dev/*.md`** – repository development rules
+- `docs/code_organization.md` – module layout and architecture
+
+The `docs/dev/` directory contains the authoritative development guidance
+for this repository. Agents must load every file in that directory before
+making changes.
+
+---
+
 ## Core Rules
 
 ### Git Operations
 
 - **NEVER** run `git commit`, `git push`, `git tag`, or any git commands that modify version control state
-- **ALLOWED**: Run read-only git commands (e.g. `git --no-pager status`, `git --no-pager diff`,
-  `git --no-pager log`, `git --no-pager show`, `git --no-pager blame`) to inspect changes/history
+- **ALLOWED**: read‑only git commands (`git --no-pager status`, `git --no-pager diff`, `git --no-pager log`, `git --no-pager show`, `git --no-pager blame`)
 - **ALWAYS** use `git --no-pager` when reading git output
 - Suggest git commands that modify version control state for the user to run manually
 
-### Commit Messages
+### Code Editing
 
-When user requests commit message generation:
+- **NEVER** use `sed`, `awk`, `perl`, or `python`to modify code
+- **ALWAYS** use the patch editing mechanism provided by the agent
+- Shell text tools may be used for **read‑only analysis only**
+
+### Commit Message Generation
+
+When generating commit messages:
 
 1. Run `git --no-pager diff --cached --stat`
-2. Generate conventional commit format: `<type>: <brief summary>`
-3. Types: `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `chore`, `style`, `ci`, `build`
-4. Include body with organized bullet points and test results
-5. Present in code block (no language) - user will commit manually
+2. Use conventional commits: `<type>: <summary>`
+3. Valid types: `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `chore`, `style`, `ci`, `build`
+4. Include bullet‑point body describing key changes
+5. Present inside a code block so the user can commit manually
 
-### Code Quality
+---
 
-- **ALLOWED**: Run formatters/linters: `cargo fmt`, `cargo clippy`, `cargo doc`, `taplo fmt`, `taplo lint`,
-  `uv run ruff check --fix`, `uv run ruff format`, `shfmt -w`, `shellcheck -x`, `npx markdownlint --fix`,
-  `typos`, `actionlint`
-- **NEVER**: Use `sed`, `awk`, `perl` for code edits
-- **ALWAYS**: Use `apply_patch` for edits (and `create_file` for new files)
-- **EXCEPTION**: Shell text tools OK for read-only analysis only
+## Validation Workflow
 
-### Validation
+After modifying files, run appropriate validators.
 
-- **JSON**: Validate with `jq empty <file>.json` after editing (or `just validate-json`)
-- **TOML**: Lint/format with taplo: `just toml-lint`, `just toml-fmt-check`, `just toml-fmt` (or validate parsing with `just validate-toml`)
-- **GitHub Actions**: Validate workflows with `just action-lint` (uses `actionlint`)
-- **Spell check**: Run `just spell-check` (or `just lint-docs`) after editing; add legitimate technical terms to
-  `typos.toml` under `[default.extend-words]` (the `just` recipe excludes `typos.toml` from checks)
-- **Shell scripts**: Run `shfmt -w scripts/*.sh` and `shellcheck -x scripts/*.sh` after editing
-
-### Rust
-
-- Prefer borrowed APIs by default:
-  take references (`&T`, `&mut T`, `&[T]`) as arguments and return borrowed views (`&T`, `&[T]`) when possible.
-  Only take ownership or return `Vec`/allocated data when required.
-- **Error handling**:
-  - Fallible public functions (constructors, I/O, parsing, operations that can fail) must return `Result` types
-  - Infallible public APIs (accessors, `len()`, `is_empty()`, iterators, builder setters) should return values directly
-  - Use `Option` for fallible lookups (e.g., "find vertex by key" returns `Option<&Vertex>`)
-  - Builder setters return `self` for chaining; report fallibility via the final `build()` method
-  - Private functions should return `Result` if called from public fallible functions to surface errors properly
-  - As a scientific library, panics are rarely acceptable - prefer explicit error propagation
-  - Define error types at the top of the relevant module/file (module-local errors, not centralized)
-- **Preludes**: Keep minimal and orthogonal by function. Users should be able to import well-named preludes to accomplish
-  specific goals without bringing in unrelated items.
-- Integration tests in `tests/*.rs` are separate crates; add a crate-level doc comment (`//! ...`) at the top to satisfy clippy `missing_docs` (CI uses `-D warnings`).
-- **Module layout**: Never use `mod.rs`.
-  Declare modules in `src/lib.rs`, including nested modules via inline `pub mod foo { pub mod bar; }` when needed.
-
-### Python
-
-- Use `uv run` for all Python scripts (never `python3` or `python` directly)
-- Use pytest for tests (not unittest)
-- **Type checking**: `just python-lint` includes ty + mypy (blocking - all code must pass type checks)
-- Add type hints to new code
-
-## Common Commands
+Common commands:
 
 ```bash
-just fix              # Apply formatters/auto-fixes (mutating) - most formatters run automatically
-just check            # Lint/validators (non-mutating)
-just ci               # Full CI run (checks + all tests + examples + bench compile)
-just ci-slow          # CI + slow tests (100+ vertices) - long-running
-just lint             # All linting
-just test             # Lib and doc tests
-just test-integration # Integration tests (includes proptests)
-just test-all         # All tests (Rust + Python)
-just examples         # Run all examples
-just changelog        # Regenerate CHANGELOG.md from git commits
+just fix
+just check
+just ci
 ```
 
-## Testing Guidance
+Refer to `docs/dev/workflows.md` for full details.
 
-- **Property tests**: Integration tests include proptests; failures show seed for reproduction
-- **Documentation**: After Rust changes, run `just doc-check` to verify docs build
-- **Validation order**: Run formatters (`just fix`) before tests to avoid formatting noise in diffs
+---
 
-### Changelog
+## Testing Rules
 
-- Never edit `CHANGELOG.md` directly - it's auto-generated from git commits via `just changelog`
+Testing guidance lives in:
 
-### GitHub Issues
+```text
+docs/dev/testing.md
+```
 
-When creating or updating issues:
+Key principle:
 
-- **Labels**: Use appropriate labels: `enhancement`, `bug`, `performance`, `documentation`, `rust`, `python`, etc.
-- **Milestones**: Assign to the appropriate milestone (e.g., `v0.7.2`, `v0.7.3`, `v0.8.0`)
-- **Dependencies**: Document relationships in issue body and comments:
-  - "Depends on: #XXX" - this issue cannot start until #XXX is complete
-  - "Blocks: #YYY" - #YYY cannot start until this issue is complete
-  - "Related: #ZZZ" - related work but not blocking
-- **Relationships**: GitHub automatically parses blocking keywords in comments to create visual relationships:
-  - Use `gh issue comment <number> --body "Blocked by #XXX"` to mark an issue as blocked
-  - Use `gh issue comment <number> --body "Blocks #YYY"` to mark an issue as blocking another
-  - GitHub will automatically create the relationship graph in the web UI
-  - Example: `gh issue comment 217 --body "Blocked by #207"` creates a blocking dependency
-- **Issue body format**: Include clear sections: Summary, Current State, Proposed Changes, Benefits, Implementation Notes
-- **Cross-referencing**: Always reference related issues/PRs using #XXX notation for automatic linking
+- Rust changes must pass unit tests, integration tests, and documentation builds.
+
+---
 
 ## Project Context
 
-- **Rust** d-dimensional Delaunay triangulation library (MSRV 1.94, Edition 2024)
-- **No unsafe code**: `#![forbid(unsafe_code)]`
-- **Architecture**: Generic with `const D: usize` for dimension (tested 2D-5D)
-- **Modules**: `src/core/` (data structures), `src/geometry/` (predicates)
-- **When adding/removing files**: Update `docs/code_organization.md`
+- **Language**: Rust
+- **Project**: d‑dimensional Delaunay triangulation library
+- **MSRV**: 1.94
+- **Edition**: 2024
+- **Unsafe code**: forbidden (`#![forbid(unsafe_code)]`)
 
-## Test Execution
+Architecture details are documented in:
 
-- **tests/ changes**: Run `just test-integration` (or `just ci`)
-- **examples/ changes**: Run `just examples`
-- **benches/ changes**: Run `just bench-compile`
-- **src/ changes**: Run `just test`
-- **Any Rust changes**: Run `just doc-check`
+```text
+docs/code_organization.md
+```
+
+---
+
+## Testing Execution Reference
+
+Typical commands:
+
+```bash
+just test
+just test-integration
+just test-all
+just examples
+```
+
+See `docs/dev/testing.md` for full testing guidance.
+
+---
+
+## Documentation Maintenance
+
+- Never edit `CHANGELOG.md` manually
+- Run `just changelog` to regenerate it from commits
+
+---
+
+## Agent Behavior Expectations
+
+Agents should:
+
+- Prefer small, focused patches
+- Follow Rust idioms and borrowing conventions
+- Avoid introducing allocations unless necessary
+- Avoid panics in library code
+- Search documentation under `docs/` when unsure
+
+If multiple solutions exist, prefer the one that:
+
+1. Preserves API stability
+2. Maintains generic const‑dimension architecture
+3. Keeps code simple and maintainable

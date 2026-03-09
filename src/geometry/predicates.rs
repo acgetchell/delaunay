@@ -55,14 +55,13 @@ fn orientation_from_matrix<const N: usize>(
 
     let exact_is_safe = matrix.det_direct().is_some_and(f64::is_finite)
         || (0..k).all(|i| (0..k).all(|j| matrix.get(i, j).is_some_and(f64::is_finite)));
-    if exact_is_safe {
-        match matrix.det_sign_exact() {
-            Ok(sign) => sign_to_orientation(sign),
-            Err(_) => fallback_orientation(),
-        }
-    } else {
-        fallback_orientation()
+    if !exact_is_safe {
+        return fallback_orientation();
     }
+
+    matrix
+        .det_sign_exact()
+        .map_or_else(|_| fallback_orientation(), sign_to_orientation)
 }
 
 /// Represents the position of a point relative to a circumsphere.
@@ -1941,7 +1940,12 @@ mod tests {
     #[test]
     fn test_orientation_from_matrix_nonfinite_outside_k_does_not_panic() {
         // A valid 3×3 orientation block with a non-finite value outside k×k.
-        // `det_sign_exact` inspects the full matrix and returns Err here.
+        // Even though the leading k×k block is positive, `orientation_from_matrix`
+        // computes `exact_is_safe` from `det_direct` OR finite `matrix.get(i, j)`
+        // checks on k×k entries; then `det_sign_exact` still inspects the full 4×4
+        // matrix and can fail on NaN. That error triggers fallback `determinant(&m)`
+        // on the full matrix, and a non-finite determinant is neither > tolerance
+        // nor < -tolerance, so the fallback classification is DEGENERATE.
         let k = 3;
         with_la_stack_matrix!(4, |m| {
             matrix_set(&mut m, 0, 0, 0.0);
