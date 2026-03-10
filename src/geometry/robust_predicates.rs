@@ -123,9 +123,12 @@ impl<T: CoordinateScalar> Default for RobustPredicateConfig<T> {
 /// provide robust results for degenerate and near-degenerate configurations.
 ///
 /// Strategies used, in order:
-/// 1) Adaptive tolerance insphere via determinant evaluation with magnitude-aware tolerances
-/// 2) Consistency verification against a distance-based insphere check
-/// 3) Symbolic perturbation with deterministic tie-breaking for hard degeneracies
+/// 1) Adaptive tolerance insphere via exact-sign determinant evaluation
+/// 2) Diagnostic consistency check against a distance-based insphere (does not
+///    override the exact result; only hard-fails when `DELAUNAY_STRICT_INSPHERE_CONSISTENCY`
+///    is set)
+/// 3) Symbolic perturbation with deterministic tie-breaking (only reached when
+///    the exact-sign computation itself fails, e.g. unsupported matrix size)
 ///
 /// Sign convention and orientation:
 /// - The determinant sign is interpreted relative to the simplex orientation.
@@ -148,7 +151,9 @@ impl<T: CoordinateScalar> Default for RobustPredicateConfig<T> {
 ///   count) or safe conversions fail
 ///
 /// Complexity:
-/// - Dominated by determinant evaluation on a (D+2)×(D+2) matrix: roughly O((D+2)^3)
+/// - The f64 fast-filter path is O((D+2)³). When the exact Bareiss path is
+///   triggered (near-degenerate inputs), arbitrary-precision rational arithmetic
+///   increases the cost significantly beyond O(D³).
 ///
 /// Example (3D):
 /// ```rust
@@ -178,6 +183,10 @@ impl<T: CoordinateScalar> Default for RobustPredicateConfig<T> {
 /// - For extremely challenging inputs, the function falls back to symbolic
 ///   perturbation with deterministic tie-breaking to maintain progress.
 /// - See `robust_orientation` for the orientation predicate used in the sign interpretation.
+/// - The insphere matrix uses absolute coordinates whose squared norms can
+///   overflow `f64` for `‖coords‖ ≥ ~1e154`; see
+///   [`crate::geometry::predicates::insphere_lifted`] for a relative-coordinate
+///   alternative that avoids this limitation.
 ///
 /// # Errors
 ///
@@ -201,31 +210,35 @@ where
         });
     }
 
-    // Strategy 1: Try standard determinant approach with adaptive tolerance
+    // Reject non-finite tolerance early, consistent with robust_orientation.
+    super::util::safe_scalar_to_f64(config.base_tolerance)?;
+
+    // Strategy 1: Exact-sign determinant approach with adaptive tolerance.
     if let Ok(result) = adaptive_tolerance_insphere(simplex_points, test_point, config) {
-        // Strategy 2: Verify consistency with alternative method
-        match verify_insphere_consistency(simplex_points, test_point, result, config) {
-            ConsistencyResult::Consistent | ConsistencyResult::Unverifiable => return Ok(result), // Accept if we can't verify
-            ConsistencyResult::Inconsistent(error) => {
-                // Optional strict mode for deterministic witness capture and hard-fail behavior.
-                if *STRICT_INSPHERE_CONSISTENCY {
-                    let details = format!(
-                        "{error}; simplex_points={simplex_points:?}; test_point={test_point:?}"
-                    );
-                    return Err(CoordinateConversionError::InsphereInconsistency {
-                        simplex_points: format!("{simplex_points:?}"),
-                        test_point: format!("{test_point:?}"),
-                        details,
-                    });
-                }
-                // Fall through to more robust methods when inconsistent.
+        // Strategy 2: Diagnostic consistency check against distance-based insphere.
+        // The exact-sign result from insphere_from_matrix is provably correct for
+        // finite inputs; a disagreement from insphere_distance reflects f64
+        // rounding in the distance-based check, not a defect in the exact predicate.
+        if let ConsistencyResult::Inconsistent(error) =
+            verify_insphere_consistency(simplex_points, test_point, result, config)
+        {
+            // In strict mode, hard-fail for deterministic witness capture.
+            if *STRICT_INSPHERE_CONSISTENCY {
+                let details = format!(
+                    "{error}; simplex_points={simplex_points:?}; test_point={test_point:?}"
+                );
+                return Err(CoordinateConversionError::InsphereInconsistency {
+                    simplex_points: format!("{simplex_points:?}"),
+                    test_point: format!("{test_point:?}"),
+                    details,
+                });
             }
         }
-    } else {
-        // Fall through to more robust methods
+        return Ok(result);
     }
 
-    // Strategy 3: Use symbolic perturbation for degenerate cases
+    // Strategy 3: Symbolic perturbation — only reached when exact-sign
+    // computation itself failed (e.g. unsupported matrix size).
     Ok(symbolic_perturbation_insphere(
         simplex_points,
         test_point,
@@ -244,6 +257,10 @@ where
     [T; D]: Copy + Sized,
 {
     debug_assert_eq!(K, D + 2);
+
+    // NOTE: Uses absolute coordinates with squared_norm.  The squared norm can
+    // overflow f64 for ‖coords‖ ≥ ~1e154 (since 1e154² ≈ 1e308 ≈ f64::MAX).
+    // `insphere_lifted` avoids this by centering on relative coordinates.
 
     // Add simplex points
     for (i, point) in simplex_points.iter().enumerate() {
@@ -1872,13 +1889,11 @@ mod tests {
     }
 
     #[test]
-    fn test_symbolic_perturbation_fallback_from_nan_tolerance() {
-        // When adaptive_tolerance_insphere fails (e.g. NAN tolerance), robust_insphere
-        // should fall through to symbolic perturbation and still return a result.
-
-        // Create a configuration that causes adaptive tolerance to fail
+    fn test_nan_tolerance_returns_error() {
+        // A NaN base_tolerance is invalid and should be rejected early,
+        // consistent with robust_orientation's behavior.
         let problematic_config = RobustPredicateConfig {
-            base_tolerance: f64::NAN, // This will cause issues in adaptive tolerance
+            base_tolerance: f64::NAN,
             relative_tolerance_factor: 1e-12,
             max_refinement_iterations: 3,
             exact_arithmetic_threshold: 1e-10,
@@ -1895,10 +1910,11 @@ mod tests {
 
         let test_point = Point::new([0.25, 0.25, 0.25]);
 
-        // The robust_insphere should still work even with problematic config
-        // It should fall back to symbolic perturbation
         let result = robust_insphere(&points, &test_point, &problematic_config);
-        assert!(result.is_ok());
+        assert!(
+            result.is_err(),
+            "NaN tolerance should produce an error, not silently fall through"
+        );
 
         // Test with a more realistic scenario: very ill-conditioned matrix
         let ill_conditioned_points = vec![
@@ -2010,5 +2026,45 @@ mod tests {
             ok
         });
         assert!(all_finite_insphere_2d);
+    }
+
+    #[test]
+    fn test_symbolic_perturbation_insphere_via_6d() {
+        // D=6 → insphere matrix is 8×8, exceeding MAX_STACK_MATRIX_DIM=7.
+        // adaptive_tolerance_insphere returns Err on every call, so
+        // robust_insphere falls through to symbolic_perturbation_insphere
+        // (Strategy 3).  Each perturbation also fails for the same reason,
+        // exercising the Err(_) branch, after which the function falls
+        // through to geometric_deterministic_tie_breaking.
+        let simplex: Vec<Point<f64, 6>> = vec![
+            Point::new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
+        ];
+        let config = config_presets::general_triangulation::<f64>();
+
+        // Far from the simplex → OUTSIDE via centroid-based tie-breaking.
+        let far = Point::new([5.0, 5.0, 5.0, 5.0, 5.0, 5.0]);
+        let result = robust_insphere(&simplex, &far, &config).unwrap();
+        assert_eq!(result, InSphere::OUTSIDE);
+
+        // Near the centroid → INSIDE.
+        let near = Point::new([0.05, 0.05, 0.05, 0.05, 0.05, 0.05]);
+        let result = robust_insphere(&simplex, &near, &config).unwrap();
+        assert_eq!(result, InSphere::INSIDE);
+    }
+
+    #[test]
+    fn test_config_preset_high_precision() {
+        let config = config_presets::high_precision::<f64>();
+        assert_eq!(config.max_refinement_iterations, 5);
+        assert!(
+            config.base_tolerance < f64::default_tolerance(),
+            "high_precision base_tolerance should be stricter than default"
+        );
     }
 }

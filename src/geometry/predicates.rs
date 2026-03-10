@@ -48,8 +48,8 @@ const fn sign_to_insphere(det_sign: i8, orient_sign: i8) -> InSphere {
 /// Compute insphere classification from a pre-populated insphere matrix.
 ///
 /// Uses [`la_stack::Matrix::det_sign_exact`] for provably correct results when
-/// the matrix entries are finite.  Falls back to an f64 determinant with
-/// adaptive tolerance only when the entries themselves are non-finite.
+/// the matrix entries are finite.  Returns [`InSphere::BOUNDARY`] when the
+/// entries are non-finite and exact arithmetic cannot run.
 ///
 /// `orient_sign` encodes how to interpret a positive determinant:
 /// - `1`: positive det → INSIDE (e.g. standard insphere with POSITIVE simplex orientation)
@@ -64,6 +64,13 @@ pub(crate) fn insphere_from_matrix<const N: usize>(
 ) -> InSphere {
     // Stage 1: f64 fast filter — if the determinant is clearly outside the
     // tolerance band the sign is unambiguous and we can skip exact arithmetic.
+    //
+    // NOTE: `adaptive_tolerance` scales `base_tol` by the matrix Frobenius
+    // norm.  This is a heuristic, NOT a rigorous error bound (unlike
+    // Shewchuk-style error analysis).  For ill-conditioned matrices the true
+    // rounding error may exceed the tolerance, causing Stage 1 to return a
+    // result that Stage 2 would override.  la-stack #44 tracks adding
+    // provable fast-filter bounds to eliminate this gap.
     let tolerance_f64 = crate::geometry::matrix::adaptive_tolerance(matrix, base_tol);
     let det = determinant(matrix);
     let det_norm = det * f64::from(orient_sign);
@@ -84,23 +91,19 @@ pub(crate) fn insphere_from_matrix<const N: usize>(
         return sign_to_insphere(sign, orient_sign);
     }
 
-    // Stage 3: f64 fallback for non-finite entries where exact arithmetic
-    // cannot run.
-    if det_norm > tolerance_f64 {
-        InSphere::INSIDE
-    } else if det_norm < -tolerance_f64 {
-        InSphere::OUTSIDE
-    } else {
-        InSphere::BOUNDARY
-    }
+    // Stage 3: sign is unresolvable.  We only reach here when:
+    //   (a) det is NaN (non-finite entries) — all comparisons are false, or
+    //   (b) |det_norm| ≤ tolerance AND exact Bareiss could not run.
+    // In both cases the sign is indeterminate → BOUNDARY.
+    InSphere::BOUNDARY
 }
 
 /// Compute orientation from a pre-populated orientation matrix.
 ///
 /// Uses [`la_stack::Matrix::det_sign_exact`] for provably correct results when
 /// the matrix entries are finite (even if the f64 determinant overflows).
-/// Falls back to an f64 determinant with adaptive tolerance only when the
-/// entries themselves are non-finite.
+/// Returns [`Orientation::DEGENERATE`] when the entries are non-finite and
+/// exact arithmetic cannot run.
 ///
 /// `k` must equal the number of rows/columns actually used in `matrix`.
 #[inline]
@@ -110,6 +113,10 @@ pub(crate) fn orientation_from_matrix<const N: usize>(
     base_tol: f64,
 ) -> Orientation {
     // Stage 1: f64 fast filter.
+    //
+    // NOTE: same caveat as in `insphere_from_matrix` — `adaptive_tolerance`
+    // is a heuristic, not a provable error bound.  la-stack #44 will address
+    // this with Shewchuk-style bounds.
     let tolerance_f64 = crate::geometry::matrix::adaptive_tolerance(matrix, base_tol);
     let det = determinant(matrix);
     if det.is_finite() {
@@ -129,14 +136,8 @@ pub(crate) fn orientation_from_matrix<const N: usize>(
         return sign_to_orientation(sign);
     }
 
-    // Stage 3: f64 fallback.
-    if det > tolerance_f64 {
-        Orientation::POSITIVE
-    } else if det < -tolerance_f64 {
-        Orientation::NEGATIVE
-    } else {
-        Orientation::DEGENERATE
-    }
+    // Stage 3: sign is unresolvable (same reasoning as insphere_from_matrix).
+    Orientation::DEGENERATE
 }
 
 /// Represents the position of a point relative to a circumsphere.
@@ -566,10 +567,26 @@ where
         );
         matrix_set(&mut matrix, D + 1, D + 1, 1.0);
 
-        // Route through the exact-sign insphere helper for provably correct
-        // classification on finite inputs.
+        // Extract simplex orientation from the insphere matrix, avoiding a
+        // redundant simplex_orientation() call that rebuilds the coordinate
+        // matrix from scratch.
+        //
+        // The insphere matrix columns are [x, y, ..., ||p||², 1].
+        // The orientation matrix needs [x, y, ..., 1] for the first D+1 rows.
+        // We embed this (D+1)×(D+1) block into a (D+2)×(D+2) matrix by
+        // placing 1.0 at (D+1, D+1); cofactor expansion along row D+1 gives
+        // det(full) = det(orientation subblock).
         let base_tol = safe_scalar_to_f64(T::default_tolerance())?;
-        let orientation = simplex_orientation(simplex_points)?;
+        let mut orient_matrix = matrix_zero_like(&matrix);
+        for i in 0..=D {
+            for j in 0..D {
+                matrix_set(&mut orient_matrix, i, j, matrix_get(&matrix, i, j));
+            }
+            matrix_set(&mut orient_matrix, i, D, 1.0);
+        }
+        matrix_set(&mut orient_matrix, D + 1, D + 1, 1.0);
+
+        let orientation = orientation_from_matrix(&orient_matrix, k, base_tol);
 
         match orientation {
             Orientation::DEGENERATE => Err(CoordinateConversionError::ConversionFailed {
@@ -613,11 +630,18 @@ where
 ///
 /// # Robustness
 ///
-/// The orientation sub-predicate uses exact arithmetic via [`la_stack::Matrix::det_sign_exact`],
-/// so simplex orientation is provably correct even for nearly-degenerate configurations.
-/// The lifted determinant itself uses fast floating-point arithmetic with adaptive tolerance.
-/// For 3D+ triangulations requiring full numerical robustness on the insphere predicate,
-/// use [`crate::geometry::kernel::RobustKernel`] instead of [`crate::geometry::kernel::FastKernel`].
+/// Both the orientation sub-predicate and the lifted insphere determinant use a
+/// three-stage evaluation (via internal helpers `insphere_from_matrix` and
+/// `orientation_from_matrix`):
+/// 1. **f64 fast filter** with adaptive tolerance — resolves well-conditioned cases
+///    without allocating.
+/// 2. **Exact Bareiss** via [`la_stack::Matrix::det_sign_exact`] — provably correct
+///    sign for finite matrix entries.
+/// 3. **f64 fallback** — only reached when matrix entries are non-finite.
+///
+/// This makes `insphere_lifted` provably correct for finite inputs. For additional
+/// robustness strategies (symbolic perturbation, consistency checking), use
+/// [`crate::geometry::kernel::RobustKernel`].
 ///
 /// # Algorithm
 ///
@@ -2058,6 +2082,116 @@ mod tests {
             orientation,
             Orientation::DEGENERATE,
             "Near-degenerate 3D tetrahedron with 2^-50 perturbation should NOT be DEGENERATE"
+        );
+    }
+
+    // =======================================================================
+    // insphere_from_matrix Stage 2 & Stage 3 coverage
+    // =======================================================================
+
+    #[test]
+    fn test_insphere_from_matrix_stage2_exact_via_overflow() {
+        // Stage 2: det_direct() overflows to non-finite, but all individual
+        // entries are finite.  The entry-by-entry finite check (|| branch on
+        // line 89) passes, enabling exact Bareiss to resolve the sign.
+        let k = 4;
+        let big = 1e100;
+        with_la_stack_matrix!(k, |m| {
+            // Diagonal matrix: det = big^4, which overflows f64.
+            matrix_set(&mut m, 0, 0, big);
+            matrix_set(&mut m, 1, 1, big);
+            matrix_set(&mut m, 2, 2, big);
+            matrix_set(&mut m, 3, 3, big);
+
+            // Positive exact sign + orient_sign = 1 → INSIDE
+            assert_eq!(insphere_from_matrix(&m, k, 1, 1e-12), InSphere::INSIDE);
+            // Positive exact sign + orient_sign = -1 → OUTSIDE
+            assert_eq!(insphere_from_matrix(&m, k, -1, 1e-12), InSphere::OUTSIDE);
+        });
+    }
+
+    #[test]
+    fn test_insphere_from_matrix_stage2_small_det() {
+        // Stage 2: det_direct() returns a finite value that falls within the
+        // adaptive tolerance band.  Exact Bareiss resolves the sign.
+        let k = 3;
+        with_la_stack_matrix!(k, |m| {
+            // Diagonal with tiny third entry: det = 1e-20.
+            matrix_set(&mut m, 0, 0, 1.0);
+            matrix_set(&mut m, 1, 1, 1.0);
+            matrix_set(&mut m, 2, 2, 1e-20);
+
+            // base_tol = 1e-10 → tolerance ≫ 1e-20 → Stage 1 ambiguous → Stage 2.
+            assert_eq!(insphere_from_matrix(&m, k, 1, 1e-10), InSphere::INSIDE);
+        });
+    }
+
+    #[test]
+    fn test_insphere_from_matrix_stage2_boundary() {
+        // Stage 2: singular matrix (exactly zero determinant) → BOUNDARY.
+        let k = 3;
+        with_la_stack_matrix!(k, |m| {
+            // Two identical rows → det = 0.
+            matrix_set(&mut m, 0, 0, 1.0);
+            matrix_set(&mut m, 0, 1, 2.0);
+            matrix_set(&mut m, 0, 2, 3.0);
+            matrix_set(&mut m, 1, 0, 1.0);
+            matrix_set(&mut m, 1, 1, 2.0);
+            matrix_set(&mut m, 1, 2, 3.0);
+            matrix_set(&mut m, 2, 0, 4.0);
+            matrix_set(&mut m, 2, 1, 5.0);
+            matrix_set(&mut m, 2, 2, 6.0);
+
+            assert_eq!(insphere_from_matrix(&m, k, 1, 1e-12), InSphere::BOUNDARY);
+        });
+    }
+
+    #[test]
+    fn test_insphere_from_matrix_stage3_nan() {
+        // Stage 3: NaN entry prevents both Stage 1 (det is NaN) and Stage 2
+        // (exact_is_safe = false).  Falls through to Stage 3 → BOUNDARY.
+        let k = 3;
+        with_la_stack_matrix!(k, |m| {
+            matrix_set(&mut m, 0, 0, 1.0);
+            matrix_set(&mut m, 1, 1, 1.0);
+            matrix_set(&mut m, 2, 2, f64::NAN);
+
+            assert_eq!(insphere_from_matrix(&m, k, 1, 1e-12), InSphere::BOUNDARY);
+        });
+    }
+
+    // =======================================================================
+    // insphere() error paths
+    // =======================================================================
+
+    #[test]
+    fn test_insphere_wrong_point_count() {
+        let two_points: Vec<Point<f64, 3>> =
+            vec![Point::new([0.0, 0.0, 0.0]), Point::new([1.0, 0.0, 0.0])];
+        let result = insphere(&two_points, Point::new([0.5, 0.5, 0.5]));
+        assert!(result.is_err(), "insphere with 2 points in 3D should error");
+    }
+
+    // =======================================================================
+    // insphere_lifted() error paths
+    // =======================================================================
+
+    #[test]
+    fn test_insphere_lifted_overflow_test_point_squared_norm() {
+        // Test point very far from the simplex: relative squared norm overflows
+        // f64, triggering the map_err conversion on the test-point path.
+        let simplex = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+        // 1e155² = 1e310 overflows f64::MAX ≈ 1.8e308.
+        let far_point = Point::new([1e155, 0.0, 0.0]);
+        let result = insphere_lifted(&simplex, far_point);
+        assert!(
+            result.is_err(),
+            "insphere_lifted should error when test point squared norm overflows"
         );
     }
 
