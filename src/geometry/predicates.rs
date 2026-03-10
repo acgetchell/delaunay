@@ -62,6 +62,12 @@ pub(crate) fn insphere_from_matrix<const N: usize>(
     orient_sign: i8,
     base_tol: f64,
 ) -> InSphere {
+    // `det_sign_exact()` and `determinant()` operate on the full N×N matrix,
+    // so callers must ensure k == N.  All production call sites satisfy this
+    // because `try_with_la_stack_matrix!(k, ...)` creates a Matrix<K> where
+    // K == k at compile time.
+    debug_assert_eq!(k, N, "k ({k}) must equal matrix dimension N ({N})");
+
     // Stage 1: f64 fast filter — if the determinant is clearly outside the
     // tolerance band the sign is unambiguous and we can skip exact arithmetic.
     //
@@ -113,6 +119,8 @@ pub(crate) fn orientation_from_matrix<const N: usize>(
     k: usize,
     base_tol: f64,
 ) -> Orientation {
+    debug_assert_eq!(k, N, "k ({k}) must equal matrix dimension N ({N})");
+
     // Stage 1: f64 fast filter.
     //
     // NOTE: same caveat as in `insphere_from_matrix` — `adaptive_tolerance`
@@ -2017,16 +2025,13 @@ mod tests {
     }
 
     #[test]
-    fn test_orientation_from_matrix_nonfinite_outside_k_does_not_panic() {
-        // A valid 3×3 orientation block with a non-finite value outside k×k.
-        // Even though the leading k×k block is positive, `orientation_from_matrix`
-        // computes `exact_is_safe` from `det_direct` OR finite `matrix.get(i, j)`
-        // checks on k×k entries; then `det_sign_exact` still inspects the full 4×4
-        // matrix and can fail on NaN. That error triggers fallback `determinant(&m)`
-        // on the full matrix, and a non-finite determinant is neither > tolerance
-        // nor < -tolerance, so the fallback classification is DEGENERATE.
-        let k = 3;
-        with_la_stack_matrix!(4, |m| {
+    fn test_orientation_from_matrix_nonfinite_entry_falls_to_stage3() {
+        // A 4×4 matrix with a NaN entry.  `det_direct()` returns NaN
+        // (non-finite) and the entry check finds NaN at (3,3), so
+        // `exact_is_safe = false`.  Stage 1 also fails (NaN determinant).
+        // Falls through to Stage 3 → DEGENERATE.
+        let k = 4;
+        with_la_stack_matrix!(k, |m| {
             matrix_set(&mut m, 0, 0, 0.0);
             matrix_set(&mut m, 0, 1, 0.0);
             matrix_set(&mut m, 0, 2, 1.0);
@@ -2037,14 +2042,14 @@ mod tests {
             matrix_set(&mut m, 2, 1, 1.0);
             matrix_set(&mut m, 2, 2, 1.0);
 
-            // Outside the k×k block.
+            // NaN inside the k×k block.
             matrix_set(&mut m, 3, 3, f64::NAN);
 
             let result = orientation_from_matrix(&m, k, 1e-12);
             assert_eq!(
                 result,
                 Orientation::DEGENERATE,
-                "non-finite entries outside k×k should trigger fallback without panic"
+                "non-finite entry in matrix should fall to Stage 3 → DEGENERATE"
             );
         });
     }
