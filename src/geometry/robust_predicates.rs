@@ -895,6 +895,44 @@ mod tests {
     }
 
     #[test]
+    fn test_robust_orientation_positive_triangle_2d() {
+        // Canonical CCW triangle to exercise the robust_orientation matrix path
+        // and confirm the exact-sign helper returns POSITIVE.
+        let points = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.0, 1.0]),
+        ];
+
+        let config = config_presets::general_triangulation::<f64>();
+        let robust = robust_orientation(&points, &config).unwrap();
+        let reference = predicates::simplex_orientation(&points).unwrap();
+
+        assert_eq!(robust, Orientation::POSITIVE);
+        assert_eq!(robust, reference);
+    }
+
+    #[test]
+    fn test_robust_orientation_non_finite_base_tolerance_returns_error() {
+        let points = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.0, 1.0]),
+        ];
+
+        let config = RobustPredicateConfig {
+            base_tolerance: f64::NAN,
+            ..config_presets::general_triangulation::<f64>()
+        };
+
+        let result = robust_orientation(&points, &config);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+    }
+
+    #[test]
     fn test_robust_orientation_near_degenerate_2d_exact_sign() {
         // Near-degenerate triangle where adaptive f64 tolerance can collapse to DEGENERATE,
         // but exact determinant sign should remain POSITIVE.
