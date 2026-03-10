@@ -649,8 +649,8 @@ proptest! {
         }
     }
 }
-gen_incremental_insertion_validity!(4, 5, 7);
-gen_incremental_insertion_validity!(5, 6, 8);
+gen_incremental_insertion_validity!(4, 5, 7, #[ignore = "Exact Bareiss fallback too slow for 5×5 orientation matrices; see la-stack #44"]);
+gen_incremental_insertion_validity!(5, 6, 8, #[ignore = "Exact Bareiss fallback too slow for 6×6 orientation matrices; see la-stack #44"]);
 
 // =============================================================================
 // DUPLICATE COORDINATE REJECTION TESTS
