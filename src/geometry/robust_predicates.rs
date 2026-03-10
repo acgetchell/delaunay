@@ -124,9 +124,8 @@ impl<T: CoordinateScalar> Default for RobustPredicateConfig<T> {
 ///
 /// Strategies used, in order:
 /// 1) Adaptive tolerance insphere via determinant evaluation with magnitude-aware tolerances
-/// 2) Determinant conditioning (row/column scaling) to improve the condition number
-/// 3) Consistency verification against a distance-based insphere check
-/// 4) Symbolic perturbation with deterministic tie-breaking for hard degeneracies
+/// 2) Consistency verification against a distance-based insphere check
+/// 3) Symbolic perturbation with deterministic tie-breaking for hard degeneracies
 ///
 /// Sign convention and orientation:
 /// - The determinant sign is interpreted relative to the simplex orientation.
@@ -226,13 +225,7 @@ where
         // Fall through to more robust methods
     }
 
-    // Strategy 3: Try with determinant conditioning
-    if let Ok(result) = conditioned_insphere(simplex_points, test_point, config) {
-        return Ok(result);
-    }
-    // Continue to most robust method
-
-    // Strategy 4: Use symbolic perturbation for degenerate cases
+    // Strategy 3: Use symbolic perturbation for degenerate cases
     Ok(symbolic_perturbation_insphere(
         simplex_points,
         test_point,
@@ -304,44 +297,6 @@ where
     let base_tol = super::util::safe_scalar_to_f64(config.base_tolerance)?;
 
     // Get simplex orientation for correct interpretation.
-    let orientation = robust_orientation(simplex_points, config)?;
-    if matches!(orientation, Orientation::DEGENERATE) {
-        return Ok(InSphere::BOUNDARY);
-    }
-    let orient_sign: i8 = if matches!(orientation, Orientation::POSITIVE) {
-        1
-    } else {
-        -1
-    };
-
-    let k = D + 2;
-    try_with_la_stack_matrix!(k, |matrix| {
-        fill_insphere_predicate_matrix(&mut matrix, simplex_points, test_point)?;
-        Ok(super::predicates::insphere_from_matrix(
-            &matrix,
-            k,
-            orient_sign,
-            base_tol,
-        ))
-    })
-}
-
-/// Insphere test with matrix conditioning fallback.
-///
-/// Uses exact-sign arithmetic via [`super::predicates::insphere_from_matrix`]
-/// as the primary path.  The previous row-scaling conditioning is no longer
-/// needed because exact sign classification handles ill-conditioned matrices.
-fn conditioned_insphere<T, const D: usize>(
-    simplex_points: &[Point<T, D>],
-    test_point: &Point<T, D>,
-    config: &RobustPredicateConfig<T>,
-) -> Result<InSphere, CoordinateConversionError>
-where
-    T: CoordinateScalar,
-    [T; D]: Copy + Sized,
-{
-    let base_tol = super::util::safe_scalar_to_f64(config.base_tolerance)?;
-
     let orientation = robust_orientation(simplex_points, config)?;
     if matches!(orientation, Orientation::DEGENERATE) {
         return Ok(InSphere::BOUNDARY);
@@ -920,33 +875,39 @@ mod tests {
 
     #[test]
     fn test_robust_insphere_near_cocircular_2d_exact_sign() {
-        // Near-cocircular 2D configuration where the test point is just barely
-        // inside the circumcircle.  With f64 tolerance the insphere determinant
-        // can collapse to BOUNDARY, but exact sign should resolve INSIDE.
+        // Near-cocircular 2D configuration where the test points sit on the
+        // circumcircle boundary ± eps, so the f64 determinant lands in the
+        // tolerance band and the exact-sign path (Stage 2) must resolve it.
         let eps = 2f64.powi(-50);
         let triangle = vec![
             Point::new([0.0, 0.0]),
             Point::new([1.0, 0.0]),
             Point::new([0.0, 1.0]),
         ];
-        // Circumcenter is (0.5, 0.5), circumradius = sqrt(2)/2 ≈ 0.7071.
-        // A point at (0.5, 0.5 - eps) is strictly inside.
-        let test_point = Point::new([0.5, 0.5 - eps]);
+        // Circumcenter = (0.5, 0.5), circumradius = sqrt(0.5).
+        // Place test points along the +x direction from the circumcenter.
+        let radius = 0.5_f64.sqrt();
+        let inside_point = Point::new([0.5 + radius - eps, 0.5]);
+        let outside_point = Point::new([0.5 + radius + eps, 0.5]);
 
         let config = config_presets::general_triangulation::<f64>();
-        let result = robust_insphere(&triangle, &test_point, &config).unwrap();
         assert_eq!(
-            result,
+            robust_insphere(&triangle, &inside_point, &config).unwrap(),
             InSphere::INSIDE,
-            "near-cocircular 2D point should be INSIDE with exact sign"
+            "near-cocircular 2D point just inside boundary should be INSIDE"
+        );
+        assert_eq!(
+            robust_insphere(&triangle, &outside_point, &config).unwrap(),
+            InSphere::OUTSIDE,
+            "near-cocircular 2D point just outside boundary should be OUTSIDE"
         );
     }
 
     #[test]
     fn test_robust_insphere_near_cospherical_3d_exact_sign() {
-        // Near-cospherical 3D configuration.  The test point is displaced from
-        // the circumsphere boundary by a tiny amount that f64 tolerance cannot
-        // resolve, but exact sign can.
+        // Near-cospherical 3D configuration where the test points sit on the
+        // circumsphere boundary ± eps, so the f64 determinant is ambiguous
+        // and exact-sign arithmetic (Stage 2) must resolve the classification.
         let eps = 2f64.powi(-50);
         let tetra = vec![
             Point::new([0.0, 0.0, 0.0]),
@@ -954,15 +915,22 @@ mod tests {
             Point::new([0.0, 1.0, 0.0]),
             Point::new([0.0, 0.0, 1.0]),
         ];
-        // Circumcenter is (0.5, 0.5, 0.5).  Move slightly inward.
-        let test_point = Point::new([0.5 - eps, 0.5 - eps, 0.5 - eps]);
+        // Circumcenter = (0.5, 0.5, 0.5), circumradius = sqrt(0.75).
+        // Place test points along the +x direction from the circumcenter.
+        let radius = 0.75_f64.sqrt();
+        let inside_point = Point::new([0.5 + radius - eps, 0.5, 0.5]);
+        let outside_point = Point::new([0.5 + radius + eps, 0.5, 0.5]);
 
         let config = config_presets::general_triangulation::<f64>();
-        let result = robust_insphere(&tetra, &test_point, &config).unwrap();
-        assert_ne!(
-            result,
-            InSphere::BOUNDARY,
-            "near-cospherical 3D point should not be BOUNDARY with exact sign"
+        assert_eq!(
+            robust_insphere(&tetra, &inside_point, &config).unwrap(),
+            InSphere::INSIDE,
+            "near-cospherical 3D point just inside boundary should be INSIDE"
+        );
+        assert_eq!(
+            robust_insphere(&tetra, &outside_point, &config).unwrap(),
+            InSphere::OUTSIDE,
+            "near-cospherical 3D point just outside boundary should be OUTSIDE"
         );
     }
 
@@ -1469,7 +1437,7 @@ mod tests {
 
     #[test]
     fn test_matrix_conditioning_edge_cases() {
-        // This mirrors the row-scaling conditioning performed in `conditioned_insphere`.
+        // Exercise row-scaling conditioning patterns on matrices.
 
         // Test matrix with very small elements
         let scale_small = with_la_stack_matrix!(3, |m| {
@@ -1904,12 +1872,11 @@ mod tests {
     }
 
     #[test]
-    fn test_conditioned_insphere_fallback() {
-        // Test the case where adaptive_tolerance_insphere fails but conditioned_insphere succeeds
-        // This is difficult to trigger directly, but we can test with configurations that
-        // might cause the first method to fail due to numerical issues
+    fn test_symbolic_perturbation_fallback_from_nan_tolerance() {
+        // When adaptive_tolerance_insphere fails (e.g. NAN tolerance), robust_insphere
+        // should fall through to symbolic perturbation and still return a result.
 
-        // Create a configuration that might cause the first method to fail
+        // Create a configuration that causes adaptive tolerance to fail
         let problematic_config = RobustPredicateConfig {
             base_tolerance: f64::NAN, // This will cause issues in adaptive tolerance
             relative_tolerance_factor: 1e-12,
