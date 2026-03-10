@@ -647,7 +647,9 @@ where
 ///    without allocating.
 /// 2. **Exact Bareiss** via [`la_stack::Matrix::det_sign_exact`] — provably correct
 ///    sign for finite matrix entries.
-/// 3. **f64 fallback** — only reached when matrix entries are non-finite.
+/// 3. **Indeterminate fallback** — if exact arithmetic cannot run (non-finite
+///    entries), the helpers return `BOUNDARY` / `DEGENERATE` directly.  No
+///    additional floating-point sign classification is performed.
 ///
 /// This makes `insphere_lifted` provably correct for finite inputs. For additional
 /// robustness strategies (symbolic perturbation, consistency checking), use
