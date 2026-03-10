@@ -36,7 +36,7 @@ const fn sign_to_orientation(sign: i8) -> Orientation {
 ///
 /// `k` must equal the number of rows/columns actually used in `matrix`.
 #[inline]
-fn orientation_from_matrix<const N: usize>(
+pub(crate) fn orientation_from_matrix<const N: usize>(
     matrix: &crate::geometry::matrix::Matrix<N>,
     k: usize,
     base_tol: f64,

@@ -469,20 +469,12 @@ where
             matrix_set(&mut matrix, i, D, 1.0);
         }
 
-        // Use adaptive tolerance before consuming the matrix.
+        // Route through the exact-sign orientation helper for provably correct
+        // orientation classification on finite inputs.
         let base_tol = safe_scalar_to_f64(config.base_tolerance)?;
-        let tolerance_f64: f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
-
-        // Calculate determinant (singular => 0; non-finite => NaN).
-        let det = determinant(&matrix);
-
-        if det > tolerance_f64 {
-            Ok(Orientation::POSITIVE)
-        } else if det < -tolerance_f64 {
-            Ok(Orientation::NEGATIVE)
-        } else {
-            Ok(Orientation::DEGENERATE)
-        }
+        Ok(super::predicates::orientation_from_matrix(
+            &matrix, k, base_tol,
+        ))
     })
 }
 
@@ -900,6 +892,84 @@ mod tests {
             result,
             Orientation::POSITIVE | Orientation::NEGATIVE
         ));
+    }
+
+    #[test]
+    fn test_robust_orientation_positive_triangle_2d() {
+        // Canonical CCW triangle to exercise the robust_orientation matrix path
+        // and confirm the exact-sign helper returns POSITIVE.
+        let points = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.0, 1.0]),
+        ];
+
+        let config = config_presets::general_triangulation::<f64>();
+        let robust = robust_orientation(&points, &config).unwrap();
+        let reference = predicates::simplex_orientation(&points).unwrap();
+
+        assert_eq!(robust, Orientation::POSITIVE);
+        assert_eq!(robust, reference);
+    }
+
+    #[test]
+    fn test_robust_orientation_non_finite_base_tolerance_returns_error() {
+        let points = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.0, 1.0]),
+        ];
+
+        let config = RobustPredicateConfig {
+            base_tolerance: f64::NAN,
+            ..config_presets::general_triangulation::<f64>()
+        };
+
+        let result = robust_orientation(&points, &config);
+        assert!(matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ));
+    }
+
+    #[test]
+    fn test_robust_orientation_near_degenerate_2d_exact_sign() {
+        // Near-degenerate triangle where adaptive f64 tolerance can collapse to DEGENERATE,
+        // but exact determinant sign should remain POSITIVE.
+        let eps = 2f64.powi(-50);
+        let points = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.5, eps]),
+        ];
+
+        let config = config_presets::general_triangulation::<f64>();
+        let result = robust_orientation(&points, &config).unwrap();
+        assert_eq!(
+            result,
+            Orientation::POSITIVE,
+            "near-degenerate 2D orientation should use exact sign and stay POSITIVE"
+        );
+    }
+
+    #[test]
+    fn test_robust_orientation_near_degenerate_3d_not_degenerate() {
+        // Near-degenerate tetrahedron where exact sign should prevent false DEGENERATE.
+        let eps = 2f64.powi(-50);
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, eps]),
+        ];
+
+        let config = config_presets::general_triangulation::<f64>();
+        let result = robust_orientation(&points, &config).unwrap();
+        assert_ne!(
+            result,
+            Orientation::DEGENERATE,
+            "near-degenerate 3D orientation should not be DEGENERATE with exact sign"
+        );
     }
 
     #[test]
