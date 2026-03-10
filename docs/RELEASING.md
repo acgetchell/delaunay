@@ -59,6 +59,12 @@ cargo set-version $VERSION
 
 Alternative: edit `Cargo.toml` manually (update `version = "..."` under `[package]`).
 
+Regenerate `Cargo.lock` and verify the build:
+
+```bash
+cargo check
+```
+
 Update references in documentation (search, then manually edit as needed):
 
 ```bash
@@ -66,7 +72,17 @@ Update references in documentation (search, then manually edit as needed):
 rg -n "\bv?[0-9]+\.[0-9]+\.[0-9]+\b" README.md docs/ || true
 ```
 
-3. Generate changelog using a temporary local tag (DO NOT PUSH this tag)
+3. Verify CI passes
+
+```bash
+just fix
+just ci
+```
+
+This ensures all tests, lints, and examples pass with the new version before
+proceeding. Fix any issues before continuing.
+
+4. Generate changelog using a temporary local tag (DO NOT PUSH this tag)
 
 ```bash
 # Create a temporary annotated tag locally to enable changelog generation
@@ -78,7 +94,7 @@ just changelog
 # uv run changelog-utils generate
 ```
 
-4. Generate performance results with fresh benchmark data
+5. Generate performance results with fresh benchmark data
 
 ```bash
 # Run benchmarks and generate performance summary automatically
@@ -91,7 +107,7 @@ just bench-perf-summary
 echo "Performance results generated. Review benches/PERFORMANCE_RESULTS.md for accuracy."
 ```
 
-5. Stage and commit release artifacts
+6. Stage and commit release artifacts
 
 ```bash
 git add Cargo.toml Cargo.lock CHANGELOG.md docs/ benches/PERFORMANCE_RESULTS.md
@@ -104,7 +120,7 @@ git commit -m "chore(release): release $TAG
 - Add performance results for $TAG"
 ```
 
-6. Push the branch and open a PR
+7. Push the branch and open a PR
 
 ```bash
 git push -u origin "release/$TAG"
@@ -191,7 +207,7 @@ git tag -l --format='%(contents)' "$TAG"
 git push origin "$TAG"
 ```
 
-4a. (Recommended) Confirm CI baseline artifact generation
+5. (Recommended) Confirm CI baseline artifact generation
 
 Pushing a version tag triggers `.github/workflows/generate-baseline.yml`, which generates a performance baseline
 artifact named `performance-baseline-$TAG` with dots replaced by underscores (e.g., `performance-baseline-v0_6_2`).
@@ -204,7 +220,7 @@ If you need to regenerate a missing/expired baseline artifact for a tag:
 gh workflow run generate-baseline.yml -f tag="$TAG" --ref main
 ```
 
-5. Create the GitHub release with notes from the tag annotation
+6. Create the GitHub release with notes from the tag annotation
 
 ```bash
 # Requires GitHub CLI (gh) and authenticated session
@@ -215,14 +231,24 @@ gh release create "$TAG" --notes-from-tag
 # to the full changelog in CHANGELOG.md. Users can click the link to see all details.
 ```
 
-6. Publish to crates.io
+7. Publish to crates.io
 
 ```bash
 # Sanity check before publishing
-cargo publish --dry-run
+cargo publish --locked --dry-run
 
 # Publish the crate (ensure docs are already updated on main via the PR)
-cargo publish
+cargo publish --locked
+```
+
+8. Clean up the release branch
+
+```bash
+# Delete remote branch
+git push origin --delete "release/$TAG"
+
+# Delete local branch
+git branch -d "release/$TAG"
 ```
 
 ---
@@ -232,4 +258,5 @@ cargo publish
 - Never push the temporary tag created for changelog generation; only push the final tag after the PR is merged.
 - Keep the release PR strictly to version + changelog + documentation to maintain a clean history.
 - If multiple crates or files reference the version, confirm all of them are updated consistently.
+- Always run `just ci` before committing the release to catch issues early.
 - For future convenience, parts of this document can be automated into a release script.

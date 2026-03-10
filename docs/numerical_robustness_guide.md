@@ -7,12 +7,37 @@ This document summarizes the robustness tools available in this crate and how to
 
 ## Robustness toolbox
 
+### Exact predicates (v0.7.1+)
+
+Orientation and insphere predicates use a three-stage evaluation:
+
+1. **f64 fast filter** — if the determinant is well outside an adaptive tolerance band,
+   the sign is resolved immediately with no allocation.
+2. **Exact Bareiss** — via `la_stack::Matrix::det_sign_exact`, the determinant sign is
+   computed in exact `BigRational` arithmetic (Bareiss fraction-free elimination).
+   Provably correct for finite matrix entries.
+3. **Indeterminate fallback** — if exact arithmetic cannot run (non-finite entries),
+   the predicate returns `BOUNDARY` / `DEGENERATE`.
+
+This applies to `simplex_orientation`, `insphere`, `insphere_lifted`, `robust_orientation`,
+and `robust_insphere`. For D ≤ 4, la-stack's fast filter uses provable Shewchuk-style
+error bounds and resolves most queries without allocating.
+
+**Dimension limits:** the stack-allocated matrix dispatch supports up to 7×7 matrices
+(`MAX_STACK_MATRIX_DIM = 7`). This means:
+
+- Exact orientation: D ≤ 6 (matrix is (D+1)×(D+1))
+- Exact insphere: D ≤ 5 (matrix is (D+2)×(D+2))
+
+For D ≥ 6, `robust_insphere` falls back to symbolic perturbation and centroid-based
+tie-breaking.
+
 ### Robust predicates (`geometry::robust_predicates`)
 
 The crate includes robust orientation and insphere predicates (e.g. `robust_orientation`,
-`robust_insphere`) for near-degenerate configurations. These predicates combine multiple
-techniques (scale-aware tolerances, determinant conditioning, deterministic tie-breaking)
-to make classifications more stable.
+`robust_insphere`) for near-degenerate configurations. These predicates layer additional
+strategies on top of exact predicates: consistency checking against `insphere_distance`,
+symbolic perturbation for tie-breaking, and deterministic geometric fallbacks.
 
 Most users won't call these functions directly; instead, select a kernel.
 
@@ -102,5 +127,17 @@ see `docs/validation.md`.
 - Treat `InsertionOutcome::Skipped { .. }` as an expected outcome on pathological data; decide
   at the application level whether to drop the vertex, perturb/rescale your point set, or
   re-run with a different kernel.
+
+## Current limitations
+
+- **Heuristic fast-filter tolerance:** the f64 fast filter uses an adaptive tolerance
+  based on the matrix infinity norm.  This is a heuristic, not a provable error bound.
+  For ill-conditioned matrices, the fast filter may return early with a result that exact
+  arithmetic would override.  la-stack #44 tracks adding Shewchuk-style bounds to close
+  this gap.  In practice, the exact Bareiss stage catches these cases.
+- **No SoS yet:** when the exact determinant is truly zero (exact degeneracy), predicates
+  return `BOUNDARY` / `DEGENERATE`.  The flip-based repair has no tie-breaking strategy
+  for these cases, which can cause flip cycles at scale.  #233 tracks adding Simulation
+  of Simplicity (SoS) perturbation.
 
 Historical investigation notes live in `docs/archive/`.

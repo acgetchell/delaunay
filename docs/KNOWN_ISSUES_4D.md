@@ -1,30 +1,59 @@
-# Known Issues: 4D Bulk Construction
+# Known Issues: Dimensional and Large-Scale Limitations
 
-## Status (targeting v0.7.2)
+## Status (v0.7.2)
 
-### Current issue
+### Current issues
 
-Large-scale 4D bulk construction can still produce final Delaunay-validation failures on
+#### 4D+ bulk construction failures
+
+Large-scale 4D bulk construction can produce Delaunay-validation failures on
 adversarial/degenerate point sets, even when local repair steps appear to succeed.
 
-**Severity:** High (correctness)  
-**Affects:** primarily large 4D bulk runs (typically 100+ vertices)  
+**Severity:** High (correctness)
+**Affects:** primarily large 4D bulk runs (typically 100+ vertices)
 **Recommended workaround:** prefer incremental insertion for production 4D workloads
+
+#### 3D large-scale flip convergence
+
+At ~130+ points in 3D, flip-based Delaunay repair can enter cycles (oscillating
+flip sequences that never converge). The triangulation is topologically valid but
+may have local Delaunay violations that flips cannot resolve.
+
+**Severity:** Medium (correctness)
+**Affects:** 3D bulk construction at moderate-to-large scale
+**Root cause:** exact degeneracies (cospherical configurations) where the insphere
+predicate returns BOUNDARY, leaving the flip heuristic unable to choose a direction.
+Simulation of Simplicity (SoS) perturbation (#233) will break these ties.
 
 ### What has been fixed
 
-The previous orientation root cause has been addressed:
+#### Orientation enforcement (v0.7.0–v0.7.1)
 
 - Coherent combinatorial orientation is now explicitly validated and normalized at the TDS layer.
 - Flip paths now enforce orientation invariants (debug assertions + post-flip normalization/validation).
 - Construction and repair paths canonicalize stored cell ordering to positive orientation.
 
-So, this issue is no longer attributed to missing TDS orientation enforcement.
+#### Exact predicates (v0.7.1–v0.7.2)
+
+- Exact orientation predicates via `la_stack::Matrix::det_sign_exact` (Bareiss algorithm
+  in `BigRational` arithmetic). Provably correct sign for finite matrix entries.
+- Exact insphere predicates using the same three-stage evaluation (f64 fast filter →
+  exact Bareiss → BOUNDARY fallback).
+- Both `insphere()`, `insphere_lifted()`, and `robust_insphere()` now use exact sign
+  classification, eliminating false BOUNDARY/DEGENERATE results from floating-point
+  rounding on well-separated inputs.
 
 ### What remains
 
-The remaining risk is in high-dimensional Delaunay-repair convergence/numerical robustness for
-large or degenerate inputs (not orientation bookkeeping itself).
+- **Flip convergence / SoS:** exact predicates correctly identify true degeneracies,
+  but the flip-based repair has no tie-breaking strategy for exactly degenerate
+  configurations.  #233 (AdaptiveKernel + Simulation of Simplicity) will address this.
+- **Heuristic fast-filter tolerance:** the f64 fast filter in `insphere_from_matrix` /
+  `orientation_from_matrix` uses an adaptive tolerance that is a heuristic, not a
+  provable error bound.  la-stack #44 tracks adding Shewchuk-style bounds.
+- **Stack-matrix dimension limit:** `MAX_STACK_MATRIX_DIM = 7` limits exact insphere
+  to D ≤ 5 (the insphere matrix is (D+2)×(D+2)).  For D ≥ 6, `robust_insphere`
+  falls back to symbolic perturbation and centroid-based tie-breaking.
 
 ### Reproduction / verification command
 
@@ -51,9 +80,13 @@ DELAUNAY_LARGE_DEBUG_N_4D=200 DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=0 \
 
 ### Recommendations
 
-- **3D:** generally robust for moderate sizes; large degenerate sets may still stress repair.
+- **2D–3D:** generally robust for moderate sizes (up to ~100 points). Larger point
+  sets may encounter flip cycles on exact degeneracies until SoS is available (#233).
 - **4D:** use incremental insertion for critical correctness paths.
-- **5D+:** experimental; incremental insertion strongly recommended.
+- **5D:** experimental; incremental insertion strongly recommended. Exact insphere
+  predicates are available (5D uses a 7×7 matrix, within the stack limit).
+- **6D+:** exact insphere is not available (matrix exceeds stack limit); falls back
+  to symbolic perturbation.  Use with caution.
 
 ### Related
 

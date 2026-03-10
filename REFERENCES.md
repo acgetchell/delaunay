@@ -181,6 +181,15 @@ These references ensure the library's geometric computations are mathematically 
 - Yap, C. K. "Towards Exact Geometric Computation."
   *Computational Geometry* 7, no. 1-2 (1997): 3-23. DOI: [10.1016/0925-7721(95)00040-2](https://doi.org/10.1016/0925-7721(95)00040-2)
 
+### Exact Determinant Sign Computation
+
+- Bareiss, E. H. "Sylvester's Identity and Multistep Integer-Preserving Gaussian Elimination."
+  *Mathematics of Computation* 22, no. 103 (1968): 565-578.
+  DOI: [10.1090/S0025-5718-1968-0226829-0](https://doi.org/10.1090/S0025-5718-1968-0226829-0)
+
+  The Bareiss fraction-free elimination algorithm is used by `la_stack::Matrix::det_sign_exact`
+  to compute provably correct determinant signs in exact `BigRational` arithmetic.
+
 ### Robust Geometric Predicates
 
 - Fortune, S., and Van Wyk, C.J. "Efficient Exact Arithmetic for Computational Geometry."
