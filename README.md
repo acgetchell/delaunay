@@ -187,9 +187,15 @@ For reproducible checks in CI/local runs, use `just check`, `just test`, `just d
 
 ## ⚠️ Limitations
 
-- CI and property-test coverage currently targets 2D-5D.
-- Large-scale and 4D bulk-construction caveats are documented in [Known Issues](docs/KNOWN_ISSUES_4D.md).
-- Validation/repair guarantees assume the library-managed construction/editing pipeline.
+- **Dimension coverage:** CI and property-test coverage targets 2D–5D.
+- **Exact predicates (D ≤ 5):** orientation and insphere predicates use provably correct
+  exact arithmetic (`det_sign_exact`) for D ≤ 5. For D ≥ 6, insphere falls back to
+  symbolic perturbation (the (D+2)×(D+2) matrix exceeds the stack-allocation limit).
+- **Flip convergence:** at larger scales (~130+ points in 3D, ~40+ in 4D), flip-based
+  Delaunay repair can encounter cycles on exactly degenerate (cospherical) configurations.
+  Simulation of Simplicity (SoS) is planned for v0.7.3 to break these ties.
+- **4D+ bulk construction:** see [Known Issues](docs/KNOWN_ISSUES_4D.md) for details.
+- **Validation/repair guarantees** assume the library-managed construction/editing pipeline.
 
 ## 🚧 Project History
 
@@ -266,7 +272,7 @@ This includes information about:
 - **[Invariants](docs/invariants.md)** - Theoretical background and rationale for the topological and geometric invariants
 - **[Numerical Robustness Guide](docs/numerical_robustness_guide.md)** - Robustness strategies, kernels, and retry/repair behavior
 - **[Property Testing Summary](docs/property_testing_summary.md)** - Property-based testing with proptest (where tests live, how to run)
-- **[Known Issues](docs/KNOWN_ISSUES_4D.md)** - Known limitations for large-scale and 4D bulk construction
+- **[Known Issues](docs/KNOWN_ISSUES_4D.md)** - Dimensional and large-scale limitations (exact predicate bounds, flip convergence, 4D+)
 - **[Releasing](docs/RELEASING.md)** - Release workflow (changelog + benchmarks + publish)
 - **[Topology](docs/topology.md)** - Level 3 topology validation (manifoldness + Euler characteristic) and module overview
 - **[Validation Guide](docs/validation.md)** - Comprehensive 4-level validation hierarchy guide (element → structural → manifold → Delaunay)
