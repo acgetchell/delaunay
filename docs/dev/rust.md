@@ -384,6 +384,20 @@ just check
 
 CI treats warnings as errors.
 
+### Lint Suppression
+
+When suppressing a lint, use `#[expect(...)]` instead of `#[allow(...)]`.
+
+`expect` causes a compiler warning if the lint is no longer triggered,
+ensuring suppressions are removed when they become unnecessary.
+
+Always include a `reason`:
+
+```rust
+#[expect(clippy::too_many_lines, reason = "test covers multiple cases")]
+fn test_large_dataset_performance() { ... }
+```
+
 ---
 
 ## API Stability

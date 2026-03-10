@@ -6019,6 +6019,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "performance test covers 3D and 2D cases"
+    )]
     fn test_large_dataset_performance() {
         println!("Testing convex hull performance with larger datasets");
 
@@ -6042,7 +6046,13 @@ mod tests {
 
         let start_time = std::time::Instant::now();
 
-        match DelaunayTriangulation::new(&large_vertices) {
+        // Use FastKernel: its insphere_lifted uses a 4×4 matrix in 3D (within
+        // la-stack's fast-filter range).  RobustKernel builds a 5×5 insphere
+        // matrix that hits exact Bareiss on these cospherical inputs.
+        match DelaunayTriangulation::<_, (), (), 3>::with_kernel(
+            &FastKernel::new(),
+            &large_vertices,
+        ) {
             Ok(large_dt) => {
                 let dt_construction_time = start_time.elapsed();
                 println!("    DelaunayTriangulation construction took: {dt_construction_time:?}");
@@ -6117,7 +6127,10 @@ mod tests {
 
         let start_2d = std::time::Instant::now();
 
-        match DelaunayTriangulation::new(&large_2d_vertices) {
+        match DelaunayTriangulation::<_, (), (), 2>::with_kernel(
+            &FastKernel::<f64>::new(),
+            &large_2d_vertices,
+        ) {
             Ok(large_2d_dt) => match ConvexHull::from_triangulation(large_2d_dt.as_triangulation())
             {
                 Ok(large_2d_hull) => {

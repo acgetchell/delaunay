@@ -9,7 +9,7 @@
 
 use super::predicates::{InSphere, Orientation};
 use super::util::{safe_coords_to_f64, safe_scalar_to_f64, squared_norm};
-use crate::geometry::matrix::{determinant, matrix_get, matrix_set};
+use crate::geometry::matrix::matrix_set;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar, ScalarSummable,
@@ -289,9 +289,9 @@ where
 
 /// Insphere test with adaptive tolerance based on operand magnitude.
 ///
-/// This approach computes tolerances that scale with the magnitude of the
-/// coordinates being processed, which is crucial when dealing with points
-/// that have very large or very small coordinate values.
+/// Uses [`super::predicates::insphere_from_matrix`] for provably correct sign
+/// classification on finite inputs, falling back to an f64 determinant with
+/// adaptive tolerance for non-finite entries.
 fn adaptive_tolerance_insphere<T, const D: usize>(
     simplex_points: &[Point<T, D>],
     test_point: &Point<T, D>,
@@ -305,33 +305,32 @@ where
 
     // Get simplex orientation for correct interpretation.
     let orientation = robust_orientation(simplex_points, config)?;
+    if matches!(orientation, Orientation::DEGENERATE) {
+        return Ok(InSphere::BOUNDARY);
+    }
+    let orient_sign: i8 = if matches!(orientation, Orientation::POSITIVE) {
+        1
+    } else {
+        -1
+    };
 
     let k = D + 2;
-    let (det, tol_f64) = try_with_la_stack_matrix!(k, |matrix| {
+    try_with_la_stack_matrix!(k, |matrix| {
         fill_insphere_predicate_matrix(&mut matrix, simplex_points, test_point)?;
-
-        let tol_f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
-        let det = determinant(&matrix);
-
-        Ok::<(f64, f64), CoordinateConversionError>((det, tol_f64))
-    })?;
-
-    let adaptive_tolerance: T = super::util::safe_scalar_from_f64::<T>(tol_f64)?;
-
-    // Interpret result based on orientation
-    interpret_insphere_determinant(det, orientation, adaptive_tolerance)
+        Ok(super::predicates::insphere_from_matrix(
+            &matrix,
+            k,
+            orient_sign,
+            base_tol,
+        ))
+    })
 }
 
-/// Insphere test with matrix conditioning to improve numerical stability.
+/// Insphere test with matrix conditioning fallback.
 ///
-/// This method applies row scaling to improve the
-/// condition number of the matrix before computing the determinant.
-///
-/// Row scaling is preferred over full row+column scaling for determinant
-/// calculations as it provides effective conditioning while keeping the scaling
-/// compensation simple and numerically stable (Golub & Van Loan, "Matrix
-/// Computations" 4th ed., Section 3.5; Higham, "Accuracy and Stability of
-/// Numerical Algorithms" 2nd ed., Section 9.7).
+/// Uses exact-sign arithmetic via [`super::predicates::insphere_from_matrix`]
+/// as the primary path.  The previous row-scaling conditioning is no longer
+/// needed because exact sign classification handles ill-conditioned matrices.
 fn conditioned_insphere<T, const D: usize>(
     simplex_points: &[Point<T, D>],
     test_point: &Point<T, D>,
@@ -344,41 +343,25 @@ where
     let base_tol = super::util::safe_scalar_to_f64(config.base_tolerance)?;
 
     let orientation = robust_orientation(simplex_points, config)?;
+    if matches!(orientation, Orientation::DEGENERATE) {
+        return Ok(InSphere::BOUNDARY);
+    }
+    let orient_sign: i8 = if matches!(orientation, Orientation::POSITIVE) {
+        1
+    } else {
+        -1
+    };
 
     let k = D + 2;
-    let (det, tolerance_raw) = try_with_la_stack_matrix!(k, |matrix| {
+    try_with_la_stack_matrix!(k, |matrix| {
         fill_insphere_predicate_matrix(&mut matrix, simplex_points, test_point)?;
-
-        // Compute adaptive tolerance from original matrix BEFORE conditioning.
-        // This keeps determinant and tolerance in the same scale.
-        let tolerance_raw = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
-
-        // Simple row scaling - scale each row by its maximum element.
-        let mut scale_factor = 1.0_f64;
-        for i in 0..k {
-            let mut max_element = 0.0_f64;
-            for j in 0..k {
-                max_element = max_element.max(matrix_get(&matrix, i, j).abs());
-            }
-
-            if max_element > 1e-100 {
-                for j in 0..k {
-                    let v = matrix_get(&matrix, i, j) / max_element;
-                    matrix_set(&mut matrix, i, j, v);
-                }
-                scale_factor *= max_element;
-            }
-        }
-
-        // Determinant with scale correction.
-        let det = determinant(&matrix) * scale_factor;
-
-        Ok::<(f64, f64), CoordinateConversionError>((det, tolerance_raw))
-    })?;
-
-    let tolerance: T = super::util::safe_scalar_from_f64::<T>(tolerance_raw)?;
-
-    interpret_insphere_determinant(det, orientation, tolerance)
+        Ok(super::predicates::insphere_from_matrix(
+            &matrix,
+            k,
+            orient_sign,
+            base_tol,
+        ))
+    })
 }
 
 /// Insphere test using symbolic perturbation for degenerate cases.
@@ -720,44 +703,6 @@ where
     }
 }
 
-/// Interpret determinant result based on orientation and tolerance.
-fn interpret_insphere_determinant<T>(
-    det: f64,
-    orientation: Orientation,
-    tolerance: T,
-) -> Result<InSphere, CoordinateConversionError>
-where
-    T: CoordinateScalar,
-{
-    let tol: f64 = safe_scalar_to_f64(tolerance)?;
-
-    let result = match orientation {
-        Orientation::DEGENERATE => {
-            InSphere::BOUNDARY // Conservative approach for degenerate cases
-        }
-        Orientation::POSITIVE => {
-            if det > tol {
-                InSphere::INSIDE
-            } else if det < -tol {
-                InSphere::OUTSIDE
-            } else {
-                InSphere::BOUNDARY
-            }
-        }
-        Orientation::NEGATIVE => {
-            if det < -tol {
-                InSphere::INSIDE
-            } else if det > tol {
-                InSphere::OUTSIDE
-            } else {
-                InSphere::BOUNDARY
-            }
-        }
-    };
-
-    Ok(result)
-}
-
 /// Factory function to create robust predicate configurations for different use cases.
 pub mod config_presets {
     use super::{CoordinateScalar, RobustPredicateConfig};
@@ -847,6 +792,7 @@ pub mod config_presets {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geometry::matrix::matrix_get;
     use crate::geometry::point::Point;
     use crate::geometry::predicates;
     use approx::assert_relative_eq;
@@ -969,6 +915,54 @@ mod tests {
             result,
             Orientation::DEGENERATE,
             "near-degenerate 3D orientation should not be DEGENERATE with exact sign"
+        );
+    }
+
+    #[test]
+    fn test_robust_insphere_near_cocircular_2d_exact_sign() {
+        // Near-cocircular 2D configuration where the test point is just barely
+        // inside the circumcircle.  With f64 tolerance the insphere determinant
+        // can collapse to BOUNDARY, but exact sign should resolve INSIDE.
+        let eps = 2f64.powi(-50);
+        let triangle = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.0, 1.0]),
+        ];
+        // Circumcenter is (0.5, 0.5), circumradius = sqrt(2)/2 ≈ 0.7071.
+        // A point at (0.5, 0.5 - eps) is strictly inside.
+        let test_point = Point::new([0.5, 0.5 - eps]);
+
+        let config = config_presets::general_triangulation::<f64>();
+        let result = robust_insphere(&triangle, &test_point, &config).unwrap();
+        assert_eq!(
+            result,
+            InSphere::INSIDE,
+            "near-cocircular 2D point should be INSIDE with exact sign"
+        );
+    }
+
+    #[test]
+    fn test_robust_insphere_near_cospherical_3d_exact_sign() {
+        // Near-cospherical 3D configuration.  The test point is displaced from
+        // the circumsphere boundary by a tiny amount that f64 tolerance cannot
+        // resolve, but exact sign can.
+        let eps = 2f64.powi(-50);
+        let tetra = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+        // Circumcenter is (0.5, 0.5, 0.5).  Move slightly inward.
+        let test_point = Point::new([0.5 - eps, 0.5 - eps, 0.5 - eps]);
+
+        let config = config_presets::general_triangulation::<f64>();
+        let result = robust_insphere(&tetra, &test_point, &config).unwrap();
+        assert_ne!(
+            result,
+            InSphere::BOUNDARY,
+            "near-cospherical 3D point should not be BOUNDARY with exact sign"
         );
     }
 
@@ -1869,65 +1863,6 @@ mod tests {
         let unperturbed = apply_perturbation(&original_point, zero_direction, 1.0);
         let unperturbed_coords = *unperturbed.coords();
         assert_relative_eq!(unperturbed_coords.as_slice(), [1.0, 2.0, 3.0].as_slice());
-    }
-
-    #[test]
-    fn test_interpret_insphere_determinant_edge_cases() {
-        // Test determinant interpretation with various orientations and edge values
-        let tolerance = 1e-12;
-
-        // Test with DEGENERATE orientation (should always return BOUNDARY)
-        let result_degenerate = interpret_insphere_determinant(
-            100.0, // Large positive determinant
-            Orientation::DEGENERATE,
-            tolerance,
-        )
-        .unwrap();
-        assert_eq!(result_degenerate, InSphere::BOUNDARY);
-
-        let result_degenerate_neg = interpret_insphere_determinant(
-            -100.0, // Large negative determinant
-            Orientation::DEGENERATE,
-            tolerance,
-        )
-        .unwrap();
-        assert_eq!(result_degenerate_neg, InSphere::BOUNDARY);
-
-        // Test POSITIVE orientation with boundary values
-        let result_pos_boundary = interpret_insphere_determinant(
-            tolerance / 2.0, // Within tolerance
-            Orientation::POSITIVE,
-            tolerance,
-        )
-        .unwrap();
-        assert_eq!(result_pos_boundary, InSphere::BOUNDARY);
-
-        // Test NEGATIVE orientation with boundary values
-        let result_neg_boundary = interpret_insphere_determinant(
-            -tolerance / 2.0, // Within tolerance
-            Orientation::NEGATIVE,
-            tolerance,
-        )
-        .unwrap();
-        assert_eq!(result_neg_boundary, InSphere::BOUNDARY);
-
-        // Test POSITIVE orientation with clear inside
-        let result_pos_inside = interpret_insphere_determinant(
-            tolerance * 10.0, // Well above tolerance
-            Orientation::POSITIVE,
-            tolerance,
-        )
-        .unwrap();
-        assert_eq!(result_pos_inside, InSphere::INSIDE);
-
-        // Test NEGATIVE orientation with clear inside (negative det)
-        let result_neg_inside = interpret_insphere_determinant(
-            -tolerance * 10.0, // Well below -tolerance
-            Orientation::NEGATIVE,
-            tolerance,
-        )
-        .unwrap();
-        assert_eq!(result_neg_inside, InSphere::INSIDE);
     }
 
     #[test]

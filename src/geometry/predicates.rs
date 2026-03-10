@@ -27,6 +27,74 @@ const fn sign_to_orientation(sign: i8) -> Orientation {
     }
 }
 
+/// Convert an exact determinant sign to an [`InSphere`] result given an
+/// orientation sign multiplier.
+///
+/// `orient_sign` encodes how to interpret a positive determinant:
+/// - `1`: positive det → INSIDE (standard insphere with POSITIVE simplex orientation)
+/// - `-1`: positive det → OUTSIDE
+#[inline]
+const fn sign_to_insphere(det_sign: i8, orient_sign: i8) -> InSphere {
+    let effective = det_sign as i16 * orient_sign as i16;
+    if effective > 0 {
+        InSphere::INSIDE
+    } else if effective < 0 {
+        InSphere::OUTSIDE
+    } else {
+        InSphere::BOUNDARY
+    }
+}
+
+/// Compute insphere classification from a pre-populated insphere matrix.
+///
+/// Uses [`la_stack::Matrix::det_sign_exact`] for provably correct results when
+/// the matrix entries are finite.  Falls back to an f64 determinant with
+/// adaptive tolerance only when the entries themselves are non-finite.
+///
+/// `orient_sign` encodes how to interpret a positive determinant:
+/// - `1`: positive det → INSIDE (e.g. standard insphere with POSITIVE simplex orientation)
+/// - `-1`: positive det → OUTSIDE (e.g. standard insphere with NEGATIVE orientation,
+///   or lifted insphere with POSITIVE relative orientation)
+#[inline]
+pub(crate) fn insphere_from_matrix<const N: usize>(
+    matrix: &crate::geometry::matrix::Matrix<N>,
+    k: usize,
+    orient_sign: i8,
+    base_tol: f64,
+) -> InSphere {
+    // Stage 1: f64 fast filter — if the determinant is clearly outside the
+    // tolerance band the sign is unambiguous and we can skip exact arithmetic.
+    let tolerance_f64 = crate::geometry::matrix::adaptive_tolerance(matrix, base_tol);
+    let det = determinant(matrix);
+    let det_norm = det * f64::from(orient_sign);
+    if det.is_finite() {
+        if det_norm > tolerance_f64 {
+            return InSphere::INSIDE;
+        }
+        if det_norm < -tolerance_f64 {
+            return InSphere::OUTSIDE;
+        }
+    }
+
+    // Stage 2: exact sign via Bareiss — only reached for ambiguous or
+    // non-finite f64 results.
+    let exact_is_safe = matrix.det_direct().is_some_and(f64::is_finite)
+        || (0..k).all(|i| (0..k).all(|j| matrix.get(i, j).is_some_and(f64::is_finite)));
+    if exact_is_safe && let Ok(sign) = matrix.det_sign_exact() {
+        return sign_to_insphere(sign, orient_sign);
+    }
+
+    // Stage 3: f64 fallback for non-finite entries where exact arithmetic
+    // cannot run.
+    if det_norm > tolerance_f64 {
+        InSphere::INSIDE
+    } else if det_norm < -tolerance_f64 {
+        InSphere::OUTSIDE
+    } else {
+        InSphere::BOUNDARY
+    }
+}
+
 /// Compute orientation from a pre-populated orientation matrix.
 ///
 /// Uses [`la_stack::Matrix::det_sign_exact`] for provably correct results when
@@ -41,27 +109,34 @@ pub(crate) fn orientation_from_matrix<const N: usize>(
     k: usize,
     base_tol: f64,
 ) -> Orientation {
-    let fallback_orientation = || {
-        let tolerance_f64 = crate::geometry::matrix::adaptive_tolerance(matrix, base_tol);
-        let det = determinant(matrix);
+    // Stage 1: f64 fast filter.
+    let tolerance_f64 = crate::geometry::matrix::adaptive_tolerance(matrix, base_tol);
+    let det = determinant(matrix);
+    if det.is_finite() {
         if det > tolerance_f64 {
-            Orientation::POSITIVE
-        } else if det < -tolerance_f64 {
-            Orientation::NEGATIVE
-        } else {
-            Orientation::DEGENERATE
+            return Orientation::POSITIVE;
         }
-    };
-
-    let exact_is_safe = matrix.det_direct().is_some_and(f64::is_finite)
-        || (0..k).all(|i| (0..k).all(|j| matrix.get(i, j).is_some_and(f64::is_finite)));
-    if !exact_is_safe {
-        return fallback_orientation();
+        if det < -tolerance_f64 {
+            return Orientation::NEGATIVE;
+        }
     }
 
-    matrix
-        .det_sign_exact()
-        .map_or_else(|_| fallback_orientation(), sign_to_orientation)
+    // Stage 2: exact sign via Bareiss — only reached for ambiguous or
+    // non-finite f64 results.
+    let exact_is_safe = matrix.det_direct().is_some_and(f64::is_finite)
+        || (0..k).all(|i| (0..k).all(|j| matrix.get(i, j).is_some_and(f64::is_finite)));
+    if exact_is_safe && let Ok(sign) = matrix.det_sign_exact() {
+        return sign_to_orientation(sign);
+    }
+
+    // Stage 3: f64 fallback.
+    if det > tolerance_f64 {
+        Orientation::POSITIVE
+    } else if det < -tolerance_f64 {
+        Orientation::NEGATIVE
+    } else {
+        Orientation::DEGENERATE
+    }
 }
 
 /// Represents the position of a point relative to a circumsphere.
@@ -491,12 +566,9 @@ where
         );
         matrix_set(&mut matrix, D + 1, D + 1, 1.0);
 
-        // Adaptive tolerance scaled by matrix magnitude to improve robustness in release mode
-        // (compute before consuming the matrix).
+        // Route through the exact-sign insphere helper for provably correct
+        // classification on finite inputs.
         let base_tol = safe_scalar_to_f64(T::default_tolerance())?;
-        let tolerance_f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
-
-        let det = determinant(&matrix);
         let orientation = simplex_orientation(simplex_points)?;
 
         match orientation {
@@ -507,19 +579,12 @@ where
                 to_type: "circumsphere containment",
             }),
             Orientation::POSITIVE | Orientation::NEGATIVE => {
-                let orient_sign = if matches!(orientation, Orientation::POSITIVE) {
-                    1.0
+                let orient_sign: i8 = if matches!(orientation, Orientation::POSITIVE) {
+                    1
                 } else {
-                    -1.0
+                    -1
                 };
-                let det_norm = det * orient_sign;
-                if det_norm > tolerance_f64 {
-                    Ok(InSphere::INSIDE)
-                } else if det_norm < -tolerance_f64 {
-                    Ok(InSphere::OUTSIDE)
-                } else {
-                    Ok(InSphere::BOUNDARY)
-                }
+                Ok(insphere_from_matrix(&matrix, k, orient_sign, base_tol))
             }
         }
     })
@@ -737,31 +802,19 @@ where
             .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
         let relative_orientation = orientation_from_matrix(&orient_matrix, k, base_tol);
 
-        // Use adaptive tolerance for boundary detection on the lifted matrix.
-        let tolerance_f64: f64 = crate::geometry::matrix::adaptive_tolerance(&matrix, base_tol);
-
-        // Calculate determinant (singular => 0; non-finite => NaN).
-        let det = determinant(&matrix);
-
         match relative_orientation {
             Orientation::DEGENERATE => Err(CellValidationError::DegenerateSimplex),
             Orientation::POSITIVE | Orientation::NEGATIVE => {
                 // The lifted insphere formula requires both dimension parity
                 // and orientation sign.  With relative coordinates the two
                 // factors combine to: det_norm = −det × sign(relative).
-                let rel_sign = if matches!(relative_orientation, Orientation::POSITIVE) {
-                    1.0
+                // So orient_sign for the helper is −rel_sign.
+                let orient_sign: i8 = if matches!(relative_orientation, Orientation::POSITIVE) {
+                    -1
                 } else {
-                    -1.0
+                    1
                 };
-                let det_norm = -det * rel_sign;
-                if det_norm > tolerance_f64 {
-                    Ok(InSphere::INSIDE)
-                } else if det_norm < -tolerance_f64 {
-                    Ok(InSphere::OUTSIDE)
-                } else {
-                    Ok(InSphere::BOUNDARY)
-                }
+                Ok(insphere_from_matrix(&matrix, k, orient_sign, base_tol))
             }
         }
     })
