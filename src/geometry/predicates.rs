@@ -65,8 +65,9 @@ pub(crate) fn insphere_from_matrix<const N: usize>(
     // Stage 1: f64 fast filter — if the determinant is clearly outside the
     // tolerance band the sign is unambiguous and we can skip exact arithmetic.
     //
-    // NOTE: `adaptive_tolerance` scales `base_tol` by the matrix Frobenius
-    // norm.  This is a heuristic, NOT a rigorous error bound (unlike
+    // NOTE: `adaptive_tolerance` scales `base_tol` by the matrix infinity
+    // norm (max absolute row sum).  This is a heuristic, NOT a rigorous
+    // error bound (unlike
     // Shewchuk-style error analysis).  For ill-conditioned matrices the true
     // rounding error may exceed the tolerance, causing Stage 1 to return a
     // result that Stage 2 would override.  la-stack #44 tracks adding
@@ -115,8 +116,9 @@ pub(crate) fn orientation_from_matrix<const N: usize>(
     // Stage 1: f64 fast filter.
     //
     // NOTE: same caveat as in `insphere_from_matrix` — `adaptive_tolerance`
-    // is a heuristic, not a provable error bound.  la-stack #44 will address
-    // this with Shewchuk-style bounds.
+    // scales `base_tol` by the matrix infinity norm (max absolute row sum).
+    // This is a heuristic, not a provable error bound.  la-stack #44 will
+    // address this with Shewchuk-style bounds.
     let tolerance_f64 = crate::geometry::matrix::adaptive_tolerance(matrix, base_tol);
     let det = determinant(matrix);
     if det.is_finite() {
