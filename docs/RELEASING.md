@@ -131,7 +131,7 @@ PR metadata:
 - Title: chore(release): release $TAG
 - Description: Clean release PR with version bump, changelog, and documentation updates. No code changes.
 
-Note: Do NOT push the temporary tag created in step 3.
+Note: Do NOT push the temporary tag created in step 4.
 
 ### Handling fixes discovered during release process
 

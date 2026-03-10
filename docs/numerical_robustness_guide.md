@@ -12,16 +12,18 @@ This document summarizes the robustness tools available in this crate and how to
 Orientation and insphere predicates use a three-stage evaluation:
 
 1. **f64 fast filter** — if the determinant is well outside an adaptive tolerance band,
-   the sign is resolved immediately with no allocation.
-2. **Exact Bareiss** — via `la_stack::Matrix::det_sign_exact`, the determinant sign is
-   computed in exact `BigRational` arithmetic (Bareiss fraction-free elimination).
-   Provably correct for finite matrix entries.
+   the sign is resolved immediately with no allocation.  (This tolerance is a heuristic;
+   see [Current limitations](#current-limitations) for details.)
+2. **Exact sign** — via `la_stack::Matrix::det_sign_exact`.  For D ≤ 4, la-stack first
+   tries a provable Shewchuk-style error bound that can resolve the sign from f64
+   arithmetic alone, without allocating.  If the bound is inconclusive (or D ≥ 5), it
+   falls back to exact `BigRational` Bareiss elimination.  Provably correct for finite
+   matrix entries.
 3. **Indeterminate fallback** — if exact arithmetic cannot run (non-finite entries),
    the predicate returns `BOUNDARY` / `DEGENERATE`.
 
 This applies to `simplex_orientation`, `insphere`, `insphere_lifted`, `robust_orientation`,
-and `robust_insphere`. For D ≤ 4, la-stack's fast filter uses provable Shewchuk-style
-error bounds and resolves most queries without allocating.
+and `robust_insphere`.
 
 **Dimension limits:** the stack-allocated matrix dispatch supports up to 7×7 matrices
 (`MAX_STACK_MATRIX_DIM = 7`). This means:
