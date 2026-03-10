@@ -936,7 +936,7 @@ mod tests {
     fn test_robust_orientation_near_degenerate_2d_exact_sign() {
         // Near-degenerate triangle where adaptive f64 tolerance can collapse to DEGENERATE,
         // but exact determinant sign should remain POSITIVE.
-        let eps = f64::from_bits(0x3CD0_0000_0000_0000); // 2^-50
+        let eps = 2f64.powi(-50);
         let points = vec![
             Point::new([0.0, 0.0]),
             Point::new([1.0, 0.0]),
@@ -955,7 +955,7 @@ mod tests {
     #[test]
     fn test_robust_orientation_near_degenerate_3d_not_degenerate() {
         // Near-degenerate tetrahedron where exact sign should prevent false DEGENERATE.
-        let eps = f64::from_bits(0x3CD0_0000_0000_0000); // 2^-50
+        let eps = 2f64.powi(-50);
         let points = vec![
             Point::new([0.0, 0.0, 0.0]),
             Point::new([1.0, 0.0, 0.0]),
