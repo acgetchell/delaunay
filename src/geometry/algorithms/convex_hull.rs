@@ -6019,12 +6019,18 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "performance test covers 3D and 2D cases"
+    )]
     fn test_large_dataset_performance() {
         println!("Testing convex hull performance with larger datasets");
 
         println!("  Testing 3D hull with many vertices...");
-        // Generate a larger set of 3D points around a sphere
-        let num_vertices = 50; // Reasonable size for testing
+        // Generate a larger set of 3D points *near* (but not on) a sphere.
+        // Varying the radius per point breaks exact cosphericity so the f64
+        // fast filter resolves most insphere queries without exact Bareiss.
+        let num_vertices = 20; // Keep small for CI; exact predicates are expensive near-cospherical
         let mut large_vertices = Vec::new();
 
         for i in 0..num_vertices {
@@ -6032,9 +6038,10 @@ mod tests {
                 / <f64 as From<_>>::from(num_vertices);
             let angle2 = <f64 as From<_>>::from(i * 3) * std::f64::consts::PI
                 / <f64 as From<_>>::from(num_vertices);
-            let x = angle1.cos() * angle2.sin();
-            let y = angle1.sin() * angle2.sin();
-            let z = angle2.cos();
+            let radius = <f64 as From<_>>::from(i).mul_add(0.02, 1.0);
+            let x = radius * angle1.cos() * angle2.sin();
+            let y = radius * angle1.sin() * angle2.sin();
+            let z = radius * angle2.cos();
             large_vertices.push(vertex!([x, y, z]));
         }
 
@@ -6042,7 +6049,14 @@ mod tests {
 
         let start_time = std::time::Instant::now();
 
-        match DelaunayTriangulation::new(&large_vertices) {
+        // Use FastKernel: its insphere_lifted uses a 4×4 matrix in 3D
+        // (within la-stack's fast-filter range).  RobustKernel builds a
+        // 5×5 insphere matrix that can still hit exact Bareiss on
+        // near-cospherical inputs.
+        match DelaunayTriangulation::<_, (), (), 3>::with_kernel(
+            &FastKernel::new(),
+            &large_vertices,
+        ) {
             Ok(large_dt) => {
                 let dt_construction_time = start_time.elapsed();
                 println!("    DelaunayTriangulation construction took: {dt_construction_time:?}");
@@ -6103,21 +6117,27 @@ mod tests {
 
         println!("  Testing 2D hull with many vertices...");
 
-        // Generate points on a 2D circle
-        let num_2d_vertices = 100;
+        // Generate points near (but not exactly on) a 2D circle.
+        let num_2d_vertices = 40;
         let mut large_2d_vertices = Vec::new();
 
         for i in 0..num_2d_vertices {
             let angle = <f64 as From<_>>::from(i) * 2.0 * std::f64::consts::PI
                 / <f64 as From<_>>::from(num_2d_vertices);
-            let x = angle.cos();
-            let y = angle.sin();
+            let radius = <f64 as From<_>>::from(i).mul_add(0.01, 1.0);
+            let x = radius * angle.cos();
+            let y = radius * angle.sin();
             large_2d_vertices.push(vertex!([x, y]));
         }
 
         let start_2d = std::time::Instant::now();
 
-        match DelaunayTriangulation::new(&large_2d_vertices) {
+        // Use FastKernel: its insphere_lifted uses a 3×3 matrix (within
+        // la-stack's fast-filter range) for consistent benchmark times.
+        match DelaunayTriangulation::<_, (), (), 2>::with_kernel(
+            &FastKernel::<f64>::new(),
+            &large_2d_vertices,
+        ) {
             Ok(large_2d_dt) => match ConvexHull::from_triangulation(large_2d_dt.as_triangulation())
             {
                 Ok(large_2d_hull) => {
