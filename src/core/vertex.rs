@@ -917,6 +917,47 @@ mod tests {
     }
 
     // =============================================================================
+    // VERTEX BUILDER TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_vertex_builder_with_point() {
+        let v: Vertex<f64, (), 3> = VertexBuilder::default()
+            .point(Point::new([1.0, 2.0, 3.0]))
+            .build()
+            .unwrap();
+        assert_relative_eq!(
+            v.point().coords().as_slice(),
+            [1.0, 2.0, 3.0].as_slice(),
+            epsilon = 1e-9
+        );
+        assert!(!v.uuid().is_nil());
+        assert!(v.incident_cell.is_none());
+        assert!(v.data.is_none());
+    }
+
+    #[test]
+    fn test_vertex_builder_with_data() {
+        let v: Vertex<f64, i32, 2> = VertexBuilder::default()
+            .point(Point::new([0.0, 1.0]))
+            .data(42)
+            .build()
+            .unwrap();
+        assert_relative_eq!(
+            v.point().coords().as_slice(),
+            [0.0, 1.0].as_slice(),
+            epsilon = 1e-9
+        );
+        assert_eq!(v.data, Some(42));
+    }
+
+    #[test]
+    fn test_vertex_builder_missing_point() {
+        let result = VertexBuilder::<f64, (), 3>::default().build();
+        assert_eq!(result, Err(VertexBuilderError::MissingPoint));
+    }
+
+    // =============================================================================
     // CONVENIENCE MACRO AND HELPER TESTS
     // =============================================================================
 
