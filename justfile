@@ -20,11 +20,6 @@ _ensure-actionlint:
     command -v actionlint >/dev/null || { echo "❌ 'actionlint' not found. See 'just setup' or https://github.com/rhysd/actionlint"; exit 1; }
 
 # Internal helpers: ensure external tooling is installed
-_ensure-jq:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v jq >/dev/null || { echo "❌ 'jq' not found. See 'just setup' or install: brew install jq"; exit 1; }
-
 _ensure-git-cliff:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -33,6 +28,11 @@ _ensure-git-cliff:
         echo "   Or via Cargo: cargo install git-cliff"
         exit 1
     }
+
+_ensure-jq:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v jq >/dev/null || { echo "❌ 'jq' not found. See 'just setup' or install: brew install jq"; exit 1; }
 
 _ensure-npx:
     #!/usr/bin/env bash
@@ -137,12 +137,13 @@ build:
 build-release:
     cargo build --release
 
-# Changelog management (git-cliff + post-processing)
+# Changelog management (git-cliff + post-processing + archiving)
 changelog: _ensure-git-cliff python-sync
     #!/usr/bin/env bash
     set -euo pipefail
     git-cliff -o CHANGELOG.md
     uv run postprocess-changelog
+    uv run archive-changelog
 
 changelog-tag version: python-sync
     uv run tag-release {{version}}
@@ -151,14 +152,6 @@ changelog-update: changelog
     @echo "📝 Changelog updated successfully!"
     @echo "To create a git tag with changelog content for a specific version, run:"
     @echo "  just changelog-tag <version>  # e.g., just changelog-tag v0.4.2"
-
-# Create an annotated git tag from the CHANGELOG.md section for the given version
-tag version: python-sync
-    uv run tag-release {{version}}
-
-# Recreate an existing tag (delete + recreate)
-tag-force version: python-sync
-    uv run tag-release {{version}} --force
 
 # Check (non-mutating): run all linters/validators
 check: lint
@@ -227,11 +220,11 @@ debug-large-scale-3d-1000:
 debug-large-scale-3d-incremental-bisect total="1000":
     DELAUNAY_LARGE_DEBUG_PREFIX_TOTAL={{total}} cargo test --test large_scale_debug debug_large_scale_3d_incremental_prefix_bisect -- --ignored --nocapture
 
-debug-large-scale-4d-100:
-    DELAUNAY_LARGE_DEBUG_N_4D=100 DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
-
 debug-large-scale-4d:
     cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
+
+debug-large-scale-4d-100:
+    DELAUNAY_LARGE_DEBUG_N_4D=100 DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
 
 # Default recipe shows available commands
 default:
@@ -643,6 +636,14 @@ spell-check: _ensure-typos
     else
         echo "No modified files to spell-check."
     fi
+
+# Create an annotated git tag from the CHANGELOG.md section for the given version
+tag version: python-sync
+    uv run tag-release {{version}}
+
+# Recreate an existing tag (delete + recreate)
+tag-force version: python-sync
+    uv run tag-release {{version}} --force
 
 # Testing
 # test: runs only lib and doc tests (fast, used by CI and dev)

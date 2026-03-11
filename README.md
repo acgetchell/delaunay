@@ -55,7 +55,8 @@ combinatorial and geometric checks.
 - [x]  [Delaunay repair] using bistellar flips for k=2/k=3 with inverse edge/triangle queues in 4D/5D
 - [x]  Safe Rust: `#![forbid(unsafe_code)]`
 
-See [CHANGELOG.md](CHANGELOG.md) for details.
+See [CHANGELOG.md](CHANGELOG.md) for details. Older releases are archived under
+[docs/archive/changelog/](docs/archive/changelog/).
 
 ## 🟢 Minimal Construction Example
 

@@ -144,8 +144,9 @@ See `docs/dev/testing.md` for full testing guidance.
 
 ## Documentation Maintenance
 
-- Never edit `CHANGELOG.md` manually
-- Run `just changelog` to regenerate it from commits
+- Never edit `CHANGELOG.md` or `docs/archive/changelog/*.md` manually
+- Run `just changelog` to regenerate the root changelog and archive files from commits
+- The root `CHANGELOG.md` contains only Unreleased + the active minor series; completed minors are archived in `docs/archive/changelog/X.Y.md`
 
 ---
 

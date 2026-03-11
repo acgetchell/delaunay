@@ -40,201 +40,210 @@ The delaunay project follows a standard Rust library structure with additional t
 ```text
 delaunay/
 ├── .cargo/
-│   └── config.toml
+│   └── config.toml
 ├── .config/
-│   └── nextest.toml
+│   └── nextest.toml
 ├── .github/
-│   ├── workflows/
-│   │   ├── audit.yml
-│   │   ├── benchmarks.yml
-│   │   ├── ci.yml
-│   │   ├── codacy.yml
-│   │   ├── codecov.yml
-│   │   ├── generate-baseline.yml
-│   │   ├── profiling-benchmarks.yml
-│   │   └── rust-clippy.yml
-│   ├── CODEOWNERS
-│   └── dependabot.yml
+│   ├── workflows/
+│   │   ├── audit.yml
+│   │   ├── benchmarks.yml
+│   │   ├── ci.yml
+│   │   ├── codacy.yml
+│   │   ├── codecov.yml
+│   │   ├── generate-baseline.yml
+│   │   ├── profiling-benchmarks.yml
+│   │   └── rust-clippy.yml
+│   ├── CODEOWNERS
+│   └── dependabot.yml
 ├── benches/
-│   ├── PERFORMANCE_RESULTS.md
-│   ├── README.md
-│   ├── ci_performance_suite.rs
-│   ├── circumsphere_containment.rs
-│   ├── large_scale_performance.rs
-│   ├── microbenchmarks.rs
-│   ├── profiling_suite.rs
-│   └── topology_guarantee_construction.rs
+│   ├── PERFORMANCE_RESULTS.md
+│   ├── README.md
+│   ├── ci_performance_suite.rs
+│   ├── circumsphere_containment.rs
+│   ├── large_scale_performance.rs
+│   ├── microbenchmarks.rs
+│   ├── profiling_suite.rs
+│   └── topology_guarantee_construction.rs
 ├── docs/
-│   ├── archive/
-│   │   ├── OPTIMIZATION_ROADMAP.md
-│   │   ├── fix-delaunay.md
-│   │   ├── invariant_validation_plan.md
-│   │   ├── issue_120_investigation.md
-│   │   ├── jaccard.md
-│   │   ├── optimization_recommendations_historical.md
-│   │   ├── phase2_bowyer_watson_optimization.md
-│   │   ├── phase2_uuid_iter_optimization.md
-│   │   ├── phase4.md
-│   │   ├── phase_3a_implementation_guide.md
-│   │   ├── phase_3c_action_plan.md
-│   │   ├── testing.md
-│   │   └── topology_integration_design_historical.md
-│   ├── dev/
-│   │   ├── commands.md
-│   │   ├── rust.md
-│   │   └── testing.md
-│   ├── templates/
-│   │   └── README.md
-│   ├── KNOWN_ISSUES_4D.md
-│   ├── ORIENTATION_SPEC.md
-│   ├── README.md
-│   ├── RELEASING.md
-│   ├── api_design.md
-│   ├── code_organization.md
-│   ├── invariants.md
-│   ├── numerical_robustness_guide.md
-│   ├── property_testing_summary.md
-│   ├── topology.md
-│   ├── validation.md
-│   └── workflows.md
+│   ├── archive/
+│   │   ├── changelog/
+│   │   │   ├── 0.2.md
+│   │   │   ├── 0.3.md
+│   │   │   ├── 0.4.md
+│   │   │   ├── 0.5.md
+│   │   │   └── 0.6.md
+│   │   ├── OPTIMIZATION_ROADMAP.md
+│   │   ├── fix-delaunay.md
+│   │   ├── invariant_validation_plan.md
+│   │   ├── issue_120_investigation.md
+│   │   ├── jaccard.md
+│   │   ├── optimization_recommendations_historical.md
+│   │   ├── phase2_bowyer_watson_optimization.md
+│   │   ├── phase2_uuid_iter_optimization.md
+│   │   ├── phase4.md
+│   │   ├── phase_3a_implementation_guide.md
+│   │   ├── phase_3c_action_plan.md
+│   │   ├── testing.md
+│   │   └── topology_integration_design_historical.md
+│   ├── dev/
+│   │   ├── commands.md
+│   │   ├── rust.md
+│   │   └── testing.md
+│   ├── templates/
+│   │   └── README.md
+│   ├── KNOWN_ISSUES_4D.md
+│   ├── ORIENTATION_SPEC.md
+│   ├── README.md
+│   ├── RELEASING.md
+│   ├── api_design.md
+│   ├── code_organization.md
+│   ├── invariants.md
+│   ├── numerical_robustness_guide.md
+│   ├── property_testing_summary.md
+│   ├── topology.md
+│   ├── validation.md
+│   └── workflows.md
 ├── examples/
-│   ├── README.md
-│   ├── convex_hull_3d_100_points.rs
-│   ├── into_from_conversions.rs
-│   ├── memory_analysis.rs
-│   ├── pachner_roundtrip_4d.rs
-│   ├── point_comparison_and_hashing.rs
-│   ├── topology_editing_2d_3d.rs
-│   ├── triangulation_3d_100_points.rs
-│   └── zero_allocation_iterator_demo.rs
+│   ├── README.md
+│   ├── convex_hull_3d_100_points.rs
+│   ├── into_from_conversions.rs
+│   ├── memory_analysis.rs
+│   ├── pachner_roundtrip_4d.rs
+│   ├── point_comparison_and_hashing.rs
+│   ├── topology_editing_2d_3d.rs
+│   ├── triangulation_3d_100_points.rs
+│   └── zero_allocation_iterator_demo.rs
 ├── scripts/
-│   ├── tests/
-│   │   ├── __init__.py
-│   │   ├── conftest.py
-│   │   ├── test_benchmark_models.py
-│   │   ├── test_benchmark_utils.py
-│   │   ├── test_compare_storage_backends.py
-│   │   ├── test_hardware_utils.py
-│   │   ├── test_postprocess_changelog.py
-│   │   └── test_subprocess_utils.py
-│   ├── README.md
-│   ├── benchmark_models.py
-│   ├── benchmark_utils.py
-│   ├── compare_storage_backends.py
-│   ├── hardware_utils.py
-│   ├── postprocess_changelog.py
-│   ├── run_all_examples.sh
-│   ├── slurm_storage_comparison.sh
-│   ├── subprocess_utils.py
-│   └── tag_release.py
+│   ├── tests/
+│   │   ├── __init__.py
+│   │   ├── conftest.py
+│   │   ├── test_archive_changelog.py
+│   │   ├── test_benchmark_models.py
+│   │   ├── test_benchmark_utils.py
+│   │   ├── test_compare_storage_backends.py
+│   │   ├── test_hardware_utils.py
+│   │   ├── test_postprocess_changelog.py
+│   │   ├── test_subprocess_utils.py
+│   │   └── test_tag_release.py
+│   ├── README.md
+│   ├── archive_changelog.py
+│   ├── benchmark_models.py
+│   ├── benchmark_utils.py
+│   ├── compare_storage_backends.py
+│   ├── hardware_utils.py
+│   ├── postprocess_changelog.py
+│   ├── run_all_examples.sh
+│   ├── slurm_storage_comparison.sh
+│   ├── subprocess_utils.py
+│   └── tag_release.py
 ├── src/
-│   ├── core/
-│   │   ├── algorithms/
-│   │   │   ├── flips.rs
-│   │   │   ├── incremental_insertion.rs
-│   │   │   └── locate.rs
-│   │   ├── collections/
-│   │   │   ├── aliases.rs
-│   │   │   ├── buffers.rs
-│   │   │   ├── helpers.rs
-│   │   │   ├── key_maps.rs
-│   │   │   ├── secondary_maps.rs
-│   │   │   ├── spatial_hash_grid.rs
-│   │   │   └── triangulation_maps.rs
-│   │   ├── traits/
-│   │   │   ├── boundary_analysis.rs
-│   │   │   ├── data_type.rs
-│   │   │   └── facet_cache.rs
-│   │   ├── util/
-│   │   │   ├── deduplication.rs
-│   │   │   ├── delaunay_validation.rs
-│   │   │   ├── facet_keys.rs
-│   │   │   ├── facet_utils.rs
-│   │   │   ├── hashing.rs
-│   │   │   ├── hilbert.rs
-│   │   │   ├── jaccard.rs
-│   │   │   ├── measurement.rs
-│   │   │   └── uuid.rs
-│   │   ├── adjacency.rs
-│   │   ├── boundary.rs
-│   │   ├── builder.rs
-│   │   ├── cell.rs
-│   │   ├── delaunay_triangulation.rs
-│   │   ├── edge.rs
-│   │   ├── facet.rs
-│   │   ├── operations.rs
-│   │   ├── triangulation.rs
-│   │   ├── triangulation_data_structure.rs
-│   │   └── vertex.rs
-│   ├── geometry/
-│   │   ├── algorithms/
-│   │   │   └── convex_hull.rs
-│   │   ├── traits/
-│   │   │   └── coordinate.rs
-│   │   ├── util/
-│   │   │   ├── circumsphere.rs
-│   │   │   ├── conversions.rs
-│   │   │   ├── measures.rs
-│   │   │   ├── norms.rs
-│   │   │   ├── point_generation.rs
-│   │   │   └── triangulation_generation.rs
-│   │   ├── kernel.rs
-│   │   ├── matrix.rs
-│   │   ├── point.rs
-│   │   ├── predicates.rs
-│   │   ├── quality.rs
-│   │   └── robust_predicates.rs
-│   ├── topology/
-│   │   ├── characteristics/
-│   │   │   ├── euler.rs
-│   │   │   └── validation.rs
-│   │   ├── spaces/
-│   │   │   ├── euclidean.rs
-│   │   │   ├── spherical.rs
-│   │   │   └── toroidal.rs
-│   │   ├── traits/
-│   │   │   ├── global_topology_model.rs
-│   │   │   └── topological_space.rs
-│   │   └── manifold.rs
-│   ├── triangulation/
-│   │   └── flips.rs
-│   └── lib.rs
+│   ├── core/
+│   │   ├── algorithms/
+│   │   │   ├── flips.rs
+│   │   │   ├── incremental_insertion.rs
+│   │   │   └── locate.rs
+│   │   ├── collections/
+│   │   │   ├── aliases.rs
+│   │   │   ├── buffers.rs
+│   │   │   ├── helpers.rs
+│   │   │   ├── key_maps.rs
+│   │   │   ├── secondary_maps.rs
+│   │   │   ├── spatial_hash_grid.rs
+│   │   │   └── triangulation_maps.rs
+│   │   ├── traits/
+│   │   │   ├── boundary_analysis.rs
+│   │   │   ├── data_type.rs
+│   │   │   └── facet_cache.rs
+│   │   ├── util/
+│   │   │   ├── deduplication.rs
+│   │   │   ├── delaunay_validation.rs
+│   │   │   ├── facet_keys.rs
+│   │   │   ├── facet_utils.rs
+│   │   │   ├── hashing.rs
+│   │   │   ├── hilbert.rs
+│   │   │   ├── jaccard.rs
+│   │   │   ├── measurement.rs
+│   │   │   └── uuid.rs
+│   │   ├── adjacency.rs
+│   │   ├── boundary.rs
+│   │   ├── builder.rs
+│   │   ├── cell.rs
+│   │   ├── delaunay_triangulation.rs
+│   │   ├── edge.rs
+│   │   ├── facet.rs
+│   │   ├── operations.rs
+│   │   ├── triangulation.rs
+│   │   ├── triangulation_data_structure.rs
+│   │   └── vertex.rs
+│   ├── geometry/
+│   │   ├── algorithms/
+│   │   │   └── convex_hull.rs
+│   │   ├── traits/
+│   │   │   └── coordinate.rs
+│   │   ├── util/
+│   │   │   ├── circumsphere.rs
+│   │   │   ├── conversions.rs
+│   │   │   ├── measures.rs
+│   │   │   ├── norms.rs
+│   │   │   ├── point_generation.rs
+│   │   │   └── triangulation_generation.rs
+│   │   ├── kernel.rs
+│   │   ├── matrix.rs
+│   │   ├── point.rs
+│   │   ├── predicates.rs
+│   │   ├── quality.rs
+│   │   └── robust_predicates.rs
+│   ├── topology/
+│   │   ├── characteristics/
+│   │   │   ├── euler.rs
+│   │   │   └── validation.rs
+│   │   ├── spaces/
+│   │   │   ├── euclidean.rs
+│   │   │   ├── spherical.rs
+│   │   │   └── toroidal.rs
+│   │   ├── traits/
+│   │   │   ├── global_topology_model.rs
+│   │   │   └── topological_space.rs
+│   │   └── manifold.rs
+│   ├── triangulation/
+│   │   └── flips.rs
+│   └── lib.rs
 ├── tests/
-│   ├── COVERAGE.md
-│   ├── README.md
-│   ├── allocation_api.rs
-│   ├── check_perturbation_stats.rs
-│   ├── circumsphere_debug_tools.rs
-│   ├── coordinate_conversion_errors.rs
-│   ├── delaunay_edge_cases.rs
-│   ├── delaunay_incremental_insertion.rs
-│   ├── delaunay_repair_fallback.rs
-│   ├── euler_characteristic.rs
-│   ├── insert_with_statistics.rs
-│   ├── k3_cycle_predicate.rs
-│   ├── large_scale_debug.rs
-│   ├── proptest_cell.rs
-│   ├── proptest_convex_hull.rs
-│   ├── proptest_delaunay_triangulation.proptest-regressions
-│   ├── proptest_delaunay_triangulation.rs
-│   ├── proptest_euler_characteristic.rs
-│   ├── proptest_facet.rs
-│   ├── proptest_geometry.rs
-│   ├── proptest_orientation.rs
-│   ├── proptest_point.rs
-│   ├── proptest_predicates.rs
-│   ├── proptest_safe_conversions.rs
-│   ├── proptest_serialization.rs
-│   ├── proptest_tds.rs
-│   ├── proptest_toroidal.rs
-│   ├── proptest_triangulation.rs
-│   ├── proptest_vertex.rs
-│   ├── public_topology_api.rs
-│   ├── regression_delaunay_2d.rs
-│   ├── serialization_vertex_preservation.rs
-│   ├── storage_backend_compatibility.rs
-│   ├── tds_orientation.rs
-│   └── triangulation_builder.rs
+│   ├── COVERAGE.md
+│   ├── README.md
+│   ├── allocation_api.rs
+│   ├── check_perturbation_stats.rs
+│   ├── circumsphere_debug_tools.rs
+│   ├── coordinate_conversion_errors.rs
+│   ├── delaunay_edge_cases.rs
+│   ├── delaunay_incremental_insertion.rs
+│   ├── delaunay_repair_fallback.rs
+│   ├── euler_characteristic.rs
+│   ├── insert_with_statistics.rs
+│   ├── k3_cycle_predicate.rs
+│   ├── large_scale_debug.rs
+│   ├── proptest_cell.rs
+│   ├── proptest_convex_hull.rs
+│   ├── proptest_delaunay_triangulation.proptest-regressions
+│   ├── proptest_delaunay_triangulation.rs
+│   ├── proptest_euler_characteristic.rs
+│   ├── proptest_facet.rs
+│   ├── proptest_geometry.rs
+│   ├── proptest_orientation.rs
+│   ├── proptest_point.rs
+│   ├── proptest_predicates.rs
+│   ├── proptest_safe_conversions.rs
+│   ├── proptest_serialization.rs
+│   ├── proptest_tds.rs
+│   ├── proptest_toroidal.rs
+│   ├── proptest_triangulation.rs
+│   ├── proptest_vertex.rs
+│   ├── public_topology_api.rs
+│   ├── regression_delaunay_2d.rs
+│   ├── serialization_vertex_preservation.rs
+│   ├── storage_backend_compatibility.rs
+│   ├── tds_orientation.rs
+│   └── triangulation_builder.rs
 ├── .codacy.yml
 ├── .codecov.yml
 ├── .coderabbit.yml
@@ -321,9 +330,11 @@ uv run pytest scripts/tests/test_benchmark_utils.py
 uv run pytest scripts/tests/test_postprocess_changelog.py
 ```
 
-**Note**: The changelog is generated by [git-cliff](https://git-cliff.org/) (`just changelog-update`) and post-processed by
-`postprocess_changelog.py` for markdown hygiene. Tag creation (`just changelog-tag`) handles GitHub's tag annotation size
-limits by falling back to lightweight tags when needed.
+**Note**: The changelog is generated by [git-cliff](https://git-cliff.org/) (`just changelog-update`), post-processed by
+`postprocess_changelog.py` for markdown hygiene, and then archived by `archive_changelog.py` which splits completed minor
+series into `docs/archive/changelog/X.Y.md` files, keeping only Unreleased + the active minor in the root `CHANGELOG.md`.
+Tag creation (`just changelog-tag`) handles GitHub's tag annotation size limits and automatically falls back to archived
+files when the requested version is no longer in the root changelog.
 
 **Note**: Benchmarks, baselines, and performance summaries are generated via the benchmark utilities CLI:
 
@@ -420,8 +431,9 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality, 
 - **`docs/`** - User and contributor documentation, including architecture/reference guides,
   `docs/dev/` workflow rules for agents, archived design notes, and templates
 - **`scripts/`** - Python utilities for automation and CI integration
+  - **`archive_changelog.py`** - Archive completed minor series from root CHANGELOG.md into per-minor files
   - **`postprocess_changelog.py`** - Markdown hygiene for git-cliff output (reflow, list normalization, summary injection)
-  - **`tag_release.py`** - Extract latest changelog section for git tag annotations (with 125KB limit handling)
+  - **`tag_release.py`** - Extract changelog section for git tag annotations (with 125KB limit handling and archive fallback)
   - **`benchmark_utils.py`** - Performance benchmarking, regression testing, and baseline management
   - **`hardware_utils.py`** - Cross-platform hardware detection for performance tracking
   - **`tests/`** - Test suite for the Python utilities (regressions and tooling behavior)
