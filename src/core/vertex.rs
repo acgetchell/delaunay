@@ -88,6 +88,120 @@ pub enum VertexValidationError {
     },
 }
 
+/// Errors that can occur when building a [`Vertex`] via [`VertexBuilder`].
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::vertex::VertexBuilderError;
+///
+/// let err = VertexBuilderError::MissingPoint;
+/// assert_eq!(err.to_string(), "Missing required field: `point`");
+/// ```
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum VertexBuilderError {
+    /// The required `point` field was not set before calling [`VertexBuilder::build`].
+    #[error("Missing required field: `point`")]
+    MissingPoint,
+}
+
+// =============================================================================
+// VERTEX BUILDER
+// =============================================================================
+
+/// A builder for constructing [`Vertex`] instances.
+///
+/// The builder pattern allows setting optional fields incrementally before
+/// constructing the final vertex. The `point` field is required; all other
+/// fields have sensible defaults.
+///
+/// # Generic Parameters
+///
+/// * `T` - The coordinate scalar type
+/// * `U` - User data type that implements [`DataType`]
+/// * `D` - The spatial dimension (compile-time constant)
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::vertex::{Vertex, VertexBuilder};
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::traits::coordinate::Coordinate;
+///
+/// // Build a vertex with just a point
+/// let v: Vertex<f64, (), 3> = VertexBuilder::default()
+///     .point(Point::new([1.0, 2.0, 3.0]))
+///     .build()
+///     .unwrap();
+///
+/// // Build a vertex with data
+/// let v: Vertex<f64, i32, 2> = VertexBuilder::default()
+///     .point(Point::new([0.0, 1.0]))
+///     .data(42)
+///     .build()
+///     .unwrap();
+/// ```
+pub struct VertexBuilder<T, U, const D: usize>
+where
+    U: DataType,
+{
+    point: Option<Point<T, D>>,
+    data: Option<U>,
+}
+
+impl<T, U, const D: usize> Default for VertexBuilder<T, U, D>
+where
+    U: DataType,
+{
+    fn default() -> Self {
+        Self {
+            point: None,
+            data: None,
+        }
+    }
+}
+
+impl<T, U, const D: usize> VertexBuilder<T, U, D>
+where
+    U: DataType,
+{
+    /// Sets the point coordinates for the vertex.
+    ///
+    /// This is a required field — [`build`](Self::build) will return an error
+    /// if the point has not been set.
+    #[must_use]
+    pub fn point(mut self, point: Point<T, D>) -> Self {
+        self.point = Some(point);
+        self
+    }
+
+    /// Sets optional user data for the vertex.
+    ///
+    /// The value is converted via [`Into<U>`], allowing ergonomic use with
+    /// compatible types.
+    #[must_use]
+    pub fn data(mut self, data: impl Into<U>) -> Self {
+        self.data = Some(data.into());
+        self
+    }
+
+    /// Consumes the builder and returns a [`Vertex`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VertexBuilderError::MissingPoint`] if [`point`](Self::point)
+    /// was not called.
+    pub fn build(self) -> Result<Vertex<T, U, D>, VertexBuilderError> {
+        let point = self.point.ok_or(VertexBuilderError::MissingPoint)?;
+        Ok(Vertex {
+            point,
+            uuid: make_uuid(),
+            incident_cell: None,
+            data: self.data,
+        })
+    }
+}
+
 // =============================================================================
 // CONVENIENCE MACROS AND HELPERS
 // =============================================================================
@@ -151,7 +265,7 @@ pub use crate::vertex;
 // VERTEX STRUCT DEFINITION
 // =============================================================================
 
-#[derive(Builder, Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 /// The `Vertex` struct represents a vertex in a triangulation with geometric
 /// coordinates, unique identification, and optional metadata.
 ///
@@ -191,7 +305,6 @@ where
     /// The coordinates of the vertex as a D-dimensional Point.
     point: Point<T, D>,
     /// A universally unique identifier for the vertex.
-    #[builder(setter(skip), default = "make_uuid()")]
     uuid: Uuid,
     /// The `CellKey` of the cell that the vertex is incident to.
     /// Phase 3: Changed from UUID to direct key reference for performance.
@@ -199,10 +312,8 @@ where
     /// Note: This field is not serialized because `CellKey` is only valid within
     /// the current `SlotMap` instance. During deserialization, the TDS automatically
     /// reconstructs `incident_cell` mappings via `assign_incident_cells()`.
-    #[builder(setter(skip), default = "None")]
     pub incident_cell: Option<CellKey>,
     /// Optional data associated with the vertex.
-    #[builder(setter(into, strip_option), default)]
     pub data: Option<U>,
 }
 
