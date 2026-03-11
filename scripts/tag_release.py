@@ -63,10 +63,11 @@ _SEMVER_RE = re.compile(
 def validate_semver(tag_version: str) -> None:
     """
     Validate that tag_version matches SemVer vX.Y.Z format (requires a leading 'v' and allows optional prerelease/metadata).
-    
+
     Parameters:
-        tag_version (str): Tag string to validate; must start with 'v' followed by MAJOR.MINOR.PATCH (e.g., v1.2.3) and may include prerelease or build metadata.
-    
+        tag_version (str): Tag string to validate; must start with 'v' followed by
+            MAJOR.MINOR.PATCH (e.g., v1.2.3) and may include prerelease or build metadata.
+
     Raises:
         ValueError: If tag_version does not conform to the expected SemVer pattern.
     """
@@ -78,7 +79,7 @@ def validate_semver(tag_version: str) -> None:
 def parse_version(tag_version: str) -> str:
     """
     Normalize a semantic version tag by removing a leading "v" if present.
-    
+
     Returns:
         The version string without a leading "v". If the input does not start with "v", it is returned unchanged.
     """
@@ -93,13 +94,13 @@ def parse_version(tag_version: str) -> str:
 def find_changelog(start: Path | None = None) -> Path:
     """
     Locate the nearest CHANGELOG.md file starting at `start` or in its parent directory.
-    
+
     Parameters:
         start (Path | None): Directory to begin the search. If None, uses the current working directory.
-    
+
     Returns:
         Path: The path to the discovered CHANGELOG.md file.
-    
+
     Raises:
         FileNotFoundError: If no CHANGELOG.md is found in `start` or its parent directory.
     """
@@ -114,14 +115,14 @@ def find_changelog(start: Path | None = None) -> Path:
 def extract_changelog_section(changelog: Path, version: str) -> str:
     """
     Extracts the changelog body for the specified version.
-    
+
     Parameters:
         changelog (Path): Path to the CHANGELOG.md file to read.
         version (str): Version identifier without a leading 'v' (e.g., "1.2.3").
-    
+
     Returns:
         str: The changelog section text for the given version (trimmed of leading/trailing blank lines).
-    
+
     Raises:
         LookupError: If the version heading is not found or the section is empty.
     """
@@ -170,10 +171,10 @@ def extract_changelog_section(changelog: Path, version: str) -> str:
 def _tag_exists(tag_version: str) -> bool:
     """
     Check whether a git tag with the given name exists in the repository.
-    
+
     Parameters:
         tag_version (str): Tag name to check.
-    
+
     Returns:
         `True` if a git tag named `tag_version` exists, `False` otherwise.
     """
@@ -188,7 +189,7 @@ def _tag_exists(tag_version: str) -> bool:
 def _delete_tag(tag_version: str) -> None:
     """
     Delete the specified local Git tag from the repository.
-    
+
     Parameters:
         tag_version (str): Git tag name to remove (e.g., "v1.2.3").
     """
@@ -198,13 +199,16 @@ def _delete_tag(tag_version: str) -> None:
 def _get_repo_url() -> str:
     """
     Return a normalized GitHub HTTPS repository URL derived from the `origin` remote.
-    
+
     If the `origin` remote is a GitHub SSH or HTTPS URL, this returns it in the form
     `https://github.com/<owner>/<repo>`. If the remote does not match recognized
     GitHub patterns, returns the raw remote URL as a best-effort fallback.
-    
+
     Returns:
         str: Normalized GitHub HTTPS URL when detected, otherwise the raw origin remote URL.
+
+    Raises:
+        ValueError: If the unrecognized remote URL appears to contain embedded credentials.
     """
     result = run_git_command(["remote", "get-url", "origin"])
     raw = result.stdout.strip()
@@ -217,16 +221,20 @@ def _get_repo_url() -> str:
         m = re.match(pat, raw)
         if m:
             return f"https://github.com/{m.group('slug')}"
+    # Refuse to return URLs that embed credentials (user:pass@ or user@).
+    if re.search(r"://[^/@]+:[^/@]+@", raw) or re.search(r"://[^/@]+@", raw) or re.match(r"[^@]+@", raw):
+        msg = f"Remote URL appears to contain credentials; cannot use as a public URL: {raw[:20]}..."
+        raise ValueError(msg)
     return raw  # best-effort fallback
 
 
 def _version_header_re(version: str) -> re.Pattern[str]:
     """
     Create a regex that matches a level-2 changelog header for the specified version.
-    
+
     Parameters:
         version (str): Version string without a leading 'v' (e.g., "1.2.3").
-    
+
     Returns:
         pattern (re.Pattern[str]): Compiled regex matching a "##" header for the version,
         allowing optional surrounding brackets, an optional leading 'v', and terminating
@@ -238,13 +246,17 @@ def _version_header_re(version: str) -> re.Pattern[str]:
 def _github_anchor(changelog: Path, version: str) -> str:
     """
     Generate a GitHub-style heading anchor for the changelog section corresponding to the given version.
-    
-    Searches the provided CHANGELOG file for a matching version header, normalizes the header to the same slug format GitHub uses (lowercase, remove punctuation, collapse spaces to hyphens, and strip inline/reference link markup), and returns the resulting anchor. If the changelog cannot be read or no matching header is found, returns a fallback slug derived from "v{version}" (version should be provided without a leading "v").
-    
+
+    Searches the provided CHANGELOG file for a matching version header, normalizes the header
+    to the same slug format GitHub uses (lowercase, remove punctuation, collapse spaces to
+    hyphens, and strip inline/reference link markup), and returns the resulting anchor. If the
+    changelog cannot be read or no matching header is found, returns a fallback slug derived
+    from "v{version}" (version should be provided without a leading "v").
+
     Parameters:
         changelog (Path): Path to the CHANGELOG.md file to scan.
         version (str): Version string without a leading "v" (e.g., "1.2.3").
-    
+
     Returns:
         str: A GitHub-compatible anchor string for the version heading.
     """
@@ -275,9 +287,13 @@ def _github_anchor(changelog: Path, version: str) -> str:
 def create_tag(tag_version: str, *, force: bool = False) -> None:
     """
     Create an annotated git tag from the matching CHANGELOG.md section for the given SemVer tag.
-    
-    If the changelog section for the specified version exceeds GitHub's annotation size limit, the tag will be created with a short reference message pointing to CHANGELOG.md and the version heading anchor instead of embedding the full section. If a tag with the same name already exists and `force` is False, the function prints a warning and exits with status 1; if `force` is True, the existing tag is deleted before creation.
-    
+
+    If the changelog section for the specified version exceeds GitHub's annotation size limit,
+    the tag will be created with a short reference message pointing to CHANGELOG.md and the
+    version heading anchor instead of embedding the full section. If a tag with the same name
+    already exists and `force` is False, the function prints a warning and exits with status 1;
+    if `force` is True, the existing tag is deleted before creation.
+
     Parameters:
         tag_version (str): The tag to create (must follow the project's SemVer format, e.g., "v1.2.3").
         force (bool): If True, delete and recreate the tag when it already exists; otherwise bail out.
@@ -352,8 +368,10 @@ def create_tag(tag_version: str, *, force: bool = False) -> None:
 def main() -> None:
     """
     CLI entry point that parses command-line arguments, configures logging, and invokes tag creation.
-    
-    Parses a positional `version` (e.g. v1.2.3) and optional `--force` and `--debug` flags, sets logging level accordingly, calls `create_tag` with the parsed options, and on common failures prints the error to stderr and exits with status 1.
+
+    Parses a positional `version` (e.g. v1.2.3) and optional `--force` and `--debug` flags,
+    sets logging level accordingly, calls `create_tag` with the parsed options, and on common
+    failures prints the error to stderr and exits with status 1.
     """
     parser = argparse.ArgumentParser(
         prog="tag-release",

@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### ⚠️ Breaking Changes
+
+- Replace custom changelog pipeline with git-cliff
+
+### Changed
+
+- 📝 Add docstrings to `chore/simplify-changelog-pipeline` [`99f5449`](https://github.com/acgetchell/delaunay/commit/99f5449a04cf0bf734dc7c9444dc8a278675dad3)
+
+### Maintenance
+
+- [**breaking**] Replace custom changelog pipeline with git-cliff
+  [`17c5b50`](https://github.com/acgetchell/delaunay/commit/17c5b500ebaee07a6e630ab7ec388c8bab19f84f)
+
+Replace ~4,000 lines of custom Python changelog generation
+  (changelog_utils.py, enhance_commits.py) with git-cliff and two
+  focused scripts (~640 lines total):
+
+- postprocess_changelog.py: lightweight markdown hygiene
+    (MD004, MD007, MD012, MD013, MD030, MD031, MD032, MD040)
+    plus summary section injection (Merged PRs, Breaking Changes)
+
+- tag_release.py: extract latest version section for git tag messages
+
+  Pipeline changes:
+
+- cliff.toml: full git-cliff config with conventional commit parsing,
+    PR auto-linking, and Tera template for Keep a Changelog format
+
+- justfile: new changelog-update, changelog-tag, changelog recipes
+    replacing the old generate-changelog workflow
+
+- Idempotent output: postprocessor matches markdownlint --fix exactly,
+    so `just changelog-update && just fix` produces zero diff
+
+  Tooling simplification:
+
+- Remove mypy in favor of ty (Astral) — mypy's permissive config was
+    catching nothing that ty doesn't already cover
+
+- Disable markdownlint MD037 (false positives on cron expressions and
+    glob patterns like saturating_*)
+
 ## [0.7.2] - 2026-03-10
 
 ### Merged Pull Requests
@@ -3962,6 +4006,7 @@ Resolve Rustsec Advisory for bytemuck 1.16.1, update Codacy.
 
 Don't need to double-submit jobs for merged PRs.
 
+[unreleased]: https://github.com/acgetchell/delaunay/compare/v0.7.2..HEAD
 [0.7.2]: https://github.com/acgetchell/delaunay/compare/v0.7.1..v0.7.2
 [0.7.1]: https://github.com/acgetchell/delaunay/compare/v0.7.0..v0.7.1
 [0.7.0]: https://github.com/acgetchell/delaunay/compare/v0.6.2..v0.7.0

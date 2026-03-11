@@ -56,7 +56,7 @@ _LIST_MARKER_SPACE_RE = re.compile(r"^(\s*-)\s{2,}")
 def _max_pr_number(entry: str) -> int:
     """
     Get the largest pull request number referenced in the given changelog entry.
-    
+
     Returns:
         highest_pr (int): The largest PR number found, or 0 if no PR links are present.
     """
@@ -67,14 +67,14 @@ def _max_pr_number(entry: str) -> int:
 def _compact_entry(line: str, *, strip_breaking: bool = False) -> str:
     """
     Produce a compact summary of a changelog list item.
-    
+
     Removes a trailing commit-hash link from the given line. If `strip_breaking` is True,
     also removes a single leading "[**breaking**] " prefix.
-    
+
     Parameters:
         line (str): The changelog list item to compact.
         strip_breaking (bool): If True, strip a single leading "[**breaking**] " prefix.
-    
+
     Returns:
         str: The compacted changelog entry with the commit-hash link (and optional breaking prefix) removed.
     """
@@ -89,14 +89,18 @@ def _extract_section_summaries(
 ) -> tuple[list[str], list[str]]:
     """
     Extract summary lines for merged pull requests and breaking changes from a version section.
-    
-    Processes only top-level list items in the provided `section` (lines starting with "- "), detects PR-linked entries and entries containing "[**breaking**]". Each matching line is compacted (trailing commit-hash links removed; the "[**breaking**]" prefix is stripped when requested) before inclusion.
-    
+
+    Processes only top-level list items in the provided `section` (lines starting with "- "),
+    detects PR-linked entries and entries containing "[**breaking**]". Each matching line is
+    compacted (trailing commit-hash links removed; the "[**breaking**]" prefix is stripped when
+    requested) before inclusion.
+
     Parameters:
         section (list[str]): Lines belonging to a single version section from a changelog.
-    
+
     Returns:
-        tuple[list[str], list[str]]: `pr_entries` — compacted lines that contain PR links; `breaking_entries` — compacted lines marked as breaking changes.
+        tuple[list[str], list[str]]: `pr_entries` — compacted lines that contain PR links;
+            `breaking_entries` — compacted lines marked as breaking changes.
     """
     pr_entries: list[str] = []
     breaking_entries: list[str] = []
@@ -120,11 +124,11 @@ def _extract_section_summaries(
 def _inject_summary_sections(text: str) -> str:
     """
     Insert "Merged Pull Requests" and "Breaking Changes" summary sections into a changelog text.
-    
+
     Scans each version section for PR-linked list items and entries marked as breaking,
     builds compact summary lists (sorted by PR number), and injects a summary block
     immediately after the version heading when relevant.
-    
+
     Returns:
         processed_text (str): The input text with summary sections inserted; unchanged if
         no version sections or no summary entries are found.
@@ -147,7 +151,7 @@ def _inject_summary_sections(text: str) -> str:
         section = lines[start:end]
 
         # Guard against double-injection.
-        if any("### Merged Pull Requests" in s for s in section):
+        if any("### Merged Pull Requests" in s or "### ⚠️ Breaking Changes" in s for s in section):
             continue
 
         pr_entries, breaking_entries = _extract_section_summaries(section)
@@ -183,15 +187,17 @@ def _inject_summary_sections(text: str) -> str:
 def _reflow_line(line: str, max_width: int = MAX_LINE_WIDTH) -> str:
     """
     Reflow a single markdown line to fit within max_width while preserving atomic markdown tokens.
-    
-    Preserves a leading list marker ("- " or "* ") on the first line and indents continuation lines to maintain list nesting. Tokens such as links and code spans are kept intact and not split across lines.
-    
+
+    Preserves a leading list marker ("- " or "* ") on the first line and indents continuation
+    lines to maintain list nesting. Tokens such as links and code spans are kept intact and not
+    split across lines.
+
     Parameters:
-    	line (str): The original line to reflow.
-    	max_width (int): Maximum allowed line width; lines longer than this will be wrapped.
-    
+        line (str): The original line to reflow.
+        max_width (int): Maximum allowed line width; lines longer than this will be wrapped.
+
     Returns:
-    	str: The reflowed line, potentially containing newline characters so that no output line exceeds max_width.
+        str: The reflowed line, potentially containing newline characters so that no output line exceeds max_width.
     """
     if len(line) <= max_width:
         return line
@@ -231,7 +237,7 @@ def _reflow_line(line: str, max_width: int = MAX_LINE_WIDTH) -> str:
 def _deindent_orphan(line: str, lines: list[str], idx: int) -> str:
     """
     Adjust indentation for orphaned unordered list items produced by git-cliff's two-space prefix.
-    
+
     If the line is a list item prefixed by two spaces from cliff's indentation, this function either
     strips exactly two leading spaces (preserving relative nesting) when an unordered-list ancestor
     exists in the original lines, or strips all leading whitespace when no unordered context is found.
@@ -272,11 +278,11 @@ def _deindent_orphan(line: str, lines: list[str], idx: int) -> str:
 def _needs_blank_before(stripped: str, result: list[str]) -> bool:
     """
     Determine whether a blank line is required before a list item to satisfy Markdown rule MD032.
-    
+
     Parameters:
         stripped (str): The current line with leading whitespace removed.
         result (list[str]): The lines already emitted immediately before the current line.
-    
+
     Returns:
         bool: `True` if a blank line should be inserted before the list item, `False` otherwise.
     """

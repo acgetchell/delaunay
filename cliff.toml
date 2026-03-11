@@ -73,6 +73,10 @@ topo_order = false
 sort_commits = "oldest"
 
 # Link (#N) references to GitHub PRs before rendering.
+# NOTE: The repo path is hardcoded here because commit_preprocessors run
+# before Tera template rendering, so {{ remote.github.owner }} variables
+# are not available.  The body/footer templates above *do* use the
+# remote.github variables.  Update this manually if forking/renaming.
 commit_preprocessors = [
     { pattern = '\(#(\d+)\)', replace = '[#${1}](https://github.com/acgetchell/delaunay/pull/${1})' },
 ]
