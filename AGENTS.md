@@ -50,6 +50,15 @@ When using the `gh` CLI to view issues, PRs, or other GitHub objects:
 - **AVOID** plain `gh issue view N` — it may fail with `read:project`
   scope errors or open a pager.
 
+- When updating issues, use explicit `comment`/`edit` commands with
+  **single‑quoted** `--body` arguments (double quotes cause shell escaping
+  failures with backticks and markdown special characters):
+
+  ```bash
+  gh issue comment 242 --repo acgetchell/delaunay --body 'Scope refinement...'
+  gh issue edit 242 --repo acgetchell/delaunay --body 'Updated issue body...'
+  ```
+
 ### Code Editing
 
 - **NEVER** use `sed`, `awk`, `perl`, or `python` to modify code

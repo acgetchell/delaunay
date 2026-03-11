@@ -333,10 +333,11 @@ where
 ///   requested topology guarantee not being satisfiable.
 /// - Validation fails after the robust fallback attempts.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if internal point-set bookkeeping is inconsistent (this indicates a bug). In
-/// particular, it will panic if the initial point set is unexpectedly consumed.
+/// Returns `DelaunayTriangulationConstructionError` if internal point-set bookkeeping
+/// is inconsistent (initial point set unexpectedly consumed), point generation fails,
+/// or all construction attempts fail validation.
 ///
 /// # Examples
 ///
@@ -426,9 +427,13 @@ where
         });
 
         let points = if attempt == 0 {
-            initial_points
-                .take()
-                .expect("initial points already consumed")
+            initial_points.take().ok_or_else(|| {
+                DelaunayTriangulationConstructionError::from(
+                    TriangulationConstructionError::InternalInconsistency {
+                        message: "initial points already consumed".to_owned(),
+                    },
+                )
+            })?
         } else {
             match point_seed {
                 Some(seed_value) => generate_random_points_seeded(n_points, bounds, seed_value)

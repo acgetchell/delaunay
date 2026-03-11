@@ -1690,7 +1690,7 @@ where
             .collect();
         for iv in &image_vertex_copies {
             tds_mut.remove_vertex(iv).map_err(|e| {
-                TriangulationConstructionError::GeometricDegeneracy {
+                TriangulationConstructionError::InternalInconsistency {
                     message: format!("Failed to remove image vertex: {e}"),
                 }
             })?;
@@ -1788,12 +1788,20 @@ where
         for (_facet_sig, occurrences) in facet_occurrences {
             match occurrences.as_slice() {
                 [(a_ck, a_idx), (b_ck, b_idx)] => {
-                    let a_lifted = rep_lifted_by_key
-                        .get(a_ck)
-                        .expect("lifted representative exists for quotient cell");
-                    let b_lifted = rep_lifted_by_key
-                        .get(b_ck)
-                        .expect("lifted representative exists for quotient cell");
+                    let a_lifted = rep_lifted_by_key.get(a_ck).ok_or_else(|| {
+                        TriangulationConstructionError::InternalInconsistency {
+                            message: format!(
+                                "missing lifted representative for quotient cell {a_ck:?}"
+                            ),
+                        }
+                    })?;
+                    let b_lifted = rep_lifted_by_key.get(b_ck).ok_or_else(|| {
+                        TriangulationConstructionError::InternalInconsistency {
+                            message: format!(
+                                "missing lifted representative for quotient cell {b_ck:?}"
+                            ),
+                        }
+                    })?;
                     let shares_all_canonical_vertices = a_lifted
                         .iter()
                         .zip(b_lifted.iter())
@@ -1807,18 +1815,24 @@ where
                         }
                         .into());
                     }
-                    neighbor_updates
-                        .get_mut(a_ck)
-                        .expect("neighbor vector exists for quotient cell")[*a_idx] = Some(*b_ck);
-                    neighbor_updates
-                        .get_mut(b_ck)
-                        .expect("neighbor vector exists for quotient cell")[*b_idx] = Some(*a_ck);
+                    neighbor_updates.get_mut(a_ck).ok_or_else(|| {
+                        TriangulationConstructionError::InternalInconsistency {
+                            message: format!("missing neighbor vector for quotient cell {a_ck:?}"),
+                        }
+                    })?[*a_idx] = Some(*b_ck);
+                    neighbor_updates.get_mut(b_ck).ok_or_else(|| {
+                        TriangulationConstructionError::InternalInconsistency {
+                            message: format!("missing neighbor vector for quotient cell {b_ck:?}"),
+                        }
+                    })?[*b_idx] = Some(*a_ck);
                 }
                 [(a_ck, a_idx)] => {
                     // Self-identified periodic facet.
-                    neighbor_updates
-                        .get_mut(a_ck)
-                        .expect("neighbor vector exists for quotient cell")[*a_idx] = Some(*a_ck);
+                    neighbor_updates.get_mut(a_ck).ok_or_else(|| {
+                        TriangulationConstructionError::InternalInconsistency {
+                            message: format!("missing neighbor vector for quotient cell {a_ck:?}"),
+                        }
+                    })?[*a_idx] = Some(*a_ck);
                 }
                 _ => {
                     return Err(TriangulationConstructionError::GeometricDegeneracy {
@@ -1848,11 +1862,13 @@ where
 
         // Apply neighbor updates.
         for &ck in &inserted_cell_keys {
-            let neighbors = neighbor_updates
-                .remove(&ck)
-                .expect("neighbor vector exists for inserted quotient cell");
+            let neighbors = neighbor_updates.remove(&ck).ok_or_else(|| {
+                TriangulationConstructionError::InternalInconsistency {
+                    message: format!("missing neighbor vector for inserted quotient cell {ck:?}"),
+                }
+            })?;
             tds_mut.set_neighbors_by_key(ck, &neighbors).map_err(|e| {
-                TriangulationConstructionError::GeometricDegeneracy {
+                TriangulationConstructionError::InternalInconsistency {
                     message: format!("set_neighbors_by_key failed for {ck:?}: {e}"),
                 }
             })?;
@@ -1873,7 +1889,7 @@ where
         }
         // Rebuild incident-cell pointers after topology surgery.
         tds_mut.assign_incident_cells().map_err(|e| {
-            TriangulationConstructionError::GeometricDegeneracy {
+            TriangulationConstructionError::InternalInconsistency {
                 message: format!("assign_incident_cells failed: {e}"),
             }
         })?;
