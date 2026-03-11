@@ -432,7 +432,7 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality, 
   `docs/dev/` workflow rules for agents, archived design notes, and templates
 - **`scripts/`** - Python utilities for automation and CI integration
   - **`archive_changelog.py`** - Archive completed minor series from root CHANGELOG.md into per-minor files
-  - **`postprocess_changelog.py`** - Markdown hygiene for git-cliff output (reflow, list normalization, summary injection)
+  - **`postprocess_changelog.py`** - Markdown hygiene for git-cliff output (typo correction, reflow, list normalization, summary injection)
   - **`tag_release.py`** - Extract changelog section for git tag annotations (with 125KB limit handling and archive fallback)
   - **`benchmark_utils.py`** - Performance benchmarking, regression testing, and baseline management
   - **`hardware_utils.py`** - Cross-platform hardware detection for performance tracking

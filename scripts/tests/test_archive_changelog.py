@@ -6,7 +6,9 @@ from typing import TYPE_CHECKING
 
 from archive_changelog import (
     _extract_link_defs,
+    _format_link_defs,
     _minor_key,
+    _version_sort_key,
     archive_changelog,
     build_root,
     group_by_minor,
@@ -70,6 +72,42 @@ class TestMinorKey:
 
     def test_major(self) -> None:
         assert _minor_key("2.0.0") == "2.0"
+
+
+class TestVersionSortKey:
+    def test_numeric_ordering(self) -> None:
+        labels = ["0.2.0", "0.10.0", "0.9.0", "0.7.2"]
+        assert sorted(labels, key=_version_sort_key) == [
+            "0.2.0",
+            "0.7.2",
+            "0.9.0",
+            "0.10.0",
+        ]
+
+    def test_minor_keys(self) -> None:
+        minors = ["0.2", "0.10", "0.9", "0.7"]
+        assert sorted(minors, key=_version_sort_key, reverse=True) == [
+            "0.10",
+            "0.9",
+            "0.7",
+            "0.2",
+        ]
+
+    def test_unreleased_sorts_last(self) -> None:
+        labels = ["0.7.2", "unreleased", "0.6.1"]
+        assert sorted(labels, key=_version_sort_key) == [
+            "0.6.1",
+            "0.7.2",
+            "unreleased",
+        ]
+
+    def test_reverse_unreleased_first(self) -> None:
+        labels = ["0.7.2", "unreleased", "0.6.1"]
+        assert sorted(labels, key=_version_sort_key, reverse=True) == [
+            "unreleased",
+            "0.7.2",
+            "0.6.1",
+        ]
 
 
 class TestParseChangelog:
@@ -311,6 +349,35 @@ class TestArchiveChangelog:
 # ---------------------------------------------------------------------------
 
 
+class TestFormatLinkDefs:
+    def test_semver_ordering_with_double_digit_minor(self) -> None:
+        """Versions like 0.10.x sort after 0.9.x, not before."""
+        link_defs = {
+            "0.10.0": "[0.10.0]: https://example.com/compare/v0.9.0..v0.10.0",
+            "0.9.0": "[0.9.0]: https://example.com/compare/v0.8.0..v0.9.0",
+            "0.7.10": "[0.7.10]: https://example.com/compare/v0.7.9..v0.7.10",
+            "0.7.2": "[0.7.2]: https://example.com/compare/v0.7.1..v0.7.2",
+        }
+        labels = {"0.10.0", "0.9.0", "0.7.10", "0.7.2"}
+        result = _format_link_defs(link_defs, labels)
+        lines = result.split("\n")
+        # Newest (0.10.0) first, then 0.9.0, 0.7.10, 0.7.2.
+        assert lines[0].startswith("[0.10.0]:")
+        assert lines[1].startswith("[0.9.0]:")
+        assert lines[2].startswith("[0.7.10]:")
+        assert lines[3].startswith("[0.7.2]:")
+
+    def test_unreleased_sorts_first_in_reverse(self) -> None:
+        link_defs = {
+            "unreleased": "[unreleased]: https://example.com/compare/v0.7.2..HEAD",
+            "0.7.2": "[0.7.2]: https://example.com/compare/v0.7.1..v0.7.2",
+        }
+        result = _format_link_defs(link_defs, {"unreleased", "0.7.2"})
+        lines = result.split("\n")
+        assert lines[0].startswith("[unreleased]:")
+        assert lines[1].startswith("[0.7.2]:")
+
+
 class TestTagReleaseArchiveFallback:
     def test_extract_from_archive(self, tmp_path: Path) -> None:
         """extract_changelog_section falls back to archive when version not in root."""
@@ -326,8 +393,18 @@ class TestTagReleaseArchiveFallback:
             encoding="utf-8",
         )
 
-        body = extract_changelog_section(changelog, "0.6.2")
+        body, source = extract_changelog_section(changelog, "0.6.2")
         assert "Bump dep in 0.6.2" in body
+        assert source == archive_dir / "0.6.md"
+
+    def test_extract_from_root_returns_root_source(self, tmp_path: Path) -> None:
+        """extract_changelog_section returns the root changelog as source when found there."""
+        changelog = tmp_path / "CHANGELOG.md"
+        changelog.write_text(_PREAMBLE + _V072, encoding="utf-8")
+
+        body, source = extract_changelog_section(changelog, "0.7.2")
+        assert "Bug fix in 0.7.2" in body
+        assert source == changelog
 
     def test_anchor_from_archive(self, tmp_path: Path) -> None:
         """_github_anchor falls back to archive for archived versions."""

@@ -153,7 +153,7 @@ If you discover issues (bugs, formatting problems, etc.) after creating the chan
    # uv run changelog-utils generate
    
    # Commit updated changelog
-   git add CHANGELOG.md
+   git add CHANGELOG.md docs/archive/changelog/
    git commit -m "docs: update changelog with release fixes"
    ```
 

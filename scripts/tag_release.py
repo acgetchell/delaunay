@@ -163,7 +163,7 @@ def _extract_section_from_file(path: Path, version: str) -> str | None:
     return body if body.strip() else None
 
 
-def extract_changelog_section(changelog: Path, version: str) -> str:
+def extract_changelog_section(changelog: Path, version: str) -> tuple[str, Path]:
     """
     Extracts the changelog body for the specified version.
 
@@ -175,21 +175,23 @@ def extract_changelog_section(changelog: Path, version: str) -> str:
         version (str): Version identifier without a leading 'v' (e.g., "1.2.3").
 
     Returns:
-        str: The changelog section text for the given version (trimmed of leading/trailing blank lines).
+        A 2-tuple of (*body*, *source*) where *body* is the trimmed
+        changelog section text and *source* is the :class:`~pathlib.Path`
+        from which it was read (either the root changelog or an archive file).
 
     Raises:
         LookupError: If the version heading is not found in the root or archive, or the section is empty.
     """
     body = _extract_section_from_file(changelog, version)
     if body:
-        return body
+        return body, changelog
 
     # Fall back to the per-minor archive.
     archive = _archive_path_for_version(changelog, version)
     if archive:
         body = _extract_section_from_file(archive, version)
         if body:
-            return body
+            return body, archive
 
     msg = f"No changelog section found for version {version}. Expected a heading like: ## [{version}] - YYYY-MM-DD"
     raise LookupError(msg)
@@ -359,7 +361,7 @@ def create_tag(tag_version: str, *, force: bool = False) -> None:
 
     # Extract changelog section (before any mutation)
     changelog = find_changelog()
-    section = extract_changelog_section(changelog, version)
+    section, source = extract_changelog_section(changelog, version)
     section_bytes = len(section.encode("utf-8"))
 
     # Check size limit
@@ -367,11 +369,16 @@ def create_tag(tag_version: str, *, force: bool = False) -> None:
         print(f"{_YELLOW}⚠ Changelog section ({section_bytes:,} bytes) exceeds GitHub's tag limit ({_GITHUB_TAG_ANNOTATION_LIMIT:,} bytes){_RESET}")
         anchor = _github_anchor(changelog, version)
         repo_url = _get_repo_url()
+        # Use the file the section was actually read from.
+        try:
+            source_rel = source.relative_to(changelog.parent)
+        except ValueError:
+            source_rel = source
         tag_message = (
             f"Version {version}\n\n"
             f"This release contains extensive changes. See full changelog:\n"
-            f"<{repo_url}/blob/{tag_version}/CHANGELOG.md#{anchor}>\n\n"
-            f"For detailed release notes, refer to CHANGELOG.md in the repository.\n"
+            f"<{repo_url}/blob/{tag_version}/{source_rel}#{anchor}>\n\n"
+            f"For detailed release notes, refer to {source_rel} in the repository.\n"
         )
         is_truncated = True
         print(f"{_BLUE}→ Creating annotated tag with CHANGELOG.md reference{_RESET}")

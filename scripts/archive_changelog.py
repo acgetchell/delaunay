@@ -55,6 +55,27 @@ def _minor_key(version: str) -> str:
     return f"{parts[0]}.{parts[1]}"
 
 
+def _version_sort_key(label: str) -> tuple[bool, tuple[int, ...]]:
+    """Return a sort key for a version label that orders by semantic version.
+
+    Non-numeric labels (e.g. ``unreleased``) sort after all numeric versions.
+    Numeric parts are compared as integers so that ``0.10`` sorts after ``0.9``.
+
+    Parameters:
+        label: A version label like ``0.7.2``, ``0.10``, or ``unreleased``.
+
+    Returns:
+        A tuple suitable for use as a sort key.
+    """
+    parts = label.split(".")
+    try:
+        nums = tuple(int(p) for p in parts)
+    except ValueError:
+        # Non-numeric labels ("unreleased") sort last (True > False).
+        return (True, ())
+    return (False, nums)
+
+
 def _extract_link_defs(text: str) -> tuple[str, dict[str, str]]:
     """Separate trailing reference-style link definitions from changelog text.
 
@@ -165,7 +186,7 @@ def _format_link_defs(link_defs: dict[str, str], labels: set[str]) -> str:
     convention that git-cliff uses: ``[unreleased]`` first, then newest
     version to oldest).
     """
-    relevant = [link_defs[label] for label in sorted(link_defs, reverse=True) if label in labels]
+    relevant = [link_defs[label] for label in sorted(link_defs, key=_version_sort_key, reverse=True) if label in labels]
     return "\n".join(relevant) if relevant else ""
 
 
@@ -305,7 +326,7 @@ def archive_changelog(
         preamble,
         unreleased,
         groups[active_minor],
-        sorted(archived_minors, reverse=True),
+        sorted(archived_minors, key=_version_sort_key, reverse=True),
         archive_dir_rel,
     )
 
