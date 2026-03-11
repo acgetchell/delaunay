@@ -60,6 +60,11 @@ class TestStripTrailingBlanks:
         assert f.read_text(encoding="utf-8") == "\n"
 
     def test_empty_file(self, tmp_path: Path) -> None:
+        """
+        Verifies that processing an empty changelog file results in a file containing exactly one newline.
+        
+        Creates an empty CHANGELOG.md at the provided temporary path, runs postprocess on it, and asserts the file's contents are "\n".
+        """
         f = tmp_path / "CHANGELOG.md"
         f.write_text("", encoding="utf-8")
 
@@ -148,10 +153,29 @@ _COMMIT_URL = f"https://github.com/{_OWNER_REPO}/commit"
 
 
 def _pr(n: int) -> str:
+    """
+    Return a Markdown-formatted pull request link for a given pull request number.
+    
+    Parameters:
+        n (int): Pull request number.
+    
+    Returns:
+        str: Markdown link in the form "[#<n>](<PR_URL>/<n>)".
+    """
     return f"[#{n}]({_PR_URL}/{n})"
 
 
 def _commit(short: str = "abc1234", full: str = "abc1234deadbeef0123456789") -> str:
+    """
+    Format a markdown link that references a commit using a short hash as link text and the full hash in the URL.
+    
+    Parameters:
+        short (str): Short commit identifier used as the link text (rendered in backticks).
+        full (str): Full commit hash used to construct the target URL.
+    
+    Returns:
+        commit_link (str): Markdown link of the form [`<short>`](<commit_url>/<full>).
+    """
     return f"[`{short}`]({_COMMIT_URL}/{full})"
 
 
@@ -187,6 +211,15 @@ class TestMaxPrNumber:
 class TestSummarySections:
     @staticmethod
     def _changelog(entries: str) -> str:
+        """
+        Create a sample changelog file containing a header, a 1.0.0 release section dated 2026-01-01, and an "Added" subsection populated with the provided entries.
+        
+        Parameters:
+            entries (str): Markdown content to place under the "Added" subsection (should include any list markers or paragraphs).
+        
+        Returns:
+            str: The full changelog content as a string.
+        """
         return f"# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Added\n\n{entries}\n"
 
     def test_injects_pr_summary(self) -> None:
@@ -208,6 +241,11 @@ class TestSummarySections:
         assert result.index("### ⚠️ Breaking Changes") < result.index("### Merged Pull Requests")
 
     def test_pr_sorted_descending(self) -> None:
+        """
+        Verifies that PRs in the injected "Merged Pull Requests" summary are sorted in descending order by PR number.
+        
+        Constructs a changelog with three entries containing PR links and confirms the summary lists them in order: highest PR number first.
+        """
         content = self._changelog(
             f"- First {_pr(5)} {_commit('aaa1111', 'aaa1111deadbeef')}\n"
             f"- Second {_pr(20)} {_commit('bbb2222', 'bbb2222deadbeef')}\n"
