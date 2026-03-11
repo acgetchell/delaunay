@@ -50,13 +50,23 @@ When using the `gh` CLI to view issues, PRs, or other GitHub objects:
 - **AVOID** plain `gh issue view N` — it may fail with `read:project`
   scope errors or open a pager.
 
-- When updating issues, use explicit `comment`/`edit` commands with
-  **single‑quoted** `--body` arguments (double quotes cause shell escaping
-  failures with backticks and markdown special characters):
+- When updating issues, use explicit `comment`/`edit` commands.
+  For **arbitrary Markdown** (backticks, quotes, special characters),
+  prefer `--body-file -` with a heredoc:
 
   ```bash
-  gh issue comment 242 --repo acgetchell/delaunay --body 'Scope refinement...'
-  gh issue edit 242 --repo acgetchell/delaunay --body 'Updated issue body...'
+  gh issue comment 242 --repo acgetchell/delaunay --body-file - <<'EOF'
+  ## Heading
+
+  Body with `backticks`, **bold**, and apostrophes that's safe.
+  EOF
+  ```
+
+  For **simple text only** (no apostrophes or special characters),
+  single‑quoted `--body` is fine:
+
+  ```bash
+  gh issue comment 242 --repo acgetchell/delaunay --body 'Simple update text'
   ```
 
 ### Code Editing

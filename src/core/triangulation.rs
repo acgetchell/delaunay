@@ -5423,6 +5423,18 @@ mod tests {
     }
 
     #[test]
+    fn test_internal_inconsistency_display() {
+        let err = TriangulationConstructionError::InternalInconsistency {
+            message: "missing vertex in lookup table".to_string(),
+        };
+
+        assert_eq!(
+            err.to_string(),
+            "Internal inconsistency during construction: missing vertex in lookup table"
+        );
+    }
+
+    #[test]
     fn test_triangulation_new_empty_and_new_with_tds_default_to_pl_manifold() {
         let tri: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_empty(FastKernel::new());
