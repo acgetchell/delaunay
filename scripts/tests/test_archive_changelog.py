@@ -141,6 +141,14 @@ class TestParseChangelog:
         assert unreleased == ""
         assert len(blocks) == 2
 
+    def test_skips_non_semver_headings(self) -> None:
+        text = _PREAMBLE + _V072 + "## [CustomLabel]\n\n- Something\n\n" + _V071
+        _, _, blocks = parse_changelog(text)
+        # The non-semver heading should be silently skipped.
+        assert len(blocks) == 2
+        assert blocks[0][0] == "0.7.2"
+        assert blocks[1][0] == "0.7.1"
+
 
 class TestGroupByMinor:
     def test_groups_correctly(self) -> None:

@@ -154,8 +154,10 @@ def parse_changelog(text: str) -> tuple[str, str, list[tuple[str, str]]]:
             unreleased = block
         else:
             m = _VERSION_RE.match(heading_line)
-            ver = m.group(1) if m else heading_line
-            version_blocks.append((ver, block))
+            if not m:
+                # Skip headings that don't contain a recognisable semver.
+                continue
+            version_blocks.append((m.group(1), block))
 
     return preamble, unreleased, version_blocks
 
