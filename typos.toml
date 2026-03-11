@@ -17,6 +17,8 @@ extend-exclude = [
     ".pytest_cache/**",
     # Auto-generated from git history; contains commit-message fragments that frequently trip spellcheck.
     "CHANGELOG.md",
+    # Regex patterns in commit_parsers trigger false positives (e.g. [Ss]upport, [Dd]elete).
+    "cliff.toml",
 ]
 
 [default]

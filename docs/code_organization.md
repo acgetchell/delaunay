@@ -80,9 +80,9 @@ delaunay/
 │   │   ├── testing.md
 │   │   └── topology_integration_design_historical.md
 │   ├── dev/
+│   │   ├── commands.md
 │   │   ├── rust.md
-│   │   ├── testing.md
-│   │   └── workflows.md
+│   │   └── testing.md
 │   ├── templates/
 │   │   └── README.md
 │   ├── KNOWN_ISSUES_4D.md
