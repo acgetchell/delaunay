@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
 from archive_changelog import (
     _extract_link_defs,
     _format_link_defs,
@@ -72,6 +74,14 @@ class TestMinorKey:
 
     def test_major(self) -> None:
         assert _minor_key("2.0.0") == "2.0"
+
+    def test_malformed_single_component(self) -> None:
+        with pytest.raises(ValueError, match="at least two components"):
+            _minor_key("1")
+
+    def test_malformed_empty_string(self) -> None:
+        with pytest.raises(ValueError, match="at least two components"):
+            _minor_key("")
 
 
 class TestVersionSortKey:

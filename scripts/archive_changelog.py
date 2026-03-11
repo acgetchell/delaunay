@@ -50,8 +50,14 @@ def _minor_key(version: str) -> str:
 
     Returns:
         The first two numeric components joined by a dot (e.g. ``0.7``).
+
+    Raises:
+        ValueError: If *version* does not contain at least two dot-separated components.
     """
     parts = version.split(".")
+    if len(parts) < 2:
+        msg = f"Expected a version with at least two components (X.Y), got: {version!r}"
+        raise ValueError(msg)
     return f"{parts[0]}.{parts[1]}"
 
 
