@@ -561,8 +561,9 @@ where
     ///
     /// # Panics
     ///
-    /// Panics if the `VertexBuilder` fails to build a vertex from any point.
-    /// This should not happen under normal circumstances with valid point data.
+    /// Cannot panic in practice: the only [`VertexBuilderError`] variant is
+    /// `MissingPoint`, and this method always calls
+    /// [`VertexBuilder::point`] before [`VertexBuilder::build`].
     ///
     /// # Example
     ///
