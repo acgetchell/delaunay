@@ -25,6 +25,14 @@ from pathlib import Path
 # markdownlint MD013 line-length limit used by this project.
 MAX_LINE_WIDTH = 160
 
+# Common misspellings found in historical commit messages.
+# Keys are whole-word patterns; values are their replacements.
+# Applied as word-boundary replacements so partial matches are avoided.
+_TYPO_MAP: dict[str, str] = {
+    "varous": "various",
+    "runtim": "runtime",
+}
+
 # Tokenise a line into atomic markdown units that must not be split.
 # Order matters: longer patterns first.
 _TOKEN_RE = re.compile(
@@ -292,9 +300,22 @@ def _needs_blank_before(stripped: str, result: list[str]) -> bool:
     return not prev.startswith(("-", "#"))
 
 
+def _fix_typos(text: str) -> str:
+    """Fix known misspellings from historical commit messages.
+
+    Uses word-boundary matching so partial words are not affected.
+    """
+    for typo, correction in _TYPO_MAP.items():
+        text = re.sub(rf"\b{re.escape(typo)}\b", correction, text)
+    return text
+
+
 def postprocess(path: Path) -> None:
     """Read *path*, apply hygiene fixes, and write it back."""
     text = path.read_text(encoding="utf-8")
+
+    # Fix known typos from historical commit messages.
+    text = _fix_typos(text)
 
     # Inject PR / breaking-change summary sections before reflow.
     text = _inject_summary_sections(text)

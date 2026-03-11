@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from postprocess_changelog import (
     _compact_entry,
+    _fix_typos,
     _inject_summary_sections,
     _max_pr_number,
     _reflow_line,
@@ -71,6 +72,24 @@ class TestStripTrailingBlanks:
         postprocess(f)
 
         assert f.read_text(encoding="utf-8") == "\n"
+
+
+class TestFixTypos:
+    def test_fixes_varous(self) -> None:
+        assert _fix_typos("Fix varous issues") == "Fix various issues"
+
+    def test_fixes_runtim(self) -> None:
+        assert _fix_typos("Increase max runtim") == "Increase max runtime"
+
+    def test_no_partial_match(self) -> None:
+        assert _fix_typos("runtime is fine") == "runtime is fine"
+
+    def test_no_change_when_clean(self) -> None:
+        text = "All various things at runtime work"
+        assert _fix_typos(text) == text
+
+    def test_multiple_occurrences(self) -> None:
+        assert _fix_typos("varous varous") == "various various"
 
 
 class TestReflowLine:

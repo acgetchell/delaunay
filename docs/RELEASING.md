@@ -110,7 +110,7 @@ echo "Performance results generated. Review benches/PERFORMANCE_RESULTS.md for a
 6. Stage and commit release artifacts
 
 ```bash
-git add Cargo.toml Cargo.lock CHANGELOG.md docs/ benches/PERFORMANCE_RESULTS.md
+git add Cargo.toml Cargo.lock CHANGELOG.md docs/ benches/PERFORMANCE_RESULTS.md docs/archive/changelog/
 
 git commit -m "chore(release): release $TAG
 
@@ -153,7 +153,7 @@ If you discover issues (bugs, formatting problems, etc.) after creating the chan
    # uv run changelog-utils generate
    
    # Commit updated changelog
-   git add CHANGELOG.md
+   git add CHANGELOG.md docs/archive/changelog/
    git commit -m "docs: update changelog with release fixes"
    ```
 
@@ -259,4 +259,6 @@ git branch -d "release/$TAG"
 - Keep the release PR strictly to version + changelog + documentation to maintain a clean history.
 - If multiple crates or files reference the version, confirm all of them are updated consistently.
 - Always run `just ci` before committing the release to catch issues early.
+- `just changelog` may create or update files under `docs/archive/changelog/`. Include these in the release PR.
+- The root `CHANGELOG.md` only contains Unreleased + the active minor series. Completed minors are archived verbatim in `docs/archive/changelog/X.Y.md`.
 - For future convenience, parts of this document can be automated into a release script.

@@ -37,6 +37,7 @@ dependencies = [ "packaging" ]
 
 # Configure scripts as entry points for command-line usage
 [project.scripts]
+archive-changelog = "archive_changelog:main"
 benchmark-utils = "benchmark_utils:main"
 compare-storage-backends = "compare_storage_backends:main"
 hardware-utils = "hardware_utils:main"
@@ -47,6 +48,7 @@ tag-release = "tag_release:main"
 [tool.setuptools]
 package-dir = { "" = "scripts" }
 py-modules = [
+    "archive_changelog",
     "benchmark_utils",
     "compare_storage_backends",
     "hardware_utils",
@@ -143,6 +145,7 @@ ignore = [
 # Import sorting and organization configuration
 [tool.ruff.lint.isort]
 known-first-party = [
+    "archive_changelog",
     "benchmark_utils",
     "compare_storage_backends",
     "hardware_utils",

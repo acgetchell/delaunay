@@ -112,22 +112,27 @@ def find_changelog(start: Path | None = None) -> Path:
     raise FileNotFoundError(msg)
 
 
-def extract_changelog_section(changelog: Path, version: str) -> str:
+def _archive_path_for_version(changelog: Path, version: str) -> Path | None:
+    """Return the archive file path for *version* if it exists.
+
+    Derives the ``X.Y`` minor key from *version* and checks for
+    ``docs/archive/changelog/X.Y.md`` relative to *changelog*'s parent.
     """
-    Extracts the changelog body for the specified version.
+    parts = version.split(".")
+    if len(parts) < 2:
+        return None
+    minor = f"{parts[0]}.{parts[1]}"
+    candidate = changelog.parent / "docs" / "archive" / "changelog" / f"{minor}.md"
+    return candidate if candidate.is_file() else None
 
-    Parameters:
-        changelog (Path): Path to the CHANGELOG.md file to read.
-        version (str): Version identifier without a leading 'v' (e.g., "1.2.3").
 
-    Returns:
-        str: The changelog section text for the given version (trimmed of leading/trailing blank lines).
+def _extract_section_from_file(path: Path, version: str) -> str | None:
+    """Try to extract the changelog section for *version* from *path*.
 
-    Raises:
-        LookupError: If the version heading is not found or the section is empty.
+    Returns the trimmed section body, or ``None`` if not found.
     """
-    content = changelog.read_text(encoding="utf-8")
     header_re = _version_header_re(version)
+    content = path.read_text(encoding="utf-8")
 
     lines = content.split("\n")
     section: list[str] = []
@@ -144,23 +149,52 @@ def extract_changelog_section(changelog: Path, version: str) -> str:
             section.append(line)
 
     if not collecting:
-        msg = f"No changelog section found for version {version}. Expected a heading like: ## [{version}] - YYYY-MM-DD"
-        raise LookupError(msg)
+        return None
 
-    # Trim leading/trailing blank lines (O(n) index scan + slice)
+    # Trim leading/trailing blank lines.
     start = 0
     while start < len(section) and not section[start].strip():
         start += 1
     end = len(section)
     while end > start and not section[end - 1].strip():
         end -= 1
-    section = section[start:end]
 
-    body = "\n".join(section)
-    if not body.strip():
-        msg = f"Changelog section for version {version} is empty."
-        raise LookupError(msg)
-    return body
+    body = "\n".join(section[start:end])
+    return body if body.strip() else None
+
+
+def extract_changelog_section(changelog: Path, version: str) -> tuple[str, Path]:
+    """
+    Extracts the changelog body for the specified version.
+
+    Searches the root CHANGELOG.md first, then falls back to the
+    per-minor archive file under ``docs/archive/changelog/``.
+
+    Parameters:
+        changelog (Path): Path to the CHANGELOG.md file to read.
+        version (str): Version identifier without a leading 'v' (e.g., "1.2.3").
+
+    Returns:
+        A 2-tuple of (*body*, *source*) where *body* is the trimmed
+        changelog section text and *source* is the :class:`~pathlib.Path`
+        from which it was read (either the root changelog or an archive file).
+
+    Raises:
+        LookupError: If the version heading is not found in the root or archive, or the section is empty.
+    """
+    body = _extract_section_from_file(changelog, version)
+    if body:
+        return body, changelog
+
+    # Fall back to the per-minor archive.
+    archive = _archive_path_for_version(changelog, version)
+    if archive:
+        body = _extract_section_from_file(archive, version)
+        if body:
+            return body, archive
+
+    msg = f"No changelog section found for version {version}. Expected a heading like: ## [{version}] - YYYY-MM-DD"
+    raise LookupError(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -243,15 +277,38 @@ def _version_header_re(version: str) -> re.Pattern[str]:
     return re.compile(rf"^##\s*\[?v?{re.escape(version)}\]?(?:$|\s|\()")
 
 
+def _heading_to_anchor(heading_line: str) -> str:
+    """Convert a markdown heading line to a GitHub-compatible anchor slug."""
+    heading = heading_line.removeprefix("## ").strip()
+    # Strip inline-link markup [text](url) → text
+    heading = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", heading)
+    # Strip reference-style brackets [text] → text
+    heading = re.sub(r"\[([^\]]+)\]", r"\1", heading)
+    heading = heading.lower()
+    # Remove everything except letters, digits, spaces, hyphens
+    heading = re.sub(r"[^a-z0-9\s-]", "", heading)
+    # Replace whitespace runs with a single hyphen
+    return re.sub(r"\s+", "-", heading)
+
+
+def _find_anchor_in_file(path: Path, version: str) -> str | None:
+    """Search *path* for a version heading and return its GitHub anchor, or ``None``."""
+    header_re = _version_header_re(version)
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if header_re.match(line):
+                return _heading_to_anchor(line)
+    except OSError:
+        pass
+    return None
+
+
 def _github_anchor(changelog: Path, version: str) -> str:
     """
     Generate a GitHub-style heading anchor for the changelog section corresponding to the given version.
 
-    Searches the provided CHANGELOG file for a matching version header, normalizes the header
-    to the same slug format GitHub uses (lowercase, remove punctuation, collapse spaces to
-    hyphens, and strip inline/reference link markup), and returns the resulting anchor. If the
-    changelog cannot be read or no matching header is found, returns a fallback slug derived
-    from "v{version}" (version should be provided without a leading "v").
+    Searches the root CHANGELOG first, then falls back to the per-minor archive.
+    If neither contains the heading, returns a fallback slug derived from "v{version}".
 
     Parameters:
         changelog (Path): Path to the CHANGELOG.md file to scan.
@@ -260,22 +317,16 @@ def _github_anchor(changelog: Path, version: str) -> str:
     Returns:
         str: A GitHub-compatible anchor string for the version heading.
     """
-    header_re = _version_header_re(version)
-    try:
-        for line in changelog.read_text(encoding="utf-8").splitlines():
-            if header_re.match(line):
-                heading = line.removeprefix("## ").strip()
-                # Strip inline-link markup [text](url) → text
-                heading = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", heading)
-                # Strip reference-style brackets [text] → text
-                heading = re.sub(r"\[([^\]]+)\]", r"\1", heading)
-                heading = heading.lower()
-                # Remove everything except letters, digits, spaces, hyphens
-                heading = re.sub(r"[^a-z0-9\s-]", "", heading)
-                # Replace whitespace runs with a single hyphen
-                return re.sub(r"\s+", "-", heading)
-    except OSError:
-        pass
+    anchor = _find_anchor_in_file(changelog, version)
+    if anchor:
+        return anchor
+
+    archive = _archive_path_for_version(changelog, version)
+    if archive:
+        anchor = _find_anchor_in_file(archive, version)
+        if anchor:
+            return anchor
+
     return re.sub(r"[^a-z0-9-]", "", f"v{version}".lower())
 
 
@@ -310,7 +361,7 @@ def create_tag(tag_version: str, *, force: bool = False) -> None:
 
     # Extract changelog section (before any mutation)
     changelog = find_changelog()
-    section = extract_changelog_section(changelog, version)
+    section, source = extract_changelog_section(changelog, version)
     section_bytes = len(section.encode("utf-8"))
 
     # Check size limit
@@ -318,11 +369,16 @@ def create_tag(tag_version: str, *, force: bool = False) -> None:
         print(f"{_YELLOW}⚠ Changelog section ({section_bytes:,} bytes) exceeds GitHub's tag limit ({_GITHUB_TAG_ANNOTATION_LIMIT:,} bytes){_RESET}")
         anchor = _github_anchor(changelog, version)
         repo_url = _get_repo_url()
+        # Use the file the section was actually read from.
+        try:
+            source_rel = source.relative_to(changelog.parent)
+        except ValueError:
+            source_rel = source
         tag_message = (
             f"Version {version}\n\n"
             f"This release contains extensive changes. See full changelog:\n"
-            f"<{repo_url}/blob/{tag_version}/CHANGELOG.md#{anchor}>\n\n"
-            f"For detailed release notes, refer to CHANGELOG.md in the repository.\n"
+            f"<{repo_url}/blob/{tag_version}/{source_rel}#{anchor}>\n\n"
+            f"For detailed release notes, refer to {source_rel} in the repository.\n"
         )
         is_truncated = True
         print(f"{_BLUE}→ Creating annotated tag with CHANGELOG.md reference{_RESET}")
