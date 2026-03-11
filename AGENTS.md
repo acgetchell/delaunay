@@ -31,6 +31,25 @@ making changes.
 - **ALWAYS** use `git --no-pager` when reading git output
 - Suggest git commands that modify version control state for the user to run manually
 
+### GitHub CLI (`gh`)
+
+When using the `gh` CLI to view issues, PRs, or other GitHub objects:
+
+- **ALWAYS** use `--json` with `| cat` to avoid pager and scope errors:
+
+  ```bash
+  gh issue view 212 --repo acgetchell/delaunay --json title,body | cat
+  ```
+
+- To extract specific fields cleanly, combine `--json` with `--jq`:
+
+  ```bash
+  gh issue view 212 --repo acgetchell/delaunay --json title,body --jq '.title + "\n" + .body' | cat
+  ```
+
+- **AVOID** plain `gh issue view N` — it may fail with `read:project`
+  scope errors or open a pager.
+
 ### Code Editing
 
 - **NEVER** use `sed`, `awk`, `perl`, or `python` to modify code

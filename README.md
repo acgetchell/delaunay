@@ -338,8 +338,8 @@ Portions of this library were developed with the assistance of these AI tools:
 [GitHub Copilot]: https://github.com/features/copilot
 [KiloCode]: https://kilocode.ai/
 [WARP]: https://www.warp.dev
-[Pseudomanifold]: https://grokipedia.com/page/Pseudomanifold
-[PL-manifold]: https://grokipedia.com/page/Piecewise_linear_manifold
+[Pseudomanifold]: https://en.wikipedia.org/wiki/Pseudomanifold
+[PL-manifold]: https://en.wikipedia.org/wiki/Piecewise_linear_manifold
 [Delaunay repair]: https://link.springer.com/article/10.1007/BF01975867
 [Pachner moves]: https://grokipedia.com/page/pachner_moves
 [`DelaunayTriangulationBuilder`]: https://docs.rs/delaunay/latest/delaunay/core/builder/struct.DelaunayTriangulationBuilder.html

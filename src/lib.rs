@@ -288,9 +288,6 @@
 // Forbid unsafe code throughout the entire crate
 #![forbid(unsafe_code)]
 
-#[macro_use]
-extern crate derive_builder;
-
 /// The `core` module contains the primary data structures and algorithms for building and manipulating Delaunay triangulations.
 ///
 /// It includes the `Tds` struct, which represents the triangulation, as well as `Cell`, `Facet`, and `Vertex` components.
