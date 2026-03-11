@@ -291,6 +291,16 @@ pub enum TriangulationConstructionError {
         /// String representation of the duplicate coordinates.
         coordinates: String,
     },
+
+    /// Internal bookkeeping state became inconsistent during construction.
+    ///
+    /// This indicates a bug in the construction algorithm rather than invalid
+    /// input or geometric degeneracy.
+    #[error("Internal inconsistency during construction: {message}")]
+    InternalInconsistency {
+        /// Description of the inconsistency.
+        message: String,
+    },
 }
 
 /// Errors that can occur during triangulation topology validation (Level 3).
@@ -5410,6 +5420,18 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn test_internal_inconsistency_display() {
+        let err = TriangulationConstructionError::InternalInconsistency {
+            message: "missing vertex in lookup table".to_string(),
+        };
+
+        assert_eq!(
+            err.to_string(),
+            "Internal inconsistency during construction: missing vertex in lookup table"
+        );
     }
 
     #[test]
