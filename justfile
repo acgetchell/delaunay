@@ -137,17 +137,28 @@ build:
 build-release:
     cargo build --release
 
-# Changelog management
-changelog: _ensure-uv _ensure-git-cliff
-    uv run changelog-utils generate
+# Changelog management (git-cliff + post-processing)
+changelog: _ensure-git-cliff python-sync
+    #!/usr/bin/env bash
+    set -euo pipefail
+    git-cliff -o CHANGELOG.md
+    uv run postprocess-changelog
 
-changelog-tag version: _ensure-uv
-    uv run changelog-utils tag {{version}}
+changelog-tag version: python-sync
+    uv run tag-release {{version}}
 
 changelog-update: changelog
     @echo "📝 Changelog updated successfully!"
     @echo "To create a git tag with changelog content for a specific version, run:"
     @echo "  just changelog-tag <version>  # e.g., just changelog-tag v0.4.2"
+
+# Create an annotated git tag from the CHANGELOG.md section for the given version
+tag version: python-sync
+    uv run tag-release {{version}}
+
+# Recreate an existing tag (delete + recreate)
+tag-force version: python-sync
+    uv run tag-release {{version}} --force
 
 # Check (non-mutating): run all linters/validators
 check: lint
@@ -417,9 +428,11 @@ python-fix: _ensure-uv
 
 python-lint: python-check
 
+python-sync: _ensure-uv
+    uv sync --group dev
+
 python-typecheck: _ensure-uv
     uv run ty check scripts/
-    cd scripts && uv run mypy . --exclude tests
 
 # Development setup
 setup: setup-tools

@@ -4,8 +4,9 @@
   "MD024": false,
   "MD029": false,
   "MD033": false,
+  "MD037": false,
   "MD038": false,
   "MD041": false,
   "MD060": false,
-  "_comment": "MD029 disabled - we prefer manual numbering over lazy numbering (1. 1. 1.) for better readability; MD060 disabled to avoid auto-reformatting tables"
+  "_comment": "MD029 disabled - we prefer manual numbering over lazy numbering (1. 1. 1.) for better readability; MD037 disabled - false positives on cron expressions (e.g. '0 2 * * 0') and glob patterns (e.g. saturating_*); MD060 disabled to avoid auto-reformatting tables"
 }
