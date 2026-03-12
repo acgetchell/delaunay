@@ -31,7 +31,7 @@
 //! local flip configurations (O(cells)) instead of the naive O(cells × vertices) brute-force.
 //! This provides ~40-100x speedup for property-based testing while remaining equally correct.
 
-use delaunay::geometry::kernel::RobustKernel;
+use delaunay::geometry::kernel::{AdaptiveKernel, RobustKernel};
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::triangulation::*;
 use proptest::prelude::*;
@@ -356,7 +356,7 @@ enum InsertionOrder3dRunStatus {
 }
 
 fn insert_vertices_3d_no_retry_or_skip(
-    dt: &mut DelaunayTriangulation<RobustKernel<f64>, (), (), 3>,
+    dt: &mut DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>,
     vertices: &[Vertex<f64, (), 3>],
 ) -> InsertionOrder3dRunStatus {
     for (idx, v) in vertices.iter().enumerate() {
@@ -673,7 +673,7 @@ macro_rules! gen_duplicate_coords_test {
                 ) {
                     let options = ConstructionOptions::default()
                         .with_dedup_policy(DedupPolicy::Exact);
-                    let dt = DelaunayTriangulation::<RobustKernel<f64>, (), (), $dim>::new_with_options(
+                    let dt = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::new_with_options(
                         &vertices,
                         options,
                     );

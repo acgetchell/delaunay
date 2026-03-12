@@ -64,7 +64,7 @@ fn main() {
 
     let mut last_error: Option<String> = None;
     let mut used_seed: Option<u64> = None;
-    let mut dt: Option<DelaunayTriangulation<RobustKernel<f64>, (), (), 3>> = None;
+    let mut dt: Option<DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>> = None;
     for &candidate in &seed_candidates {
         match generate_random_triangulation(n_points, bounds, None, Some(candidate)) {
             Ok(candidate_dt) => {
@@ -78,7 +78,7 @@ fn main() {
         }
     }
 
-    let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> = if let Some(dt) = dt {
+    let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> = if let Some(dt) = dt {
         let construction_time = start.elapsed();
         if let Some(seed) = used_seed {
             println!("✓ Triangulation created successfully in {construction_time:?} (seed={seed})");
@@ -133,7 +133,7 @@ fn main() {
 }
 
 /// Analyze and display triangulation properties
-fn analyze_triangulation(dt: &DelaunayTriangulation<RobustKernel<f64>, (), (), 3>) {
+fn analyze_triangulation(dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>) {
     println!("Triangulation Analysis:");
     println!("======================");
     println!("  Number of vertices: {}", dt.tds().number_of_vertices());
@@ -158,7 +158,7 @@ fn analyze_triangulation(dt: &DelaunayTriangulation<RobustKernel<f64>, (), (), 3
 }
 
 /// Extract and analyze the convex hull from the triangulation
-fn extract_and_analyze_convex_hull(dt: &DelaunayTriangulation<RobustKernel<f64>, (), (), 3>) {
+fn extract_and_analyze_convex_hull(dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>) {
     println!("Convex Hull Extraction:");
     println!("=======================");
 
@@ -229,7 +229,7 @@ fn extract_and_analyze_convex_hull(dt: &DelaunayTriangulation<RobustKernel<f64>,
 }
 
 /// Test point containment with various points (updated to work with generated triangulation)
-fn test_point_containment(dt: &DelaunayTriangulation<RobustKernel<f64>, (), (), 3>) {
+fn test_point_containment(dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>) {
     println!("Point Containment Tests:");
     println!("=======================");
 
@@ -296,10 +296,10 @@ fn test_point_containment(dt: &DelaunayTriangulation<RobustKernel<f64>, (), (), 
 
 /// Test containment for a single point and display results
 fn test_point_containment_single(
-    hull: &ConvexHull<RobustKernel<f64>, (), (), 3>,
+    hull: &ConvexHull<AdaptiveKernel<f64>, (), (), 3>,
     point: &Point<f64, 3>,
     description: &str,
-    dt: &DelaunayTriangulation<RobustKernel<f64>, (), (), 3>,
+    dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>,
 ) {
     let coords = point.coords();
 
@@ -327,7 +327,7 @@ fn test_point_containment_single(
 }
 
 /// Analyze visible facets from external points
-fn analyze_visible_facets(dt: &DelaunayTriangulation<RobustKernel<f64>, (), (), 3>) {
+fn analyze_visible_facets(dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>) {
     println!("Visible Facet Analysis:");
     println!("======================");
 
@@ -421,7 +421,7 @@ fn analyze_visible_facets(dt: &DelaunayTriangulation<RobustKernel<f64>, (), (), 
 }
 
 /// Perform performance analysis and benchmarking
-fn performance_analysis(dt: &DelaunayTriangulation<RobustKernel<f64>, (), (), 3>) {
+fn performance_analysis(dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>) {
     println!("Performance Analysis:");
     println!("====================");
     let hull = match ConvexHull::from_triangulation(dt.as_triangulation()) {
@@ -507,7 +507,7 @@ fn performance_analysis(dt: &DelaunayTriangulation<RobustKernel<f64>, (), (), 3>
     }
 
     // Memory usage estimation
-    let hull_size = std::mem::size_of::<ConvexHull<RobustKernel<f64>, (), (), 3>>();
+    let hull_size = std::mem::size_of::<ConvexHull<AdaptiveKernel<f64>, (), (), 3>>();
     // Phase 3C: Facets are now lightweight (CellKey, u8) tuples
     let facet_handle_size = std::mem::size_of::<(delaunay::core::CellKey, u8)>();
     let estimated_hull_memory = hull_size + (facet_count * facet_handle_size);

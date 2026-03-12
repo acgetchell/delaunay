@@ -59,7 +59,7 @@ fn main() {
 
     let mut last_error: Option<String> = None;
     let mut used_seed: Option<u64> = None;
-    let mut dt: Option<DelaunayTriangulation<RobustKernel<f64>, (), (), 3>> = None;
+    let mut dt: Option<DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>> = None;
     for &candidate in &seed_candidates {
         match generate_random_triangulation(n_points, bounds, None, Some(candidate)) {
             Ok(triangulation) => {
@@ -73,7 +73,8 @@ fn main() {
         }
     }
 
-    let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> = if let Some(triangulation) = dt {
+    let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> = if let Some(triangulation) = dt
+    {
         let construction_time = start.elapsed();
         if let Some(seed) = used_seed {
             println!("✓ Triangulation created successfully in {construction_time:?} (seed={seed})");

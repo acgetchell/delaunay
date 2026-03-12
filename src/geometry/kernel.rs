@@ -1,19 +1,38 @@
 //! Geometric kernel abstraction following CGAL's design.
 //!
-//! The Kernel trait defines the interface for geometric predicates used by
+//! The `Kernel` trait defines the interface for geometric predicates used by
 //! higher-level triangulation algorithms. This separation allows swapping
 //! between fast floating-point and robust exact-arithmetic implementations.
+//!
+//! # Choosing a kernel
+//!
+//! **`AdaptiveKernel`** (default) — best for Delaunay triangulation.
+//! Provably correct predicates with zero configuration. Insphere uses
+//! Simulation of Simplicity (`SoS`) to break cospherical ties
+//! deterministically, so every query returns a definitive ±1.
+//!
+//! **`RobustKernel`** — configurable tolerance-based predicates. Prefer
+//! this when you need tolerance tuning for noisy data, explicit
+//! `BOUNDARY`/`DEGENERATE` signals, or diagnostic consistency checks.
+//! Use the explicit-kernel constructors (`with_kernel`,
+//! `build_with_kernel`, etc.) to opt in.
+//!
+//! **`FastKernel`** — raw f64 arithmetic, no robustness guarantees.
+//! Only suitable for 2D with well-conditioned input.
 
 #![forbid(unsafe_code)]
 
+use crate::geometry::matrix::{matrix_get, matrix_set, matrix_zero_like};
 use crate::geometry::point::Point;
 use crate::geometry::predicates::{InSphere, Orientation, insphere_lifted, simplex_orientation};
 use crate::geometry::robust_predicates::{
     RobustPredicateConfig, config_presets, robust_insphere, robust_orientation,
 };
+use crate::geometry::sos::exact_det_sign;
 use crate::geometry::traits::coordinate::{
-    CoordinateConversionError, CoordinateScalar, ScalarSummable,
+    Coordinate, CoordinateConversionError, CoordinateScalar, ScalarSummable,
 };
+use crate::geometry::util::{safe_coords_to_f64, safe_scalar_to_f64, squared_norm};
 use core::marker::PhantomData;
 
 /// Geometric kernel trait defining predicates for triangulation algorithms.
@@ -55,6 +74,9 @@ pub trait Kernel<const D: usize>: Clone + Default {
     /// - `-1`: Negative orientation
     /// - `0`: Degenerate (points are coplanar/collinear)
     /// - `+1`: Positive orientation
+    ///
+    /// **Note:** All built-in kernels can return `0` for truly degenerate
+    /// inputs. Generic code should handle all three values.
     ///
     /// # Arguments
     ///
@@ -100,6 +122,11 @@ pub trait Kernel<const D: usize>: Clone + Default {
     /// - `-1`: Point is outside the circumsphere
     /// - `0`: Point is on the circumsphere (within numerical tolerance)
     /// - `+1`: Point is inside the circumsphere
+    ///
+    /// **Note:** [`AdaptiveKernel`] resolves boundary cases via Simulation
+    /// of Simplicity and never returns `0` for insphere. Generic code
+    /// should handle all three values but must not *rely* on receiving `0`
+    /// for boundary inputs.
     ///
     /// # Arguments
     ///
@@ -154,7 +181,7 @@ pub trait Kernel<const D: usize>: Clone + Default {
 /// May produce incorrect results for degenerate or near-degenerate cases.
 ///
 /// For applications requiring guaranteed correctness in degenerate cases,
-/// use [`RobustKernel`] instead.
+/// use [`AdaptiveKernel`] (the default) instead.
 ///
 /// # ⚠️ Warning: Unreliable in 3D and Higher Dimensions
 ///
@@ -164,7 +191,7 @@ pub trait Kernel<const D: usize>: Clone + Default {
 /// points, leading to incorrect conflict zones, invalid topology, and construction
 /// failures.
 ///
-/// Use [`RobustKernel`] (the default) for all 3D+ work. `FastKernel` remains
+/// Use [`AdaptiveKernel`] (the default) for all 3D+ work. `FastKernel` remains
 /// suitable for 2D triangulations with well-conditioned input, or when explicitly
 /// opted into via [`DelaunayTriangulation::with_kernel`](crate::core::delaunay_triangulation::DelaunayTriangulation::with_kernel) for advanced use cases
 /// where the caller has verified the input is non-degenerate.
@@ -267,17 +294,30 @@ where
     }
 }
 
-/// Robust exact-arithmetic kernel.
+/// Robust exact-arithmetic kernel with configurable tolerance.
 ///
-/// Uses adaptive tolerance and symbolic perturbation predicates that are
-/// guaranteed to be correct even for degenerate cases. Slower than
-/// [`FastKernel`] but provides better numerical stability.
+/// Uses adaptive tolerance predicates backed by exact Bareiss arithmetic.
+/// Slower than [`FastKernel`] but provides configurable numerical stability.
+///
+/// # When to use `RobustKernel` over [`AdaptiveKernel`]
+///
+/// Prefer `RobustKernel` when you need:
+/// - **Tolerance tuning** for noisy input data (via [`RobustPredicateConfig`])
+/// - **Explicit degeneracy signals** — returns `DEGENERATE`/`BOUNDARY` (`0`)
+///   instead of forcing a decision, useful when your application needs to
+///   detect and handle cospherical or coplanar configurations directly
+/// - **Diagnostic consistency checks** — cross-validates insphere results
+///   against a distance-based check
+///
+/// For standard Delaunay triangulation, [`AdaptiveKernel`] is the better
+/// default: zero configuration, provable error bounds, and `SoS`
+/// tie-breaking on insphere eliminates `BOUNDARY` ambiguity.
 ///
 /// # Robustness Features
 ///
 /// - **Adaptive tolerance**: Scales with coordinate magnitude
-/// - **Symbolic perturbation**: Deterministic tie-breaking for degenerate cases
 /// - **Configurable**: Supports multiple precision levels via [`RobustPredicateConfig`]
+/// - **Exact fallback**: Bareiss algorithm in `BigRational` for ambiguous cases
 ///
 /// # Performance
 ///
@@ -413,137 +453,352 @@ where
     }
 }
 
+/// Adaptive precision kernel with Simulation of Simplicity.
+///
+/// This is the **default kernel** for [`DelaunayTriangulation`] convenience
+/// constructors (`new`, `empty`, `new_with_options`, etc.).
+///
+/// [`DelaunayTriangulation`]: crate::core::delaunay_triangulation::DelaunayTriangulation
+///
+/// # When to use `AdaptiveKernel`
+///
+/// Use this kernel (the default) for Delaunay triangulation. It provides:
+/// - **Zero configuration** — no tolerance to tune or get wrong
+/// - **Provable error bounds** on the fast filter (no heuristic tolerance)
+/// - **Exact orientation** — returns 0 only for truly degenerate inputs
+/// - **`SoS` insphere** — cospherical ties are broken deterministically,
+///   so every insphere query returns ±1 (never 0/BOUNDARY)
+///
+/// If you need configurable tolerance, explicit `BOUNDARY`/`DEGENERATE`
+/// signals, or diagnostic consistency checks, use [`RobustKernel`] via
+/// the explicit-kernel constructors (`with_kernel`, `build_with_kernel`).
+///
+/// # Evaluation strategy
+///
+/// **Orientation** (exact — no `SoS`):
+/// 1. **Fast filter**: `det_direct()` + `det_errbound()` (provable for D ≤ 4)
+/// 2. **Exact arithmetic**: `det_sign_exact()` via Bareiss algorithm in `BigRational`
+///
+/// **Insphere** (exact + `SoS` tie-breaking):
+/// 1. **Fast filter** + **exact arithmetic** (same as orientation)
+/// 2. **`SoS` tie-breaking**: Simulation of Simplicity for cospherical cases
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::geometry::kernel::{AdaptiveKernel, Kernel};
+/// use delaunay::geometry::point::Point;
+/// use delaunay::geometry::traits::coordinate::Coordinate;
+///
+/// let kernel = AdaptiveKernel::<f64>::new();
+///
+/// // Collinear points are correctly reported as degenerate
+/// let collinear = [
+///     Point::new([0.0, 0.0]),
+///     Point::new([1.0, 0.0]),
+///     Point::new([2.0, 0.0]),
+/// ];
+/// let orientation = kernel.orientation(&collinear).unwrap();
+/// assert_eq!(orientation, 0); // Exact: truly degenerate
+/// ```
+#[derive(Clone, Default, Debug)]
+pub struct AdaptiveKernel<T: CoordinateScalar> {
+    _phantom: PhantomData<T>,
+}
+
+impl<T: CoordinateScalar> AdaptiveKernel<T> {
+    /// Create a new adaptive kernel.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::geometry::kernel::AdaptiveKernel;
+    ///
+    /// let kernel = AdaptiveKernel::<f64>::new();
+    /// ```
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<T, const D: usize> Kernel<D> for AdaptiveKernel<T>
+where
+    T: ScalarSummable,
+{
+    type Scalar = T;
+
+    fn orientation(
+        &self,
+        points: &[Point<Self::Scalar, D>],
+    ) -> Result<i32, CoordinateConversionError> {
+        if points.len() != D + 1 {
+            return Err(CoordinateConversionError::ConversionFailed {
+                coordinate_index: 0,
+                coordinate_value: format!("Expected {} points, got {}", D + 1, points.len()),
+                from_type: "point count",
+                to_type: "valid simplex",
+            });
+        }
+
+        let k = D + 1;
+
+        try_with_la_stack_matrix!(k, |matrix| {
+            // Build (D+1)×(D+1) homogeneous orientation matrix.
+            for (i, p) in points.iter().enumerate() {
+                let coords_f64 = safe_coords_to_f64(p.coords())?;
+                for (j, &v) in coords_f64.iter().enumerate() {
+                    matrix_set(&mut matrix, i, j, v);
+                }
+                matrix_set(&mut matrix, i, D, 1.0);
+            }
+
+            // Exact sign via fast filter + Bareiss in BigRational.
+            // No SoS: orientation must reflect true geometry so that
+            // zero-volume (degenerate) cells are detected, not masked.
+            Ok(exact_det_sign(&matrix))
+        })
+    }
+
+    fn in_sphere(
+        &self,
+        simplex_points: &[Point<Self::Scalar, D>],
+        test_point: &Point<Self::Scalar, D>,
+    ) -> Result<i32, CoordinateConversionError> {
+        if simplex_points.len() != D + 1 {
+            return Err(CoordinateConversionError::ConversionFailed {
+                coordinate_index: 0,
+                coordinate_value: format!(
+                    "Expected {} points, got {}",
+                    D + 1,
+                    simplex_points.len()
+                ),
+                from_type: "point count",
+                to_type: "valid simplex",
+            });
+        }
+
+        let k = D + 1;
+
+        try_with_la_stack_matrix!(k, |matrix| {
+            // Build (D+1)×(D+1) lifted insphere matrix using relative
+            // coordinates centered on simplex_points[0].
+            let ref_coords = simplex_points[0].coords();
+
+            for (row, point) in simplex_points.iter().skip(1).enumerate() {
+                let coords = point.coords();
+                let mut rel_t: [T; D] = [T::zero(); D];
+                for (dst, (p, r)) in rel_t.iter_mut().zip(coords.iter().zip(ref_coords.iter())) {
+                    *dst = *p - *r;
+                }
+                let rel_f64: [f64; D] = safe_coords_to_f64(&rel_t)?;
+                for (j, &v) in rel_f64.iter().enumerate() {
+                    matrix_set(&mut matrix, row, j, v);
+                }
+                let sq_norm = squared_norm(&rel_t);
+                let sq_f64 = safe_scalar_to_f64(sq_norm)?;
+                matrix_set(&mut matrix, row, D, sq_f64);
+            }
+
+            // Test point row.
+            let test_coords = test_point.coords();
+            let mut test_rel_t: [T; D] = [T::zero(); D];
+            for (dst, (p, r)) in test_rel_t
+                .iter_mut()
+                .zip(test_coords.iter().zip(ref_coords.iter()))
+            {
+                *dst = *p - *r;
+            }
+            let test_rel_f64: [f64; D] = safe_coords_to_f64(&test_rel_t)?;
+            for (j, &v) in test_rel_f64.iter().enumerate() {
+                matrix_set(&mut matrix, D, j, v);
+            }
+            let test_sq = squared_norm(&test_rel_t);
+            let test_sq_f64 = safe_scalar_to_f64(test_sq)?;
+            matrix_set(&mut matrix, D, D, test_sq_f64);
+
+            // Compute relative orientation from D×D coordinate block
+            // (same embedding as insphere_lifted).
+            let mut orient_matrix = matrix_zero_like(&matrix);
+            for i in 0..D {
+                for j in 0..D {
+                    matrix_set(&mut orient_matrix, i, j, matrix_get(&matrix, i, j));
+                }
+            }
+            matrix_set(&mut orient_matrix, D, D, 1.0);
+
+            // Layer 1 + 2 for both predicates.
+            let rel_orient_sign = exact_det_sign(&orient_matrix);
+            let insphere_det_sign = exact_det_sign(&matrix);
+
+            // Fast path: both non-degenerate.
+            if rel_orient_sign != 0 && insphere_det_sign != 0 {
+                let orient_factor = -rel_orient_sign;
+                return Ok((insphere_det_sign * orient_factor).signum());
+            }
+
+            // At least one predicate needs SoS → convert to f64 points.
+            let f64_simplex: Vec<Point<f64, D>> = simplex_points
+                .iter()
+                .map(|p| safe_coords_to_f64(p.coords()).map(Point::new))
+                .collect::<Result<_, _>>()?;
+            let f64_test = Point::new(safe_coords_to_f64(test_point.coords())?);
+
+            // Resolve orientation factor.
+            let orient_factor: i32 = if rel_orient_sign != 0 {
+                -rel_orient_sign
+            } else {
+                // Orientation degenerate → SoS gives absolute orientation sign.
+                // rel_orient = (-1)^D × abs_orient
+                // orient_factor = -rel_orient = (-1)^(D+1) × abs_orient
+                let sos_abs = crate::geometry::sos::sos_orientation_sign(&f64_simplex)?;
+                if D.is_multiple_of(2) {
+                    -sos_abs
+                } else {
+                    sos_abs
+                }
+            };
+
+            // Resolve insphere sign.
+            let insphere_effective: i32 = if insphere_det_sign != 0 {
+                insphere_det_sign
+            } else {
+                crate::geometry::sos::sos_insphere_sign(&f64_simplex, &f64_test)?
+            };
+
+            Ok((insphere_effective * orient_factor).signum())
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
 
-    #[test]
-    fn test_fast_kernel_orientation_3d() {
-        let kernel = FastKernel::<f64>::new();
+    // =========================================================================
+    // GENERIC HELPER FUNCTIONS
+    // =========================================================================
 
-        // Create a 3D simplex (tetrahedron)
-        let points = [
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-
-        let orientation = kernel.orientation(&points).unwrap();
-
-        // Should have a definite orientation (not degenerate)
-        assert!(orientation == -1 || orientation == 1);
+    /// Standard D-simplex: origin + D unit vectors (non-degenerate).
+    fn standard_simplex<const D: usize>() -> Vec<Point<f64, D>> {
+        let mut points = Vec::with_capacity(D + 1);
+        points.push(Point::new([0.0; D]));
+        for i in 0..D {
+            let mut coords = [0.0; D];
+            coords[i] = 1.0;
+            points.push(Point::new(coords));
+        }
+        points
     }
 
-    #[test]
-    fn test_fast_kernel_in_sphere_3d() {
-        let kernel = FastKernel::<f64>::new();
-
-        // Create a 3D simplex (tetrahedron)
-        let simplex = [
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-
-        // Point clearly inside the circumsphere
-        let inside_point = Point::new([0.25, 0.25, 0.25]);
-        let result = kernel.in_sphere(&simplex, &inside_point).unwrap();
-        assert_eq!(result, 1); // INSIDE
-
-        // Point clearly outside the circumsphere
-        let outside_point = Point::new([2.0, 2.0, 2.0]);
-        let result = kernel.in_sphere(&simplex, &outside_point).unwrap();
-        assert_eq!(result, -1); // OUTSIDE
+    /// Degenerate D-simplex: all points have last coordinate = 0.
+    fn degenerate_simplex<const D: usize>() -> Vec<Point<f64, D>> {
+        let mut points = Vec::with_capacity(D + 1);
+        points.push(Point::new([0.0; D]));
+        for i in 0..D.saturating_sub(1) {
+            let mut coords = [0.0; D];
+            coords[i] = 1.0;
+            points.push(Point::new(coords));
+        }
+        let mut bary = [0.0; D];
+        for c in bary.iter_mut().take(D.saturating_sub(1)) {
+            *c = 0.5;
+        }
+        points.push(Point::new(bary));
+        points
     }
 
-    #[test]
-    fn test_robust_kernel_orientation_3d() {
-        let kernel = RobustKernel::<f64>::new();
-
-        // Create a 3D simplex (tetrahedron)
-        let points = [
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-
-        let orientation = kernel.orientation(&points).unwrap();
-
-        // Should have a definite orientation (not degenerate)
-        assert!(orientation == -1 || orientation == 1);
+    /// Point clearly inside the circumsphere of the standard simplex.
+    fn inside_point<const D: usize>() -> Point<f64, D> {
+        Point::new([0.1; D])
     }
 
-    #[test]
-    fn test_robust_kernel_in_sphere_3d() {
-        let kernel = RobustKernel::<f64>::new();
-
-        // Create a 3D simplex (tetrahedron)
-        let simplex = [
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-
-        // Point clearly inside the circumsphere
-        let inside_point = Point::new([0.25, 0.25, 0.25]);
-        let result = kernel.in_sphere(&simplex, &inside_point).unwrap();
-        assert_eq!(result, 1); // INSIDE
-
-        // Point clearly outside the circumsphere
-        let outside_point = Point::new([2.0, 2.0, 2.0]);
-        let result = kernel.in_sphere(&simplex, &outside_point).unwrap();
-        assert_eq!(result, -1); // OUTSIDE
+    /// Point clearly outside the circumsphere of the standard simplex.
+    fn outside_point<const D: usize>() -> Point<f64, D> {
+        Point::new([2.0; D])
     }
 
-    #[test]
-    fn test_kernel_consistency_fast_vs_robust() {
-        let fast_kernel = FastKernel::<f64>::new();
-        let robust_kernel = RobustKernel::<f64>::new();
-
-        // Create a 2D simplex (triangle)
-        let simplex = [
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.5, 1.0]),
-        ];
-
-        // Test orientation consistency
-        let fast_orientation = fast_kernel.orientation(&simplex).unwrap();
-        let robust_orientation = robust_kernel.orientation(&simplex).unwrap();
-        assert_eq!(fast_orientation, robust_orientation);
-
-        // Test in_sphere consistency for clear cases
-        let test_point = Point::new([0.5, 0.3]);
-        let fast_result = fast_kernel.in_sphere(&simplex, &test_point).unwrap();
-        let robust_result = robust_kernel.in_sphere(&simplex, &test_point).unwrap();
-        assert_eq!(fast_result, robust_result);
+    /// Co-spherical test point: (1,1,…,1) lies on the circumsphere of the
+    /// standard simplex for all D ≥ 2.
+    fn cospherical_test<const D: usize>() -> Point<f64, D> {
+        Point::new([1.0; D])
     }
 
-    #[test]
-    fn test_fast_kernel_2d() {
-        let kernel = FastKernel::<f64>::new();
-
-        // 2D triangle
-        let points = [
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.5, 1.0]),
-        ];
-
-        let orientation = kernel.orientation(&points).unwrap();
-        assert!(orientation != 0); // Not degenerate
-
-        // Point inside circumcircle
-        let inside = Point::new([0.5, 0.3]);
-        let result = kernel.in_sphere(&points, &inside).unwrap();
-        assert_eq!(result, 1); // INSIDE
+    /// Test point off the degenerate hyperplane (last coord nonzero).
+    fn off_plane_test<const D: usize>() -> Point<f64, D> {
+        let mut coords = [0.0; D];
+        coords[D - 1] = 1.0;
+        Point::new(coords)
     }
+
+    /// Test point in the degenerate hyperplane but far from the simplex.
+    fn coplanar_far_test<const D: usize>() -> Point<f64, D> {
+        let mut coords = [0.0; D];
+        coords[0] = 3.0;
+        Point::new(coords)
+    }
+
+    // =========================================================================
+    // MACRO — FastKernel + RobustKernel PER-DIMENSION TESTS (2D–5D)
+    // =========================================================================
+
+    /// Generate orientation + insphere tests for a standard (non-`SoS`) kernel.
+    macro_rules! gen_standard_kernel_tests {
+        ($dim:literal, $name:ident, $kernel:expr) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_ $name _orientation_ $dim d_nondegenerate>]() {
+                    let kernel = $kernel;
+                    let simplex = standard_simplex::<$dim>();
+                    let result = kernel.orientation(&simplex).unwrap();
+                    assert!(
+                        result == 1 || result == -1,
+                        "expected ±1, got {result}"
+                    );
+                }
+
+                #[test]
+                fn [<test_ $name _orientation_ $dim d_degenerate>]() {
+                    let kernel = $kernel;
+                    let simplex = degenerate_simplex::<$dim>();
+                    let result = kernel.orientation(&simplex).unwrap();
+                    assert_eq!(result, 0, "degenerate simplex must give 0");
+                }
+
+                #[test]
+                fn [<test_ $name _insphere_ $dim d_inside>]() {
+                    let kernel = $kernel;
+                    let simplex = standard_simplex::<$dim>();
+                    let test = inside_point::<$dim>();
+                    let result = kernel.in_sphere(&simplex, &test).unwrap();
+                    assert_eq!(result, 1, "point should be INSIDE");
+                }
+
+                #[test]
+                fn [<test_ $name _insphere_ $dim d_outside>]() {
+                    let kernel = $kernel;
+                    let simplex = standard_simplex::<$dim>();
+                    let test = outside_point::<$dim>();
+                    let result = kernel.in_sphere(&simplex, &test).unwrap();
+                    assert_eq!(result, -1, "point should be OUTSIDE");
+                }
+            }
+        };
+    }
+
+    gen_standard_kernel_tests!(2, fast, FastKernel::<f64>::new());
+    gen_standard_kernel_tests!(3, fast, FastKernel::<f64>::new());
+    gen_standard_kernel_tests!(4, fast, FastKernel::<f64>::new());
+    gen_standard_kernel_tests!(5, fast, FastKernel::<f64>::new());
+
+    gen_standard_kernel_tests!(2, robust, RobustKernel::<f64>::new());
+    gen_standard_kernel_tests!(3, robust, RobustKernel::<f64>::new());
+    gen_standard_kernel_tests!(4, robust, RobustKernel::<f64>::new());
+    gen_standard_kernel_tests!(5, robust, RobustKernel::<f64>::new());
 
     #[test]
     fn test_robust_kernel_with_custom_config() {
@@ -561,45 +816,9 @@ mod tests {
         assert!(orientation != 0); // Should be non-degenerate
     }
 
-    // =============================================================================
-    // Degeneracy Detection Tests
-    // =============================================================================
-
-    #[test]
-    fn test_orientation_collinear_2d_fast() {
-        let kernel = FastKernel::<f64>::new();
-
-        // Three collinear points on x-axis
-        let collinear = [
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([2.0, 0.0]),
-        ];
-
-        let orientation = kernel.orientation(&collinear).unwrap();
-        assert_eq!(
-            orientation, 0,
-            "Collinear points should have zero orientation"
-        );
-    }
-
-    #[test]
-    fn test_orientation_collinear_2d_robust() {
-        let kernel = RobustKernel::<f64>::new();
-
-        // Three collinear points on x-axis
-        let collinear = [
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([2.0, 0.0]),
-        ];
-
-        let orientation = kernel.orientation(&collinear).unwrap();
-        assert_eq!(
-            orientation, 0,
-            "Collinear points should have zero orientation"
-        );
-    }
+    // =========================================================================
+    // NON-MACRO — EDGE CASES AND SPECIAL CONFIGURATIONS
+    // =========================================================================
 
     #[test]
     fn test_orientation_collinear_diagonal_2d() {
@@ -616,89 +835,6 @@ mod tests {
         assert_eq!(
             orientation, 0,
             "Diagonal collinear points should have zero orientation"
-        );
-    }
-
-    #[test]
-    fn test_orientation_valid_triangle_2d() {
-        let kernel = FastKernel::<f64>::new();
-
-        // Valid triangle (not collinear)
-        let triangle = [
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.5, 0.866]), // ~60 degree angle
-        ];
-
-        let orientation = kernel.orientation(&triangle).unwrap();
-        assert_ne!(
-            orientation, 0,
-            "Valid triangle should have non-zero orientation"
-        );
-        assert!(
-            orientation == 1 || orientation == -1,
-            "Orientation should be +1 or -1"
-        );
-    }
-
-    #[test]
-    fn test_orientation_coplanar_3d_fast() {
-        let kernel = FastKernel::<f64>::new();
-
-        // Four coplanar points in xy-plane
-        let coplanar = [
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.5, 0.5, 0.0]), // All z=0
-        ];
-
-        let orientation = kernel.orientation(&coplanar).unwrap();
-        assert_eq!(
-            orientation, 0,
-            "Coplanar points should have zero orientation"
-        );
-    }
-
-    #[test]
-    fn test_orientation_coplanar_3d_robust() {
-        let kernel = RobustKernel::<f64>::new();
-
-        // Four coplanar points in xy-plane
-        let coplanar = [
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.5, 0.5, 0.0]), // All z=0
-        ];
-
-        let orientation = kernel.orientation(&coplanar).unwrap();
-        assert_eq!(
-            orientation, 0,
-            "Coplanar points should have zero orientation"
-        );
-    }
-
-    #[test]
-    fn test_orientation_valid_tetrahedron_3d() {
-        let kernel = FastKernel::<f64>::new();
-
-        // Valid tetrahedron (not coplanar)
-        let tetrahedron = [
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-
-        let orientation = kernel.orientation(&tetrahedron).unwrap();
-        assert_ne!(
-            orientation, 0,
-            "Valid tetrahedron should have non-zero orientation"
-        );
-        assert!(
-            orientation == 1 || orientation == -1,
-            "Orientation should be +1 or -1"
         );
     }
 
@@ -738,46 +874,6 @@ mod tests {
     }
 
     #[test]
-    fn test_orientation_4d_valid_simplex() {
-        let kernel = FastKernel::<f64>::new();
-
-        // 4D simplex (5 points)
-        let simplex_4d = [
-            Point::new([0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0]),
-        ];
-
-        let orientation = kernel.orientation(&simplex_4d).unwrap();
-        assert_ne!(
-            orientation, 0,
-            "4D simplex should have non-zero orientation"
-        );
-    }
-
-    #[test]
-    fn test_orientation_4d_degenerate() {
-        let kernel = FastKernel::<f64>::new();
-
-        // 4D degenerate simplex (all points in 3D hyperplane)
-        let degenerate_4d = [
-            Point::new([0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.5, 0.5, 0.5, 0.0]), // All w=0
-        ];
-
-        let orientation = kernel.orientation(&degenerate_4d).unwrap();
-        assert_eq!(
-            orientation, 0,
-            "Degenerate 4D simplex should have zero orientation"
-        );
-    }
-
-    #[test]
     fn test_orientation_small_but_valid_2d() {
         let kernel = FastKernel::<f64>::new();
 
@@ -792,48 +888,6 @@ mod tests {
         assert_ne!(
             orientation, 0,
             "Small but valid triangle should be non-degenerate"
-        );
-    }
-
-    #[test]
-    fn test_orientation_consistency_both_kernels() {
-        let fast = FastKernel::<f64>::new();
-        let robust = RobustKernel::<f64>::new();
-
-        // Test case 1: Collinear
-        let collinear = [
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([2.0, 0.0]),
-        ];
-        assert_eq!(
-            fast.orientation(&collinear).unwrap(),
-            robust.orientation(&collinear).unwrap(),
-            "Both kernels should agree on collinear points"
-        );
-
-        // Test case 2: Valid triangle
-        let triangle1 = [
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.0, 1.0]),
-        ];
-        assert_eq!(
-            fast.orientation(&triangle1).unwrap(),
-            robust.orientation(&triangle1).unwrap(),
-            "Both kernels should agree on valid triangle"
-        );
-
-        // Test case 3: Another valid triangle
-        let triangle2 = [
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.5, 0.5]),
-        ];
-        assert_eq!(
-            fast.orientation(&triangle2).unwrap(),
-            robust.orientation(&triangle2).unwrap(),
-            "Both kernels should agree on another valid triangle"
         );
     }
 
@@ -868,5 +922,182 @@ mod tests {
         let test_point = Point::new([0.5, 0.5, 0.5]);
         let result = kernel.in_sphere(&simplex, &test_point);
         assert!(result.is_err(), "Should error with degenerate simplex");
+    }
+
+    // =========================================================================
+    // MACRO — AdaptiveKernel PER-DIMENSION TESTS (2D–5D)
+    // =========================================================================
+
+    /// Generate `AdaptiveKernel` tests for a given dimension: agreement with
+    /// `FastKernel` on non-degenerate inputs, `SoS` resolution of degenerate
+    /// orientation and cospherical insphere, determinism, and branch coverage
+    /// for orient-degenerate and both-degenerate insphere paths.
+    macro_rules! gen_adaptive_kernel_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_adaptive_orientation_ $dim d_agrees>]() {
+                    let adaptive = AdaptiveKernel::<f64>::new();
+                    let fast = FastKernel::<f64>::new();
+                    let simplex = standard_simplex::<$dim>();
+                    assert_eq!(
+                        adaptive.orientation(&simplex).unwrap(),
+                        fast.orientation(&simplex).unwrap(),
+                        "AdaptiveKernel must agree with FastKernel on non-degenerate"
+                    );
+                }
+
+                #[test]
+                fn [<test_adaptive_orientation_ $dim d_degenerate_exact_zero>]() {
+                    // Exact orientation returns 0 for truly degenerate inputs
+                    // (no SoS on orientation — true geometry must be visible).
+                    let kernel = AdaptiveKernel::<f64>::new();
+                    let simplex = degenerate_simplex::<$dim>();
+                    let result = kernel.orientation(&simplex).unwrap();
+                    assert_eq!(
+                        result, 0,
+                        "AdaptiveKernel exact orientation must return 0 for degenerate input, got {result}"
+                    );
+                }
+
+                #[test]
+                fn [<test_adaptive_insphere_ $dim d_agrees>]() {
+                    let adaptive = AdaptiveKernel::<f64>::new();
+                    let fast = FastKernel::<f64>::new();
+                    let simplex = standard_simplex::<$dim>();
+                    let inside = inside_point::<$dim>();
+                    assert_eq!(
+                        adaptive.in_sphere(&simplex, &inside).unwrap(),
+                        fast.in_sphere(&simplex, &inside).unwrap(),
+                        "Must agree on clearly inside point"
+                    );
+                    let outside = outside_point::<$dim>();
+                    assert_eq!(
+                        adaptive.in_sphere(&simplex, &outside).unwrap(),
+                        fast.in_sphere(&simplex, &outside).unwrap(),
+                        "Must agree on clearly outside point"
+                    );
+                }
+
+                #[test]
+                fn [<test_adaptive_insphere_ $dim d_cospherical_nonzero>]() {
+                    let kernel = AdaptiveKernel::<f64>::new();
+                    let simplex = standard_simplex::<$dim>();
+                    let test = cospherical_test::<$dim>();
+                    let result = kernel.in_sphere(&simplex, &test).unwrap();
+                    assert!(
+                        result == 1 || result == -1,
+                        "AdaptiveKernel insphere must never return 0, got {result}"
+                    );
+                }
+
+                #[test]
+                fn [<test_adaptive_insphere_ $dim d_cospherical_deterministic>]() {
+                    let kernel = AdaptiveKernel::<f64>::new();
+                    let simplex = standard_simplex::<$dim>();
+                    let test = cospherical_test::<$dim>();
+                    let results: Vec<i32> = (0..10)
+                        .map(|_| kernel.in_sphere(&simplex, &test).unwrap())
+                        .collect();
+                    assert!(
+                        results.iter().all(|&r| r == results[0]),
+                        "Degenerate insphere must be deterministic"
+                    );
+                }
+
+                #[test]
+                fn [<test_adaptive_insphere_ $dim d_orient_degenerate>]() {
+                    // Degenerate simplex + off-plane test → orientation is
+                    // degenerate but insphere determinant may not be.
+                    let kernel = AdaptiveKernel::<f64>::new();
+                    let simplex = degenerate_simplex::<$dim>();
+                    let test = off_plane_test::<$dim>();
+                    let result = kernel.in_sphere(&simplex, &test).unwrap();
+                    assert!(
+                        result == 1 || result == -1,
+                        "Must resolve orient-degenerate insphere, got {result}"
+                    );
+                }
+
+                #[test]
+                fn [<test_adaptive_insphere_ $dim d_both_degenerate>]() {
+                    // Degenerate simplex + coplanar test → both orientation
+                    // and insphere determinants may be zero.
+                    let kernel = AdaptiveKernel::<f64>::new();
+                    let simplex = degenerate_simplex::<$dim>();
+                    let test = coplanar_far_test::<$dim>();
+                    let result = kernel.in_sphere(&simplex, &test).unwrap();
+                    assert!(
+                        result == 1 || result == -1,
+                        "Must resolve both-degenerate insphere, got {result}"
+                    );
+                }
+            }
+        };
+    }
+
+    gen_adaptive_kernel_tests!(2);
+    gen_adaptive_kernel_tests!(3);
+    gen_adaptive_kernel_tests!(4);
+    gen_adaptive_kernel_tests!(5);
+
+    // =========================================================================
+    // MACRO — Kernel Consistency Across All Three Implementations (2D–5D)
+    // =========================================================================
+
+    /// Verify that `FastKernel`, `RobustKernel`, and `AdaptiveKernel` agree on
+    /// clearly non-degenerate inputs.
+    macro_rules! gen_kernel_consistency_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_kernel_consistency_ $dim d_orientation>]() {
+                    let fast = FastKernel::<f64>::new();
+                    let robust = RobustKernel::<f64>::new();
+                    let adaptive = AdaptiveKernel::<f64>::new();
+                    let simplex = standard_simplex::<$dim>();
+                    let f = fast.orientation(&simplex).unwrap();
+                    let r = robust.orientation(&simplex).unwrap();
+                    let a = adaptive.orientation(&simplex).unwrap();
+                    assert_eq!(f, r, "Fast vs Robust");
+                    assert_eq!(f, a, "Fast vs Adaptive");
+                }
+
+                #[test]
+                fn [<test_kernel_consistency_ $dim d_insphere>]() {
+                    let fast = FastKernel::<f64>::new();
+                    let robust = RobustKernel::<f64>::new();
+                    let adaptive = AdaptiveKernel::<f64>::new();
+                    let simplex = standard_simplex::<$dim>();
+                    let test = inside_point::<$dim>();
+                    let f = fast.in_sphere(&simplex, &test).unwrap();
+                    let r = robust.in_sphere(&simplex, &test).unwrap();
+                    let a = adaptive.in_sphere(&simplex, &test).unwrap();
+                    assert_eq!(f, r, "Fast vs Robust");
+                    assert_eq!(f, a, "Fast vs Adaptive");
+                }
+            }
+        };
+    }
+
+    gen_kernel_consistency_tests!(2);
+    gen_kernel_consistency_tests!(3);
+    gen_kernel_consistency_tests!(4);
+    gen_kernel_consistency_tests!(5);
+
+    #[test]
+    fn test_adaptive_kernel_default_trait() {
+        let _adaptive: AdaptiveKernel<f64> = AdaptiveKernel::default();
+    }
+
+    #[test]
+    fn test_adaptive_kernel_wrong_point_count() {
+        let kernel = AdaptiveKernel::<f64>::new();
+        let points = [Point::new([0.0, 0.0]), Point::new([1.0, 0.0])];
+        assert!(kernel.orientation(&points).is_err());
+
+        let simplex = [Point::new([0.0, 0.0]), Point::new([1.0, 0.0])];
+        let test = Point::new([0.5, 0.5]);
+        assert!(kernel.in_sphere(&simplex, &test).is_err());
     }
 }

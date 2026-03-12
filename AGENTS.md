@@ -50,6 +50,33 @@ When using the `gh` CLI to view issues, PRs, or other GitHub objects:
 - **AVOID** plain `gh issue view N` — it may fail with `read:project`
   scope errors or open a pager.
 
+- To manage **issue dependencies** (Blocks / Is Blocked By), use the
+  GitHub REST API via `gh api`. The endpoint requires the **internal
+  issue ID** (not the issue number).
+
+  To get an issue's internal ID:
+
+  ```bash
+  gh api repos/acgetchell/delaunay/issues/233 --jq '.id'
+  ```
+
+  To add a "blocked by" dependency (e.g. #254 is blocked by #233):
+
+  ```bash
+  gh api repos/acgetchell/delaunay/issues/254/dependencies/blocked_by \
+    -X POST -F issue_id=<BLOCKING_ISSUE_ID>
+  ```
+
+  To list existing blocked‑by dependencies:
+
+  ```bash
+  gh api repos/acgetchell/delaunay/issues/254/dependencies/blocked_by \
+    --jq '[.[].number]' | cat
+  ```
+
+  **Note**: Use `-F` (not `-f`) for `issue_id` so it is sent as an
+  integer. The API returns HTTP 422 if the dependency already exists.
+
 - When updating issues, use explicit `comment`/`edit` commands.
   For **arbitrary Markdown** (backticks, quotes, special characters),
   prefer `--body-file -` with a heredoc:

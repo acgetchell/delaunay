@@ -81,7 +81,7 @@ use delaunay::core::delaunay_triangulation::{
     ConstructionOptions, DelaunayTriangulation, RetryPolicy,
 };
 use delaunay::core::vertex::Vertex;
-use delaunay::geometry::kernel::RobustKernel;
+use delaunay::geometry::kernel::AdaptiveKernel;
 use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::vertex;
 use std::hint::black_box;
@@ -182,7 +182,7 @@ fn construction_options(seed: u64) -> ConstructionOptions {
 fn construct_triangulation<const D: usize>(
     vertices: &[Vertex<f64, (), D>],
     seed: u64,
-) -> DelaunayTriangulation<RobustKernel<f64>, (), (), D> {
+) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     DelaunayTriangulation::new_with_options(vertices, construction_options(seed)).unwrap_or_else(
         |err| {
             panic!(

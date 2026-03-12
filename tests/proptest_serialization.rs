@@ -9,9 +9,13 @@
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
 use approx::relative_eq;
+use delaunay::prelude::Tds;
 use delaunay::prelude::query::*;
 use delaunay::prelude::topology::validation::*;
 use proptest::prelude::*;
+
+/// Type alias for the default round-trip target (`AdaptiveKernel`).
+type DefaultDt<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
 
 /// Check if two points are approximately equal (coordinate-wise)
 /// Uses relative epsilon comparison suitable for JSON serialization roundtrips
@@ -56,9 +60,11 @@ macro_rules! test_serialization_properties {
                         // Serialize to JSON
                         let json = serde_json::to_string(&dt).expect("Serialization failed");
 
-                        // Deserialize from JSON
-                        let deserialized: DelaunayTriangulation<_, (), (), $dim> =
+                        // Deserialize from JSON via from_tds
+                        let tds: Tds<f64, (), (), $dim> =
                             serde_json::from_str(&json).expect("Deserialization failed");
+                        let deserialized: DefaultDt<$dim> =
+                            DelaunayTriangulation::from_tds(tds, AdaptiveKernel::new());
 
                         // Verify structure preservation
                         prop_assert_eq!(
@@ -96,10 +102,12 @@ macro_rules! test_serialization_properties {
                         TopologyGuarantee::PLManifold,
                     ) {
                         if dt.tds().validate().is_ok() {
-                            // Serialize and deserialize
+                            // Serialize and deserialize via from_tds
                             let json = serde_json::to_string(&dt).expect("Serialization failed");
-                            let deserialized: DelaunayTriangulation<_, (), (), $dim> =
+                            let tds: Tds<f64, (), (), $dim> =
                                 serde_json::from_str(&json).expect("Deserialization failed");
+                            let deserialized: DefaultDt<$dim> =
+                                DelaunayTriangulation::from_tds(tds, AdaptiveKernel::new());
 
                             // Deserialized triangulation should also be valid
                             prop_assert!(
@@ -136,10 +144,12 @@ macro_rules! test_serialization_properties {
                             .map(|(_, v)| *v.point())
                             .collect();
 
-                        // Serialize and deserialize
+                        // Serialize and deserialize via from_tds
                         let json = serde_json::to_string(&dt).expect("Serialization failed");
-                        let deserialized: DelaunayTriangulation<_, (), (), $dim> =
+                        let tds: Tds<f64, (), (), $dim> =
                             serde_json::from_str(&json).expect("Deserialization failed");
+                        let deserialized: DefaultDt<$dim> =
+                            DelaunayTriangulation::from_tds(tds, AdaptiveKernel::new());
 
                         // Collect deserialized vertex points
                         let deserialized_points: Vec<_> = deserialized.vertices()
@@ -191,10 +201,12 @@ macro_rules! test_serialization_properties {
                             }
                         }
 
-                        // Serialize and deserialize
+                        // Serialize and deserialize via from_tds
                         let json = serde_json::to_string(&dt).expect("Serialization failed");
-                        let deserialized: DelaunayTriangulation<_, (), (), $dim> =
+                        let tds: Tds<f64, (), (), $dim> =
                             serde_json::from_str(&json).expect("Deserialization failed");
+                        let deserialized: DefaultDt<$dim> =
+                            DelaunayTriangulation::from_tds(tds, AdaptiveKernel::new());
 
                         // Count deserialized neighbor relationships
                         let mut deserialized_neighbor_count = 0;

@@ -30,7 +30,7 @@ pub(in crate::geometry::util) fn scaled_hypot_2d<T: CoordinateScalar>(x: T, y: T
     // Use scaled computation for numerical stability
     let x_scaled = x / max_abs;
     let y_scaled = y / max_abs;
-    max_abs * Float::sqrt(x_scaled * x_scaled + y_scaled * y_scaled)
+    max_abs * Float::sqrt(x_scaled.mul_add(x_scaled, y_scaled * y_scaled))
 }
 
 /// Helper function to compute squared norm using generic arithmetic on T.
@@ -70,7 +70,7 @@ pub fn squared_norm<T, const D: usize>(coords: &[T; D]) -> T
 where
     T: CoordinateScalar,
 {
-    coords.iter().fold(T::zero(), |acc, &x| acc + x * x)
+    coords.iter().fold(T::zero(), |acc, &x| x.mul_add(x, acc))
 }
 
 /// Compute the d-dimensional hypot (Euclidean norm) of a coordinate array.
@@ -149,13 +149,10 @@ where
             }
 
             // Scale all coordinates by max_abs and compute sum of squares
-            let sum_of_scaled_squares = coords
-                .iter()
-                .map(|&x| {
-                    let scaled = x / max_abs;
-                    scaled * scaled
-                })
-                .fold(T::zero(), |acc, x| acc + x);
+            let sum_of_scaled_squares = coords.iter().fold(T::zero(), |acc, &x| {
+                let scaled = x / max_abs;
+                scaled.mul_add(scaled, acc)
+            });
 
             // Result is max_abs * sqrt(sum_of_scaled_squares)
             max_abs * Float::sqrt(sum_of_scaled_squares)

@@ -229,8 +229,8 @@ macro_rules! test_complex_with_interior {
     ($test_name:ident, $dim:expr, $vertices:expr, $expected_boundary_chi:expr) => {
         #[test]
         fn $test_name() {
-            use delaunay::geometry::kernel::RobustKernel;
-            type DT = DelaunayTriangulation<RobustKernel<f64>, (), (), $dim>;
+            use delaunay::geometry::kernel::AdaptiveKernel;
+            type DT = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), $dim>;
             let dt =
                 DT::new_with_topology_guarantee($vertices, TopologyGuarantee::PLManifold).unwrap();
 

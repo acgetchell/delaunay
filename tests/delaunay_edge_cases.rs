@@ -811,6 +811,8 @@ fn test_robust_kernel_with_edge_case() {
 #[test]
 fn test_collinear_points_2d() {
     // All points lie on a line in 2D: no non-degenerate simplex exists.
+    // AdaptiveKernel uses exact orientation (no SoS), so collinear points
+    // are correctly detected as degenerate.
     let collinear = vec![
         vertex!([0.0, 0.0]),
         vertex!([1.0, 0.0]),

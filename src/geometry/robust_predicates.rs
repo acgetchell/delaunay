@@ -15,7 +15,6 @@ use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar, ScalarSummable,
 };
 use num_traits::cast;
-use std::fmt::Debug;
 use std::sync::LazyLock;
 
 static STRICT_INSPHERE_CONSISTENCY: LazyLock<bool> =
@@ -95,8 +94,6 @@ pub struct RobustPredicateConfig<T> {
     pub max_refinement_iterations: usize,
     /// Threshold for switching to exact arithmetic
     pub exact_arithmetic_threshold: T,
-    /// Scale factor for perturbation when handling degeneracies
-    pub perturbation_scale: T,
     /// Multiplier for visibility threshold in fallback visibility heuristics
     pub visibility_threshold_multiplier: T,
 }
@@ -108,7 +105,6 @@ impl<T: CoordinateScalar> Default for RobustPredicateConfig<T> {
             relative_tolerance_factor: cast(1e-12).unwrap_or_else(T::default_tolerance),
             max_refinement_iterations: 3,
             exact_arithmetic_threshold: cast(1e-10).unwrap_or_else(T::default_tolerance),
-            perturbation_scale: cast(1e-10).unwrap_or_else(T::default_tolerance),
             visibility_threshold_multiplier: cast(100.0)
                 .unwrap_or_else(|| T::from(100.0).unwrap_or_else(T::default_tolerance)),
         }
@@ -127,8 +123,8 @@ impl<T: CoordinateScalar> Default for RobustPredicateConfig<T> {
 /// 2) Diagnostic consistency check against a distance-based insphere (does not
 ///    override the exact result; only hard-fails when `DELAUNAY_STRICT_INSPHERE_CONSISTENCY`
 ///    is set)
-/// 3) Symbolic perturbation with deterministic tie-breaking (only reached when
-///    the exact-sign computation itself fails, e.g. unsupported matrix size)
+/// 3) Simulation of Simplicity (`SoS`) fallback (only reached when the exact-sign
+///    computation itself fails, e.g. unsupported matrix size for D ≥ 6)
 ///
 /// Sign convention and orientation:
 /// - The determinant sign is interpreted relative to the simplex orientation.
@@ -180,8 +176,9 @@ impl<T: CoordinateScalar> Default for RobustPredicateConfig<T> {
 /// ```
 ///
 /// Notes:
-/// - For extremely challenging inputs, the function falls back to symbolic
-///   perturbation with deterministic tie-breaking to maintain progress.
+/// - When Strategy 1 fails (e.g. D ≥ 6 where the insphere matrix exceeds the
+///   stack-matrix limit), the function falls back to Simulation of Simplicity
+///   (`SoS`) for deterministic tie-breaking without modifying coordinates.
 /// - See `robust_orientation` for the orientation predicate used in the sign interpretation.
 /// - The insphere matrix uses absolute coordinates whose squared norms can
 ///   overflow `f64` for `‖coords‖ ≥ ~1e154`; see
@@ -237,13 +234,54 @@ where
         return Ok(result);
     }
 
-    // Strategy 3: Symbolic perturbation — only reached when exact-sign
-    // computation itself failed (e.g. unsupported matrix size).
-    Ok(symbolic_perturbation_insphere(
-        simplex_points,
-        test_point,
-        config,
-    ))
+    // Strategy 3: Geometric + SoS fallback — only reached when exact-sign
+    // computation itself failed (e.g. unsupported matrix size for D ≥ 6).
+    //
+    // First try insphere_distance (circumcenter/radius based — no matrix
+    // determinant needed, works at any dimension).  This handles the
+    // non-degenerate cases correctly.  Only if the result is BOUNDARY
+    // (truly degenerate) do we apply SoS tie-breaking.
+    if let Ok(geometric_result) = super::predicates::insphere_distance(simplex_points, *test_point)
+        && geometric_result != InSphere::BOUNDARY
+    {
+        return Ok(geometric_result);
+    }
+
+    // SoS tie-breaking for the truly degenerate case (BOUNDARY or
+    // insphere_distance itself failed).  The SoS cofactor minors are one
+    // size smaller, so this succeeds where the full insphere matrix
+    // dispatch does not.
+    let f64_simplex: Vec<Point<f64, D>> = simplex_points
+        .iter()
+        .map(|p| safe_coords_to_f64(p.coords()).map(Point::new))
+        .collect::<Result<_, _>>()?;
+    let f64_test: Point<f64, D> = Point::new(safe_coords_to_f64(test_point.coords())?);
+
+    // Use exact orientation when available; fall back to SoS only when the
+    // exact predicate reports DEGENERATE (or fails entirely).
+    let abs_orient: i32 = match robust_orientation(simplex_points, config) {
+        Ok(Orientation::POSITIVE) => 1,
+        Ok(Orientation::NEGATIVE) => -1,
+        _ => crate::geometry::sos::sos_orientation_sign(&f64_simplex)?,
+    };
+    let raw_insphere = crate::geometry::sos::sos_insphere_sign(&f64_simplex, &f64_test)?;
+
+    // Apply the same parity-aware normalization as AdaptiveKernel:
+    // orient_factor = (-1)^(D+1) × abs_orient, because the insphere
+    // convention requires negating the relative orientation and
+    // rel_orient = (-1)^D × abs_orient.
+    let orient_factor = if D.is_multiple_of(2) {
+        -abs_orient
+    } else {
+        abs_orient
+    };
+    let sign = raw_insphere * orient_factor;
+
+    Ok(if sign > 0 {
+        InSphere::INSIDE
+    } else {
+        InSphere::OUTSIDE
+    })
 }
 
 #[inline]
@@ -334,37 +372,6 @@ where
             base_tol,
         ))
     })
-}
-
-/// Insphere test using symbolic perturbation for degenerate cases.
-///
-/// When points are exactly or nearly cocircular/cospherical, this method
-/// applies a small symbolic perturbation to break ties deterministically.
-fn symbolic_perturbation_insphere<T, const D: usize>(
-    simplex_points: &[Point<T, D>],
-    test_point: &Point<T, D>,
-    config: &RobustPredicateConfig<T>,
-) -> InSphere
-where
-    T: ScalarSummable,
-    [T; D]: Copy + Sized,
-{
-    // Try with small perturbations in different directions
-    let perturbation_directions = generate_perturbation_directions::<T, D>();
-
-    for direction in perturbation_directions {
-        let perturbed_test_point =
-            apply_perturbation(test_point, direction, config.perturbation_scale);
-
-        match adaptive_tolerance_insphere(simplex_points, &perturbed_test_point, config) {
-            Ok(InSphere::INSIDE) => return InSphere::INSIDE,
-            Ok(InSphere::OUTSIDE) => return InSphere::OUTSIDE,
-            Ok(InSphere::BOUNDARY) | Err(_) => {} // Try next perturbation
-        }
-    }
-
-    // If all perturbations fail, use geometric deterministic tie-breaking
-    geometric_deterministic_tie_breaking(simplex_points, test_point)
 }
 
 /// Enhanced orientation predicate with robustness improvements.
@@ -503,178 +510,6 @@ where
     )
 }
 
-/// Generate perturbation directions for symbolic perturbation.
-fn generate_perturbation_directions<T, const D: usize>() -> Vec<[T; D]>
-where
-    T: CoordinateScalar,
-{
-    let mut directions = Vec::new();
-
-    // Try unit vectors in each coordinate direction
-    for i in 0..D {
-        let mut direction = [T::zero(); D];
-        direction[i] = T::one();
-        directions.push(direction);
-
-        // Also try negative direction
-        direction[i] = -T::one();
-        directions.push(direction);
-    }
-
-    // Add a few diagonal directions
-    if D >= 2 {
-        let mut diag = [T::one(); D];
-        for item in diag.iter_mut().take(D) {
-            let d_value = cast(D).unwrap_or_else(T::one);
-            *item = *item / d_value;
-        }
-        directions.push(diag);
-    }
-
-    directions
-}
-
-/// Apply small perturbation to a point.
-fn apply_perturbation<T, const D: usize>(
-    point: &Point<T, D>,
-    direction: [T; D],
-    scale: T,
-) -> Point<T, D>
-where
-    T: CoordinateScalar,
-    [T; D]: Copy + Sized,
-{
-    let mut coords = *point.coords();
-
-    for i in 0..D {
-        coords[i] = coords[i] + direction[i] * scale;
-    }
-
-    Point::new(coords)
-}
-
-/// Geometric deterministic tie-breaking using Simulation of Simplicity (`SoS`).
-///
-/// This implements the Simulation of Simplicity approach by Edelsbrunner and Mücke
-/// ("Simulation of Simplicity: A Technique to Cope with Degenerate Cases in
-/// Geometric Algorithms", ACM Transactions on Graphics, 1990).
-///
-/// The method applies infinitesimal symbolic perturbations in a deterministic order
-/// to break degeneracies while preserving geometric meaning. Points are conceptually
-/// perturbed by ε^i where ε is infinitesimal and i is the point's index.
-fn geometric_deterministic_tie_breaking<T, const D: usize>(
-    simplex_points: &[Point<T, D>],
-    test_point: &Point<T, D>,
-) -> InSphere
-where
-    T: ScalarSummable,
-    [T; D]: Copy + Sized,
-{
-    // Implement Simulation of Simplicity for insphere predicate
-    // We assign symbolic indices: simplex points get indices 0..D, test point gets D+1
-
-    // Build the symbolic insphere matrix with perturbation terms
-    // The SoS approach evaluates the determinant as if each point i was perturbed
-    // by adding ε^i to each coordinate, where ε is infinitesimal
-
-    // For the insphere predicate, we need to consider the sign of the determinant
-    // when breaking ties using the lowest-order perturbation that gives a non-zero result
-
-    // Since this is quite complex to implement fully, we use a simplified geometric approach:
-    // Apply tiny perturbations based on point indices to maintain geometric meaning
-
-    let perturbation_scale = T::from(1e-100)
-        .unwrap_or_else(|| T::default_tolerance() / T::from(1000).unwrap_or_else(T::one));
-
-    // Apply SoS-style perturbations: each point gets a unique perturbation magnitude
-    let mut perturbed_simplex: Vec<Point<T, D>> = Vec::with_capacity(simplex_points.len());
-
-    for (i, point) in simplex_points.iter().enumerate() {
-        let mut coords = *point.coords();
-
-        // Apply perturbation with magnitude ε^(i+1) in the first coordinate
-        // This maintains the SoS property while being computationally feasible
-        let perturbation_magnitude = perturbation_scale / T::from(i + 1).unwrap_or_else(T::one);
-        coords[0] = coords[0] + perturbation_magnitude;
-
-        perturbed_simplex.push(Point::new(coords));
-    }
-
-    // Perturb test point with unique index
-    let mut test_coords = *test_point.coords();
-    let test_perturbation =
-        perturbation_scale / T::from(simplex_points.len() + 1).unwrap_or_else(T::one);
-    test_coords[0] = test_coords[0] + test_perturbation;
-    let perturbed_test = Point::new(test_coords);
-
-    // Now evaluate the insphere predicate with perturbed points
-    // Use distance-based approach for robustness
-    super::predicates::insphere_distance(&perturbed_simplex, perturbed_test).unwrap_or_else(|_| {
-        // If that fails, fall back to a more conservative geometric approach
-        // based on the centroid distance method
-        centroid_based_tie_breaking(simplex_points, test_point)
-    })
-}
-
-/// Centroid-based geometric tie-breaking as a fallback.
-///
-/// This method compares the test point's distance to the simplex centroid
-/// versus the average distance of simplex points to the centroid.
-/// While not as theoretically rigorous as `SoS`, it maintains geometric meaning.
-fn centroid_based_tie_breaking<T, const D: usize>(
-    simplex_points: &[Point<T, D>],
-    test_point: &Point<T, D>,
-) -> InSphere
-where
-    T: ScalarSummable,
-    [T; D]: Copy + Sized,
-{
-    // Calculate simplex centroid
-    let mut centroid_coords = [T::zero(); D];
-    for point in simplex_points {
-        let coords = *point.coords();
-        for i in 0..D {
-            centroid_coords[i] = centroid_coords[i] + coords[i];
-        }
-    }
-
-    let num_points_scalar = T::from(simplex_points.len()).unwrap_or_else(T::one);
-    for coord in &mut centroid_coords {
-        *coord = *coord / num_points_scalar;
-    }
-
-    // Calculate test point distance to centroid
-    let test_coords = *test_point.coords();
-    let mut test_dist_sq = T::zero();
-    for i in 0..D {
-        let diff = test_coords[i] - centroid_coords[i];
-        test_dist_sq = test_dist_sq + diff * diff;
-    }
-
-    // Calculate average simplex point distance to centroid
-    let mut avg_simplex_dist_sq = T::zero();
-    for point in simplex_points {
-        let coords = *point.coords();
-        let mut dist_sq = T::zero();
-        for i in 0..D {
-            let diff = coords[i] - centroid_coords[i];
-            dist_sq = dist_sq + diff * diff;
-        }
-        avg_simplex_dist_sq = avg_simplex_dist_sq + dist_sq;
-    }
-    avg_simplex_dist_sq = avg_simplex_dist_sq / num_points_scalar;
-
-    // Compare distances: if test point is farther from centroid than average,
-    // it's likely outside the circumsphere
-    if test_dist_sq > avg_simplex_dist_sq {
-        InSphere::OUTSIDE
-    } else if test_dist_sq < avg_simplex_dist_sq {
-        InSphere::INSIDE
-    } else {
-        InSphere::BOUNDARY
-    }
-}
-
 /// Factory function to create robust predicate configurations for different use cases.
 pub mod config_presets {
     use super::{CoordinateScalar, RobustPredicateConfig};
@@ -700,7 +535,6 @@ pub mod config_presets {
             relative_tolerance_factor: cast(1e-12).unwrap_or_else(T::default_tolerance),
             max_refinement_iterations: 3,
             exact_arithmetic_threshold: cast(1e-10).unwrap_or_else(T::default_tolerance),
-            perturbation_scale: cast(1e-10).unwrap_or_else(T::default_tolerance),
             visibility_threshold_multiplier: cast(100.0)
                 .unwrap_or_else(|| T::from(100.0).unwrap_or_else(T::default_tolerance)),
         }
@@ -727,7 +561,6 @@ pub mod config_presets {
             relative_tolerance_factor: cast(1e-14).unwrap_or(base_tol),
             max_refinement_iterations: 5,
             exact_arithmetic_threshold: cast(1e-12).unwrap_or(base_tol),
-            perturbation_scale: cast(1e-12).unwrap_or(base_tol),
             visibility_threshold_multiplier: cast(100.0)
                 .unwrap_or_else(|| T::from(100.0).unwrap_or_else(T::default_tolerance)),
         }
@@ -754,7 +587,6 @@ pub mod config_presets {
             relative_tolerance_factor: cast(1e-10).unwrap_or(base_tol),
             max_refinement_iterations: 2,
             exact_arithmetic_threshold: cast(1e-8).unwrap_or(base_tol),
-            perturbation_scale: cast(1e-8).unwrap_or(base_tol),
             visibility_threshold_multiplier: cast(200.0)
                 .unwrap_or_else(|| T::from(200.0).unwrap_or_else(T::default_tolerance)),
         }
@@ -767,7 +599,6 @@ mod tests {
     use crate::geometry::matrix::matrix_get;
     use crate::geometry::point::Point;
     use crate::geometry::predicates;
-    use approx::assert_relative_eq;
     use num_traits::NumCast;
     use rand::{RngExt, SeedableRng};
 
@@ -1418,18 +1249,16 @@ mod tests {
     }
 
     #[test]
-    fn test_symbolic_perturbation_fallback() {
-        // Test symbolic perturbation pathways and deterministic tie-breaking
+    fn test_near_degenerate_insphere_robustness() {
+        // Near-degenerate configuration that exercises robust exact-sign paths.
         let config = RobustPredicateConfig {
             base_tolerance: 1e-12,
             relative_tolerance_factor: 1e-15,
             max_refinement_iterations: 1,
             exact_arithmetic_threshold: 1e-8,
-            perturbation_scale: 1e-15, // Very small perturbation
             visibility_threshold_multiplier: 100.0,
         };
 
-        // Create a nearly degenerate configuration that will challenge the algorithms
         let nearly_coplanar_points = vec![
             Point::new([0.0, 0.0, 0.0]),
             Point::new([1.0, 0.0, 0.0]),
@@ -1437,14 +1266,11 @@ mod tests {
             Point::new([0.5, 0.5, 1e-16]), // Extremely close to coplanar
         ];
 
-        // Test point that's very close to the boundary
         let boundary_test_point = Point::new([0.5, 0.5, 5e-17]);
 
-        // This should exercise the symbolic perturbation logic
         let result = robust_insphere(&nearly_coplanar_points, &boundary_test_point, &config);
         assert!(result.is_ok());
 
-        // The result should be one of the valid InSphere variants
         let insphere_result = result.unwrap();
         assert!(matches!(
             insphere_result,
@@ -1563,7 +1389,6 @@ mod tests {
             relative_tolerance_factor: 1e-15_f64,
             max_refinement_iterations: 1,
             exact_arithmetic_threshold: 1e-18_f64,
-            perturbation_scale: 1e-18_f64,
             visibility_threshold_multiplier: 100.0,
         };
 
@@ -1687,7 +1512,6 @@ mod tests {
         assert!(general_config.base_tolerance > 0.0);
         assert!(general_config.relative_tolerance_factor > 0.0);
         assert!(general_config.exact_arithmetic_threshold > 0.0);
-        assert!(general_config.perturbation_scale > 0.0);
         assert_eq!(general_config.max_refinement_iterations, 3);
 
         let high_precision_config = config_presets::high_precision::<f64>();
@@ -1789,68 +1613,6 @@ mod tests {
     }
 
     #[test]
-    fn test_perturbation_direction_generation() {
-        // Test perturbation directions for different dimensions
-
-        // 1D case
-        let directions_1d = generate_perturbation_directions::<f64, 1>();
-        assert_eq!(directions_1d.len(), 2); // +1 and -1 in single coordinate
-        assert_relative_eq!(directions_1d[0][0], 1.0);
-        assert_relative_eq!(directions_1d[1][0], -1.0);
-
-        // 2D case
-        let directions_2d = generate_perturbation_directions::<f64, 2>();
-        assert_eq!(directions_2d.len(), 5); // 4 axis directions + 1 diagonal
-
-        // 3D case
-        let directions_3d = generate_perturbation_directions::<f64, 3>();
-        assert_eq!(directions_3d.len(), 7); // 6 axis directions + 1 diagonal
-
-        // Check that diagonal direction is normalized
-        let diag_3d = directions_3d.last().unwrap();
-        for &component in diag_3d {
-            assert!((component - 1.0 / 3.0).abs() < 1e-10);
-        }
-
-        // 4D case
-        let directions_4d = generate_perturbation_directions::<f64, 4>();
-        assert_eq!(directions_4d.len(), 9); // 8 axis directions + 1 diagonal
-    }
-
-    #[test]
-    fn test_apply_perturbation() {
-        // Test applying perturbations to points
-        let original_point = Point::new([1.0, 2.0, 3.0]);
-        let direction = [0.1, -0.1, 0.2];
-        let scale = 0.001;
-
-        let perturbed = apply_perturbation(&original_point, direction, scale);
-        let perturbed_coords = *perturbed.coords();
-
-        assert_relative_eq!(
-            perturbed_coords[0],
-            0.1f64.mul_add(0.001, 1.0),
-            epsilon = 1e-15
-        );
-        assert_relative_eq!(
-            perturbed_coords[1],
-            0.1f64.mul_add(-0.001, 2.0),
-            epsilon = 1e-15
-        );
-        assert_relative_eq!(
-            perturbed_coords[2],
-            0.2f64.mul_add(0.001, 3.0),
-            epsilon = 1e-15
-        );
-
-        // Test with zero perturbation
-        let zero_direction = [0.0, 0.0, 0.0];
-        let unperturbed = apply_perturbation(&original_point, zero_direction, 1.0);
-        let unperturbed_coords = *unperturbed.coords();
-        assert_relative_eq!(unperturbed_coords.as_slice(), [1.0, 2.0, 3.0].as_slice());
-    }
-
-    #[test]
     fn test_consistency_check_fallback_branch() {
         // Test the case where consistency check fails and we fall back to more robust methods
         // This is challenging to test directly since we need a case where the first method
@@ -1862,7 +1624,6 @@ mod tests {
             relative_tolerance_factor: 1e-20,
             max_refinement_iterations: 1,
             exact_arithmetic_threshold: 1e-20,
-            perturbation_scale: 1e-20,
             visibility_threshold_multiplier: 100.0,
         };
 
@@ -1897,7 +1658,6 @@ mod tests {
             relative_tolerance_factor: 1e-12,
             max_refinement_iterations: 3,
             exact_arithmetic_threshold: 1e-10,
-            perturbation_scale: 1e-10,
             visibility_threshold_multiplier: 100.0,
         };
 
@@ -2029,13 +1789,12 @@ mod tests {
     }
 
     #[test]
-    fn test_symbolic_perturbation_insphere_via_6d() {
+    fn test_sos_fallback_insphere_via_6d() {
         // D=6 → insphere matrix is 8×8, exceeding MAX_STACK_MATRIX_DIM=7.
         // adaptive_tolerance_insphere returns Err on every call, so
-        // robust_insphere falls through to symbolic_perturbation_insphere
-        // (Strategy 3).  Each perturbation also fails for the same reason,
-        // exercising the Err(_) branch, after which the function falls
-        // through to geometric_deterministic_tie_breaking.
+        // robust_insphere falls through to the SoS fallback (Strategy 3).
+        // SoS cofactor minors are 6×6 (within the 7-dim limit), so this
+        // succeeds where the full matrix dispatch does not.
         let simplex: Vec<Point<f64, 6>> = vec![
             Point::new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
             Point::new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
@@ -2047,15 +1806,16 @@ mod tests {
         ];
         let config = config_presets::general_triangulation::<f64>();
 
-        // Far from the simplex → OUTSIDE via centroid-based tie-breaking.
-        let far = Point::new([5.0, 5.0, 5.0, 5.0, 5.0, 5.0]);
-        let result = robust_insphere(&simplex, &far, &config).unwrap();
-        assert_eq!(result, InSphere::OUTSIDE);
-
-        // Near the centroid → INSIDE.
-        let near = Point::new([0.05, 0.05, 0.05, 0.05, 0.05, 0.05]);
-        let result = robust_insphere(&simplex, &near, &config).unwrap();
-        assert_eq!(result, InSphere::INSIDE);
+        // Exactly cospherical point: (1,1,0,…,0) lies on the circumsphere
+        // of the standard 6-simplex (circumcenter = (1/2,…,1/2),
+        // circumradius² = 3/2, |(1,1,0,…,0) - c|² = 3/2).
+        // insphere_distance returns BOUNDARY, forcing the SoS path.
+        let cospherical = Point::new([1.0, 1.0, 0.0, 0.0, 0.0, 0.0]);
+        let result = robust_insphere(&simplex, &cospherical, &config).unwrap();
+        assert!(
+            result == InSphere::INSIDE || result == InSphere::OUTSIDE,
+            "SoS fallback must resolve BOUNDARY to INSIDE or OUTSIDE, got {result:?}"
+        );
     }
 
     #[test]

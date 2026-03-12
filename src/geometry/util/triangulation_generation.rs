@@ -13,9 +13,8 @@ use crate::core::delaunay_triangulation::{
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionError};
 use crate::core::vertex::{Vertex, VertexBuilder};
-use crate::geometry::kernel::RobustKernel;
+use crate::geometry::kernel::AdaptiveKernel;
 use crate::geometry::point::Point;
-use crate::geometry::robust_predicates::config_presets;
 use crate::geometry::traits::coordinate::{CoordinateScalar, ScalarAccumulative};
 use rand::SeedableRng;
 use rand::distr::uniform::SampleUniform;
@@ -116,12 +115,12 @@ where
         .collect()
 }
 
-/// Creates a [`RobustKernel`] configured for degenerate-input handling.
+/// Creates an [`AdaptiveKernel`] for triangulation construction.
 ///
-/// All code paths that build a non-empty triangulation with `RobustKernel` should
-/// use this factory so they share the same predicate configuration.
-fn make_robust_kernel<T: ScalarAccumulative>() -> RobustKernel<T> {
-    RobustKernel::with_config(config_presets::degenerate_robust::<T>())
+/// All code paths that build a non-empty triangulation should use this factory
+/// so they share the same kernel type.
+const fn make_adaptive_kernel<T: ScalarAccumulative>() -> AdaptiveKernel<T> {
+    AdaptiveKernel::new()
 }
 
 fn random_triangulation_try_with_vertices<T, U, V, const D: usize>(
@@ -129,16 +128,16 @@ fn random_triangulation_try_with_vertices<T, U, V, const D: usize>(
     min_vertices: usize,
     shuffle_seed: Option<u64>,
     topology_guarantee: TopologyGuarantee,
-) -> Option<DelaunayTriangulation<RobustKernel<T>, U, V, D>>
+) -> Option<DelaunayTriangulation<AdaptiveKernel<T>, U, V, D>>
 where
     T: ScalarAccumulative,
     U: DataType,
     V: DataType,
 {
-    let robust_kernel = make_robust_kernel::<T>();
+    let adaptive_kernel = make_adaptive_kernel::<T>();
 
     if let Some(dt) =
-        random_triangulation_try_build(&robust_kernel, vertices, min_vertices, topology_guarantee)
+        random_triangulation_try_build(&adaptive_kernel, vertices, min_vertices, topology_guarantee)
     {
         return Some(dt);
     }
@@ -155,7 +154,7 @@ where
         }
 
         if let Some(dt) = random_triangulation_try_build(
-            &robust_kernel,
+            &adaptive_kernel,
             &shuffled,
             min_vertices,
             topology_guarantee,
@@ -193,7 +192,7 @@ where
 /// # Returns
 ///
 /// A `Result` containing either:
-/// - `Ok(DelaunayTriangulation<RobustKernel<T>, U, V, D>)` - The successfully created triangulation
+/// - `Ok(DelaunayTriangulation<AdaptiveKernel<T>, U, V, D>)` - The successfully created triangulation
 /// - `Err(DelaunayTriangulationConstructionError)` - An error from point generation or triangulation construction
 ///
 /// # Errors
@@ -299,7 +298,7 @@ pub fn generate_random_triangulation<T, U, V, const D: usize>(
     bounds: (T, T),
     vertex_data: Option<U>,
     seed: Option<u64>,
-) -> Result<DelaunayTriangulation<RobustKernel<T>, U, V, D>, DelaunayTriangulationConstructionError>
+) -> Result<DelaunayTriangulation<AdaptiveKernel<T>, U, V, D>, DelaunayTriangulationConstructionError>
 where
     T: ScalarAccumulative + SampleUniform,
     U: DataType,
@@ -362,7 +361,7 @@ pub fn generate_random_triangulation_with_topology_guarantee<T, U, V, const D: u
     vertex_data: Option<U>,
     seed: Option<u64>,
     topology_guarantee: TopologyGuarantee,
-) -> Result<DelaunayTriangulation<RobustKernel<T>, U, V, D>, DelaunayTriangulationConstructionError>
+) -> Result<DelaunayTriangulation<AdaptiveKernel<T>, U, V, D>, DelaunayTriangulationConstructionError>
 where
     T: ScalarAccumulative + SampleUniform,
     U: DataType,
@@ -372,7 +371,7 @@ where
     if n_points == 0 {
         return Ok(
             DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
-                make_robust_kernel::<T>(),
+                make_adaptive_kernel::<T>(),
                 topology_guarantee,
             ),
         );
@@ -615,7 +614,7 @@ where
     pub fn build<U, V, const D: usize>(
         self,
     ) -> Result<
-        DelaunayTriangulation<RobustKernel<T>, U, V, D>,
+        DelaunayTriangulation<AdaptiveKernel<T>, U, V, D>,
         DelaunayTriangulationConstructionError,
     >
     where
@@ -650,7 +649,7 @@ where
         self,
         vertex_data: Option<U>,
     ) -> Result<
-        DelaunayTriangulation<RobustKernel<T>, U, V, D>,
+        DelaunayTriangulation<AdaptiveKernel<T>, U, V, D>,
         DelaunayTriangulationConstructionError,
     >
     where
@@ -661,7 +660,7 @@ where
         if self.n_points == 0 {
             return Ok(
                 DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
-                    make_robust_kernel::<T>(),
+                    make_adaptive_kernel::<T>(),
                     self.topology_guarantee,
                 ),
             );
@@ -711,7 +710,7 @@ where
             );
         }
         let dt = DelaunayTriangulation::with_topology_guarantee_and_options(
-            &make_robust_kernel::<T>(),
+            &make_adaptive_kernel::<T>(),
             &vertices,
             self.topology_guarantee,
             self.construction_options,
@@ -932,7 +931,7 @@ mod tests {
 
         // Test with integer data (try multiple deterministic seeds to avoid rare degeneracies)
         let seeds = [999_u64, 123, 456, 789, 2024];
-        let mut tri_with_int_data: Option<DelaunayTriangulation<RobustKernel<f64>, u32, (), 3>> =
+        let mut tri_with_int_data: Option<DelaunayTriangulation<AdaptiveKernel<f64>, u32, (), 3>> =
             None;
         let mut last_err: Option<String> = None;
         for seed in seeds {
