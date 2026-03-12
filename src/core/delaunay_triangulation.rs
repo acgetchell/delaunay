@@ -35,7 +35,7 @@ use crate::core::util::{
     stable_hash_u64_slice,
 };
 use crate::core::vertex::Vertex;
-use crate::geometry::kernel::{Kernel, RobustKernel};
+use crate::geometry::kernel::{AdaptiveKernel, Kernel, RobustKernel};
 use crate::geometry::traits::coordinate::{
     CoordinateConversionError, CoordinateScalar, ScalarAccumulative, ScalarSummable,
 };
@@ -1361,13 +1361,13 @@ where
     spatial_index: Option<HashGridIndex<K::Scalar, D>>,
 }
 
-// Most common case: f64 with RobustKernel, no vertex or cell data
-impl<const D: usize> DelaunayTriangulation<RobustKernel<f64>, (), (), D> {
+// Most common case: f64 with AdaptiveKernel, no vertex or cell data
+impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// Create a Delaunay triangulation from vertices with no data (most common case).
     ///
     /// This is the simplest constructor for the most common use case:
     /// - f64 coordinates
-    /// - Robust adaptive predicates (exact for degenerate/co-spherical configurations)
+    /// - Adaptive precision predicates with Simulation of Simplicity (`SoS`)
     /// - No vertex data
     /// - No cell data
     ///
@@ -1435,7 +1435,7 @@ impl<const D: usize> DelaunayTriangulation<RobustKernel<f64>, (), (), D> {
     pub fn new(
         vertices: &[Vertex<f64, (), D>],
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
-        Self::with_kernel(&RobustKernel::<f64>::new(), vertices)
+        Self::with_kernel(&AdaptiveKernel::<f64>::new(), vertices)
     }
 
     /// Create a Delaunay triangulation and return aggregate construction statistics.
@@ -1456,7 +1456,7 @@ impl<const D: usize> DelaunayTriangulation<RobustKernel<f64>, (), (), D> {
         vertices: &[Vertex<f64, (), D>],
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
-        let kernel = RobustKernel::<f64>::new();
+        let kernel = AdaptiveKernel::<f64>::new();
         Self::with_topology_guarantee_and_options_with_construction_statistics(
             &kernel,
             vertices,
@@ -1481,7 +1481,7 @@ impl<const D: usize> DelaunayTriangulation<RobustKernel<f64>, (), (), D> {
         options: ConstructionOptions,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
-        let kernel = RobustKernel::<f64>::new();
+        let kernel = AdaptiveKernel::<f64>::new();
         Self::with_topology_guarantee_and_options_with_construction_statistics(
             &kernel,
             vertices,
@@ -1524,7 +1524,7 @@ impl<const D: usize> DelaunayTriangulation<RobustKernel<f64>, (), (), D> {
         vertices: &[Vertex<f64, (), D>],
         options: ConstructionOptions,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
-        let kernel = RobustKernel::<f64>::new();
+        let kernel = AdaptiveKernel::<f64>::new();
         Self::with_topology_guarantee_and_options(
             &kernel,
             vertices,
@@ -1567,7 +1567,7 @@ impl<const D: usize> DelaunayTriangulation<RobustKernel<f64>, (), (), D> {
         vertices: &[Vertex<f64, (), D>],
         topology_guarantee: TopologyGuarantee,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
-        let kernel = RobustKernel::<f64>::new();
+        let kernel = AdaptiveKernel::<f64>::new();
         Self::with_topology_guarantee(&kernel, vertices, topology_guarantee)
     }
 
@@ -1598,7 +1598,7 @@ impl<const D: usize> DelaunayTriangulation<RobustKernel<f64>, (), (), D> {
     /// ```
     #[must_use]
     pub fn empty() -> Self {
-        Self::with_empty_kernel(RobustKernel::<f64>::new())
+        Self::with_empty_kernel(AdaptiveKernel::<f64>::new())
     }
 
     /// Create an empty Delaunay triangulation with an explicit topology guarantee (fast-kernel convenience).
@@ -1622,7 +1622,7 @@ impl<const D: usize> DelaunayTriangulation<RobustKernel<f64>, (), (), D> {
     #[must_use]
     pub fn empty_with_topology_guarantee(topology_guarantee: TopologyGuarantee) -> Self {
         Self::with_empty_kernel_and_topology_guarantee(
-            RobustKernel::<f64>::new(),
+            AdaptiveKernel::<f64>::new(),
             topology_guarantee,
         )
     }
@@ -5547,10 +5547,10 @@ where
     }
 }
 
-/// Custom `Deserialize` implementation for the common case: `RobustKernel<f64>` with no custom data.
+/// Custom `Deserialize` implementation for the common case: `AdaptiveKernel<f64>` with no custom data.
 ///
 /// This specialization provides convenient deserialization for the most common use case:
-/// triangulations with `f64` coordinates, `RobustKernel`, and no custom vertex/cell data.
+/// triangulations with `f64` coordinates, `AdaptiveKernel`, and no custom vertex/cell data.
 ///
 /// # Why This Specialization?
 ///
@@ -5558,7 +5558,7 @@ where
 /// the `Tds` (which contains all the geometric and topological data), then reconstruct
 /// the kernel wrapper on deserialization.
 ///
-/// This specialization is limited to `RobustKernel<f64>` because:
+/// This specialization is limited to `AdaptiveKernel<f64>` because:
 /// - It's the most common configuration (matches `DelaunayTriangulation::new()` default)
 /// - Rust doesn't allow overlapping `impl` blocks for generic types
 /// - Custom kernels are rare and can deserialize manually
@@ -5594,7 +5594,7 @@ where
 /// # Ok(())
 /// # }
 /// ```
-impl<'de, const D: usize> Deserialize<'de> for DelaunayTriangulation<RobustKernel<f64>, (), (), D>
+impl<'de, const D: usize> Deserialize<'de> for DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>
 where
     Tds<f64, (), (), D>: Deserialize<'de>,
 {
@@ -5603,7 +5603,7 @@ where
         De: Deserializer<'de>,
     {
         let tds = Tds::deserialize(deserializer)?;
-        Ok(Self::from_tds(tds, RobustKernel::new()))
+        Ok(Self::from_tds(tds, AdaptiveKernel::new()))
     }
 }
 
@@ -5804,7 +5804,7 @@ impl DelaunayCheckPolicy {
 mod tests {
     use super::*;
     use crate::core::algorithms::flips::DelaunayRepairError;
-    use crate::geometry::kernel::{FastKernel, RobustKernel};
+    use crate::geometry::kernel::{AdaptiveKernel, FastKernel, RobustKernel};
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::triangulation::flips::BistellarFlips;
     use crate::vertex;
@@ -6595,7 +6595,7 @@ mod tests {
             }
 
             let Ok(mut dt) =
-                DelaunayTriangulation::<RobustKernel<f64>, (), (), DIM>::new(&vertices)
+                DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), DIM>::new(&vertices)
             else {
                 continue;
             };
@@ -7658,7 +7658,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
         let repair_err = DelaunayRepairError::NonConvergent {
@@ -7679,7 +7679,7 @@ mod tests {
         };
 
         let result =
-            DelaunayTriangulation::<RobustKernel<f64>, (), (), 3>::try_d_lt4_global_repair_fallback(
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::try_d_lt4_global_repair_fallback(
                 &mut dt.tri.tds,
                 &dt.tri.kernel,
                 TopologyGuarantee::PLManifold,
@@ -7710,7 +7710,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
             vertex!([0.3, 0.3, 0.3]),
         ];
-        let mut dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
         let repair_err = DelaunayRepairError::NonConvergent {
@@ -7732,7 +7732,7 @@ mod tests {
 
         // TDS is valid, so global repair should succeed (nothing to fix).
         let result =
-            DelaunayTriangulation::<RobustKernel<f64>, (), (), 3>::try_d_lt4_global_repair_fallback(
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::try_d_lt4_global_repair_fallback(
                 &mut dt.tri.tds,
                 &dt.tri.kernel,
                 TopologyGuarantee::PLManifold,
@@ -7757,7 +7757,7 @@ mod tests {
         // Build a 1D triangulation — repair_delaunay_with_flips_k2_k3 returns
         // UnsupportedDimension for D<2, guaranteeing the global repair fails.
         let vertices = vec![vertex!([0.0]), vertex!([1.0])];
-        let mut dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 1> =
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 1> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
         let repair_err = DelaunayRepairError::PostconditionFailed {
@@ -7765,7 +7765,7 @@ mod tests {
         };
 
         let result =
-            DelaunayTriangulation::<RobustKernel<f64>, (), (), 1>::try_d_lt4_global_repair_fallback(
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 1>::try_d_lt4_global_repair_fallback(
                 &mut dt.tri.tds,
                 &dt.tri.kernel,
                 TopologyGuarantee::PLManifold,

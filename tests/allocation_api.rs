@@ -9,7 +9,7 @@ use allocation_counter::measure;
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::triangulation::*;
 
-use delaunay::geometry::kernel::RobustKernel;
+use delaunay::geometry::kernel::AdaptiveKernel;
 
 // Testing utilities
 use rand::RngExt;
@@ -85,7 +85,7 @@ pub mod test_helpers {
     ///
     /// Panics if triangulation creation fails.
     #[must_use]
-    pub fn create_test_tds() -> DelaunayTriangulation<RobustKernel<f64>, (), (), 4> {
+    pub fn create_test_tds() -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 4> {
         // Create an empty triangulation with no vertices
         DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold)
     }
@@ -96,7 +96,8 @@ pub mod test_helpers {
     ///
     /// Panics if triangulation creation with vertices fails.
     #[must_use]
-    pub fn create_test_tds_with_vertices() -> DelaunayTriangulation<RobustKernel<f64>, (), (), 3> {
+    pub fn create_test_tds_with_vertices() -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>
+    {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),

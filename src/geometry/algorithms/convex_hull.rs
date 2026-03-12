@@ -1471,7 +1471,7 @@ where
     /// assert!(hull.validate(dt.as_triangulation()).is_ok());
     ///
     /// // Empty hull should also validate
-    /// let empty_hull: ConvexHull<delaunay::geometry::kernel::RobustKernel<f64>, (), (), 3> = ConvexHull::default();
+    /// let empty_hull: ConvexHull<delaunay::geometry::kernel::AdaptiveKernel<f64>, (), (), 3> = ConvexHull::default();
     /// // Note: validate() requires a TDS, so use an empty TDS for validation
     /// assert!(empty_hull.validate(dt.as_triangulation()).is_ok());
     /// ```

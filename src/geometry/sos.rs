@@ -6,16 +6,14 @@
 //!
 //! # Algorithm
 //!
-//! Each input point is conceptually perturbed by an infinitesimal amount
-//! `ε^(i+1)` in coordinate `j`, where `i` is the point's index in the input
-//! array.  The perturbation is purely symbolic: no floating-point values are
-//! changed.  The sign of the perturbed determinant is determined by evaluating
-//! sub-determinants (cofactors) in a specific order until a non-zero one is
-//! found.
+//! Points are symbolically perturbed by infinitesimals εᵢ such that
+//! ε₀ << ε₁ << … << εₙ (i.e. higher-indexed points receive larger
+//! perturbations).  The perturbation is purely symbolic: no floating-point
+//! values are changed.
 //!
 //! For an `n×n` matrix whose determinant is exactly zero, the SoS expansion
-//! iterates over (row, column) positions in reverse order.  The cofactor at
-//! the first non-zero position determines the sign.
+//! evaluates cofactors in reverse lexicographic `(row, column)` order.  The
+//! first non-zero cofactor determines the sign of the perturbed determinant.
 //!
 //! # Key Properties
 //!
@@ -294,7 +292,7 @@ fn orientation_cofactor_det<const D: usize>(
             r += 1;
         }
 
-        exact_det_sign(&matrix, minor_dim)
+        exact_det_sign(&matrix)
     })
 }
 
@@ -344,18 +342,18 @@ fn insphere_cofactor_det<const D: usize>(
             r += 1;
         }
 
-        exact_det_sign(&matrix, minor_dim)
+        exact_det_sign(&matrix)
     })
 }
 
-/// Compute the exact sign of a matrix determinant using la-stack.
+/// Compute the exact sign of a matrix determinant
 ///
 /// Uses the two-stage approach:
 /// 1. `det_direct()` + `det_errbound()` for D ≤ 4 (provable fast filter)
 /// 2. `det_sign_exact()` for exact result
 ///
 /// Returns -1, 0, or +1.
-pub(crate) fn exact_det_sign<const N: usize>(matrix: &Matrix<N>, _dim: usize) -> i32 {
+pub(crate) fn exact_det_sign<const N: usize>(matrix: &Matrix<N>) -> i32 {
     // Stage 1: fast filter with provable error bound (D ≤ 4).
     if let (Some(det), Some(bound)) = (matrix.det_direct(), matrix.det_errbound())
         && det.is_finite()
@@ -582,19 +580,19 @@ mod tests {
     #[test]
     fn test_exact_det_sign_identity_2x2() {
         let m = Matrix::<2>::from_rows([[1.0, 0.0], [0.0, 1.0]]);
-        assert_eq!(exact_det_sign(&m, 2), 1);
+        assert_eq!(exact_det_sign(&m), 1);
     }
 
     #[test]
     fn test_exact_det_sign_singular_2x2() {
         let m = Matrix::<2>::from_rows([[1.0, 2.0], [2.0, 4.0]]);
-        assert_eq!(exact_det_sign(&m, 2), 0);
+        assert_eq!(exact_det_sign(&m), 0);
     }
 
     #[test]
     fn test_exact_det_sign_negative_2x2() {
         let m = Matrix::<2>::from_rows([[0.0, 1.0], [1.0, 0.0]]);
-        assert_eq!(exact_det_sign(&m, 2), -1);
+        assert_eq!(exact_det_sign(&m), -1);
     }
 
     // =========================================================================
@@ -604,14 +602,14 @@ mod tests {
     #[test]
     fn test_exact_det_sign_identity_3x3() {
         let m = Matrix::<3>::from_rows([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
-        assert_eq!(exact_det_sign(&m, 3), 1);
+        assert_eq!(exact_det_sign(&m), 1);
     }
 
     #[test]
     fn test_exact_det_sign_negative_3x3() {
         // Swapping two rows of the identity negates the determinant.
         let m = Matrix::<3>::from_rows([[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]);
-        assert_eq!(exact_det_sign(&m, 3), -1);
+        assert_eq!(exact_det_sign(&m), -1);
     }
 
     #[test]
@@ -622,7 +620,7 @@ mod tests {
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ]);
-        assert_eq!(exact_det_sign(&m, 4), 1);
+        assert_eq!(exact_det_sign(&m), 1);
     }
 
     #[test]
@@ -636,7 +634,7 @@ mod tests {
             [0.0, 0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 0.0, 1.0],
         ]);
-        assert_eq!(exact_det_sign(&m, 5), 1);
+        assert_eq!(exact_det_sign(&m), 1);
     }
 
     // =========================================================================
@@ -655,7 +653,7 @@ mod tests {
             [4.0, 5.0, 6.0],
             [7.0, 8.0, 9.0],
         ]);
-        assert_eq!(exact_det_sign(&m, 3), -1);
+        assert_eq!(exact_det_sign(&m), -1);
     }
 
     // =========================================================================
@@ -667,14 +665,14 @@ mod tests {
         // Entries are finite but det_direct overflows to infinity.
         // The is_finite() guard skips Stage 1; Bareiss computes exactly.
         let m = Matrix::<2>::from_rows([[1e200, 0.0], [0.0, 1e200]]);
-        assert_eq!(exact_det_sign(&m, 2), 1);
+        assert_eq!(exact_det_sign(&m), 1);
     }
 
     #[test]
     fn test_exact_det_sign_nan_entry_returns_zero() {
         // Non-finite entry → det_sign_exact returns Err → map_or gives 0.
         let m = Matrix::<2>::from_rows([[f64::NAN, 0.0], [0.0, 1.0]]);
-        assert_eq!(exact_det_sign(&m, 2), 0);
+        assert_eq!(exact_det_sign(&m), 0);
     }
 
     // =========================================================================

@@ -1,8 +1,24 @@
 //! Geometric kernel abstraction following CGAL's design.
 //!
-//! The Kernel trait defines the interface for geometric predicates used by
+//! The `Kernel` trait defines the interface for geometric predicates used by
 //! higher-level triangulation algorithms. This separation allows swapping
 //! between fast floating-point and robust exact-arithmetic implementations.
+//!
+//! # Choosing a kernel
+//!
+//! **`AdaptiveKernel`** (default) — best for Delaunay triangulation.
+//! Provably correct predicates with zero configuration. Insphere uses
+//! Simulation of Simplicity (`SoS`) to break cospherical ties
+//! deterministically, so every query returns a definitive ±1.
+//!
+//! **`RobustKernel`** — configurable tolerance-based predicates. Prefer
+//! this when you need tolerance tuning for noisy data, explicit
+//! `BOUNDARY`/`DEGENERATE` signals, or diagnostic consistency checks.
+//! Use the explicit-kernel constructors (`with_kernel`,
+//! `build_with_kernel`, etc.) to opt in.
+//!
+//! **`FastKernel`** — raw f64 arithmetic, no robustness guarantees.
+//! Only suitable for 2D with well-conditioned input.
 
 #![forbid(unsafe_code)]
 
@@ -12,6 +28,7 @@ use crate::geometry::predicates::{InSphere, Orientation, insphere_lifted, simple
 use crate::geometry::robust_predicates::{
     RobustPredicateConfig, config_presets, robust_insphere, robust_orientation,
 };
+use crate::geometry::sos::exact_det_sign;
 use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar, ScalarSummable,
 };
@@ -58,10 +75,8 @@ pub trait Kernel<const D: usize>: Clone + Default {
     /// - `0`: Degenerate (points are coplanar/collinear)
     /// - `+1`: Positive orientation
     ///
-    /// **Note:** Some implementations (e.g. [`AdaptiveKernel`]) resolve
-    /// degenerate cases via Simulation of Simplicity and never return `0`.
-    /// Generic code should handle all three values but must not *rely* on
-    /// receiving `0` for degenerate inputs.
+    /// **Note:** All built-in kernels can return `0` for truly degenerate
+    /// inputs. Generic code should handle all three values.
     ///
     /// # Arguments
     ///
@@ -108,10 +123,10 @@ pub trait Kernel<const D: usize>: Clone + Default {
     /// - `0`: Point is on the circumsphere (within numerical tolerance)
     /// - `+1`: Point is inside the circumsphere
     ///
-    /// **Note:** Some implementations (e.g. [`AdaptiveKernel`]) resolve
-    /// boundary cases via Simulation of Simplicity and never return `0`.
-    /// Generic code should handle all three values but must not *rely* on
-    /// receiving `0` for boundary inputs.
+    /// **Note:** [`AdaptiveKernel`] resolves boundary cases via Simulation
+    /// of Simplicity and never returns `0` for insphere. Generic code
+    /// should handle all three values but must not *rely* on receiving `0`
+    /// for boundary inputs.
     ///
     /// # Arguments
     ///
@@ -279,17 +294,30 @@ where
     }
 }
 
-/// Robust exact-arithmetic kernel.
+/// Robust exact-arithmetic kernel with configurable tolerance.
 ///
-/// Uses adaptive tolerance and symbolic perturbation predicates that are
-/// guaranteed to be correct even for degenerate cases. Slower than
-/// [`FastKernel`] but provides better numerical stability.
+/// Uses adaptive tolerance predicates backed by exact Bareiss arithmetic.
+/// Slower than [`FastKernel`] but provides configurable numerical stability.
+///
+/// # When to use `RobustKernel` over [`AdaptiveKernel`]
+///
+/// Prefer `RobustKernel` when you need:
+/// - **Tolerance tuning** for noisy input data (via [`RobustPredicateConfig`])
+/// - **Explicit degeneracy signals** — returns `DEGENERATE`/`BOUNDARY` (`0`)
+///   instead of forcing a decision, useful when your application needs to
+///   detect and handle cospherical or coplanar configurations directly
+/// - **Diagnostic consistency checks** — cross-validates insphere results
+///   against a distance-based check
+///
+/// For standard Delaunay triangulation, [`AdaptiveKernel`] is the better
+/// default: zero configuration, provable error bounds, and `SoS`
+/// tie-breaking on insphere eliminates `BOUNDARY` ambiguity.
 ///
 /// # Robustness Features
 ///
 /// - **Adaptive tolerance**: Scales with coordinate magnitude
-/// - **Symbolic perturbation**: Deterministic tie-breaking for degenerate cases
 /// - **Configurable**: Supports multiple precision levels via [`RobustPredicateConfig`]
+/// - **Exact fallback**: Bareiss algorithm in `BigRational` for ambiguous cases
 ///
 /// # Performance
 ///
@@ -427,15 +455,33 @@ where
 
 /// Adaptive precision kernel with Simulation of Simplicity.
 ///
-/// Uses a three-layer evaluation strategy for maximum robustness:
+/// This is the **default kernel** for [`DelaunayTriangulation`] convenience
+/// constructors (`new`, `empty`, `new_with_options`, etc.).
+///
+/// [`DelaunayTriangulation`]: crate::core::delaunay_triangulation::DelaunayTriangulation
+///
+/// # When to use `AdaptiveKernel`
+///
+/// Use this kernel (the default) for Delaunay triangulation. It provides:
+/// - **Zero configuration** — no tolerance to tune or get wrong
+/// - **Provable error bounds** on the fast filter (no heuristic tolerance)
+/// - **Exact orientation** — returns 0 only for truly degenerate inputs
+/// - **`SoS` insphere** — cospherical ties are broken deterministically,
+///   so every insphere query returns ±1 (never 0/BOUNDARY)
+///
+/// If you need configurable tolerance, explicit `BOUNDARY`/`DEGENERATE`
+/// signals, or diagnostic consistency checks, use [`RobustKernel`] via
+/// the explicit-kernel constructors (`with_kernel`, `build_with_kernel`).
+///
+/// # Evaluation strategy
+///
+/// **Orientation** (exact — no `SoS`):
 /// 1. **Fast filter**: `det_direct()` + `det_errbound()` (provable for D ≤ 4)
 /// 2. **Exact arithmetic**: `det_sign_exact()` via Bareiss algorithm in `BigRational`
-/// 3. **`SoS` tie-breaking**: Simulation of Simplicity for truly degenerate cases
 ///
-/// Unlike [`RobustKernel`], this kernel:
-/// - Never modifies coordinates (no perturbation)
-/// - Never returns degenerate/boundary (orientation ≠ 0, insphere ≠ 0)
-/// - Uses provable error bounds instead of heuristic tolerance
+/// **Insphere** (exact + `SoS` tie-breaking):
+/// 1. **Fast filter** + **exact arithmetic** (same as orientation)
+/// 2. **`SoS` tie-breaking**: Simulation of Simplicity for cospherical cases
 ///
 /// # Examples
 ///
@@ -446,14 +492,14 @@ where
 ///
 /// let kernel = AdaptiveKernel::<f64>::new();
 ///
-/// // Even collinear points get a deterministic non-zero orientation
+/// // Collinear points are correctly reported as degenerate
 /// let collinear = [
 ///     Point::new([0.0, 0.0]),
 ///     Point::new([1.0, 0.0]),
 ///     Point::new([2.0, 0.0]),
 /// ];
 /// let orientation = kernel.orientation(&collinear).unwrap();
-/// assert!(orientation == 1 || orientation == -1); // Never 0
+/// assert_eq!(orientation, 0); // Exact: truly degenerate
 /// ```
 #[derive(Clone, Default, Debug)]
 pub struct AdaptiveKernel<T: CoordinateScalar> {
@@ -509,18 +555,10 @@ where
                 matrix_set(&mut matrix, i, D, 1.0);
             }
 
-            // Layer 1 + 2: fast filter and exact Bareiss.
-            let sign = crate::geometry::sos::exact_det_sign(&matrix, k);
-            if sign != 0 {
-                return Ok(sign);
-            }
-
-            // Layer 3: SoS tie-breaking.
-            let f64_points: Vec<Point<f64, D>> = points
-                .iter()
-                .map(|p| safe_coords_to_f64(p.coords()).map(Point::new))
-                .collect::<Result<_, _>>()?;
-            crate::geometry::sos::sos_orientation_sign(&f64_points)
+            // Exact sign via fast filter + Bareiss in BigRational.
+            // No SoS: orientation must reflect true geometry so that
+            // zero-volume (degenerate) cells are detected, not masked.
+            Ok(exact_det_sign(&matrix))
         })
     }
 
@@ -592,8 +630,8 @@ where
             matrix_set(&mut orient_matrix, D, D, 1.0);
 
             // Layer 1 + 2 for both predicates.
-            let rel_orient_sign = crate::geometry::sos::exact_det_sign(&orient_matrix, k);
-            let insphere_det_sign = crate::geometry::sos::exact_det_sign(&matrix, k);
+            let rel_orient_sign = exact_det_sign(&orient_matrix);
+            let insphere_det_sign = exact_det_sign(&matrix);
 
             // Fast path: both non-degenerate.
             if rel_orient_sign != 0 && insphere_det_sign != 0 {
@@ -910,26 +948,15 @@ mod tests {
                 }
 
                 #[test]
-                fn [<test_adaptive_orientation_ $dim d_degenerate_nonzero>]() {
+                fn [<test_adaptive_orientation_ $dim d_degenerate_exact_zero>]() {
+                    // Exact orientation returns 0 for truly degenerate inputs
+                    // (no SoS on orientation — true geometry must be visible).
                     let kernel = AdaptiveKernel::<f64>::new();
                     let simplex = degenerate_simplex::<$dim>();
                     let result = kernel.orientation(&simplex).unwrap();
-                    assert!(
-                        result == 1 || result == -1,
-                        "AdaptiveKernel must never return 0, got {result}"
-                    );
-                }
-
-                #[test]
-                fn [<test_adaptive_orientation_ $dim d_deterministic>]() {
-                    let kernel = AdaptiveKernel::<f64>::new();
-                    let simplex = degenerate_simplex::<$dim>();
-                    let results: Vec<i32> = (0..10)
-                        .map(|_| kernel.orientation(&simplex).unwrap())
-                        .collect();
-                    assert!(
-                        results.iter().all(|&r| r == results[0]),
-                        "AdaptiveKernel orientation must be deterministic"
+                    assert_eq!(
+                        result, 0,
+                        "AdaptiveKernel exact orientation must return 0 for degenerate input, got {result}"
                     );
                 }
 
