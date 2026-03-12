@@ -254,7 +254,7 @@ fn gram_determinant_ldlt<const D: usize>(gram_matrix: Matrix<D>) -> f64 {
     match gram_matrix.ldlt(DEFAULT_SINGULAR_TOL) {
         Ok(ldlt) => ldlt.det(),
         Err(LaError::Singular { .. }) => 0.0,
-        Err(LaError::NonFinite { .. }) => f64::NAN,
+        Err(_) => f64::NAN,
     }
 }
 

@@ -45,8 +45,8 @@ use crate::core::util::stable_hash_u64_slice;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
-use crate::geometry::predicates::{InSphere, Orientation};
-use crate::geometry::robust_predicates::{config_presets, robust_insphere, robust_orientation};
+use crate::geometry::predicates::Orientation;
+use crate::geometry::robust_predicates::{config_presets, robust_orientation};
 use crate::geometry::traits::coordinate::{CoordinateScalar, ScalarSummable};
 use slotmap::Key;
 use std::collections::VecDeque;
@@ -1319,7 +1319,6 @@ pub enum RepairQueueOrder {
 ///     cycle_signature_samples: Vec::new(),
 ///     attempt: 1,
 ///     queue_order: RepairQueueOrder::Fifo,
-///     used_robust_predicates: false,
 /// };
 /// assert!(diagnostics.to_string().contains("checked"));
 /// ```
@@ -1345,8 +1344,6 @@ pub struct DelaunayRepairDiagnostics {
     pub attempt: usize,
     /// Queue ordering policy used for this attempt.
     pub queue_order: RepairQueueOrder,
-    /// Whether robust predicates were enabled for ambiguous tests.
-    pub used_robust_predicates: bool,
 }
 
 impl fmt::Display for DelaunayRepairDiagnostics {
@@ -1354,14 +1351,13 @@ impl fmt::Display for DelaunayRepairDiagnostics {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "checked {} facets, ambiguous={}, max_queue={}, flips={}, attempt={}, order={:?}, robust={}, predicate_failures={}, cycles={}, cycle_samples={:?}",
+            "checked {} facets, ambiguous={}, max_queue={}, flips={}, attempt={}, order={:?}, predicate_failures={}, cycles={}, cycle_samples={:?}",
             self.facets_checked,
             self.ambiguous_predicates,
             self.max_queue_len,
             self.flips_performed,
             self.attempt,
             self.queue_order,
-            self.used_robust_predicates,
             self.predicate_failures,
             self.cycle_detections,
             self.cycle_signature_samples
@@ -1795,7 +1791,7 @@ where
             vertex_key: opposite_b,
         })?
         .point();
-    let mut in_a = match kernel.in_sphere(&points_a, opposite_point_b) {
+    let in_a = match kernel.in_sphere(&points_a, opposite_point_b) {
         Ok(value) => value,
         Err(e) => {
             diagnostics.record_predicate_failure();
@@ -1805,7 +1801,7 @@ where
         }
     };
 
-    let mut in_b = match kernel.in_sphere(&points_b, opposite_point_a) {
+    let in_b = match kernel.in_sphere(&points_b, opposite_point_a) {
         Ok(value) => value,
         Err(e) => {
             diagnostics.record_predicate_failure();
@@ -1815,10 +1811,7 @@ where
         }
     };
 
-    let fast_sign_a = in_a;
-    let fast_sign_b = in_b;
-
-    // Always record ambiguous sites when the fast predicate returns boundary/uncertain.
+    // Record ambiguous sites when the predicate returns boundary/uncertain.
     if in_a == 0 {
         let key = predicate_key_from_vertices(&cell_vertices[0], opposite_b);
         diagnostics.record_ambiguous(key);
@@ -1829,48 +1822,18 @@ where
         diagnostics.record_ambiguous(key);
     }
 
-    // If enabled, run the robust predicate *unconditionally*.
-    //
-    // In practice, fast predicates can return an incorrect non-zero sign near degeneracy
-    // (especially in 3D+), which can cause the repair queues to terminate while global
-    // Delaunay violations remain. A fully robust pass is used as a correctness fallback.
-    if config.use_robust_on_ambiguous {
-        in_a = robust_insphere_sign(&points_a, opposite_point_b, diagnostics);
-        in_b = robust_insphere_sign(&points_b, opposite_point_a, diagnostics);
-    }
-
-    // When robust predicates are active, in_a > 0 AND in_b > 0 simultaneously is
-    // physically impossible: det(A, v_B) = -det(B, v_A) by cofactor antisymmetry, so at
-    // most one side can be positive.  Both appearing positive is a near-degenerate
-    // numerical artefact — the adaptive tolerance in the (D+2)×(D+2) insphere matrix is
-    // insufficient to resolve the sign.  Treat it as ambiguous (skip the flip) rather than
-    // flipping, which would create an identical configuration in reverse and cycle forever.
-    let both_positive_artifact = D >= 4 && config.use_robust_on_ambiguous && in_a > 0 && in_b > 0;
-    if both_positive_artifact {
-        let key = predicate_key_from_vertices(&cell_vertices[0], opposite_b);
-        diagnostics.record_ambiguous(key);
-    }
-    let violates = !both_positive_artifact && (in_a > 0 || in_b > 0);
+    let violates = in_a > 0 || in_b > 0;
     if std::env::var_os("DELAUNAY_REPAIR_DEBUG_PREDICATES").is_some()
-        && (violates
-            || both_positive_artifact
-            || fast_sign_a == 0
-            || fast_sign_b == 0
-            || in_a == 0
-            || in_b == 0)
+        && (violates || in_a == 0 || in_b == 0)
     {
         tracing::debug!(
             facet_vertices = ?facet_vertices,
             opposite_a = ?opposite_a,
             opposite_b = ?opposite_b,
-            in_a_fast = fast_sign_a,
-            in_b_fast = fast_sign_b,
             in_a,
             in_b,
             violates,
-            both_positive_artifact,
             attempt = config.attempt,
-            use_robust = config.use_robust_on_ambiguous,
             "delaunay_violation_k2_for_facet: insphere classification"
         );
     }
@@ -2192,7 +2155,7 @@ fn delaunay_violation_k3_for_ridge<K, U, V, const D: usize>(
     kernel: &K,
     ridge_vertices: &[VertexKey],
     triangle_vertices: &[VertexKey],
-    config: &RepairAttemptConfig,
+    _config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
 ) -> Result<bool, FlipError>
 where
@@ -2237,7 +2200,7 @@ where
             })?
             .point();
 
-        let mut in_sphere = match kernel.in_sphere(&points, missing_point) {
+        let in_sphere = match kernel.in_sphere(&points, missing_point) {
             Ok(value) => value,
             Err(e) => {
                 diagnostics.record_predicate_failure();
@@ -2251,11 +2214,6 @@ where
         if in_sphere == 0 {
             let key = predicate_key_from_vertices(&cell_vertices, missing);
             diagnostics.record_ambiguous(key);
-        }
-
-        // If enabled, use robust predicates for the classification regardless of the fast result.
-        if config.use_robust_on_ambiguous {
-            in_sphere = robust_insphere_sign(&points, missing_point, diagnostics);
         }
 
         if in_sphere > 0 {
@@ -2421,10 +2379,9 @@ where
     if repair_trace_enabled() {
         let seed_count = seed_cells.map_or(0, <[CellKey]>::len);
         tracing::debug!(
-            "[repair] attempt={} order={:?} robust={} cells={} max_flips={} seeds={} queues(facet={})",
+            "[repair] attempt={} order={:?} cells={} max_flips={} seeds={} queues(facet={})",
             config.attempt,
             config.queue_order,
-            config.use_robust_on_ambiguous,
             tds.number_of_cells(),
             max_flips,
             seed_count,
@@ -2562,10 +2519,6 @@ where
 ///
 /// Returns a [`DelaunayRepairError`] if the repair fails to converge or an underlying
 /// flip operation encounters an unrecoverable error.
-#[expect(
-    clippy::too_many_lines,
-    reason = "Repair retries and tracing are kept together for clarity"
-)]
 pub(crate) fn repair_delaunay_with_flips_k2_k3<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -2591,27 +2544,21 @@ where
         });
     }
 
-    // In debug/test builds (especially for 3D+), prefer a fully-robust predicate pass.
-    // This materially improves correctness in near-degenerate configurations.
+    // Two-attempt strategy: FIFO then LIFO queue ordering.
+    // With exact+SoS predicates from AdaptiveKernel, predicate correctness is guaranteed;
+    // the retry exists only to escape queue-order-dependent flip cycles.
     let attempt1 = RepairAttemptConfig {
         attempt: 1,
         queue_order: RepairQueueOrder::Fifo,
-        use_robust_on_ambiguous: cfg!(any(test, debug_assertions)) && D >= 3,
         max_flips_override: None,
     };
 
     let attempt2 = RepairAttemptConfig {
         attempt: 2,
         queue_order: RepairQueueOrder::Lifo,
-        use_robust_on_ambiguous: true,
         max_flips_override: None,
     };
-    let attempt3 = RepairAttemptConfig {
-        attempt: 3,
-        queue_order: RepairQueueOrder::Fifo,
-        use_robust_on_ambiguous: true,
-        max_flips_override: None,
-    };
+
     // Snapshot the pre-repair state so a failed attempt doesn't poison retries.
     let tds_snapshot = tds.clone();
 
@@ -2628,97 +2575,39 @@ where
             }
             if repair_trace_enabled() {
                 tracing::debug!(
-                    "[repair] attempt 1 postcondition failed; retrying with robust predicates + full reseed"
+                    "[repair] attempt 1 postcondition failed; retrying with LIFO + full reseed"
                 );
             }
 
-            // Postcondition verification failed: rerun with robust predicates + full reseed.
-            *tds = tds_snapshot.clone();
+            // Postcondition verification failed: rerun with LIFO + full reseed.
+            *tds = tds_snapshot;
             let retry_seed_cells = None;
             let stats2 = if D == 2 {
                 repair_delaunay_with_flips_k2_attempt(tds, kernel, retry_seed_cells, &attempt2)
             } else {
                 repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, retry_seed_cells, &attempt2)
-            };
-
-            match stats2 {
-                Ok(stats2) => {
-                    if verify_repair_postcondition(tds, kernel, retry_seed_cells).is_ok() {
-                        return Ok(stats2);
-                    }
-                    if repair_trace_enabled() {
-                        tracing::debug!(
-                            "[repair] attempt 2 postcondition failed; retrying with alternate queue order"
-                        );
-                    }
-                }
-                Err(DelaunayRepairError::NonConvergent { .. }) => {
-                    if repair_trace_enabled() {
-                        tracing::debug!(
-                            "[repair] attempt 2 non-convergent; retrying with alternate queue order"
-                        );
-                    }
-                }
-                Err(err) => return Err(err),
-            }
-
-            // Final attempt with alternate queue order.
-            *tds = tds_snapshot;
-            let stats3 = if D == 2 {
-                repair_delaunay_with_flips_k2_attempt(tds, kernel, retry_seed_cells, &attempt3)
-            } else {
-                repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, retry_seed_cells, &attempt3)
             }?;
 
             verify_repair_postcondition(tds, kernel, retry_seed_cells)?;
-            Ok(stats3)
+            Ok(stats2)
         }
         Err(DelaunayRepairError::NonConvergent { .. }) => {
             if repair_trace_enabled() {
                 tracing::debug!(
-                    "[repair] attempt 1 non-convergent; retrying with robust predicates + full reseed"
+                    "[repair] attempt 1 non-convergent; retrying with LIFO + full reseed"
                 );
             }
-            // Retry with robust predicates + full reseed.
-            *tds = tds_snapshot.clone();
+            // Retry with LIFO + full reseed.
+            *tds = tds_snapshot;
             let retry_seed_cells = None;
             let stats2 = if D == 2 {
                 repair_delaunay_with_flips_k2_attempt(tds, kernel, retry_seed_cells, &attempt2)
             } else {
                 repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, retry_seed_cells, &attempt2)
-            };
-
-            match stats2 {
-                Ok(stats2) => {
-                    if verify_repair_postcondition(tds, kernel, retry_seed_cells).is_ok() {
-                        return Ok(stats2);
-                    }
-                    if repair_trace_enabled() {
-                        tracing::debug!(
-                            "[repair] attempt 2 postcondition failed; retrying with alternate queue order"
-                        );
-                    }
-                }
-                Err(DelaunayRepairError::NonConvergent { .. }) => {
-                    if repair_trace_enabled() {
-                        tracing::debug!(
-                            "[repair] attempt 2 non-convergent; retrying with alternate queue order"
-                        );
-                    }
-                }
-                Err(err) => return Err(err),
-            }
-
-            // Final attempt with alternate queue order.
-            *tds = tds_snapshot;
-            let stats3 = if D == 2 {
-                repair_delaunay_with_flips_k2_attempt(tds, kernel, retry_seed_cells, &attempt3)
-            } else {
-                repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, retry_seed_cells, &attempt3)
             }?;
 
             verify_repair_postcondition(tds, kernel, retry_seed_cells)?;
-            Ok(stats3)
+            Ok(stats2)
         }
         Err(err) => Err(err),
     }
@@ -2732,13 +2621,13 @@ where
 /// which is critical for D≥4 where a full-triangulation seed would generate O(cells×30)
 /// items (prohibitively expensive with robust predicates).
 ///
-/// Three attempts are made with alternating queue orders (FIFO → LIFO → FIFO) to escape
+/// Two attempts are made with alternating queue orders (FIFO → LIFO) to escape
 /// flip cycles — the same strategy as [`repair_delaunay_with_flips_k2_k3`], but without the
 /// `None`-reseed fallback.  A TDS snapshot is taken so that a failed attempt does not
 /// leave the triangulation partially modified.
 ///
 /// It is designed for per-insertion bulk construction and for the final bounded pass in
-/// `finalize_bulk_construction`.  On non-convergence after all three attempts the caller
+/// `finalize_bulk_construction`.  On non-convergence after both attempts the caller
 /// should soft-fail and record the seed cells for a subsequent repair pass, or let
 /// `build_with_shuffled_retries` try a different vertex ordering.
 ///
@@ -2747,7 +2636,7 @@ where
 ///
 /// # Errors
 ///
-/// Returns [`DelaunayRepairError::NonConvergent`] if all three attempts fail to converge.
+/// Returns [`DelaunayRepairError::NonConvergent`] if both attempts fail to converge.
 /// Other errors (topology violations, predicate failures) are forwarded as-is.
 pub(crate) fn repair_delaunay_local_single_pass<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
@@ -2761,24 +2650,17 @@ where
     U: DataType,
     V: DataType,
 {
-    // Cost is O(seed_cells × queues_per_cell) — bounded regardless of triangulation size.
-    let use_robust = cfg!(any(test, debug_assertions)) && D >= 3;
+    // Two-attempt strategy: FIFO then LIFO queue ordering.
+    // With exact+SoS predicates from AdaptiveKernel, predicate correctness is guaranteed;
+    // the retry exists only to escape queue-order-dependent flip cycles.
     let attempt1 = RepairAttemptConfig {
         attempt: 1,
         queue_order: RepairQueueOrder::Fifo,
-        use_robust_on_ambiguous: use_robust,
         max_flips_override: Some(max_flips),
     };
     let attempt2 = RepairAttemptConfig {
         attempt: 2,
         queue_order: RepairQueueOrder::Lifo,
-        use_robust_on_ambiguous: true,
-        max_flips_override: Some(max_flips),
-    };
-    let attempt3 = RepairAttemptConfig {
-        attempt: 3,
-        queue_order: RepairQueueOrder::Fifo,
-        use_robust_on_ambiguous: true,
         max_flips_override: Some(max_flips),
     };
     // Snapshot so a failed attempt does not leave the TDS in a partially-modified state.
@@ -2810,37 +2692,13 @@ where
     } else {
         repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, Some(seed_cells), &attempt2)
     };
-    match attempt2_result {
-        Ok(stats) => {
-            if verify_repair_postcondition(tds, kernel, Some(seed_cells)).is_ok() {
-                return Ok(stats);
-            }
-            if repair_trace_enabled() {
-                tracing::debug!(
-                    "[repair] local attempt 2 postcondition failed; retrying FIFO robust"
-                );
-            }
-        }
-        Err(DelaunayRepairError::NonConvergent { .. }) => {
-            if repair_trace_enabled() {
-                tracing::debug!("[repair] local attempt 2 non-convergent; retrying FIFO robust");
-            }
-        }
-        Err(err) => return Err(err),
-    }
-    *tds = tds_snapshot.clone();
-    let attempt3_result = if D == 2 {
-        repair_delaunay_with_flips_k2_attempt(tds, kernel, Some(seed_cells), &attempt3)
-    } else {
-        repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, Some(seed_cells), &attempt3)
-    };
     // On failure, restore the TDS to the pre-repair snapshot so callers that
     // soft-fail (e.g. D≥4 bulk construction) receive a structurally valid
     // triangulation rather than a partially-modified one.
-    if attempt3_result.is_err() {
+    if attempt2_result.is_err() {
         *tds = tds_snapshot;
     }
-    attempt3_result
+    attempt2_result
 }
 
 /// Verify the Delaunay property via local flip predicates (fast O(cells) validation).
@@ -2924,7 +2782,6 @@ where
     let config = RepairAttemptConfig {
         attempt: 0,
         queue_order: RepairQueueOrder::Fifo,
-        use_robust_on_ambiguous: true,
         max_flips_override: None,
     };
 
@@ -2935,10 +2792,9 @@ where
     if repair_trace_enabled() {
         let seed_count = seed_cells.map_or(0, <[CellKey]>::len);
         tracing::debug!(
-            "[repair] attempt={} order={:?} robust={} cells={} seeds={} queues(facet={}, ridge={}, edge={}, tri={})",
+            "[repair] attempt={} order={:?} cells={} seeds={} queues(facet={}, ridge={}, edge={}, tri={})",
             config.attempt,
             config.queue_order,
-            config.use_robust_on_ambiguous,
             tds.number_of_cells(),
             seed_count,
             queues.facet_queue.len(),
@@ -3404,7 +3260,6 @@ impl RepairDiagnostics {
 struct RepairAttemptConfig {
     attempt: usize,
     queue_order: RepairQueueOrder,
-    use_robust_on_ambiguous: bool,
     /// Override the flip budget. `None` uses `default_max_flips` (proportional to total cell
     /// count). Set to `Some(n)` for per-insertion local repairs to avoid a runaway budget when
     /// the triangulation is large but the seed set is small.
@@ -3431,7 +3286,6 @@ fn non_convergent_error(
             cycle_signature_samples: diagnostics.cycle_samples.clone(),
             attempt: config.attempt,
             queue_order: config.queue_order,
-            used_robust_predicates: config.use_robust_on_ambiguous,
         },
     }
 }
@@ -3451,7 +3305,6 @@ fn emit_repair_debug_summary(
         label = %label,
         attempt = config.attempt,
         order = ?config.queue_order,
-        robust = config.use_robust_on_ambiguous,
         flips = stats.flips_performed,
         max_flips,
         checked = stats.facets_checked,
@@ -3562,26 +3415,6 @@ fn would_immediately_reverse_last_flip<const D: usize>(
     let current = LastAppliedFlip::new(k_move, removed_face_vertices, inserted_face_vertices);
     current.removed_face_vertices == last_flip.inserted_face_vertices
         && current.inserted_face_vertices == last_flip.removed_face_vertices
-}
-
-fn robust_insphere_sign<T, const D: usize>(
-    simplex_points: &[Point<T, D>],
-    test_point: &Point<T, D>,
-    diagnostics: &mut RepairDiagnostics,
-) -> i32
-where
-    T: ScalarSummable,
-{
-    let config = config_presets::general_triangulation::<T>();
-    match robust_insphere(simplex_points, test_point, &config) {
-        Ok(InSphere::INSIDE) => 1,
-        Ok(InSphere::OUTSIDE) => -1,
-        Ok(InSphere::BOUNDARY) => 0,
-        Err(_) => {
-            diagnostics.record_predicate_failure();
-            0
-        }
-    }
 }
 
 #[inline]
@@ -4114,7 +3947,7 @@ where
     // Normally we only apply inverse k=2 if the target (2-cell) configuration is locally
     // Delaunay. On the final robust attempt, allow exploratory inverse moves to escape
     // trapped non-regular configurations; postcondition verification still enforces correctness.
-    let allow_exploratory_inverse = config.attempt >= 3 && config.use_robust_on_ambiguous;
+    let allow_exploratory_inverse = config.attempt >= 2;
     if violates && !allow_exploratory_inverse {
         return Ok(true);
     }

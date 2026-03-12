@@ -149,7 +149,7 @@ pub fn determinant<const D: usize>(m: &Matrix<D>) -> f64 {
     match m.det(0.0) {
         Ok(det) => det,
         Err(LaError::Singular { .. }) => 0.0,
-        Err(LaError::NonFinite { .. }) => f64::NAN,
+        Err(_) => f64::NAN,
     }
 }
 
