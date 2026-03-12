@@ -257,7 +257,13 @@ where
         .collect::<Result<_, _>>()?;
     let f64_test: Point<f64, D> = Point::new(safe_coords_to_f64(test_point.coords())?);
 
-    let sos_abs_orient = crate::geometry::sos::sos_orientation_sign(&f64_simplex)?;
+    // Use exact orientation when available; fall back to SoS only when the
+    // exact predicate reports DEGENERATE (or fails entirely).
+    let abs_orient: i32 = match robust_orientation(simplex_points, config) {
+        Ok(Orientation::POSITIVE) => 1,
+        Ok(Orientation::NEGATIVE) => -1,
+        _ => crate::geometry::sos::sos_orientation_sign(&f64_simplex)?,
+    };
     let raw_insphere = crate::geometry::sos::sos_insphere_sign(&f64_simplex, &f64_test)?;
 
     // Apply the same parity-aware normalization as AdaptiveKernel:
@@ -265,9 +271,9 @@ where
     // convention requires negating the relative orientation and
     // rel_orient = (-1)^D × abs_orient.
     let orient_factor = if D.is_multiple_of(2) {
-        -sos_abs_orient
+        -abs_orient
     } else {
-        sos_abs_orient
+        abs_orient
     };
     let sign = raw_insphere * orient_factor;
 
@@ -1800,15 +1806,16 @@ mod tests {
         ];
         let config = config_presets::general_triangulation::<f64>();
 
-        // Far from the simplex → OUTSIDE via SoS.
-        let far = Point::new([5.0, 5.0, 5.0, 5.0, 5.0, 5.0]);
-        let result = robust_insphere(&simplex, &far, &config).unwrap();
-        assert_eq!(result, InSphere::OUTSIDE);
-
-        // Near the centroid → INSIDE via SoS.
-        let near = Point::new([0.05, 0.05, 0.05, 0.05, 0.05, 0.05]);
-        let result = robust_insphere(&simplex, &near, &config).unwrap();
-        assert_eq!(result, InSphere::INSIDE);
+        // Exactly cospherical point: (1,1,0,…,0) lies on the circumsphere
+        // of the standard 6-simplex (circumcenter = (1/2,…,1/2),
+        // circumradius² = 3/2, |(1,1,0,…,0) - c|² = 3/2).
+        // insphere_distance returns BOUNDARY, forcing the SoS path.
+        let cospherical = Point::new([1.0, 1.0, 0.0, 0.0, 0.0, 0.0]);
+        let result = robust_insphere(&simplex, &cospherical, &config).unwrap();
+        assert!(
+            result == InSphere::INSIDE || result == InSphere::OUTSIDE,
+            "SoS fallback must resolve BOUNDARY to INSIDE or OUTSIDE, got {result:?}"
+        );
     }
 
     #[test]

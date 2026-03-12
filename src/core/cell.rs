@@ -2693,9 +2693,10 @@ mod tests {
         assert!(serialized.contains("vertices"));
         assert!(serialized.contains("cells"));
 
-        // Deserialize back to DT
-        let deserialized: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> =
+        // Deserialize back to DT via from_tds (AdaptiveKernel has no auto-Deserialize).
+        let tds: crate::core::triangulation_data_structure::Tds<f64, (), (), 3> =
             serde_json::from_str(&serialized).unwrap();
+        let deserialized = DelaunayTriangulation::from_tds(tds, AdaptiveKernel::new());
 
         // Verify DT properties match
         assert_eq!(deserialized.number_of_vertices(), dt.number_of_vertices());

@@ -75,8 +75,10 @@ use crate::geometry::traits::coordinate::CoordinateConversionError;
 ///
 /// # Errors
 ///
-/// Returns [`CoordinateConversionError::ConversionFailed`] if
-/// `points.len() != D + 1`.
+/// - [`CoordinateConversionError::ConversionFailed`] if
+///   `points.len() != D + 1`, or if all cofactors vanish (identical points).
+/// - [`CoordinateConversionError::NonFiniteValue`] if any coordinate is
+///   NaN or infinite.
 pub fn sos_orientation_sign<const D: usize>(
     points: &[Point<f64, D>],
 ) -> Result<i32, CoordinateConversionError> {
@@ -91,6 +93,20 @@ pub fn sos_orientation_sign<const D: usize>(
             from_type: "point count",
             to_type: "valid simplex",
         });
+    }
+
+    // Reject non-finite coordinates (NaN / ±∞) before entering the
+    // cofactor expansion.  Non-finite values would silently produce
+    // meaningless determinant signs.
+    for (point_idx, point) in points.iter().enumerate() {
+        for (coord_idx, &val) in point.coords().iter().enumerate() {
+            if !val.is_finite() {
+                return Err(CoordinateConversionError::NonFiniteValue {
+                    coordinate_index: point_idx * D + coord_idx,
+                    coordinate_value: val.to_string(),
+                });
+            }
+        }
     }
 
     let n = D + 1; // matrix dimension
@@ -123,14 +139,16 @@ pub fn sos_orientation_sign<const D: usize>(
         }
     }
 
-    // Fallback: return +1.
-    //
-    // The Edelsbrunner & Mücke SoS perturbation guarantees a non-zero
-    // first-order cofactor for any set of *distinct* points.  All cofactors
-    // being zero implies a higher-corank degeneracy (e.g. all points are
-    // identical), which is geometrically meaningless.  Returning a
-    // deterministic constant is safe and avoids complicating callers.
-    Ok(1)
+    // All first-order cofactors vanished.  The Edelsbrunner & Mücke SoS
+    // perturbation guarantees a non-zero cofactor for *distinct* points,
+    // so this can only happen when points are identical — an invalid input.
+    Err(CoordinateConversionError::ConversionFailed {
+        coordinate_index: 0,
+        coordinate_value: "all SoS orientation cofactors vanished (points may be identical)"
+            .to_string(),
+        from_type: "SoS orientation",
+        to_type: "non-zero sign",
+    })
 }
 
 /// Compute the `SoS` in-sphere sign for a degenerate configuration.
@@ -175,8 +193,10 @@ pub fn sos_orientation_sign<const D: usize>(
 ///
 /// # Errors
 ///
-/// Returns [`CoordinateConversionError::ConversionFailed`] if
-/// `simplex.len() != D + 1`.
+/// - [`CoordinateConversionError::ConversionFailed`] if
+///   `simplex.len() != D + 1`, or if all cofactors vanish (identical points).
+/// - [`CoordinateConversionError::NonFiniteValue`] if any coordinate is
+///   NaN or infinite.
 pub fn sos_insphere_sign<const D: usize>(
     simplex: &[Point<f64, D>],
     test: &Point<f64, D>,
@@ -192,6 +212,26 @@ pub fn sos_insphere_sign<const D: usize>(
             from_type: "point count",
             to_type: "valid simplex",
         });
+    }
+
+    // Reject non-finite coordinates (NaN / ±∞) in simplex and test point.
+    for (point_idx, point) in simplex.iter().enumerate() {
+        for (coord_idx, &val) in point.coords().iter().enumerate() {
+            if !val.is_finite() {
+                return Err(CoordinateConversionError::NonFiniteValue {
+                    coordinate_index: point_idx * D + coord_idx,
+                    coordinate_value: val.to_string(),
+                });
+            }
+        }
+    }
+    for (coord_idx, &val) in test.coords().iter().enumerate() {
+        if !val.is_finite() {
+            return Err(CoordinateConversionError::NonFiniteValue {
+                coordinate_index: (D + 1) * D + coord_idx,
+                coordinate_value: val.to_string(),
+            });
+        }
     }
 
     let n = D + 1; // matrix dimension: (D+1)×(D+1)
@@ -242,12 +282,14 @@ pub fn sos_insphere_sign<const D: usize>(
         }
     }
 
-    // Fallback: return +1.
-    //
-    // Same reasoning as `sos_orientation_sign`: all cofactors zero implies
-    // a higher-corank degeneracy (all points identical) that has no
-    // geometric meaning.  A deterministic constant is safe.
-    Ok(1)
+    // All cofactors vanished — same reasoning as `sos_orientation_sign`.
+    Err(CoordinateConversionError::ConversionFailed {
+        coordinate_index: 0,
+        coordinate_value: "all SoS insphere cofactors vanished (points may be identical)"
+            .to_string(),
+        from_type: "SoS insphere",
+        to_type: "non-zero sign",
+    })
 }
 
 // =============================================================================
@@ -441,7 +483,7 @@ mod tests {
     /// - orientation: degenerate nonzero, deterministic, translation-invariant
     /// - insphere: cospherical nonzero, deterministic (10 calls),
     ///   translation-invariant
-    /// - fallback: orientation all-identical → +1, insphere all-identical → +1
+    /// - fallback: orientation all-identical → Err, insphere all-identical → Err
     macro_rules! gen_sos_dim_tests {
         ($dim:literal) => {
             pastey::paste! {
@@ -507,23 +549,21 @@ mod tests {
                 }
 
                 #[test]
-                fn [<test_sos_orientation_ $dim d_all_identical_fallback>]() {
+                fn [<test_sos_orientation_ $dim d_all_identical_returns_err>]() {
                     let points = vec![Point::new([0.0; $dim]); $dim + 1];
-                    assert_eq!(
-                        sos_orientation_sign(&points).unwrap(),
-                        1,
-                        "All-identical fallback must return +1"
+                    assert!(
+                        sos_orientation_sign(&points).is_err(),
+                        "All-identical points must return Err"
                     );
                 }
 
                 #[test]
-                fn [<test_sos_insphere_ $dim d_all_identical_fallback>]() {
+                fn [<test_sos_insphere_ $dim d_all_identical_returns_err>]() {
                     let simplex = vec![Point::new([1.0; $dim]); $dim + 1];
                     let test_pt = Point::new([1.0; $dim]);
-                    assert_eq!(
-                        sos_insphere_sign(&simplex, &test_pt).unwrap(),
-                        1,
-                        "All-identical insphere fallback must return +1"
+                    assert!(
+                        sos_insphere_sign(&simplex, &test_pt).is_err(),
+                        "All-identical insphere must return Err"
                     );
                 }
             }

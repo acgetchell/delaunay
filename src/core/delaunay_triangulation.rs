@@ -5547,31 +5547,22 @@ where
     }
 }
 
-/// Custom `Deserialize` implementation for the common case: `AdaptiveKernel<f64>` with no custom data.
+/// Custom `Deserialize` implementation for `RobustKernel<f64>` with no custom data.
 ///
-/// This specialization provides convenient deserialization for the most common use case:
-/// triangulations with `f64` coordinates, `AdaptiveKernel`, and no custom vertex/cell data.
-///
-/// # Why This Specialization?
-///
-/// Kernels are stateless and can be reconstructed on deserialization. We only serialize
-/// the `Tds` (which contains all the geometric and topological data), then reconstruct
-/// the kernel wrapper on deserialization.
-///
-/// This specialization is limited to `AdaptiveKernel<f64>` because:
-/// - It's the most common configuration (matches `DelaunayTriangulation::new()` default)
-/// - Rust doesn't allow overlapping `impl` blocks for generic types
-/// - Custom kernels are rare and can deserialize manually
+/// Kernels are stateless and can be reconstructed on deserialization.  We only
+/// serialize the `Tds` (which contains all the geometric and topological data),
+/// then reconstruct the kernel wrapper on deserialization.
 ///
 /// # Note on Locate Hint Persistence
-/// The internal `insertion_state.last_inserted_cell` "locate hint" is intentionally **not** serialized.
-/// Deserialization reconstructs a fresh triangulation via [`from_tds()`](Self::from_tds),
-/// which resets the hint to `None`. This only affects performance for the first few
-/// insertions after loading.
 ///
-/// # Usage with Custom Kernels
+/// The internal `insertion_state.last_inserted_cell` "locate hint" is intentionally
+/// **not** serialized.  Deserialization reconstructs a fresh triangulation via
+/// [`from_tds()`](Self::from_tds), which resets the hint to `None`.  This only
+/// affects performance for the first few insertions after loading.
 ///
-/// If you're using a custom kernel (e.g., `FastKernel`) or custom data types,
+/// # Usage with Other Kernels
+///
+/// For other kernels (e.g., `AdaptiveKernel`, `FastKernel`) or custom data types,
 /// deserialize the `Tds` directly and reconstruct with [`from_tds()`](Self::from_tds):
 ///
 /// ```rust
@@ -5588,29 +5579,12 @@ where
 /// let dt = DelaunayTriangulation::<_, (), (), 3>::new(&vertices)?;
 /// let json = serde_json::to_string(&dt)?;
 ///
-/// // Deserialize with different kernel
+/// // Deserialize with a specific kernel via from_tds
 /// let tds: Tds<f64, (), (), 3> = serde_json::from_str(&json)?;
-/// let dt_fast = DelaunayTriangulation::from_tds(tds, FastKernel::new());
+/// let dt_adaptive = DelaunayTriangulation::from_tds(tds, AdaptiveKernel::new());
 /// # Ok(())
 /// # }
 /// ```
-impl<'de, const D: usize> Deserialize<'de> for DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>
-where
-    Tds<f64, (), (), D>: Deserialize<'de>,
-{
-    fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
-    where
-        De: Deserializer<'de>,
-    {
-        let tds = Tds::deserialize(deserializer)?;
-        Ok(Self::from_tds(tds, AdaptiveKernel::new()))
-    }
-}
-
-/// Custom `Deserialize` implementation for `RobustKernel<f64>` with no custom data.
-///
-/// Mirrors the [`AdaptiveKernel`] specialization above for backward compatibility
-/// with serialized triangulations that were built with `RobustKernel`.
 impl<'de, const D: usize> Deserialize<'de> for DelaunayTriangulation<RobustKernel<f64>, (), (), D>
 where
     Tds<f64, (), (), D>: Deserialize<'de>,
@@ -7533,15 +7507,41 @@ mod tests {
             DelaunayTriangulation::new(&vertices).unwrap();
 
         let json = serde_json::to_string(&dt).unwrap();
-        let roundtrip: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> =
-            serde_json::from_str(&json).unwrap();
 
-        assert_eq!(roundtrip.number_of_vertices(), dt.number_of_vertices());
-        assert_eq!(roundtrip.number_of_cells(), dt.number_of_cells());
+        // AdaptiveKernel: no auto-Deserialize impl, use from_tds.
+        let tds: Tds<f64, (), (), 3> = serde_json::from_str(&json).unwrap();
+        let roundtrip_adaptive = DelaunayTriangulation::from_tds(tds, AdaptiveKernel::new());
+
+        assert_eq!(
+            roundtrip_adaptive.number_of_vertices(),
+            dt.number_of_vertices()
+        );
+        assert_eq!(roundtrip_adaptive.number_of_cells(), dt.number_of_cells());
 
         // `insertion_state.last_inserted_cell` is a performance-only locate hint and is intentionally not
         // persisted across serde round-trips (it is reset to `None` in `from_tds`).
-        assert!(roundtrip.insertion_state.last_inserted_cell.is_none());
+        assert!(
+            roundtrip_adaptive
+                .insertion_state
+                .last_inserted_cell
+                .is_none()
+        );
+
+        // RobustKernel: has a custom Deserialize impl.
+        let roundtrip_robust: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
+            serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            roundtrip_robust.number_of_vertices(),
+            dt.number_of_vertices()
+        );
+        assert_eq!(roundtrip_robust.number_of_cells(), dt.number_of_cells());
+        assert!(
+            roundtrip_robust
+                .insertion_state
+                .last_inserted_cell
+                .is_none()
+        );
     }
 
     // =========================================================================
