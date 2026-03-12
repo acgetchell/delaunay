@@ -508,6 +508,8 @@ pub mod geometry {
     pub mod quality;
     /// Enhanced predicates with improved numerical robustness
     pub mod robust_predicates;
+    /// Simulation of Simplicity (SoS) for deterministic degeneracy resolution
+    pub mod sos;
     /// Geometric utility functions for d-dimensional geometry calculations
     pub mod util {
         use crate::geometry::matrix::{MatrixError, StackMatrixDispatchError};

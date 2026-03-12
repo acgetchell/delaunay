@@ -430,9 +430,9 @@ dependencies = [
 
 [[package]]
 name = "la-stack"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e31b044e7461a0cdc02462986af07f56954e26c6201c528e8e828eecffd52b7f"
+checksum = "5920ead6509d170250f9506312522bd02ecdbee60a16b4f47e406e1e605eb8f5"
 dependencies = [
  "num-bigint",
  "num-rational",
