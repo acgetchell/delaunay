@@ -257,9 +257,19 @@ where
         .collect::<Result<_, _>>()?;
     let f64_test: Point<f64, D> = Point::new(safe_coords_to_f64(test_point.coords())?);
 
-    let orient_sign = crate::geometry::sos::sos_orientation_sign(&f64_simplex)?;
+    let sos_abs_orient = crate::geometry::sos::sos_orientation_sign(&f64_simplex)?;
     let raw_insphere = crate::geometry::sos::sos_insphere_sign(&f64_simplex, &f64_test)?;
-    let sign = orient_sign * raw_insphere;
+
+    // Apply the same parity-aware normalization as AdaptiveKernel:
+    // orient_factor = (-1)^(D+1) × abs_orient, because the insphere
+    // convention requires negating the relative orientation and
+    // rel_orient = (-1)^D × abs_orient.
+    let orient_factor = if D.is_multiple_of(2) {
+        -sos_abs_orient
+    } else {
+        sos_abs_orient
+    };
+    let sign = raw_insphere * orient_factor;
 
     Ok(if sign > 0 {
         InSphere::INSIDE

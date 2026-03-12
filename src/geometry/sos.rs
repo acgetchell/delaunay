@@ -267,33 +267,33 @@ fn orientation_cofactor_det<const D: usize>(
     remove_row: usize,
     remove_col: usize,
 ) -> i32 {
-    let minor_dim = D; // (D+1) rows − 1; (D−1) coord cols + 1 "one" col = D
-    if minor_dim == 0 {
+    if D == 0 {
         return 1; // 0×0 determinant = 1
     }
 
-    with_la_stack_matrix!(minor_dim, |matrix| {
-        let mut r = 0;
-        for (i, coord_row) in coords.iter().enumerate() {
-            if i == remove_row {
+    // D is a const generic, so we use Matrix::<D>::zero() directly instead
+    // of the runtime dispatch macro, which panics for D > MAX_STACK_MATRIX_DIM.
+    let mut matrix = Matrix::<D>::zero();
+    let mut r = 0;
+    for (i, coord_row) in coords.iter().enumerate() {
+        if i == remove_row {
+            continue;
+        }
+        let mut c = 0;
+        // Coordinate columns, skipping the removed one.
+        for (j, &val) in coord_row.iter().enumerate() {
+            if j == remove_col {
                 continue;
             }
-            let mut c = 0;
-            // Coordinate columns, skipping the removed one.
-            for (j, &val) in coord_row.iter().enumerate() {
-                if j == remove_col {
-                    continue;
-                }
-                matrix_set(&mut matrix, r, c, val);
-                c += 1;
-            }
-            // Constant "1" column (always present in the minor).
-            matrix_set(&mut matrix, r, c, 1.0);
-            r += 1;
+            matrix_set(&mut matrix, r, c, val);
+            c += 1;
         }
+        // Constant "1" column (always present in the minor).
+        matrix_set(&mut matrix, r, c, 1.0);
+        r += 1;
+    }
 
-        exact_det_sign(&matrix)
-    })
+    exact_det_sign(&matrix)
 }
 
 /// Compute the sign of the D×D minor from the (D+1)×(D+1) lifted insphere
@@ -307,43 +307,43 @@ fn insphere_cofactor_det<const D: usize>(
     remove_row: usize,
     remove_col: usize,
 ) -> i32 {
-    let minor_dim = D; // (D+1) − 1 = D
-    if minor_dim == 0 {
+    if D == 0 {
         return 1;
     }
 
     let num_rows = D + 1;
     let num_cols = D + 1;
 
-    with_la_stack_matrix!(minor_dim, |matrix| {
-        let mut r = 0;
-        for i in 0..num_rows {
-            if i == remove_row {
+    // D is a const generic, so we use Matrix::<D>::zero() directly instead
+    // of the runtime dispatch macro, which panics for D > MAX_STACK_MATRIX_DIM.
+    let mut matrix = Matrix::<D>::zero();
+    let mut r = 0;
+    for i in 0..num_rows {
+        if i == remove_row {
+            continue;
+        }
+        let mut c = 0;
+        // Iterate over all columns of the lifted matrix.  Column indices
+        // 0..D are relative-coordinate columns; index D is the lifted
+        // (squared-norm) column.  We skip `remove_col` and pack the rest
+        // into the minor.
+        #[expect(clippy::needless_range_loop, reason = "mixed data sources")]
+        for j in 0..num_cols {
+            if j == remove_col {
                 continue;
             }
-            let mut c = 0;
-            // Iterate over all columns of the lifted matrix.  Column indices
-            // 0..D are relative-coordinate columns; index D is the lifted
-            // (squared-norm) column.  We skip `remove_col` and pack the rest
-            // into the minor.
-            #[expect(clippy::needless_range_loop, reason = "mixed data sources")]
-            for j in 0..num_cols {
-                if j == remove_col {
-                    continue;
-                }
-                let val = if j < D {
-                    rel_coords[i][j]
-                } else {
-                    lifted_col[i]
-                };
-                matrix_set(&mut matrix, r, c, val);
-                c += 1;
-            }
-            r += 1;
+            let val = if j < D {
+                rel_coords[i][j]
+            } else {
+                lifted_col[i]
+            };
+            matrix_set(&mut matrix, r, c, val);
+            c += 1;
         }
+        r += 1;
+    }
 
-        exact_det_sign(&matrix)
-    })
+    exact_det_sign(&matrix)
 }
 
 /// Compute the exact sign of a matrix determinant

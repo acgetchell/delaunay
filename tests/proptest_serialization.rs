@@ -13,6 +13,9 @@ use delaunay::prelude::query::*;
 use delaunay::prelude::topology::validation::*;
 use proptest::prelude::*;
 
+/// Type alias for the default deserialization target (`AdaptiveKernel`).
+type DefaultDt<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
+
 /// Check if two points are approximately equal (coordinate-wise)
 /// Uses relative epsilon comparison suitable for JSON serialization roundtrips
 fn points_approx_equal<const D: usize>(p1: &Point<f64, D>, p2: &Point<f64, D>) -> bool {
@@ -57,7 +60,7 @@ macro_rules! test_serialization_properties {
                         let json = serde_json::to_string(&dt).expect("Serialization failed");
 
                         // Deserialize from JSON
-                        let deserialized: DelaunayTriangulation<_, (), (), $dim> =
+                        let deserialized: DefaultDt<$dim> =
                             serde_json::from_str(&json).expect("Deserialization failed");
 
                         // Verify structure preservation
@@ -98,7 +101,7 @@ macro_rules! test_serialization_properties {
                         if dt.tds().validate().is_ok() {
                             // Serialize and deserialize
                             let json = serde_json::to_string(&dt).expect("Serialization failed");
-                            let deserialized: DelaunayTriangulation<_, (), (), $dim> =
+                            let deserialized: DefaultDt<$dim> =
                                 serde_json::from_str(&json).expect("Deserialization failed");
 
                             // Deserialized triangulation should also be valid
@@ -138,7 +141,7 @@ macro_rules! test_serialization_properties {
 
                         // Serialize and deserialize
                         let json = serde_json::to_string(&dt).expect("Serialization failed");
-                        let deserialized: DelaunayTriangulation<_, (), (), $dim> =
+                        let deserialized: DefaultDt<$dim> =
                             serde_json::from_str(&json).expect("Deserialization failed");
 
                         // Collect deserialized vertex points
@@ -193,7 +196,7 @@ macro_rules! test_serialization_properties {
 
                         // Serialize and deserialize
                         let json = serde_json::to_string(&dt).expect("Serialization failed");
-                        let deserialized: DelaunayTriangulation<_, (), (), $dim> =
+                        let deserialized: DefaultDt<$dim> =
                             serde_json::from_str(&json).expect("Deserialization failed");
 
                         // Count deserialized neighbor relationships

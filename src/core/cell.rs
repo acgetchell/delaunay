@@ -1623,7 +1623,7 @@ mod tests {
     type TestVertex3D = Vertex<f64, (), 3>;
     type TestVertex2D = Vertex<f64, (), 2>;
 
-    use crate::geometry::kernel::FastKernel;
+    use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::prelude::DelaunayTriangulation;
 
     // =============================================================================
@@ -2694,7 +2694,7 @@ mod tests {
         assert!(serialized.contains("cells"));
 
         // Deserialize back to DT
-        let deserialized: DelaunayTriangulation<_, (), (), 3> =
+        let deserialized: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> =
             serde_json::from_str(&serialized).unwrap();
 
         // Verify DT properties match

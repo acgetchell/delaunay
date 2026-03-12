@@ -5607,6 +5607,23 @@ where
     }
 }
 
+/// Custom `Deserialize` implementation for `RobustKernel<f64>` with no custom data.
+///
+/// Mirrors the [`AdaptiveKernel`] specialization above for backward compatibility
+/// with serialized triangulations that were built with `RobustKernel`.
+impl<'de, const D: usize> Deserialize<'de> for DelaunayTriangulation<RobustKernel<f64>, (), (), D>
+where
+    Tds<f64, (), (), D>: Deserialize<'de>,
+{
+    fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
+    where
+        De: Deserializer<'de>,
+    {
+        let tds = Tds::deserialize(deserializer)?;
+        Ok(Self::from_tds(tds, RobustKernel::new()))
+    }
+}
+
 /// Policy controlling automatic flip-based Delaunay repair.
 ///
 /// This policy schedules **local flip-based repairs** after successful insertions
@@ -7516,7 +7533,8 @@ mod tests {
             DelaunayTriangulation::new(&vertices).unwrap();
 
         let json = serde_json::to_string(&dt).unwrap();
-        let roundtrip: DelaunayTriangulation<_, (), (), 3> = serde_json::from_str(&json).unwrap();
+        let roundtrip: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> =
+            serde_json::from_str(&json).unwrap();
 
         assert_eq!(roundtrip.number_of_vertices(), dt.number_of_vertices());
         assert_eq!(roundtrip.number_of_cells(), dt.number_of_cells());

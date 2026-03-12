@@ -181,7 +181,7 @@ pub trait Kernel<const D: usize>: Clone + Default {
 /// May produce incorrect results for degenerate or near-degenerate cases.
 ///
 /// For applications requiring guaranteed correctness in degenerate cases,
-/// use [`RobustKernel`] instead.
+/// use [`AdaptiveKernel`] (the default) instead.
 ///
 /// # ⚠️ Warning: Unreliable in 3D and Higher Dimensions
 ///
@@ -191,7 +191,7 @@ pub trait Kernel<const D: usize>: Clone + Default {
 /// points, leading to incorrect conflict zones, invalid topology, and construction
 /// failures.
 ///
-/// Use [`RobustKernel`] (the default) for all 3D+ work. `FastKernel` remains
+/// Use [`AdaptiveKernel`] (the default) for all 3D+ work. `FastKernel` remains
 /// suitable for 2D triangulations with well-conditioned input, or when explicitly
 /// opted into via [`DelaunayTriangulation::with_kernel`](crate::core::delaunay_triangulation::DelaunayTriangulation::with_kernel) for advanced use cases
 /// where the caller has verified the input is non-degenerate.
