@@ -150,6 +150,61 @@ Robust geometry code must handle these cases gracefully.
 
 ---
 
+## Dimension Coverage (2D–5D)
+
+This library supports d-dimensional triangulations. Tests for
+dimension-generic code **must cover 2D through 5D** whenever possible.
+
+### Use macros for per-dimension test generation
+
+Define a macro that accepts a dimension literal and generates the full set
+of test functions for that dimension. Invoke it once per dimension:
+
+```rust
+macro_rules! gen_tests {
+    ($dim:literal) => {
+        pastey::paste! {
+            #[test]
+            fn [<test_foo_ $dim d>]() {
+                let points = build_points::<$dim>();
+                // assertions …
+            }
+        }
+    };
+}
+
+gen_tests!(2);
+gen_tests!(3);
+gen_tests!(4);
+gen_tests!(5);
+```
+
+### Keep core logic in generic helper functions
+
+The macro body should be thin — primarily calling generic helpers and
+asserting results. Dimension-specific point construction, translation, and
+other setup belongs in `const`-generic helper functions:
+
+```rust
+fn build_degenerate_points<const D: usize>() -> Vec<Point<f64, D>> { … }
+fn translate_point<const D: usize>(p: &Point<f64, D>) -> Point<f64, D> { … }
+```
+
+This keeps the macro readable and the helpers independently testable.
+
+### Reference examples
+
+- Unit tests: `src/geometry/sos.rs` — `gen_sos_dim_tests!`
+- Property tests: `tests/proptest_sos.rs` — `gen_sos_tests!`
+
+### When single-dimension tests are acceptable
+
+Some tests are inherently dimension-specific (e.g. 1D edge cases,
+matrix-level tests for a fixed size, error-handling tests). These do not
+need macro-ification.
+
+---
+
 ## Deterministic Randomness
 
 Tests must be deterministic.

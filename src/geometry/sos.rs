@@ -125,8 +125,13 @@ pub fn sos_orientation_sign<const D: usize>(
         }
     }
 
-    // Fallback: return +1 (all cofactors zero — should not happen for a
-    // genuine SoS perturbation, but provides a safe default).
+    // Fallback: return +1.
+    //
+    // The Edelsbrunner & Mücke SoS perturbation guarantees a non-zero
+    // first-order cofactor for any set of *distinct* points.  All cofactors
+    // being zero implies a higher-corank degeneracy (e.g. all points are
+    // identical), which is geometrically meaningless.  Returning a
+    // deterministic constant is safe and avoids complicating callers.
     Ok(1)
 }
 
@@ -152,6 +157,15 @@ pub fn sos_orientation_sign<const D: usize>(
 /// including the lifted (squared-norm) column, so the expansion correctly
 /// accounts for the complete insphere geometry.
 ///
+/// # Raw Determinant Sign
+///
+/// This function returns the sign of the **perturbed insphere determinant**,
+/// *not* a normalized INSIDE/OUTSIDE classification.  The relationship
+/// between determinant sign and geometric containment depends on the simplex
+/// orientation.  Callers must multiply the result by an appropriate
+/// orientation factor (as [`AdaptiveKernel::in_sphere`](crate::geometry::kernel::AdaptiveKernel) does) to obtain the
+/// correct INSIDE/OUTSIDE semantics.
+///
 /// # Arguments
 ///
 /// * `simplex` - Exactly `D+1` points defining the simplex (f64 coordinates).
@@ -159,7 +173,7 @@ pub fn sos_orientation_sign<const D: usize>(
 ///
 /// # Returns
 ///
-/// `Ok(1)` (INSIDE) or `Ok(-1)` (OUTSIDE).  Never returns `Ok(0)`.
+/// `Ok(1)` or `Ok(-1)` (raw determinant sign).  Never returns `Ok(0)`.
 ///
 /// # Errors
 ///
@@ -230,7 +244,11 @@ pub fn sos_insphere_sign<const D: usize>(
         }
     }
 
-    // Fallback: return INSIDE (+1).
+    // Fallback: return +1.
+    //
+    // Same reasoning as `sos_orientation_sign`: all cofactors zero implies
+    // a higher-corank degeneracy (all points identical) that has no
+    // geometric meaning.  A deterministic constant is safe.
     Ok(1)
 }
 
@@ -367,104 +385,161 @@ mod tests {
     use crate::geometry::traits::coordinate::Coordinate;
 
     // =========================================================================
-    // HELPER FUNCTIONS
+    // GENERIC HELPER FUNCTIONS
     // =========================================================================
 
-    /// Build a co-linear 2D point set (3 collinear points on x-axis).
-    fn collinear_2d() -> Vec<Point<f64, 2>> {
-        vec![
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([2.0, 0.0]),
-        ]
+    /// Build D+1 co-hyperplanar points (all with last coordinate = 0).
+    ///
+    /// Construction: origin + (D−1) axis-aligned unit vectors (last coord = 0)
+    /// + a barycentric combination with weight 0.5 in each active axis.
+    fn degenerate_orient_points<const D: usize>() -> Vec<Point<f64, D>> {
+        let mut points = Vec::with_capacity(D + 1);
+        points.push(Point::new([0.0; D]));
+        for i in 0..D.saturating_sub(1) {
+            let mut coords = [0.0; D];
+            coords[i] = 1.0;
+            points.push(Point::new(coords));
+        }
+        let mut bary = [0.0; D];
+        for c in bary.iter_mut().take(D.saturating_sub(1)) {
+            *c = 0.5;
+        }
+        points.push(Point::new(bary));
+        points
     }
 
-    /// Build a co-planar 3D point set (4 coplanar points in z=0 plane).
-    fn coplanar_3d() -> Vec<Point<f64, 3>> {
-        vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.5, 0.5, 0.0]),
-        ]
+    /// Build D+1 simplex points and a co-spherical test point.
+    ///
+    /// The simplex is the origin plus D axis-aligned unit vectors.
+    /// The test point (1,1,…,1) lies on the circumsphere (distance from
+    /// center = circumradius for all D ≥ 2).
+    fn cospherical_points<const D: usize>() -> (Vec<Point<f64, D>>, Point<f64, D>) {
+        let mut simplex = Vec::with_capacity(D + 1);
+        simplex.push(Point::new([0.0; D]));
+        for i in 0..D {
+            let mut coords = [0.0; D];
+            coords[i] = 1.0;
+            simplex.push(Point::new(coords));
+        }
+        (simplex, Point::new([1.0; D]))
     }
 
-    /// Build a 4D degenerate simplex (all points in w=0 hyperplane).
-    fn degenerate_4d() -> Vec<Point<f64, 4>> {
-        vec![
-            Point::new([0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.5, 0.5, 0.5, 0.0]),
-        ]
-    }
-
-    /// Build a 3D simplex and a test point on its circumsphere boundary.
-    /// The standard unit tetrahedron has circumcenter at (0.5, 0.5, 0.5)
-    /// with circumradius sqrt(3)/2. A vertex is exactly on the circumsphere.
-    fn cospherical_3d() -> (Vec<Point<f64, 3>>, Point<f64, 3>) {
-        let simplex = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-        // (1,1,0) lies on the circumsphere of this tetrahedron:
-        // distance from circumcenter (0.5,0.5,0.5) = sqrt(0.25+0.25+0.25) = sqrt(0.75)
-        // circumradius = sqrt(0.75), so it's exactly on the boundary.
-        let test = Point::new([1.0, 1.0, 0.0]);
-        (simplex, test)
+    /// Translate a point by a deterministic per-axis offset.
+    fn translate_point<const D: usize>(p: &Point<f64, D>) -> Point<f64, D> {
+        const OFFSETS: [f64; 5] = [1e6, -5e5, 7.77, -3.33e4, 42.0];
+        let mut coords = [0.0; D];
+        for (i, c) in coords.iter_mut().enumerate() {
+            *c = p.coords()[i] + OFFSETS[i % OFFSETS.len()];
+        }
+        Point::new(coords)
     }
 
     // =========================================================================
-    // SOS ORIENTATION TESTS
+    // MACRO-GENERATED PER-DIMENSION TESTS (2D–5D)
     // =========================================================================
 
-    #[test]
-    fn test_sos_orientation_collinear_2d_returns_nonzero() {
-        let points = collinear_2d();
-        let sign = sos_orientation_sign(&points).unwrap();
-        assert!(sign == 1 || sign == -1, "SoS must return ±1, got {sign}");
+    /// Generate the standard `SoS` tests for a given dimension:
+    ///
+    /// - orientation: degenerate nonzero, deterministic, translation-invariant
+    /// - insphere: cospherical nonzero, deterministic (10 calls),
+    ///   translation-invariant
+    /// - fallback: orientation all-identical → +1, insphere all-identical → +1
+    macro_rules! gen_sos_dim_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_sos_orientation_ $dim d_degenerate_nonzero>]() {
+                    let points = degenerate_orient_points::<$dim>();
+                    let sign = sos_orientation_sign(&points).unwrap();
+                    assert!(sign == 1 || sign == -1, "SoS must return ±1, got {sign}");
+                }
+
+                #[test]
+                fn [<test_sos_orientation_ $dim d_degenerate_deterministic>]() {
+                    let points = degenerate_orient_points::<$dim>();
+                    let s1 = sos_orientation_sign(&points).unwrap();
+                    let s2 = sos_orientation_sign(&points).unwrap();
+                    assert_eq!(s1, s2, "SoS must be deterministic");
+                }
+
+                #[test]
+                fn [<test_sos_orientation_ $dim d_translation_invariant>]() {
+                    let points = degenerate_orient_points::<$dim>();
+                    let s1 = sos_orientation_sign(&points).unwrap();
+                    let translated: Vec<_> = points.iter().map(translate_point).collect();
+                    let s2 = sos_orientation_sign(&translated).unwrap();
+                    assert_eq!(s1, s2, "SoS orientation must be translation-invariant");
+                }
+
+                #[test]
+                fn [<test_sos_insphere_ $dim d_cospherical_nonzero>]() {
+                    let (simplex, test) = cospherical_points::<$dim>();
+                    let sign = sos_insphere_sign(&simplex, &test).unwrap();
+                    assert!(
+                        sign == 1 || sign == -1,
+                        "SoS insphere must return ±1, got {sign}"
+                    );
+                }
+
+                #[test]
+                fn [<test_sos_insphere_ $dim d_cospherical_deterministic>]() {
+                    let (simplex, test) = cospherical_points::<$dim>();
+                    let results: Vec<i32> = (0..10)
+                        .map(|_| sos_insphere_sign(&simplex, &test).unwrap())
+                        .collect();
+                    assert!(
+                        results.iter().all(|&r| r == results[0]),
+                        "SoS insphere must be deterministic across calls"
+                    );
+                }
+
+                #[test]
+                fn [<test_sos_insphere_ $dim d_translation_invariant>]() {
+                    let (simplex, test) = cospherical_points::<$dim>();
+                    let s1 = sos_insphere_sign(&simplex, &test).unwrap();
+                    let translated_simplex: Vec<_> =
+                        simplex.iter().map(translate_point).collect();
+                    let translated_test = translate_point(&test);
+                    let s2 =
+                        sos_insphere_sign(&translated_simplex, &translated_test).unwrap();
+                    assert_eq!(
+                        s1, s2,
+                        "SoS insphere must be translation-invariant"
+                    );
+                }
+
+                #[test]
+                fn [<test_sos_orientation_ $dim d_all_identical_fallback>]() {
+                    let points = vec![Point::new([0.0; $dim]); $dim + 1];
+                    assert_eq!(
+                        sos_orientation_sign(&points).unwrap(),
+                        1,
+                        "All-identical fallback must return +1"
+                    );
+                }
+
+                #[test]
+                fn [<test_sos_insphere_ $dim d_all_identical_fallback>]() {
+                    let simplex = vec![Point::new([1.0; $dim]); $dim + 1];
+                    let test_pt = Point::new([1.0; $dim]);
+                    assert_eq!(
+                        sos_insphere_sign(&simplex, &test_pt).unwrap(),
+                        1,
+                        "All-identical insphere fallback must return +1"
+                    );
+                }
+            }
+        };
     }
 
-    #[test]
-    fn test_sos_orientation_collinear_2d_is_deterministic() {
-        let points = collinear_2d();
-        let sign1 = sos_orientation_sign(&points).unwrap();
-        let sign2 = sos_orientation_sign(&points).unwrap();
-        assert_eq!(sign1, sign2, "SoS must be deterministic");
-    }
+    gen_sos_dim_tests!(2);
+    gen_sos_dim_tests!(3);
+    gen_sos_dim_tests!(4);
+    gen_sos_dim_tests!(5);
 
-    #[test]
-    fn test_sos_orientation_coplanar_3d_returns_nonzero() {
-        let points = coplanar_3d();
-        let sign = sos_orientation_sign(&points).unwrap();
-        assert!(sign == 1 || sign == -1, "SoS must return ±1, got {sign}");
-    }
-
-    #[test]
-    fn test_sos_orientation_coplanar_3d_is_deterministic() {
-        let points = coplanar_3d();
-        let sign1 = sos_orientation_sign(&points).unwrap();
-        let sign2 = sos_orientation_sign(&points).unwrap();
-        assert_eq!(sign1, sign2, "SoS must be deterministic");
-    }
-
-    #[test]
-    fn test_sos_orientation_degenerate_4d_returns_nonzero() {
-        let points = degenerate_4d();
-        let sign = sos_orientation_sign(&points).unwrap();
-        assert!(sign == 1 || sign == -1, "SoS must return ±1, got {sign}");
-    }
-
-    #[test]
-    fn test_sos_orientation_degenerate_4d_is_deterministic() {
-        let points = degenerate_4d();
-        let sign1 = sos_orientation_sign(&points).unwrap();
-        let sign2 = sos_orientation_sign(&points).unwrap();
-        assert_eq!(sign1, sign2, "SoS must be deterministic");
-    }
+    // =========================================================================
+    // SOS ORIENTATION — NON-DEGENERATE SPOT CHECK
+    // =========================================================================
 
     #[test]
     fn test_sos_orientation_nondegenerate_returns_correct_sign() {
@@ -479,140 +554,6 @@ mod tests {
         ];
         let sign = sos_orientation_sign(&positive).unwrap();
         assert_eq!(sign, 1, "Non-degenerate positive triangle should return +1");
-    }
-
-    #[test]
-    fn test_sos_orientation_5d_degenerate() {
-        // 5D degenerate: all points have last coord = 0
-        let points = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.5, 0.5, 0.5, 0.5, 0.0]),
-        ];
-        let sign = sos_orientation_sign(&points).unwrap();
-        assert!(
-            sign == 1 || sign == -1,
-            "SoS must return ±1 for 5D, got {sign}"
-        );
-    }
-
-    #[test]
-    fn test_sos_orientation_translation_invariant_2d() {
-        let points = collinear_2d();
-        let sign1 = sos_orientation_sign(&points).unwrap();
-
-        // Translate all points by a large offset.
-        let translated: Vec<Point<f64, 2>> = points
-            .iter()
-            .map(|p| Point::new([p.coords()[0] + 1000.0, p.coords()[1] + 2000.0]))
-            .collect();
-        let sign2 = sos_orientation_sign(&translated).unwrap();
-        assert_eq!(
-            sign1, sign2,
-            "SoS orientation must be translation-invariant"
-        );
-    }
-
-    #[test]
-    fn test_sos_orientation_translation_invariant_3d() {
-        let points = coplanar_3d();
-        let sign1 = sos_orientation_sign(&points).unwrap();
-
-        let translated: Vec<Point<f64, 3>> = points
-            .iter()
-            .map(|p| {
-                Point::new([
-                    p.coords()[0] + 1e6,
-                    p.coords()[1] - 5e5,
-                    p.coords()[2] + 7.77,
-                ])
-            })
-            .collect();
-        let sign2 = sos_orientation_sign(&translated).unwrap();
-        assert_eq!(
-            sign1, sign2,
-            "SoS orientation must be translation-invariant"
-        );
-    }
-
-    // =========================================================================
-    // SOS INSPHERE TESTS
-    // =========================================================================
-
-    #[test]
-    fn test_sos_insphere_cospherical_3d_returns_nonzero() {
-        let (simplex, test) = cospherical_3d();
-        let sign = sos_insphere_sign(&simplex, &test).unwrap();
-        assert!(
-            sign == 1 || sign == -1,
-            "SoS insphere must return ±1, got {sign}"
-        );
-    }
-
-    #[test]
-    fn test_sos_insphere_cospherical_3d_is_deterministic() {
-        let (simplex, test) = cospherical_3d();
-        let sign1 = sos_insphere_sign(&simplex, &test).unwrap();
-        let sign2 = sos_insphere_sign(&simplex, &test).unwrap();
-        assert_eq!(sign1, sign2, "SoS insphere must be deterministic");
-    }
-
-    #[test]
-    fn test_sos_insphere_vertex_on_boundary_2d() {
-        // 2D: test point is a vertex of the simplex (exactly on circumsphere)
-        let simplex = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.0, 1.0]),
-        ];
-        // The circumcircle passes through all vertices. Test with a
-        // different co-circular point.
-        let test = Point::new([1.0, 1.0]);
-        let sign = sos_insphere_sign(&simplex, &test).unwrap();
-        assert!(
-            sign == 1 || sign == -1,
-            "SoS insphere must return ±1, got {sign}"
-        );
-    }
-
-    #[test]
-    fn test_sos_insphere_4d_cospherical() {
-        // 4D: 5 points on a unit 3-sphere centered at origin.
-        let simplex = vec![
-            Point::new([1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0]),
-            Point::new([-1.0, 0.0, 0.0, 0.0]),
-        ];
-        // Another point on the same unit 3-sphere.
-        let test = Point::new([0.0, -1.0, 0.0, 0.0]);
-        let sign = sos_insphere_sign(&simplex, &test).unwrap();
-        assert!(
-            sign == 1 || sign == -1,
-            "SoS insphere must return ±1 for 4D, got {sign}"
-        );
-    }
-
-    #[test]
-    fn test_sos_insphere_deterministic_across_calls() {
-        let simplex = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-        let test = Point::new([1.0, 1.0, 0.0]);
-        let results: Vec<i32> = (0..10)
-            .map(|_| sos_insphere_sign(&simplex, &test).unwrap())
-            .collect();
-        assert!(
-            results.iter().all(|&r| r == results[0]),
-            "SoS insphere must be deterministic across calls"
-        );
     }
 
     // =========================================================================
@@ -654,5 +595,112 @@ mod tests {
     fn test_exact_det_sign_negative_2x2() {
         let m = Matrix::<2>::from_rows([[0.0, 1.0], [1.0, 0.0]]);
         assert_eq!(exact_det_sign(&m, 2), -1);
+    }
+
+    // =========================================================================
+    // EXACT_DET_SIGN — 3×3, 4×4, 5×5
+    // =========================================================================
+
+    #[test]
+    fn test_exact_det_sign_identity_3x3() {
+        let m = Matrix::<3>::from_rows([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+        assert_eq!(exact_det_sign(&m, 3), 1);
+    }
+
+    #[test]
+    fn test_exact_det_sign_negative_3x3() {
+        // Swapping two rows of the identity negates the determinant.
+        let m = Matrix::<3>::from_rows([[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]);
+        assert_eq!(exact_det_sign(&m, 3), -1);
+    }
+
+    #[test]
+    fn test_exact_det_sign_identity_4x4() {
+        let m = Matrix::<4>::from_rows([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]);
+        assert_eq!(exact_det_sign(&m, 4), 1);
+    }
+
+    #[test]
+    fn test_exact_det_sign_identity_5x5_bareiss_only() {
+        // D ≥ 5: det_direct() and det_errbound() return None.
+        // Only the Bareiss exact path runs.
+        let m = Matrix::<5>::from_rows([
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ]);
+        assert_eq!(exact_det_sign(&m, 5), 1);
+    }
+
+    // =========================================================================
+    // EXACT_DET_SIGN — NEAR-SINGULAR (INCONCLUSIVE FAST FILTER → BAREISS)
+    // =========================================================================
+
+    #[test]
+    fn test_exact_det_sign_near_singular_uses_bareiss() {
+        // Base matrix [[1,2,3],[4,5,6],[7,8,9]] is exactly singular.
+        // Adding 2^-50 to entry (0,0) gives det = -3 × 2^-50 ≈ -2.66e-15.
+        // This is much smaller than the error bound (~8e-13), so the fast
+        // filter is inconclusive and Bareiss resolves the sign exactly.
+        let perturbation = f64::from_bits(0x3CD0_0000_0000_0000); // 2^-50
+        let m = Matrix::<3>::from_rows([
+            [1.0 + perturbation, 2.0, 3.0],
+            [4.0, 5.0, 6.0],
+            [7.0, 8.0, 9.0],
+        ]);
+        assert_eq!(exact_det_sign(&m, 3), -1);
+    }
+
+    // =========================================================================
+    // EXACT_DET_SIGN — OVERFLOW / NON-FINITE RECOVERY
+    // =========================================================================
+
+    #[test]
+    fn test_exact_det_sign_overflow_det_recovered_by_bareiss() {
+        // Entries are finite but det_direct overflows to infinity.
+        // The is_finite() guard skips Stage 1; Bareiss computes exactly.
+        let m = Matrix::<2>::from_rows([[1e200, 0.0], [0.0, 1e200]]);
+        assert_eq!(exact_det_sign(&m, 2), 1);
+    }
+
+    #[test]
+    fn test_exact_det_sign_nan_entry_returns_zero() {
+        // Non-finite entry → det_sign_exact returns Err → map_or gives 0.
+        let m = Matrix::<2>::from_rows([[f64::NAN, 0.0], [0.0, 1.0]]);
+        assert_eq!(exact_det_sign(&m, 2), 0);
+    }
+
+    // =========================================================================
+    // SOS ORIENTATION — 1D EDGE CASE
+    // =========================================================================
+
+    #[test]
+    fn test_sos_orientation_1d_identical_points() {
+        // Two identical 1D points: orientation determinant is exactly zero.
+        // SoS must still resolve to ±1.
+        let points = vec![Point::new([5.0]), Point::new([5.0])];
+        let sign = sos_orientation_sign(&points).unwrap();
+        assert!(
+            sign == 1 || sign == -1,
+            "SoS must return ±1 for 1D, got {sign}"
+        );
+    }
+
+    #[test]
+    fn test_sos_orientation_1d_distinct_degenerate() {
+        // D=1 with distinct points is non-degenerate, but SoS still works.
+        let points = vec![Point::new([0.0]), Point::new([1.0])];
+        let sign = sos_orientation_sign(&points).unwrap();
+        assert!(
+            sign == 1 || sign == -1,
+            "SoS must return ±1 for 1D, got {sign}"
+        );
     }
 }
