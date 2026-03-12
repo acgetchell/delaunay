@@ -498,10 +498,10 @@ pub mod geometry {
         pub mod convex_hull;
         pub use convex_hull::*;
     }
-    /// Geometric kernel abstraction (CGAL-style).
-    pub mod kernel;
     #[macro_use]
     pub mod matrix;
+    /// Geometric kernel abstraction (CGAL-style).
+    pub mod kernel;
     pub mod point;
     pub mod predicates;
     /// Geometric quality measures for d-dimensional simplicial cells
@@ -948,7 +948,7 @@ pub mod prelude {
         pub use crate::core::traits::data_type::DataType;
         pub use crate::core::{Cell, Vertex};
         pub use crate::geometry::Point;
-        pub use crate::geometry::kernel::{FastKernel, Kernel, RobustKernel};
+        pub use crate::geometry::kernel::{AdaptiveKernel, FastKernel, Kernel, RobustKernel};
         pub use crate::geometry::traits::coordinate::Coordinate;
 
         // Read-only predicates (useful in benchmarks / lightweight geometry checks)
