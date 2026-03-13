@@ -9,6 +9,7 @@
 //! Converted from legacy `Tds::new()` tests to use the new `DelaunayTriangulation` API.
 
 use delaunay::geometry::kernel::RobustKernel;
+use delaunay::geometry::util::generate_random_points_in_ball_seeded;
 use delaunay::prelude::triangulation::*;
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
@@ -836,6 +837,43 @@ fn test_collinear_points_2d() {
         ),
         "Expected GeometricDegeneracy error for collinear points, got: {result:?}"
     );
+}
+
+// =========================================================================
+// Regression: #228 exact-predicate paths (fast variant)
+// =========================================================================
+
+/// Fast regression test for the exact-predicate code paths changed in #228.
+///
+/// Constructs a 3D triangulation from 16 random ball-distributed points using
+/// `AdaptiveKernel` (the default; exact+SoS predicates) and verifies the
+/// Delaunay property. This exercises:
+/// - `det_errbound()` fast filter in orientation/insphere predicates (Phase 2)
+/// - Unified kernel predicates in flip repair (Phase 1)
+/// - `solve_exact_f64` circumcenter fallback for near-singular simplices (Phase 3)
+///
+/// Unlike the slow-tests gated 1000-point test in `large_scale_debug.rs`, this
+/// runs in normal CI (seconds in debug, sub-second in release).
+#[test]
+fn regression_issue_228_exact_predicate_paths_3d_fast() {
+    let seed: u64 = 0x0228_FA53_0003;
+    let points = generate_random_points_in_ball_seeded::<f64, 3>(16, 100.0, seed)
+        .expect("point generation should succeed");
+    let vertices: Vec<Vertex<f64, (), 3>> = points.into_iter().map(|p| vertex!(p)).collect();
+
+    let dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::new_with_topology_guarantee(
+            &vertices,
+            TopologyGuarantee::Pseudomanifold,
+        )
+        .expect("3D 16-point construction must not fail (#228 fast regression)");
+
+    assert!(
+        dt.is_delaunay_via_flips().is_ok(),
+        "Delaunay property must hold (#228 fast regression, seed=0x{seed:X})"
+    );
+    assert!(dt.number_of_vertices() > 0);
+    assert!(dt.number_of_cells() > 0);
 }
 
 // =========================================================================

@@ -9,16 +9,14 @@ This document summarizes the robustness tools available in this crate and how to
 
 ### Exact predicates (v0.7.1+)
 
-Orientation and insphere predicates use a three-stage evaluation:
+Orientation and insphere predicates use a two-stage evaluation:
 
-1. **f64 fast filter** — if the determinant is well outside an adaptive tolerance band,
-   the sign is resolved immediately with no allocation.  (This tolerance is a heuristic;
-   see [Current limitations](#current-limitations) for details.)
-2. **Exact sign** — via `la_stack::Matrix::det_sign_exact`.  For D ≤ 4, la-stack first
-   tries a provable Shewchuk-style error bound that can resolve the sign from f64
-   arithmetic alone, without allocating.  If the bound is inconclusive (or D ≥ 5), it
-   falls back to exact `BigRational` Bareiss elimination.  Provably correct for finite
-   matrix entries.
+1. **Provable f64 fast filter (D ≤ 4)** — `la_stack::Matrix::det_errbound()` computes a
+   rigorous Shewchuk-style error bound from the f64 determinant.  If the bound certifies
+   the sign, no allocation is needed.  For D ≥ 5 (where `det_errbound` is not available),
+   the predicate falls through directly to exact arithmetic.
+2. **Exact sign** — via `la_stack::Matrix::det_sign_exact`.  Uses exact `BigRational`
+   Bareiss elimination.  Provably correct for finite matrix entries.
 3. **Indeterminate fallback** — if exact arithmetic cannot run (non-finite entries),
    the predicate returns `BOUNDARY` / `DEGENERATE`.
 
@@ -106,19 +104,31 @@ match outcome {
 }
 ```
 
-### Flip-based repair and Delaunay verification
+### Flip-based repair and Delaunay verification (v0.7.3+)
 
-`DelaunayTriangulation` can run flip-based repair passes to restore the local Delaunay property
-after insertion. You can also run them manually:
+`DelaunayTriangulation` runs flip-based repair passes to restore the local Delaunay property
+after insertion. The repair code uses the same kernel predicates as the insertion path —
+there is no separate "robust predicate override". This unified predicate pipeline ensures
+consistent sign decisions and eliminates flip cycles caused by predicate disagreements.
+
+You can also run repair manually:
 
 - `dt.repair_delaunay_with_flips()`
 - `dt.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())`
 
-After construction (or repair), you can verify the Delaunay property via `dt.is_valid()`
+After construction (or repair), verify the Delaunay property via `dt.is_valid()`
 (which uses local flip predicates).
 
 For full stack diagnostics (Levels 1-4), use `dt.validate()` or `dt.validation_report()`;
 see `docs/validation.md`.
+
+### Exact circumcenter computation (v0.7.3+)
+
+Circumcenter computation falls back to exact arithmetic when the simplex is
+near-singular (ill-conditioned linear system). This uses
+`la_stack::Matrix::solve_exact_f64()` — BigRational Gaussian elimination that
+returns exact `f64`-rounded results. This replaces the previous zero-tolerance LU
+fallback which could fail on degenerate simplices.
 
 ## Practical recommendations
 
@@ -135,6 +145,6 @@ see `docs/validation.md`.
 - **D ≥ 5 performance:** for dimensions 5 and above, `det_errbound()` is not
   available, so predicates fall through directly to exact Bareiss arithmetic on
   every call.  This is correct but slower than the fast-filter path used for
-  D ≤ 4.
+  D ≤ 4.  Tracked in [#257](https://github.com/acgetchell/delaunay/issues/257).
 
 Historical investigation notes live in `docs/archive/`.

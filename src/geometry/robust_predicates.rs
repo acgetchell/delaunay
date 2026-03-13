@@ -1566,50 +1566,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
-    fn test_adaptive_tolerance_computation() {
-        // Test adaptive tolerance computation with different matrix sizes and values
-        let config = config_presets::general_triangulation::<f64>();
-
-        // Small matrix with moderate values
-        let tolerance_small = with_la_stack_matrix!(2, |m| {
-            matrix_set(&mut m, 0, 0, 1.0);
-            matrix_set(&mut m, 0, 1, 2.0);
-            matrix_set(&mut m, 1, 0, 3.0);
-            matrix_set(&mut m, 1, 1, 4.0);
-            crate::geometry::matrix::adaptive_tolerance(&m, config.base_tolerance)
-        });
-        assert!(tolerance_small > 0.0);
-
-        // Large matrix with large values
-        let tolerance_large = with_la_stack_matrix!(5, |m| {
-            for i in 0..5 {
-                for j in 0..5 {
-                    let sum_f64 = num_traits::cast::<usize, f64>(i + j).unwrap_or(0.0);
-                    matrix_set(&mut m, i, j, sum_f64 * 1000.0);
-                }
-            }
-
-            crate::geometry::matrix::adaptive_tolerance(&m, config.base_tolerance)
-        });
-        assert!(tolerance_large > 0.0);
-        // Larger matrices with larger values should have larger tolerances
-        assert!(tolerance_large > tolerance_small);
-
-        // Matrix with very small values
-        let tolerance_tiny = with_la_stack_matrix!(3, |m| {
-            for i in 0..3 {
-                for j in 0..3 {
-                    matrix_set(&mut m, i, j, 1e-10);
-                }
-            }
-
-            crate::geometry::matrix::adaptive_tolerance(&m, config.base_tolerance)
-        });
-        assert!(tolerance_tiny > 0.0);
-    }
-
-    #[test]
     fn test_consistency_check_fallback_branch() {
         // Test the case where consistency check fails and we fall back to more robust methods
         // This is challenging to test directly since we need a case where the first method

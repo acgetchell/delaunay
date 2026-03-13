@@ -153,66 +153,6 @@ pub fn determinant<const D: usize>(m: &Matrix<D>) -> f64 {
     }
 }
 
-/// Compute adaptive tolerance scaled by matrix magnitude (infinity norm).
-///
-/// This computes: `base_tol` + `rel_factor` * ||A||_∞, where ||A||_∞ is the maximum
-/// absolute row sum. If the last column is (approximately) all ones, it is
-/// excluded from the magnitude estimate to avoid over-inflating tolerance on
-/// small simplices (common in orientation/insphere matrices).
-///
-/// # Deprecation
-///
-/// Internal predicates now use [`la_stack::Matrix::det_errbound`] for provable
-/// Shewchuk-style error bounds (D ≤ 4) instead of this heuristic.  This
-/// function is retained for downstream callers but is no longer used
-/// internally.
-///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::geometry::matrix::{adaptive_tolerance, Matrix};
-///
-/// let mut m = Matrix::<2>::zero();
-/// m.set(0, 0, 1.0);
-/// m.set(1, 1, 1.0);
-/// let tol = adaptive_tolerance(&m, 1e-12);
-/// assert!(tol >= 1e-12);
-/// ```
-#[deprecated(
-    since = "0.7.3",
-    note = "Internal predicates now use `det_errbound()` for provable error bounds. \
-            This heuristic is retained for backward compatibility."
-)]
-#[must_use]
-pub fn adaptive_tolerance<const D: usize>(matrix: &Matrix<D>, base_tol: f64) -> f64 {
-    let nrows = D;
-    let ncols = D;
-
-    // Check if the last column is (approximately) all ones.
-    let last_col_is_all_ones = ncols > 0
-        && (0..nrows).all(|i| (matrix_get(matrix, i, ncols - 1) - 1.0).abs() <= f64::EPSILON);
-
-    // Infinity norm (max absolute row sum), optionally excluding constant 1 column
-    let mut max_row_sum = 0.0f64;
-    for i in 0..nrows {
-        let mut row_sum = 0.0f64;
-        let col_limit = if last_col_is_all_ones {
-            ncols - 1
-        } else {
-            ncols
-        };
-        for j in 0..col_limit {
-            row_sum += matrix_get(matrix, i, j).abs();
-        }
-        if row_sum > max_row_sum {
-            max_row_sum = row_sum;
-        }
-    }
-
-    let rel_factor = 1e-12f64;
-    rel_factor.mul_add(max_row_sum, base_tol)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,51 +169,6 @@ mod tests {
             Err(StackMatrixDispatchError::UnsupportedDim { .. })
         ));
     }
-
-    macro_rules! gen_adaptive_tol_tests {
-        ($d:literal) => {
-            pastey::paste! {
-                #[test]
-                #[allow(deprecated)]
-                fn [<adaptive_tolerance_ignores_constant_one_last_col_ $d d>]() {
-                    let n = $d + 1; // orientation/insphere-like square matrix
-                    let base = 1e-12;
-
-                    let tol = with_la_stack_matrix!(n, |m| {
-                        for i in 0..n {
-                            matrix_set(&mut m, i, n - 1, 1.0);
-                        }
-                        adaptive_tolerance(&m, base)
-                    });
-
-                    assert_relative_eq!(tol, base, epsilon = 1e-18);
-                }
-
-                #[test]
-                #[allow(deprecated)]
-                fn [<adaptive_tolerance_includes_non_one_last_col_ $d d>]() {
-                    let n = $d + 1;
-                    let base = 1e-12;
-
-                    let tol = with_la_stack_matrix!(n, |m| {
-                        for i in 0..n {
-                            matrix_set(&mut m, i, n - 1, 2.0);
-                        }
-                        adaptive_tolerance(&m, base)
-                    });
-
-                    // With only the last column set to 2.0, max row sum = 2.0
-                    let expected = base + 2.0e-12;
-                    assert_relative_eq!(tol, expected, epsilon = 1e-24);
-                }
-            }
-        };
-    }
-
-    gen_adaptive_tol_tests!(2);
-    gen_adaptive_tol_tests!(3);
-    gen_adaptive_tol_tests!(4);
-    gen_adaptive_tol_tests!(5);
 
     #[test]
     fn matrix_zero_like_returns_zero_matrix_of_same_size() {
