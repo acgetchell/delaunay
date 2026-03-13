@@ -28,6 +28,20 @@ use delaunay::geometry::traits::coordinate::Coordinate;
 use proptest::prelude::*;
 
 // =============================================================================
+// HELPERS
+// =============================================================================
+
+/// Check that all points have distinct coordinates.
+///
+/// Uses exact equality because coordinates are derived from integers
+/// via `f64::from()`, so no rounding occurs.
+#[allow(clippy::float_cmp)]
+fn points_all_distinct<const D: usize>(points: &[Point<f64, D>]) -> bool {
+    (0..points.len())
+        .all(|i| ((i + 1)..points.len()).all(|j| points[i].coords() != points[j].coords()))
+}
+
+// =============================================================================
 // STRATEGIES
 // =============================================================================
 
@@ -85,10 +99,7 @@ macro_rules! gen_sos_tests {
                     // In 2D only one coordinate varies (the last is forced
                     // to 0), so collisions are likely.  SoS requires
                     // distinct points — skip inputs with duplicates.
-                    let all_distinct = (0..points.len()).all(|i|
-                        ((i + 1)..points.len()).all(|j|
-                            points[i].coords() != points[j].coords()));
-                    prop_assume!(all_distinct);
+                    prop_assume!(points_all_distinct(&points));
 
                     let sign = sos_orientation_sign(&points).unwrap();
                     prop_assert!(sign == 1 || sign == -1,
@@ -112,10 +123,7 @@ macro_rules! gen_sos_tests {
                             Point::new(coords)
                         })
                         .collect();
-                    let all_distinct = (0..points.len()).all(|i|
-                        ((i + 1)..points.len()).all(|j|
-                            points[i].coords() != points[j].coords()));
-                    prop_assume!(all_distinct);
+                    prop_assume!(points_all_distinct(&points));
 
                     let s1 = sos_orientation_sign(&points).unwrap();
                     let s2 = sos_orientation_sign(&points).unwrap();
@@ -147,10 +155,7 @@ macro_rules! gen_sos_tests {
                             Point::new(coords)
                         })
                         .collect();
-                    let all_distinct = (0..points.len()).all(|i|
-                        ((i + 1)..points.len()).all(|j|
-                            points[i].coords() != points[j].coords()));
-                    prop_assume!(all_distinct);
+                    prop_assume!(points_all_distinct(&points));
 
                     let s1 = sos_orientation_sign(&points).unwrap();
                     let translated: Vec<Point<f64, $dim>> = points

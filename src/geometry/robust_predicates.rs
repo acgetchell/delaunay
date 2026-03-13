@@ -1,9 +1,10 @@
 //! Enhanced geometric predicates with improved numerical robustness.
 //!
-//! This module demonstrates several techniques for improving the numerical stability
-//! of geometric predicates used in Delaunay triangulation. These improvements
-//! address the "No cavity boundary facets found" error by making the predicates
-//! more reliable when dealing with degenerate or near-degenerate point configurations.
+//! This module provides robust orientation and insphere predicates for
+//! Delaunay triangulation. The predicates layer multiple strategies on top
+//! of exact arithmetic: adaptive tolerance, diagnostic consistency checking,
+//! and Simulation of Simplicity (`SoS`) fallback for degenerate and
+//! near-degenerate point configurations.
 
 #![forbid(unsafe_code)]
 

@@ -11,11 +11,11 @@
 //! Simulation of Simplicity (`SoS`) to break cospherical ties
 //! deterministically, so every query returns a definitive ±1.
 //!
-//! **`RobustKernel`** — configurable tolerance-based predicates. Prefer
-//! this when you need tolerance tuning for noisy data, explicit
-//! `BOUNDARY`/`DEGENERATE` signals, or diagnostic consistency checks.
-//! Use the explicit-kernel constructors (`with_kernel`,
-//! `build_with_kernel`, etc.) to opt in.
+//! **`RobustKernel`** — exact-arithmetic predicates that preserve explicit
+//! `BOUNDARY`/`DEGENERATE` signals and run diagnostic consistency checks.
+//! Prefer this when your application needs to detect cospherical or
+//! coplanar configurations directly. Use the explicit-kernel constructors
+//! (`with_kernel`, `build_with_kernel`, etc.) to opt in.
 //!
 //! **`FastKernel`** — raw f64 arithmetic, no robustness guarantees.
 //! Only suitable for 2D with well-conditioned input.
