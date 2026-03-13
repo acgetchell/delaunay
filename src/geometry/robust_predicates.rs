@@ -525,10 +525,9 @@ mod tests {
     }
 
     #[test]
-    fn test_robust_orientation_ignores_base_tolerance() {
-        // robust_orientation no longer uses config.base_tolerance (the
-        // provable det_errbound replaces the heuristic tolerance), so a
-        // NaN base_tolerance does not cause an error.
+    fn test_robust_orientation_ccw_triangle_2d() {
+        // Standard CCW triangle — robust_orientation uses provable
+        // det_errbound and exact Bareiss arithmetic, no configuration.
         let points = vec![
             Point::new([0.0, 0.0]),
             Point::new([1.0, 0.0]),
@@ -1393,10 +1392,9 @@ mod tests {
     }
 
     #[test]
-    fn test_nan_tolerance_accepted_because_unused() {
-        // base_tolerance is no longer used internally (provable det_errbound
-        // replaced the heuristic tolerance), so NaN base_tolerance no longer
-        // causes an error — it is simply ignored.
+    fn test_robust_insphere_standard_tetrahedron_inside() {
+        // Standard tetrahedron with a clearly interior point — exercises
+        // the exact-sign insphere path with no configuration.
 
         let points = vec![
             Point::new([0.0, 0.0, 0.0]),
@@ -1410,7 +1408,7 @@ mod tests {
         let result = robust_insphere(&points, &test_point);
         assert!(
             result.is_ok(),
-            "NaN base_tolerance should be accepted since it is unused internally"
+            "robust_insphere should succeed on a standard tetrahedron"
         );
 
         // Test with a more realistic scenario: very ill-conditioned matrix
