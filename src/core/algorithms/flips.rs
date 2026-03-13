@@ -2693,18 +2693,15 @@ where
         repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, Some(seed_cells), &attempt2)
     };
     match attempt2_result {
-        Ok(stats) => {
-            if verify_repair_postcondition(tds, kernel, Some(seed_cells)).is_ok() {
-                Ok(stats)
-            } else {
+        Ok(stats) => match verify_repair_postcondition(tds, kernel, Some(seed_cells)) {
+            Ok(()) => Ok(stats),
+            Err(verifier_err) => {
                 // Postcondition failed: restore the TDS so callers that
                 // soft-fail receive a structurally valid triangulation.
                 *tds = tds_snapshot;
-                Err(DelaunayRepairError::PostconditionFailed {
-                    message: "local single-pass attempt 2 postcondition failed".into(),
-                })
+                Err(verifier_err)
             }
-        }
+        },
         Err(err) => {
             // On failure, restore the TDS to the pre-repair snapshot so callers that
             // soft-fail (e.g. D≥4 bulk construction) receive a structurally valid
@@ -3070,8 +3067,12 @@ where
 
         if !violates {
             // For D≥4, flip-based inverse postcondition checks can produce false
-            // positives in near-degenerate configurations.  Defer to
-            // `is_delaunay_property_only()` for ground-truth D≥4 validation.
+            // positives in near-degenerate configurations (both forward and inverse
+            // flip predicates simultaneously report a violation — a numerical
+            // artifact).  Ground-truth validation via `is_delaunay_property_only()`
+            // is performed at the bulk-construction layer (e.g.
+            // `build_with_shuffled_retries`), not here, because calling it per-edge
+            // would be O(cells × vertices) per iteration.
             if D >= 4 {
                 continue;
             }
@@ -3141,8 +3142,9 @@ where
         if !violates {
             // Symmetric guard to the inverse k=2 check above: for D≥4,
             // flip-based inverse postcondition checks can produce false
-            // positives in near-degenerate configurations.  Defer to
-            // `is_delaunay_property_only()` for ground-truth D≥4 validation.
+            // positives in near-degenerate configurations.  Ground-truth
+            // validation via `is_delaunay_property_only()` is performed at the
+            // bulk-construction layer, not here (see inverse k=2 comment).
             if D >= 4 {
                 continue;
             }
