@@ -3416,10 +3416,13 @@ where
         let context =
             format!("Failed to canonicalize orientation after post-construction repair: {error}");
         match error {
+            // Construction already wraps a TriangulationConstructionError — preserve it
+            // rather than rewrapping, mirroring map_insertion_error.
+            InsertionError::Construction(source) => source.clone(),
             // Structural / data-structure errors indicate algorithmic bugs,
             // not input-geometry problems.
             InsertionError::TopologyValidation(_)
-            | InsertionError::Construction(_)
+            | InsertionError::TopologyValidationFailed { .. }
             | InsertionError::CavityFilling { .. }
             | InsertionError::NeighborWiring { .. }
             | InsertionError::DuplicateUuid { .. } => {
@@ -3431,7 +3434,6 @@ where
             | InsertionError::NonManifoldTopology { .. }
             | InsertionError::HullExtension { .. }
             | InsertionError::DelaunayValidationFailed { .. }
-            | InsertionError::TopologyValidationFailed { .. }
             | InsertionError::DuplicateCoordinates { .. } => {
                 TriangulationConstructionError::GeometricDegeneracy { message: context }
             }
@@ -7876,17 +7878,41 @@ mod tests {
     }
 
     #[test]
-    fn test_map_orientation_canonicalization_error_construction_is_internal() {
+    fn test_map_orientation_canonicalization_error_construction_preserves_source() {
         let error =
             InsertionError::Construction(TriangulationConstructionError::FailedToCreateCell {
                 message: "test".to_string(),
             });
         let mapped =
             DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(&error);
-        assert!(matches!(
-            mapped,
-            TriangulationConstructionError::InternalInconsistency { .. }
-        ));
+        assert!(
+            matches!(
+                mapped,
+                TriangulationConstructionError::FailedToCreateCell { .. }
+            ),
+            "Construction should preserve the inner error, got: {mapped:?}"
+        );
+    }
+
+    #[test]
+    fn test_map_orientation_canonicalization_error_topology_validation_failed_is_internal() {
+        let error = InsertionError::TopologyValidationFailed {
+            message: "post-insertion".to_string(),
+            source: Box::new(TriangulationValidationError::Tds(
+                TdsValidationError::InconsistentDataStructure {
+                    message: "test".to_string(),
+                },
+            )),
+        };
+        let mapped =
+            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(&error);
+        assert!(
+            matches!(
+                mapped,
+                TriangulationConstructionError::InternalInconsistency { .. }
+            ),
+            "TopologyValidationFailed should map to InternalInconsistency, got: {mapped:?}"
+        );
     }
 
     #[test]
@@ -7952,6 +7978,147 @@ mod tests {
             let label = format!("{error}");
             let mapped =
                 DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
+            assert!(
+                matches!(
+                    mapped,
+                    TriangulationConstructionError::GeometricDegeneracy { .. }
+                ),
+                "{label} should map to GeometricDegeneracy, got: {mapped:?}"
+            );
+        }
+    }
+
+    // ---- map_insertion_error tests ----
+
+    #[test]
+    fn test_map_insertion_error_construction_preserves_source() {
+        let error =
+            InsertionError::Construction(TriangulationConstructionError::FailedToCreateCell {
+                message: "inner".to_string(),
+            });
+        let mapped =
+            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_insertion_error(error);
+        assert!(
+            matches!(
+                mapped,
+                TriangulationConstructionError::FailedToCreateCell { .. }
+            ),
+            "Construction should preserve inner error, got: {mapped:?}"
+        );
+    }
+
+    #[test]
+    fn test_map_insertion_error_cavity_filling() {
+        let error = InsertionError::CavityFilling {
+            message: "test".to_string(),
+        };
+        let mapped =
+            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_insertion_error(error);
+        assert!(
+            matches!(
+                mapped,
+                TriangulationConstructionError::FailedToCreateCell { .. }
+            ),
+            "CavityFilling should map to FailedToCreateCell, got: {mapped:?}"
+        );
+    }
+
+    #[test]
+    fn test_map_insertion_error_neighbor_wiring() {
+        let error = InsertionError::NeighborWiring {
+            message: "bad wiring".to_string(),
+        };
+        let mapped =
+            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_insertion_error(error);
+        assert!(
+            matches!(mapped, TriangulationConstructionError::Tds(_)),
+            "NeighborWiring should map to Tds(ValidationError(InvalidNeighbors)), got: {mapped:?}"
+        );
+        assert!(
+            mapped.to_string().contains("bad wiring"),
+            "should preserve message: {mapped}"
+        );
+    }
+
+    #[test]
+    fn test_map_insertion_error_topology_validation() {
+        let error =
+            InsertionError::TopologyValidation(TdsValidationError::InconsistentDataStructure {
+                message: "broken".to_string(),
+            });
+        let mapped =
+            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_insertion_error(error);
+        assert!(
+            matches!(mapped, TriangulationConstructionError::Tds(_)),
+            "TopologyValidation should map to Tds(ValidationError), got: {mapped:?}"
+        );
+    }
+
+    #[test]
+    fn test_map_insertion_error_duplicate_uuid() {
+        let error = InsertionError::DuplicateUuid {
+            entity: crate::core::triangulation_data_structure::EntityKind::Cell,
+            uuid: Uuid::nil(),
+        };
+        let mapped =
+            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_insertion_error(error);
+        assert!(
+            matches!(mapped, TriangulationConstructionError::Tds(_)),
+            "DuplicateUuid should map to Tds(DuplicateUuid), got: {mapped:?}"
+        );
+    }
+
+    #[test]
+    fn test_map_insertion_error_duplicate_coordinates() {
+        let error = InsertionError::DuplicateCoordinates {
+            coordinates: "[1,2,3]".to_string(),
+        };
+        let mapped =
+            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_insertion_error(error);
+        assert!(
+            matches!(
+                mapped,
+                TriangulationConstructionError::DuplicateCoordinates { .. }
+            ),
+            "DuplicateCoordinates should be preserved, got: {mapped:?}"
+        );
+    }
+
+    #[test]
+    fn test_map_insertion_error_geometry_variants_are_degeneracy() {
+        use crate::core::algorithms::incremental_insertion::HullExtensionReason;
+
+        let geometry_errors: Vec<InsertionError> = vec![
+            InsertionError::ConflictRegion(
+                crate::core::algorithms::locate::ConflictError::OpenBoundary {
+                    facet_count: 2,
+                    ridge_vertex_count: 1,
+                    open_cell: CellKey::from(slotmap::KeyData::from_ffi(1)),
+                },
+            ),
+            InsertionError::NonManifoldTopology {
+                facet_hash: 0,
+                cell_count: 3,
+            },
+            InsertionError::HullExtension {
+                reason: HullExtensionReason::NoVisibleFacets,
+            },
+            InsertionError::DelaunayValidationFailed {
+                message: "test".to_string(),
+            },
+            InsertionError::TopologyValidationFailed {
+                message: "test".to_string(),
+                source: Box::new(TriangulationValidationError::Tds(
+                    TdsValidationError::InconsistentDataStructure {
+                        message: "test".to_string(),
+                    },
+                )),
+            },
+        ];
+        for error in geometry_errors {
+            let label = format!("{error}");
+            let mapped =
+                DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_insertion_error(error);
             assert!(
                 matches!(
                     mapped,
