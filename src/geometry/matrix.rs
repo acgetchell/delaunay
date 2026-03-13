@@ -160,6 +160,13 @@ pub fn determinant<const D: usize>(m: &Matrix<D>) -> f64 {
 /// excluded from the magnitude estimate to avoid over-inflating tolerance on
 /// small simplices (common in orientation/insphere matrices).
 ///
+/// # Deprecation
+///
+/// Internal predicates now use [`la_stack::Matrix::det_errbound`] for provable
+/// Shewchuk-style error bounds (D ≤ 4) instead of this heuristic.  This
+/// function is retained for downstream callers but is no longer used
+/// internally.
+///
 /// # Examples
 ///
 /// ```rust
@@ -171,6 +178,11 @@ pub fn determinant<const D: usize>(m: &Matrix<D>) -> f64 {
 /// let tol = adaptive_tolerance(&m, 1e-12);
 /// assert!(tol >= 1e-12);
 /// ```
+#[deprecated(
+    since = "0.7.3",
+    note = "Internal predicates now use `det_errbound()` for provable error bounds. \
+            This heuristic is retained for backward compatibility."
+)]
 #[must_use]
 pub fn adaptive_tolerance<const D: usize>(matrix: &Matrix<D>, base_tol: f64) -> f64 {
     let nrows = D;
@@ -222,6 +234,7 @@ mod tests {
         ($d:literal) => {
             pastey::paste! {
                 #[test]
+                #[allow(deprecated)]
                 fn [<adaptive_tolerance_ignores_constant_one_last_col_ $d d>]() {
                     let n = $d + 1; // orientation/insphere-like square matrix
                     let base = 1e-12;
@@ -237,6 +250,7 @@ mod tests {
                 }
 
                 #[test]
+                #[allow(deprecated)]
                 fn [<adaptive_tolerance_includes_non_one_last_col_ $d d>]() {
                     let n = $d + 1;
                     let base = 1e-12;

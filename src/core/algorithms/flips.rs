@@ -3055,14 +3055,9 @@ where
         };
 
         if !violates {
-            // For D≥4, `both_positive_artifact` in `delaunay_violation_k2_for_facet`
-            // sets `violates = false` even when both `in_a > 0` and `in_b > 0` (which
-            // is numerically impossible by cofactor antisymmetry and indicates a
-            // near-degenerate artefact in the (D+2)×(D+2) insphere matrix).  The
-            // inverse-flip postcondition check would incorrectly treat this as an
-            // "applicable" flip and fail.  For D≥4, `is_delaunay_property_only()` with
-            // its own artifact filter is the ground-truth correctness check; skip the
-            // flip-based inverse check here to avoid false positives.
+            // For D≥4, flip-based inverse postcondition checks can produce false
+            // positives in near-degenerate configurations.  Defer to
+            // `is_delaunay_property_only()` for ground-truth D≥4 validation.
             if D >= 4 {
                 continue;
             }
@@ -3130,11 +3125,10 @@ where
         };
 
         if !violates {
-            // Symmetric guard to the inverse k=2 check above: for D≥4 the
-            // `both_positive_artifact` logic can suppress a genuine violation flag,
-            // yielding `violates = false` even in numerically degenerate
-            // configurations that are not real Delaunay failures.  Skip and defer
-            // to `is_delaunay_property_only()` for ground-truth D≥4 validation.
+            // Symmetric guard to the inverse k=2 check above: for D≥4,
+            // flip-based inverse postcondition checks can produce false
+            // positives in near-degenerate configurations.  Defer to
+            // `is_delaunay_property_only()` for ground-truth D≥4 validation.
             if D >= 4 {
                 continue;
             }

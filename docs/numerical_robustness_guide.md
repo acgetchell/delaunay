@@ -132,14 +132,9 @@ see `docs/validation.md`.
 
 ## Current limitations
 
-- **Heuristic fast-filter tolerance:** the f64 fast filter uses an adaptive tolerance
-  based on the matrix infinity norm.  This is a heuristic, not a provable error bound.
-  For ill-conditioned matrices, the fast filter may return early with a result that exact
-  arithmetic would override.  la-stack #44 tracks adding Shewchuk-style bounds to close
-  this gap.  In practice, the exact Bareiss stage catches these cases.
-- **No SoS yet:** when the exact determinant is truly zero (exact degeneracy), predicates
-  return `BOUNDARY` / `DEGENERATE`.  The flip-based repair has no tie-breaking strategy
-  for these cases, which can cause flip cycles at scale.  #233 tracks adding Simulation
-  of Simplicity (SoS) perturbation.
+- **D ≥ 5 performance:** for dimensions 5 and above, `det_errbound()` is not
+  available, so predicates fall through directly to exact Bareiss arithmetic on
+  every call.  This is correct but slower than the fast-filter path used for
+  D ≤ 4.
 
 Historical investigation notes live in `docs/archive/`.

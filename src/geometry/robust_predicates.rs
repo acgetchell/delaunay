@@ -349,8 +349,6 @@ where
     T: CoordinateScalar,
     [T; D]: Copy + Sized,
 {
-    let base_tol = super::util::safe_scalar_to_f64(config.base_tolerance)?;
-
     // Get simplex orientation for correct interpretation.
     let orientation = robust_orientation(simplex_points, config)?;
     if matches!(orientation, Orientation::DEGENERATE) {
@@ -369,7 +367,6 @@ where
             &matrix,
             k,
             orient_sign,
-            base_tol,
         ))
     })
 }
@@ -400,7 +397,7 @@ where
 /// ```
 pub fn robust_orientation<T, const D: usize>(
     simplex_points: &[Point<T, D>],
-    config: &RobustPredicateConfig<T>,
+    _config: &RobustPredicateConfig<T>,
 ) -> Result<Orientation, CoordinateConversionError>
 where
     T: CoordinateScalar,
@@ -433,10 +430,7 @@ where
 
         // Route through the exact-sign orientation helper for provably correct
         // orientation classification on finite inputs.
-        let base_tol = safe_scalar_to_f64(config.base_tolerance)?;
-        Ok(super::predicates::orientation_from_matrix(
-            &matrix, k, base_tol,
-        ))
+        Ok(super::predicates::orientation_from_matrix(&matrix, k))
     })
 }
 
@@ -662,7 +656,10 @@ mod tests {
     }
 
     #[test]
-    fn test_robust_orientation_non_finite_base_tolerance_returns_error() {
+    fn test_robust_orientation_ignores_base_tolerance() {
+        // robust_orientation no longer uses config.base_tolerance (the
+        // provable det_errbound replaces the heuristic tolerance), so a
+        // NaN base_tolerance does not cause an error.
         let points = vec![
             Point::new([0.0, 0.0]),
             Point::new([1.0, 0.0]),
@@ -675,10 +672,7 @@ mod tests {
         };
 
         let result = robust_orientation(&points, &config);
-        assert!(matches!(
-            result,
-            Err(CoordinateConversionError::NonFiniteValue { .. })
-        ));
+        assert_eq!(result.unwrap(), Orientation::POSITIVE);
     }
 
     #[test]
@@ -1570,6 +1564,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_adaptive_tolerance_computation() {
         // Test adaptive tolerance computation with different matrix sizes and values
         let config = config_presets::general_triangulation::<f64>();
