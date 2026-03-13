@@ -5173,6 +5173,27 @@ mod tests {
         panic!("face ({face_v0:?}, {face_v1:?}, {face_v2:?}) not found in cell {cell_key:?}");
     }
 
+    /// Assert that `resolve_zero_orientation` returns a non-zero sign for
+    /// every new-cell point set that a k=2 flip context would produce.
+    fn assert_context_has_nonzero_robust_orientation(
+        tds: &Tds<f64, (), (), 2>,
+        context: &FlipContext<2, 2>,
+    ) {
+        for &omit in &context.removed_face_vertices {
+            let mut verts: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                SmallBuffer::with_capacity(3);
+            verts.extend_from_slice(&context.inserted_face_vertices);
+            for &v in &context.removed_face_vertices {
+                if v != omit {
+                    verts.push(v);
+                }
+            }
+            let points = vertices_to_points(tds, &verts).unwrap();
+            let sign = resolve_zero_orientation(&points, "test").unwrap();
+            assert_ne!(sign, 0, "robust_orientation must resolve to ±1");
+        }
+    }
+
     #[test]
     fn test_resolve_facet_handle_for_key_remaps_after_slot_swap() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
@@ -6577,21 +6598,7 @@ mod tests {
         let facet = FacetHandle::new(c1, 2);
         let context = build_k2_flip_context(&tds, facet).unwrap();
 
-        // Directly verify that resolve_zero_orientation returns a non-zero
-        // sign for each new-cell point set (the same sets the flip code builds).
-        for &omit in &context.removed_face_vertices {
-            let mut verts: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-                SmallBuffer::with_capacity(3);
-            verts.extend_from_slice(&context.inserted_face_vertices);
-            for &v in &context.removed_face_vertices {
-                if v != omit {
-                    verts.push(v);
-                }
-            }
-            let points = vertices_to_points(&tds, &verts).unwrap();
-            let sign = resolve_zero_orientation(&points, "test").unwrap();
-            assert_ne!(sign, 0, "robust_orientation must resolve to ±1");
-        }
+        assert_context_has_nonzero_robust_orientation(&tds, &context);
 
         // Now apply the flip with the zero-orientation kernel and verify success.
         let kernel = ZeroOrientationKernel2d;
@@ -6623,22 +6630,7 @@ mod tests {
         let facet = FacetHandle::new(c1, 2);
         let context = build_k2_flip_context(&tds, facet).unwrap();
 
-        // Directly verify that resolve_zero_orientation returns a non-zero
-        // sign for the same point sets that k2_flip_would_create_degenerate_cell
-        // checks.
-        for &omit in &context.removed_face_vertices {
-            let mut verts: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-                SmallBuffer::with_capacity(3);
-            verts.extend_from_slice(&context.inserted_face_vertices);
-            for &v in &context.removed_face_vertices {
-                if v != omit {
-                    verts.push(v);
-                }
-            }
-            let points = vertices_to_points(&tds, &verts).unwrap();
-            let sign = resolve_zero_orientation(&points, "test").unwrap();
-            assert_ne!(sign, 0, "robust_orientation must resolve to ±1");
-        }
+        assert_context_has_nonzero_robust_orientation(&tds, &context);
 
         // Then verify k2_flip_would_create_degenerate_cell correctly returns
         // false when the zero-orientation kernel triggers the fallback.

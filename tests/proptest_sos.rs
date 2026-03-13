@@ -110,13 +110,20 @@ macro_rules! gen_sos_tests {
                 }
 
                 /// `SoS` orientation is translation-invariant for degenerate points.
+                ///
+                /// The offset uses integers (not arbitrary f64) because SoS
+                /// translation invariance relies on the "1" column cancelling
+                /// the shift *exactly*.  Non-integer f64 offsets introduce
+                /// rounding in the coordinate addition, which can perturb
+                /// cofactors from exactly 0 to slightly non-zero, changing
+                /// which cofactor the SoS expansion finds first.
                 #[test]
                 fn [<prop_sos_orientation_translation_invariant_ $dim d>](
                     raw in prop::collection::vec(
                         $uniform(small_int()),
                         ($dim + 1)..=($dim + 1),
                     ),
-                    offset in $uniform(finite_coord()),
+                    offset in $uniform(small_int()),
                 ) {
                     let points: Vec<Point<f64, $dim>> = raw
                         .iter()
@@ -132,7 +139,7 @@ macro_rules! gen_sos_tests {
                         .iter()
                         .map(|p| {
                             let coords: [f64; $dim] = std::array::from_fn(|i| {
-                                p.coords()[i] + offset[i]
+                                p.coords()[i] + f64::from(offset[i])
                             });
                             Point::new(coords)
                         })
