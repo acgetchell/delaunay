@@ -14,7 +14,6 @@ use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar, ScalarSummable,
 };
-use num_traits::cast;
 use std::sync::LazyLock;
 
 static STRICT_INSPHERE_CONSISTENCY: LazyLock<bool> =
@@ -73,43 +72,6 @@ pub enum InsphereConsistencyError {
         distance_result: InSphere,
     },
 }
-/// This structure allows fine-tuning of numerical robustness parameters
-/// based on the specific requirements of the triangulation algorithm.
-///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::geometry::robust_predicates::RobustPredicateConfig;
-///
-/// let config = RobustPredicateConfig::<f64>::default();
-/// assert!(config.max_refinement_iterations > 0);
-/// ```
-#[derive(Debug, Clone)]
-pub struct RobustPredicateConfig<T> {
-    /// Base tolerance for degenerate case detection
-    pub base_tolerance: T,
-    /// Relative tolerance factor (multiplied by magnitude of operands)
-    pub relative_tolerance_factor: T,
-    /// Maximum number of refinement iterations for adaptive precision
-    pub max_refinement_iterations: usize,
-    /// Threshold for switching to exact arithmetic
-    pub exact_arithmetic_threshold: T,
-    /// Multiplier for visibility threshold in fallback visibility heuristics
-    pub visibility_threshold_multiplier: T,
-}
-
-impl<T: CoordinateScalar> Default for RobustPredicateConfig<T> {
-    fn default() -> Self {
-        Self {
-            base_tolerance: T::default_tolerance(),
-            relative_tolerance_factor: cast(1e-12).unwrap_or_else(T::default_tolerance),
-            max_refinement_iterations: 3,
-            exact_arithmetic_threshold: cast(1e-10).unwrap_or_else(T::default_tolerance),
-            visibility_threshold_multiplier: cast(100.0)
-                .unwrap_or_else(|| T::from(100.0).unwrap_or_else(T::default_tolerance)),
-        }
-    }
-}
 
 /// Enhanced insphere predicate with multiple numerical robustness techniques.
 ///
@@ -139,7 +101,6 @@ impl<T: CoordinateScalar> Default for RobustPredicateConfig<T> {
 /// Parameters:
 /// - `simplex_points`: Exactly `D + 1` points defining the simplex
 /// - `test_point`: The query point to classify relative to the simplex circumsphere
-/// - `config`: Tunable numeric-robustness parameters; see `config_presets` for defaults
 ///
 /// Returns:
 /// - `Ok(InSphere::{INSIDE, BOUNDARY, OUTSIDE})` on success
@@ -154,7 +115,7 @@ impl<T: CoordinateScalar> Default for RobustPredicateConfig<T> {
 /// Example (3D):
 /// ```rust
 /// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::robust_predicates::{robust_insphere, config_presets};
+/// use delaunay::geometry::robust_predicates::robust_insphere;
 /// use delaunay::geometry::predicates::InSphere;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
 ///
@@ -164,13 +125,12 @@ impl<T: CoordinateScalar> Default for RobustPredicateConfig<T> {
 ///     Point::new([0.0, 1.0, 0.0]),
 ///     Point::new([0.0, 0.0, 1.0]),
 /// ];
-/// let config = config_presets::general_triangulation::<f64>();
 ///
 /// let inside = Point::new([0.25, 0.25, 0.25]);
 /// let outside = Point::new([2.0, 2.0, 2.0]);
 ///
-/// let r_in = robust_insphere(&tetra, &inside, &config).unwrap();
-/// let r_out = robust_insphere(&tetra, &outside, &config).unwrap();
+/// let r_in = robust_insphere(&tetra, &inside).unwrap();
+/// let r_out = robust_insphere(&tetra, &outside).unwrap();
 /// assert_eq!(r_in, InSphere::INSIDE);
 /// assert_eq!(r_out, InSphere::OUTSIDE);
 /// ```
@@ -192,7 +152,6 @@ impl<T: CoordinateScalar> Default for RobustPredicateConfig<T> {
 pub fn robust_insphere<T, const D: usize>(
     simplex_points: &[Point<T, D>],
     test_point: &Point<T, D>,
-    config: &RobustPredicateConfig<T>,
 ) -> Result<InSphere, CoordinateConversionError>
 where
     T: ScalarSummable,
@@ -208,13 +167,13 @@ where
     }
 
     // Strategy 1: Exact-sign determinant approach with adaptive tolerance.
-    if let Ok(result) = adaptive_tolerance_insphere(simplex_points, test_point, config) {
+    if let Ok(result) = adaptive_tolerance_insphere(simplex_points, test_point) {
         // Strategy 2: Diagnostic consistency check against distance-based insphere.
         // The exact-sign result from insphere_from_matrix is provably correct for
         // finite inputs; a disagreement from insphere_distance reflects f64
         // rounding in the distance-based check, not a defect in the exact predicate.
         if let ConsistencyResult::Inconsistent(error) =
-            verify_insphere_consistency(simplex_points, test_point, result, config)
+            verify_insphere_consistency(simplex_points, test_point, result)
         {
             // In strict mode, hard-fail for deterministic witness capture.
             if *STRICT_INSPHERE_CONSISTENCY {
@@ -256,7 +215,7 @@ where
 
     // Use exact orientation when available; fall back to SoS only when the
     // exact predicate reports DEGENERATE (or fails entirely).
-    let abs_orient: i32 = match robust_orientation(simplex_points, config) {
+    let abs_orient: i32 = match robust_orientation(simplex_points) {
         Ok(Orientation::POSITIVE) => 1,
         Ok(Orientation::NEGATIVE) => -1,
         _ => crate::geometry::sos::sos_orientation_sign(&f64_simplex)?,
@@ -340,14 +299,13 @@ where
 fn adaptive_tolerance_insphere<T, const D: usize>(
     simplex_points: &[Point<T, D>],
     test_point: &Point<T, D>,
-    config: &RobustPredicateConfig<T>,
 ) -> Result<InSphere, CoordinateConversionError>
 where
     T: CoordinateScalar,
     [T; D]: Copy + Sized,
 {
     // Get simplex orientation for correct interpretation.
-    let orientation = robust_orientation(simplex_points, config)?;
+    let orientation = robust_orientation(simplex_points)?;
     if matches!(orientation, Orientation::DEGENERATE) {
         return Ok(InSphere::BOUNDARY);
     }
@@ -370,10 +328,8 @@ where
 
 /// Enhanced orientation predicate with robustness improvements.
 ///
-/// The `config` parameter is accepted for API compatibility but is currently
-/// unused.  Internally, this function uses provable [`la_stack::Matrix::det_errbound`]
-/// bounds (D ≤ 4) and exact Bareiss arithmetic, so tolerance settings in
-/// `config` have no effect on the result.
+/// Internally uses provable [`la_stack::Matrix::det_errbound`] bounds (D ≤ 4)
+/// and exact Bareiss arithmetic for the slow path.
 ///
 /// # Errors
 ///
@@ -385,7 +341,7 @@ where
 /// ```rust
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::predicates::Orientation;
-/// use delaunay::geometry::robust_predicates::{robust_orientation, RobustPredicateConfig};
+/// use delaunay::geometry::robust_predicates::robust_orientation;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
 ///
 /// let tri = vec![
@@ -393,13 +349,11 @@ where
 ///     Point::new([1.0, 0.0]),
 ///     Point::new([0.0, 1.0]),
 /// ];
-/// let config = RobustPredicateConfig::<f64>::default();
-/// let orientation = robust_orientation(&tri, &config).unwrap();
+/// let orientation = robust_orientation(&tri).unwrap();
 /// assert_eq!(orientation, Orientation::POSITIVE);
 /// ```
 pub fn robust_orientation<T, const D: usize>(
     simplex_points: &[Point<T, D>],
-    _config: &RobustPredicateConfig<T>,
 ) -> Result<Orientation, CoordinateConversionError>
 where
     T: CoordinateScalar,
@@ -472,7 +426,6 @@ fn verify_insphere_consistency<T, const D: usize>(
     simplex_points: &[Point<T, D>],
     test_point: &Point<T, D>,
     determinant_result: InSphere,
-    _config: &RobustPredicateConfig<T>,
 ) -> ConsistencyResult
 where
     T: ScalarSummable,
@@ -506,89 +459,6 @@ where
     )
 }
 
-/// Factory function to create robust predicate configurations for different use cases.
-pub mod config_presets {
-    use super::{CoordinateScalar, RobustPredicateConfig};
-    use num_traits::cast;
-
-    /// Configuration optimized for general-purpose triangulation.
-    ///
-    /// This provides a balanced configuration suitable for most triangulation
-    /// scenarios with moderate tolerance settings.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use delaunay::geometry::robust_predicates::config_presets;
-    ///
-    /// let config = config_presets::general_triangulation::<f64>();
-    /// assert_eq!(config.max_refinement_iterations, 3);
-    /// ```
-    #[must_use]
-    pub fn general_triangulation<T: CoordinateScalar>() -> RobustPredicateConfig<T> {
-        RobustPredicateConfig {
-            base_tolerance: T::default_tolerance(),
-            relative_tolerance_factor: cast(1e-12).unwrap_or_else(T::default_tolerance),
-            max_refinement_iterations: 3,
-            exact_arithmetic_threshold: cast(1e-10).unwrap_or_else(T::default_tolerance),
-            visibility_threshold_multiplier: cast(100.0)
-                .unwrap_or_else(|| T::from(100.0).unwrap_or_else(T::default_tolerance)),
-        }
-    }
-
-    /// Configuration for high-precision triangulation (stricter tolerances).
-    ///
-    /// This configuration uses tighter tolerances and more refinement iterations
-    /// for applications requiring high geometric precision.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use delaunay::geometry::robust_predicates::config_presets;
-    ///
-    /// let config = config_presets::high_precision::<f64>();
-    /// assert_eq!(config.max_refinement_iterations, 5);
-    /// ```
-    #[must_use]
-    pub fn high_precision<T: CoordinateScalar>() -> RobustPredicateConfig<T> {
-        let base_tol = T::default_tolerance();
-        RobustPredicateConfig {
-            base_tolerance: base_tol / cast(100.0).unwrap_or_else(T::one),
-            relative_tolerance_factor: cast(1e-14).unwrap_or(base_tol),
-            max_refinement_iterations: 5,
-            exact_arithmetic_threshold: cast(1e-12).unwrap_or(base_tol),
-            visibility_threshold_multiplier: cast(100.0)
-                .unwrap_or_else(|| T::from(100.0).unwrap_or_else(T::default_tolerance)),
-        }
-    }
-
-    /// Configuration for dealing with degenerate cases (more lenient tolerances).
-    ///
-    /// This configuration uses more lenient tolerances to handle nearly degenerate
-    /// geometric configurations that might otherwise cause numerical instability.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use delaunay::geometry::robust_predicates::config_presets;
-    ///
-    /// let config = config_presets::degenerate_robust::<f64>();
-    /// assert_eq!(config.max_refinement_iterations, 2);
-    /// ```
-    #[must_use]
-    pub fn degenerate_robust<T: CoordinateScalar>() -> RobustPredicateConfig<T> {
-        let base_tol = T::default_tolerance();
-        RobustPredicateConfig {
-            base_tolerance: base_tol * cast(100.0).unwrap_or_else(T::one),
-            relative_tolerance_factor: cast(1e-10).unwrap_or(base_tol),
-            max_refinement_iterations: 2,
-            exact_arithmetic_threshold: cast(1e-8).unwrap_or(base_tol),
-            visibility_threshold_multiplier: cast(200.0)
-                .unwrap_or_else(|| T::from(200.0).unwrap_or_else(T::default_tolerance)),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -607,16 +477,14 @@ mod tests {
             Point::new([0.0, 0.0, 1.0]),
         ];
 
-        let config = config_presets::general_triangulation();
-
         // Test point clearly inside
         let inside_point = Point::new([0.25, 0.25, 0.25]);
-        let result = robust_insphere(&points, &inside_point, &config).unwrap();
+        let result = robust_insphere(&points, &inside_point).unwrap();
         assert_eq!(result, InSphere::INSIDE);
 
         // Test point clearly outside
         let outside_point = Point::new([2.0, 2.0, 2.0]);
-        let result = robust_insphere(&points, &outside_point, &config).unwrap();
+        let result = robust_insphere(&points, &outside_point).unwrap();
         assert_eq!(result, InSphere::OUTSIDE);
     }
 
@@ -629,8 +497,7 @@ mod tests {
             Point::new([0.0, 0.0, 1.0]),
         ];
 
-        let config = config_presets::general_triangulation();
-        let result = robust_orientation(&points, &config).unwrap();
+        let result = robust_orientation(&points).unwrap();
 
         // Should detect orientation (exact result depends on coordinate system)
         assert!(matches!(
@@ -649,8 +516,7 @@ mod tests {
             Point::new([0.0, 1.0]),
         ];
 
-        let config = config_presets::general_triangulation::<f64>();
-        let robust = robust_orientation(&points, &config).unwrap();
+        let robust = robust_orientation(&points).unwrap();
         let reference = predicates::simplex_orientation(&points).unwrap();
 
         assert_eq!(robust, Orientation::POSITIVE);
@@ -668,12 +534,7 @@ mod tests {
             Point::new([0.0, 1.0]),
         ];
 
-        let config = RobustPredicateConfig {
-            base_tolerance: f64::NAN,
-            ..config_presets::general_triangulation::<f64>()
-        };
-
-        let result = robust_orientation(&points, &config);
+        let result = robust_orientation(&points);
         assert_eq!(result.unwrap(), Orientation::POSITIVE);
     }
 
@@ -688,8 +549,7 @@ mod tests {
             Point::new([0.5, eps]),
         ];
 
-        let config = config_presets::general_triangulation::<f64>();
-        let result = robust_orientation(&points, &config).unwrap();
+        let result = robust_orientation(&points).unwrap();
         assert_eq!(
             result,
             Orientation::POSITIVE,
@@ -708,8 +568,7 @@ mod tests {
             Point::new([0.0, 0.0, eps]),
         ];
 
-        let config = config_presets::general_triangulation::<f64>();
-        let result = robust_orientation(&points, &config).unwrap();
+        let result = robust_orientation(&points).unwrap();
         assert_ne!(
             result,
             Orientation::DEGENERATE,
@@ -734,14 +593,13 @@ mod tests {
         let inside_point = Point::new([0.5 + radius - eps, 0.5]);
         let outside_point = Point::new([0.5 + radius + eps, 0.5]);
 
-        let config = config_presets::general_triangulation::<f64>();
         assert_eq!(
-            robust_insphere(&triangle, &inside_point, &config).unwrap(),
+            robust_insphere(&triangle, &inside_point).unwrap(),
             InSphere::INSIDE,
             "near-cocircular 2D point just inside boundary should be INSIDE"
         );
         assert_eq!(
-            robust_insphere(&triangle, &outside_point, &config).unwrap(),
+            robust_insphere(&triangle, &outside_point).unwrap(),
             InSphere::OUTSIDE,
             "near-cocircular 2D point just outside boundary should be OUTSIDE"
         );
@@ -765,14 +623,13 @@ mod tests {
         let inside_point = Point::new([0.5 + radius - eps, 0.5, 0.5]);
         let outside_point = Point::new([0.5 + radius + eps, 0.5, 0.5]);
 
-        let config = config_presets::general_triangulation::<f64>();
         assert_eq!(
-            robust_insphere(&tetra, &inside_point, &config).unwrap(),
+            robust_insphere(&tetra, &inside_point).unwrap(),
             InSphere::INSIDE,
             "near-cospherical 3D point just inside boundary should be INSIDE"
         );
         assert_eq!(
-            robust_insphere(&tetra, &outside_point, &config).unwrap(),
+            robust_insphere(&tetra, &outside_point).unwrap(),
             InSphere::OUTSIDE,
             "near-cospherical 3D point just outside boundary should be OUTSIDE"
         );
@@ -788,18 +645,15 @@ mod tests {
             Point::new([0.5, 0.5, 1e-15]), // Very slightly off-plane
         ];
 
-        let config = config_presets::degenerate_robust();
-
         // Should handle gracefully
         let test_point = Point::new([0.25, 0.25, 1e-16]);
-        let result = robust_insphere(&points, &test_point, &config);
+        let result = robust_insphere(&points, &test_point);
         assert!(result.is_ok());
     }
 
     #[expect(clippy::too_many_lines)]
     #[test]
     fn test_verify_insphere_consistency_comprehensive() {
-        let config = config_presets::general_triangulation();
         let points = vec![
             Point::new([0.0, 0.0, 0.0]),
             Point::new([1.0, 0.0, 0.0]),
@@ -828,7 +682,7 @@ mod tests {
 
         for (test_point, result, description) in test_cases {
             assert!(
-                verify_insphere_consistency(&points, &test_point, result, &config).is_consistent(),
+                verify_insphere_consistency(&points, &test_point, result).is_consistent(),
                 "Failed for {description}"
             );
         }
@@ -838,13 +692,8 @@ mod tests {
         for expected_result in [InSphere::INSIDE, InSphere::OUTSIDE, InSphere::BOUNDARY] {
             if expected_result == InSphere::BOUNDARY {
                 assert!(
-                    verify_insphere_consistency(
-                        &points,
-                        &boundary_test_point,
-                        expected_result,
-                        &config
-                    )
-                    .is_consistent()
+                    verify_insphere_consistency(&points, &boundary_test_point, expected_result,)
+                        .is_consistent()
                 );
             }
         }
@@ -857,8 +706,7 @@ mod tests {
         ];
         let test_2d = Point::new([1.0, 0.5]);
         assert!(
-            verify_insphere_consistency(&triangle_2d, &test_2d, InSphere::BOUNDARY, &config)
-                .is_consistent()
+            verify_insphere_consistency(&triangle_2d, &test_2d, InSphere::BOUNDARY).is_consistent()
         );
 
         // Test edge cases with extreme coordinates and error conditions
@@ -887,7 +735,7 @@ mod tests {
 
         for (edge_points, edge_test, description) in edge_cases {
             assert!(
-                verify_insphere_consistency(&edge_points, &edge_test, InSphere::BOUNDARY, &config)
+                verify_insphere_consistency(&edge_points, &edge_test, InSphere::BOUNDARY)
                     .is_consistent(),
                 "Failed for edge case: {description}"
             );
@@ -926,12 +774,8 @@ mod tests {
         ];
 
         for (error_points, error_test, error_description) in error_cases {
-            let result = verify_insphere_consistency(
-                &error_points,
-                &error_test,
-                InSphere::BOUNDARY,
-                &config,
-            );
+            let result =
+                verify_insphere_consistency(&error_points, &error_test, InSphere::BOUNDARY);
             assert_eq!(
                 result,
                 ConsistencyResult::Unverifiable,
@@ -1079,7 +923,6 @@ mod tests {
 
     fn find_periodic_3d_inconsistency_witness(
         expanded: &[Point<f64, 3>],
-        config: &RobustPredicateConfig<f64>,
         seed: u64,
         sample_budget: usize,
     ) -> Option<PeriodicWitness3d> {
@@ -1109,7 +952,7 @@ mod tests {
 
             let simplex = [expanded[i0], expanded[i1], expanded[i2], expanded[i3]];
             let test_point = expanded[it];
-            let det_result = adaptive_tolerance_insphere(&simplex, &test_point, config);
+            let det_result = adaptive_tolerance_insphere(&simplex, &test_point);
             let dist_result = predicates::insphere_distance(&simplex, test_point);
 
             if let (Ok(det), Ok(dist)) = (det_result, dist_result)
@@ -1127,11 +970,9 @@ mod tests {
     #[test]
     #[ignore = "stress test; run explicitly with --ignored"]
     fn test_periodic_3d_inconsistency_witness_search_seeded() {
-        let config = config_presets::general_triangulation::<f64>();
         let canonical_points = periodic_3d_canonical_points();
         let expanded = periodic_3d_builder_style_expansion(&canonical_points);
-        let witness =
-            find_periodic_3d_inconsistency_witness(&expanded, &config, 0x2100_0003, 200_000);
+        let witness = find_periodic_3d_inconsistency_witness(&expanded, 0x2100_0003, 200_000);
 
         if let Some((simplex, test_point, det, dist)) = witness {
             panic!(
@@ -1143,7 +984,6 @@ mod tests {
     #[test]
     fn test_robust_predicates_dimensional_coverage() {
         // Comprehensive test across dimensions 2D-5D with both valid and invalid cases
-        let config = config_presets::general_triangulation();
 
         // Test 2D - Valid triangle
         let triangle_2d = vec![
@@ -1153,11 +993,11 @@ mod tests {
         ];
         let test_2d = Point::new([0.5, 0.3]);
         assert!(
-            robust_insphere(&triangle_2d, &test_2d, &config).is_ok(),
+            robust_insphere(&triangle_2d, &test_2d).is_ok(),
             "2D insphere should work"
         );
         assert!(
-            robust_orientation(&triangle_2d, &config).is_ok(),
+            robust_orientation(&triangle_2d).is_ok(),
             "2D orientation should work"
         );
 
@@ -1170,11 +1010,11 @@ mod tests {
         ];
         let test_3d = Point::new([0.25, 0.25, 0.25]);
         assert!(
-            robust_insphere(&tetrahedron_3d, &test_3d, &config).is_ok(),
+            robust_insphere(&tetrahedron_3d, &test_3d).is_ok(),
             "3D insphere should work"
         );
         assert!(
-            robust_orientation(&tetrahedron_3d, &config).is_ok(),
+            robust_orientation(&tetrahedron_3d).is_ok(),
             "3D orientation should work"
         );
 
@@ -1188,11 +1028,11 @@ mod tests {
         ];
         let test_4d = Point::new([0.2, 0.2, 0.2, 0.2]);
         assert!(
-            robust_insphere(&simplex_4d, &test_4d, &config).is_ok(),
+            robust_insphere(&simplex_4d, &test_4d).is_ok(),
             "4D insphere should work"
         );
         assert!(
-            robust_orientation(&simplex_4d, &config).is_ok(),
+            robust_orientation(&simplex_4d).is_ok(),
             "4D orientation should work"
         );
 
@@ -1207,19 +1047,19 @@ mod tests {
         ];
         let test_5d = Point::new([0.15, 0.15, 0.15, 0.15, 0.15]);
         assert!(
-            robust_insphere(&simplex_5d, &test_5d, &config).is_ok(),
+            robust_insphere(&simplex_5d, &test_5d).is_ok(),
             "5D insphere should work"
         );
         assert!(
-            robust_orientation(&simplex_5d, &config).is_ok(),
+            robust_orientation(&simplex_5d).is_ok(),
             "5D orientation should work"
         );
 
         // Test error cases - wrong number of points for each dimension
         // 2D error case - too few points
         let too_few_2d = vec![Point::new([0.0, 0.0])];
-        let insphere_2d_err = robust_insphere(&too_few_2d, &test_2d, &config);
-        let orientation_2d_err = robust_orientation(&too_few_2d, &config);
+        let insphere_2d_err = robust_insphere(&too_few_2d, &test_2d);
+        let orientation_2d_err = robust_orientation(&too_few_2d);
         assert!(
             insphere_2d_err.is_err() || orientation_2d_err.is_err(),
             "2D should fail with 1 point"
@@ -1227,8 +1067,8 @@ mod tests {
 
         // 3D error case - too few points
         let too_few_3d = vec![Point::new([0.0, 0.0, 0.0]), Point::new([1.0, 0.0, 0.0])];
-        let insphere_3d_err = robust_insphere(&too_few_3d, &test_3d, &config);
-        let orientation_3d_err = robust_orientation(&too_few_3d, &config);
+        let insphere_3d_err = robust_insphere(&too_few_3d, &test_3d);
+        let orientation_3d_err = robust_orientation(&too_few_3d);
         assert!(
             insphere_3d_err.is_err() || orientation_3d_err.is_err(),
             "3D should fail with 2 points"
@@ -1240,20 +1080,13 @@ mod tests {
             Point::new([1.0, 0.0, 0.0, 0.0]),
             Point::new([0.0, 1.0, 0.0, 0.0]),
         ];
-        let insphere_4d_err = robust_insphere(&too_few_4d, &test_4d, &config);
+        let insphere_4d_err = robust_insphere(&too_few_4d, &test_4d);
         assert!(insphere_4d_err.is_err(), "4D should fail with 3 points");
     }
 
     #[test]
     fn test_near_degenerate_insphere_robustness() {
         // Near-degenerate configuration that exercises robust exact-sign paths.
-        let config = RobustPredicateConfig {
-            base_tolerance: 1e-12,
-            relative_tolerance_factor: 1e-15,
-            max_refinement_iterations: 1,
-            exact_arithmetic_threshold: 1e-8,
-            visibility_threshold_multiplier: 100.0,
-        };
 
         let nearly_coplanar_points = vec![
             Point::new([0.0, 0.0, 0.0]),
@@ -1264,7 +1097,7 @@ mod tests {
 
         let boundary_test_point = Point::new([0.5, 0.5, 5e-17]);
 
-        let result = robust_insphere(&nearly_coplanar_points, &boundary_test_point, &config);
+        let result = robust_insphere(&nearly_coplanar_points, &boundary_test_point);
         assert!(result.is_ok());
 
         let insphere_result = result.unwrap();
@@ -1380,13 +1213,6 @@ mod tests {
     #[test]
     fn test_tie_breaking_comprehensive() {
         // Test tie-breaking with various degenerate and extreme configurations across dimensions
-        let degenerate_config = RobustPredicateConfig {
-            base_tolerance: 1e-15_f64,
-            relative_tolerance_factor: 1e-15_f64,
-            max_refinement_iterations: 1,
-            exact_arithmetic_threshold: 1e-18_f64,
-            visibility_threshold_multiplier: 100.0,
-        };
 
         // Test 1: 2D - Degenerate triangle (nearly collinear)
         let triangle_2d = vec![
@@ -1395,7 +1221,7 @@ mod tests {
             Point::new([0.5, 1e-15]), // Nearly collinear
         ];
         let test_2d = Point::new([0.5, 1e-16]);
-        let result_2d = robust_insphere(&triangle_2d, &test_2d, &degenerate_config);
+        let result_2d = robust_insphere(&triangle_2d, &test_2d);
         assert!(result_2d.is_ok(), "2D tie-breaking should work");
 
         // Test 2: 3D - Coplanar points (forces SoS tie-breaking)
@@ -1406,7 +1232,7 @@ mod tests {
             Point::new([0.5, 0.5, 0.0]), // All z = 0
         ];
         let test_3d = Point::new([0.25, 0.25, 0.0]);
-        let result_3d = robust_insphere(&coplanar_3d, &test_3d, &degenerate_config);
+        let result_3d = robust_insphere(&coplanar_3d, &test_3d);
         assert!(
             result_3d.is_ok(),
             "3D tie-breaking should handle coplanar points"
@@ -1421,7 +1247,7 @@ mod tests {
             Point::new([1e-14, 1e-14, 1e-14, 1.0]), // Nearly in 3D subspace
         ];
         let test_4d = Point::new([0.2, 0.2, 0.2, 1e-15]);
-        let result_4d = robust_insphere(&simplex_4d, &test_4d, &degenerate_config);
+        let result_4d = robust_insphere(&simplex_4d, &test_4d);
         assert!(result_4d.is_ok(), "4D tie-breaking should work");
 
         // Test 4: 5D - Degenerate case
@@ -1434,18 +1260,17 @@ mod tests {
             Point::new([1e-12, 1e-12, 1e-12, 1e-12, 1.0]), // Nearly in 4D subspace
         ];
         let test_5d = Point::new([0.1, 0.1, 0.1, 0.1, 1e-13]);
-        let result_5d = robust_insphere(&simplex_5d, &test_5d, &degenerate_config);
+        let result_5d = robust_insphere(&simplex_5d, &test_5d);
         assert!(result_5d.is_ok(), "5D tie-breaking should work");
 
         // Test determinism - same input should give same output
-        let result_3d_repeat = robust_insphere(&coplanar_3d, &test_3d, &degenerate_config);
+        let result_3d_repeat = robust_insphere(&coplanar_3d, &test_3d);
         assert_eq!(
             result_3d, result_3d_repeat,
             "Tie-breaking should be deterministic"
         );
 
         // Test numerical extremes
-        let config = config_presets::general_triangulation::<f64>();
         let extreme_cases = [
             // Very small coordinates
             (
@@ -1472,7 +1297,7 @@ mod tests {
         ];
 
         for (simplex, test_point, description) in extreme_cases {
-            let result = robust_insphere(&simplex, &test_point, &config);
+            let result = robust_insphere(&simplex, &test_point);
             assert!(result.is_ok(), "Should handle {description}");
         }
 
@@ -1487,49 +1312,20 @@ mod tests {
         let clearly_outside = Point::new([5.0, 5.0, 5.0]);
 
         assert_eq!(
-            robust_insphere(&regular_tetrahedron, &clearly_inside, &config).unwrap(),
+            robust_insphere(&regular_tetrahedron, &clearly_inside).unwrap(),
             InSphere::INSIDE,
             "Center should be inside"
         );
         assert_eq!(
-            robust_insphere(&regular_tetrahedron, &clearly_outside, &config).unwrap(),
+            robust_insphere(&regular_tetrahedron, &clearly_outside).unwrap(),
             InSphere::OUTSIDE,
             "Far point should be outside"
         );
     }
 
     #[test]
-    fn test_config_fallback_values() {
-        // Test that config presets handle cast failures gracefully
-        // This is tricky to test directly since cast usually succeeds for standard types,
-        // but we can at least verify the configs are created successfully
-
-        let general_config = config_presets::general_triangulation::<f64>();
-        assert!(general_config.base_tolerance > 0.0);
-        assert!(general_config.relative_tolerance_factor > 0.0);
-        assert!(general_config.exact_arithmetic_threshold > 0.0);
-        assert_eq!(general_config.max_refinement_iterations, 3);
-
-        let high_precision_config = config_presets::high_precision::<f64>();
-        assert!(high_precision_config.base_tolerance > 0.0);
-        assert!(high_precision_config.base_tolerance < general_config.base_tolerance);
-        assert_eq!(high_precision_config.max_refinement_iterations, 5);
-
-        let degenerate_config = config_presets::degenerate_robust::<f64>();
-        assert!(degenerate_config.base_tolerance > 0.0);
-        assert!(degenerate_config.base_tolerance > general_config.base_tolerance);
-        assert_eq!(degenerate_config.max_refinement_iterations, 2);
-
-        // Test with f32 to exercise potentially different code paths
-        let f32_config = config_presets::general_triangulation::<f32>();
-        assert!(f32_config.base_tolerance > 0.0);
-        assert!(f32_config.relative_tolerance_factor > 0.0);
-    }
-
-    #[test]
     fn test_deterministic_tie_breaking() {
         // Test deterministic tie-breaking with identical coordinates
-        let config = config_presets::general_triangulation();
 
         // Create points where the test point has identical coordinates to a simplex point
         let identical_points = vec![
@@ -1543,7 +1339,7 @@ mod tests {
         let identical_test = Point::new([0.0, 0.0, 0.0]);
 
         // This should exercise the deterministic tie-breaking logic
-        let result = robust_insphere(&identical_points, &identical_test, &config);
+        let result = robust_insphere(&identical_points, &identical_test);
         assert!(result.is_ok());
 
         // Create a case where coordinates are lexicographically ordered
@@ -1556,12 +1352,12 @@ mod tests {
 
         // Test point that's lexicographically smaller
         let smaller_test = Point::new([0.0, 1.0, 2.0]);
-        let result_smaller = robust_insphere(&ordered_points, &smaller_test, &config);
+        let result_smaller = robust_insphere(&ordered_points, &smaller_test);
         assert!(result_smaller.is_ok());
 
         // Test point that's lexicographically larger
         let larger_test = Point::new([15.0, 16.0, 17.0]);
-        let result_larger = robust_insphere(&ordered_points, &larger_test, &config);
+        let result_larger = robust_insphere(&ordered_points, &larger_test);
         assert!(result_larger.is_ok());
     }
 
@@ -1572,13 +1368,6 @@ mod tests {
         // succeeds but consistency verification shows inconsistent result
 
         // Create a configuration with very strict tolerances that might cause issues
-        let strict_config = RobustPredicateConfig {
-            base_tolerance: 1e-20, // Extremely strict
-            relative_tolerance_factor: 1e-20,
-            max_refinement_iterations: 1,
-            exact_arithmetic_threshold: 1e-20,
-            visibility_threshold_multiplier: 100.0,
-        };
 
         // Use points that are challenging for numerical precision
         let challenging_points = vec![
@@ -1591,7 +1380,7 @@ mod tests {
         let test_point = Point::new([0.5, 0.5, 0.5]);
 
         // The function should still return a valid result even with challenging input
-        let result = robust_insphere(&challenging_points, &test_point, &strict_config);
+        let result = robust_insphere(&challenging_points, &test_point);
         assert!(result.is_ok());
 
         // Verify we get a sensible InSphere result
@@ -1607,13 +1396,6 @@ mod tests {
         // base_tolerance is no longer used internally (provable det_errbound
         // replaced the heuristic tolerance), so NaN base_tolerance no longer
         // causes an error — it is simply ignored.
-        let nan_config = RobustPredicateConfig {
-            base_tolerance: f64::NAN,
-            relative_tolerance_factor: 1e-12,
-            max_refinement_iterations: 3,
-            exact_arithmetic_threshold: 1e-10,
-            visibility_threshold_multiplier: 100.0,
-        };
 
         let points = vec![
             Point::new([0.0, 0.0, 0.0]),
@@ -1624,7 +1406,7 @@ mod tests {
 
         let test_point = Point::new([0.25, 0.25, 0.25]);
 
-        let result = robust_insphere(&points, &test_point, &nan_config);
+        let result = robust_insphere(&points, &test_point);
         assert!(
             result.is_ok(),
             "NaN base_tolerance should be accepted since it is unused internally"
@@ -1638,11 +1420,10 @@ mod tests {
             Point::new([1e8, 1e-12, 1e4]),
         ];
 
-        let normal_config = config_presets::general_triangulation::<f64>();
         let ill_test_point = Point::new([1e-10, 1e10, 1e-5]);
 
         // Should still get a result even with ill-conditioned input
-        let ill_result = robust_insphere(&ill_conditioned_points, &ill_test_point, &normal_config);
+        let ill_result = robust_insphere(&ill_conditioned_points, &ill_test_point);
         assert!(ill_result.is_ok());
     }
 
@@ -1758,27 +1539,16 @@ mod tests {
             Point::new([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
             Point::new([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
         ];
-        let config = config_presets::general_triangulation::<f64>();
 
         // Exactly cospherical point: (1,1,0,…,0) lies on the circumsphere
         // of the standard 6-simplex (circumcenter = (1/2,…,1/2),
         // circumradius² = 3/2, |(1,1,0,…,0) - c|² = 3/2).
         // insphere_distance returns BOUNDARY, forcing the SoS path.
         let cospherical = Point::new([1.0, 1.0, 0.0, 0.0, 0.0, 0.0]);
-        let result = robust_insphere(&simplex, &cospherical, &config).unwrap();
+        let result = robust_insphere(&simplex, &cospherical).unwrap();
         assert!(
             result == InSphere::INSIDE || result == InSphere::OUTSIDE,
             "SoS fallback must resolve BOUNDARY to INSIDE or OUTSIDE, got {result:?}"
-        );
-    }
-
-    #[test]
-    fn test_config_preset_high_precision() {
-        let config = config_presets::high_precision::<f64>();
-        assert_eq!(config.max_refinement_iterations, 5);
-        assert!(
-            config.base_tolerance < f64::default_tolerance(),
-            "high_precision base_tolerance should be stricter than default"
         );
     }
 }

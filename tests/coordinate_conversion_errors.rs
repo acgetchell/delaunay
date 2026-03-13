@@ -209,11 +209,10 @@ fn test_robust_insphere_with_nan() {
         Point::new([f64::NAN, 0.5, 0.5]), // Point with NaN
     ];
     let test_point = Point::new([0.5, 0.5, 0.5]);
-    let config = config_presets::general_triangulation();
 
     // The robust function might use different strategies that don't immediately hit the safe conversion
     // The function might return an error due to NaN coordinate, or it might handle it differently
-    let result = robust_insphere(&points, &test_point, &config);
+    let result = robust_insphere(&points, &test_point);
 
     match result {
         Err(CoordinateConversionError::NonFiniteValue { .. }) => {
@@ -242,11 +241,10 @@ fn test_robust_insphere_with_infinity() {
         Point::new([f64::NEG_INFINITY, 0.5, 0.5]), // Point with negative infinity
     ];
     let test_point = Point::new([0.5, 0.5, 0.5]);
-    let config = config_presets::general_triangulation();
 
     // The robust function might use different strategies that don't immediately hit the safe conversion
     // The function might return an error due to infinity coordinate, or it might handle it differently
-    let result = robust_insphere(&points, &test_point, &config);
+    let result = robust_insphere(&points, &test_point);
 
     match result {
         Err(CoordinateConversionError::NonFiniteValue { .. }) => {

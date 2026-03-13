@@ -46,7 +46,7 @@ use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
-use crate::geometry::robust_predicates::{config_presets, robust_orientation};
+use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::{CoordinateScalar, ScalarSummable};
 use slotmap::Key;
 use std::collections::VecDeque;
@@ -338,9 +338,8 @@ where
                 message: format!("orientation failed for flip cell: {e}"),
             })?;
         let orientation_sign = if orientation == 0 {
-            let config = config_presets::high_precision::<K::Scalar>();
             let robust_orientation =
-                robust_orientation(&points, &config).map_err(|e| FlipError::PredicateFailure {
+                robust_orientation(&points).map_err(|e| FlipError::PredicateFailure {
                     message: format!("robust orientation failed for flip cell: {e}"),
                 })?;
             if matches!(robust_orientation, Orientation::DEGENERATE) {
@@ -1878,9 +1877,8 @@ where
                 message: format!("orientation failed for k=2 postcondition: {e}"),
             })?;
         if orientation == 0 {
-            let config = config_presets::high_precision::<K::Scalar>();
             let robust_orientation =
-                robust_orientation(&points, &config).map_err(|e| FlipError::PredicateFailure {
+                robust_orientation(&points).map_err(|e| FlipError::PredicateFailure {
                     message: format!("robust orientation failed for k=2 postcondition: {e}"),
                 })?;
             if matches!(robust_orientation, Orientation::DEGENERATE) {

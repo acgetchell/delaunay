@@ -25,9 +25,7 @@
 use crate::geometry::matrix::{matrix_get, matrix_set, matrix_zero_like};
 use crate::geometry::point::Point;
 use crate::geometry::predicates::{InSphere, Orientation, insphere_lifted, simplex_orientation};
-use crate::geometry::robust_predicates::{
-    RobustPredicateConfig, config_presets, robust_insphere, robust_orientation,
-};
+use crate::geometry::robust_predicates::{robust_insphere, robust_orientation};
 use crate::geometry::sos::exact_det_sign;
 use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar, ScalarSummable,
@@ -294,15 +292,14 @@ where
     }
 }
 
-/// Robust exact-arithmetic kernel with configurable tolerance.
+/// Robust exact-arithmetic kernel.
 ///
-/// Uses adaptive tolerance predicates backed by exact Bareiss arithmetic.
-/// Slower than [`FastKernel`] but provides configurable numerical stability.
+/// Uses exact Bareiss arithmetic backed by provable error bounds.
+/// Slower than [`FastKernel`] but provides robust numerical stability.
 ///
 /// # When to use `RobustKernel` over [`AdaptiveKernel`]
 ///
 /// Prefer `RobustKernel` when you need:
-/// - **Tolerance tuning** for noisy input data (via [`RobustPredicateConfig`])
 /// - **Explicit degeneracy signals** — returns `DEGENERATE`/`BOUNDARY` (`0`)
 ///   instead of forcing a decision, useful when your application needs to
 ///   detect and handle cospherical or coplanar configurations directly
@@ -313,20 +310,6 @@ where
 /// default: zero configuration, provable error bounds, and `SoS`
 /// tie-breaking on insphere eliminates `BOUNDARY` ambiguity.
 ///
-/// # Robustness Features
-///
-/// - **Adaptive tolerance**: Scales with coordinate magnitude
-/// - **Configurable**: Supports multiple precision levels via [`RobustPredicateConfig`]
-/// - **Exact fallback**: Bareiss algorithm in `BigRational` for ambiguous cases
-///
-/// # Performance
-///
-/// Typically 2-3x slower than `FastKernel` due to additional robustness checks,
-/// but essential for:
-/// - Nearly-degenerate point configurations
-/// - High-precision applications
-/// - Safety-critical computations
-///
 /// # Examples
 ///
 /// ```
@@ -334,10 +317,8 @@ where
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
 ///
-/// // Create with default configuration
 /// let kernel = RobustKernel::<f64>::new();
 ///
-/// // Test with a 3D tetrahedron
 /// let points = [
 ///     Point::new([0.0, 0.0, 0.0]),
 ///     Point::new([1.0, 0.0, 0.0]),
@@ -348,27 +329,17 @@ where
 /// let orientation = kernel.orientation(&points).unwrap();
 /// assert!(orientation != 0); // Non-degenerate
 ///
-/// // Test insphere with high-precision config
-/// use delaunay::geometry::robust_predicates::config_presets;
-/// let precise_kernel = RobustKernel::with_config(
-///     config_presets::high_precision::<f64>()
-/// );
-///
 /// let test_point = Point::new([0.25, 0.25, 0.25]);
-/// let result = precise_kernel.in_sphere(&points, &test_point).unwrap();
+/// let result = kernel.in_sphere(&points, &test_point).unwrap();
 /// assert_eq!(result, 1); // Inside circumsphere
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct RobustKernel<T: CoordinateScalar> {
-    config: RobustPredicateConfig<T>,
     _phantom: PhantomData<T>,
 }
 
 impl<T: CoordinateScalar> RobustKernel<T> {
-    /// Create a new robust kernel with general triangulation configuration.
-    ///
-    /// This uses [`config_presets::general_triangulation`] which provides
-    /// balanced robustness suitable for most applications.
+    /// Create a new robust kernel.
     ///
     /// # Examples
     ///
@@ -378,46 +349,10 @@ impl<T: CoordinateScalar> RobustKernel<T> {
     /// let kernel = RobustKernel::<f64>::new();
     /// ```
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
-            config: config_presets::general_triangulation(),
             _phantom: PhantomData,
         }
-    }
-
-    /// Create a robust kernel with a custom configuration.
-    ///
-    /// Use [`config_presets`] to access predefined configurations for
-    /// different precision levels and use cases.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use delaunay::geometry::kernel::RobustKernel;
-    /// use delaunay::geometry::robust_predicates::config_presets;
-    ///
-    /// // High-precision configuration
-    /// let kernel = RobustKernel::with_config(
-    ///     config_presets::high_precision::<f64>()
-    /// );
-    ///
-    /// // Degenerate-robust configuration
-    /// let kernel = RobustKernel::with_config(
-    ///     config_presets::degenerate_robust::<f64>()
-    /// );
-    /// ```
-    #[must_use]
-    pub const fn with_config(config: RobustPredicateConfig<T>) -> Self {
-        Self {
-            config,
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<T: CoordinateScalar> Default for RobustKernel<T> {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -431,7 +366,7 @@ where
         &self,
         points: &[Point<Self::Scalar, D>],
     ) -> Result<i32, CoordinateConversionError> {
-        let result = robust_orientation(points, &self.config)?;
+        let result = robust_orientation(points)?;
         Ok(match result {
             Orientation::NEGATIVE => -1,
             Orientation::DEGENERATE => 0,
@@ -444,7 +379,7 @@ where
         simplex_points: &[Point<Self::Scalar, D>],
         test_point: &Point<Self::Scalar, D>,
     ) -> Result<i32, CoordinateConversionError> {
-        let result = robust_insphere(simplex_points, test_point, &self.config)?;
+        let result = robust_insphere(simplex_points, test_point)?;
         Ok(match result {
             InSphere::OUTSIDE => -1,
             InSphere::BOUNDARY => 0,
@@ -799,22 +734,6 @@ mod tests {
     gen_standard_kernel_tests!(3, robust, RobustKernel::<f64>::new());
     gen_standard_kernel_tests!(4, robust, RobustKernel::<f64>::new());
     gen_standard_kernel_tests!(5, robust, RobustKernel::<f64>::new());
-
-    #[test]
-    fn test_robust_kernel_with_custom_config() {
-        let config = config_presets::high_precision();
-        let kernel = RobustKernel::<f64>::with_config(config);
-
-        let points = [
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-        ];
-
-        let orientation = kernel.orientation(&points).unwrap();
-        assert!(orientation != 0); // Should be non-degenerate
-    }
 
     // =========================================================================
     // NON-MACRO — EDGE CASES AND SPECIAL CONFIGURATIONS
