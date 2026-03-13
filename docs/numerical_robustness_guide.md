@@ -119,7 +119,7 @@ You can also run repair manually:
 After construction (or repair), verify the Delaunay property via `dt.is_valid()`
 (which uses local flip predicates).
 
-For full stack diagnostics (Levels 1-4), use `dt.validate()` or `dt.validation_report()`;
+For full-stack diagnostics (Levels 1-4), use `dt.validate()` or `dt.validation_report()`;
 see `docs/validation.md`.
 
 ### Exact circumcenter computation (v0.7.3+)

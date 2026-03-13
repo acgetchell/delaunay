@@ -1017,9 +1017,15 @@ fn debug_large_scale_3d_incremental_prefix_bisect() {
 /// unrelated PL-manifold validation (negative-orientation cells are a separate
 /// issue tracked independently).
 ///
-/// Gated behind `slow-tests` because 1000-point 3D construction takes >10s.
+/// Gated behind `slow-tests` and `#[ignore]` because 1000-point 3D
+/// construction takes minutes in debug mode, exceeding CI timeout.
+/// Run manually with:
+/// ```bash
+/// cargo test --test large_scale_debug --features slow-tests regression_issue_228 -- --ignored --nocapture
+/// ```
 #[cfg(feature = "slow-tests")]
 #[test]
+#[ignore = "1000-point 3D construction exceeds CI timeout (~30min debug)"]
 fn regression_issue_228_3d_1000_flip_repair_convergence() {
     use delaunay::core::triangulation::TopologyGuarantee;
 
@@ -1028,12 +1034,11 @@ fn regression_issue_228_3d_1000_flip_repair_convergence() {
         .expect("point generation should succeed");
     let vertices: Vec<Vertex<f64, (), 3>> = points.into_iter().map(|p| vertex!(p)).collect();
 
-    // Use Pseudomanifold to skip PL-manifold orientation validation (separate issue).
-    // This isolates the test to the Delaunay property: flip-repair convergence.
-    let kernel = RobustKernel::<f64>::new();
-    let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
-        DelaunayTriangulation::with_topology_guarantee(
-            &kernel,
+    // Use the default kernel (AdaptiveKernel — exact+SoS predicates) to match the
+    // actual regression scenario.  Use Pseudomanifold to skip PL-manifold orientation
+    // validation (separate issue).
+    let dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::Pseudomanifold,
         )
