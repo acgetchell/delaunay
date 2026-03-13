@@ -82,6 +82,14 @@ macro_rules! gen_sos_tests {
                             Point::new(coords)
                         })
                         .collect();
+                    // In 2D only one coordinate varies (the last is forced
+                    // to 0), so collisions are likely.  SoS requires
+                    // distinct points — skip inputs with duplicates.
+                    let all_distinct = (0..points.len()).all(|i|
+                        ((i + 1)..points.len()).all(|j|
+                            points[i].coords() != points[j].coords()));
+                    prop_assume!(all_distinct);
+
                     let sign = sos_orientation_sign(&points).unwrap();
                     prop_assert!(sign == 1 || sign == -1,
                         "SoS orientation must return ±1 in {}D, got {}", $dim, sign);
@@ -104,6 +112,11 @@ macro_rules! gen_sos_tests {
                             Point::new(coords)
                         })
                         .collect();
+                    let all_distinct = (0..points.len()).all(|i|
+                        ((i + 1)..points.len()).all(|j|
+                            points[i].coords() != points[j].coords()));
+                    prop_assume!(all_distinct);
+
                     let s1 = sos_orientation_sign(&points).unwrap();
                     let s2 = sos_orientation_sign(&points).unwrap();
                     prop_assert_eq!(s1, s2, "SoS must be deterministic in {}D", $dim);
@@ -134,6 +147,11 @@ macro_rules! gen_sos_tests {
                             Point::new(coords)
                         })
                         .collect();
+                    let all_distinct = (0..points.len()).all(|i|
+                        ((i + 1)..points.len()).all(|j|
+                            points[i].coords() != points[j].coords()));
+                    prop_assume!(all_distinct);
+
                     let s1 = sos_orientation_sign(&points).unwrap();
                     let translated: Vec<Point<f64, $dim>> = points
                         .iter()

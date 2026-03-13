@@ -5074,6 +5074,7 @@ mod tests {
     use crate::core::collections::Uuid;
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
     use crate::geometry::kernel::{FastKernel, RobustKernel};
+    use crate::geometry::traits::coordinate::Coordinate;
     use crate::vertex;
     use rand::{RngExt, SeedableRng, rngs::StdRng};
 
@@ -6572,6 +6573,18 @@ mod tests {
         let _info = apply_bistellar_flip_k2(&mut tds, &kernel, &context).unwrap();
 
         assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_resolve_zero_orientation_degenerate_returns_zero() {
+        // Collinear points: robust_orientation → DEGENERATE → 0.
+        let points = [
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([2.0, 0.0]),
+        ];
+        let sign = resolve_zero_orientation(&points, "collinear test").unwrap();
+        assert_eq!(sign, 0, "collinear points must give DEGENERATE (0)");
     }
 
     /// Exercises the `orientation == 0` fallback in `apply_bistellar_flip`
