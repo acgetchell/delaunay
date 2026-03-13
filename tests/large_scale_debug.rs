@@ -1045,6 +1045,10 @@ fn regression_issue_228_3d_1000_flip_repair_convergence() {
         .expect("construction must not fail (#228 regression)");
 
     assert!(
+        dt.as_triangulation().validate().is_ok(),
+        "Topology validation (L1-L3) must pass (#228 regression, seed=0x{seed:X})"
+    );
+    assert!(
         dt.is_delaunay_via_flips().is_ok(),
         "Delaunay property must hold (#228 regression, seed=0x{seed:X})"
     );
