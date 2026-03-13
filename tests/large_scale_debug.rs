@@ -1013,9 +1013,9 @@ fn debug_large_scale_3d_incremental_prefix_bisect() {
 /// This test uses the exact seed that reproduced the original failure:
 /// `seed_for_case::<3>(42, 1000)` with ball distribution (radius=100).
 ///
-/// Uses `Pseudomanifold` topology to isolate the Delaunay property check from
-/// unrelated PL-manifold validation (negative-orientation cells are a separate
-/// issue tracked independently).
+/// Uses `PLManifold` topology for full PL-manifold validation including
+/// geometric cell orientation (#258 fixed the negative-orientation gap that
+/// previously required the `Pseudomanifold` workaround).
 ///
 /// Gated behind `slow-tests` and `#[ignore]` because 1000-point 3D
 /// construction takes minutes in debug mode, exceeding CI timeout.
@@ -1035,12 +1035,12 @@ fn regression_issue_228_3d_1000_flip_repair_convergence() {
     let vertices: Vec<Vertex<f64, (), 3>> = points.into_iter().map(|p| vertex!(p)).collect();
 
     // Use the default kernel (AdaptiveKernel — exact+SoS predicates) to match the
-    // actual regression scenario.  Use Pseudomanifold to skip PL-manifold orientation
-    // validation (separate issue).
+    // actual regression scenario.  PLManifold enables full orientation validation
+    // now that #258 is fixed.
     let dt: DelaunayTriangulation<_, (), (), 3> =
         DelaunayTriangulation::new_with_topology_guarantee(
             &vertices,
-            TopologyGuarantee::Pseudomanifold,
+            TopologyGuarantee::PLManifold,
         )
         .expect("construction must not fail (#228 regression)");
 

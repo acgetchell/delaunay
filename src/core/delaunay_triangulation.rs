@@ -3371,6 +3371,17 @@ where
             }
         }
 
+        // Flip-based repair calls normalize_coherent_orientation() which makes all cells
+        // combinatorially coherent but can leave the global sign negative.  Re-canonicalize
+        // geometric orientation to positive before validation (#258).
+        self.tri
+            .normalize_and_promote_positive_orientation()
+            .map_err(|e| TriangulationConstructionError::GeometricDegeneracy {
+                message: format!(
+                    "Failed to canonicalize orientation after post-construction repair: {e}",
+                ),
+            })?;
+
         if topology.requires_vertex_links_at_completion() {
             tracing::debug!("post-construction: starting topology validation (finalize)");
             let validation_started = Instant::now();
