@@ -88,7 +88,7 @@ where
 {
     #[cfg(debug_assertions)]
     if std::env::var_os("DELAUNAY_DEBUG_UNUSED_IMPORTS").is_some() {
-        eprintln!(
+        tracing::debug!(
             "circumsphere::circumcenter called (points_len={}, D={})",
             points.len(),
             D
@@ -143,25 +143,30 @@ where
 
     // Solve for x, then C = x0 + 1/2 * x.
     //
-    // Use la-stack's default absolute pivot tolerance first, but fall back to a zero
-    // tolerance (exact singular detection) for extremely scaled-but-invertible systems.
-    let lu = match a.lu(DEFAULT_PIVOT_TOL) {
-        Ok(lu) => lu,
+    // Fast path: LU factorization with la-stack's default pivot tolerance.
+    // Exact fallback: when LU rejects the matrix as near-singular, use
+    // `solve_exact_f64` (BigRational Gaussian elimination) for a provably
+    // correct result.  This replaces the old `lu(0.0)` zero-tolerance
+    // fallback, which could silently accept truly singular matrices.
+    let b_vec = LaVector::<D>::new(b_arr);
+    let x = match a.lu(DEFAULT_PIVOT_TOL) {
+        Ok(lu) => lu
+            .solve_vec(b_vec)
+            .map_err(|e| CircumcenterError::MatrixInversionFailed {
+                details: format!("LU solve failed: {e}"),
+            })?
+            .into_array(),
         Err(LaError::Singular { .. }) => {
-            // Debugging hook: the fallback typically indicates an extremely scaled-but-invertible
-            // system that tripped `DEFAULT_PIVOT_TOL`. Enable this message in debug builds via:
-            //   DELAUNAY_DEBUG_LU_FALLBACK=1
             #[cfg(debug_assertions)]
             if std::env::var_os("DELAUNAY_DEBUG_LU_FALLBACK").is_some() {
-                eprintln!(
-                    "circumcenter<{D}>: LU factorization fell back to zero pivot tolerance (DEFAULT_PIVOT_TOL={DEFAULT_PIVOT_TOL})",
-                );
+                tracing::debug!("circumcenter<{D}>: LU near-singular, using solve_exact_f64");
             }
 
-            a.lu(0.0)
+            a.solve_exact_f64(b_vec)
                 .map_err(|e| CircumcenterError::MatrixInversionFailed {
-                    details: format!("LU factorization failed: {e}"),
+                    details: format!("exact circumcenter solve failed: {e}"),
                 })?
+                .into_array()
         }
         Err(e) => {
             return Err(CircumcenterError::MatrixInversionFailed {
@@ -169,13 +174,6 @@ where
             });
         }
     };
-
-    let x = lu
-        .solve_vec(LaVector::<D>::new(b_arr))
-        .map_err(|e| CircumcenterError::MatrixInversionFailed {
-            details: format!("LU solve failed: {e}"),
-        })?
-        .into_array();
 
     // Use safe coordinate conversion for solution and add back the first point
     let mut circumcenter_coords = [T::zero(); D];
@@ -791,5 +789,75 @@ mod tests {
             result,
             Err(CircumcenterError::MatrixInversionFailed { .. })
         ));
+    }
+
+    #[test]
+    fn test_circumcenter_exact_fallback_near_singular_3d() {
+        // Near-degenerate tetrahedron: three vertices nearly coplanar with a
+        // tiny perturbation off the plane.  The resulting linear system is
+        // ill-conditioned enough to trip DEFAULT_PIVOT_TOL, exercising the
+        // solve_exact_f64 fallback path.
+        let eps = 1e-14; // Perturbation small enough to make LU reject
+        let points: Vec<Point<f64, 3>> = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.5, 0.5, eps]), // Barely off the z=0 plane
+        ];
+
+        let result = circumcenter(&points);
+        // The exact solver should succeed where LU alone would fail or
+        // produce inaccurate results.
+        let center = result.expect("exact fallback should handle near-singular system");
+        let center_coords = center.coords();
+
+        // All coordinates must be finite
+        assert!(
+            center_coords.iter().all(|&x| x.is_finite()),
+            "Circumcenter coordinates should be finite"
+        );
+
+        // Verify equidistance: all vertices should be the same distance
+        // from the circumcenter.
+        let distances: Vec<f64> = points
+            .iter()
+            .map(|p| {
+                let diff = [
+                    p.coords()[0] - center_coords[0],
+                    p.coords()[1] - center_coords[1],
+                    p.coords()[2] - center_coords[2],
+                ];
+                hypot(&diff)
+            })
+            .collect();
+
+        for i in 1..distances.len() {
+            assert_relative_eq!(distances[0], distances[i], epsilon = 1e-6);
+        }
+    }
+
+    #[test]
+    fn test_circumcenter_exact_fallback_near_singular_2d() {
+        // Near-degenerate triangle: two vertices very close together.
+        // The system matrix has a row with tiny entries, likely tripping
+        // DEFAULT_PIVOT_TOL.
+        let eps = 1e-15;
+        let points: Vec<Point<f64, 2>> = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.5, eps]), // Nearly collinear
+        ];
+
+        let result = circumcenter(&points);
+        let center = result.expect("exact fallback should handle near-singular 2D system");
+        let center_coords = center.coords();
+
+        assert!(
+            center_coords.iter().all(|&x| x.is_finite()),
+            "Circumcenter coordinates should be finite"
+        );
+
+        // x-coordinate should be near 0.5 (midpoint of base edge)
+        assert_relative_eq!(center_coords[0], 0.5, epsilon = 1e-6);
     }
 }
