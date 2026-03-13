@@ -199,7 +199,6 @@ fn test_hypot_with_infinity_values() {
 // =============================================================================
 
 #[test]
-#[expect(clippy::match_same_arms)]
 fn test_robust_insphere_with_nan() {
     // Test robust insphere with NaN coordinates
     let points = vec![
@@ -210,28 +209,17 @@ fn test_robust_insphere_with_nan() {
     ];
     let test_point = Point::new([0.5, 0.5, 0.5]);
 
-    // The robust function might use different strategies that don't immediately hit the safe conversion
-    // The function might return an error due to NaN coordinate, or it might handle it differently
     let result = robust_insphere(&points, &test_point);
-
-    match result {
-        Err(CoordinateConversionError::NonFiniteValue { .. }) => {
-            // Expected error type
-        }
-        // The robust predicates might also handle NaN differently, so we accept any result
-        // that doesn't cause a panic
-        Ok(_) => {
-            // The robust predicates might have fallback strategies that don't error
-            // This is acceptable as long as it doesn't panic
-        }
-        Err(_other_error) => {
-            // Other errors are also acceptable as they indicate proper error handling
-        }
-    }
+    assert!(
+        matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ),
+        "Expected CoordinateConversionError::NonFiniteValue, got: {result:?}"
+    );
 }
 
 #[test]
-#[expect(clippy::match_same_arms)]
 fn test_robust_insphere_with_infinity() {
     // Test robust insphere with infinity coordinates
     let points = vec![
@@ -242,24 +230,14 @@ fn test_robust_insphere_with_infinity() {
     ];
     let test_point = Point::new([0.5, 0.5, 0.5]);
 
-    // The robust function might use different strategies that don't immediately hit the safe conversion
-    // The function might return an error due to infinity coordinate, or it might handle it differently
     let result = robust_insphere(&points, &test_point);
-
-    match result {
-        Err(CoordinateConversionError::NonFiniteValue { .. }) => {
-            // Expected error type
-        }
-        // The robust predicates might also handle infinity differently, so we accept any result
-        // that doesn't cause a panic
-        Ok(_) => {
-            // The robust predicates might have fallback strategies that don't error
-            // This is acceptable as long as it doesn't panic
-        }
-        Err(_other_error) => {
-            // Other errors are also acceptable as they indicate proper error handling
-        }
-    }
+    assert!(
+        matches!(
+            result,
+            Err(CoordinateConversionError::NonFiniteValue { .. })
+        ),
+        "Expected CoordinateConversionError::NonFiniteValue, got: {result:?}"
+    );
 }
 
 // =============================================================================
