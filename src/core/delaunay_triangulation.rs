@@ -3376,7 +3376,7 @@ where
         // geometric orientation to positive before validation (#258).
         self.tri
             .normalize_and_promote_positive_orientation()
-            .map_err(|ref e| Self::map_orientation_canonicalization_error(e))?;
+            .map_err(Self::map_orientation_canonicalization_error)?;
 
         if topology.requires_vertex_links_at_completion() {
             tracing::debug!("post-construction: starting topology validation (finalize)");
@@ -3411,31 +3411,37 @@ where
     /// When adding new variants, decide whether the failure mode is an internal
     /// bug or an input-geometry problem.
     fn map_orientation_canonicalization_error(
-        error: &InsertionError,
+        error: InsertionError,
     ) -> TriangulationConstructionError {
-        let context =
-            format!("Failed to canonicalize orientation after post-construction repair: {error}");
         match error {
             // Construction already wraps a TriangulationConstructionError — preserve it
-            // rather than rewrapping, mirroring map_insertion_error.
-            InsertionError::Construction(source) => source.clone(),
+            // directly rather than rewrapping, mirroring map_insertion_error.
+            InsertionError::Construction(source) => source,
             // Structural / data-structure errors indicate algorithmic bugs,
             // not input-geometry problems.
-            InsertionError::TopologyValidation(_)
+            error @ (InsertionError::TopologyValidation(_)
             | InsertionError::TopologyValidationFailed { .. }
             | InsertionError::CavityFilling { .. }
             | InsertionError::NeighborWiring { .. }
-            | InsertionError::DuplicateUuid { .. } => {
-                TriangulationConstructionError::InternalInconsistency { message: context }
+            | InsertionError::DuplicateUuid { .. }) => {
+                TriangulationConstructionError::InternalInconsistency {
+                    message: format!(
+                        "Failed to canonicalize orientation after post-construction repair: {error}"
+                    ),
+                }
             }
             // Geometry-related failures (degenerate input, predicate issues).
-            InsertionError::ConflictRegion(_)
+            error @ (InsertionError::ConflictRegion(_)
             | InsertionError::Location(_)
             | InsertionError::NonManifoldTopology { .. }
             | InsertionError::HullExtension { .. }
             | InsertionError::DelaunayValidationFailed { .. }
-            | InsertionError::DuplicateCoordinates { .. } => {
-                TriangulationConstructionError::GeometricDegeneracy { message: context }
+            | InsertionError::DuplicateCoordinates { .. }) => {
+                TriangulationConstructionError::GeometricDegeneracy {
+                    message: format!(
+                        "Failed to canonicalize orientation after post-construction repair: {error}"
+                    ),
+                }
             }
         }
     }
@@ -7862,7 +7868,7 @@ mod tests {
                 message: "missing cell".to_string(),
             });
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(&error);
+            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(
             matches!(
                 mapped,
@@ -7884,7 +7890,7 @@ mod tests {
                 message: "test".to_string(),
             });
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(&error);
+            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(
             matches!(
                 mapped,
@@ -7905,7 +7911,7 @@ mod tests {
             )),
         };
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(&error);
+            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(
             matches!(
                 mapped,
@@ -7921,7 +7927,7 @@ mod tests {
             message: "test".to_string(),
         };
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(&error);
+            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(matches!(
             mapped,
             TriangulationConstructionError::InternalInconsistency { .. }
@@ -7934,7 +7940,7 @@ mod tests {
             message: "test".to_string(),
         };
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(&error);
+            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(matches!(
             mapped,
             TriangulationConstructionError::InternalInconsistency { .. }
@@ -7948,7 +7954,7 @@ mod tests {
             uuid: Uuid::nil(),
         };
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(&error);
+            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(matches!(
             mapped,
             TriangulationConstructionError::InternalInconsistency { .. }
@@ -7958,8 +7964,10 @@ mod tests {
     #[test]
     fn test_map_orientation_canonicalization_error_geometry_variants_are_degeneracy() {
         use crate::core::algorithms::incremental_insertion::HullExtensionReason;
+        use crate::core::algorithms::locate::LocateError;
 
         let geometry_errors: Vec<InsertionError> = vec![
+            InsertionError::Location(LocateError::EmptyTriangulation),
             InsertionError::NonManifoldTopology {
                 facet_hash: 0,
                 cell_count: 3,
@@ -7974,7 +7982,7 @@ mod tests {
                 coordinates: "[0,0,0]".to_string(),
             },
         ];
-        for error in &geometry_errors {
+        for error in geometry_errors {
             let label = format!("{error}");
             let mapped =
                 DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
@@ -8087,6 +8095,7 @@ mod tests {
     #[test]
     fn test_map_insertion_error_geometry_variants_are_degeneracy() {
         use crate::core::algorithms::incremental_insertion::HullExtensionReason;
+        use crate::core::algorithms::locate::LocateError;
 
         let geometry_errors: Vec<InsertionError> = vec![
             InsertionError::ConflictRegion(
@@ -8096,6 +8105,7 @@ mod tests {
                     open_cell: CellKey::from(slotmap::KeyData::from_ffi(1)),
                 },
             ),
+            InsertionError::Location(LocateError::EmptyTriangulation),
             InsertionError::NonManifoldTopology {
                 facet_hash: 0,
                 cell_count: 3,
