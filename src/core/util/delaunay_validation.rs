@@ -78,7 +78,6 @@ fn validate_cell_delaunay<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cell_key: CellKey,
     cell_vertex_points: &mut SmallVec<[Point<T, D>; 8]>,
-    config: &crate::geometry::robust_predicates::RobustPredicateConfig<T>,
 ) -> Result<Option<CellKey>, DelaunayValidationError>
 where
     T: ScalarAccumulative,
@@ -118,7 +117,7 @@ where
         }
 
         // Test if this vertex is inside the cell's circumsphere using ROBUST predicates
-        match robust_insphere(cell_vertex_points, test_vertex.point(), config) {
+        match robust_insphere(cell_vertex_points, test_vertex.point()) {
             Ok(InSphere::INSIDE) => {
                 // For D≥4: check for the both_positive_artifact before reporting a violation.
                 //
@@ -186,7 +185,7 @@ where
                             //    predicate would attempt a flip but every flip just cycles
                             //    the sign; suppressing here is consistent.
                             if matches!(
-                                robust_insphere(&b_points, apex_a_v.point(), config),
+                                robust_insphere(&b_points, apex_a_v.point()),
                                 Ok(InSphere::INSIDE | InSphere::BOUNDARY)
                             ) {
                                 break 'artifact true;
@@ -231,16 +230,13 @@ where
     U: DataType,
     V: DataType,
 {
-    // Use robust predicates configuration for reliability
-    let config = crate::geometry::robust_predicates::config_presets::general_triangulation::<T>();
-
     // Reusable buffer to minimize allocations
     let mut cell_vertex_points: SmallVec<[Point<T, D>; 8]> = SmallVec::with_capacity(D + 1);
 
     // Check each cell using the shared validation helper
     for cell_key in tds.cell_keys() {
         if let Some(violating_cell) =
-            validate_cell_delaunay(tds, cell_key, &mut cell_vertex_points, &config)?
+            validate_cell_delaunay(tds, cell_key, &mut cell_vertex_points)?
         {
             return Err(DelaunayValidationError::DelaunayViolation {
                 cell_key: violating_cell,
@@ -309,9 +305,6 @@ where
     let mut violating_cells = ViolationBuffer::new();
     let mut cell_vertex_points: SmallVec<[Point<T, D>; 8]> = SmallVec::with_capacity(D + 1);
 
-    // Use robust predicates configuration for reliability
-    let config = crate::geometry::robust_predicates::config_presets::general_triangulation::<T>();
-
     #[cfg(any(test, debug_assertions))]
     if let Some(keys) = cells_to_check {
         tracing::debug!(
@@ -333,7 +326,7 @@ where
         }
 
         if let Some(violating_cell) =
-            validate_cell_delaunay(tds, cell_key, &mut cell_vertex_points, &config)?
+            validate_cell_delaunay(tds, cell_key, &mut cell_vertex_points)?
         {
             violating_cells.push(violating_cell);
         }
@@ -399,8 +392,6 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
     U: DataType,
     V: DataType,
 {
-    use crate::geometry::robust_predicates::config_presets;
-
     // First, find violating cells using the standard helper.
     let violations = match find_delaunay_violations(tds, cells_subset) {
         Ok(v) => v,
@@ -506,7 +497,6 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
         return;
     }
 
-    let config = config_presets::general_triangulation::<T>();
     let mut offending: Option<(VertexKey, Point<T, D>)> = None;
 
     for (test_vkey, test_vertex) in tds.vertices() {
@@ -514,7 +504,7 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
             continue;
         }
 
-        match robust_insphere(&cell_vertex_points, test_vertex.point(), &config) {
+        match robust_insphere(&cell_vertex_points, test_vertex.point()) {
             Ok(InSphere::INSIDE) => {
                 offending = Some((test_vkey, *test_vertex.point()));
                 break;

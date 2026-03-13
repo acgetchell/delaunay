@@ -45,18 +45,24 @@ Most users won't call these functions directly; instead, select a kernel.
 
 Kernels control which predicate implementations are used by the triangulation algorithms:
 
-- `FastKernel<T>`: standard floating-point predicates (default; fastest).
-- `RobustKernel<T>`: robust predicates with configurable presets (slower, but more stable).
+- `AdaptiveKernel<T>` **(default)**: provably correct predicates with zero configuration.
+  Uses exact arithmetic (fast filter + Bareiss) for orientation, and adds Simulation of
+  Simplicity (`SoS`) for insphere so cospherical ties are broken deterministically (every
+  insphere query returns ±1, never 0/BOUNDARY). Best choice for Delaunay triangulation.
+- `RobustKernel<T>`: exact-arithmetic predicates that preserve explicit
+  `BOUNDARY`/`DEGENERATE` signals and run diagnostic consistency checks. Prefer this when
+  your application needs to detect cospherical/coplanar configurations directly.
+- `FastKernel<T>`: raw f64 arithmetic, no robustness guarantees. Only suitable for 2D with
+  well-conditioned input.
 
-`RobustKernel::new()` uses the balanced preset `config_presets::general_triangulation()`.
-You can pick other presets via `RobustKernel::with_config(...)`.
+The convenience constructors (`DelaunayTriangulation::new()`, `::empty()`, etc.) use
+`AdaptiveKernel`. To opt into a different kernel, use the explicit-kernel constructors:
 
 ```rust
 use delaunay::geometry::kernel::RobustKernel;
-use delaunay::geometry::robust_predicates::config_presets;
 use delaunay::prelude::triangulation::*;
 
-let kernel = RobustKernel::with_config(config_presets::degenerate_robust::<f64>());
+let kernel = RobustKernel::<f64>::new();
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),
@@ -132,10 +138,12 @@ fallback which could fail on degenerate simplices.
 
 ## Practical recommendations
 
-- Start with the default fast path (`DelaunayTriangulation::new()` / `::empty()`).
-- If you see retryable insertion errors, frequent perturbation retries, or skipped vertices:
-  - preprocess your input (dedup / rescale if appropriate), and/or
-  - switch to `RobustKernel` (and optionally a different `config_presets::*` preset).
+- Start with the default `AdaptiveKernel` (`DelaunayTriangulation::new()` / `::empty()`).
+  This handles near-degenerate configurations correctly out of the box.
+- If you need explicit `BOUNDARY`/`DEGENERATE` signals (e.g. to detect and handle cospherical
+  configurations yourself), switch to `RobustKernel`.
+- If you see retryable insertion errors, frequent perturbation retries, or skipped vertices,
+  preprocess your input (dedup / rescale if appropriate).
 - Treat `InsertionOutcome::Skipped { .. }` as an expected outcome on pathological data; decide
   at the application level whether to drop the vertex, perturb/rescale your point set, or
   re-run with a different kernel.

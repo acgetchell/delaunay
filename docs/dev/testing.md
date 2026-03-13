@@ -397,6 +397,27 @@ CI enforces:
 
 ---
 
+## Test Module Organization
+
+Within a `#[cfg(test)] mod tests { … }` block, items should appear in
+this order:
+
+1. `use` imports
+2. Test-only types (e.g. mock kernels, stub structs)
+3. Helper functions
+4. Macros (`macro_rules!`)
+5. `#[test]` functions (and `proptest!` blocks)
+
+All `use` imports for a test module must go at the **top** of the module,
+not inside individual test functions. This keeps dependencies visible in
+one place and avoids duplicated or scattered imports.
+
+Keeping helpers and types **above** macros and tests makes them easy to
+find and avoids forward-reference confusion. New helpers should be added
+to this section rather than inlined next to the tests that use them.
+
+---
+
 ## Preferred Test Style
 
 Tests should be:

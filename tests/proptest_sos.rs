@@ -28,6 +28,20 @@ use delaunay::geometry::traits::coordinate::Coordinate;
 use proptest::prelude::*;
 
 // =============================================================================
+// HELPERS
+// =============================================================================
+
+/// Check that all points have distinct coordinates.
+///
+/// Uses exact equality because coordinates are derived from integers
+/// via `f64::from()`, so no rounding occurs.
+#[allow(clippy::float_cmp)]
+fn points_all_distinct<const D: usize>(points: &[Point<f64, D>]) -> bool {
+    (0..points.len())
+        .all(|i| ((i + 1)..points.len()).all(|j| points[i].coords() != points[j].coords()))
+}
+
+// =============================================================================
 // STRATEGIES
 // =============================================================================
 
@@ -82,6 +96,11 @@ macro_rules! gen_sos_tests {
                             Point::new(coords)
                         })
                         .collect();
+                    // In 2D only one coordinate varies (the last is forced
+                    // to 0), so collisions are likely.  SoS requires
+                    // distinct points — skip inputs with duplicates.
+                    prop_assume!(points_all_distinct(&points));
+
                     let sign = sos_orientation_sign(&points).unwrap();
                     prop_assert!(sign == 1 || sign == -1,
                         "SoS orientation must return ±1 in {}D, got {}", $dim, sign);
@@ -104,19 +123,28 @@ macro_rules! gen_sos_tests {
                             Point::new(coords)
                         })
                         .collect();
+                    prop_assume!(points_all_distinct(&points));
+
                     let s1 = sos_orientation_sign(&points).unwrap();
                     let s2 = sos_orientation_sign(&points).unwrap();
                     prop_assert_eq!(s1, s2, "SoS must be deterministic in {}D", $dim);
                 }
 
                 /// `SoS` orientation is translation-invariant for degenerate points.
+                ///
+                /// The offset uses integers (not arbitrary f64) because SoS
+                /// translation invariance relies on the "1" column cancelling
+                /// the shift *exactly*.  Non-integer f64 offsets introduce
+                /// rounding in the coordinate addition, which can perturb
+                /// cofactors from exactly 0 to slightly non-zero, changing
+                /// which cofactor the SoS expansion finds first.
                 #[test]
                 fn [<prop_sos_orientation_translation_invariant_ $dim d>](
                     raw in prop::collection::vec(
                         $uniform(small_int()),
                         ($dim + 1)..=($dim + 1),
                     ),
-                    offset in $uniform(finite_coord()),
+                    offset in $uniform(small_int()),
                 ) {
                     let points: Vec<Point<f64, $dim>> = raw
                         .iter()
@@ -127,12 +155,14 @@ macro_rules! gen_sos_tests {
                             Point::new(coords)
                         })
                         .collect();
+                    prop_assume!(points_all_distinct(&points));
+
                     let s1 = sos_orientation_sign(&points).unwrap();
                     let translated: Vec<Point<f64, $dim>> = points
                         .iter()
                         .map(|p| {
                             let coords: [f64; $dim] = std::array::from_fn(|i| {
-                                p.coords()[i] + offset[i]
+                                p.coords()[i] + f64::from(offset[i])
                             });
                             Point::new(coords)
                         })
