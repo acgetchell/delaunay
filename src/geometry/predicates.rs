@@ -7,7 +7,7 @@
 #![forbid(unsafe_code)]
 
 use crate::core::cell::CellValidationError;
-use crate::geometry::matrix::{determinant, matrix_get, matrix_set, matrix_zero_like};
+use crate::geometry::matrix::{matrix_get, matrix_set, matrix_zero_like};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{CoordinateConversionError, ScalarSummable};
 use crate::geometry::util::{
@@ -60,48 +60,42 @@ pub(crate) fn insphere_from_matrix<const N: usize>(
     matrix: &crate::geometry::matrix::Matrix<N>,
     k: usize,
     orient_sign: i8,
-    base_tol: f64,
 ) -> InSphere {
-    // `det_sign_exact()` and `determinant()` operate on the full N×N matrix,
+    // `det_sign_exact()` and `det_direct()` operate on the full N×N matrix,
     // so callers must ensure k == N.  All production call sites satisfy this
     // because `try_with_la_stack_matrix!(k, ...)` creates a Matrix<K> where
     // K == k at compile time.
     debug_assert_eq!(k, N, "k ({k}) must equal matrix dimension N ({N})");
 
-    // Stage 1: f64 fast filter — if the determinant is clearly outside the
-    // tolerance band the sign is unambiguous and we can skip exact arithmetic.
-    //
-    // NOTE: `adaptive_tolerance` scales `base_tol` by the matrix infinity
-    // norm (max absolute row sum).  This is a heuristic, NOT a rigorous
-    // error bound (unlike
-    // Shewchuk-style error analysis).  For ill-conditioned matrices the true
-    // rounding error may exceed the tolerance, causing Stage 1 to return a
-    // result that Stage 2 would override.  la-stack #44 tracks adding
-    // provable fast-filter bounds to eliminate this gap.
-    let tolerance_f64 = crate::geometry::matrix::adaptive_tolerance(matrix, base_tol);
-    let det = determinant(matrix);
-    let det_norm = det * f64::from(orient_sign);
-    if det.is_finite() {
-        if det_norm > tolerance_f64 {
+    // Stage 1: provable f64 fast filter for D ≤ 4.
+    // `det_errbound()` returns a Shewchuk-style error bound derived from the
+    // matrix permanent: |det_direct() − det_exact| ≤ errbound.  If the f64
+    // determinant clearly exceeds the bound, the sign is guaranteed correct
+    // without allocating.  For D ≥ 5, `det_errbound()` returns `None` and
+    // we skip directly to exact arithmetic.
+    let det_direct = matrix.det_direct();
+    if let (Some(det), Some(errbound)) = (det_direct, matrix.det_errbound())
+        && det.is_finite()
+    {
+        let det_norm = det * f64::from(orient_sign);
+        if det_norm > errbound {
             return InSphere::INSIDE;
         }
-        if det_norm < -tolerance_f64 {
+        if det_norm < -errbound {
             return InSphere::OUTSIDE;
         }
     }
 
-    // Stage 2: exact sign via Bareiss — only reached for ambiguous or
-    // non-finite f64 results.
-    let exact_is_safe = matrix.det_direct().is_some_and(f64::is_finite)
+    // Stage 2: exact sign via Bareiss — reached for ambiguous f64 results
+    // (D ≤ 4) or always for D ≥ 5.
+    let exact_is_safe = det_direct.is_some_and(f64::is_finite)
         || (0..k).all(|i| (0..k).all(|j| matrix.get(i, j).is_some_and(f64::is_finite)));
     if exact_is_safe && let Ok(sign) = matrix.det_sign_exact() {
         return sign_to_insphere(sign, orient_sign);
     }
 
-    // Stage 3: sign is unresolvable.  We only reach here when:
-    //   (a) det is NaN (non-finite entries) — all comparisons are false, or
-    //   (b) |det_norm| ≤ tolerance AND exact Bareiss could not run.
-    // In both cases the sign is indeterminate → BOUNDARY.
+    // Stage 3: sign is unresolvable (non-finite entries prevent exact
+    // arithmetic from running).
     InSphere::BOUNDARY
 }
 
@@ -117,30 +111,26 @@ pub(crate) fn insphere_from_matrix<const N: usize>(
 pub(crate) fn orientation_from_matrix<const N: usize>(
     matrix: &crate::geometry::matrix::Matrix<N>,
     k: usize,
-    base_tol: f64,
 ) -> Orientation {
     debug_assert_eq!(k, N, "k ({k}) must equal matrix dimension N ({N})");
 
-    // Stage 1: f64 fast filter.
-    //
-    // NOTE: same caveat as in `insphere_from_matrix` — `adaptive_tolerance`
-    // scales `base_tol` by the matrix infinity norm (max absolute row sum).
-    // This is a heuristic, not a provable error bound.  la-stack #44 will
-    // address this with Shewchuk-style bounds.
-    let tolerance_f64 = crate::geometry::matrix::adaptive_tolerance(matrix, base_tol);
-    let det = determinant(matrix);
-    if det.is_finite() {
-        if det > tolerance_f64 {
+    // Stage 1: provable f64 fast filter for D ≤ 4.
+    // See `insphere_from_matrix` for detailed explanation of the error bound.
+    let det_direct = matrix.det_direct();
+    if let (Some(det), Some(errbound)) = (det_direct, matrix.det_errbound())
+        && det.is_finite()
+    {
+        if det > errbound {
             return Orientation::POSITIVE;
         }
-        if det < -tolerance_f64 {
+        if det < -errbound {
             return Orientation::NEGATIVE;
         }
     }
 
-    // Stage 2: exact sign via Bareiss — only reached for ambiguous or
-    // non-finite f64 results.
-    let exact_is_safe = matrix.det_direct().is_some_and(f64::is_finite)
+    // Stage 2: exact sign via Bareiss — reached for ambiguous f64 results
+    // (D ≤ 4) or always for D ≥ 5.
+    let exact_is_safe = det_direct.is_some_and(f64::is_finite)
         || (0..k).all(|i| (0..k).all(|j| matrix.get(i, j).is_some_and(f64::is_finite)));
     if exact_is_safe && let Ok(sign) = matrix.det_sign_exact() {
         return sign_to_orientation(sign);
@@ -297,8 +287,7 @@ where
             matrix_set(&mut matrix, i, D, 1.0);
         }
 
-        let base_tol = safe_scalar_to_f64(T::default_tolerance())?;
-        Ok(orientation_from_matrix(&matrix, k, base_tol))
+        Ok(orientation_from_matrix(&matrix, k))
     })
 }
 
@@ -586,7 +575,6 @@ where
         // We embed this (D+1)×(D+1) block into a (D+2)×(D+2) matrix by
         // placing 1.0 at (D+1, D+1); cofactor expansion along row D+1 gives
         // det(full) = det(orientation subblock).
-        let base_tol = safe_scalar_to_f64(T::default_tolerance())?;
         let mut orient_matrix = matrix_zero_like(&matrix);
         for i in 0..=D {
             for j in 0..D {
@@ -596,7 +584,7 @@ where
         }
         matrix_set(&mut orient_matrix, D + 1, D + 1, 1.0);
 
-        let orientation = orientation_from_matrix(&orient_matrix, k, base_tol);
+        let orientation = orientation_from_matrix(&orient_matrix, k);
 
         match orientation {
             Orientation::DEGENERATE => Err(CoordinateConversionError::ConversionFailed {
@@ -611,7 +599,7 @@ where
                 } else {
                     -1
                 };
-                Ok(insphere_from_matrix(&matrix, k, orient_sign, base_tol))
+                Ok(insphere_from_matrix(&matrix, k, orient_sign))
             }
         }
     })
@@ -834,9 +822,7 @@ where
         }
         matrix_set(&mut orient_matrix, D, D, 1.0);
 
-        let base_tol = safe_scalar_to_f64(T::default_tolerance())
-            .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
-        let relative_orientation = orientation_from_matrix(&orient_matrix, k, base_tol);
+        let relative_orientation = orientation_from_matrix(&orient_matrix, k);
 
         match relative_orientation {
             Orientation::DEGENERATE => Err(CellValidationError::DegenerateSimplex),
@@ -850,7 +836,7 @@ where
                 } else {
                     1
                 };
-                Ok(insphere_from_matrix(&matrix, k, orient_sign, base_tol))
+                Ok(insphere_from_matrix(&matrix, k, orient_sign))
             }
         }
     })
@@ -1951,7 +1937,7 @@ mod tests {
             matrix_set(&mut m, 2, 1, 1.0);
             matrix_set(&mut m, 2, 2, 1.0);
 
-            assert_eq!(orientation_from_matrix(&m, k, 1e-12), Orientation::POSITIVE);
+            assert_eq!(orientation_from_matrix(&m, k), Orientation::POSITIVE);
         });
     }
 
@@ -1973,7 +1959,7 @@ mod tests {
             matrix_set(&mut m, 2, 1, 0.0);
             matrix_set(&mut m, 2, 2, 1.0);
 
-            assert_eq!(orientation_from_matrix(&m, k, 1e-12), Orientation::NEGATIVE);
+            assert_eq!(orientation_from_matrix(&m, k), Orientation::NEGATIVE);
         });
     }
 
@@ -1993,17 +1979,15 @@ mod tests {
             matrix_set(&mut m, 2, 1, 0.0);
             matrix_set(&mut m, 2, 2, 1.0);
 
-            assert_eq!(
-                orientation_from_matrix(&m, k, 1e-12),
-                Orientation::DEGENERATE
-            );
+            assert_eq!(orientation_from_matrix(&m, k), Orientation::DEGENERATE);
         });
     }
 
     #[test]
     fn test_orientation_from_matrix_extreme_magnitude_fallback() {
         // Entries near f64::MAX cause det_direct() to overflow to infinity,
-        // triggering the adaptive-tolerance fallback path.
+        // bypassing the fast filter.  Stage 2 (exact Bareiss) resolves the
+        // correct sign because all individual entries are finite.
         let k = 3;
         let big = f64::MAX / 2.0;
         with_la_stack_matrix!(k, |m| {
@@ -2017,7 +2001,7 @@ mod tests {
             matrix_set(&mut m, 2, 1, big);
             matrix_set(&mut m, 2, 2, 1.0);
 
-            let result = orientation_from_matrix(&m, k, 1e-12);
+            let result = orientation_from_matrix(&m, k);
             assert_eq!(
                 result,
                 Orientation::POSITIVE,
@@ -2047,7 +2031,7 @@ mod tests {
             // NaN inside the k×k block.
             matrix_set(&mut m, 3, 3, f64::NAN);
 
-            let result = orientation_from_matrix(&m, k, 1e-12);
+            let result = orientation_from_matrix(&m, k);
             assert_eq!(
                 result,
                 Orientation::DEGENERATE,
@@ -2101,8 +2085,8 @@ mod tests {
     #[test]
     fn test_insphere_from_matrix_stage2_exact_via_overflow() {
         // Stage 2: det_direct() overflows to non-finite, but all individual
-        // entries are finite.  The entry-by-entry finite check (|| branch on
-        // line 89) passes, enabling exact Bareiss to resolve the sign.
+        // entries are finite.  The entry-by-entry finite check passes,
+        // enabling exact Bareiss to resolve the sign.
         let k = 4;
         let big = 1e100;
         with_la_stack_matrix!(k, |m| {
@@ -2113,25 +2097,28 @@ mod tests {
             matrix_set(&mut m, 3, 3, big);
 
             // Positive exact sign + orient_sign = 1 → INSIDE
-            assert_eq!(insphere_from_matrix(&m, k, 1, 1e-12), InSphere::INSIDE);
+            assert_eq!(insphere_from_matrix(&m, k, 1), InSphere::INSIDE);
             // Positive exact sign + orient_sign = -1 → OUTSIDE
-            assert_eq!(insphere_from_matrix(&m, k, -1, 1e-12), InSphere::OUTSIDE);
+            assert_eq!(insphere_from_matrix(&m, k, -1), InSphere::OUTSIDE);
         });
     }
 
     #[test]
-    fn test_insphere_from_matrix_stage2_small_det() {
-        // Stage 2: det_direct() returns a finite value that falls within the
-        // adaptive tolerance band.  Exact Bareiss resolves the sign.
+    fn test_insphere_from_matrix_stage2_near_singular() {
+        // Stage 2: near-singular matrix whose f64 determinant falls within
+        // the provable `det_errbound()` band.  Exact Bareiss resolves the
+        // positive sign.
         let k = 3;
+        let eps = f64::EPSILON;
         with_la_stack_matrix!(k, |m| {
-            // Diagonal with tiny third entry: det = 1e-20.
+            // Near-singular: det = eps, permanent ≈ 2 → errbound ≫ eps.
             matrix_set(&mut m, 0, 0, 1.0);
-            matrix_set(&mut m, 1, 1, 1.0);
-            matrix_set(&mut m, 2, 2, 1e-20);
+            matrix_set(&mut m, 0, 1, 1.0);
+            matrix_set(&mut m, 1, 0, 1.0);
+            matrix_set(&mut m, 1, 1, 1.0 + eps);
+            matrix_set(&mut m, 2, 2, 1.0);
 
-            // base_tol = 1e-10 → tolerance ≫ 1e-20 → Stage 1 ambiguous → Stage 2.
-            assert_eq!(insphere_from_matrix(&m, k, 1, 1e-10), InSphere::INSIDE);
+            assert_eq!(insphere_from_matrix(&m, k, 1), InSphere::INSIDE);
         });
     }
 
@@ -2151,7 +2138,7 @@ mod tests {
             matrix_set(&mut m, 2, 1, 5.0);
             matrix_set(&mut m, 2, 2, 6.0);
 
-            assert_eq!(insphere_from_matrix(&m, k, 1, 1e-12), InSphere::BOUNDARY);
+            assert_eq!(insphere_from_matrix(&m, k, 1), InSphere::BOUNDARY);
         });
     }
 
@@ -2165,7 +2152,7 @@ mod tests {
             matrix_set(&mut m, 1, 1, 1.0);
             matrix_set(&mut m, 2, 2, f64::NAN);
 
-            assert_eq!(insphere_from_matrix(&m, k, 1, 1e-12), InSphere::BOUNDARY);
+            assert_eq!(insphere_from_matrix(&m, k, 1), InSphere::BOUNDARY);
         });
     }
 

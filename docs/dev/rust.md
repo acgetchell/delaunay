@@ -420,6 +420,28 @@ with migration guidance.
 
 ---
 
+## Logging and Diagnostics
+
+Use `tracing` for all runtime diagnostics. **Never use `eprintln!`** or
+`println!` for debug output — use `tracing::debug!`, `tracing::trace!`, etc.
+
+This ensures all diagnostic output is:
+
+- filterable via `RUST_LOG` / `tracing-subscriber`
+- structured and machine-parseable
+- suppressible in production builds
+
+Debug hooks gated on environment variables should still use `tracing`:
+
+```rust
+#[cfg(debug_assertions)]
+if std::env::var_os("DELAUNAY_DEBUG_FOO").is_some() {
+    tracing::debug!("diagnostic message: {value}");
+}
+```
+
+---
+
 ## Preferred Patch Style
 
 When modifying Rust code:

@@ -207,9 +207,6 @@ where
         });
     }
 
-    // Reject non-finite tolerance early, consistent with robust_orientation.
-    super::util::safe_scalar_to_f64(config.base_tolerance)?;
-
     // Strategy 1: Exact-sign determinant approach with adaptive tolerance.
     if let Ok(result) = adaptive_tolerance_insphere(simplex_points, test_point, config) {
         // Strategy 2: Diagnostic consistency check against distance-based insphere.
@@ -349,8 +346,6 @@ where
     T: CoordinateScalar,
     [T; D]: Copy + Sized,
 {
-    let base_tol = super::util::safe_scalar_to_f64(config.base_tolerance)?;
-
     // Get simplex orientation for correct interpretation.
     let orientation = robust_orientation(simplex_points, config)?;
     if matches!(orientation, Orientation::DEGENERATE) {
@@ -369,12 +364,16 @@ where
             &matrix,
             k,
             orient_sign,
-            base_tol,
         ))
     })
 }
 
 /// Enhanced orientation predicate with robustness improvements.
+///
+/// The `config` parameter is accepted for API compatibility but is currently
+/// unused.  Internally, this function uses provable [`la_stack::Matrix::det_errbound`]
+/// bounds (D ≤ 4) and exact Bareiss arithmetic, so tolerance settings in
+/// `config` have no effect on the result.
 ///
 /// # Errors
 ///
@@ -400,7 +399,7 @@ where
 /// ```
 pub fn robust_orientation<T, const D: usize>(
     simplex_points: &[Point<T, D>],
-    config: &RobustPredicateConfig<T>,
+    _config: &RobustPredicateConfig<T>,
 ) -> Result<Orientation, CoordinateConversionError>
 where
     T: CoordinateScalar,
@@ -433,10 +432,7 @@ where
 
         // Route through the exact-sign orientation helper for provably correct
         // orientation classification on finite inputs.
-        let base_tol = safe_scalar_to_f64(config.base_tolerance)?;
-        Ok(super::predicates::orientation_from_matrix(
-            &matrix, k, base_tol,
-        ))
+        Ok(super::predicates::orientation_from_matrix(&matrix, k))
     })
 }
 
@@ -662,7 +658,10 @@ mod tests {
     }
 
     #[test]
-    fn test_robust_orientation_non_finite_base_tolerance_returns_error() {
+    fn test_robust_orientation_ignores_base_tolerance() {
+        // robust_orientation no longer uses config.base_tolerance (the
+        // provable det_errbound replaces the heuristic tolerance), so a
+        // NaN base_tolerance does not cause an error.
         let points = vec![
             Point::new([0.0, 0.0]),
             Point::new([1.0, 0.0]),
@@ -675,10 +674,7 @@ mod tests {
         };
 
         let result = robust_orientation(&points, &config);
-        assert!(matches!(
-            result,
-            Err(CoordinateConversionError::NonFiniteValue { .. })
-        ));
+        assert_eq!(result.unwrap(), Orientation::POSITIVE);
     }
 
     #[test]
@@ -1570,49 +1566,6 @@ mod tests {
     }
 
     #[test]
-    fn test_adaptive_tolerance_computation() {
-        // Test adaptive tolerance computation with different matrix sizes and values
-        let config = config_presets::general_triangulation::<f64>();
-
-        // Small matrix with moderate values
-        let tolerance_small = with_la_stack_matrix!(2, |m| {
-            matrix_set(&mut m, 0, 0, 1.0);
-            matrix_set(&mut m, 0, 1, 2.0);
-            matrix_set(&mut m, 1, 0, 3.0);
-            matrix_set(&mut m, 1, 1, 4.0);
-            crate::geometry::matrix::adaptive_tolerance(&m, config.base_tolerance)
-        });
-        assert!(tolerance_small > 0.0);
-
-        // Large matrix with large values
-        let tolerance_large = with_la_stack_matrix!(5, |m| {
-            for i in 0..5 {
-                for j in 0..5 {
-                    let sum_f64 = num_traits::cast::<usize, f64>(i + j).unwrap_or(0.0);
-                    matrix_set(&mut m, i, j, sum_f64 * 1000.0);
-                }
-            }
-
-            crate::geometry::matrix::adaptive_tolerance(&m, config.base_tolerance)
-        });
-        assert!(tolerance_large > 0.0);
-        // Larger matrices with larger values should have larger tolerances
-        assert!(tolerance_large > tolerance_small);
-
-        // Matrix with very small values
-        let tolerance_tiny = with_la_stack_matrix!(3, |m| {
-            for i in 0..3 {
-                for j in 0..3 {
-                    matrix_set(&mut m, i, j, 1e-10);
-                }
-            }
-
-            crate::geometry::matrix::adaptive_tolerance(&m, config.base_tolerance)
-        });
-        assert!(tolerance_tiny > 0.0);
-    }
-
-    #[test]
     fn test_consistency_check_fallback_branch() {
         // Test the case where consistency check fails and we fall back to more robust methods
         // This is challenging to test directly since we need a case where the first method
@@ -1650,10 +1603,11 @@ mod tests {
     }
 
     #[test]
-    fn test_nan_tolerance_returns_error() {
-        // A NaN base_tolerance is invalid and should be rejected early,
-        // consistent with robust_orientation's behavior.
-        let problematic_config = RobustPredicateConfig {
+    fn test_nan_tolerance_accepted_because_unused() {
+        // base_tolerance is no longer used internally (provable det_errbound
+        // replaced the heuristic tolerance), so NaN base_tolerance no longer
+        // causes an error — it is simply ignored.
+        let nan_config = RobustPredicateConfig {
             base_tolerance: f64::NAN,
             relative_tolerance_factor: 1e-12,
             max_refinement_iterations: 3,
@@ -1670,10 +1624,10 @@ mod tests {
 
         let test_point = Point::new([0.25, 0.25, 0.25]);
 
-        let result = robust_insphere(&points, &test_point, &problematic_config);
+        let result = robust_insphere(&points, &test_point, &nan_config);
         assert!(
-            result.is_err(),
-            "NaN tolerance should produce an error, not silently fall through"
+            result.is_ok(),
+            "NaN base_tolerance should be accepted since it is unused internally"
         );
 
         // Test with a more realistic scenario: very ill-conditioned matrix

@@ -7692,7 +7692,6 @@ mod tests {
                 cycle_signature_samples: Vec::new(),
                 attempt: 1,
                 queue_order: RepairQueueOrder::Fifo,
-                used_robust_predicates: false,
             },
         };
 
@@ -7744,7 +7743,6 @@ mod tests {
                 cycle_signature_samples: Vec::new(),
                 attempt: 1,
                 queue_order: RepairQueueOrder::Fifo,
-                used_robust_predicates: false,
             },
         };
 

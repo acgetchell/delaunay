@@ -1003,6 +1003,53 @@ fn debug_large_scale_3d_incremental_prefix_bisect() {
     );
 }
 
+/// Regression test for issue #228: 3D 1000-point flip-repair non-convergence.
+///
+/// Before the fix, `AdaptiveKernel`'s exact+SoS predicates were overridden by
+/// `use_robust_on_ambiguous` in the flip repair code, causing tolerance-based
+/// predicates to return wrong signs for near-degenerate cases and triggering
+/// flip cycles.
+///
+/// This test uses the exact seed that reproduced the original failure:
+/// `seed_for_case::<3>(42, 1000)` with ball distribution (radius=100).
+///
+/// Uses `Pseudomanifold` topology to isolate the Delaunay property check from
+/// unrelated PL-manifold validation (negative-orientation cells are a separate
+/// issue tracked independently).
+///
+/// Gated behind `slow-tests` and `#[ignore]` because 1000-point 3D
+/// construction takes minutes in debug mode, exceeding CI timeout.
+/// Run manually with:
+/// ```bash
+/// cargo test --test large_scale_debug --features slow-tests regression_issue_228 -- --ignored --nocapture
+/// ```
+#[cfg(feature = "slow-tests")]
+#[test]
+#[ignore = "1000-point 3D construction exceeds CI timeout (~30min debug)"]
+fn regression_issue_228_3d_1000_flip_repair_convergence() {
+    use delaunay::core::triangulation::TopologyGuarantee;
+
+    let seed = seed_for_case::<3>(42, 1000);
+    let points = generate_random_points_in_ball_seeded::<f64, 3>(1000, 100.0, seed)
+        .expect("point generation should succeed");
+    let vertices: Vec<Vertex<f64, (), 3>> = points.into_iter().map(|p| vertex!(p)).collect();
+
+    // Use the default kernel (AdaptiveKernel — exact+SoS predicates) to match the
+    // actual regression scenario.  Use Pseudomanifold to skip PL-manifold orientation
+    // validation (separate issue).
+    let dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::new_with_topology_guarantee(
+            &vertices,
+            TopologyGuarantee::Pseudomanifold,
+        )
+        .expect("construction must not fail (#228 regression)");
+
+    assert!(
+        dt.is_delaunay_via_flips().is_ok(),
+        "Delaunay property must hold (#228 regression, seed=0x{seed:X})"
+    );
+}
+
 #[test]
 #[ignore = "large-scale debug harness (manual run)"]
 fn debug_large_scale_2d() {
