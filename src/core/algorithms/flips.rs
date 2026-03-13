@@ -5067,6 +5067,28 @@ mod tests {
     use crate::vertex;
     use rand::{RngExt, SeedableRng, rngs::StdRng};
 
+    #[derive(Clone, Default)]
+    struct ZeroOrientationKernel2d;
+
+    impl Kernel<2> for ZeroOrientationKernel2d {
+        type Scalar = f64;
+
+        fn orientation(
+            &self,
+            _points: &[Point<Self::Scalar, 2>],
+        ) -> Result<i32, crate::geometry::traits::coordinate::CoordinateConversionError> {
+            Ok(0)
+        }
+
+        fn in_sphere(
+            &self,
+            simplex_points: &[Point<Self::Scalar, 2>],
+            test_point: &Point<Self::Scalar, 2>,
+        ) -> Result<i32, crate::geometry::traits::coordinate::CoordinateConversionError> {
+            FastKernel::<f64>::new().in_sphere(simplex_points, test_point)
+        }
+    }
+
     fn init_tracing() {
         static INIT: std::sync::Once = std::sync::Once::new();
         INIT.call_once(|| {
@@ -6519,6 +6541,67 @@ mod tests {
         let _info = apply_bistellar_flip_k2(&mut tds, &kernel, &context).unwrap();
 
         assert!(tds.is_valid().is_ok());
+    }
+
+    /// Exercises the `orientation == 0` fallback in `apply_bistellar_flip`
+    /// (lines ~340-365) where the kernel returns zero and `robust_orientation`
+    /// resolves the sign.
+    #[test]
+    fn test_flip_k2_zero_orientation_kernel_exercises_robust_fallback() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let c1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+            .unwrap();
+        let _c2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
+            .unwrap();
+
+        repair_neighbor_pointers(&mut tds).unwrap();
+
+        let facet = FacetHandle::new(c1, 2);
+        let context = build_k2_flip_context(&tds, facet).unwrap();
+        let kernel = ZeroOrientationKernel2d;
+        // The kernel always returns 0 for orientation, forcing the
+        // robust_orientation fallback path inside apply_bistellar_flip.
+        let result = apply_bistellar_flip_k2(&mut tds, &kernel, &context);
+        assert!(result.is_ok(), "flip should succeed via robust fallback");
+        assert!(tds.is_valid().is_ok());
+    }
+
+    /// Exercises the `orientation == 0` fallback in
+    /// `k2_flip_would_create_degenerate_cell` (lines ~1879-1887).
+    #[test]
+    fn test_k2_flip_would_create_degenerate_cell_zero_orientation_kernel() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let c1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+            .unwrap();
+        let _c2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
+            .unwrap();
+
+        repair_neighbor_pointers(&mut tds).unwrap();
+
+        let facet = FacetHandle::new(c1, 2);
+        let context = build_k2_flip_context(&tds, facet).unwrap();
+        let kernel = ZeroOrientationKernel2d;
+        // The kernel returns 0 for orientation, forcing robust_orientation
+        // inside k2_flip_would_create_degenerate_cell.
+        let degenerate = k2_flip_would_create_degenerate_cell(&tds, &kernel, &context).unwrap();
+        // Points form a proper square — robust orientation is non-degenerate.
+        assert!(!degenerate);
     }
 
     #[test]
