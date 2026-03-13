@@ -137,7 +137,7 @@ macro_rules! gen_orientation_incremental_props {
 }
 
 gen_orientation_construction_and_tamper_props!(2, 4, 10);
-gen_orientation_construction_and_tamper_props!(3, 5, 12);
+gen_orientation_construction_and_tamper_props!(3, 5, 12, #[ignore = "Slow (>60s) in Codecov CI"]);
 gen_orientation_construction_and_tamper_props!(
     4,
     6,

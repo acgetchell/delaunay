@@ -2692,13 +2692,27 @@ where
     } else {
         repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, Some(seed_cells), &attempt2)
     };
-    // On failure, restore the TDS to the pre-repair snapshot so callers that
-    // soft-fail (e.g. D≥4 bulk construction) receive a structurally valid
-    // triangulation rather than a partially-modified one.
-    if attempt2_result.is_err() {
-        *tds = tds_snapshot;
+    match attempt2_result {
+        Ok(stats) => {
+            if verify_repair_postcondition(tds, kernel, Some(seed_cells)).is_ok() {
+                Ok(stats)
+            } else {
+                // Postcondition failed: restore the TDS so callers that
+                // soft-fail receive a structurally valid triangulation.
+                *tds = tds_snapshot;
+                Err(DelaunayRepairError::PostconditionFailed {
+                    message: "local single-pass attempt 2 postcondition failed".into(),
+                })
+            }
+        }
+        Err(err) => {
+            // On failure, restore the TDS to the pre-repair snapshot so callers that
+            // soft-fail (e.g. D≥4 bulk construction) receive a structurally valid
+            // triangulation rather than a partially-modified one.
+            *tds = tds_snapshot;
+            Err(err)
+        }
     }
-    attempt2_result
 }
 
 /// Verify the Delaunay property via local flip predicates (fast O(cells) validation).
@@ -3939,8 +3953,9 @@ where
     };
 
     // Normally we only apply inverse k=2 if the target (2-cell) configuration is locally
-    // Delaunay. On the final robust attempt, allow exploratory inverse moves to escape
-    // trapped non-regular configurations; postcondition verification still enforces correctness.
+    // Delaunay. On the second attempt (LIFO queue order), allow exploratory inverse moves
+    // to escape trapped non-regular configurations; postcondition verification still
+    // enforces correctness.
     let allow_exploratory_inverse = config.attempt >= 2;
     if violates && !allow_exploratory_inverse {
         return Ok(true);

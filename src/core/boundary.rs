@@ -531,6 +531,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "bench")]
+    #[ignore = "Slow (>60s) in Codecov CI"]
     fn benchmark_boundary_facets_performance() {
         // Smaller point counts for reasonable test time
         let point_counts = [20, 40, 60, 80];

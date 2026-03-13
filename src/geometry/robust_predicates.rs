@@ -207,9 +207,6 @@ where
         });
     }
 
-    // Reject non-finite tolerance early, consistent with robust_orientation.
-    super::util::safe_scalar_to_f64(config.base_tolerance)?;
-
     // Strategy 1: Exact-sign determinant approach with adaptive tolerance.
     if let Ok(result) = adaptive_tolerance_insphere(simplex_points, test_point, config) {
         // Strategy 2: Diagnostic consistency check against distance-based insphere.
@@ -372,6 +369,11 @@ where
 }
 
 /// Enhanced orientation predicate with robustness improvements.
+///
+/// The `config` parameter is accepted for API compatibility but is currently
+/// unused.  Internally, this function uses provable [`la_stack::Matrix::det_errbound`]
+/// bounds (D ≤ 4) and exact Bareiss arithmetic, so tolerance settings in
+/// `config` have no effect on the result.
 ///
 /// # Errors
 ///
@@ -1645,10 +1647,11 @@ mod tests {
     }
 
     #[test]
-    fn test_nan_tolerance_returns_error() {
-        // A NaN base_tolerance is invalid and should be rejected early,
-        // consistent with robust_orientation's behavior.
-        let problematic_config = RobustPredicateConfig {
+    fn test_nan_tolerance_accepted_because_unused() {
+        // base_tolerance is no longer used internally (provable det_errbound
+        // replaced the heuristic tolerance), so NaN base_tolerance no longer
+        // causes an error — it is simply ignored.
+        let nan_config = RobustPredicateConfig {
             base_tolerance: f64::NAN,
             relative_tolerance_factor: 1e-12,
             max_refinement_iterations: 3,
@@ -1665,10 +1668,10 @@ mod tests {
 
         let test_point = Point::new([0.25, 0.25, 0.25]);
 
-        let result = robust_insphere(&points, &test_point, &problematic_config);
+        let result = robust_insphere(&points, &test_point, &nan_config);
         assert!(
-            result.is_err(),
-            "NaN tolerance should produce an error, not silently fall through"
+            result.is_ok(),
+            "NaN base_tolerance should be accepted since it is unused internally"
         );
 
         // Test with a more realistic scenario: very ill-conditioned matrix
