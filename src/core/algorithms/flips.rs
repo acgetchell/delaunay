@@ -209,6 +209,29 @@ where
     Ok(stats)
 }
 
+/// Resolve a zero kernel orientation via [`robust_orientation`].
+///
+/// When a kernel returns `orientation == 0`, this helper calls the exact-arithmetic
+/// `robust_orientation` predicate and returns the resulting sign:
+/// `1` (positive), `-1` (negative), or `0` (truly degenerate).
+fn resolve_zero_orientation<T, const D: usize>(
+    points: &[Point<T, D>],
+    context: &str,
+) -> Result<i32, FlipError>
+where
+    T: CoordinateScalar,
+    [T; D]: Copy + Sized,
+{
+    let orientation = robust_orientation(points).map_err(|e| FlipError::PredicateFailure {
+        message: format!("robust orientation failed for {context}: {e}"),
+    })?;
+    Ok(match orientation {
+        Orientation::POSITIVE => 1,
+        Orientation::NEGATIVE => -1,
+        Orientation::DEGENERATE => 0,
+    })
+}
+
 /// Apply a bistellar flip using explicit k and vertex/cell slices.
 #[expect(
     clippy::too_many_lines,
@@ -338,11 +361,8 @@ where
                 message: format!("orientation failed for flip cell: {e}"),
             })?;
         let orientation_sign = if orientation == 0 {
-            let robust_orientation =
-                robust_orientation(&points).map_err(|e| FlipError::PredicateFailure {
-                    message: format!("robust orientation failed for flip cell: {e}"),
-                })?;
-            if matches!(robust_orientation, Orientation::DEGENERATE) {
+            let sign = resolve_zero_orientation(&points, "flip cell")?;
+            if sign == 0 {
                 if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
                     tracing::debug!(
                         k_move,
@@ -355,11 +375,7 @@ where
                 }
                 return Err(FlipError::DegenerateCell);
             }
-            match robust_orientation {
-                Orientation::POSITIVE => 1,
-                Orientation::NEGATIVE => -1,
-                Orientation::DEGENERATE => 0,
-            }
+            sign
         } else {
             orientation
         };
@@ -1876,14 +1892,8 @@ where
             .map_err(|e| FlipError::PredicateFailure {
                 message: format!("orientation failed for k=2 postcondition: {e}"),
             })?;
-        if orientation == 0 {
-            let robust_orientation =
-                robust_orientation(&points).map_err(|e| FlipError::PredicateFailure {
-                    message: format!("robust orientation failed for k=2 postcondition: {e}"),
-                })?;
-            if matches!(robust_orientation, Orientation::DEGENERATE) {
-                return Ok(true);
-            }
+        if orientation == 0 && resolve_zero_orientation(&points, "k=2 postcondition")? == 0 {
+            return Ok(true);
         }
     }
 
@@ -6544,8 +6554,8 @@ mod tests {
     }
 
     /// Exercises the `orientation == 0` fallback in `apply_bistellar_flip`
-    /// (lines ~340-365) where the kernel returns zero and `robust_orientation`
-    /// resolves the sign.
+    /// where the kernel returns zero and `resolve_zero_orientation` resolves
+    /// the sign via `robust_orientation`.
     #[test]
     fn test_flip_k2_zero_orientation_kernel_exercises_robust_fallback() {
         init_tracing();
@@ -6566,16 +6576,32 @@ mod tests {
 
         let facet = FacetHandle::new(c1, 2);
         let context = build_k2_flip_context(&tds, facet).unwrap();
+
+        // Directly verify that resolve_zero_orientation returns a non-zero
+        // sign for each new-cell point set (the same sets the flip code builds).
+        for &omit in &context.removed_face_vertices {
+            let mut verts: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                SmallBuffer::with_capacity(3);
+            verts.extend_from_slice(&context.inserted_face_vertices);
+            for &v in &context.removed_face_vertices {
+                if v != omit {
+                    verts.push(v);
+                }
+            }
+            let points = vertices_to_points(&tds, &verts).unwrap();
+            let sign = resolve_zero_orientation(&points, "test").unwrap();
+            assert_ne!(sign, 0, "robust_orientation must resolve to ±1");
+        }
+
+        // Now apply the flip with the zero-orientation kernel and verify success.
         let kernel = ZeroOrientationKernel2d;
-        // The kernel always returns 0 for orientation, forcing the
-        // robust_orientation fallback path inside apply_bistellar_flip.
         let result = apply_bistellar_flip_k2(&mut tds, &kernel, &context);
         assert!(result.is_ok(), "flip should succeed via robust fallback");
         assert!(tds.is_valid().is_ok());
     }
 
     /// Exercises the `orientation == 0` fallback in
-    /// `k2_flip_would_create_degenerate_cell` (lines ~1879-1887).
+    /// `k2_flip_would_create_degenerate_cell` via `resolve_zero_orientation`.
     #[test]
     fn test_k2_flip_would_create_degenerate_cell_zero_orientation_kernel() {
         init_tracing();
@@ -6596,11 +6622,28 @@ mod tests {
 
         let facet = FacetHandle::new(c1, 2);
         let context = build_k2_flip_context(&tds, facet).unwrap();
+
+        // Directly verify that resolve_zero_orientation returns a non-zero
+        // sign for the same point sets that k2_flip_would_create_degenerate_cell
+        // checks.
+        for &omit in &context.removed_face_vertices {
+            let mut verts: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                SmallBuffer::with_capacity(3);
+            verts.extend_from_slice(&context.inserted_face_vertices);
+            for &v in &context.removed_face_vertices {
+                if v != omit {
+                    verts.push(v);
+                }
+            }
+            let points = vertices_to_points(&tds, &verts).unwrap();
+            let sign = resolve_zero_orientation(&points, "test").unwrap();
+            assert_ne!(sign, 0, "robust_orientation must resolve to ±1");
+        }
+
+        // Then verify k2_flip_would_create_degenerate_cell correctly returns
+        // false when the zero-orientation kernel triggers the fallback.
         let kernel = ZeroOrientationKernel2d;
-        // The kernel returns 0 for orientation, forcing robust_orientation
-        // inside k2_flip_would_create_degenerate_cell.
         let degenerate = k2_flip_would_create_degenerate_cell(&tds, &kernel, &context).unwrap();
-        // Points form a proper square — robust orientation is non-degenerate.
         assert!(!degenerate);
     }
 
