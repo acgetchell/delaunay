@@ -2739,15 +2739,16 @@ mod tests {
                     );
                 }
                 Err(DelaunayTriangulationConstructionError::Triangulation(
-                    TriangulationConstructionError::GeometricDegeneracy { .. },
+                    TriangulationConstructionError::GeometricDegeneracy { .. }
+                    | TriangulationConstructionError::InsufficientVertices { .. },
                 )) => {
                     // Extremely large/small/mixed coordinate sets may be rejected as
-                    // numerically unstable by the robust initial simplex search.
-                    // This is acceptable as long as it is surfaced as a clear
-                    // GeometricDegeneracy error.
+                    // numerically unstable by the robust initial simplex search, or
+                    // Hilbert-sort dedup may collapse near-identical coordinates at
+                    // quantization resolution, leaving fewer than D+1 vertices.
                     println!(
                         "  \x1b[33mWarning:\x1b[0m skipping {desc} extreme coordinate hull validation \
-                         due to geometric degeneracy in DelaunayTriangulation::new",
+                         due to geometric degeneracy or insufficient vertices in DelaunayTriangulation::new",
                     );
                 }
                 Err(other) => {

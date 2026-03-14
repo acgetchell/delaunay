@@ -1190,6 +1190,9 @@ fn hilbert_bits_per_coord<const D: usize>() -> Option<u32> {
     Some(bits_per_coord)
 }
 
+/// Sort key for Hilbert ordering: `(hilbert_index, quantized_coords, vertex, input_index)`.
+type HilbertSortKey<T, U, const D: usize> = (u128, [u32; D], Vertex<T, U, D>, usize);
+
 fn order_vertices_hilbert<T, U, const D: usize>(
     vertices: Vec<Vertex<T, U, D>>,
 ) -> Vec<Vertex<T, U, D>>
@@ -1247,8 +1250,8 @@ where
         // On bulk index computation error, fall back to true lexicographic ordering
         return order_vertices_lexicographic(vertices);
     };
-    // Phase 3: Pair indices with vertices and input indices
-    let mut keyed: Vec<(u128, Vertex<T, U, D>, usize)> = vertices
+    // Phase 3: Pair indices with vertices, quantized coords, and input indices
+    let mut keyed: Vec<HilbertSortKey<T, U, D>> = vertices
         .into_iter()
         .enumerate()
         .map(|(input_index, vertex)| {
@@ -1257,18 +1260,49 @@ where
                 .copied()
                 // Fallback to input index directly as u128 (no u32 truncation)
                 .unwrap_or(input_index as u128);
-            (idx, vertex, input_index)
+            let q = quantized[input_index];
+            (idx, q, vertex, input_index)
         })
         .collect();
 
-    keyed.sort_by(|(a_idx, a_vertex, a_in), (b_idx, b_vertex, b_in)| {
-        a_idx
-            .cmp(b_idx)
-            .then_with(|| a_vertex.partial_cmp(b_vertex).unwrap_or(Ordering::Equal))
-            .then_with(|| a_in.cmp(b_in))
-    });
+    keyed.sort_by(
+        |(a_idx, a_q, a_vertex, a_in), (b_idx, b_q, b_vertex, b_in)| {
+            a_idx
+                .cmp(b_idx)
+                .then_with(|| a_q.cmp(b_q))
+                .then_with(|| a_vertex.partial_cmp(b_vertex).unwrap_or(Ordering::Equal))
+                .then_with(|| a_in.cmp(b_in))
+        },
+    );
 
-    keyed.into_iter().map(|(_, v, _)| v).collect()
+    // Phase 4: Deduplicate vertices that quantize to the same grid cell.
+    //
+    // After sorting, vertices with identical quantized coordinates are adjacent.
+    // Points mapping to the same Hilbert grid cell are near-identical at the
+    // quantization resolution (e.g. ~10⁻⁸ for unit-scale 5D inputs with 25 bits).
+    // Removing them prevents catastrophic SoS failures on identical/near-identical
+    // points and avoids zero-volume simplices that break Pachner moves.
+    let input_len = keyed.len();
+    let mut prev_q: Option<[u32; D]> = None;
+    let deduped: Vec<Vertex<T, U, D>> = keyed
+        .into_iter()
+        .filter_map(|(_, q, v, _)| {
+            if prev_q == Some(q) {
+                return None; // duplicate at quantization resolution
+            }
+            prev_q = Some(q);
+            Some(v)
+        })
+        .collect();
+
+    let removed = input_len - deduped.len();
+    if removed > 0 {
+        tracing::debug!(
+            "Hilbert-sort dedup removed {removed} vertices (quantized at {bits_per_coord} bits/coord)"
+        );
+    }
+
+    deduped
 }
 
 /// Delaunay triangulation with incremental insertion support.
@@ -6364,6 +6398,111 @@ mod tests {
             assert_eq!(got, expected);
         }
     }
+
+    // =========================================================================
+    // HILBERT DEDUP — GENERIC HELPERS
+    // =========================================================================
+
+    /// Build D+1 standard simplex vertices: origin + D unit vectors.
+    fn simplex_vertices<const D: usize>() -> Vec<Vertex<f64, (), D>> {
+        let mut verts = Vec::with_capacity(D + 1);
+        verts.push(vertex!([0.0; D]));
+        for i in 0..D {
+            let mut coords = [0.0; D];
+            coords[i] = 1.0;
+            verts.push(vertex!(coords));
+        }
+        verts
+    }
+
+    /// Build simplex vertices plus exact duplicates of the first two.
+    fn simplex_with_duplicates<const D: usize>() -> (Vec<Vertex<f64, (), D>>, usize) {
+        let mut verts = simplex_vertices::<D>();
+        let distinct = verts.len();
+        // Duplicate the origin and first unit vector
+        verts.push(vertex!([0.0; D]));
+        let mut unit = [0.0; D];
+        unit[0] = 1.0;
+        verts.push(vertex!(unit));
+        (verts, distinct)
+    }
+
+    /// Build simplex vertices plus an interior point (all distinct).
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "D ≤ 5 in practice; no precision loss"
+    )]
+    fn simplex_with_interior<const D: usize>() -> Vec<Vertex<f64, (), D>> {
+        let mut verts = simplex_vertices::<D>();
+        let interior = [0.1_f64 / (D as f64); D];
+        verts.push(vertex!(interior));
+        verts
+    }
+
+    // =========================================================================
+    // HILBERT DEDUP — MACRO-GENERATED PER-DIMENSION TESTS (2D–5D)
+    // =========================================================================
+
+    /// Generate Hilbert-sort dedup tests for a given dimension:
+    ///
+    /// - exact duplicates are removed
+    /// - distinct points are preserved
+    /// - all-identical inputs collapse to 1
+    macro_rules! gen_hilbert_dedup_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_hilbert_sort_dedup_removes_exact_duplicates_ $dim d>]() {
+                    init_tracing();
+                    let (vertices, distinct) = simplex_with_duplicates::<$dim>();
+                    assert!(vertices.len() > distinct);
+                    let result = order_vertices_hilbert(vertices);
+                    assert_eq!(
+                        result.len(),
+                        distinct,
+                        "{}D: exact duplicates should be removed",
+                        $dim
+                    );
+                }
+
+                #[test]
+                fn [<test_hilbert_sort_dedup_preserves_distinct_points_ $dim d>]() {
+                    init_tracing();
+                    let vertices = simplex_with_interior::<$dim>();
+                    let expected = vertices.len();
+                    let result = order_vertices_hilbert(vertices);
+                    assert_eq!(
+                        result.len(),
+                        expected,
+                        "{}D: distinct points should all be preserved",
+                        $dim
+                    );
+                }
+
+                #[test]
+                fn [<test_hilbert_sort_dedup_all_identical_ $dim d>]() {
+                    init_tracing();
+                    let vertices: Vec<Vertex<f64, (), $dim>> = vec![
+                        vertex!([0.5; $dim]),
+                        vertex!([0.5; $dim]),
+                        vertex!([0.5; $dim]),
+                    ];
+                    let result = order_vertices_hilbert(vertices);
+                    assert_eq!(
+                        result.len(),
+                        1,
+                        "{}D: all-identical inputs should collapse to 1",
+                        $dim
+                    );
+                }
+            }
+        };
+    }
+
+    gen_hilbert_dedup_tests!(2);
+    gen_hilbert_dedup_tests!(3);
+    gen_hilbert_dedup_tests!(4);
+    gen_hilbert_dedup_tests!(5);
 
     #[test]
     fn test_new_with_options_lexicographic_and_morton_smoke_3d() {

@@ -516,6 +516,19 @@ pub enum TdsValidationError {
         /// Description of the finalization failure, including underlying error details.
         message: String,
     },
+    /// A cell contains two or more vertices with identical coordinates.
+    ///
+    /// This is distinct from [`CellValidationError::DuplicateVertices`] which checks
+    /// for duplicate vertex *keys*. This variant detects the case where different
+    /// vertex keys reference geometrically identical points — producing a zero-volume
+    /// simplex that is catastrophic for `SoS` and Pachner moves.
+    #[error("Duplicate coordinates in cell {cell_id}: {message}")]
+    DuplicateCoordinatesInCell {
+        /// UUID of the cell containing duplicate-coordinate vertices.
+        cell_id: Uuid,
+        /// Description of which vertices share coordinates.
+        message: String,
+    },
 }
 
 /// Errors that can occur during TDS mutation operations.
@@ -589,6 +602,8 @@ pub enum InvariantKind {
     VertexValidity,
     /// Per-cell validity (vertex count, duplicate vertices, nil UUID, etc.).
     CellValidity,
+    /// No cells contain vertices with identical coordinates (geometric uniqueness).
+    CellCoordinateUniqueness,
     /// Vertex UUID↔key mapping invariants.
     VertexMappings,
     /// Cell UUID↔key mapping invariants.
@@ -3841,6 +3856,55 @@ where
         Ok(())
     }
 
+    /// Validates that no cell contains vertices with identical coordinates.
+    ///
+    /// This is a geometric-level check complementing [`Cell::new()`]'s vertex-key uniqueness
+    /// check. Two different vertex keys can reference geometrically identical points, producing
+    /// a zero-volume simplex that is catastrophic for `SoS` orientation and Pachner moves.
+    ///
+    /// Uses exact `OrderedFloat`-based coordinate comparison (NaN-aware, +0.0 == -0.0).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TdsValidationError::DuplicateCoordinatesInCell`] on the first cell found
+    /// containing two vertices with identical coordinates.
+    fn validate_cell_coordinate_uniqueness(&self) -> Result<(), TdsValidationError>
+    where
+        T: CoordinateScalar,
+    {
+        for (_cell_key, cell) in &self.cells {
+            let vkeys = cell.vertices();
+            // O(D²) pairwise comparison per cell — acceptable since D is small (≤ 6).
+            for i in 0..vkeys.len() {
+                let Some(vi) = self.get_vertex_by_key(vkeys[i]) else {
+                    continue; // Missing keys are caught by validate_cell_vertex_keys
+                };
+                for j in (i + 1)..vkeys.len() {
+                    let Some(vj) = self.get_vertex_by_key(vkeys[j]) else {
+                        continue;
+                    };
+                    if crate::core::util::deduplication::coords_equal_exact(
+                        vi.point().coords(),
+                        vj.point().coords(),
+                    ) {
+                        return Err(TdsError::DuplicateCoordinatesInCell {
+                            cell_id: cell.uuid(),
+                            message: format!(
+                                "vertices {:?} and {:?} (keys {:?}, {:?}) have identical coordinates {:?}",
+                                vi.uuid(),
+                                vj.uuid(),
+                                vkeys[i],
+                                vkeys[j],
+                                vi.point().coords(),
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Validates that no facet is shared by more than 2 cells
     ///
     /// This is a critical property for valid triangulations. Each facet should be
@@ -4293,6 +4357,10 @@ where
                 return Err(TdsError::InvalidCell { cell_id, source });
             }
         }
+
+        // Coordinate-level duplicate detection: different vertex keys with identical
+        // coordinates produce zero-volume simplices that break SoS and Pachner moves.
+        self.validate_cell_coordinate_uniqueness()?;
 
         self.is_valid()
     }

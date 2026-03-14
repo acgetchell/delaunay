@@ -136,6 +136,101 @@ near-singular (ill-conditioned linear system). This uses
 returns exact `f64`-rounded results. This replaces the previous zero-tolerance LU
 fallback which could fail on degenerate simplices.
 
+## Duplicate vertex handling
+
+Duplicate or near-duplicate vertices are a common source of geometric degeneracy: they
+produce zero-volume simplices whose orientation determinant is exactly zero, breaking
+SoS perturbation, Pachner moves, and Delaunay repair. This crate applies a three-layer
+defense-in-depth strategy so that duplicate vertices are caught early and never reach
+the triangulation interior.
+
+### Layer 1: Hilbert-sort preprocessing dedup (batch construction)
+
+When vertices are inserted via batch constructors (`DelaunayTriangulation::new()`,
+`::with_kernel()`, etc.) using the default `InsertionOrderStrategy::Hilbert`, the
+Hilbert ordering pass quantizes each coordinate to a fixed-width integer grid before
+computing the space-filling curve index. After sorting, vertices that map to the same
+quantized grid cell are adjacent and are removed in a single linear sweep.
+
+The quantization resolution is `128/D` bits per coordinate (capped at 31), giving:
+
+- 2D: 64 bits/coord → ~10⁻¹⁹ relative resolution
+- 3D: 42 bits/coord → ~10⁻¹³ relative resolution
+- 4D: 31 bits/coord → ~10⁻⁹ relative resolution
+- 5D: 25 bits/coord → ~10⁻⁸ relative resolution
+
+This layer is unconditional when Hilbert ordering is active (the default) and runs in
+O(n log n) time. It removes the vast majority of exact and near-duplicate vertices
+before any insertion occurs.
+
+See `order_vertices_hilbert` in
+[`src/core/delaunay_triangulation.rs`](../src/core/delaunay_triangulation.rs).
+
+### Layer 2: Per-insertion duplicate coordinate check
+
+Every call to `insert_transactional` checks the incoming vertex against all existing
+vertices before attempting insertion. When a hash-grid spatial index is available
+(the default for batch construction), this is an O(1) amortized lookup; otherwise
+it falls back to a linear scan.
+
+The check uses a squared-distance tolerance of `1e-10` (i.e. vertices within ~10⁻⁵
+Euclidean distance are considered duplicates). If a duplicate is detected, the
+vertex is skipped with `InsertionOutcome::Skipped { error: DuplicateCoordinates { .. } }`
+and the triangulation is unchanged.
+
+This layer catches duplicates that survive Hilbert dedup (e.g. when using
+`InsertionOrderStrategy::InputOrder` or `::Morton`) and also protects single-vertex
+`insert()` calls.
+
+See `duplicate_coordinates_error` in
+[`src/core/triangulation.rs`](../src/core/triangulation.rs).
+
+### Layer 3: Cell-level coordinate uniqueness validation
+
+As a post-hoc safety net, `Tds::validate()` (Level 2 validation) includes a
+`CellCoordinateUniqueness` check that scans every cell for pairs of vertices with
+identical coordinates. This uses exact `OrderedFloat`-based comparison (NaN-aware,
++0.0 == -0.0) via `coords_equal_exact`.
+
+Unlike the per-insertion check (which uses a distance tolerance), this validation
+detects only exact floating-point matches — it is a strict invariant that should
+never be violated if Layers 1 and 2 are working correctly.
+
+If violated, the error is
+`TdsValidationError::DuplicateCoordinatesInCell { cell_id, message }`.
+
+See `validate_cell_coordinate_uniqueness` in
+[`src/core/triangulation_data_structure.rs`](../src/core/triangulation_data_structure.rs).
+
+### User-facing dedup utilities
+
+For explicit preprocessing, the crate provides public deduplication functions in
+`core::util`:
+
+- `dedup_vertices_exact(&[Vertex])` — removes exact coordinate duplicates (O(n²))
+- `dedup_vertices_epsilon(&[Vertex], epsilon)` — removes near-duplicates within
+  Euclidean distance `epsilon` (O(n²))
+- `filter_vertices_excluding(&[Vertex], &[Vertex])` — excludes vertices matching
+  reference coordinates (e.g. an initial simplex)
+
+These are useful when you need fine-grained control over deduplication before
+construction, or when using a non-Hilbert insertion order.
+
+### Choosing a `DedupPolicy`
+
+The `DedupPolicy` enum on `DelaunayTriangulation` controls whether explicit
+preprocessing dedup is applied before batch construction:
+
+- `DedupPolicy::Off` *(default)*: rely on the implicit Hilbert dedup (Layer 1) and
+  per-insertion checks (Layer 2). This is sufficient for most use cases.
+- `DedupPolicy::Exact`: apply `dedup_vertices_exact` before construction.
+- `DedupPolicy::Epsilon(value)`: apply `dedup_vertices_epsilon` with the given
+  tolerance before construction.
+
+The default (`Off`) is recommended because Hilbert dedup is faster (O(n log n) vs
+O(n²)) and catches near-duplicates at quantization resolution, while per-insertion
+checks handle any remaining cases.
+
 ## Practical recommendations
 
 - Start with the default `AdaptiveKernel` (`DelaunayTriangulation::new()` / `::empty()`).

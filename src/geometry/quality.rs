@@ -1253,11 +1253,13 @@ let cell_key = dt.cells().next().unwrap().0;
                 );
             }
             Err(DelaunayTriangulationConstructionError::Triangulation(
-                TriangulationConstructionError::GeometricDegeneracy { .. },
+                TriangulationConstructionError::GeometricDegeneracy { .. }
+                | TriangulationConstructionError::InsufficientVertices { .. },
             )) => {
                 // Extremely flat/near-degenerate configurations may now be rejected
-                // up-front by the initial simplex search. This is acceptable as
-                // long as the error is reported as geometric degeneracy.
+                // up-front by the initial simplex search, or Hilbert-sort dedup may
+                // collapse near-identical coordinates (e.g. 1e-14 vs 0.0) at
+                // quantization resolution, leaving fewer than D+1 distinct vertices.
             }
             Err(other) => panic!(
                 "Unexpected triangulation error for normalized_volume numerical edge case: {other}",

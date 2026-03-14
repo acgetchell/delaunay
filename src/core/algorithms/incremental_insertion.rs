@@ -42,6 +42,8 @@ use crate::core::triangulation_data_structure::{
 };
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
+use crate::geometry::predicates::Orientation;
+use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use std::hash::{Hash, Hasher};
 
@@ -1631,16 +1633,20 @@ where
         let mut edge_line = SmallBuffer::<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
         edge_line.extend(edge_points.iter().copied());
         edge_line.push(*point);
-        let orientation_with_point =
-            kernel
-                .orientation(&edge_line)
-                .map_err(|e| InsertionError::HullExtension {
-                    reason: HullExtensionReason::Other {
-                        message: format!("Orientation test failed: {e}"),
-                    },
-                })?;
 
-        if orientation_with_point != 0 {
+        // Use exact orientation (not kernel SoS) to detect true collinearity.
+        // SoS-based kernels never return 0, which would mask the geometric
+        // property we need here: is the point truly on the line through the edge?
+        let is_collinear = matches!(
+            robust_orientation(&edge_line).map_err(|e| InsertionError::HullExtension {
+                reason: HullExtensionReason::Other {
+                    message: format!("Exact orientation test failed: {e}"),
+                },
+            })?,
+            Orientation::DEGENERATE
+        );
+
+        if !is_collinear {
             continue;
         }
 
