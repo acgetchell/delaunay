@@ -2214,6 +2214,20 @@ where
         })
     }
 
+    /// Returns `true` if the construction error is deterministic and should not
+    /// be masked by shuffled retry logic (e.g. duplicate UUIDs, internal bugs).
+    const fn is_non_retryable_construction_error(
+        err: &DelaunayTriangulationConstructionError,
+    ) -> bool {
+        matches!(
+            err,
+            DelaunayTriangulationConstructionError::Triangulation(
+                TriangulationConstructionError::Tds(TdsConstructionError::DuplicateUuid { .. })
+                    | TriangulationConstructionError::InternalInconsistency { .. }
+            )
+        )
+    }
+
     #[allow(clippy::too_many_lines)]
     fn build_with_shuffled_retries(
         kernel: &K,
@@ -2258,16 +2272,7 @@ where
                 Err(err) => format!("Delaunay property violated after construction: {err}"),
             },
             Err(err) => {
-                // Some construction errors are deterministic and should not be masked
-                // by shuffled retry logic (e.g. duplicate UUIDs, internal bugs).
-                if matches!(
-                    &err,
-                    DelaunayTriangulationConstructionError::Triangulation(
-                        TriangulationConstructionError::Tds(
-                            TdsConstructionError::DuplicateUuid { .. }
-                        ) | TriangulationConstructionError::InternalInconsistency { .. }
-                    )
-                ) {
+                if Self::is_non_retryable_construction_error(&err) {
                     return Err(err);
                 }
                 err.to_string()
@@ -2328,14 +2333,7 @@ where
                     }
                 }
                 Err(err) => {
-                    if matches!(
-                        &err,
-                        DelaunayTriangulationConstructionError::Triangulation(
-                            TriangulationConstructionError::Tds(
-                                TdsConstructionError::DuplicateUuid { .. }
-                            ) | TriangulationConstructionError::InternalInconsistency { .. }
-                        )
-                    ) {
+                    if Self::is_non_retryable_construction_error(&err) {
                         return Err(err);
                     }
                     last_error = err.to_string();
@@ -2421,16 +2419,7 @@ where
                 Err(err) => {
                     let DelaunayTriangulationConstructionErrorWithStatistics { error, statistics } =
                         err;
-                    // Some construction errors are deterministic and should not be masked
-                    // by shuffled retry logic (e.g. duplicate UUIDs, internal bugs).
-                    if matches!(
-                        &error,
-                        DelaunayTriangulationConstructionError::Triangulation(
-                            TriangulationConstructionError::Tds(
-                                TdsConstructionError::DuplicateUuid { .. }
-                            ) | TriangulationConstructionError::InternalInconsistency { .. }
-                        )
-                    ) {
+                    if Self::is_non_retryable_construction_error(&error) {
                         return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                             error,
                             statistics,
@@ -2498,14 +2487,7 @@ where
                 Err(err) => {
                     let DelaunayTriangulationConstructionErrorWithStatistics { error, statistics } =
                         err;
-                    if matches!(
-                        &error,
-                        DelaunayTriangulationConstructionError::Triangulation(
-                            TriangulationConstructionError::Tds(
-                                TdsConstructionError::DuplicateUuid { .. }
-                            ) | TriangulationConstructionError::InternalInconsistency { .. }
-                        )
-                    ) {
+                    if Self::is_non_retryable_construction_error(&error) {
                         return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                             error,
                             statistics,
@@ -8377,6 +8359,54 @@ mod tests {
                 TriangulationConstructionError::GeometricDegeneracy { .. }
             ),
             "ConflictRegion should map to GeometricDegeneracy, got: {mapped:?}"
+        );
+    }
+
+    // ---- is_non_retryable_construction_error tests ----
+
+    #[test]
+    fn test_is_non_retryable_construction_error_duplicate_uuid() {
+        let err: DelaunayTriangulationConstructionError =
+            TriangulationConstructionError::Tds(TdsConstructionError::DuplicateUuid {
+                entity: EntityKind::Cell,
+                uuid: Uuid::nil(),
+            })
+            .into();
+        assert!(
+            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::is_non_retryable_construction_error(
+                &err
+            ),
+            "DuplicateUuid should be non-retryable"
+        );
+    }
+
+    #[test]
+    fn test_is_non_retryable_construction_error_internal_inconsistency() {
+        let err: DelaunayTriangulationConstructionError =
+            TriangulationConstructionError::InternalInconsistency {
+                message: "test".to_string(),
+            }
+            .into();
+        assert!(
+            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::is_non_retryable_construction_error(
+                &err
+            ),
+            "InternalInconsistency should be non-retryable"
+        );
+    }
+
+    #[test]
+    fn test_is_non_retryable_construction_error_false_for_geometric_degeneracy() {
+        let err: DelaunayTriangulationConstructionError =
+            TriangulationConstructionError::GeometricDegeneracy {
+                message: "test".to_string(),
+            }
+            .into();
+        assert!(
+            !DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::is_non_retryable_construction_error(
+                &err
+            ),
+            "GeometricDegeneracy should NOT be non-retryable"
         );
     }
 }

@@ -4259,30 +4259,9 @@ where
             }
         }
 
-        // If any vertex is not incident to a cell, topology is not a pure ball anymore.
-        if let Some((iso_key, iso_vertex)) =
-            self.tds.vertices().find(|(_, v)| v.incident_cell.is_none())
-        {
-            let iso_uuid = iso_vertex.uuid();
-            #[cfg(debug_assertions)]
-            if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
-                let isolated_count = 1 + self
-                    .tds
-                    .vertices()
-                    .filter(|(k, v)| *k != iso_key && v.incident_cell.is_none())
-                    .count();
-                tracing::warn!(
-                    isolated_count,
-                    "insert_with_conflict_region: isolated vertices detected after insertion"
-                );
-            }
-            return Err(InsertionError::TopologyValidation(
-                TdsValidationError::IsolatedVertex {
-                    vertex_key: iso_key,
-                    vertex_uuid: iso_uuid,
-                },
-            ));
-        }
+        // Repair stale incident-cell pointers (e.g. pointing to deleted conflict-region
+        // cells) and error only for truly isolated vertices (in zero cells).
+        self.repair_stale_incident_cells()?;
 
         // Connectedness guard (STRUCTURAL SAFETY, NOT Level 3 validation)
         self.validate_connectedness(&new_cells)?;
@@ -4290,6 +4269,56 @@ where
         // Return hint for next insertion
         Ok((hint, total_removed))
     }
+
+    /// Repair stale incident-cell pointers and detect truly isolated vertices.
+    ///
+    /// After cavity filling and cell removal, pre-existing boundary vertices may
+    /// still reference deleted conflict-region cells via a stale `incident_cell`.
+    /// For each vertex with a stale or missing `incident_cell`, this scans all
+    /// cells for a valid one and updates the pointer.  Returns an error only if a
+    /// vertex is in zero cells (truly isolated).
+    fn repair_stale_incident_cells(&mut self) -> Result<(), InsertionError> {
+        let stale_vertices: Vec<_> = {
+            let tds = &self.tds;
+            tds.vertices()
+                .filter(|(vk, v)| {
+                    !v.incident_cell.is_some_and(|cell_key| {
+                        tds.get_cell(cell_key)
+                            .is_some_and(|cell| cell.contains_vertex(*vk))
+                    })
+                })
+                .map(|(vk, v)| (vk, v.uuid()))
+                .collect()
+        };
+        #[cfg(debug_assertions)]
+        if !stale_vertices.is_empty() && std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
+            tracing::debug!(
+                stale_count = stale_vertices.len(),
+                "repairing stale incident-cell pointers"
+            );
+        }
+        for &(vk, uuid) in &stale_vertices {
+            let repaired_cell = self
+                .tds
+                .cells()
+                .find_map(|(ck, cell)| cell.contains_vertex(vk).then_some(ck));
+            if let Some(cell_key) = repaired_cell {
+                if let Some(vertex) = self.tds.get_vertex_by_key_mut(vk) {
+                    vertex.incident_cell = Some(cell_key);
+                }
+            } else {
+                // Truly isolated: no cell in the TDS contains this vertex.
+                return Err(InsertionError::TopologyValidation(
+                    TdsValidationError::IsolatedVertex {
+                        vertex_key: vk,
+                        vertex_uuid: uuid,
+                    },
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Internal implementation of insert without retry logic.
     /// Returns the result and the number of cells removed during repair.
     ///
@@ -4830,17 +4859,9 @@ where
                     }
                 }
 
-                // Detect isolated vertices.
-                if let Some((iso_key, iso_vertex)) =
-                    self.tds.vertices().find(|(_, v)| v.incident_cell.is_none())
-                {
-                    return Err(InsertionError::TopologyValidation(
-                        TdsValidationError::IsolatedVertex {
-                            vertex_key: iso_key,
-                            vertex_uuid: iso_vertex.uuid(),
-                        },
-                    ));
-                }
+                // Repair stale incident-cell pointers (e.g. pointing to deleted
+                // conflict-region cells) and error only for truly isolated vertices.
+                self.repair_stale_incident_cells()?;
 
                 // Connectedness guard (localized): ensure the newly created cell set is internally
                 // connected and attached to the existing triangulation.
@@ -5366,6 +5387,45 @@ mod tests {
     use crate::vertex;
 
     use slotmap::KeyData;
+
+    /// Helper: build a minimal 3D triangulation with one tetrahedron and valid
+    /// incident-cell pointers for all four vertices.
+    fn build_single_tet() -> (
+        Triangulation<FastKernel<f64>, (), (), 3>,
+        [VertexKey; 4],
+        CellKey,
+    ) {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 3> =
+            Triangulation::new_empty(FastKernel::new());
+
+        let v0 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .unwrap();
+        let v1 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .unwrap();
+        let v2 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .unwrap();
+        let v3 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .unwrap();
+
+        let ck = tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v3], None).unwrap())
+            .unwrap();
+
+        for vk in [v0, v1, v2, v3] {
+            tri.tds.get_vertex_by_key_mut(vk).unwrap().incident_cell = Some(ck);
+        }
+
+        (tri, [v0, v1, v2, v3], ck)
+    }
 
     #[test]
     fn test_triangulation_validation_error_from_manifold_error_preserves_detail() {
@@ -8542,6 +8602,75 @@ mod tests {
                     if message.contains("ctx") && message.contains("filling failed")
             ),
             "CavityFilling should wrap to InconsistentDataStructure: {result:?}"
+        );
+    }
+
+    // ---- repair_stale_incident_cells tests ----
+
+    #[test]
+    fn test_repair_stale_incident_cells_noop_when_all_valid() {
+        let (mut tri, [v0, v1, v2, v3], ck) = build_single_tet();
+        assert!(tri.repair_stale_incident_cells().is_ok());
+
+        // Pointers unchanged.
+        for vk in [v0, v1, v2, v3] {
+            assert_eq!(
+                tri.tds.get_vertex_by_key_mut(vk).unwrap().incident_cell,
+                Some(ck)
+            );
+        }
+    }
+
+    #[test]
+    fn test_repair_stale_incident_cells_repairs_none_pointer() {
+        let (mut tri, [_, _, _, v3], ck) = build_single_tet();
+
+        // Corrupt v3 to have no incident cell.
+        tri.tds.get_vertex_by_key_mut(v3).unwrap().incident_cell = None;
+
+        assert!(tri.repair_stale_incident_cells().is_ok());
+        assert_eq!(
+            tri.tds.get_vertex_by_key_mut(v3).unwrap().incident_cell,
+            Some(ck),
+            "v3 should be repaired to point to the tetrahedron"
+        );
+    }
+
+    #[test]
+    fn test_repair_stale_incident_cells_repairs_stale_pointer() {
+        let (mut tri, [_, _, _, v3], ck) = build_single_tet();
+
+        // Point v3 to a non-existent cell key (simulates a deleted conflict cell).
+        let stale = CellKey::from(KeyData::from_ffi(0xDEAD_BEEF));
+        tri.tds.get_vertex_by_key_mut(v3).unwrap().incident_cell = Some(stale);
+
+        assert!(tri.repair_stale_incident_cells().is_ok());
+        assert_eq!(
+            tri.tds.get_vertex_by_key_mut(v3).unwrap().incident_cell,
+            Some(ck),
+            "stale pointer should be repaired to the valid cell"
+        );
+    }
+
+    #[test]
+    fn test_repair_stale_incident_cells_errors_on_truly_isolated_vertex() {
+        let (mut tri, _, _) = build_single_tet();
+
+        // Insert a vertex that is NOT referenced by any cell.
+        let iso = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.5, 0.5, 0.5]))
+            .unwrap();
+
+        let result = tri.repair_stale_incident_cells();
+        assert!(
+            matches!(
+                &result,
+                Err(InsertionError::TopologyValidation(
+                    TdsValidationError::IsolatedVertex { vertex_key, .. }
+                )) if *vertex_key == iso
+            ),
+            "Truly isolated vertex should produce IsolatedVertex error: {result:?}"
         );
     }
 }
