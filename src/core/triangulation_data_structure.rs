@@ -499,13 +499,6 @@ pub enum TdsValidationError {
         vertex_uuid: Uuid,
     },
 
-    /// Level 3 topology validation failed (manifold / Euler characteristic, etc.).
-    ///
-    /// This preserves the structured Level‑3 validation error when topology checks
-    /// need to be surfaced through APIs that currently return [`TdsValidationError`]
-    /// (notably the incremental insertion rollback path).
-    ///
-
     /// Insufficient vertices to create a triangulation.
     #[error("Insufficient vertices for {dimension}D triangulation: {source}")]
     InsufficientVertices {

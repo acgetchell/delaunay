@@ -148,7 +148,7 @@ use crate::topology::manifold::{
     validate_vertex_links,
 };
 use crate::topology::traits::global_topology_model::GlobalTopologyModel;
-use crate::topology::traits::topological_space::{GlobalTopology, TopologyError, TopologyKind};
+use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
 use core::ops::Div;
 use num_traits::{NumCast, One, Zero};
 use std::borrow::Cow;
@@ -291,13 +291,6 @@ pub enum TriangulationConstructionError {
         source: CellValidationError,
     },
 
-    /// Failed to add vertex during triangulation construction.
-    #[error("Failed to add vertex during construction: {message}")]
-    FailedToAddVertex {
-        /// Description of the vertex addition failure.
-        message: String,
-    },
-
     /// Geometric degeneracy prevents triangulation construction.
     #[error("Geometric degeneracy encountered during construction: {message}")]
     GeometricDegeneracy {
@@ -362,47 +355,7 @@ pub enum TriangulationValidationError {
         cell_count: usize,
     },
 
-    /// A boundary facet unexpectedly has a neighbor pointer across it.
-    #[error(
-        "Boundary facet {facet_key:016x} unexpectedly has a neighbor across cell {cell_uuid}[{facet_index}] -> {neighbor_key:?}"
-    )]
-    BoundaryFacetHasNeighbor {
-        /// The facet key.
-        facet_key: u64,
-        /// UUID of the cell that owns the boundary facet.
-        cell_uuid: Uuid,
-        /// The facet index within the cell.
-        facet_index: usize,
-        /// The neighbor key that was unexpectedly present.
-        neighbor_key: CellKey,
-    },
-
-    /// Two cells that share a facet do not point to each other as neighbors across that facet.
-    #[error(
-        "Interior facet {facet_key:016x} has inconsistent neighbor pointers: {first_cell_uuid}[{first_facet_index}] -> {first_neighbor:?}, {second_cell_uuid}[{second_facet_index}] -> {second_neighbor:?}"
-    )]
-    InteriorFacetNeighborMismatch {
-        /// The facet key.
-        facet_key: u64,
-        /// The first cell key.
-        first_cell_key: CellKey,
-        /// The first cell UUID.
-        first_cell_uuid: Uuid,
-        /// The facet index in the first cell.
-        first_facet_index: usize,
-        /// The neighbor recorded in the first cell.
-        first_neighbor: Option<CellKey>,
-        /// The second cell key.
-        second_cell_key: CellKey,
-        /// The second cell UUID.
-        second_cell_uuid: Uuid,
-        /// The facet index in the second cell.
-        second_facet_index: usize,
-        /// The neighbor recorded in the second cell.
-        second_neighbor: Option<CellKey>,
-    },
-
-    /// Boundary is not a closed (D-1)-manifold: a ridge on the boundary is incident to the
+    /// Boundary is not a closed (D-1)-manifold:
     /// wrong number of boundary facets.
     ///
     /// This detects "boundary of boundary" issues (codimension-2 manifoldness of the boundary).
@@ -470,10 +423,6 @@ pub enum TriangulationValidationError {
         /// The topology classification used to determine expectation.
         classification: TopologyClassification,
     },
-
-    /// Topology computation/classification failed.
-    #[error(transparent)]
-    Topology(#[from] TopologyError),
 }
 
 impl From<TdsMutationError> for TriangulationValidationError {

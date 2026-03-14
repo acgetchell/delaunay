@@ -36,9 +36,7 @@ use crate::core::util::{
 };
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{AdaptiveKernel, Kernel, RobustKernel};
-use crate::geometry::traits::coordinate::{
-    CoordinateConversionError, CoordinateScalar, ScalarAccumulative, ScalarSummable,
-};
+use crate::geometry::traits::coordinate::{CoordinateScalar, ScalarAccumulative, ScalarSummable};
 use crate::topology::manifold::validate_ridge_links_for_cells;
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
 use core::cmp::Ordering;
@@ -148,33 +146,6 @@ pub enum DelaunayTriangulationValidationError {
     /// Lower-layer validation error (Levels 1–3).
     #[error(transparent)]
     Triangulation(#[from] TriangulationValidationError),
-
-    /// A cell violates the empty circumsphere property.
-    #[error(
-        "Delaunay property violated: Cell {cell_uuid} (key: {cell_key:?}) violates empty circumsphere invariant"
-    )]
-    DelaunayViolation {
-        /// Key of the violating cell.
-        cell_key: CellKey,
-        /// UUID of the violating cell (or nil if the UUID mapping is unavailable).
-        cell_uuid: Uuid,
-    },
-
-    /// Numeric predicate failure during Delaunay validation.
-    #[error(
-        "Numeric predicate failure while validating Delaunay property for cell {cell_uuid} (key: {cell_key:?}), vertex {vertex_key:?}: {source}"
-    )]
-    NumericPredicateError {
-        /// The key of the cell whose circumsphere was being tested.
-        cell_key: CellKey,
-        /// UUID of the cell whose predicate evaluation failed (or nil if unavailable).
-        cell_uuid: Uuid,
-        /// The key of the vertex being classified relative to the circumsphere.
-        vertex_key: VertexKey,
-        /// Underlying robust predicate error (e.g., conversion failure).
-        #[source]
-        source: CoordinateConversionError,
-    },
 
     /// Flip-based Delaunay verification detected a violation.
     ///
