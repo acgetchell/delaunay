@@ -464,6 +464,16 @@ pub enum TdsValidationError {
         /// Description of the inconsistency.
         message: String,
     },
+    /// Geometric orientation degeneracy detected during orientation canonicalization.
+    ///
+    /// This indicates a geometry-related issue (e.g., nearly coplanar input points
+    /// producing a zero determinant, or a kernel predicate evaluation failure)
+    /// rather than an internal data structure bug.
+    #[error("Degenerate geometric orientation: {message}")]
+    DegenerateOrientation {
+        /// Description of the degeneracy.
+        message: String,
+    },
 
     /// Level 3 topology validation failed (manifold / Euler characteristic, etc.).
     ///

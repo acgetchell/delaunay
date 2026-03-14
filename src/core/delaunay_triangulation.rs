@@ -3417,6 +3417,15 @@ where
             // Construction already wraps a TriangulationConstructionError — preserve it
             // directly rather than rewrapping, mirroring map_insertion_error.
             InsertionError::Construction(source) => source,
+            // Degenerate orientation (det ≈ 0 or predicate failure) is a geometry
+            // problem, not an internal bug.
+            InsertionError::TopologyValidation(
+                error @ TdsValidationError::DegenerateOrientation { .. },
+            ) => TriangulationConstructionError::GeometricDegeneracy {
+                message: format!(
+                    "Failed to canonicalize orientation after post-construction repair: {error}"
+                ),
+            },
             // Structural / data-structure errors indicate algorithmic bugs,
             // not input-geometry problems.
             error @ (InsertionError::TopologyValidation(_)
@@ -7879,6 +7888,27 @@ mod tests {
         let msg = mapped.to_string();
         assert!(
             msg.contains("missing cell"),
+            "error message should preserve the original error: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_map_orientation_canonicalization_error_degenerate_orientation_is_degeneracy() {
+        let error = InsertionError::TopologyValidation(TdsValidationError::DegenerateOrientation {
+            message: "det=0".to_string(),
+        });
+        let mapped =
+            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
+        assert!(
+            matches!(
+                mapped,
+                TriangulationConstructionError::GeometricDegeneracy { .. }
+            ),
+            "DegenerateOrientation should map to GeometricDegeneracy, got: {mapped:?}"
+        );
+        let msg = mapped.to_string();
+        assert!(
+            msg.contains("det=0"),
             "error message should preserve the original error: {msg}"
         );
     }

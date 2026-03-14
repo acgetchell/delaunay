@@ -2083,14 +2083,14 @@ where
     {
         let points = self.collect_cell_points_for_orientation(cell_key, cell, purpose)?;
 
-        self.kernel.orientation(&points).map_err(|e| {
-            TdsValidationError::InconsistentDataStructure {
+        self.kernel
+            .orientation(&points)
+            .map_err(|e| TdsValidationError::DegenerateOrientation {
                 message: format!(
                     "{predicate_failure_prefix} {:?} (key {cell_key:?}): {e}",
                     cell.uuid(),
                 ),
-            }
-        })
+            })
     }
     /// Validates geometric orientation sign for each stored cell using the kernel's signed
     /// determinant predicate.
@@ -2155,7 +2155,7 @@ where
                 "Geometric orientation predicate failed while promoting positive orientation for cell",
             )?;
             if orientation == 0 {
-                return Err(TdsValidationError::InconsistentDataStructure {
+                return Err(TdsValidationError::DegenerateOrientation {
                     message: format!(
                         "Cell {:?} (key {cell_key:?}) has degenerate geometric orientation while promoting positive orientation",
                         cell.uuid(),
@@ -2214,7 +2214,7 @@ where
                 "Geometric orientation predicate failed while checking positive-orientation convergence for cell",
             )?;
             if orientation == 0 {
-                return Err(TdsValidationError::InconsistentDataStructure {
+                return Err(TdsValidationError::DegenerateOrientation {
                     message: format!(
                         "Cell {:?} (key {cell_key:?}) has degenerate geometric orientation while checking positive-orientation convergence",
                         cell.uuid(),
@@ -2244,7 +2244,7 @@ where
                 "Geometric orientation predicate failed while canonicalizing global orientation sign for cell",
             )?;
             if orientation == 0 {
-                return Err(TdsValidationError::InconsistentDataStructure {
+                return Err(TdsValidationError::DegenerateOrientation {
                     message: format!(
                         "Cell {:?} (key {cell_key:?}) has degenerate geometric orientation during global orientation-sign canonicalization",
                         cell.uuid(),
