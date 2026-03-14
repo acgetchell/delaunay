@@ -3386,8 +3386,7 @@ where
             // geometry problems, not internal bugs.
             InsertionError::TopologyValidation(
                 error @ (TdsValidationError::DegenerateOrientation { .. }
-                | TdsValidationError::NegativeOrientation { .. }
-                | TdsValidationError::OrientationViolation { .. }),
+                | TdsValidationError::NegativeOrientation { .. }),
             ) => TriangulationConstructionError::GeometricDegeneracy {
                 message: format!(
                     "Failed to canonicalize orientation after post-construction repair: {error}"
@@ -3395,6 +3394,13 @@ where
             },
             // Structural / data-structure errors indicate algorithmic bugs,
             // not input-geometry problems.
+            //
+            // NOTE: OrientationViolation (coherent-orientation invariant breach between
+            // adjacent cells) lands here rather than in the geometry arm above.  After
+            // normalize_coherent_orientation() BFS, a surviving violation would mean the
+            // normalization algorithm failed its post-condition — an internal bug, not
+            // bad input geometry.  DegenerateOrientation / NegativeOrientation capture
+            // the actual FP-related geometry failures.
             error @ (InsertionError::TopologyValidation(_)
             | InsertionError::TopologyValidationFailed { .. }
             | InsertionError::CavityFilling { .. }
@@ -8288,7 +8294,8 @@ mod tests {
     // ---- map_orientation_canonicalization_error: OrientationViolation ----
 
     #[test]
-    fn test_map_orientation_canonicalization_error_orientation_violation_is_degeneracy() {
+    fn test_map_orientation_canonicalization_error_orientation_violation_is_internal_inconsistency()
+    {
         let error = InsertionError::TopologyValidation(TdsValidationError::OrientationViolation {
             cell1_key: CellKey::from(slotmap::KeyData::from_ffi(1)),
             cell1_uuid: Uuid::nil(),
@@ -8306,9 +8313,9 @@ mod tests {
         assert!(
             matches!(
                 mapped,
-                TriangulationConstructionError::GeometricDegeneracy { .. }
+                TriangulationConstructionError::InternalInconsistency { .. }
             ),
-            "OrientationViolation should map to GeometricDegeneracy, got: {mapped:?}"
+            "OrientationViolation should map to InternalInconsistency (structural invariant breach, not geometry), got: {mapped:?}"
         );
     }
 
