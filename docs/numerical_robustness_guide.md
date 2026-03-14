@@ -46,12 +46,15 @@ Most users won't call these functions directly; instead, select a kernel.
 Kernels control which predicate implementations are used by the triangulation algorithms:
 
 - `AdaptiveKernel<T>` **(default)**: provably correct predicates with zero configuration.
-  Uses exact arithmetic (fast filter + Bareiss) for orientation, and adds Simulation of
-  Simplicity (`SoS`) for insphere so cospherical ties are broken deterministically (every
-  insphere query returns ±1, never 0/BOUNDARY). Best choice for Delaunay triangulation.
+  Uses exact arithmetic (fast filter + Bareiss) for both orientation and insphere, and adds
+  Simulation of Simplicity (`SoS`) so degenerate ties are broken deterministically — both
+  orientation and insphere queries return ±1, never 0. The only exception is truly identical
+  points (same f64 coordinates), where all SoS cofactors vanish and orientation returns 0.
+  Best choice for Delaunay triangulation.
 - `RobustKernel<T>`: exact-arithmetic predicates that preserve explicit
   `BOUNDARY`/`DEGENERATE` signals and run diagnostic consistency checks. Prefer this when
-  your application needs to detect cospherical/coplanar configurations directly.
+  your application needs to detect cospherical/coplanar/collinear configurations directly
+  (SoS would mask these).
 - `FastKernel<T>`: raw f64 arithmetic, no robustness guarantees. Only suitable for 2D with
   well-conditioned input.
 
@@ -85,6 +88,10 @@ rolled back to the pre-insertion state.
 Some geometric degeneracies are retryable via a small deterministic perturbation. If retries
 are exhausted, the vertex is skipped and you get `InsertionOutcome::Skipped { .. }`
 (the triangulation is unchanged).
+
+**Note:** With the default `AdaptiveKernel`, SoS resolves most orientation degeneracies
+symbolically, so perturbation retries are rarely needed. The primary remaining retryable
+cases involve cavity/topology failures rather than predicate degeneracies.
 
 Use `insert_with_statistics()` to observe this behavior:
 
@@ -161,9 +168,11 @@ The quantization resolution is `min(128/D, 31)` bits per coordinate, giving:
 
 This layer is unconditional when Hilbert ordering is active (the default) and runs in
 O(n log n) time. It removes the vast majority of exact and near-duplicate vertices
-before any insertion occurs.
+before any insertion occurs. The dedup runs regardless of `DedupPolicy` because it
+guards against SoS failures on identical quantized points — a different failure mode
+than the user-facing duplicate policies.
 
-See `order_vertices_hilbert` in
+See `hilbert_dedup_sorted` (called from `preprocess_vertices_for_construction`) in
 [`src/core/delaunay_triangulation.rs`](../src/core/delaunay_triangulation.rs).
 
 ### Layer 2: Per-insertion duplicate coordinate check

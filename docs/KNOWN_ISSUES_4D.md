@@ -23,7 +23,9 @@ may have local Delaunay violations that flips cannot resolve.
 **Affects:** 3D bulk construction at moderate-to-large scale
 **Root cause:** exact degeneracies (cospherical configurations) where the insphere
 predicate returns BOUNDARY, leaving the flip heuristic unable to choose a direction.
-Simulation of Simplicity (SoS) perturbation (#233) will break these ties.
+With `AdaptiveKernel` (default), SoS now breaks these ties for both insphere and
+orientation predicates (#233, #263). Flip convergence at large scale may still be
+affected by cavity/topology interactions rather than predicate degeneracies.
 
 ### What has been fixed
 
@@ -43,11 +45,19 @@ Simulation of Simplicity (SoS) perturbation (#233) will break these ties.
   classification, eliminating false BOUNDARY/DEGENERATE results from floating-point
   rounding on well-separated inputs.
 
+#### SoS orientation normalization (v0.7.2+)
+
+- `AdaptiveKernel::orientation()` now applies SoS when the exact determinant is zero,
+  matching the existing insphere SoS behavior (#263). Both predicates return ±1 for
+  distinct points; only truly identical f64 coordinates yield 0.
+- Callers that need true geometric degeneracy detection (e.g. initial simplex validation,
+  flip degenerate-cell guards) now use `robust_orientation` (exact, no SoS) directly.
+- Hilbert-sort dedup extracted into a separate `hilbert_dedup_sorted` pass that runs
+  unconditionally after Hilbert sorting, guarding against SoS failures on identical
+  quantized points.
+
 ### What remains
 
-- **Flip convergence / SoS:** exact predicates correctly identify true degeneracies,
-  but the flip-based repair has no tie-breaking strategy for exactly degenerate
-  configurations.  #233 (AdaptiveKernel + Simulation of Simplicity) will address this.
 - **Heuristic fast-filter tolerance:** the f64 fast filter in `insphere_from_matrix` /
   `orientation_from_matrix` uses an adaptive tolerance that is a heuristic, not a
   provable error bound.  la-stack #44 tracks adding Shewchuk-style bounds.
@@ -80,8 +90,8 @@ DELAUNAY_LARGE_DEBUG_N_4D=200 DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=0 \
 
 ### Recommendations
 
-- **2D–3D:** generally robust for moderate sizes (up to ~100 points). Larger point
-  sets may encounter flip cycles on exact degeneracies until SoS is available (#233).
+- **2D–3D:** generally robust for moderate sizes. SoS (now applied to both orientation
+  and insphere) eliminates most predicate-degeneracy flip cycles.
 - **4D:** use incremental insertion for critical correctness paths.
 - **5D:** experimental; incremental insertion strongly recommended. Exact insphere
   predicates are available (5D uses a 7×7 matrix, within the stack limit).

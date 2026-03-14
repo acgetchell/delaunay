@@ -9,8 +9,10 @@
 //! Dimension coverage: 2D–5D via `gen_dedup_batch_tests!`.
 
 use delaunay::core::delaunay_triangulation::{
-    ConstructionOptions, DedupPolicy, InsertionOrderStrategy,
+    ConstructionOptions, DedupPolicy, DelaunayTriangulationConstructionError,
+    InsertionOrderStrategy,
 };
+use delaunay::core::triangulation::TriangulationConstructionError;
 use delaunay::prelude::triangulation::*;
 
 // =============================================================================
@@ -138,8 +140,13 @@ macro_rules! gen_dedup_batch_tests {
                     DelaunayTriangulation::new(&vertices);
 
                 assert!(
-                    result.is_err(),
-                    "{}D: all-duplicate input should fail",
+                    matches!(
+                        result,
+                        Err(DelaunayTriangulationConstructionError::Triangulation(
+                            TriangulationConstructionError::InsufficientVertices { .. }
+                        ))
+                    ),
+                    "{}D: all-duplicate input should fail with InsufficientVertices",
                     $dim
                 );
             }
@@ -198,10 +205,10 @@ macro_rules! gen_dedup_batch_tests {
             fn [<test_batch_construction_many_duplicates_ $dim d>]() {
                 init_tracing();
                 // D+2 distinct vertices, each repeated 5× = 5(D+2) total
-                let base = simplex_with_interior_and_duplicates::<$dim>().0;
-                // Take only the distinct portion (first D+2 entries)
+                let (base, distinct_count_raw) = simplex_with_interior_and_duplicates::<$dim>();
+                // Take only the distinct portion using the helper's reported count.
                 let distinct: Vec<Vertex<f64, (), $dim>> =
-                    base.into_iter().take($dim + 2).collect();
+                    base.into_iter().take(distinct_count_raw).collect();
                 let distinct_count = distinct.len();
 
                 let vertices: Vec<Vertex<f64, (), $dim>> = distinct

@@ -485,38 +485,29 @@ where
             });
         }
 
-        let k = D + 1;
+        // Layer 1+2: exact sign via fast filter + Bareiss in BigRational.
+        // Delegates to robust_orientation to avoid duplicating the homogeneous
+        // matrix build + exact_det_sign pipeline.
+        let exact = robust_orientation(points)?;
+        match exact {
+            Orientation::POSITIVE => return Ok(1),
+            Orientation::NEGATIVE => return Ok(-1),
+            Orientation::DEGENERATE => {}
+        }
 
-        try_with_la_stack_matrix!(k, |matrix| {
-            // Build (D+1)×(D+1) homogeneous orientation matrix.
-            for (i, p) in points.iter().enumerate() {
-                let coords_f64 = safe_coords_to_f64(p.coords())?;
-                for (j, &v) in coords_f64.iter().enumerate() {
-                    matrix_set(&mut matrix, i, j, v);
-                }
-                matrix_set(&mut matrix, i, D, 1.0);
-            }
+        // Layer 3: SoS tie-breaking for truly degenerate orientation.
+        // Same pattern as in_sphere() — convert to f64 points for SoS.
+        let f64_points: Vec<Point<f64, D>> = points
+            .iter()
+            .map(|p| safe_coords_to_f64(p.coords()).map(Point::new))
+            .collect::<Result<_, _>>()?;
 
-            // Layer 1+2: exact sign via fast filter + Bareiss in BigRational.
-            let sign = exact_det_sign(&matrix);
-            if sign != 0 {
-                return Ok(sign);
-            }
-
-            // Layer 3: SoS tie-breaking for truly degenerate orientation.
-            // Same pattern as in_sphere() — convert to f64 points for SoS.
-            let f64_points: Vec<Point<f64, D>> = points
-                .iter()
-                .map(|p| safe_coords_to_f64(p.coords()).map(Point::new))
-                .collect::<Result<_, _>>()?;
-
-            // SoS guarantees a non-zero sign for distinct points.  If SoS
-            // fails (all cofactors vanish) the points are identical in f64
-            // representation — a true degeneracy that cannot be resolved
-            // symbolically.  Return 0 so callers' existing degenerate-
-            // orientation handling applies.
-            crate::geometry::sos::sos_orientation_sign(&f64_points).map_or(Ok(0), Ok)
-        })
+        // SoS guarantees a non-zero sign for distinct points.  If SoS
+        // fails (all cofactors vanish) the points are identical in f64
+        // representation — a true degeneracy that cannot be resolved
+        // symbolically.  Return 0 so callers' existing degenerate-
+        // orientation handling applies.
+        crate::geometry::sos::sos_orientation_sign(&f64_points).map_or(Ok(0), Ok)
     }
 
     fn in_sphere(

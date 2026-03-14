@@ -3880,6 +3880,12 @@ where
                     continue; // Missing keys are caught by validate_cell_vertex_keys
                 };
                 for j in (i + 1)..vkeys.len() {
+                    // Same key → same vertex; skip to avoid a misleading
+                    // "duplicate coordinates" error for what is really a
+                    // duplicate-key issue (caught by Cell::new).
+                    if vkeys[i] == vkeys[j] {
+                        continue;
+                    }
                     let Some(vj) = self.get_vertex_by_key(vkeys[j]) else {
                         continue;
                     };

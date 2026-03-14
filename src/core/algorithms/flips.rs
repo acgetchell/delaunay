@@ -361,18 +361,26 @@ where
         // SoS (e.g. AdaptiveKernel) because SoS returns ±1 even for truly
         // degenerate configurations, bypassing the `orientation == 0` check
         // below.  Matches the pattern in evaluate_cell_orientation_for_context.
-        if matches!(robust_orientation(&points), Ok(Orientation::DEGENERATE)) {
-            if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
-                tracing::debug!(
-                    k_move,
-                    direction = ?direction,
-                    removed_face = ?removed_face_vertices,
-                    inserted_face = ?inserted_face_vertices,
-                    vertices = ?vertices,
-                    "[repair] flip degenerate cell (exact)"
-                );
+        match robust_orientation(&points) {
+            Err(e) => {
+                return Err(FlipError::PredicateFailure {
+                    message: format!("robust orientation failed for flip cell: {e}"),
+                });
             }
-            return Err(FlipError::DegenerateCell);
+            Ok(Orientation::DEGENERATE) => {
+                if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+                    tracing::debug!(
+                        k_move,
+                        direction = ?direction,
+                        removed_face = ?removed_face_vertices,
+                        inserted_face = ?inserted_face_vertices,
+                        vertices = ?vertices,
+                        "[repair] flip degenerate cell (exact)"
+                    );
+                }
+                return Err(FlipError::DegenerateCell);
+            }
+            Ok(_) => {}
         }
 
         let orientation = kernel
@@ -1862,14 +1870,12 @@ where
     Ok(violates)
 }
 /// Check whether a k=2 flip would create a degenerate cell.
-fn k2_flip_would_create_degenerate_cell<K, U, V, const D: usize>(
-    tds: &Tds<K::Scalar, U, V, D>,
-    kernel: &K,
+fn k2_flip_would_create_degenerate_cell<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
     context: &FlipContext<D, 2>,
 ) -> Result<bool, FlipError>
 where
-    K: Kernel<D>,
-    K::Scalar: ScalarSummable,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -1893,13 +1899,17 @@ where
         }
 
         let points = vertices_to_points(tds, &vertices)?;
-        let orientation = kernel
-            .orientation(&points)
-            .map_err(|e| FlipError::PredicateFailure {
-                message: format!("orientation failed for k=2 postcondition: {e}"),
-            })?;
-        if orientation == 0 && resolve_zero_orientation(&points, "k=2 postcondition")? == 0 {
-            return Ok(true);
+        // Use exact orientation (no SoS) so that truly degenerate cells are
+        // detected even when the kernel uses SoS.  Matches the pattern in
+        // apply_bistellar_flip_with_k.
+        match robust_orientation(&points) {
+            Err(e) => {
+                return Err(FlipError::PredicateFailure {
+                    message: format!("robust orientation failed for k=2 postcondition: {e}"),
+                });
+            }
+            Ok(Orientation::DEGENERATE) => return Ok(true),
+            Ok(_) => {}
         }
     }
 
@@ -2907,19 +2917,18 @@ where
 
         match is_delaunay_violation_k2(tds, kernel, &context, config, diagnostics) {
             Ok(true) => {
-                let flip_degenerate =
-                    match k2_flip_would_create_degenerate_cell(tds, kernel, &context) {
-                        Ok(degenerate) => degenerate,
-                        Err(FlipError::PredicateFailure { .. }) => {
-                            // Inconclusive due to numeric degeneracy; skip.
-                            continue;
-                        }
-                        Err(e) => {
-                            return Err(DelaunayRepairError::PostconditionFailed {
-                                message: format!("local k=2 verification failed after repair: {e}"),
-                            });
-                        }
-                    };
+                let flip_degenerate = match k2_flip_would_create_degenerate_cell(tds, &context) {
+                    Ok(degenerate) => degenerate,
+                    Err(FlipError::PredicateFailure { .. }) => {
+                        // Inconclusive due to numeric degeneracy; skip.
+                        continue;
+                    }
+                    Err(e) => {
+                        return Err(DelaunayRepairError::PostconditionFailed {
+                            message: format!("local k=2 verification failed after repair: {e}"),
+                        });
+                    }
+                };
 
                 if flip_degenerate {
                     if repair_trace_enabled() {
@@ -6626,10 +6635,10 @@ mod tests {
         assert!(tds.is_valid().is_ok());
     }
 
-    /// Exercises the `orientation == 0` fallback in
-    /// `k2_flip_would_create_degenerate_cell` via `resolve_zero_orientation`.
+    /// Verifies that `k2_flip_would_create_degenerate_cell` returns false for
+    /// non-degenerate cells using `robust_orientation` (kernel-independent).
     #[test]
-    fn test_k2_flip_would_create_degenerate_cell_zero_orientation_kernel() {
+    fn test_k2_flip_would_create_degenerate_cell_nondegenerate() {
         init_tracing();
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
@@ -6651,10 +6660,7 @@ mod tests {
 
         assert_context_has_nonzero_robust_orientation(&tds, &context);
 
-        // Then verify k2_flip_would_create_degenerate_cell correctly returns
-        // false when the zero-orientation kernel triggers the fallback.
-        let kernel = ZeroOrientationKernel2d;
-        let degenerate = k2_flip_would_create_degenerate_cell(&tds, &kernel, &context).unwrap();
+        let degenerate = k2_flip_would_create_degenerate_cell(&tds, &context).unwrap();
         assert!(!degenerate);
     }
 

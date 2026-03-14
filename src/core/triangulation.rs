@@ -2089,11 +2089,15 @@ where
             }),
         }
     }
-    /// Validates geometric orientation sign for each stored cell using the kernel's signed
-    /// determinant predicate.
+    /// Validates geometric orientation sign for each stored cell using exact arithmetic
+    /// via [`robust_orientation`].
     ///
     /// Cells are stored in canonical positive orientation order by construction and mutation
     /// paths; a negative sign indicates geometric/combinatorial mismatch.
+    ///
+    /// Orientation is evaluated through [`evaluate_cell_orientation_for_context`](Self::evaluate_cell_orientation_for_context),
+    /// which uses [`robust_orientation`] exclusively (no `SoS`) so that truly degenerate
+    /// cells are correctly identified rather than masked.
     ///
     /// Periodic-lifted cells are validated in lifted coordinates using per-vertex periodic
     /// offsets and toroidal domain periods.
@@ -2707,10 +2711,10 @@ where
     /// with no neighbor relationships (all boundary facets). The simplex is
     /// validated to ensure it is non-degenerate (vertices span full D-dimensional space).
     ///
-    /// **Design Note**: This method uses `K::default()` to construct a kernel instance
-    /// for the orientation test, relying on the design principle that kernels are stateless
-    /// and reconstructible. If stateful kernels are introduced in the future, this method
-    /// should accept an explicit kernel parameter instead.
+    /// **Design Note**: This method uses [`robust_orientation`] directly for the
+    /// non-degeneracy check, bypassing the kernel. This avoids `SoS` tie-breaking
+    /// (which would mask truly degenerate input) and keeps the method independent
+    /// of kernel state.
     ///
     /// # Arguments
     /// - `vertices`: Exactly D+1 vertices to form the initial simplex

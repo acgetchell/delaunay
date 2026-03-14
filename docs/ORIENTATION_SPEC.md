@@ -120,6 +120,13 @@ where
 
 **Key insight**: Swapping **any two vertices** flips orientation. We conventionally swap vertices 0 and 1.
 
+**Implementation note**: Orientation canonicalization uses `robust_orientation` (exact
+arithmetic, no SoS) rather than the kernel's `orientation()` method. This is necessary
+because `AdaptiveKernel::orientation()` applies SoS and returns ±1 even for truly
+degenerate (zero-volume) simplices, which would mask the `DEGENERATE` case that must
+be rejected. The `robust_orientation` function provides the true geometric sign needed
+for canonicalization and validation.
+
 #### 1.2 Apply During Cell Creation
 
 Update `Tds::insert_cell()` and related methods to canonicalize vertices:
@@ -334,9 +341,11 @@ where
 Flips now apply explicit per-cell orientation handling in `src/core/algorithms/flips.rs`
 (`apply_bistellar_flip_with_k`):
 
-1. Build candidate replacement cells
-2. Compute orientation for each candidate and swap slots when needed so each new cell has canonical local orientation
-3. Insert via `tds.insert_cell_with_mapping(...)` (insertion keeps the provided slot order; it does not canonicalize orientation implicitly)
+1. Check `robust_orientation` for true degeneracy — reject flips that would create
+   zero-volume cells (`FlipError::DegenerateCell`) before consulting the kernel
+2. Build candidate replacement cells
+3. Compute orientation for each candidate and swap slots when needed so each new cell has canonical local orientation
+4. Insert via `tds.insert_cell_with_mapping(...)` (insertion keeps the provided slot order; it does not canonicalize orientation implicitly)
 
 After rewiring and removing old cells, flips run:
 
