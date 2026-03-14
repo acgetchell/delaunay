@@ -288,12 +288,18 @@ impl InsertionError {
     }
 
     /// Check whether a TDS-level validation error is geometry-related (retryable).
+    ///
+    /// `IsolatedVertex` is retryable because it arises during insertion when
+    /// a geometrically-sensitive conflict region leaves a pre-existing vertex
+    /// with no incident cells; perturbing coordinates changes the conflict
+    /// region and can avoid stranding the vertex.
     const fn is_tds_error_retryable(tds_err: &TdsValidationError) -> bool {
         matches!(
             tds_err,
             TdsValidationError::DegenerateOrientation { .. }
                 | TdsValidationError::NegativeOrientation { .. }
                 | TdsValidationError::OrientationViolation { .. }
+                | TdsValidationError::IsolatedVertex { .. }
         )
     }
 
@@ -2280,6 +2286,7 @@ mod tests {
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::traits::coordinate::{Coordinate, CoordinateConversionError};
+    use crate::topology::characteristics::euler::TopologyClassification;
     use crate::vertex;
     use slotmap::KeyData;
 
@@ -2663,9 +2670,11 @@ mod tests {
             })
             .is_retryable()
         );
-        // IsolatedVertex is structural (not geometry), so not retryable.
+        // IsolatedVertex is retryable: during insertion, a geometrically-sensitive
+        // conflict region can leave a pre-existing vertex with no incident cells;
+        // perturbing coordinates changes the conflict region.
         assert!(
-            !InsertionError::TopologyValidation(TdsValidationError::IsolatedVertex {
+            InsertionError::TopologyValidation(TdsValidationError::IsolatedVertex {
                 vertex_key: VertexKey::from(KeyData::from_ffi(1)),
                 vertex_uuid: uuid::Uuid::nil(),
             })
@@ -2694,6 +2703,75 @@ mod tests {
             InsertionError::TopologyValidationFailed {
                 message: "test".to_string(),
                 source: Box::new(geometry_l3),
+            }
+            .is_retryable()
+        );
+
+        // TopologyValidationFailed wrapping BoundaryRidgeMultiplicity is retryable.
+        assert!(
+            InsertionError::TopologyValidationFailed {
+                message: "test".to_string(),
+                source: Box::new(TriangulationValidationError::BoundaryRidgeMultiplicity {
+                    ridge_key: 0xab,
+                    boundary_facet_count: 3,
+                }),
+            }
+            .is_retryable()
+        );
+        // TopologyValidationFailed wrapping RidgeLinkNotManifold is retryable.
+        assert!(
+            InsertionError::TopologyValidationFailed {
+                message: "test".to_string(),
+                source: Box::new(TriangulationValidationError::RidgeLinkNotManifold {
+                    ridge_key: 0xcd,
+                    link_vertex_count: 4,
+                    link_edge_count: 5,
+                    max_degree: 3,
+                    degree_one_vertices: 1,
+                    connected: false,
+                }),
+            }
+            .is_retryable()
+        );
+        // TopologyValidationFailed wrapping VertexLinkNotManifold is retryable.
+        assert!(
+            InsertionError::TopologyValidationFailed {
+                message: "test".to_string(),
+                source: Box::new(TriangulationValidationError::VertexLinkNotManifold {
+                    vertex_key: VertexKey::from(KeyData::from_ffi(1)),
+                    link_vertex_count: 3,
+                    link_cell_count: 4,
+                    boundary_facet_count: 1,
+                    max_degree: 2,
+                    connected: false,
+                    interior_vertex: true,
+                }),
+            }
+            .is_retryable()
+        );
+        // TopologyValidationFailed wrapping Tds(DegenerateOrientation) is retryable
+        // (delegates to is_tds_error_retryable).
+        assert!(
+            InsertionError::TopologyValidationFailed {
+                message: "test".to_string(),
+                source: Box::new(TriangulationValidationError::Tds(
+                    TdsValidationError::DegenerateOrientation {
+                        message: "det=0".to_string(),
+                    }
+                )),
+            }
+            .is_retryable()
+        );
+        // TopologyValidationFailed wrapping EulerCharacteristicMismatch is NOT retryable
+        // (wildcard fallback).
+        assert!(
+            !InsertionError::TopologyValidationFailed {
+                message: "test".to_string(),
+                source: Box::new(TriangulationValidationError::EulerCharacteristicMismatch {
+                    computed: 3,
+                    expected: 2,
+                    classification: TopologyClassification::Ball(3),
+                }),
             }
             .is_retryable()
         );
@@ -2775,7 +2853,7 @@ mod tests {
         // Non-retryable errors
         assert!(
             !InsertionError::DuplicateUuid {
-                entity: crate::core::triangulation_data_structure::EntityKind::Vertex,
+                entity: EntityKind::Vertex,
                 uuid: uuid::Uuid::new_v4(),
             }
             .is_retryable()

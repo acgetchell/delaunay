@@ -228,6 +228,28 @@ pub(crate) fn record_duplicate_detection_metrics(
     }
 }
 
+/// Extract the inner [`TdsValidationError`] from an [`InsertionError`], preserving
+/// structured error information when possible.
+///
+/// - `TopologyValidation(source)` → returns `source` directly
+/// - `TopologyValidationFailed` wrapping `Tds(source)` → returns the inner TDS error
+/// - All other variants → wrapped in [`TdsValidationError::InconsistentDataStructure`]
+///   with the provided `context`
+fn extract_tds_validation_error(error: InsertionError, context: &str) -> TdsValidationError {
+    match error {
+        InsertionError::TopologyValidation(source) => source,
+        InsertionError::TopologyValidationFailed { source, .. } => match *source {
+            TriangulationValidationError::Tds(tds_err) => tds_err,
+            other => TdsValidationError::InconsistentDataStructure {
+                message: format!("{context}: {other}"),
+            },
+        },
+        other => TdsValidationError::InconsistentDataStructure {
+            message: format!("{context}: {other}"),
+        },
+    }
+}
+
 /// Errors that can occur during triangulation construction.
 ///
 /// # Examples
@@ -4077,13 +4099,11 @@ where
         // Fill cavity BEFORE removing old cells
         let new_cells = fill_cavity(&mut self.tds, v_key, &boundary_facets)?;
         self.canonicalize_positive_orientation_for_cells(&new_cells)
-            .map_err(|e| match e {
-                InsertionError::TopologyValidation(source) => source,
-                other => TdsValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Failed to canonicalize positive orientation for cavity cells: {other}",
-                    ),
-                },
+            .map_err(|e| {
+                extract_tds_validation_error(
+                    e,
+                    "Failed to canonicalize positive orientation for cavity cells",
+                )
             })?;
 
         // Wire neighbors (while both old and new cells exist)
@@ -4977,13 +4997,11 @@ where
             // Normalize coherent orientation, canonicalize global sign, and promote
             // cells to positive orientation (#258).
             self.normalize_and_promote_positive_orientation()
-                .map_err(|e| match e {
-                    InsertionError::TopologyValidation(source) => source,
-                    other => TdsValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Orientation canonicalization failed after fan retriangulation: {other}"
-                        ),
-                    },
+                .map_err(|e| {
+                    extract_tds_validation_error(
+                        e,
+                        "Orientation canonicalization failed after fan retriangulation",
+                    )
                 })?;
 
             // Rebuild vertex-cell incidence for all vertices
@@ -8464,5 +8482,66 @@ mod tests {
             &mut suspicion,
         );
         // Reaching here without panic confirms EXPAND and SHRINK branches executed.
+    }
+
+    // ---- extract_tds_validation_error tests ----
+
+    #[test]
+    fn test_extract_tds_validation_error_topology_validation_returns_source() {
+        let source = TdsValidationError::DegenerateOrientation {
+            message: "det=0".to_string(),
+        };
+        let error = InsertionError::TopologyValidation(source.clone());
+        let result = extract_tds_validation_error(error, "test context");
+        assert_eq!(result, source);
+    }
+
+    #[test]
+    fn test_extract_tds_validation_error_topology_validation_failed_wrapping_tds() {
+        let inner_tds = TdsValidationError::NegativeOrientation {
+            message: "det<0".to_string(),
+        };
+        let error = InsertionError::TopologyValidationFailed {
+            message: "outer".to_string(),
+            source: Box::new(TriangulationValidationError::Tds(inner_tds.clone())),
+        };
+        let result = extract_tds_validation_error(error, "test context");
+        assert_eq!(result, inner_tds);
+    }
+
+    #[test]
+    fn test_extract_tds_validation_error_topology_validation_failed_wrapping_non_tds() {
+        let error = InsertionError::TopologyValidationFailed {
+            message: "outer".to_string(),
+            source: Box::new(TriangulationValidationError::ManifoldFacetMultiplicity {
+                facet_key: 42,
+                cell_count: 3,
+            }),
+        };
+        let result = extract_tds_validation_error(error, "my context");
+        assert!(
+            matches!(
+                result,
+                TdsValidationError::InconsistentDataStructure { ref message }
+                    if message.contains("my context")
+            ),
+            "Non-Tds inner error should produce InconsistentDataStructure: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_extract_tds_validation_error_other_variant_wraps_in_inconsistent() {
+        let error = InsertionError::CavityFilling {
+            message: "filling failed".to_string(),
+        };
+        let result = extract_tds_validation_error(error, "ctx");
+        assert!(
+            matches!(
+                result,
+                TdsValidationError::InconsistentDataStructure { ref message }
+                    if message.contains("ctx") && message.contains("filling failed")
+            ),
+            "CavityFilling should wrap to InconsistentDataStructure: {result:?}"
+        );
     }
 }

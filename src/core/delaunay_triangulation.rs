@@ -3433,7 +3433,8 @@ where
             // geometry problems, not internal bugs.
             InsertionError::TopologyValidation(
                 error @ (TdsValidationError::DegenerateOrientation { .. }
-                | TdsValidationError::NegativeOrientation { .. }),
+                | TdsValidationError::NegativeOrientation { .. }
+                | TdsValidationError::OrientationViolation { .. }),
             ) => TriangulationConstructionError::GeometricDegeneracy {
                 message: format!(
                     "Failed to canonicalize orientation after post-construction repair: {error}"
@@ -5909,6 +5910,7 @@ impl DelaunayCheckPolicy {
 mod tests {
     use super::*;
     use crate::core::algorithms::flips::DelaunayRepairError;
+    use crate::core::triangulation_data_structure::EntityKind;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel, RobustKernel};
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::triangulation::flips::BistellarFlips;
@@ -8068,7 +8070,7 @@ mod tests {
     #[test]
     fn test_map_orientation_canonicalization_error_duplicate_uuid_is_internal() {
         let error = InsertionError::DuplicateUuid {
-            entity: crate::core::triangulation_data_structure::EntityKind::Cell,
+            entity: EntityKind::Cell,
             uuid: Uuid::nil(),
         };
         let mapped =
@@ -8179,7 +8181,7 @@ mod tests {
     #[test]
     fn test_map_insertion_error_duplicate_uuid() {
         let error = InsertionError::DuplicateUuid {
-            entity: crate::core::triangulation_data_structure::EntityKind::Cell,
+            entity: EntityKind::Cell,
             uuid: Uuid::nil(),
         };
         let mapped =
@@ -8278,14 +8280,14 @@ mod tests {
     }
 
     #[test]
-    fn test_is_retryable_isolated_vertex_is_not_retryable() {
+    fn test_is_retryable_isolated_vertex_is_retryable() {
         let error = InsertionError::TopologyValidation(TdsValidationError::IsolatedVertex {
             vertex_key: VertexKey::from(slotmap::KeyData::from_ffi(1)),
             vertex_uuid: Uuid::nil(),
         });
         assert!(
-            !error.is_retryable(),
-            "IsolatedVertex should NOT be retryable (structural, not geometry)"
+            error.is_retryable(),
+            "IsolatedVertex should be retryable (geometry-sensitive conflict region)"
         );
     }
 
@@ -8309,6 +8311,72 @@ mod tests {
         assert!(
             !error.is_retryable(),
             "FailedToCreateCell should NOT be retryable"
+        );
+    }
+
+    // ---- VerificationFailed variant tests ----
+
+    #[test]
+    fn test_verification_failed_display() {
+        let err = DelaunayTriangulationValidationError::VerificationFailed {
+            message: "flip predicate detected non-Delaunay facet".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Delaunay verification failed"),
+            "Display should contain prefix: {msg}"
+        );
+        assert!(
+            msg.contains("flip predicate detected non-Delaunay facet"),
+            "Display should contain inner message: {msg}"
+        );
+    }
+
+    // ---- map_orientation_canonicalization_error: OrientationViolation ----
+
+    #[test]
+    fn test_map_orientation_canonicalization_error_orientation_violation_is_degeneracy() {
+        let error = InsertionError::TopologyValidation(TdsValidationError::OrientationViolation {
+            cell1_key: CellKey::from(slotmap::KeyData::from_ffi(1)),
+            cell1_uuid: Uuid::nil(),
+            cell2_key: CellKey::from(slotmap::KeyData::from_ffi(2)),
+            cell2_uuid: Uuid::nil(),
+            cell1_facet_index: 0,
+            cell2_facet_index: 1,
+            facet_vertices: vec![],
+            cell2_facet_vertices: vec![],
+            observed_odd_permutation: true,
+            expected_odd_permutation: false,
+        });
+        let mapped =
+            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
+        assert!(
+            matches!(
+                mapped,
+                TriangulationConstructionError::GeometricDegeneracy { .. }
+            ),
+            "OrientationViolation should map to GeometricDegeneracy, got: {mapped:?}"
+        );
+    }
+
+    // ---- map_orientation_canonicalization_error: ConflictRegion ----
+
+    #[test]
+    fn test_map_orientation_canonicalization_error_conflict_region_is_degeneracy() {
+        use crate::core::algorithms::locate::ConflictError;
+
+        let error = InsertionError::ConflictRegion(ConflictError::NonManifoldFacet {
+            facet_hash: 0x123,
+            cell_count: 3,
+        });
+        let mapped =
+            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
+        assert!(
+            matches!(
+                mapped,
+                TriangulationConstructionError::GeometricDegeneracy { .. }
+            ),
+            "ConflictRegion should map to GeometricDegeneracy, got: {mapped:?}"
         );
     }
 }
