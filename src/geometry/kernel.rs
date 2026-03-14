@@ -1053,4 +1053,36 @@ mod tests {
         let test = Point::new([0.5, 0.5]);
         assert!(kernel.in_sphere(&simplex, &test).is_err());
     }
+
+    // =========================================================================
+    // SoS IDENTICAL-POINTS REGRESSION
+    // =========================================================================
+
+    /// When all D+1 input points are identical in f64, every `SoS` cofactor
+    /// vanishes and `sos_orientation_sign` returns `Err`.  `AdaptiveKernel`
+    /// must map that to `Ok(0)` so callers' degenerate-orientation handling
+    /// applies.  This is a regression guard for the fallback at kernel.rs:518.
+    macro_rules! gen_sos_identical_points_test {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_adaptive_sos_identical_points_ $dim d>]() {
+                    let kernel = AdaptiveKernel::<f64>::new();
+                    let points: Vec<Point<f64, $dim>> =
+                        vec![Point::new([0.42; $dim]); $dim + 1];
+                    let result = kernel.orientation(&points).unwrap();
+                    assert_eq!(
+                        result, 0,
+                        "{}D: identical points must yield orientation 0, got {result}",
+                        $dim
+                    );
+                }
+            }
+        };
+    }
+
+    gen_sos_identical_points_test!(2);
+    gen_sos_identical_points_test!(3);
+    gen_sos_identical_points_test!(4);
+    gen_sos_identical_points_test!(5);
 }

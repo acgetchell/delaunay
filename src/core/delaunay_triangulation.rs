@@ -1275,20 +1275,63 @@ where
         },
     );
 
-    // Phase 4: Deduplicate vertices that quantize to the same grid cell.
-    //
-    // After sorting, vertices with identical quantized coordinates are adjacent.
-    // Points mapping to the same Hilbert grid cell are near-identical at the
-    // quantization resolution (e.g. ~10⁻⁸ for unit-scale 5D inputs with 25 bits).
-    // Removing them prevents catastrophic SoS failures on identical/near-identical
-    // points and avoids zero-volume simplices that break Pachner moves.
-    let input_len = keyed.len();
+    keyed.into_iter().map(|(_, _, v, _)| v).collect()
+}
+
+/// Deduplicate a Hilbert-sorted vertex sequence at quantization resolution.
+///
+/// After Hilbert sorting, vertices that map to the same quantized grid cell are
+/// adjacent.  This removes such duplicates in a single linear sweep.
+fn hilbert_dedup_sorted<T, U, const D: usize>(
+    vertices: Vec<Vertex<T, U, D>>,
+) -> Vec<Vertex<T, U, D>>
+where
+    T: CoordinateScalar,
+    U: DataType,
+{
+    let Some(bits_per_coord) = hilbert_bits_per_coord::<D>() else {
+        return vertices;
+    };
+
+    // Compute global bounds (same logic as order_vertices_hilbert).
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    for v in &vertices {
+        for &coord in v.point().coords() {
+            let Some(c) = coord.to_f64() else {
+                return vertices;
+            };
+            if !c.is_finite() {
+                return vertices;
+            }
+            min = min.min(c);
+            max = max.max(c);
+        }
+    }
+    let (Some(min_t), Some(max_t)) = (NumCast::from(min), NumCast::from(max)) else {
+        return vertices;
+    };
+    let bounds: (T, T) = (min_t, max_t);
+
+    // Re-quantize to detect duplicates.  The quantize step is cheap compared to
+    // the Hilbert index computation so the extra pass is negligible.
+    let quantized: Result<Vec<[u32; D]>, ()> = vertices
+        .iter()
+        .map(|v| hilbert_quantize(v.point().coords(), bounds, bits_per_coord).map_err(|_| ()))
+        .collect();
+
+    let Ok(quantized) = quantized else {
+        return vertices;
+    };
+
+    let input_len = vertices.len();
     let mut prev_q: Option<[u32; D]> = None;
-    let deduped: Vec<Vertex<T, U, D>> = keyed
+    let deduped: Vec<Vertex<T, U, D>> = vertices
         .into_iter()
-        .filter_map(|(_, q, v, _)| {
+        .zip(quantized)
+        .filter_map(|(v, q)| {
             if prev_q == Some(q) {
-                return None; // duplicate at quantization resolution
+                return None;
             }
             prev_q = Some(q);
             Some(v)
@@ -2188,6 +2231,18 @@ where
                 insertion_order,
             )),
         };
+
+        // After Hilbert sorting, remove vertices that quantize to the same grid
+        // cell.  This is safety-critical for SoS: identical quantized points
+        // cause all cofactors to vanish, producing degenerate simplices.
+        // The dedup runs regardless of `DedupPolicy` because it guards against
+        // a different failure mode (quantization-resolution collisions) than the
+        // user-facing duplicate policies.
+        if matches!(insertion_order, InsertionOrderStrategy::Hilbert)
+            && let Some(verts) = owned_vertices
+        {
+            owned_vertices = Some(hilbert_dedup_sorted(verts));
+        }
 
         let (primary, fallback) = match initial_simplex {
             InitialSimplexStrategy::First => (owned_vertices, None),
@@ -6456,7 +6511,8 @@ mod tests {
                     init_tracing();
                     let (vertices, distinct) = simplex_with_duplicates::<$dim>();
                     assert!(vertices.len() > distinct);
-                    let result = order_vertices_hilbert(vertices);
+                    let sorted = order_vertices_hilbert(vertices);
+                    let result = hilbert_dedup_sorted(sorted);
                     assert_eq!(
                         result.len(),
                         distinct,
@@ -6470,7 +6526,8 @@ mod tests {
                     init_tracing();
                     let vertices = simplex_with_interior::<$dim>();
                     let expected = vertices.len();
-                    let result = order_vertices_hilbert(vertices);
+                    let sorted = order_vertices_hilbert(vertices);
+                    let result = hilbert_dedup_sorted(sorted);
                     assert_eq!(
                         result.len(),
                         expected,
@@ -6487,7 +6544,8 @@ mod tests {
                         vertex!([0.5; $dim]),
                         vertex!([0.5; $dim]),
                     ];
-                    let result = order_vertices_hilbert(vertices);
+                    let sorted = order_vertices_hilbert(vertices);
+                    let result = hilbert_dedup_sorted(sorted);
                     assert_eq!(
                         result.len(),
                         1,
@@ -6503,6 +6561,39 @@ mod tests {
     gen_hilbert_dedup_tests!(3);
     gen_hilbert_dedup_tests!(4);
     gen_hilbert_dedup_tests!(5);
+
+    // =========================================================================
+    // HILBERT DEDUP — STANDALONE EDGE-CASE TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_hilbert_dedup_sorted_empty_input() {
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![];
+        let result = hilbert_dedup_sorted(vertices);
+        assert!(result.is_empty(), "empty input must produce empty output");
+    }
+
+    #[test]
+    fn test_hilbert_dedup_sorted_single_vertex() {
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![vertex!([1.0, 2.0, 3.0])];
+        let result = hilbert_dedup_sorted(vertices);
+        assert_eq!(result.len(), 1, "single vertex must be preserved");
+    }
+
+    #[test]
+    fn test_hilbert_dedup_sorted_already_unique() {
+        // Pre-sorted distinct vertices — dedup should be a no-op.
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let sorted = order_vertices_hilbert(vertices);
+        let n = sorted.len();
+        let result = hilbert_dedup_sorted(sorted);
+        assert_eq!(result.len(), n, "already-unique input must be unchanged");
+    }
 
     #[test]
     fn test_new_with_options_lexicographic_and_morton_smoke_3d() {

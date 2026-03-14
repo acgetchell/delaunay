@@ -1548,7 +1548,7 @@ where
 )]
 fn find_boundary_edge_split_facet<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
-    kernel: &K,
+    _kernel: &K,
     point: &Point<K::Scalar, D>,
 ) -> Result<Option<FacetHandle>, InsertionError>
 where
@@ -1617,16 +1617,20 @@ where
             SmallBuffer::<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
         simplex_points.extend(edge_points.iter().copied());
         simplex_points.push(opposite_point);
-        let orientation_with_opposite =
-            kernel
-                .orientation(&simplex_points)
-                .map_err(|e| InsertionError::HullExtension {
-                    reason: HullExtensionReason::Other {
-                        message: format!("Orientation test failed: {e}"),
-                    },
-                })?;
 
-        if orientation_with_opposite == 0 {
+        // Use exact orientation (not kernel SoS) to detect true degeneracy.
+        // SoS-based kernels never return 0, which would mask the geometric
+        // property we need here: is the opposite simplex truly degenerate?
+        let opposite_degenerate = matches!(
+            robust_orientation(&simplex_points).map_err(|e| InsertionError::HullExtension {
+                reason: HullExtensionReason::Other {
+                    message: format!("Exact orientation test failed: {e}"),
+                },
+            })?,
+            Orientation::DEGENERATE
+        );
+
+        if opposite_degenerate {
             continue;
         }
 

@@ -5,7 +5,6 @@
 //! - The resulting triangulations are valid (Levels 1–4)
 //! - Cell-level coordinate uniqueness validation catches no violations post-dedup
 //! - Explicit `DedupPolicy::Exact` works for non-Hilbert orderings
-//! - Near-duplicate inputs at quantization resolution are handled correctly
 //!
 //! Dimension coverage: 2D–5D via `gen_dedup_batch_tests!`.
 

@@ -4390,7 +4390,10 @@ where
     ///
     /// Returns a [`TriangulationValidationReport`] containing all invariant
     /// violations if any validation step fails.
-    pub(crate) fn validation_report(&self) -> Result<(), TriangulationValidationReport> {
+    pub(crate) fn validation_report(&self) -> Result<(), TriangulationValidationReport>
+    where
+        T: CoordinateScalar,
+    {
         let mut violations = Vec::new();
 
         // 1. Mapping consistency (vertex + cell UUID↔key mappings)
@@ -4420,6 +4423,14 @@ where
             cell_vertex_keys_ok = false;
             violations.push(InvariantViolation {
                 kind: InvariantKind::CellVertexKeys,
+                error: e.into(),
+            });
+        }
+
+        // 2b. Cell coordinate uniqueness (no cells with duplicate-coordinate vertices)
+        if cell_vertex_keys_ok && let Err(e) = self.validate_cell_coordinate_uniqueness() {
+            violations.push(InvariantViolation {
+                kind: InvariantKind::CellCoordinateUniqueness,
                 error: e.into(),
             });
         }

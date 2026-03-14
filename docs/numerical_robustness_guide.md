@@ -152,10 +152,10 @@ Hilbert ordering pass quantizes each coordinate to a fixed-width integer grid be
 computing the space-filling curve index. After sorting, vertices that map to the same
 quantized grid cell are adjacent and are removed in a single linear sweep.
 
-The quantization resolution is `128/D` bits per coordinate (capped at 31), giving:
+The quantization resolution is `min(128/D, 31)` bits per coordinate, giving:
 
-- 2D: 64 bits/coord → ~10⁻¹⁹ relative resolution
-- 3D: 42 bits/coord → ~10⁻¹³ relative resolution
+- 2D: 31 bits/coord → ~10⁻⁹ relative resolution
+- 3D: 31 bits/coord → ~10⁻⁹ relative resolution
 - 4D: 31 bits/coord → ~10⁻⁹ relative resolution
 - 5D: 25 bits/coord → ~10⁻⁸ relative resolution
 

@@ -2042,27 +2042,27 @@ where
     /// Evaluate a cell's geometric orientation for a specific validation/canonicalization context.
     ///
     /// This helper centralizes:
-    /// - lifted-point collection,
-    /// - exact (non-SoS) degeneracy detection via [`robust_orientation`], and
-    /// - kernel orientation predicate invocation with contextual error mapping.
+    /// - lifted-point collection, and
+    /// - exact (non-SoS) orientation determination via [`robust_orientation`].
     ///
-    /// # Degeneracy Detection
+    /// # Exact Orientation (no `SoS`)
     ///
-    /// Before consulting the kernel (which may use `SoS`), this function checks
-    /// [`robust_orientation`] for true geometric degeneracy. If the exact
-    /// orientation is `DEGENERATE` (zero-volume simplex), the function returns
-    /// `Ok(0)` regardless of the kernel's `SoS` sign. This ensures callers'
-    /// existing `orientation == 0` handling continues to work correctly even
-    /// when the kernel uses Simulation of Simplicity.
+    /// This function uses [`robust_orientation`] exclusively to determine the sign.
+    /// It does **not** consult the kernel (which may use `SoS`), because:
+    /// - Callers need the true geometric sign for orientation canonicalization
+    ///   and validation — `SoS` tie-breaking would mask real degeneracies.
+    /// - Using `robust_orientation` alone avoids duplicate exact-arithmetic work
+    ///   (both `robust_orientation` and `AdaptiveKernel::orientation()` run the
+    ///   same fast-filter + Bareiss pipeline internally).
+    ///
+    /// Returns `0` for truly degenerate (zero-volume) cells, so callers' existing
+    /// `orientation == 0` handling works correctly.
     ///
     /// # Error Mapping
     ///
-    /// Kernel predicate failures (e.g. the orientation computation itself returning `Err`)
-    /// are mapped to [`TdsValidationError::InconsistentDataStructure`] because they
-    /// indicate an internal problem (missing vertices, bad periodic offsets, etc.) rather
-    /// than a geometry degeneracy.  Callers that need to distinguish degenerate geometry
-    /// should inspect the `Ok(0)` return value — a zero determinant — and map it to
-    /// [`TdsValidationError::DegenerateOrientation`] themselves.
+    /// Conversion failures (e.g. non-finite coordinates) are mapped to
+    /// [`TdsValidationError::InconsistentDataStructure`] because they indicate
+    /// an internal problem rather than a geometry degeneracy.
     fn evaluate_cell_orientation_for_context(
         &self,
         cell_key: CellKey,
@@ -2075,20 +2075,19 @@ where
     {
         let points = self.collect_cell_points_for_orientation(cell_key, cell, purpose)?;
 
-        // Exact degeneracy check (no SoS): if the simplex is truly zero-volume,
-        // return 0 so callers can handle it via their existing degenerate paths.
-        if matches!(robust_orientation(&points), Ok(Orientation::DEGENERATE)) {
-            return Ok(0);
-        }
-
-        self.kernel.orientation(&points).map_err(|e| {
-            TdsValidationError::InconsistentDataStructure {
+        // Use exact orientation only (no SoS): callers need the true geometric
+        // sign to correctly classify degenerate cells vs negatively oriented ones.
+        match robust_orientation(&points) {
+            Ok(Orientation::POSITIVE) => Ok(1),
+            Ok(Orientation::NEGATIVE) => Ok(-1),
+            Ok(Orientation::DEGENERATE) => Ok(0),
+            Err(e) => Err(TdsValidationError::InconsistentDataStructure {
                 message: format!(
                     "{predicate_failure_prefix} {:?} (key {cell_key:?}): {e}",
                     cell.uuid(),
                 ),
-            }
-        })
+            }),
+        }
     }
     /// Validates geometric orientation sign for each stored cell using the kernel's signed
     /// determinant predicate.
@@ -2190,8 +2189,9 @@ where
     ///
     /// # Errors
     ///
-    /// Returns an [`InsertionError`] if orientation evaluation fails or if any cell is
-    /// geometrically degenerate (`orientation == 0`).
+    /// Returns an [`InsertionError`] if orientation evaluation fails.
+    /// Geometrically degenerate cells (`orientation == 0` per [`robust_orientation`])
+    /// are skipped, consistent with [`promote_cells_to_positive_orientation`](Self::promote_cells_to_positive_orientation).
     fn cells_require_positive_orientation_promotion(&self) -> Result<bool, InsertionError>
     where
         K::Scalar: CoordinateScalar,
@@ -2776,7 +2776,6 @@ where
         // Validate that the simplex is non-degenerate using exact orientation.
         // Use robust_orientation (no SoS) so that truly degenerate input
         // (collinear/coplanar) is detected even when the kernel uses SoS.
-        let kernel = K::default();
 
         // Collect points into stack-allocated buffer (at most 8 points for D ≤ 7)
         let points: SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
@@ -2802,12 +2801,18 @@ where
             });
         }
 
-        // Use the kernel's orientation (which may use SoS) for the sign.
-        let orientation = kernel.orientation(&points[..]).map_err(|e| {
-            TriangulationConstructionError::FailedToCreateCell {
-                message: format!("Orientation test failed: {e}"),
+        // Use the exact orientation sign directly — robust_orientation already
+        // provides a provably correct POSITIVE/NEGATIVE for non-degenerate inputs.
+        let orientation = match exact_orientation {
+            Orientation::POSITIVE => 1,
+            Orientation::NEGATIVE => -1,
+            Orientation::DEGENERATE => {
+                // Unreachable: degeneracy was checked above.
+                return Err(TriangulationConstructionError::GeometricDegeneracy {
+                    message: format!("Degenerate initial simplex in {D}D (unreachable)"),
+                });
             }
-        })?;
+        };
 
         // Create empty Tds
         let mut tds = Tds::empty();

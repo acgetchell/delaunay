@@ -355,24 +355,36 @@ where
         }
 
         let points = vertices_to_points(tds, vertices)?;
+
+        // Exact degeneracy check (no SoS): reject flips that would create
+        // zero-volume cells.  This guard is essential when the kernel uses
+        // SoS (e.g. AdaptiveKernel) because SoS returns ±1 even for truly
+        // degenerate configurations, bypassing the `orientation == 0` check
+        // below.  Matches the pattern in evaluate_cell_orientation_for_context.
+        if matches!(robust_orientation(&points), Ok(Orientation::DEGENERATE)) {
+            if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+                tracing::debug!(
+                    k_move,
+                    direction = ?direction,
+                    removed_face = ?removed_face_vertices,
+                    inserted_face = ?inserted_face_vertices,
+                    vertices = ?vertices,
+                    "[repair] flip degenerate cell (exact)"
+                );
+            }
+            return Err(FlipError::DegenerateCell);
+        }
+
         let orientation = kernel
             .orientation(&points)
             .map_err(|e| FlipError::PredicateFailure {
                 message: format!("orientation failed for flip cell: {e}"),
             })?;
         let orientation_sign = if orientation == 0 {
+            // Kernel returned 0 even though robust_orientation was non-degenerate.
+            // Fall back to resolve_zero_orientation for the sign.
             let sign = resolve_zero_orientation(&points, "flip cell")?;
             if sign == 0 {
-                if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
-                    tracing::debug!(
-                        k_move,
-                        direction = ?direction,
-                        removed_face = ?removed_face_vertices,
-                        inserted_face = ?inserted_face_vertices,
-                        vertices = ?vertices,
-                        "[repair] flip degenerate cell"
-                    );
-                }
                 return Err(FlipError::DegenerateCell);
             }
             sign
