@@ -3975,13 +3975,22 @@ where
 
         // Re-canonicalize geometric orientation (#258): flip repair may leave
         // the global sign negative.
+        self.ensure_positive_orientation()?;
+
+        Ok(stats)
+    }
+
+    /// Canonicalize geometric orientation to the positive sign, mapping failures
+    /// to [`DelaunayRepairError::PostconditionFailed`].
+    fn ensure_positive_orientation(&mut self) -> Result<(), DelaunayRepairError>
+    where
+        K::Scalar: ScalarSummable,
+    {
         self.tri
             .normalize_and_promote_positive_orientation()
             .map_err(|e| DelaunayRepairError::PostconditionFailed {
-                message: format!("Orientation canonicalization failed after flip repair: {e}"),
-            })?;
-
-        Ok(stats)
+                message: format!("Orientation canonicalization failed after repair: {e}"),
+            })
     }
 
     fn repair_delaunay_with_flips_robust(
@@ -4144,13 +4153,7 @@ where
                 if let Ok(stats) = self.repair_delaunay_with_flips_robust(None) {
                     // Re-canonicalize geometric orientation (#258): robust flip
                     // repair may leave the global sign negative.
-                    self.tri
-                        .normalize_and_promote_positive_orientation()
-                        .map_err(|e| DelaunayRepairError::PostconditionFailed {
-                            message: format!(
-                                "Orientation canonicalization failed after robust flip repair: {e}"
-                            ),
-                        })?;
+                    self.ensure_positive_orientation()?;
                     return Ok(DelaunayRepairOutcome {
                         stats,
                         heuristic: None,
@@ -4321,14 +4324,7 @@ where
 
                 // Re-canonicalize geometric orientation (#258): the final flip
                 // repair may leave the global sign negative.
-                candidate
-                    .tri
-                    .normalize_and_promote_positive_orientation()
-                    .map_err(|e| DelaunayRepairError::PostconditionFailed {
-                        message: format!(
-                            "Orientation canonicalization failed after heuristic rebuild: {e}"
-                        ),
-                    })?;
+                candidate.ensure_positive_orientation()?;
 
                 Ok::<_, DelaunayRepairError>((candidate, stats))
             })();
