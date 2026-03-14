@@ -1029,12 +1029,6 @@ pub enum FlipError {
         /// Context message.
         message: String,
     },
-    /// Flip direction is not supported for this operation.
-    #[error("Flip direction {direction:?} is not supported for this operation")]
-    InvalidFlipDirection {
-        /// Requested direction.
-        direction: FlipDirection,
-    },
     /// Flip context is inconsistent with the requested move.
     #[error("Flip context invalid: {message}")]
     InvalidFlipContext {

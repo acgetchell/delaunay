@@ -9,11 +9,134 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### ⚠️ Breaking Changes
 
+- Add SoS module for deterministic degeneracy resolution [#233](https://github.com/acgetchell/delaunay/pull/233)
+  [#251](https://github.com/acgetchell/delaunay/pull/251)
+- Remove use_robust_on_ambiguous override from flip repair [#228](https://github.com/acgetchell/delaunay/pull/228)
+  [#255](https://github.com/acgetchell/delaunay/pull/255)
+- Remove RobustPredicateConfig and config_presets [#259](https://github.com/acgetchell/delaunay/pull/259)
+  [#260](https://github.com/acgetchell/delaunay/pull/260)
 - Replace custom changelog pipeline with git-cliff [#247](https://github.com/acgetchell/delaunay/pull/247)
 
 ### Merged Pull Requests
 
+- Remove RobustPredicateConfig and config_presets [#259](https://github.com/acgetchell/delaunay/pull/259)
+  [#260](https://github.com/acgetchell/delaunay/pull/260)
+- Remove use_robust_on_ambiguous override from flip repair [#228](https://github.com/acgetchell/delaunay/pull/228)
+  [#255](https://github.com/acgetchell/delaunay/pull/255)
+- Add SoS module for deterministic degeneracy resolution [#233](https://github.com/acgetchell/delaunay/pull/233)
+  [#251](https://github.com/acgetchell/delaunay/pull/251)
+- Replace panicking calls with error propagation [#242](https://github.com/acgetchell/delaunay/pull/242) [#250](https://github.com/acgetchell/delaunay/pull/250)
+- Replace derive_builder with hand-written VertexBuilder [#212](https://github.com/acgetchell/delaunay/pull/212)
+  [#249](https://github.com/acgetchell/delaunay/pull/249)
+- Archive completed changelog minor series into per-minor files [#248](https://github.com/acgetchell/delaunay/pull/248)
 - Replace custom changelog pipeline with git-cliff [#247](https://github.com/acgetchell/delaunay/pull/247)
+
+### Added
+
+- Archive completed changelog minor series into per-minor files [#248](https://github.com/acgetchell/delaunay/pull/248)
+  [`45e4781`](https://github.com/acgetchell/delaunay/commit/45e47818b93b87aa2c0970d3bf7da0159d299cf1)
+
+- feat: archive completed changelog minor series into per-minor files
+
+  Add archive_changelog.py to split CHANGELOG.md by minor series:
+
+  - Parse version blocks, group by X.Y minor key, write completed
+    minors to docs/archive/changelog/X.Y.md (0.2–0.6)
+
+  - Extract and distribute git-cliff reference-style link definitions
+    so each output file contains only its own version defs (fixes MD053)
+
+  - Keep Unreleased + active minor (0.7) in root CHANGELOG.md with an
+    Archives link section; root shrinks from ~4,000 to ~1,400 lines
+
+  - Pipeline is idempotent: repeated runs produce no diff
+
+  Update tag_release.py to fall back to archive files when a requested
+  version is no longer in the root changelog (extract_changelog_section
+  and _github_anchor both search docs/archive/changelog/X.Y.md).
+
+  Register archive-changelog CLI entry point in pyproject.toml and wire
+  it into the justfile changelog recipe after postprocess-changelog.
+
+  Add 24 tests covering parsing, grouping, link-def distribution,
+  archive writing, idempotency, and tag_release archive fallback.
+
+  Other changes:
+
+  - Sort justfile recipes in lexicographic order
+  - Update docs/code_organization.md tree (new files, fix NBSP encoding)
+  - Update AGENTS.md, README.md, RELEASING.md with archive references
+  - Exclude docs/archive/changelog/** from typos checks
+- [**breaking**] Add SoS module for deterministic degeneracy resolution [#233](https://github.com/acgetchell/delaunay/pull/233)
+  [#251](https://github.com/acgetchell/delaunay/pull/251) [`6ed6f88`](https://github.com/acgetchell/delaunay/commit/6ed6f889b6bd2df7d263d4aae108823ebb71b608)
+
+- feat: add SoS module for deterministic degeneracy resolution [#233](https://github.com/acgetchell/delaunay/pull/233)
+
+  - New `src/geometry/sos.rs` with dimension-generic SoS tie-breaking
+  - `sos_orientation_sign<D>()` for degenerate orientation predicates
+  - `sos_insphere_sign<D>()` for co-spherical insphere predicates
+  - Two-stage exact det sign: `det_errbound()` fast filter + Bareiss exact
+  - 18 unit tests covering 2D–5D degenerate configurations
+  - No coordinate modification — purely a decision rule
+
+  Part of AdaptiveKernel implementation (B2 of #233).
+
+- [**breaking**] Remove use_robust_on_ambiguous override from flip repair [#228](https://github.com/acgetchell/delaunay/pull/228)
+  [#255](https://github.com/acgetchell/delaunay/pull/255) [`faf84de`](https://github.com/acgetchell/delaunay/commit/faf84ded97e8343fd36292d38b051be9df39c353)
+
+- feat!: remove use_robust_on_ambiguous override from flip repair [#228](https://github.com/acgetchell/delaunay/pull/228)
+
+  Remove the `use_robust_on_ambiguous` flag and `robust_insphere_sign()`
+  fallback from flip repair. With AdaptiveKernel providing exact+SoS
+  predicates, the old tolerance-based override was the root cause of
+  flip-repair non-convergence.
+
+  - Remove override blocks in k2/k3 violation functions
+  - Remove `both_positive_artifact` workaround
+  - Simplify repair attempts from 3 to 2 (FIFO then LIFO)
+  - Remove `used_robust_predicates` from `DelaunayRepairDiagnostics`
+  - Fix pre-existing clippy `match_same_arms` in matrix.rs/measures.rs
+
+### Changed
+
+- Replace panicking calls with error propagation [#242](https://github.com/acgetchell/delaunay/pull/242) [#250](https://github.com/acgetchell/delaunay/pull/250)
+  [`9d640c3`](https://github.com/acgetchell/delaunay/commit/9d640c378bdefd0043c28970b05b7162c47dc1bf)
+
+- refactor: replace panicking calls with error propagation [#242](https://github.com/acgetchell/delaunay/pull/242)
+
+  - Add `InternalInconsistency` variant to `TriangulationConstructionError`
+    for internal bookkeeping failures distinct from geometric degeneracy
+
+  - Replace 5 `.expect()` calls on HashMap lookups in builder.rs periodic
+    quotient reconstruction with `?` propagation
+
+  - Reclassify 3 additional internal operations (image vertex removal,
+    neighbor assignment, incident-cell rebuild) from `GeometricDegeneracy`
+    to `InternalInconsistency`
+
+  - Replace `.expect()` on `initial_points.take()` in
+    triangulation_generation.rs with error propagation
+
+  - Update doc comment from `# Panics` to `# Errors`
+  - Add single-quote guidance for gh --body in AGENTS.md
+- [**breaking**] Remove RobustPredicateConfig and config_presets [#259](https://github.com/acgetchell/delaunay/pull/259)
+  [#260](https://github.com/acgetchell/delaunay/pull/260) [`6764bac`](https://github.com/acgetchell/delaunay/commit/6764bacd7a02a9e7c95c88235b68bfcbc447eae3)
+
+- refactor!: remove RobustPredicateConfig and config_presets [#259](https://github.com/acgetchell/delaunay/pull/259)
+
+  - Delete RobustPredicateConfig struct and config_presets module
+  - Remove config parameter from robust_insphere, robust_orientation,
+    adaptive_tolerance_insphere, and verify_insphere_consistency
+
+  - Simplify RobustKernel to a zero-size type (remove config field and
+    with_config constructor, derive Default)
+
+  - Remove config threading from flips.rs, delaunay_validation.rs, and
+    coordinate_conversion_errors.rs
+
+  - Delete tests that only exercised config field values
+  - Update numerical_robustness_guide.md: document AdaptiveKernel as the
+    default kernel, remove config_presets references
 
 ### Maintenance
 
@@ -50,6 +173,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   - Disable markdownlint MD037 (false positives on cron expressions and
     glob patterns like saturating_*)
+
+- Replace derive_builder with hand-written VertexBuilder [#212](https://github.com/acgetchell/delaunay/pull/212)
+  [#249](https://github.com/acgetchell/delaunay/pull/249) [`b017b39`](https://github.com/acgetchell/delaunay/commit/b017b39bc410e96703bc7370972a930b93f6d6be)
+
+- chore: replace derive_builder with hand-written VertexBuilder [#212](https://github.com/acgetchell/delaunay/pull/212)
+
+  - Add VertexBuilderError enum and VertexBuilder struct with
+    point(), data(), and build() methods in src/core/vertex.rs
+
+  - Remove #[derive(Builder)] and #[builder(...)] attributes from Vertex
+  - Remove derive_builder dependency from Cargo.toml and lib.rs
+  - All ~30 call sites unchanged — builder API is a drop-in replacement
 
 ## [0.7.2] - 2026-03-10
 

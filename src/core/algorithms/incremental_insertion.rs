@@ -37,7 +37,9 @@ use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::TriangulationConstructionError;
 use crate::core::triangulation::TriangulationValidationError;
-use crate::core::triangulation_data_structure::{CellKey, Tds, VertexKey};
+use crate::core::triangulation_data_structure::{
+    CellKey, EntityKind, Tds, TdsValidationError, VertexKey,
+};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateScalar;
@@ -171,19 +173,19 @@ pub enum InsertionError {
     #[error("Duplicate UUID: {entity:?} with UUID {uuid} already exists")]
     DuplicateUuid {
         /// The type of entity.
-        entity: crate::core::triangulation_data_structure::EntityKind,
+        entity: EntityKind,
         /// The UUID that was duplicated.
         uuid: uuid::Uuid,
     },
 
     /// Topology validation or repair failed.
     #[error("Topology validation error: {0}")]
-    TopologyValidation(#[from] crate::core::triangulation_data_structure::TdsValidationError),
+    TopologyValidation(#[from] TdsValidationError),
 
     /// Level 3 topology validation failed (Triangulation layer).
     ///
     /// This preserves the structured [`TriangulationValidationError`] without wrapping it into a
-    /// [`TdsValidationError`](crate::core::triangulation_data_structure::TdsValidationError),
+    /// [`TdsValidationError`],
     /// avoiding lower-layer (`Tds`) errors depending on higher-layer (`Triangulation`) errors.
     #[error("{message}: {source}")]
     TopologyValidationFailed {
@@ -234,12 +236,18 @@ impl InsertionError {
     #[must_use]
     pub fn is_retryable(&self) -> bool {
         match self {
-            // Non-manifold topology and topology validation errors are retryable via perturbation
-            Self::NonManifoldTopology { .. }
-            | Self::TopologyValidation(_)
-            | Self::TopologyValidationFailed { .. } => true,
-            // Legacy neighbor wiring errors: check message for non-manifold (backwards compatibility)
-            Self::NeighborWiring { message } => message.contains("Non-manifold"),
+            // Non-manifold topology detected during wiring is retryable (geometry degeneracy).
+            Self::NonManifoldTopology { .. } => true,
+            // Level 3 topology validation: retryability depends on the inner error.
+            // Geometry-related topology violations (manifold facet multiplicity, link
+            // conditions) may be resolved by perturbation; structural invariant failures
+            // (Euler mismatch, inconsistent data structure) cannot.
+            Self::TopologyValidationFailed { source, .. } => {
+                Self::is_level3_error_retryable(source)
+            }
+            // TDS-level topology errors: only geometry/FP-related sub-variants are retryable.
+            // Structural errors (missing cells, broken invariants) won't be fixed by perturbation.
+            Self::TopologyValidation(tds_err) => Self::is_tds_error_retryable(tds_err),
             // Conflict region errors: non-manifold facets, ridge fans, or disconnected/open cavity
             // boundaries indicate degeneracy.
             Self::ConflictRegion(ce) => {
@@ -266,12 +274,50 @@ impl InsertionError {
                     HullExtensionReason::NoVisibleFacets | HullExtensionReason::InvalidPatch { .. }
                 )
             }
-            Self::Location(_)
+            // Neighbor wiring errors are structural failures (missing cells, index
+            // overflow, etc.). Non-manifold topology detection uses the dedicated
+            // `NonManifoldTopology` variant.
+            Self::NeighborWiring { .. }
+            | Self::Location(_)
             | Self::Construction(_)
             | Self::CavityFilling { .. }
             | Self::DelaunayValidationFailed { .. }
             | Self::DuplicateCoordinates { .. }
             | Self::DuplicateUuid { .. } => false,
+        }
+    }
+
+    /// Check whether a TDS-level validation error is geometry-related (retryable).
+    ///
+    /// `IsolatedVertex` is retryable because it arises during insertion when
+    /// a geometrically-sensitive conflict region leaves a pre-existing vertex
+    /// with no incident cells; perturbing coordinates changes the conflict
+    /// region and can avoid stranding the vertex.
+    const fn is_tds_error_retryable(tds_err: &TdsValidationError) -> bool {
+        matches!(
+            tds_err,
+            TdsValidationError::DegenerateOrientation { .. }
+                | TdsValidationError::NegativeOrientation { .. }
+                | TdsValidationError::OrientationViolation { .. }
+                | TdsValidationError::IsolatedVertex { .. }
+        )
+    }
+
+    /// Check whether a Level 3 (Triangulation) validation error is geometry-related (retryable).
+    const fn is_level3_error_retryable(err: &TriangulationValidationError) -> bool {
+        match err {
+            // Geometry-related topology violations: a near-degenerate insertion can create
+            // non-manifold facets, broken links, or boundary violations that perturbation
+            // may resolve.
+            TriangulationValidationError::ManifoldFacetMultiplicity { .. }
+            | TriangulationValidationError::BoundaryRidgeMultiplicity { .. }
+            | TriangulationValidationError::RidgeLinkNotManifold { .. }
+            | TriangulationValidationError::VertexLinkNotManifold { .. } => true,
+            // TDS-level errors: delegate to the same geometry-variant check.
+            TriangulationValidationError::Tds(tds_err) => Self::is_tds_error_retryable(tds_err),
+            // All other variants (structural invariant violations, future additions)
+            // are conservatively treated as non-retryable.
+            _ => false,
         }
     }
 }
@@ -2238,9 +2284,9 @@ mod tests {
     use super::*;
     use crate::core::collections::CellKeyBuffer;
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
-    use crate::core::triangulation_data_structure::TdsValidationError;
     use crate::geometry::kernel::FastKernel;
-    use crate::geometry::traits::coordinate::Coordinate;
+    use crate::geometry::traits::coordinate::{Coordinate, CoordinateConversionError};
+    use crate::topology::characteristics::euler::TopologyClassification;
     use crate::vertex;
     use slotmap::KeyData;
 
@@ -2373,17 +2419,10 @@ mod tests {
             (0..=2).map(|i| FacetHandle::new(cell_key, i)).collect();
 
         let result = fill_cavity(tds, invalid_vkey, &boundary_facets);
-        assert!(result.is_err());
-
-        if let Err(InsertionError::CavityFilling { message }) = result {
-            assert!(
-                message.contains("not found")
-                    || message.contains("invalid")
-                    || message.contains("does not exist")
-            );
-        } else {
-            panic!("Expected CavityFilling error");
-        }
+        assert!(
+            matches!(result, Err(InsertionError::CavityFilling { .. })),
+            "Expected CavityFilling error, got: {result:?}"
+        );
     }
 
     #[test]
@@ -2576,15 +2615,16 @@ mod tests {
         new_cells.push(cell_key);
 
         let err = wire_cavity_neighbors(tds, &new_cells, [], None).unwrap_err();
-        assert!(matches!(
-            err,
-            InsertionError::NeighborWiring { message } if message.contains("Facet index")
-        ));
+        assert!(matches!(err, InsertionError::NeighborWiring { .. }));
     }
 
     // InsertionError::is_retryable() tests
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Exhaustive coverage of all InsertionError retryability classifications"
+    )]
     fn test_insertion_error_retryable() {
         // Retryable errors
         assert!(
@@ -2595,27 +2635,150 @@ mod tests {
             .is_retryable()
         );
 
+        // InconsistentDataStructure is now non-retryable (structural bug, not geometry).
         assert!(
-            InsertionError::TopologyValidation(TdsValidationError::InconsistentDataStructure {
+            !InsertionError::TopologyValidation(TdsValidationError::InconsistentDataStructure {
                 message: "test".to_string()
             })
             .is_retryable()
         );
+        // Geometry-related variants are still retryable.
+        assert!(
+            InsertionError::TopologyValidation(TdsValidationError::DegenerateOrientation {
+                message: "test".to_string()
+            })
+            .is_retryable()
+        );
+        assert!(
+            InsertionError::TopologyValidation(TdsValidationError::NegativeOrientation {
+                message: "test".to_string()
+            })
+            .is_retryable()
+        );
+        assert!(
+            InsertionError::TopologyValidation(TdsValidationError::OrientationViolation {
+                cell1_key: CellKey::from(KeyData::from_ffi(1)),
+                cell1_uuid: uuid::Uuid::nil(),
+                cell2_key: CellKey::from(KeyData::from_ffi(2)),
+                cell2_uuid: uuid::Uuid::nil(),
+                cell1_facet_index: 0,
+                cell2_facet_index: 1,
+                facet_vertices: vec![],
+                cell2_facet_vertices: vec![],
+                observed_odd_permutation: true,
+                expected_odd_permutation: false,
+            })
+            .is_retryable()
+        );
+        // IsolatedVertex is retryable: during insertion, a geometrically-sensitive
+        // conflict region can leave a pre-existing vertex with no incident cells;
+        // perturbing coordinates changes the conflict region.
+        assert!(
+            InsertionError::TopologyValidation(TdsValidationError::IsolatedVertex {
+                vertex_key: VertexKey::from(KeyData::from_ffi(1)),
+                vertex_uuid: uuid::Uuid::nil(),
+            })
+            .is_retryable()
+        );
 
-        let level3_err =
+        // TopologyValidationFailed wrapping a structural error is non-retryable.
+        let structural_l3 =
             TriangulationValidationError::from(TdsValidationError::InconsistentDataStructure {
                 message: "test".to_string(),
             });
         assert!(
-            InsertionError::TopologyValidationFailed {
+            !InsertionError::TopologyValidationFailed {
                 message: "test".to_string(),
-                source: Box::new(level3_err),
+                source: Box::new(structural_l3),
             }
             .is_retryable()
         );
 
+        // TopologyValidationFailed wrapping a geometry-related error is retryable.
+        let geometry_l3 = TriangulationValidationError::ManifoldFacetMultiplicity {
+            facet_key: 0x12345,
+            cell_count: 3,
+        };
         assert!(
-            InsertionError::NeighborWiring {
+            InsertionError::TopologyValidationFailed {
+                message: "test".to_string(),
+                source: Box::new(geometry_l3),
+            }
+            .is_retryable()
+        );
+
+        // TopologyValidationFailed wrapping BoundaryRidgeMultiplicity is retryable.
+        assert!(
+            InsertionError::TopologyValidationFailed {
+                message: "test".to_string(),
+                source: Box::new(TriangulationValidationError::BoundaryRidgeMultiplicity {
+                    ridge_key: 0xab,
+                    boundary_facet_count: 3,
+                }),
+            }
+            .is_retryable()
+        );
+        // TopologyValidationFailed wrapping RidgeLinkNotManifold is retryable.
+        assert!(
+            InsertionError::TopologyValidationFailed {
+                message: "test".to_string(),
+                source: Box::new(TriangulationValidationError::RidgeLinkNotManifold {
+                    ridge_key: 0xcd,
+                    link_vertex_count: 4,
+                    link_edge_count: 5,
+                    max_degree: 3,
+                    degree_one_vertices: 1,
+                    connected: false,
+                }),
+            }
+            .is_retryable()
+        );
+        // TopologyValidationFailed wrapping VertexLinkNotManifold is retryable.
+        assert!(
+            InsertionError::TopologyValidationFailed {
+                message: "test".to_string(),
+                source: Box::new(TriangulationValidationError::VertexLinkNotManifold {
+                    vertex_key: VertexKey::from(KeyData::from_ffi(1)),
+                    link_vertex_count: 3,
+                    link_cell_count: 4,
+                    boundary_facet_count: 1,
+                    max_degree: 2,
+                    connected: false,
+                    interior_vertex: true,
+                }),
+            }
+            .is_retryable()
+        );
+        // TopologyValidationFailed wrapping Tds(DegenerateOrientation) is retryable
+        // (delegates to is_tds_error_retryable).
+        assert!(
+            InsertionError::TopologyValidationFailed {
+                message: "test".to_string(),
+                source: Box::new(TriangulationValidationError::Tds(
+                    TdsValidationError::DegenerateOrientation {
+                        message: "det=0".to_string(),
+                    }
+                )),
+            }
+            .is_retryable()
+        );
+        // TopologyValidationFailed wrapping EulerCharacteristicMismatch is NOT retryable
+        // (wildcard fallback).
+        assert!(
+            !InsertionError::TopologyValidationFailed {
+                message: "test".to_string(),
+                source: Box::new(TriangulationValidationError::EulerCharacteristicMismatch {
+                    computed: 3,
+                    expected: 2,
+                    classification: TopologyClassification::Ball(3),
+                }),
+            }
+            .is_retryable()
+        );
+
+        // NeighborWiring is unconditionally non-retryable.
+        assert!(
+            !InsertionError::NeighborWiring {
                 message: "Non-manifold topology detected".to_string()
             }
             .is_retryable()
@@ -2652,11 +2815,45 @@ mod tests {
             })
             .is_retryable()
         );
+        assert!(
+            !InsertionError::ConflictRegion(ConflictError::PredicateError {
+                source: CoordinateConversionError::ConversionFailed {
+                    coordinate_index: 0,
+                    coordinate_value: "test".to_string(),
+                    from_type: "f64",
+                    to_type: "f64",
+                },
+            })
+            .is_retryable()
+        );
+        assert!(
+            !InsertionError::ConflictRegion(ConflictError::CellDataAccessFailed {
+                cell_key: CellKey::from(KeyData::from_ffi(1)),
+                message: "test".to_string(),
+            })
+            .is_retryable()
+        );
+        assert!(
+            InsertionError::ConflictRegion(ConflictError::DisconnectedBoundary {
+                visited: 1,
+                total: 3,
+                disconnected_cells: vec![],
+            })
+            .is_retryable()
+        );
+        assert!(
+            InsertionError::ConflictRegion(ConflictError::OpenBoundary {
+                facet_count: 1,
+                ridge_vertex_count: 2,
+                open_cell: CellKey::from(KeyData::from_ffi(1)),
+            })
+            .is_retryable()
+        );
 
         // Non-retryable errors
         assert!(
             !InsertionError::DuplicateUuid {
-                entity: crate::core::triangulation_data_structure::EntityKind::Vertex,
+                entity: EntityKind::Vertex,
                 uuid: uuid::Uuid::new_v4(),
             }
             .is_retryable()
@@ -2679,6 +2876,15 @@ mod tests {
         assert!(
             InsertionError::HullExtension {
                 reason: HullExtensionReason::NoVisibleFacets
+            }
+            .is_retryable()
+        );
+
+        assert!(
+            InsertionError::HullExtension {
+                reason: HullExtensionReason::InvalidPatch {
+                    details: "test".to_string(),
+                }
             }
             .is_retryable()
         );
@@ -2926,10 +3132,7 @@ mod tests {
         let missing = CellKey::from(KeyData::from_ffi(u64::MAX));
 
         let err = set_neighbor(&mut tds, missing, 0, None).unwrap_err();
-        assert!(matches!(
-            err,
-            InsertionError::NeighborWiring { message } if message.contains("not found")
-        ));
+        assert!(matches!(err, InsertionError::NeighborWiring { .. }));
     }
 
     #[test]
