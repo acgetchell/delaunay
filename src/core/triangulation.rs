@@ -2114,7 +2114,7 @@ where
                 "Geometric orientation predicate failed for cell",
             )?;
             if orientation == 0 {
-                return Err(TdsValidationError::InconsistentDataStructure {
+                return Err(TdsValidationError::DegenerateOrientation {
                     message: format!(
                         "Cell {:?} (key {cell_key:?}) has degenerate geometric orientation",
                         cell.uuid(),
@@ -2123,7 +2123,7 @@ where
                 .into());
             }
             if orientation < 0 {
-                return Err(TdsValidationError::InconsistentDataStructure {
+                return Err(TdsValidationError::NegativeOrientation {
                     message: format!(
                         "Cell {:?} (key {cell_key:?}) has negative geometric orientation; expected positive canonical orientation",
                         cell.uuid(),
@@ -2695,11 +2695,9 @@ where
 
         for (vk, vertex) in self.tds.vertices() {
             if !vertices_in_cells.contains(&vk) {
-                return Err(TdsValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Isolated vertex detected during topology validation: vertex {} (key {vk:?}) is not incident to any cell",
-                        vertex.uuid()
-                    ),
+                return Err(TdsValidationError::IsolatedVertex {
+                    vertex_key: vk,
+                    vertex_uuid: vertex.uuid(),
                 }
                 .into());
             }
@@ -4065,10 +4063,13 @@ where
         // Fill cavity BEFORE removing old cells
         let new_cells = fill_cavity(&mut self.tds, v_key, &boundary_facets)?;
         self.canonicalize_positive_orientation_for_cells(&new_cells)
-            .map_err(|e| TdsValidationError::InconsistentDataStructure {
-                message: format!(
-                    "Failed to canonicalize positive orientation for cavity cells: {e}",
-                ),
+            .map_err(|e| match e {
+                InsertionError::TopologyValidation(source) => source,
+                other => TdsValidationError::InconsistentDataStructure {
+                    message: format!(
+                        "Failed to canonicalize positive orientation for cavity cells: {other}",
+                    ),
+                },
             })?;
 
         // Wire neighbors (while both old and new cells exist)
@@ -4238,10 +4239,16 @@ where
                     "insert_with_conflict_region: isolated vertices detected after insertion"
                 );
             }
+            // Report the first isolated vertex with structured data.
+            let (iso_key, iso_vertex) = self
+                .tds
+                .vertices()
+                .find(|(_, v)| v.incident_cell.is_none())
+                .expect("isolated_count > 0 but no isolated vertex found");
             return Err(InsertionError::TopologyValidation(
-                TdsValidationError::InconsistentDataStructure {
-                    message: "Isolated vertex detected after insertion (vertex not in any cell)"
-                        .to_string(),
+                TdsValidationError::IsolatedVertex {
+                    vertex_key: iso_key,
+                    vertex_uuid: iso_vertex.uuid(),
                 },
             ));
         }
@@ -4522,8 +4529,8 @@ where
                             let fallback_on_isolated_vertex = matches!(
                                 &err,
                                 InsertionError::TopologyValidation(
-                                    TdsValidationError::InconsistentDataStructure { message }
-                                ) if message.contains("Isolated vertex detected after insertion")
+                                    TdsValidationError::IsolatedVertex { .. }
+                                )
                             );
                             let should_fallback = matches!(
                                 &err,
@@ -4795,11 +4802,15 @@ where
 
                 // Detect isolated vertices and treat as retryable degeneracy.
                 if self.tds.vertices().any(|(_, v)| v.incident_cell.is_none()) {
+                    let (iso_key, iso_vertex) = self
+                        .tds
+                        .vertices()
+                        .find(|(_, v)| v.incident_cell.is_none())
+                        .expect("isolated check passed but no isolated vertex found");
                     return Err(InsertionError::TopologyValidation(
-                        TdsValidationError::InconsistentDataStructure {
-                            message:
-                                "Isolated vertex detected after insertion (vertex not in any cell)"
-                                    .to_string(),
+                        TdsValidationError::IsolatedVertex {
+                            vertex_key: iso_key,
+                            vertex_uuid: iso_vertex.uuid(),
                         },
                     ));
                 }
@@ -4916,10 +4927,13 @@ where
                     message: format!("Fan triangulation failed: {e}"),
                 })?;
             self.canonicalize_positive_orientation_for_cells(&new_cells)
-                .map_err(|e| TdsValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Failed to canonicalize positive orientation during fan retriangulation: {e}",
-                    ),
+                .map_err(|e| match e {
+                    InsertionError::TopologyValidation(source) => source,
+                    other => TdsValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Failed to canonicalize positive orientation during fan retriangulation: {other}",
+                        ),
+                    },
                 })?;
 
             // Wire neighbors for the new cells (while both old and new cells exist)
@@ -4970,19 +4984,21 @@ where
             // Fan retriangulation may produce locally inconsistent slot orderings; normalize
             // orientation before rebuilding incidence and removing the vertex.
             self.tds.normalize_coherent_orientation()?;
-            self.canonicalize_global_orientation_sign().map_err(|e| {
-                TdsValidationError::InconsistentDataStructure {
+            self.canonicalize_global_orientation_sign().map_err(|e| match e {
+                InsertionError::TopologyValidation(source) => source,
+                other => TdsValidationError::InconsistentDataStructure {
                     message: format!(
-                        "Failed to canonicalize global orientation sign after fan retriangulation: {e}",
+                        "Failed to canonicalize global orientation sign after fan retriangulation: {other}",
                     ),
-                }
+                },
             })?;
-            self.validate_geometric_cell_orientation().map_err(|e| {
-                TdsValidationError::InconsistentDataStructure {
+            self.validate_geometric_cell_orientation().map_err(|e| match e {
+                TriangulationValidationError::Tds(source) => source,
+                other => TdsValidationError::InconsistentDataStructure {
                     message: format!(
-                        "Geometric orientation validation failed after fan retriangulation: {e}",
+                        "Geometric orientation validation failed after fan retriangulation: {other}",
                     ),
-                }
+                },
             })?;
 
             // Rebuild vertex-cell incidence for all vertices
@@ -6463,15 +6479,12 @@ mod tests {
             .expect("bootstrap insertion should succeed");
 
         match tri.is_valid() {
-            Err(TriangulationValidationError::Tds(
-                TdsValidationError::InconsistentDataStructure { message },
-            )) => {
-                assert!(
-                    message.contains("Isolated vertex detected"),
-                    "Expected isolated-vertex diagnostic, got message: {message}"
-                );
+            Err(TriangulationValidationError::Tds(TdsValidationError::IsolatedVertex {
+                ..
+            })) => {
+                // Expected: isolated vertex produces a structured IsolatedVertex error.
             }
-            other => panic!("Expected isolated-vertex error, got {other:?}"),
+            other => panic!("Expected IsolatedVertex error, got {other:?}"),
         }
     }
 
@@ -6501,15 +6514,12 @@ mod tests {
             .unwrap();
 
         match tri.is_valid() {
-            Err(TriangulationValidationError::Tds(
-                TdsValidationError::InconsistentDataStructure { message },
-            )) => {
-                assert!(
-                    message.contains("Isolated vertex detected"),
-                    "Expected isolated-vertex diagnostic, got message: {message}"
-                );
+            Err(TriangulationValidationError::Tds(TdsValidationError::IsolatedVertex {
+                ..
+            })) => {
+                // Expected: isolated vertex produces a structured IsolatedVertex error.
             }
-            other => panic!("Expected isolated-vertex error, got {other:?}"),
+            other => panic!("Expected IsolatedVertex error, got {other:?}"),
         }
     }
 
@@ -7062,7 +7072,7 @@ mod tests {
         let err = tri.is_valid().unwrap_err();
         assert!(matches!(
             err,
-            TriangulationValidationError::Tds(TdsValidationError::InconsistentDataStructure { message })
+            TriangulationValidationError::Tds(TdsValidationError::NegativeOrientation { message })
                 if message.contains("negative geometric orientation")
         ));
     }
@@ -7155,7 +7165,7 @@ mod tests {
         let err = tri.validate_geometric_cell_orientation().unwrap_err();
         assert!(matches!(
             err,
-            TriangulationValidationError::Tds(TdsValidationError::InconsistentDataStructure { message })
+            TriangulationValidationError::Tds(TdsValidationError::NegativeOrientation { message })
                 if message.contains("negative geometric orientation")
         ));
     }

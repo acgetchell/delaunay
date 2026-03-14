@@ -234,10 +234,17 @@ impl InsertionError {
     #[must_use]
     pub fn is_retryable(&self) -> bool {
         match self {
-            // Non-manifold topology and topology validation errors are retryable via perturbation
-            Self::NonManifoldTopology { .. }
-            | Self::TopologyValidation(_)
-            | Self::TopologyValidationFailed { .. } => true,
+            // Non-manifold topology and Level 3 topology validation errors are retryable.
+            Self::NonManifoldTopology { .. } | Self::TopologyValidationFailed { .. } => true,
+            // TDS-level topology errors: only geometry/FP-related sub-variants are retryable.
+            // Structural errors (missing cells, broken invariants) won't be fixed by perturbation.
+            Self::TopologyValidation(tds_err) => matches!(
+                tds_err,
+                crate::core::triangulation_data_structure::TdsValidationError::DegenerateOrientation { .. }
+                | crate::core::triangulation_data_structure::TdsValidationError::NegativeOrientation { .. }
+                | crate::core::triangulation_data_structure::TdsValidationError::OrientationViolation { .. }
+                | crate::core::triangulation_data_structure::TdsValidationError::IsolatedVertex { .. }
+            ),
             // Legacy neighbor wiring errors: check message for non-manifold (backwards compatibility)
             Self::NeighborWiring { message } => message.contains("Non-manifold"),
             // Conflict region errors: non-manifold facets, ridge fans, or disconnected/open cavity
@@ -2595,8 +2602,16 @@ mod tests {
             .is_retryable()
         );
 
+        // InconsistentDataStructure is now non-retryable (structural bug, not geometry).
         assert!(
-            InsertionError::TopologyValidation(TdsValidationError::InconsistentDataStructure {
+            !InsertionError::TopologyValidation(TdsValidationError::InconsistentDataStructure {
+                message: "test".to_string()
+            })
+            .is_retryable()
+        );
+        // Geometry-related variants are still retryable.
+        assert!(
+            InsertionError::TopologyValidation(TdsValidationError::DegenerateOrientation {
                 message: "test".to_string()
             })
             .is_retryable()

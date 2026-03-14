@@ -474,6 +474,30 @@ pub enum TdsValidationError {
         /// Description of the degeneracy.
         message: String,
     },
+    /// Negative geometric orientation detected after canonicalization.
+    ///
+    /// A cell has `det < 0` even after orientation canonicalization passes.  This
+    /// typically indicates floating-point sign instability for near-degenerate input
+    /// (the fast kernel gives inconsistent sign results across calls) rather than a
+    /// data-structure corruption bug.
+    #[error("Negative geometric orientation: {message}")]
+    NegativeOrientation {
+        /// Description of the negative-orientation condition.
+        message: String,
+    },
+    /// Vertex is not incident to any cell.
+    ///
+    /// An isolated vertex violates manifold invariants at the topology (Level 3) layer
+    /// and may indicate a failed insertion or an insertion that was partially rolled back.
+    #[error(
+        "Isolated vertex: vertex {vertex_uuid} (key {vertex_key:?}) is not incident to any cell"
+    )]
+    IsolatedVertex {
+        /// Key of the isolated vertex.
+        vertex_key: VertexKey,
+        /// UUID of the isolated vertex.
+        vertex_uuid: Uuid,
+    },
 
     /// Level 3 topology validation failed (manifold / Euler characteristic, etc.).
     ///
