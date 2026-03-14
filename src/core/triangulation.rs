@@ -4867,10 +4867,6 @@ where
     /// (Note: `TdsMutationError` is currently a thin wrapper around
     /// [`TdsValidationError`]; the wrapper exists to make mutation call sites/docs more semantically explicit.)
     ///
-    #[expect(
-        clippy::too_many_lines,
-        reason = "Vertex removal keeps rollback, retriangulation, repair, and orientation finalization in one explicit transactional flow"
-    )]
     pub(crate) fn remove_vertex(
         &mut self,
         vertex: &Vertex<K::Scalar, U, D>,
@@ -4933,16 +4929,6 @@ where
                 .map_err(|e| TdsValidationError::FailedToCreateCell {
                     message: format!("Fan triangulation failed: {e}"),
                 })?;
-            self.canonicalize_positive_orientation_for_cells(&new_cells)
-                .map_err(|e| match e {
-                    InsertionError::TopologyValidation(source) => source,
-                    other => TdsValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Failed to canonicalize positive orientation during fan retriangulation: {other}",
-                        ),
-                    },
-                })?;
-
             // Wire neighbors for the new cells (while both old and new cells exist)
             let external_facets =
                 external_facets_for_boundary(&self.tds, &cells_to_remove, &boundary_facets)
@@ -4988,25 +4974,17 @@ where
                     })?;
                 }
             }
-            // Fan retriangulation may produce locally inconsistent slot orderings; normalize
-            // orientation before rebuilding incidence and removing the vertex.
-            self.tds.normalize_coherent_orientation()?;
-            self.canonicalize_global_orientation_sign().map_err(|e| match e {
-                InsertionError::TopologyValidation(source) => source,
-                other => TdsValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Failed to canonicalize global orientation sign after fan retriangulation: {other}",
-                    ),
-                },
-            })?;
-            self.validate_geometric_cell_orientation().map_err(|e| match e {
-                TriangulationValidationError::Tds(source) => source,
-                other => TdsValidationError::InconsistentDataStructure {
-                    message: format!(
-                        "Geometric orientation validation failed after fan retriangulation: {other}",
-                    ),
-                },
-            })?;
+            // Normalize coherent orientation, canonicalize global sign, and promote
+            // cells to positive orientation (#258).
+            self.normalize_and_promote_positive_orientation()
+                .map_err(|e| match e {
+                    InsertionError::TopologyValidation(source) => source,
+                    other => TdsValidationError::InconsistentDataStructure {
+                        message: format!(
+                            "Orientation canonicalization failed after fan retriangulation: {other}"
+                        ),
+                    },
+                })?;
 
             // Rebuild vertex-cell incidence for all vertices
             self.tds.assign_incident_cells()?;

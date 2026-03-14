@@ -4319,6 +4319,17 @@ where
                 let (tds, kernel) = (&mut candidate.tri.tds, &candidate.tri.kernel);
                 let stats = repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology)?;
 
+                // Re-canonicalize geometric orientation (#258): the final flip
+                // repair may leave the global sign negative.
+                candidate
+                    .tri
+                    .normalize_and_promote_positive_orientation()
+                    .map_err(|e| DelaunayRepairError::PostconditionFailed {
+                        message: format!(
+                            "Orientation canonicalization failed after heuristic rebuild: {e}"
+                        ),
+                    })?;
+
                 Ok::<_, DelaunayRepairError>((candidate, stats))
             })();
 
