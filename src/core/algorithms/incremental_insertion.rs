@@ -294,7 +294,6 @@ impl InsertionError {
             TdsValidationError::DegenerateOrientation { .. }
                 | TdsValidationError::NegativeOrientation { .. }
                 | TdsValidationError::OrientationViolation { .. }
-                | TdsValidationError::IsolatedVertex { .. }
         )
     }
 
@@ -2280,7 +2279,7 @@ mod tests {
     use crate::core::collections::CellKeyBuffer;
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
     use crate::geometry::kernel::FastKernel;
-    use crate::geometry::traits::coordinate::Coordinate;
+    use crate::geometry::traits::coordinate::{Coordinate, CoordinateConversionError};
     use crate::vertex;
     use slotmap::KeyData;
 
@@ -2643,6 +2642,35 @@ mod tests {
             })
             .is_retryable()
         );
+        assert!(
+            InsertionError::TopologyValidation(TdsValidationError::NegativeOrientation {
+                message: "test".to_string()
+            })
+            .is_retryable()
+        );
+        assert!(
+            InsertionError::TopologyValidation(TdsValidationError::OrientationViolation {
+                cell1_key: CellKey::from(KeyData::from_ffi(1)),
+                cell1_uuid: uuid::Uuid::nil(),
+                cell2_key: CellKey::from(KeyData::from_ffi(2)),
+                cell2_uuid: uuid::Uuid::nil(),
+                cell1_facet_index: 0,
+                cell2_facet_index: 1,
+                facet_vertices: vec![],
+                cell2_facet_vertices: vec![],
+                observed_odd_permutation: true,
+                expected_odd_permutation: false,
+            })
+            .is_retryable()
+        );
+        // IsolatedVertex is structural (not geometry), so not retryable.
+        assert!(
+            !InsertionError::TopologyValidation(TdsValidationError::IsolatedVertex {
+                vertex_key: VertexKey::from(KeyData::from_ffi(1)),
+                vertex_uuid: uuid::Uuid::nil(),
+            })
+            .is_retryable()
+        );
 
         // TopologyValidationFailed wrapping a structural error is non-retryable.
         let structural_l3 =
@@ -2709,6 +2737,40 @@ mod tests {
             })
             .is_retryable()
         );
+        assert!(
+            !InsertionError::ConflictRegion(ConflictError::PredicateError {
+                source: CoordinateConversionError::ConversionFailed {
+                    coordinate_index: 0,
+                    coordinate_value: "test".to_string(),
+                    from_type: "f64",
+                    to_type: "f64",
+                },
+            })
+            .is_retryable()
+        );
+        assert!(
+            !InsertionError::ConflictRegion(ConflictError::CellDataAccessFailed {
+                cell_key: CellKey::from(KeyData::from_ffi(1)),
+                message: "test".to_string(),
+            })
+            .is_retryable()
+        );
+        assert!(
+            InsertionError::ConflictRegion(ConflictError::DisconnectedBoundary {
+                visited: 1,
+                total: 3,
+                disconnected_cells: vec![],
+            })
+            .is_retryable()
+        );
+        assert!(
+            InsertionError::ConflictRegion(ConflictError::OpenBoundary {
+                facet_count: 1,
+                ridge_vertex_count: 2,
+                open_cell: CellKey::from(KeyData::from_ffi(1)),
+            })
+            .is_retryable()
+        );
 
         // Non-retryable errors
         assert!(
@@ -2736,6 +2798,15 @@ mod tests {
         assert!(
             InsertionError::HullExtension {
                 reason: HullExtensionReason::NoVisibleFacets
+            }
+            .is_retryable()
+        );
+
+        assert!(
+            InsertionError::HullExtension {
+                reason: HullExtensionReason::InvalidPatch {
+                    details: "test".to_string(),
+                }
             }
             .is_retryable()
         );

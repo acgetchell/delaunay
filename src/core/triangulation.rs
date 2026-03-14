@@ -3640,10 +3640,15 @@ where
 
         let expected_new_cells = new_set.len();
 
-        let start = *new_set
-            .iter()
-            .next()
-            .expect("new_set is non-empty by construction");
+        let Some(&start) = new_set.iter().next() else {
+            return Err(InsertionError::TopologyValidation(
+                TdsValidationError::InconsistentDataStructure {
+                    message:
+                        "new_set unexpectedly empty after non-empty check in validate_connectedness"
+                            .to_string(),
+                },
+            ));
+        };
 
         let mut touches_existing_cells = false;
 
@@ -4235,29 +4240,26 @@ where
         }
 
         // If any vertex is not incident to a cell, topology is not a pure ball anymore.
-        let isolated_count = self
-            .tds
-            .vertices()
-            .filter(|(_, v)| v.incident_cell.is_none())
-            .count();
-        if isolated_count > 0 {
+        if let Some((iso_key, iso_vertex)) =
+            self.tds.vertices().find(|(_, v)| v.incident_cell.is_none())
+        {
+            let iso_uuid = iso_vertex.uuid();
             #[cfg(debug_assertions)]
             if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
+                let isolated_count = 1 + self
+                    .tds
+                    .vertices()
+                    .filter(|(k, v)| *k != iso_key && v.incident_cell.is_none())
+                    .count();
                 tracing::warn!(
                     isolated_count,
                     "insert_with_conflict_region: isolated vertices detected after insertion"
                 );
             }
-            // Report the first isolated vertex with structured data.
-            let (iso_key, iso_vertex) = self
-                .tds
-                .vertices()
-                .find(|(_, v)| v.incident_cell.is_none())
-                .expect("isolated_count > 0 but no isolated vertex found");
             return Err(InsertionError::TopologyValidation(
                 TdsValidationError::IsolatedVertex {
                     vertex_key: iso_key,
-                    vertex_uuid: iso_vertex.uuid(),
+                    vertex_uuid: iso_uuid,
                 },
             ));
         }
@@ -4808,13 +4810,10 @@ where
                     }
                 }
 
-                // Detect isolated vertices and treat as retryable degeneracy.
-                if self.tds.vertices().any(|(_, v)| v.incident_cell.is_none()) {
-                    let (iso_key, iso_vertex) = self
-                        .tds
-                        .vertices()
-                        .find(|(_, v)| v.incident_cell.is_none())
-                        .expect("isolated check passed but no isolated vertex found");
+                // Detect isolated vertices.
+                if let Some((iso_key, iso_vertex)) =
+                    self.tds.vertices().find(|(_, v)| v.incident_cell.is_none())
+                {
                     return Err(InsertionError::TopologyValidation(
                         TdsValidationError::IsolatedVertex {
                             vertex_key: iso_key,

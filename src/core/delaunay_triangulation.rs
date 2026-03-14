@@ -2259,13 +2259,13 @@ where
             },
             Err(err) => {
                 // Some construction errors are deterministic and should not be masked
-                // by shuffled retry logic (e.g. duplicate UUIDs).
+                // by shuffled retry logic (e.g. duplicate UUIDs, internal bugs).
                 if matches!(
                     &err,
                     DelaunayTriangulationConstructionError::Triangulation(
                         TriangulationConstructionError::Tds(
                             TdsConstructionError::DuplicateUuid { .. }
-                        )
+                        ) | TriangulationConstructionError::InternalInconsistency { .. }
                     )
                 ) {
                     return Err(err);
@@ -2333,7 +2333,7 @@ where
                         DelaunayTriangulationConstructionError::Triangulation(
                             TriangulationConstructionError::Tds(
                                 TdsConstructionError::DuplicateUuid { .. }
-                            )
+                            ) | TriangulationConstructionError::InternalInconsistency { .. }
                         )
                     ) {
                         return Err(err);
@@ -2422,13 +2422,13 @@ where
                     let DelaunayTriangulationConstructionErrorWithStatistics { error, statistics } =
                         err;
                     // Some construction errors are deterministic and should not be masked
-                    // by shuffled retry logic (e.g. duplicate UUIDs).
+                    // by shuffled retry logic (e.g. duplicate UUIDs, internal bugs).
                     if matches!(
                         &error,
                         DelaunayTriangulationConstructionError::Triangulation(
                             TriangulationConstructionError::Tds(
                                 TdsConstructionError::DuplicateUuid { .. }
-                            )
+                            ) | TriangulationConstructionError::InternalInconsistency { .. }
                         )
                     ) {
                         return Err(DelaunayTriangulationConstructionErrorWithStatistics {
@@ -2503,7 +2503,7 @@ where
                         DelaunayTriangulationConstructionError::Triangulation(
                             TriangulationConstructionError::Tds(
                                 TdsConstructionError::DuplicateUuid { .. }
-                            )
+                            ) | TriangulationConstructionError::InternalInconsistency { .. }
                         )
                     ) {
                         return Err(DelaunayTriangulationConstructionErrorWithStatistics {
@@ -3933,12 +3933,13 @@ where
     ///
     /// This is a manual entrypoint that performs a global scan of interior facets
     /// and applies k=2/k=3 bistellar flips until locally Delaunay or until the flip
-    /// budget is exhausted.
+    /// budget is exhausted. On success, geometric orientation is re-canonicalized
+    /// to the positive sign.
     ///
     /// # Errors
     ///
-    /// Returns a [`DelaunayRepairError`] if the repair fails to converge or an underlying
-    /// flip operation fails.
+    /// Returns a [`DelaunayRepairError`] if the repair fails to converge, an underlying
+    /// flip operation fails, or post-repair orientation canonicalization fails.
     ///
     /// # Examples
     ///
@@ -3970,7 +3971,17 @@ where
             });
         }
         let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-        repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology)
+        let stats = repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology)?;
+
+        // Re-canonicalize geometric orientation (#258): flip repair may leave
+        // the global sign negative.
+        self.tri
+            .normalize_and_promote_positive_orientation()
+            .map_err(|e| DelaunayRepairError::PostconditionFailed {
+                message: format!("Orientation canonicalization failed after flip repair: {e}"),
+            })?;
+
+        Ok(stats)
     }
 
     fn repair_delaunay_with_flips_robust(
@@ -4073,15 +4084,17 @@ where
     /// This first attempts the standard two-pass flip repair. If it fails to converge (or if
     /// the result cannot be verified as Delaunay), it rebuilds the triangulation from the
     /// current vertex set using a shuffled insertion order and a perturbation seed, then runs
-    /// a final flip-repair pass.
+    /// a final flip-repair pass. On success, geometric orientation is re-canonicalized
+    /// to the positive sign.
     ///
     /// The returned outcome marks whether the heuristic fallback was used and records
     /// the seeds needed to reproduce it (if desired).
     ///
     /// # Errors
     ///
-    /// Returns [`DelaunayRepairError`] if the flip-based repair fails or if the heuristic
-    /// rebuild fallback cannot construct a valid triangulation.
+    /// Returns [`DelaunayRepairError`] if the flip-based repair fails, the heuristic
+    /// rebuild fallback cannot construct a valid triangulation, or post-repair
+    /// orientation canonicalization fails.
     ///
     /// # Examples
     ///
@@ -4129,6 +4142,15 @@ where
                 | DelaunayRepairError::PostconditionFailed { .. },
             ) => {
                 if let Ok(stats) = self.repair_delaunay_with_flips_robust(None) {
+                    // Re-canonicalize geometric orientation (#258): robust flip
+                    // repair may leave the global sign negative.
+                    self.tri
+                        .normalize_and_promote_positive_orientation()
+                        .map_err(|e| DelaunayRepairError::PostconditionFailed {
+                            message: format!(
+                                "Orientation canonicalization failed after robust flip repair: {e}"
+                            ),
+                        })?;
                     return Ok(DelaunayRepairOutcome {
                         stats,
                         heuristic: None,
@@ -5311,6 +5333,16 @@ where
                     message: format!("Delaunay repair failed after vertex removal: {e}"),
                 }
             })?;
+
+            // Re-canonicalize geometric orientation (#258): flip repair may leave
+            // the global sign negative.
+            self.tri
+                .normalize_and_promote_positive_orientation()
+                .map_err(|e| TdsValidationError::FinalizationFailed {
+                    message: format!(
+                        "Orientation canonicalization failed after vertex removal: {e}"
+                    ),
+                })?;
         }
 
         Ok(cells_removed)
@@ -8239,12 +8271,15 @@ mod tests {
     }
 
     #[test]
-    fn test_is_retryable_isolated_vertex_is_retryable() {
+    fn test_is_retryable_isolated_vertex_is_not_retryable() {
         let error = InsertionError::TopologyValidation(TdsValidationError::IsolatedVertex {
             vertex_key: VertexKey::from(slotmap::KeyData::from_ffi(1)),
             vertex_uuid: Uuid::nil(),
         });
-        assert!(error.is_retryable(), "IsolatedVertex should be retryable");
+        assert!(
+            !error.is_retryable(),
+            "IsolatedVertex should NOT be retryable (structural, not geometry)"
+        );
     }
 
     #[test]
