@@ -5359,11 +5359,7 @@ where
 
         // Fast path: inverse k=1 flip when the vertex star is a simplex.
         let mut seed_cells: Option<CellKeyBuffer> = None;
-        let cells_removed = match apply_bistellar_flip_k1_inverse(
-            &mut self.tri.tds,
-            &self.tri.kernel,
-            vertex_key,
-        ) {
+        let cells_removed = match apply_bistellar_flip_k1_inverse(&mut self.tri.tds, vertex_key) {
             Ok(info) => {
                 seed_cells = Some(info.new_cells);
                 info.removed_cells.len()

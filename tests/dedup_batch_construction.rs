@@ -122,7 +122,7 @@ macro_rules! gen_dedup_batch_tests {
                 assert!(dt.number_of_cells() > 0);
 
                 // Full validation (Levels 1–4) including coordinate uniqueness
-                let validation = dt.as_triangulation().validate();
+                let validation = dt.validate();
                 assert!(
                     validation.is_ok(),
                     "{}D: triangulation should pass validation: {validation:?}",
@@ -245,3 +245,28 @@ gen_dedup_batch_tests!(2);
 gen_dedup_batch_tests!(3);
 gen_dedup_batch_tests!(4);
 gen_dedup_batch_tests!(5);
+
+/// Verify that Hilbert-sort dedup collapses geometrically distinct points
+/// that quantize to the same Hilbert grid cell.
+///
+/// For D=2, bits=31, grid spacing ≈ 1/(2³¹ − 1) ≈ 4.66×10⁻¹⁰.
+/// Two points differing by ~1×10⁻¹⁰ will collide at quantization resolution.
+#[test]
+fn test_hilbert_dedup_quantized_collision_2d() {
+    init_tracing();
+    let mut vertices = simplex_vertices::<2>();
+    vertices.push(vertex!([0.5, 0.5]));
+    vertices.push(vertex!([0.5 + 1e-10, 0.5])); // quantizes to same cell
+    let total = vertices.len();
+
+    let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices)
+        .expect("2D construction with quantized-collision should succeed");
+
+    // Hilbert dedup should collapse the near-coincident pair.
+    assert!(
+        dt.number_of_vertices() < total,
+        "expected Hilbert dedup to collapse quantized-collision pair (got {} of {total})",
+        dt.number_of_vertices(),
+    );
+    assert!(dt.validate().is_ok());
+}

@@ -597,6 +597,7 @@ type TdsError = TdsValidationError;
 ///
 /// This is used by [`TriangulationValidationReport`] to group related errors.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum InvariantKind {
     /// Per-vertex validity (finite coordinates, non-nil UUID, etc.).
     VertexValidity,
@@ -4366,7 +4367,12 @@ where
 
         // Coordinate-level duplicate detection: different vertex keys with identical
         // coordinates produce zero-volume simplices that break SoS and Pachner moves.
-        self.validate_cell_coordinate_uniqueness()?;
+        // Guard behind cell-vertex-key validity so that stale keys are reported as
+        // key-reference failures (by is_valid below) rather than confusing coordinate
+        // errors.  Matches the pattern in validation_report().
+        if self.validate_cell_vertex_keys().is_ok() {
+            self.validate_cell_coordinate_uniqueness()?;
+        }
 
         self.is_valid()
     }

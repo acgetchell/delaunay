@@ -230,26 +230,26 @@ where
         cell_key: CellKey,
         vertex: Vertex<K::Scalar, U, D>,
     ) -> Result<FlipInfo<D>, FlipError> {
-        apply_bistellar_flip_k1(&mut self.tds, &self.kernel, cell_key, vertex)
+        apply_bistellar_flip_k1(&mut self.tds, cell_key, vertex)
     }
 
     fn flip_k1_remove(&mut self, vertex_key: VertexKey) -> Result<FlipInfo<D>, FlipError> {
-        apply_bistellar_flip_k1_inverse(&mut self.tds, &self.kernel, vertex_key)
+        apply_bistellar_flip_k1_inverse(&mut self.tds, vertex_key)
     }
 
     fn flip_k2(&mut self, facet: FacetHandle) -> Result<FlipInfo<D>, FlipError> {
         let context = build_k2_flip_context(&self.tds, facet)?;
-        apply_bistellar_flip_k2(&mut self.tds, &self.kernel, &context)
+        apply_bistellar_flip_k2(&mut self.tds, &context)
     }
 
     fn flip_k3(&mut self, ridge: RidgeHandle) -> Result<FlipInfo<D>, FlipError> {
         let context = build_k3_flip_context(&self.tds, ridge)?;
-        apply_bistellar_flip_k3(&mut self.tds, &self.kernel, &context)
+        apply_bistellar_flip_k3(&mut self.tds, &context)
     }
 
     fn flip_k2_inverse_from_edge(&mut self, edge: EdgeKey) -> Result<FlipInfo<D>, FlipError> {
         let context = build_k2_flip_context_from_edge(&self.tds, edge)?;
-        apply_bistellar_flip_dynamic(&mut self.tds, &self.kernel, D, &context)
+        apply_bistellar_flip_dynamic(&mut self.tds, D, &context)
     }
 
     fn flip_k3_inverse_from_triangle(
@@ -268,7 +268,7 @@ where
             .checked_sub(1)
             .ok_or(FlipError::UnsupportedDimension { dimension: D })?;
 
-        apply_bistellar_flip_dynamic(&mut self.tds, &self.kernel, k_move, &context)
+        apply_bistellar_flip_dynamic(&mut self.tds, k_move, &context)
     }
 }
 

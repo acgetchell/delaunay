@@ -246,6 +246,8 @@ Validates the combinatorial structure of the Triangulation Data Structure.
 - **Cell Coordinate Uniqueness**: No cell contains two vertices with identical coordinates
   (exact `OrderedFloat` comparison). Duplicate-coordinate vertices produce zero-volume
   simplices that break SoS and Pachner moves.
+  **Note**: `is_valid()` does **not** check coordinate uniqueness. Use `validate()` (or
+  `validation_report()`) for the stronger guarantee.
 
 ### Complexity
 

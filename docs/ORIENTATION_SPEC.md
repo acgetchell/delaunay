@@ -311,12 +311,12 @@ Check all Pachner moves in `src/core/algorithms/flips.rs`:
 At entry and exit of each flip:
 
 ```rust
-pub fn apply_k2_flip<K, U, V, const D: usize>(
-    tds: &mut Tds<K::Scalar, U, V, D>,
-    // ... params
-) -> Result<FlipResult, FlipError>
+pub fn apply_bistellar_flip_k2<T, U, V, const D: usize>(
+    tds: &mut Tds<T, U, V, D>,
+    context: &FlipContext<D, 2>,
+) -> Result<FlipInfo<D>, FlipError>
 where
-    K: Kernel<D>,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -336,16 +336,23 @@ where
 }
 ```
 
+Note: Flip-application functions (`apply_bistellar_flip_*`) are parameterized by
+the scalar type `T: CoordinateScalar` rather than the kernel type `K: Kernel<D>`,
+because they use `robust_orientation` directly and do not need `kernel.orientation()`
+or `kernel.in_sphere()`. The kernel parameter is only needed in the Delaunay
+violation predicates that drive the repair loop.
+
 #### 4.3 Ensure New Cells Use Canonical Ordering
 
 Flips now apply explicit per-cell orientation handling in `src/core/algorithms/flips.rs`
 (`apply_bistellar_flip_with_k`):
 
-1. Check `robust_orientation` for true degeneracy — reject flips that would create
-   zero-volume cells (`FlipError::DegenerateCell`) before consulting the kernel
-2. Build candidate replacement cells
-3. Compute orientation for each candidate and swap slots when needed so each new cell has canonical local orientation
-4. Insert via `tds.insert_cell_with_mapping(...)` (insertion keeps the provided slot order; it does not canonicalize orientation implicitly)
+1. Build candidate replacement cells
+2. For each candidate, call `robust_orientation` to determine the exact sign:
+   - `DEGENERATE` → reject the flip (`FlipError::DegenerateCell`)
+   - `NEGATIVE` → swap two vertex slots to canonicalize to positive orientation
+   - `POSITIVE` → keep the current slot order
+3. Insert via `tds.insert_cell_with_mapping(...)` (insertion keeps the provided slot order; it does not canonicalize orientation implicitly)
 
 After rewiring and removing old cells, flips run:
 
