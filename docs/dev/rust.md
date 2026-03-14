@@ -235,6 +235,38 @@ pub enum InsertError {
 
 ---
 
+## Imports
+
+Always import types at the top of the module rather than using fully‑qualified
+paths inline. This keeps code readable and consistent.
+
+Prefer:
+
+```rust
+use crate::core::triangulation_data_structure::TdsValidationError;
+
+fn check(err: &TdsValidationError) -> bool { ... }
+```
+
+Instead of:
+
+```rust
+fn check(err: &crate::core::triangulation_data_structure::TdsValidationError) -> bool { ... }
+```
+
+Group imports from the same module into a single `use` statement with braces:
+
+```rust
+use crate::core::triangulation_data_structure::{
+    CellKey, EntityKind, Tds, TdsValidationError, VertexKey,
+};
+```
+
+If a test module already has `use super::*;`, do not re‑import items that are
+already brought into scope by the parent module's imports.
+
+---
+
 ## Module Layout
 
 Never use `mod.rs`.

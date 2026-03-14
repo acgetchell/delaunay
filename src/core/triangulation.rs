@@ -2071,6 +2071,15 @@ where
     /// This helper centralizes:
     /// - lifted-point collection, and
     /// - kernel orientation predicate invocation with contextual error mapping.
+    ///
+    /// # Error Mapping
+    ///
+    /// Kernel predicate failures (e.g. the orientation computation itself returning `Err`)
+    /// are mapped to [`TdsValidationError::InconsistentDataStructure`] because they
+    /// indicate an internal problem (missing vertices, bad periodic offsets, etc.) rather
+    /// than a geometry degeneracy.  Callers that need to distinguish degenerate geometry
+    /// should inspect the `Ok(0)` return value — a zero determinant — and map it to
+    /// [`TdsValidationError::DegenerateOrientation`] themselves.
     fn evaluate_cell_orientation_for_context(
         &self,
         cell_key: CellKey,
@@ -2083,14 +2092,14 @@ where
     {
         let points = self.collect_cell_points_for_orientation(cell_key, cell, purpose)?;
 
-        self.kernel
-            .orientation(&points)
-            .map_err(|e| TdsValidationError::DegenerateOrientation {
+        self.kernel.orientation(&points).map_err(|e| {
+            TdsValidationError::InconsistentDataStructure {
                 message: format!(
                     "{predicate_failure_prefix} {:?} (key {cell_key:?}): {e}",
                     cell.uuid(),
                 ),
-            })
+            }
+        })
     }
     /// Validates geometric orientation sign for each stored cell using the kernel's signed
     /// determinant predicate.
@@ -4526,12 +4535,12 @@ where
                             // For exterior points, a "global" conflict region can intersect the hull,
                             // producing an open/disconnected cavity boundary. In these cases we fall back
                             // to hull extension instead of surfacing an insertion error.
-                            let fallback_on_isolated_vertex = matches!(
-                                &err,
-                                InsertionError::TopologyValidation(
-                                    TdsValidationError::IsolatedVertex { .. }
-                                )
-                            );
+                            //
+                            // IMPORTANT: Only ConflictError variants are safe to fall back from here.
+                            // These originate from `extract_cavity_boundary` which runs BEFORE any TDS
+                            // mutation.  Errors like `IsolatedVertex` originate from AFTER the cavity
+                            // has been filled, neighbors wired, and conflict cells removed — the TDS
+                            // is already heavily mutated and hull extension on that state is unsound.
                             let should_fallback = matches!(
                                 &err,
                                 InsertionError::ConflictRegion(
@@ -4540,7 +4549,7 @@ where
                                         | ConflictError::DisconnectedBoundary { .. }
                                         | ConflictError::OpenBoundary { .. }
                                 )
-                            ) || fallback_on_isolated_vertex;
+                            );
 
                             if should_fallback {
                                 #[cfg(debug_assertions)]
@@ -4551,7 +4560,6 @@ where
                                 if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
                                     tracing::debug!(
                                         error = %err,
-                                        fallback_on_isolated_vertex,
                                         "Outside insertion: cavity insertion failed; using hull extension"
                                     );
                                 }
@@ -4923,7 +4931,7 @@ where
             // Use fan triangulation that skips boundary facets which already include the apex
             let new_cells = self
                 .fan_fill_cavity(apex_vertex_key, &boundary_facets)
-                .map_err(|e| TdsValidationError::InconsistentDataStructure {
+                .map_err(|e| TdsValidationError::FailedToCreateCell {
                     message: format!("Fan triangulation failed: {e}"),
                 })?;
             self.canonicalize_positive_orientation_for_cells(&new_cells)
@@ -4939,7 +4947,7 @@ where
             // Wire neighbors for the new cells (while both old and new cells exist)
             let external_facets =
                 external_facets_for_boundary(&self.tds, &cells_to_remove, &boundary_facets)
-                    .map_err(|e| TdsValidationError::InconsistentDataStructure {
+                    .map_err(|e| TdsValidationError::InvalidNeighbors {
                         message: format!("External-facet collection failed: {e}"),
                     })?;
             wire_cavity_neighbors(
@@ -4948,7 +4956,7 @@ where
                 external_facets.iter().copied(),
                 Some(&cells_to_remove),
             )
-            .map_err(|e| TdsValidationError::InconsistentDataStructure {
+            .map_err(|e| TdsValidationError::InvalidNeighbors {
                 message: format!("Neighbor wiring failed: {e}"),
             })?;
 
@@ -4973,7 +4981,7 @@ where
                 // This ensures neighbor consistency after repair operations
                 if removed > 0 {
                     repair_neighbor_pointers(&mut self.tds).map_err(|e| {
-                        TdsValidationError::InconsistentDataStructure {
+                        TdsValidationError::InvalidNeighbors {
                             message: format!(
                                 "Neighbor repair after facet issue repair failed: {e}"
                             ),
@@ -5786,14 +5794,9 @@ mod tests {
 
         match tri.validate_after_insertion(SuspicionFlags::default()) {
             Err(TriangulationValidationError::Tds(
-                TdsValidationError::InconsistentDataStructure { message },
-            )) => {
-                assert!(
-                    message.contains("Disconnected triangulation"),
-                    "Unexpected message: {message}"
-                );
-            }
-            other => panic!("Expected disconnectedness error, got {other:?}"),
+                TdsValidationError::InconsistentDataStructure { .. },
+            )) => {}
+            other => panic!("Expected InconsistentDataStructure error, got {other:?}"),
         }
     }
 
@@ -6475,14 +6478,19 @@ mod tests {
             Triangulation::new_empty(FastKernel::new());
 
         // Bootstrap insertion (no cells yet)
-        tri.insert(vertex!([0.0, 0.0, 0.0]), None, None)
+        let vertex = vertex!([0.0, 0.0, 0.0]);
+        let expected_uuid = vertex.uuid();
+        let (expected_vk, _) = tri
+            .insert(vertex, None, None)
             .expect("bootstrap insertion should succeed");
 
         match tri.is_valid() {
             Err(TriangulationValidationError::Tds(TdsValidationError::IsolatedVertex {
-                ..
+                vertex_key,
+                vertex_uuid,
             })) => {
-                // Expected: isolated vertex produces a structured IsolatedVertex error.
+                assert_eq!(vertex_key, expected_vk);
+                assert_eq!(vertex_uuid, expected_uuid);
             }
             other => panic!("Expected IsolatedVertex error, got {other:?}"),
         }

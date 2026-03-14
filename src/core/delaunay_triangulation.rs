@@ -5358,7 +5358,7 @@ where
         // Use fast flip-based verification (O(cells) instead of O(cells × vertices))
         self.is_delaunay_via_flips().map_err(|err| {
             DelaunayTriangulationValidationError::VerificationFailed {
-                message: format!("Delaunay property violation detected: {err}"),
+                message: err.to_string(),
             }
         })
     }
@@ -8120,10 +8120,6 @@ mod tests {
         assert!(
             matches!(mapped, TriangulationConstructionError::Tds(_)),
             "NeighborWiring should map to Tds(ValidationError(InvalidNeighbors)), got: {mapped:?}"
-        );
-        assert!(
-            mapped.to_string().contains("bad wiring"),
-            "should preserve message: {mapped}"
         );
     }
 

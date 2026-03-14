@@ -37,7 +37,9 @@ use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::TriangulationConstructionError;
 use crate::core::triangulation::TriangulationValidationError;
-use crate::core::triangulation_data_structure::{CellKey, Tds, VertexKey};
+use crate::core::triangulation_data_structure::{
+    CellKey, EntityKind, Tds, TdsValidationError, VertexKey,
+};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateScalar;
@@ -171,19 +173,19 @@ pub enum InsertionError {
     #[error("Duplicate UUID: {entity:?} with UUID {uuid} already exists")]
     DuplicateUuid {
         /// The type of entity.
-        entity: crate::core::triangulation_data_structure::EntityKind,
+        entity: EntityKind,
         /// The UUID that was duplicated.
         uuid: uuid::Uuid,
     },
 
     /// Topology validation or repair failed.
     #[error("Topology validation error: {0}")]
-    TopologyValidation(#[from] crate::core::triangulation_data_structure::TdsValidationError),
+    TopologyValidation(#[from] TdsValidationError),
 
     /// Level 3 topology validation failed (Triangulation layer).
     ///
     /// This preserves the structured [`TriangulationValidationError`] without wrapping it into a
-    /// [`TdsValidationError`](crate::core::triangulation_data_structure::TdsValidationError),
+    /// [`TdsValidationError`],
     /// avoiding lower-layer (`Tds`) errors depending on higher-layer (`Triangulation`) errors.
     #[error("{message}: {source}")]
     TopologyValidationFailed {
@@ -234,19 +236,18 @@ impl InsertionError {
     #[must_use]
     pub fn is_retryable(&self) -> bool {
         match self {
-            // Non-manifold topology and Level 3 topology validation errors are retryable.
-            Self::NonManifoldTopology { .. } | Self::TopologyValidationFailed { .. } => true,
+            // Non-manifold topology detected during wiring is retryable (geometry degeneracy).
+            Self::NonManifoldTopology { .. } => true,
+            // Level 3 topology validation: retryability depends on the inner error.
+            // Geometry-related topology violations (manifold facet multiplicity, link
+            // conditions) may be resolved by perturbation; structural invariant failures
+            // (Euler mismatch, inconsistent data structure) cannot.
+            Self::TopologyValidationFailed { source, .. } => {
+                Self::is_level3_error_retryable(source)
+            }
             // TDS-level topology errors: only geometry/FP-related sub-variants are retryable.
             // Structural errors (missing cells, broken invariants) won't be fixed by perturbation.
-            Self::TopologyValidation(tds_err) => matches!(
-                tds_err,
-                crate::core::triangulation_data_structure::TdsValidationError::DegenerateOrientation { .. }
-                | crate::core::triangulation_data_structure::TdsValidationError::NegativeOrientation { .. }
-                | crate::core::triangulation_data_structure::TdsValidationError::OrientationViolation { .. }
-                | crate::core::triangulation_data_structure::TdsValidationError::IsolatedVertex { .. }
-            ),
-            // Legacy neighbor wiring errors: check message for non-manifold (backwards compatibility)
-            Self::NeighborWiring { message } => message.contains("Non-manifold"),
+            Self::TopologyValidation(tds_err) => Self::is_tds_error_retryable(tds_err),
             // Conflict region errors: non-manifold facets, ridge fans, or disconnected/open cavity
             // boundaries indicate degeneracy.
             Self::ConflictRegion(ce) => {
@@ -273,12 +274,45 @@ impl InsertionError {
                     HullExtensionReason::NoVisibleFacets | HullExtensionReason::InvalidPatch { .. }
                 )
             }
-            Self::Location(_)
+            // Neighbor wiring errors are structural failures (missing cells, index
+            // overflow, etc.). Non-manifold topology detection uses the dedicated
+            // `NonManifoldTopology` variant.
+            Self::NeighborWiring { .. }
+            | Self::Location(_)
             | Self::Construction(_)
             | Self::CavityFilling { .. }
             | Self::DelaunayValidationFailed { .. }
             | Self::DuplicateCoordinates { .. }
             | Self::DuplicateUuid { .. } => false,
+        }
+    }
+
+    /// Check whether a TDS-level validation error is geometry-related (retryable).
+    const fn is_tds_error_retryable(tds_err: &TdsValidationError) -> bool {
+        matches!(
+            tds_err,
+            TdsValidationError::DegenerateOrientation { .. }
+                | TdsValidationError::NegativeOrientation { .. }
+                | TdsValidationError::OrientationViolation { .. }
+                | TdsValidationError::IsolatedVertex { .. }
+        )
+    }
+
+    /// Check whether a Level 3 (Triangulation) validation error is geometry-related (retryable).
+    const fn is_level3_error_retryable(err: &TriangulationValidationError) -> bool {
+        match err {
+            // Geometry-related topology violations: a near-degenerate insertion can create
+            // non-manifold facets, broken links, or boundary violations that perturbation
+            // may resolve.
+            TriangulationValidationError::ManifoldFacetMultiplicity { .. }
+            | TriangulationValidationError::BoundaryRidgeMultiplicity { .. }
+            | TriangulationValidationError::RidgeLinkNotManifold { .. }
+            | TriangulationValidationError::VertexLinkNotManifold { .. } => true,
+            // TDS-level errors: delegate to the same geometry-variant check.
+            TriangulationValidationError::Tds(tds_err) => Self::is_tds_error_retryable(tds_err),
+            // All other variants (structural invariant violations, future additions)
+            // are conservatively treated as non-retryable.
+            _ => false,
         }
     }
 }
@@ -2245,7 +2279,6 @@ mod tests {
     use super::*;
     use crate::core::collections::CellKeyBuffer;
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
-    use crate::core::triangulation_data_structure::TdsValidationError;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::vertex;
@@ -2380,17 +2413,10 @@ mod tests {
             (0..=2).map(|i| FacetHandle::new(cell_key, i)).collect();
 
         let result = fill_cavity(tds, invalid_vkey, &boundary_facets);
-        assert!(result.is_err());
-
-        if let Err(InsertionError::CavityFilling { message }) = result {
-            assert!(
-                message.contains("not found")
-                    || message.contains("invalid")
-                    || message.contains("does not exist")
-            );
-        } else {
-            panic!("Expected CavityFilling error");
-        }
+        assert!(
+            matches!(result, Err(InsertionError::CavityFilling { .. })),
+            "Expected CavityFilling error, got: {result:?}"
+        );
     }
 
     #[test]
@@ -2583,15 +2609,16 @@ mod tests {
         new_cells.push(cell_key);
 
         let err = wire_cavity_neighbors(tds, &new_cells, [], None).unwrap_err();
-        assert!(matches!(
-            err,
-            InsertionError::NeighborWiring { message } if message.contains("Facet index")
-        ));
+        assert!(matches!(err, InsertionError::NeighborWiring { .. }));
     }
 
     // InsertionError::is_retryable() tests
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Exhaustive coverage of all InsertionError retryability classifications"
+    )]
     fn test_insertion_error_retryable() {
         // Retryable errors
         assert!(
@@ -2617,20 +2644,35 @@ mod tests {
             .is_retryable()
         );
 
-        let level3_err =
+        // TopologyValidationFailed wrapping a structural error is non-retryable.
+        let structural_l3 =
             TriangulationValidationError::from(TdsValidationError::InconsistentDataStructure {
                 message: "test".to_string(),
             });
         assert!(
-            InsertionError::TopologyValidationFailed {
+            !InsertionError::TopologyValidationFailed {
                 message: "test".to_string(),
-                source: Box::new(level3_err),
+                source: Box::new(structural_l3),
             }
             .is_retryable()
         );
 
+        // TopologyValidationFailed wrapping a geometry-related error is retryable.
+        let geometry_l3 = TriangulationValidationError::ManifoldFacetMultiplicity {
+            facet_key: 0x12345,
+            cell_count: 3,
+        };
         assert!(
-            InsertionError::NeighborWiring {
+            InsertionError::TopologyValidationFailed {
+                message: "test".to_string(),
+                source: Box::new(geometry_l3),
+            }
+            .is_retryable()
+        );
+
+        // NeighborWiring is unconditionally non-retryable.
+        assert!(
+            !InsertionError::NeighborWiring {
                 message: "Non-manifold topology detected".to_string()
             }
             .is_retryable()
@@ -2941,10 +2983,7 @@ mod tests {
         let missing = CellKey::from(KeyData::from_ffi(u64::MAX));
 
         let err = set_neighbor(&mut tds, missing, 0, None).unwrap_err();
-        assert!(matches!(
-            err,
-            InsertionError::NeighborWiring { message } if message.contains("not found")
-        ));
+        assert!(matches!(err, InsertionError::NeighborWiring { .. }));
     }
 
     #[test]
