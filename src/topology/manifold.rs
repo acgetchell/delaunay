@@ -2940,6 +2940,133 @@ mod tests {
     }
 
     #[test]
+    fn test_simplex_star_cells_rejects_empty_simplex() {
+        let tds: Tds<f64, (), (), 2> = Tds::empty();
+        match simplex_star_cells(&tds, &[]) {
+            Err(ManifoldError::Tds(TdsError::InconsistentDataStructure { ref message })) => {
+                assert!(message.contains("at least one vertex"));
+            }
+            other => panic!("Expected InconsistentDataStructure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_simplex_star_cells_rejects_missing_vertex() {
+        let tds: Tds<f64, (), (), 2> = Tds::empty();
+        let stale_key = VertexKey::from(KeyData::from_ffi(0xDEAD));
+        match simplex_star_cells(&tds, &[stale_key]) {
+            Err(ManifoldError::Tds(TdsError::VertexNotFound {
+                vertex_key,
+                ref context,
+            })) => {
+                assert_eq!(vertex_key, stale_key);
+                assert!(context.contains("simplex star"));
+            }
+            other => panic!("Expected VertexNotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_simplex_link_simplices_from_star_rejects_empty_simplex() {
+        let tds: Tds<f64, (), (), 2> = Tds::empty();
+        match simplex_link_simplices_from_star(&tds, &[], &[]) {
+            Err(ManifoldError::Tds(TdsError::InconsistentDataStructure { ref message })) => {
+                assert!(message.contains("at least one vertex"));
+            }
+            other => panic!("Expected InconsistentDataStructure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_ridge_star_cells_rejects_wrong_vertex_count() {
+        let tds: Tds<f64, (), (), 3> = Tds::empty();
+        // For D=3, ridges have D-1=2 vertices; pass 1 vertex instead.
+        let v = VertexKey::from(KeyData::from_ffi(1));
+        match ridge_star_cells(&tds, &[v]) {
+            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
+                expected, actual, ..
+            })) => {
+                assert_eq!(expected, 2);
+                assert_eq!(actual, 1);
+            }
+            other => panic!("Expected DimensionMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_closed_boundary_dimension_mismatch_on_corrupted_cell() {
+        // Create a 3D TDS with a cell that has too few vertices (corrupted state),
+        // then trigger the DimensionMismatch path in validate_closed_boundary.
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+
+        let v0 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v3], None).unwrap())
+            .unwrap();
+
+        // Build a facet-to-cells map with a synthetic boundary facet pointing at facet_index=0
+        // but then corrupt the cell to only have 2 vertices.
+        {
+            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            // Replace with only 2 vertices so the facet subtraction produces wrong count.
+            cell.clear_vertex_keys();
+            cell.push_vertex_key(v0);
+            cell.push_vertex_key(v1);
+        }
+
+        let mut facet_to_cells: FacetToCellsMap = FacetToCellsMap::default();
+        let mut handles: SmallBuffer<crate::core::facet::FacetHandle, 2> = SmallBuffer::new();
+        handles.push(crate::core::facet::FacetHandle::new(cell_key, 0));
+        facet_to_cells.insert(0_u64, handles);
+
+        match validate_closed_boundary(&tds, &facet_to_cells) {
+            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
+                expected, actual, ..
+            })) => {
+                assert_eq!(expected, 3, "D=3: boundary facet should have 3 vertices");
+                assert!(
+                    actual != 3,
+                    "Corrupted cell should produce wrong vertex count"
+                );
+            }
+            other => panic!("Expected DimensionMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_manifold_error_display_variants() {
+        let err = ManifoldError::ManifoldFacetMultiplicity {
+            facet_key: 0xABCD,
+            cell_count: 3,
+        };
+        assert!(err.to_string().contains("Non-manifold facet"));
+
+        let err = ManifoldError::BoundaryRidgeMultiplicity {
+            ridge_key: 0x1234,
+            boundary_facet_count: 4,
+        };
+        assert!(err.to_string().contains("Boundary is not closed"));
+
+        let tds_err = TdsError::InconsistentDataStructure {
+            message: "inner".to_string(),
+        };
+        let err = ManifoldError::from(tds_err);
+        assert!(err.to_string().contains("inner"));
+    }
+
+    #[test]
     fn test_validate_vertex_links_accepts_cone_on_sphere_in_3d() {
         // Cone on the boundary of a tetrahedron (S^2).
         // The apex link is S^2, so this IS a valid PL 3-manifold (a 3-ball).

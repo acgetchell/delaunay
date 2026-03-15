@@ -235,14 +235,15 @@ pub(crate) fn record_duplicate_detection_metrics(
 ///
 /// - `TopologyValidation(source)` → returns `source` directly
 /// - `TopologyValidationFailed` → wrapped in [`TdsError::InconsistentDataStructure`]
+///   with both the high-level `message` and the structured `source`
 /// - All other variants → wrapped in [`TdsError::InconsistentDataStructure`]
 ///   with the provided `context`
 fn extract_tds_error(error: InsertionError, context: &str) -> TdsError {
     match error {
         InsertionError::TopologyValidation(source) => source,
-        InsertionError::TopologyValidationFailed { source, .. } => {
+        InsertionError::TopologyValidationFailed { message, source } => {
             TdsError::InconsistentDataStructure {
-                message: format!("{context}: {source}"),
+                message: format!("{context}: {message}: {source}"),
             }
         }
         other => TdsError::InconsistentDataStructure {
@@ -8564,9 +8565,9 @@ mod tests {
             matches!(
                 result,
                 TdsError::InconsistentDataStructure { ref message }
-                    if message.contains("test context")
+                    if message.contains("test context") && message.contains("outer")
             ),
-            "TopologyValidationFailed should produce InconsistentDataStructure: {result:?}"
+            "TopologyValidationFailed should produce InconsistentDataStructure preserving message: {result:?}"
         );
     }
 
@@ -8584,9 +8585,9 @@ mod tests {
             matches!(
                 result,
                 TdsError::InconsistentDataStructure { ref message }
-                    if message.contains("my context")
+                    if message.contains("my context") && message.contains("outer")
             ),
-            "Non-Tds inner error should produce InconsistentDataStructure: {result:?}"
+            "Non-Tds inner error should produce InconsistentDataStructure preserving message: {result:?}"
         );
     }
 
@@ -8674,6 +8675,94 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("Isolated vertex"));
         assert!(msg.contains("not incident to any cell"));
+    }
+
+    // ---- is_valid / validate error-path tests ----
+
+    #[test]
+    fn test_is_valid_returns_invariant_error_for_isolated_vertex() {
+        let (mut tri, _, _) = build_single_tet();
+
+        // Add an isolated vertex that is not referenced by any cell.
+        let iso = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.5, 0.5, 0.5]))
+            .unwrap();
+
+        match tri.is_valid() {
+            Err(InvariantError::Triangulation(TriangulationValidationError::IsolatedVertex {
+                vertex_key,
+                ..
+            })) => {
+                assert_eq!(vertex_key, iso);
+            }
+            other => {
+                panic!("Expected InvariantError::Triangulation(IsolatedVertex), got {other:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn test_is_valid_returns_tds_error_for_disconnected() {
+        let tds = build_disconnected_two_triangles_tds_2d();
+        let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+
+        match tri.is_valid() {
+            Err(InvariantError::Tds(TdsError::InconsistentDataStructure { ref message })) => {
+                assert!(
+                    message.contains("Disconnected"),
+                    "Expected 'Disconnected' in: {message}"
+                );
+            }
+            other => {
+                panic!("Expected InvariantError::Tds(InconsistentDataStructure), got {other:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn test_validate_returns_invariant_error_from_tds_layer() {
+        // Corrupt a TDS so that Level 2 structural validation fails.
+        let (mut tri, [v0, _, _, _], _) = build_single_tet();
+
+        // Break vertex mapping: remove uuid entry.
+        let uuid = tri.tds.get_vertex_by_key(v0).unwrap().uuid();
+        tri.tds.uuid_to_vertex_key.remove(&uuid);
+
+        match tri.validate() {
+            Err(InvariantError::Tds(TdsError::MappingInconsistency { .. })) => {}
+            other => panic!("Expected InvariantError::Tds(MappingInconsistency), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_returns_invariant_error_from_topology_layer() {
+        let (mut tri, _, _) = build_single_tet();
+
+        // Add an isolated vertex so Level 3 (topology) fails.
+        let _ = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.5, 0.5, 0.5]))
+            .unwrap();
+
+        match tri.validate() {
+            Err(InvariantError::Triangulation(TriangulationValidationError::IsolatedVertex {
+                ..
+            })) => {}
+            other => {
+                panic!("Expected InvariantError::Triangulation(IsolatedVertex), got {other:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn test_from_manifold_error_tds_routes_to_invariant_error_tds() {
+        let tds_err = TdsError::InconsistentDataStructure {
+            message: "underlying TDS issue".to_string(),
+        };
+        let manifold_err = ManifoldError::Tds(tds_err.clone());
+        let inv = InvariantError::from(manifold_err);
+        assert_eq!(inv, InvariantError::Tds(tds_err));
     }
 
     // ---- repair_stale_incident_cells tests ----

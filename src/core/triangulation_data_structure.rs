@@ -7228,6 +7228,90 @@ mod tests {
     }
 
     #[test]
+    fn test_invariant_error_from_delaunay_validation_error() {
+        use crate::core::delaunay_triangulation::DelaunayTriangulationValidationError;
+
+        let dt_err = DelaunayTriangulationValidationError::VerificationFailed {
+            message: "test".to_string(),
+        };
+        let inv = InvariantError::from(dt_err);
+        assert!(matches!(inv, InvariantError::Delaunay(_)));
+    }
+
+    #[test]
+    fn test_invariant_kind_all_variants_are_distinct() {
+        let kinds = [
+            InvariantKind::VertexValidity,
+            InvariantKind::CellValidity,
+            InvariantKind::CellCoordinateUniqueness,
+            InvariantKind::VertexMappings,
+            InvariantKind::CellMappings,
+            InvariantKind::CellVertexKeys,
+            InvariantKind::VertexIncidence,
+            InvariantKind::DuplicateCells,
+            InvariantKind::FacetSharing,
+            InvariantKind::NeighborConsistency,
+            InvariantKind::CoherentOrientation,
+            InvariantKind::Connectedness,
+            InvariantKind::Topology,
+            InvariantKind::DelaunayProperty,
+        ];
+        // All variants must be copyable and comparable.
+        for (i, &a) in kinds.iter().enumerate() {
+            assert_eq!(a, a);
+            for &b in &kinds[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
+    }
+
+    #[test]
+    fn test_invariant_violation_stores_kind_and_error() {
+        let violation = InvariantViolation {
+            kind: InvariantKind::NeighborConsistency,
+            error: InvariantError::Tds(TdsError::InvalidNeighbors {
+                message: "test".to_string(),
+            }),
+        };
+        assert_eq!(violation.kind, InvariantKind::NeighborConsistency);
+        assert!(matches!(violation.error, InvariantError::Tds(_)));
+    }
+
+    #[test]
+    fn test_entity_kind_debug_output() {
+        assert_eq!(format!("{:?}", EntityKind::Vertex), "Vertex");
+        assert_eq!(format!("{:?}", EntityKind::Cell), "Cell");
+        assert_ne!(EntityKind::Vertex, EntityKind::Cell);
+    }
+
+    #[test]
+    fn test_tds_mutation_error_from_round_trips() {
+        // Test the full round-trip: TdsError -> TdsMutationError -> TdsError
+        let original = TdsError::CellNotFound {
+            cell_key: CellKey::from(KeyData::from_ffi(42)),
+            context: "round trip".to_string(),
+        };
+        let mutation = TdsMutationError::from(original.clone());
+        assert_eq!(mutation.to_string(), original.to_string());
+        let round_tripped: TdsError = mutation.into();
+        assert_eq!(round_tripped, original);
+    }
+
+    #[test]
+    fn test_geometric_error_from_into_tds_error() {
+        let geo = GeometricError::NegativeOrientation {
+            message: "det<0".to_string(),
+        };
+        let tds_err: TdsError = geo.into();
+        assert!(matches!(
+            tds_err,
+            TdsError::Geometric(GeometricError::NegativeOrientation { .. })
+        ));
+        // Display propagates via #[error(transparent)].
+        assert!(tds_err.to_string().contains("det<0"));
+    }
+
+    #[test]
     fn test_is_connected_returns_false_for_isolated_cells() {
         use crate::core::cell::Cell;
 

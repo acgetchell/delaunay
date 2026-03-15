@@ -5088,16 +5088,15 @@ where
         // orientation before exposing the updated triangulation state.
         self.tri
             .normalize_and_promote_positive_orientation()
-            .map_err(|err| {
-                let source = match err {
-                    InsertionError::TopologyValidation(source) => source,
-                    other => TdsError::InconsistentDataStructure {
-                        message: format!(
-                            "Geometric orientation normalization failed after Delaunay repair: {other}",
-                        ),
-                    },
-                };
-                InsertionError::TopologyValidation(source)
+            .map_err(|err| match err {
+                InsertionError::TopologyValidation(source) => {
+                    InsertionError::TopologyValidation(source)
+                }
+                other => InsertionError::TopologyValidation(TdsError::FinalizationFailed {
+                    message: format!(
+                        "Geometric orientation normalization failed after Delaunay repair: {other}",
+                    ),
+                }),
             })?;
         self.tri
             .validate_geometric_cell_orientation()
@@ -8341,6 +8340,63 @@ mod tests {
         };
         let err = DelaunayTriangulationValidationError::from(inner);
         assert!(err.to_string().contains("Isolated vertex"));
+    }
+
+    // ---- DT validate() error-mapping tests ----
+
+    #[test]
+    fn test_dt_validate_maps_tds_error_to_tds_variant() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        // Break vertex mapping so Level 2 structural validation fails.
+        let vk = dt.tds().vertex_keys().next().unwrap();
+        let uuid = dt.tds().get_vertex_by_key(vk).unwrap().uuid();
+        dt.tds_mut().uuid_to_vertex_key.remove(&uuid);
+
+        match dt.validate() {
+            Err(DelaunayTriangulationValidationError::Tds(TdsError::MappingInconsistency {
+                ..
+            })) => {}
+            other => panic!(
+                "Expected DelaunayTriangulationValidationError::Tds(MappingInconsistency), got {other:?}"
+            ),
+        }
+    }
+
+    #[test]
+    fn test_dt_validate_maps_topology_error_to_triangulation_variant() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        // Add an isolated vertex so Level 3 (topology) fails.
+        let _ = dt
+            .tds_mut()
+            .insert_vertex_with_mapping(vertex!([0.5, 0.5, 0.5]))
+            .unwrap();
+
+        match dt.validate() {
+            Err(DelaunayTriangulationValidationError::Triangulation(
+                TriangulationValidationError::IsolatedVertex { .. },
+            )) => {}
+            other => panic!(
+                "Expected DelaunayTriangulationValidationError::Triangulation(IsolatedVertex), got {other:?}"
+            ),
+        }
     }
 
     // ---- map_orientation_canonicalization_error: OrientationViolation ----
