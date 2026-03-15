@@ -3405,7 +3405,7 @@ where
     ///
     /// - `InvariantError::Tds(e)` → `InsertionError::TopologyValidation(e)`
     /// - `InvariantError::Triangulation(e)` → `InsertionError::TopologyValidationFailed { source: e }`
-    /// - `InvariantError::Delaunay(e)` → `InsertionError::TopologyValidationFailed` (stringified)
+    /// - `InvariantError::Delaunay(e)` → `InsertionError::DelaunayValidationFailed { message }`
     fn invariant_error_to_insertion_error(err: &InvariantError) -> InsertionError {
         match err {
             InvariantError::Tds(tds_err) => InsertionError::TopologyValidation(tds_err.clone()),
@@ -3413,13 +3413,8 @@ where
                 message: "Topology validation failed".to_string(),
                 source: Box::new(tri_err.clone()),
             },
-            InvariantError::Delaunay(dt_err) => InsertionError::TopologyValidationFailed {
-                message: format!("Delaunay validation failed: {dt_err}"),
-                source: Box::new(TriangulationValidationError::EulerCharacteristicMismatch {
-                    computed: 0,
-                    expected: 0,
-                    classification: TopologyClassification::Unknown,
-                }),
+            InvariantError::Delaunay(dt_err) => InsertionError::DelaunayValidationFailed {
+                message: format!("Delaunay validation failed after insertion: {dt_err}"),
             },
         }
     }
@@ -3580,10 +3575,7 @@ where
 
                 Ok((fallback_ok, fallback_removed, fallback_suspicion))
             }
-            Err(fallback_err) => {
-                let _ = fallback_err;
-                Err(Self::invariant_error_to_insertion_error(validation_err))
-            }
+            Err(fallback_err) => Err(fallback_err),
         }
     }
 

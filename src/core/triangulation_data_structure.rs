@@ -3394,8 +3394,11 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`TdsError::InconsistentDataStructure`] if neighbor references are
-    /// dangling, mirror facets cannot be derived, or orientation constraints are contradictory.
+    /// Returns [`TdsError`] if the traversal encounters structural problems:
+    /// - [`CellNotFound`](TdsError::CellNotFound) — a cell key referenced during BFS is missing from storage.
+    /// - [`InvalidNeighbors`](TdsError::InvalidNeighbors) — a mirror facet cannot be derived between adjacent cells.
+    /// - [`InconsistentDataStructure`](TdsError::InconsistentDataStructure) — orientation constraints are contradictory
+    ///   or a flip-assignment entry is unexpectedly absent.
     pub(crate) fn normalize_coherent_orientation(&mut self) -> Result<(), TdsError> {
         let mut flip_assignment: FastHashMap<CellKey, bool> =
             fast_hash_map_with_capacity(self.cells.len());
@@ -3527,8 +3530,11 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a `TdsError::VertexNotFound` or `TdsError::CellNotFound`
-    /// if any cell cannot resolve its vertex keys, which would indicate a corrupted triangulation state.
+    /// Returns [`TdsError`] if the map cannot be built:
+    /// - [`VertexNotFound`](TdsError::VertexNotFound) / [`CellNotFound`](TdsError::CellNotFound) — a cell cannot resolve its vertex keys.
+    /// - [`IndexOutOfBounds`](TdsError::IndexOutOfBounds) — a facet index exceeds the `u8` range.
+    /// - [`DimensionMismatch`](TdsError::DimensionMismatch) — periodic offset count does not match vertex count.
+    /// - [`InconsistentDataStructure`](TdsError::InconsistentDataStructure) — periodic facet key derivation fails.
     ///
     /// # Performance
     ///
@@ -4126,11 +4132,12 @@ where
         omit_idx: usize,
     ) -> Result<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>, TdsError> {
         if omit_idx >= cell.number_of_vertices() {
-            return Err(TdsError::InconsistentDataStructure {
-                message: format!(
-                    "Facet index {omit_idx} out of bounds for cell {:?} with {} vertices during orientation validation",
+            return Err(TdsError::IndexOutOfBounds {
+                index: omit_idx,
+                bound: cell.number_of_vertices(),
+                context: format!(
+                    "facet index for cell {:?} during orientation validation",
                     cell.uuid(),
-                    cell.number_of_vertices(),
                 ),
             });
         }
@@ -4154,11 +4161,12 @@ where
         omit_idx: usize,
     ) -> Result<SmallBuffer<(VertexKey, [i16; D]), MAX_PRACTICAL_DIMENSION_SIZE>, TdsError> {
         if omit_idx >= cell.number_of_vertices() {
-            return Err(TdsError::InconsistentDataStructure {
-                message: format!(
-                    "Facet index {omit_idx} out of bounds for cell {:?} with {} vertices during orientation validation",
+            return Err(TdsError::IndexOutOfBounds {
+                index: omit_idx,
+                bound: cell.number_of_vertices(),
+                context: format!(
+                    "facet index for cell {:?} during orientation validation",
                     cell.uuid(),
-                    cell.number_of_vertices(),
                 ),
             });
         }
@@ -4167,12 +4175,12 @@ where
         if let Some(offsets) = periodic_offsets
             && offsets.len() != cell.number_of_vertices()
         {
-            return Err(TdsError::InconsistentDataStructure {
-                message: format!(
-                    "Cell {:?} periodic offset count {} does not match vertex count {} during orientation validation",
+            return Err(TdsError::DimensionMismatch {
+                expected: cell.number_of_vertices(),
+                actual: offsets.len(),
+                context: format!(
+                    "periodic offset count for cell {:?} during orientation validation",
                     cell.uuid(),
-                    offsets.len(),
-                    cell.number_of_vertices(),
                 ),
             });
         }

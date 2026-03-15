@@ -3373,9 +3373,11 @@ where
             InsertionError::CavityFilling { message } => {
                 TriangulationConstructionError::FailedToCreateCell { message }
             }
-            InsertionError::NeighborWiring { message } => TriangulationConstructionError::Tds(
-                TdsConstructionError::ValidationError(TdsError::InvalidNeighbors { message }),
-            ),
+            InsertionError::NeighborWiring { message } => {
+                TriangulationConstructionError::InternalInconsistency {
+                    message: format!("Neighbor wiring failed: {message}"),
+                }
+            }
             InsertionError::TopologyValidation(source) => {
                 TriangulationConstructionError::from(TdsConstructionError::ValidationError(source))
             }
@@ -5203,11 +5205,10 @@ where
                 }
                 .into());
             }
-            Err(_) => self.tri.remove_vertex(vertex).map_err(|e| {
-                InvariantError::Tds(TdsError::InconsistentDataStructure {
-                    message: format!("remove_vertex fan triangulation failed: {e}"),
-                })
-            })?,
+            Err(_) => self
+                .tri
+                .remove_vertex(vertex)
+                .map_err(|e| InvariantError::Tds(e.into_inner()))?,
         };
 
         let topology = self.tri.topology_guarantee();
@@ -8129,8 +8130,11 @@ mod tests {
         let mapped =
             DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_insertion_error(error);
         assert!(
-            matches!(mapped, TriangulationConstructionError::Tds(_)),
-            "NeighborWiring should map to Tds(ValidationError(InvalidNeighbors)), got: {mapped:?}"
+            matches!(
+                mapped,
+                TriangulationConstructionError::InternalInconsistency { .. }
+            ),
+            "NeighborWiring should map to InternalInconsistency, got: {mapped:?}"
         );
     }
 
