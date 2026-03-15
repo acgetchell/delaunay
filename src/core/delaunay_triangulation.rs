@@ -27,7 +27,7 @@ use crate::core::triangulation::{
     ValidationPolicy, record_duplicate_detection_metrics,
 };
 use crate::core::triangulation_data_structure::{
-    CellKey, InvariantKind, InvariantViolation, Tds, TdsConstructionError, TdsValidationError,
+    CellKey, InvariantKind, InvariantViolation, Tds, TdsConstructionError, TdsError,
     TriangulationValidationReport, VertexKey,
 };
 use crate::core::util::{
@@ -3317,17 +3317,15 @@ where
             // Construction already wraps a TriangulationConstructionError — preserve it
             // directly rather than rewrapping, mirroring map_insertion_error.
             InsertionError::Construction(source) => source,
-            // Degenerate orientation (det ≈ 0 or predicate failure) and negative
-            // orientation (det < 0 after canonicalization, FP sign instability) are
+            // Geometric orientation errors (degenerate or negative) are
             // geometry problems, not internal bugs.
-            InsertionError::TopologyValidation(
-                error @ (TdsValidationError::DegenerateOrientation { .. }
-                | TdsValidationError::NegativeOrientation { .. }),
-            ) => TriangulationConstructionError::GeometricDegeneracy {
-                message: format!(
-                    "Failed to canonicalize orientation after post-construction repair: {error}"
-                ),
-            },
+            InsertionError::TopologyValidation(error @ TdsError::Geometric(_)) => {
+                TriangulationConstructionError::GeometricDegeneracy {
+                    message: format!(
+                        "Failed to canonicalize orientation after post-construction repair: {error}"
+                    ),
+                }
+            }
             // Structural / data-structure errors indicate algorithmic bugs,
             // not input-geometry problems.
             //
@@ -3371,11 +3369,9 @@ where
             InsertionError::CavityFilling { message } => {
                 TriangulationConstructionError::FailedToCreateCell { message }
             }
-            InsertionError::NeighborWiring { message } => {
-                TriangulationConstructionError::from(TdsConstructionError::ValidationError(
-                    TdsValidationError::InvalidNeighbors { message },
-                ))
-            }
+            InsertionError::NeighborWiring { message } => TriangulationConstructionError::from(
+                TdsConstructionError::ValidationError(TdsError::InvalidNeighbors { message }),
+            ),
             InsertionError::TopologyValidation(source) => {
                 TriangulationConstructionError::from(TdsConstructionError::ValidationError(source))
             }
@@ -5085,7 +5081,7 @@ where
                     InsertionError::TopologyValidationFailed { source, .. } => *source,
                     other => {
                         TriangulationValidationError::Tds(
-                            TdsValidationError::InconsistentDataStructure {
+                            TdsError::InconsistentDataStructure {
                                 message: format!(
                                     "Geometric orientation normalization failed after Delaunay repair: {other}",
                                 ),
@@ -5212,7 +5208,7 @@ where
                 info.removed_cells.len()
             }
             Err(FlipError::NeighborWiring { message }) => {
-                return Err(TdsValidationError::InvalidNeighbors {
+                return Err(TdsError::InvalidNeighbors {
                     message: format!("inverse k=1 flip failed during remove_vertex: {message}"),
                 }
                 .into());
@@ -5228,7 +5224,7 @@ where
             let seed_ref = seed_cells.as_deref();
             let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
             repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology).map_err(|e| {
-                TdsValidationError::FinalizationFailed {
+                TdsError::FinalizationFailed {
                     message: format!("Delaunay repair failed after vertex removal: {e}"),
                 }
             })?;
@@ -5237,7 +5233,7 @@ where
             // the global sign negative.
             self.tri
                 .normalize_and_promote_positive_orientation()
-                .map_err(|e| TdsValidationError::FinalizationFailed {
+                .map_err(|e| TdsError::FinalizationFailed {
                     message: format!(
                         "Orientation canonicalization failed after vertex removal: {e}"
                     ),
@@ -5801,7 +5797,7 @@ impl DelaunayCheckPolicy {
 mod tests {
     use super::*;
     use crate::core::algorithms::flips::DelaunayRepairError;
-    use crate::core::triangulation_data_structure::EntityKind;
+    use crate::core::triangulation_data_structure::{EntityKind, GeometricError};
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel, RobustKernel};
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::triangulation::flips::BistellarFlips;
@@ -7894,10 +7890,9 @@ mod tests {
 
     #[test]
     fn test_map_orientation_canonicalization_error_topology_validation_is_internal() {
-        let error =
-            InsertionError::TopologyValidation(TdsValidationError::InconsistentDataStructure {
-                message: "missing cell".to_string(),
-            });
+        let error = InsertionError::TopologyValidation(TdsError::InconsistentDataStructure {
+            message: "missing cell".to_string(),
+        });
         let mapped =
             DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(
@@ -7916,9 +7911,11 @@ mod tests {
 
     #[test]
     fn test_map_orientation_canonicalization_error_degenerate_orientation_is_degeneracy() {
-        let error = InsertionError::TopologyValidation(TdsValidationError::DegenerateOrientation {
-            message: "det=0".to_string(),
-        });
+        let error = InsertionError::TopologyValidation(TdsError::Geometric(
+            GeometricError::DegenerateOrientation {
+                message: "det=0".to_string(),
+            },
+        ));
         let mapped =
             DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(
@@ -7937,9 +7934,11 @@ mod tests {
 
     #[test]
     fn test_map_orientation_canonicalization_error_negative_orientation_is_degeneracy() {
-        let error = InsertionError::TopologyValidation(TdsValidationError::NegativeOrientation {
-            message: "det<0 after canonicalization".to_string(),
-        });
+        let error = InsertionError::TopologyValidation(TdsError::Geometric(
+            GeometricError::NegativeOrientation {
+                message: "det<0 after canonicalization".to_string(),
+            },
+        ));
         let mapped =
             DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(
@@ -7958,10 +7957,13 @@ mod tests {
 
     #[test]
     fn test_map_orientation_canonicalization_error_isolated_vertex_is_internal() {
-        let error = InsertionError::TopologyValidation(TdsValidationError::IsolatedVertex {
-            vertex_key: VertexKey::from(slotmap::KeyData::from_ffi(1)),
-            vertex_uuid: Uuid::nil(),
-        });
+        let error = InsertionError::TopologyValidationFailed {
+            message: "test".to_string(),
+            source: Box::new(TriangulationValidationError::IsolatedVertex {
+                vertex_key: VertexKey::from(slotmap::KeyData::from_ffi(1)),
+                vertex_uuid: Uuid::nil(),
+            }),
+        };
         let mapped =
             DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(
@@ -7995,7 +7997,7 @@ mod tests {
         let error = InsertionError::TopologyValidationFailed {
             message: "post-insertion".to_string(),
             source: Box::new(TriangulationValidationError::Tds(
-                TdsValidationError::InconsistentDataStructure {
+                TdsError::InconsistentDataStructure {
                     message: "test".to_string(),
                 },
             )),
@@ -8136,10 +8138,9 @@ mod tests {
 
     #[test]
     fn test_map_insertion_error_topology_validation() {
-        let error =
-            InsertionError::TopologyValidation(TdsValidationError::InconsistentDataStructure {
-                message: "broken".to_string(),
-            });
+        let error = InsertionError::TopologyValidation(TdsError::InconsistentDataStructure {
+            message: "broken".to_string(),
+        });
         let mapped =
             DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_insertion_error(error);
         assert!(
@@ -8205,7 +8206,7 @@ mod tests {
             InsertionError::TopologyValidationFailed {
                 message: "test".to_string(),
                 source: Box::new(TriangulationValidationError::Tds(
-                    TdsValidationError::InconsistentDataStructure {
+                    TdsError::InconsistentDataStructure {
                         message: "test".to_string(),
                     },
                 )),
@@ -8229,9 +8230,11 @@ mod tests {
 
     #[test]
     fn test_is_retryable_degenerate_orientation_is_retryable() {
-        let error = InsertionError::TopologyValidation(TdsValidationError::DegenerateOrientation {
-            message: "det=0".to_string(),
-        });
+        let error = InsertionError::TopologyValidation(TdsError::Geometric(
+            GeometricError::DegenerateOrientation {
+                message: "det=0".to_string(),
+            },
+        ));
         assert!(
             error.is_retryable(),
             "DegenerateOrientation should be retryable"
@@ -8240,9 +8243,11 @@ mod tests {
 
     #[test]
     fn test_is_retryable_negative_orientation_is_retryable() {
-        let error = InsertionError::TopologyValidation(TdsValidationError::NegativeOrientation {
-            message: "det<0".to_string(),
-        });
+        let error = InsertionError::TopologyValidation(TdsError::Geometric(
+            GeometricError::NegativeOrientation {
+                message: "det<0".to_string(),
+            },
+        ));
         assert!(
             error.is_retryable(),
             "NegativeOrientation should be retryable"
@@ -8251,10 +8256,13 @@ mod tests {
 
     #[test]
     fn test_is_retryable_isolated_vertex_is_retryable() {
-        let error = InsertionError::TopologyValidation(TdsValidationError::IsolatedVertex {
-            vertex_key: VertexKey::from(slotmap::KeyData::from_ffi(1)),
-            vertex_uuid: Uuid::nil(),
-        });
+        let error = InsertionError::TopologyValidationFailed {
+            message: "test".to_string(),
+            source: Box::new(TriangulationValidationError::IsolatedVertex {
+                vertex_key: VertexKey::from(slotmap::KeyData::from_ffi(1)),
+                vertex_uuid: Uuid::nil(),
+            }),
+        };
         assert!(
             error.is_retryable(),
             "IsolatedVertex should be retryable (geometry-sensitive conflict region)"
@@ -8263,10 +8271,9 @@ mod tests {
 
     #[test]
     fn test_is_retryable_inconsistent_data_structure_is_not_retryable() {
-        let error =
-            InsertionError::TopologyValidation(TdsValidationError::InconsistentDataStructure {
-                message: "missing cell".to_string(),
-            });
+        let error = InsertionError::TopologyValidation(TdsError::InconsistentDataStructure {
+            message: "missing cell".to_string(),
+        });
         assert!(
             !error.is_retryable(),
             "InconsistentDataStructure should NOT be retryable"
@@ -8275,7 +8282,7 @@ mod tests {
 
     #[test]
     fn test_is_retryable_failed_to_create_cell_is_not_retryable() {
-        let error = InsertionError::TopologyValidation(TdsValidationError::FailedToCreateCell {
+        let error = InsertionError::TopologyValidation(TdsError::FailedToCreateCell {
             message: "test".to_string(),
         });
         assert!(
@@ -8307,7 +8314,7 @@ mod tests {
     #[test]
     fn test_map_orientation_canonicalization_error_orientation_violation_is_internal_inconsistency()
     {
-        let error = InsertionError::TopologyValidation(TdsValidationError::OrientationViolation {
+        let error = InsertionError::TopologyValidation(TdsError::OrientationViolation {
             cell1_key: CellKey::from(slotmap::KeyData::from_ffi(1)),
             cell1_uuid: Uuid::nil(),
             cell2_key: CellKey::from(slotmap::KeyData::from_ffi(2)),

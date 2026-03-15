@@ -3,7 +3,7 @@
 #![forbid(unsafe_code)]
 
 use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
-use delaunay::core::triangulation_data_structure::{Tds, TdsValidationError};
+use delaunay::core::triangulation_data_structure::{Tds, TdsError};
 use delaunay::vertex;
 macro_rules! coherent_orientation_test {
     ($name:ident, $dim:literal, $vertices:expr) => {
@@ -45,7 +45,7 @@ macro_rules! coherent_orientation_test {
             assert!(!tampered_tds.is_coherently_oriented());
             assert!(matches!(
                 tampered_tds.is_valid(),
-                Err(TdsValidationError::OrientationViolation { .. })
+                Err(TdsError::OrientationViolation { .. })
             ));
         }
     };
@@ -135,6 +135,6 @@ fn test_tds_orientation_violation_detected_via_validation() {
     assert!(!tampered_tds.is_coherently_oriented());
     assert!(matches!(
         tampered_tds.is_valid(),
-        Err(TdsValidationError::OrientationViolation { .. })
+        Err(TdsError::OrientationViolation { .. })
     ));
 }

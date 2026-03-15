@@ -37,9 +37,7 @@ use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::TriangulationConstructionError;
 use crate::core::triangulation::TriangulationValidationError;
-use crate::core::triangulation_data_structure::{
-    CellKey, EntityKind, Tds, TdsValidationError, VertexKey,
-};
+use crate::core::triangulation_data_structure::{CellKey, EntityKind, Tds, TdsError, VertexKey};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
@@ -182,12 +180,12 @@ pub enum InsertionError {
 
     /// Topology validation or repair failed.
     #[error("Topology validation error: {0}")]
-    TopologyValidation(#[from] TdsValidationError),
+    TopologyValidation(#[from] TdsError),
 
     /// Level 3 topology validation failed (Triangulation layer).
     ///
     /// This preserves the structured [`TriangulationValidationError`] without wrapping it into a
-    /// [`TdsValidationError`],
+    /// [`TdsError`],
     /// avoiding lower-layer (`Tds`) errors depending on higher-layer (`Triangulation`) errors.
     #[error("{message}: {source}")]
     TopologyValidationFailed {
@@ -295,13 +293,10 @@ impl InsertionError {
     /// a geometrically-sensitive conflict region leaves a pre-existing vertex
     /// with no incident cells; perturbing coordinates changes the conflict
     /// region and can avoid stranding the vertex.
-    const fn is_tds_error_retryable(tds_err: &TdsValidationError) -> bool {
+    const fn is_tds_error_retryable(tds_err: &TdsError) -> bool {
         matches!(
             tds_err,
-            TdsValidationError::DegenerateOrientation { .. }
-                | TdsValidationError::NegativeOrientation { .. }
-                | TdsValidationError::OrientationViolation { .. }
-                | TdsValidationError::IsolatedVertex { .. }
+            TdsError::Geometric(_) | TdsError::OrientationViolation { .. }
         )
     }
 
@@ -310,11 +305,14 @@ impl InsertionError {
         match err {
             // Geometry-related topology violations: a near-degenerate insertion can create
             // non-manifold facets, broken links, or boundary violations that perturbation
-            // may resolve.
+            // may resolve.  IsolatedVertex is retryable because a geometrically-sensitive
+            // conflict region can leave a pre-existing vertex with no incident cells;
+            // perturbing coordinates changes the conflict region.
             TriangulationValidationError::ManifoldFacetMultiplicity { .. }
             | TriangulationValidationError::BoundaryRidgeMultiplicity { .. }
             | TriangulationValidationError::RidgeLinkNotManifold { .. }
-            | TriangulationValidationError::VertexLinkNotManifold { .. } => true,
+            | TriangulationValidationError::VertexLinkNotManifold { .. }
+            | TriangulationValidationError::IsolatedVertex { .. } => true,
             // TDS-level errors: delegate to the same geometry-variant check.
             TriangulationValidationError::Tds(tds_err) => Self::is_tds_error_retryable(tds_err),
             // All other variants (structural invariant violations, future additions)
@@ -2291,6 +2289,7 @@ mod tests {
     use super::*;
     use crate::core::collections::CellKeyBuffer;
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
+    use crate::core::triangulation_data_structure::GeometricError;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::traits::coordinate::{Coordinate, CoordinateConversionError};
     use crate::topology::characteristics::euler::TopologyClassification;
@@ -2644,26 +2643,30 @@ mod tests {
 
         // InconsistentDataStructure is now non-retryable (structural bug, not geometry).
         assert!(
-            !InsertionError::TopologyValidation(TdsValidationError::InconsistentDataStructure {
+            !InsertionError::TopologyValidation(TdsError::InconsistentDataStructure {
                 message: "test".to_string()
             })
             .is_retryable()
         );
         // Geometry-related variants are still retryable.
         assert!(
-            InsertionError::TopologyValidation(TdsValidationError::DegenerateOrientation {
-                message: "test".to_string()
-            })
+            InsertionError::TopologyValidation(TdsError::Geometric(
+                GeometricError::DegenerateOrientation {
+                    message: "test".to_string()
+                }
+            ))
             .is_retryable()
         );
         assert!(
-            InsertionError::TopologyValidation(TdsValidationError::NegativeOrientation {
-                message: "test".to_string()
-            })
+            InsertionError::TopologyValidation(TdsError::Geometric(
+                GeometricError::NegativeOrientation {
+                    message: "test".to_string()
+                }
+            ))
             .is_retryable()
         );
         assert!(
-            InsertionError::TopologyValidation(TdsValidationError::OrientationViolation {
+            InsertionError::TopologyValidation(TdsError::OrientationViolation {
                 cell1_key: CellKey::from(KeyData::from_ffi(1)),
                 cell1_uuid: uuid::Uuid::nil(),
                 cell2_key: CellKey::from(KeyData::from_ffi(2)),
@@ -2681,16 +2684,19 @@ mod tests {
         // conflict region can leave a pre-existing vertex with no incident cells;
         // perturbing coordinates changes the conflict region.
         assert!(
-            InsertionError::TopologyValidation(TdsValidationError::IsolatedVertex {
-                vertex_key: VertexKey::from(KeyData::from_ffi(1)),
-                vertex_uuid: uuid::Uuid::nil(),
-            })
+            InsertionError::TopologyValidationFailed {
+                message: "test".to_string(),
+                source: Box::new(TriangulationValidationError::IsolatedVertex {
+                    vertex_key: VertexKey::from(KeyData::from_ffi(1)),
+                    vertex_uuid: uuid::Uuid::nil(),
+                }),
+            }
             .is_retryable()
         );
 
         // TopologyValidationFailed wrapping a structural error is non-retryable.
         let structural_l3 =
-            TriangulationValidationError::from(TdsValidationError::InconsistentDataStructure {
+            TriangulationValidationError::from(TdsError::InconsistentDataStructure {
                 message: "test".to_string(),
             });
         assert!(
@@ -2761,11 +2767,11 @@ mod tests {
         assert!(
             InsertionError::TopologyValidationFailed {
                 message: "test".to_string(),
-                source: Box::new(TriangulationValidationError::Tds(
-                    TdsValidationError::DegenerateOrientation {
+                source: Box::new(TriangulationValidationError::Tds(TdsError::Geometric(
+                    GeometricError::DegenerateOrientation {
                         message: "det=0".to_string(),
                     }
-                )),
+                ))),
             }
             .is_retryable()
         );

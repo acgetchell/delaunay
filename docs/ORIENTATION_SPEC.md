@@ -87,13 +87,13 @@ We already have `simplex_orientation()` in `src/geometry/predicates.rs` that com
 fn canonicalize_vertex_order<T, U, const D: usize>(
     vertices: &[VertexKey],
     tds: &Tds<T, U, V, D>,
-) -> Result<Vec<VertexKey>, TdsValidationError>
+) -> Result<Vec<VertexKey>, TdsError>
 where
     T: CoordinateScalar,
     U: DataType,
 {
     if vertices.len() != D + 1 {
-        return Err(TdsValidationError::InconsistentDataStructure { ... });
+        return Err(TdsError::InconsistentDataStructure { ... });
     }
     
     // Extract points from vertices
@@ -112,7 +112,7 @@ where
             Ok(canonical)
         }
         Orientation::DEGENERATE => {
-            Err(TdsValidationError::DegenerateCell { ... })
+            Err(TdsError::DegenerateCell { ... })
         }
     }
 }
@@ -133,7 +133,7 @@ Update `Tds::insert_cell()` and related methods to canonicalize vertices:
 
 ```rust
 pub fn insert_cell(&mut self, vertices: Vec<VertexKey>, data: Option<V>) 
-    -> Result<CellKey, TdsValidationError>
+    -> Result<CellKey, TdsError>
 where
     T: CoordinateScalar,
 {
@@ -247,7 +247,7 @@ For practical D ≤ 5, this is acceptable for validation.
 #### 3.1 Add Error Variant
 
 ```rust
-// In TdsValidationError enum
+// In TdsError enum
 #[error("Orientation invariant violated: cells {cell1_uuid} and {cell2_uuid} induce same orientation on shared facet")]
 OrientationViolation {
     cell1_key: CellKey,
@@ -272,7 +272,7 @@ pub enum InvariantKind {
 
 ```rust
 // In Tds::is_valid()
-pub fn is_valid(&self) -> Result<(), TdsValidationError>
+pub fn is_valid(&self) -> Result<(), TdsError>
 where
     T: CoordinateScalar,
 {
@@ -282,7 +282,7 @@ where
     if !self.is_coherently_oriented() {
         // Find the violating pair for error reporting
         let (cell1, cell2, facet) = self.find_orientation_violation()?;
-        return Err(TdsValidationError::OrientationViolation {
+        return Err(TdsError::OrientationViolation {
             cell1_key: cell1,
             cell1_uuid: self.cells[cell1].uuid(),
             cell2_key: cell2,

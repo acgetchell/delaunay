@@ -13,12 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [#251](https://github.com/acgetchell/delaunay/pull/251)
 - Remove use_robust_on_ambiguous override from flip repair [#228](https://github.com/acgetchell/delaunay/pull/228)
   [#255](https://github.com/acgetchell/delaunay/pull/255)
+- Apply SoS to AdaptiveKernel::orientation() and tolerate degener… [#264](https://github.com/acgetchell/delaunay/pull/264)
 - Remove RobustPredicateConfig and config_presets [#259](https://github.com/acgetchell/delaunay/pull/259)
   [#260](https://github.com/acgetchell/delaunay/pull/260)
 - Replace custom changelog pipeline with git-cliff [#247](https://github.com/acgetchell/delaunay/pull/247)
 
 ### Merged Pull Requests
 
+- Apply SoS to AdaptiveKernel::orientation() and tolerate degener… [#264](https://github.com/acgetchell/delaunay/pull/264)
+- Canonicalize positive orientation after bulk construction repair… [#261](https://github.com/acgetchell/delaunay/pull/261)
 - Remove RobustPredicateConfig and config_presets [#259](https://github.com/acgetchell/delaunay/pull/259)
   [#260](https://github.com/acgetchell/delaunay/pull/260)
 - Remove use_robust_on_ambiguous override from flip repair [#228](https://github.com/acgetchell/delaunay/pull/228)
@@ -96,6 +99,136 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Simplify repair attempts from 3 to 2 (FIFO then LIFO)
   - Remove `used_robust_predicates` from `DelaunayRepairDiagnostics`
   - Fix pre-existing clippy `match_same_arms` in matrix.rs/measures.rs
+- [**breaking**] Apply SoS to AdaptiveKernel::orientation() and tolerate degener… [#264](https://github.com/acgetchell/delaunay/pull/264)
+  [`526b39e`](https://github.com/acgetchell/delaunay/commit/526b39e4c1f634208db9014793806e2e94f9c0ed)
+
+- feat: apply SoS to AdaptiveKernel::orientation() and tolerate degenerate cells [#263](https://github.com/acgetchell/delaunay/pull/263)
+
+  - Apply Simulation of Simplicity to AdaptiveKernel::orientation() so
+    degenerate ties are broken deterministically (returns ±1 for all
+    distinct-point inputs, 0 only for identical f64 points)
+
+  - Tolerate degenerate cells (zero exact determinant) in orientation
+    normalization after flip-based Delaunay repair:
+
+    - promote_cells_to_positive_orientation: skip instead of error
+    - cells_require_positive_orientation_promotion: skip instead of error
+    - canonicalize_global_orientation_sign: scan past degenerate cells
+    - validate_geometric_cell_orientation: only flag negative orientation
+  - Add Hilbert-sort preprocessing dedup (Phase 4 in order_vertices_hilbert)
+    that removes vertices mapping to the same quantized grid cell
+
+  - Add per-cell coordinate uniqueness validation (DuplicateCoordinatesInCell
+    variant, CellCoordinateUniqueness invariant kind)
+
+  - Document three-layer duplicate vertex handling strategy in
+    docs/numerical_robustness_guide.md
+
+  - Update convex_hull and quality tests to accept InsufficientVertices
+    alongside GeometricDegeneracy for extreme-scale dedup inputs
+
+  - Add macro-generated dedup integration tests covering 2D–5D
+
+  - feat: normalize SoS orientation callers and harden Hilbert dedup [#263](https://github.com/acgetchell/delaunay/pull/263)
+
+  - Refactor evaluate_cell_orientation_for_context to use robust_orientation
+    as the sole oracle, removing the duplicate kernel call
+
+  - Add robust_orientation guard in apply_bistellar_flip_with_k to reject
+    degenerate cells before kernel invocation (fixes 4D perf regression)
+
+  - Switch find_boundary_edge_split_facet to robust_orientation for true
+    collinearity/degeneracy detection instead of kernel SoS
+
+  - Use robust_orientation sign directly in build_initial_simplex, removing
+    unused kernel variable and redundant orientation call
+
+  - Extract hilbert_dedup_sorted from order_vertices_hilbert so the
+    ordering function is pure; apply dedup in
+    preprocess_vertices_for_construction after Hilbert sort regardless of
+    DedupPolicy (safety-critical for SoS identical-point failures)
+
+  - Add validate_cell_coordinate_uniqueness to validation_report with
+    CoordinateScalar bound
+
+  - Fix quantization bits table in numerical_robustness_guide.md (2D/3D
+    capped at 31 bits, not 64/42)
+
+  - Update rustdoc for cells_require_positive_orientation_promotion to
+    reflect skip-degenerate semantics
+
+  - Trim inaccurate near-duplicate claim from dedup_batch_construction docs
+  - Add SoS identical-points regression tests (2D–5D) verifying
+    AdaptiveKernel returns 0 when all cofactors vanish
+
+  - Add standalone hilbert_dedup_sorted edge-case tests
+
+  - refactor: address review comments for SoS orientation normalization [#263](https://github.com/acgetchell/delaunay/pull/263)
+
+  - Propagate `robust_orientation` errors in `apply_bistellar_flip_with_k`
+    instead of silently ignoring `Err` via `matches!`
+
+  - Switch `k2_flip_would_create_degenerate_cell` from kernel orientation
+    to `robust_orientation` so degenerate cells are detected under SoS;
+    remove unused `kernel` parameter
+
+  - Delegate `AdaptiveKernel::orientation()` to `robust_orientation` for
+    layers 1+2, eliminating duplicated matrix build + exact_det_sign logic
+
+  - Remove unused `kernel` parameter from `find_boundary_edge_split_facet`
+    and update call site in `extend_hull`
+
+  - Update stale rustdoc: `validate_geometric_cell_orientation` and
+    `build_initial_simplex` now reference `robust_orientation` instead of
+    kernel predicates / `K::default()`
+
+  - Add `vkeys[i] == vkeys[j]` guard in `validate_cell_coordinate_uniqueness`
+    to avoid misleading error when vertex keys are duplicated
+
+  - Replace broad `assert!(result.is_err())` in all-duplicates test with
+    precise `InsufficientVertices` match
+
+  - Decouple many-duplicates test from magic `$dim + 2` by using the
+    helper's returned distinct count
+
+  - Update docs: numerical_robustness_guide, KNOWN_ISSUES_4D,
+    ORIENTATION_SPEC, validation.md
+
+  - refactor: remove unused kernel parameter from flip-application functions [#263](https://github.com/acgetchell/delaunay/pull/263)
+
+  - Replace `K: Kernel<D>` with `T: CoordinateScalar` in 7 functions:
+    apply_bistellar_flip_with_k, apply_bistellar_flip,
+    apply_bistellar_flip_dynamic, apply_bistellar_flip_k2/k3/k1,
+    apply_bistellar_flip_k1_inverse
+
+  - Update ~40 call sites across flips.rs, triangulation/flips.rs,
+    delaunay_triangulation.rs
+
+  - Delete ZeroOrientationKernel2d test struct (now redundant)
+  - Update ORIENTATION_SPEC.md flip pseudocode to match new signatures
+  - Address review round 3 comments: guard coordinate uniqueness
+    validation, add #[non_exhaustive] to InvariantKind, extract
+    generic flip_would_create_degenerate_cell, add nitpick tests
+
+  - fix!: remove Morton and Lexicographic ordering, unconditional Hilbert dedup, strengthen flip assertions
+    [#263](https://github.com/acgetchell/delaunay/pull/263)
+
+  - Strengthen assert_context_has_nonzero_robust_orientation to explicitly
+    fail on Err variants instead of only checking for DEGENERATE
+
+  - Merge hilbert_dedup_sorted into order_vertices_hilbert via
+    dedup_quantized parameter, eliminating redundant re-quantization
+
+  - Make Hilbert quantized dedup unconditional (not gated on DedupPolicy)
+  - Update DedupPolicy docs to frame as performance-tuning knob
+  - Remove InsertionOrderStrategy::Morton variant and all supporting code
+    (~100 lines: morton_bits_per_coord, morton_code, order_vertices_morton)
+
+  - Remove InsertionOrderStrategy::Lexicographic variant and associated
+    tests; keep internal order_vertices_lexicographic as Hilbert fallback
+
+  - Remove Morton/Lexicographic doc references from README, invariants.md,
+    numerical_robustness_guide.md, and triangulation_generation.rs
 
 ### Changed
 
@@ -137,6 +270,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Delete tests that only exercised config field values
   - Update numerical_robustness_guide.md: document AdaptiveKernel as the
     default kernel, remove config_presets references
+
+### Fixed
+
+- Canonicalize positive orientation after bulk construction repair… [#261](https://github.com/acgetchell/delaunay/pull/261)
+  [`dec8df9`](https://github.com/acgetchell/delaunay/commit/dec8df9f07b5e868825f31a64bee85c4a04e984d)
+
+- fix: canonicalize positive orientation after bulk construction repair [#258](https://github.com/acgetchell/delaunay/pull/258)
+
+  - Call normalize_and_promote_positive_orientation() in
+    finalize_bulk_construction after the flip-repair block and before
+    topology validation, ensuring the global geometric sign is positive
+
+  - Update #228 regression test to expect PLManifold (was Pseudomanifold)
+    now that orientation is correctly canonicalized
+
+  - Changed: categorize errors during orientation canonicalization
+
+  Distinguish structural `InsertionError` variants as `InternalInconsistency`
+  to separate algorithmic bugs from input-related `GeometricDegeneracy`
+  during post-repair orientation canonicalization. Added topology
+  validation to the issue #228 regression test to ensure manifold parity.
 
 ### Maintenance
 

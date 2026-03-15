@@ -5,7 +5,7 @@
 use crate::core::cell::CellValidationError;
 use crate::core::collections::ViolationBuffer;
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation_data_structure::{CellKey, Tds, TdsValidationError, VertexKey};
+use crate::core::triangulation_data_structure::{CellKey, Tds, TdsError, VertexKey};
 use crate::geometry::point::Point;
 use crate::geometry::predicates::InSphere;
 use crate::geometry::robust_predicates::robust_insphere;
@@ -39,7 +39,7 @@ pub enum DelaunayValidationError {
     TriangulationState {
         /// The underlying TDS validation error (TDS-level invariants).
         #[source]
-        source: TdsValidationError,
+        source: TdsError,
     },
     /// Invalid cell structure detected during validation.
     #[error("Invalid cell {cell_key:?}: {source}")]
@@ -101,7 +101,7 @@ where
     for &vkey in &cell_vertex_keys {
         let Some(v) = tds.get_vertex_by_key(vkey) else {
             return Err(DelaunayValidationError::TriangulationState {
-                source: TdsValidationError::InconsistentDataStructure {
+                source: TdsError::InconsistentDataStructure {
                     message: format!("Cell {cell_key:?} references non-existent vertex {vkey:?}"),
                 },
             });
