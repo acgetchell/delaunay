@@ -209,37 +209,13 @@ where
     Ok(stats)
 }
 
-/// Resolve a zero kernel orientation via [`robust_orientation`].
-///
-/// When a kernel returns `orientation == 0`, this helper calls the exact-arithmetic
-/// `robust_orientation` predicate and returns the resulting sign:
-/// `1` (positive), `-1` (negative), or `0` (truly degenerate).
-fn resolve_zero_orientation<T, const D: usize>(
-    points: &[Point<T, D>],
-    context: &str,
-) -> Result<i32, FlipError>
-where
-    T: CoordinateScalar,
-    [T; D]: Copy + Sized,
-{
-    let orientation = robust_orientation(points).map_err(|e| FlipError::PredicateFailure {
-        message: format!("robust orientation failed for {context}: {e}"),
-    })?;
-    Ok(match orientation {
-        Orientation::POSITIVE => 1,
-        Orientation::NEGATIVE => -1,
-        Orientation::DEGENERATE => 0,
-    })
-}
-
 /// Apply a bistellar flip using explicit k and vertex/cell slices.
 #[expect(
     clippy::too_many_lines,
     reason = "Keep flip construction, validation, and wiring together for clarity"
 )]
-fn apply_bistellar_flip_with_k<K, U, V, const D: usize>(
-    tds: &mut Tds<K::Scalar, U, V, D>,
-    kernel: &K,
+fn apply_bistellar_flip_with_k<T, U, V, const D: usize>(
+    tds: &mut Tds<T, U, V, D>,
     k_move: usize,
     removed_face_vertices: &[VertexKey],
     inserted_face_vertices: &[VertexKey],
@@ -247,8 +223,7 @@ fn apply_bistellar_flip_with_k<K, U, V, const D: usize>(
     direction: FlipDirection,
 ) -> Result<FlipInfo<D>, FlipError>
 where
-    K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -355,14 +330,18 @@ where
         }
 
         let points = vertices_to_points(tds, vertices)?;
-        let orientation = kernel
-            .orientation(&points)
-            .map_err(|e| FlipError::PredicateFailure {
-                message: format!("orientation failed for flip cell: {e}"),
-            })?;
-        let orientation_sign = if orientation == 0 {
-            let sign = resolve_zero_orientation(&points, "flip cell")?;
-            if sign == 0 {
+
+        // Exact orientation: reject degenerate cells and canonicalize to
+        // positive orientation in one pass.  This function uses
+        // robust_orientation (exact arithmetic, no SoS) rather than any
+        // kernel predicate, so it is kernel-independent.
+        match robust_orientation(&points) {
+            Err(e) => {
+                return Err(FlipError::PredicateFailure {
+                    message: format!("robust orientation failed for flip cell: {e}"),
+                });
+            }
+            Ok(Orientation::DEGENERATE) => {
                 if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
                     tracing::debug!(
                         k_move,
@@ -370,19 +349,16 @@ where
                         removed_face = ?removed_face_vertices,
                         inserted_face = ?inserted_face_vertices,
                         vertices = ?vertices,
-                        "[repair] flip degenerate cell"
+                        "[repair] flip degenerate cell (exact)"
                     );
                 }
                 return Err(FlipError::DegenerateCell);
             }
-            sign
-        } else {
-            orientation
-        };
-
-        // Canonicalize to positive orientation by swapping two vertices when needed.
-        if orientation_sign < 0 {
-            vertices.swap(0, 1);
+            Ok(Orientation::NEGATIVE) => {
+                // Canonicalize to positive orientation by swapping two vertices.
+                vertices.swap(0, 1);
+            }
+            Ok(Orientation::POSITIVE) => {}
         }
     }
 
@@ -581,20 +557,17 @@ where
 /// Returns a [`FlipError`] if the flip would be degenerate, duplicate an existing cell,
 /// create non-manifold topology, if predicate evaluation fails, or if underlying TDS
 /// mutations fail.
-pub(crate) fn apply_bistellar_flip<K, U, V, const D: usize, const K_MOVE: usize>(
-    tds: &mut Tds<K::Scalar, U, V, D>,
-    kernel: &K,
+pub(crate) fn apply_bistellar_flip<T, U, V, const D: usize, const K_MOVE: usize>(
+    tds: &mut Tds<T, U, V, D>,
     context: &FlipContext<D, K_MOVE>,
 ) -> Result<FlipInfo<D>, FlipError>
 where
-    K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
     apply_bistellar_flip_with_k(
         tds,
-        kernel,
         K_MOVE,
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
@@ -610,21 +583,18 @@ where
 /// Returns a [`FlipError`] if the flip would be degenerate, duplicate an existing cell,
 /// create non-manifold topology, if predicate evaluation fails, or if underlying TDS
 /// mutations fail.
-pub(crate) fn apply_bistellar_flip_dynamic<K, U, V, const D: usize>(
-    tds: &mut Tds<K::Scalar, U, V, D>,
-    kernel: &K,
+pub(crate) fn apply_bistellar_flip_dynamic<T, U, V, const D: usize>(
+    tds: &mut Tds<T, U, V, D>,
     k_move: usize,
     context: &FlipContextDyn<D>,
 ) -> Result<FlipInfo<D>, FlipError>
 where
-    K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
     apply_bistellar_flip_with_k(
         tds,
-        kernel,
         k_move,
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
@@ -1849,15 +1819,56 @@ where
 
     Ok(violates)
 }
+/// Check whether a flip would create a degenerate (zero-volume) cell.
+///
+/// Builds the replacement cells from the given removed/inserted face vertices
+/// and checks each with [`robust_orientation`].  Returns `Ok(true)` if any
+/// replacement cell is degenerate.
+fn flip_would_create_degenerate_cell<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    removed_face_vertices: &[VertexKey],
+    inserted_face_vertices: &[VertexKey],
+) -> Result<bool, FlipError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    for &omit in removed_face_vertices {
+        let mut vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(D + 1);
+        vertices.extend_from_slice(inserted_face_vertices);
+        for &v in removed_face_vertices {
+            if v != omit {
+                vertices.push(v);
+            }
+        }
+
+        let points = vertices_to_points(tds, &vertices)?;
+        // Use exact orientation (no SoS) so that truly degenerate cells are
+        // detected even when the kernel uses SoS.  Matches the pattern in
+        // apply_bistellar_flip_with_k.
+        match robust_orientation(&points) {
+            Err(e) => {
+                return Err(FlipError::PredicateFailure {
+                    message: format!("robust orientation failed for flip postcondition: {e}"),
+                });
+            }
+            Ok(Orientation::DEGENERATE) => return Ok(true),
+            Ok(_) => {}
+        }
+    }
+
+    Ok(false)
+}
+
 /// Check whether a k=2 flip would create a degenerate cell.
-fn k2_flip_would_create_degenerate_cell<K, U, V, const D: usize>(
-    tds: &Tds<K::Scalar, U, V, D>,
-    kernel: &K,
+fn k2_flip_would_create_degenerate_cell<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
     context: &FlipContext<D, 2>,
 ) -> Result<bool, FlipError>
 where
-    K: Kernel<D>,
-    K::Scalar: ScalarSummable,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -1870,28 +1881,11 @@ where
         });
     }
 
-    for &omit in &context.removed_face_vertices {
-        let mut vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-            SmallBuffer::with_capacity(D + 1);
-        vertices.extend_from_slice(&context.inserted_face_vertices);
-        for &v in &context.removed_face_vertices {
-            if v != omit {
-                vertices.push(v);
-            }
-        }
-
-        let points = vertices_to_points(tds, &vertices)?;
-        let orientation = kernel
-            .orientation(&points)
-            .map_err(|e| FlipError::PredicateFailure {
-                message: format!("orientation failed for k=2 postcondition: {e}"),
-            })?;
-        if orientation == 0 && resolve_zero_orientation(&points, "k=2 postcondition")? == 0 {
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
+    flip_would_create_degenerate_cell(
+        tds,
+        &context.removed_face_vertices,
+        &context.inserted_face_vertices,
+    )
 }
 /// Check whether a k=2 facet violates the local Delaunay condition.
 ///
@@ -1940,18 +1934,16 @@ where
 /// Returns a [`FlipError`] if the flip would be degenerate, duplicate an existing cell,
 /// create non-manifold topology, if predicate evaluation fails, or if underlying TDS
 /// mutations fail.
-pub(crate) fn apply_bistellar_flip_k2<K, U, V, const D: usize>(
-    tds: &mut Tds<K::Scalar, U, V, D>,
-    kernel: &K,
+pub(crate) fn apply_bistellar_flip_k2<T, U, V, const D: usize>(
+    tds: &mut Tds<T, U, V, D>,
     context: &FlipContext<D, 2>,
 ) -> Result<FlipInfo<D>, FlipError>
 where
-    K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    apply_bistellar_flip::<K, U, V, D, 2>(tds, kernel, context)
+    apply_bistellar_flip::<T, U, V, D, 2>(tds, context)
 }
 
 /// Build flip context for a k=3 (ridge) flip.
@@ -2233,18 +2225,16 @@ where
 /// Returns a [`FlipError`] if the flip would be degenerate, duplicate an existing cell,
 /// create non-manifold topology, if predicate evaluation fails, or if underlying TDS
 /// mutations fail.
-pub(crate) fn apply_bistellar_flip_k3<K, U, V, const D: usize>(
-    tds: &mut Tds<K::Scalar, U, V, D>,
-    kernel: &K,
+pub(crate) fn apply_bistellar_flip_k3<T, U, V, const D: usize>(
+    tds: &mut Tds<T, U, V, D>,
     context: &FlipContext<D, 3>,
 ) -> Result<FlipInfo<D>, FlipError>
 where
-    K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    apply_bistellar_flip::<K, U, V, D, 3>(tds, kernel, context)
+    apply_bistellar_flip::<T, U, V, D, 3>(tds, context)
 }
 
 /// Apply a forward k=1 move (cell split) by inserting a new vertex.
@@ -2253,15 +2243,13 @@ where
 ///
 /// Returns a [`FlipError`] if the cell is missing, the vertex cannot be inserted,
 /// or the flip would be degenerate.
-pub(crate) fn apply_bistellar_flip_k1<K, U, V, const D: usize>(
-    tds: &mut Tds<K::Scalar, U, V, D>,
-    kernel: &K,
+pub(crate) fn apply_bistellar_flip_k1<T, U, V, const D: usize>(
+    tds: &mut Tds<T, U, V, D>,
     cell_key: CellKey,
-    vertex: Vertex<K::Scalar, U, D>,
+    vertex: Vertex<T, U, D>,
 ) -> Result<FlipInfo<D>, FlipError>
 where
-    K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -2276,7 +2264,7 @@ where
             })?;
 
     let context = build_k1_forward_context_from_cell(tds, cell_key, vertex_key)?;
-    let result = apply_bistellar_flip::<K, U, V, D, 1>(tds, kernel, &context);
+    let result = apply_bistellar_flip::<T, U, V, D, 1>(tds, &context);
 
     if result.is_err()
         && let Some(inserted) = tds.get_vertex_by_key(vertex_key).copied()
@@ -2293,14 +2281,12 @@ where
 /// # Errors
 ///
 /// Returns a [`FlipError`] if the vertex star is invalid or the flip would be degenerate.
-pub(crate) fn apply_bistellar_flip_k1_inverse<K, U, V, const D: usize>(
-    tds: &mut Tds<K::Scalar, U, V, D>,
-    kernel: &K,
+pub(crate) fn apply_bistellar_flip_k1_inverse<T, U, V, const D: usize>(
+    tds: &mut Tds<T, U, V, D>,
     vertex_key: VertexKey,
 ) -> Result<FlipInfo<D>, FlipError>
 where
-    K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -2309,7 +2295,7 @@ where
     }
 
     let context = build_k1_inverse_context(tds, vertex_key)?;
-    let info = apply_bistellar_flip_dynamic(tds, kernel, D + 1, &context)?;
+    let info = apply_bistellar_flip_dynamic(tds, D + 1, &context)?;
 
     if let Some(vertex) = tds.get_vertex_by_key(vertex_key).copied() {
         let _ = tds.remove_vertex(&vertex);
@@ -2447,7 +2433,7 @@ where
             config,
         )?;
 
-        let info = match apply_bistellar_flip_k2(tds, kernel, &context) {
+        let info = match apply_bistellar_flip_k2(tds, &context) {
             Ok(info) => info,
             Err(
                 err @ (FlipError::DegenerateCell
@@ -2895,19 +2881,18 @@ where
 
         match is_delaunay_violation_k2(tds, kernel, &context, config, diagnostics) {
             Ok(true) => {
-                let flip_degenerate =
-                    match k2_flip_would_create_degenerate_cell(tds, kernel, &context) {
-                        Ok(degenerate) => degenerate,
-                        Err(FlipError::PredicateFailure { .. }) => {
-                            // Inconclusive due to numeric degeneracy; skip.
-                            continue;
-                        }
-                        Err(e) => {
-                            return Err(DelaunayRepairError::PostconditionFailed {
-                                message: format!("local k=2 verification failed after repair: {e}"),
-                            });
-                        }
-                    };
+                let flip_degenerate = match k2_flip_would_create_degenerate_cell(tds, &context) {
+                    Ok(degenerate) => degenerate,
+                    Err(FlipError::PredicateFailure { .. }) => {
+                        // Inconclusive due to numeric degeneracy; skip.
+                        continue;
+                    }
+                    Err(e) => {
+                        return Err(DelaunayRepairError::PostconditionFailed {
+                            message: format!("local k=2 verification failed after repair: {e}"),
+                        });
+                    }
+                };
 
                 if flip_degenerate {
                     if repair_trace_enabled() {
@@ -2990,6 +2975,31 @@ where
 
         match is_delaunay_violation_k3(tds, kernel, &context, config, diagnostics) {
             Ok(true) => {
+                let flip_degenerate = match flip_would_create_degenerate_cell(
+                    tds,
+                    &context.removed_face_vertices,
+                    &context.inserted_face_vertices,
+                ) {
+                    Ok(degenerate) => degenerate,
+                    Err(FlipError::PredicateFailure { .. }) => {
+                        // Inconclusive due to numeric degeneracy; skip.
+                        continue;
+                    }
+                    Err(e) => {
+                        return Err(DelaunayRepairError::PostconditionFailed {
+                            message: format!("local k=3 verification failed after repair: {e}"),
+                        });
+                    }
+                };
+
+                if flip_degenerate {
+                    if repair_trace_enabled() {
+                        tracing::debug!(
+                            "[repair] postcondition k=3 violation unresolved due to degenerate flip (ridge={ridge:?})"
+                        );
+                    }
+                    continue;
+                }
                 if repair_trace_enabled() {
                     tracing::debug!(
                         "[repair] postcondition k=3 violation remains (ridge={ridge:?})"
@@ -3828,7 +3838,7 @@ where
         config,
     )?;
 
-    let info = match apply_bistellar_flip_k3(tds, kernel, &context) {
+    let info = match apply_bistellar_flip_k3(tds, &context) {
         Ok(info) => info,
         Err(
             err @ (FlipError::DegenerateCell
@@ -3999,7 +4009,7 @@ where
         config,
     )?;
 
-    let info = match apply_bistellar_flip_dynamic(tds, kernel, D, &context) {
+    let info = match apply_bistellar_flip_dynamic(tds, D, &context) {
         Ok(info) => info,
         Err(
             err @ (FlipError::DegenerateCell
@@ -4162,7 +4172,7 @@ where
         config,
     )?;
 
-    let info = match apply_bistellar_flip_dynamic(tds, kernel, D - 1, &context) {
+    let info = match apply_bistellar_flip_dynamic(tds, D - 1, &context) {
         Ok(info) => info,
         Err(
             err @ (FlipError::DegenerateCell
@@ -4322,7 +4332,7 @@ where
         config,
     )?;
 
-    let info = match apply_bistellar_flip_k2(tds, kernel, &context) {
+    let info = match apply_bistellar_flip_k2(tds, &context) {
         Ok(info) => info,
         Err(
             err @ (FlipError::DegenerateCell
@@ -5067,32 +5077,9 @@ mod tests {
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
     use crate::core::collections::Uuid;
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
-    use crate::geometry::kernel::{FastKernel, RobustKernel};
-    use crate::geometry::traits::coordinate::Coordinate;
+    use crate::geometry::kernel::FastKernel;
     use crate::vertex;
     use rand::{RngExt, SeedableRng, rngs::StdRng};
-
-    #[derive(Clone, Default)]
-    struct ZeroOrientationKernel2d;
-
-    impl Kernel<2> for ZeroOrientationKernel2d {
-        type Scalar = f64;
-
-        fn orientation(
-            &self,
-            _points: &[Point<Self::Scalar, 2>],
-        ) -> Result<i32, crate::geometry::traits::coordinate::CoordinateConversionError> {
-            Ok(0)
-        }
-
-        fn in_sphere(
-            &self,
-            simplex_points: &[Point<Self::Scalar, 2>],
-            test_point: &Point<Self::Scalar, 2>,
-        ) -> Result<i32, crate::geometry::traits::coordinate::CoordinateConversionError> {
-            FastKernel::<f64>::new().in_sphere(simplex_points, test_point)
-        }
-    }
 
     fn init_tracing() {
         static INIT: std::sync::Once = std::sync::Once::new();
@@ -5168,7 +5155,7 @@ mod tests {
         panic!("face ({face_v0:?}, {face_v1:?}, {face_v2:?}) not found in cell {cell_key:?}");
     }
 
-    /// Assert that `resolve_zero_orientation` returns a non-zero sign for
+    /// Assert that `robust_orientation` returns a non-degenerate sign for
     /// every new-cell point set that a k=2 flip context would produce.
     fn assert_context_has_nonzero_robust_orientation(
         tds: &Tds<f64, (), (), 2>,
@@ -5184,8 +5171,10 @@ mod tests {
                 }
             }
             let points = vertices_to_points(tds, &verts).unwrap();
-            let sign = resolve_zero_orientation(&points, "test").unwrap();
-            assert_ne!(sign, 0, "robust_orientation must resolve to ±1");
+            match robust_orientation(&points) {
+                Ok(Orientation::POSITIVE | Orientation::NEGATIVE) => {}
+                other => panic!("robust_orientation must resolve to ±1, got {other:?}"),
+            }
         }
     }
 
@@ -5321,8 +5310,7 @@ mod tests {
         )
         .unwrap();
 
-        let kernel = FastKernel::<f64>::new();
-        let info = apply_bistellar_flip(&mut tds, &kernel, &ctx).unwrap();
+        let info = apply_bistellar_flip(&mut tds, &ctx).unwrap();
 
         assert!(!tds.contains_cell(cell_cavity_left));
         assert!(!tds.contains_cell(cell_cavity_right));
@@ -5458,8 +5446,7 @@ mod tests {
                 .any(|cell_key| cell_key == cell_around_edge_2)
         );
 
-        let kernel = FastKernel::<f64>::new();
-        let info = apply_bistellar_flip(&mut tds, &kernel, &ctx).unwrap();
+        let info = apply_bistellar_flip(&mut tds, &ctx).unwrap();
 
         // Removed cells should be gone.
         assert!(!tds.contains_cell(cell_around_edge_0));
@@ -5590,16 +5577,15 @@ mod tests {
 
                     let before = snapshot_topology(&tds);
 
-                    let kernel = FastKernel::<f64>::new();
                     let new_vertex = vertex!([0.1; $dim]);
                     let new_uuid = new_vertex.uuid();
-                    let _info = apply_bistellar_flip_k1(&mut tds, &kernel, cell_key, new_vertex)
+                    let _info = apply_bistellar_flip_k1(&mut tds, cell_key, new_vertex)
                         .unwrap();
                     assert!(tds.is_valid().is_ok());
 
                     let new_key = tds.vertex_key_from_uuid(&new_uuid).unwrap();
                     let _info_back =
-                        apply_bistellar_flip_k1_inverse(&mut tds, &kernel, new_key).unwrap();
+                        apply_bistellar_flip_k1_inverse(&mut tds, new_key).unwrap();
                     assert!(tds.is_valid().is_ok());
 
                     assert_eq!(snapshot_topology(&tds), before);
@@ -5646,8 +5632,7 @@ mod tests {
 
                     let facet = FacetHandle::new(cell_a, u8::try_from($dim).unwrap());
                     let context = build_k2_flip_context(&tds, facet).unwrap();
-                    let kernel = FastKernel::<f64>::new();
-                    let info = apply_bistellar_flip_k2(&mut tds, &kernel, &context).unwrap();
+                    let info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
                     assert!(tds.is_valid().is_ok());
 
                     if $dim == 2 {
@@ -5671,12 +5656,12 @@ mod tests {
                         let facet = inverse_facet.expect("inverse k=2 facet not found");
                         let context_back = build_k2_flip_context(&tds, facet).unwrap();
                         let _info_back =
-                            apply_bistellar_flip_k2(&mut tds, &kernel, &context_back).unwrap();
+                            apply_bistellar_flip_k2(&mut tds, &context_back).unwrap();
                     } else {
                         let edge = EdgeKey::new(opposite_a, opposite_b);
                         let context_back = build_k2_flip_context_from_edge(&tds, edge).unwrap();
                         let _info_back =
-                            apply_bistellar_flip_dynamic(&mut tds, &kernel, $dim, &context_back)
+                            apply_bistellar_flip_dynamic(&mut tds, $dim, &context_back)
                                 .unwrap();
                     }
 
@@ -5741,8 +5726,7 @@ mod tests {
                         u8::try_from($dim).unwrap(),
                     );
                     let context = build_k3_flip_context(&tds, ridge).unwrap();
-                    let kernel = FastKernel::<f64>::new();
-                    let info = apply_bistellar_flip_k3(&mut tds, &kernel, &context).unwrap();
+                    let info = apply_bistellar_flip_k3(&mut tds, &context).unwrap();
                     assert!(tds.is_valid().is_ok());
 
                     if $dim == 3 {
@@ -5769,14 +5753,13 @@ mod tests {
                         let facet = inverse_facet.expect("inverse k=3 facet not found");
                         let context_back = build_k2_flip_context(&tds, facet).unwrap();
                         let _info_back =
-                            apply_bistellar_flip_k2(&mut tds, &kernel, &context_back).unwrap();
+                            apply_bistellar_flip_k2(&mut tds, &context_back).unwrap();
                     } else {
                         let triangle = TriangleHandle::new(a, b, c);
                         let context_back =
                             build_k3_flip_context_from_triangle(&tds, triangle).unwrap();
                         let _info_back = apply_bistellar_flip_dynamic(
                             &mut tds,
-                            &kernel,
                             $dim - 1,
                             &context_back,
                         )
@@ -5814,9 +5797,8 @@ mod tests {
         repair_neighbor_pointers(&mut tds).unwrap();
 
         let facet = FacetHandle::new(c1, 2); // facet opposite vertex index 2 (edge AB)
-        let kernel = FastKernel::<f64>::new();
         let context = build_k2_flip_context(&tds, facet).unwrap();
-        let info = apply_bistellar_flip_k2(&mut tds, &kernel, &context).unwrap();
+        let info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
 
         assert_eq!(info.removed_cells.len(), 2);
         assert_eq!(info.new_cells.len(), 2);
@@ -5858,9 +5840,8 @@ mod tests {
         repair_neighbor_pointers(&mut tds).unwrap();
 
         let facet = FacetHandle::new(c1, 2); // facet opposite vertex index 2 (edge AB)
-        let kernel = FastKernel::<f64>::new();
         let context = build_k2_flip_context(&tds, facet).unwrap();
-        let result = apply_bistellar_flip_k2(&mut tds, &kernel, &context);
+        let result = apply_bistellar_flip_k2(&mut tds, &context);
 
         assert!(matches!(result, Err(FlipError::DuplicateCell)));
         assert!(tds.is_valid().is_ok());
@@ -5919,8 +5900,7 @@ mod tests {
         let facet = FacetHandle::new(cell_a, 0);
         let ctx = build_k2_flip_context(&tds, facet).unwrap();
 
-        let kernel = FastKernel::<f64>::new();
-        let result = apply_bistellar_flip_k2(&mut tds, &kernel, &ctx);
+        let result = apply_bistellar_flip_k2(&mut tds, &ctx);
 
         assert!(matches!(
             result,
@@ -5954,9 +5934,8 @@ mod tests {
         repair_neighbor_pointers(&mut tds).unwrap();
 
         let facet = FacetHandle::new(c1, 2); // facet opposite vertex index 2 (edge AB)
-        let kernel = FastKernel::<f64>::new();
         let context = build_k2_flip_context(&tds, facet).unwrap();
-        let result = apply_bistellar_flip_k2(&mut tds, &kernel, &context);
+        let result = apply_bistellar_flip_k2(&mut tds, &context);
 
         assert!(matches!(result, Err(FlipError::NonManifoldFacet)));
         assert!(tds.is_valid().is_ok());
@@ -5993,8 +5972,7 @@ mod tests {
 
         let facet = FacetHandle::new(c1, 3); // facet opposite vertex d (ABC)
         let context = build_k2_flip_context(&tds, facet).unwrap();
-        let kernel = FastKernel::<f64>::new();
-        let info = apply_bistellar_flip_k2(&mut tds, &kernel, &context).unwrap();
+        let info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
 
         assert_eq!(info.new_cells.len(), 3);
         assert!(tds.is_valid().is_ok());
@@ -6034,8 +6012,7 @@ mod tests {
 
         let ridge = RidgeHandle::new(c1, 2, 3);
         let context = build_k3_flip_context(&tds, ridge).unwrap();
-        let kernel = FastKernel::<f64>::new();
-        let info = apply_bistellar_flip_k3(&mut tds, &kernel, &context).unwrap();
+        let info = apply_bistellar_flip_k3(&mut tds, &context).unwrap();
 
         assert_eq!(info.kind, BistellarFlipKind::k3(3));
         assert_eq!(info.removed_cells.len(), 3);
@@ -6080,8 +6057,7 @@ mod tests {
 
         let ridge = RidgeHandle::new(c1, 3, 4);
         let context = build_k3_flip_context(&tds, ridge).unwrap();
-        let kernel = FastKernel::<f64>::new();
-        let info = apply_bistellar_flip_k3(&mut tds, &kernel, &context).unwrap();
+        let info = apply_bistellar_flip_k3(&mut tds, &context).unwrap();
 
         assert_eq!(info.kind, BistellarFlipKind::k3(4));
         assert_eq!(info.removed_cells.len(), 3);
@@ -6129,8 +6105,7 @@ mod tests {
 
         let ridge = RidgeHandle::new(c1, 4, 5);
         let context = build_k3_flip_context(&tds, ridge).unwrap();
-        let kernel = FastKernel::<f64>::new();
-        let info = apply_bistellar_flip_k3(&mut tds, &kernel, &context).unwrap();
+        let info = apply_bistellar_flip_k3(&mut tds, &context).unwrap();
 
         assert_eq!(info.kind, BistellarFlipKind::k3(5));
         assert_eq!(info.removed_cells.len(), 3);
@@ -6255,10 +6230,8 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
             .unwrap();
 
-        let kernel = FastKernel::<f64>::new();
         let before = snapshot_topology(&tds);
-        let err =
-            apply_bistellar_flip_k1(&mut tds, &kernel, cell_key, vertex!([0.5, 0.0])).unwrap_err();
+        let err = apply_bistellar_flip_k1(&mut tds, cell_key, vertex!([0.5, 0.0])).unwrap_err();
 
         assert!(matches!(err, FlipError::DegenerateCell));
         assert_eq!(snapshot_topology(&tds), before);
@@ -6297,8 +6270,7 @@ mod tests {
         let facet = FacetHandle::new(cell_a, 4);
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let context_dyn = to_dynamic(context);
-        let kernel = FastKernel::<f64>::new();
-        let info = apply_bistellar_flip_dynamic(&mut tds, &kernel, 2, &context_dyn).unwrap();
+        let info = apply_bistellar_flip_dynamic(&mut tds, 2, &context_dyn).unwrap();
 
         assert_eq!(info.kind, BistellarFlipKind::k2(4));
         assert_eq!(info.removed_cells.len(), 2);
@@ -6347,8 +6319,7 @@ mod tests {
         let ridge = RidgeHandle::new(c1, 4, 5);
         let context = build_k3_flip_context(&tds, ridge).unwrap();
         let context_dyn = to_dynamic(context);
-        let kernel = FastKernel::<f64>::new();
-        let info = apply_bistellar_flip_dynamic(&mut tds, &kernel, 3, &context_dyn).unwrap();
+        let info = apply_bistellar_flip_dynamic(&mut tds, 3, &context_dyn).unwrap();
 
         assert_eq!(info.kind, BistellarFlipKind::k3(5));
         assert_eq!(info.removed_cells.len(), 3);
@@ -6360,7 +6331,6 @@ mod tests {
     fn test_k2_roundtrip_randomized_3d() {
         init_tracing();
         let mut rng = StdRng::seed_from_u64(0x51f1_7a2b);
-        let kernel = FastKernel::<f64>::new();
 
         for _ in 0..10 {
             let mut jitter = |v: [f64; 3]| {
@@ -6400,7 +6370,7 @@ mod tests {
             let before = snapshot_topology(&tds);
             let facet = FacetHandle::new(c1, 3);
             let context = build_k2_flip_context(&tds, facet).unwrap();
-            let info = apply_bistellar_flip_k2(&mut tds, &kernel, &context).unwrap();
+            let info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
             assert!(tds.is_valid().is_ok());
 
             let edge = EdgeKey::new(
@@ -6408,8 +6378,7 @@ mod tests {
                 info.inserted_face_vertices[1],
             );
             let context_back = build_k2_flip_context_from_edge(&tds, edge).unwrap();
-            let _info_back =
-                apply_bistellar_flip_dynamic(&mut tds, &kernel, 3, &context_back).unwrap();
+            let _info_back = apply_bistellar_flip_dynamic(&mut tds, 3, &context_back).unwrap();
 
             assert!(tds.is_valid().is_ok());
             assert_eq!(snapshot_topology(&tds), before);
@@ -6563,29 +6532,46 @@ mod tests {
 
         let facet = FacetHandle::new(c1, 2);
         let context = build_k2_flip_context(&tds, facet).unwrap();
-        let kernel = RobustKernel::<f64>::new();
-        let _info = apply_bistellar_flip_k2(&mut tds, &kernel, &context).unwrap();
+        let _info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
 
         assert!(tds.is_valid().is_ok());
     }
 
+    /// Verifies that `k2_flip_would_create_degenerate_cell` detects a degenerate
+    /// replacement cell (collinear vertices in 2D).
     #[test]
-    fn test_resolve_zero_orientation_degenerate_returns_zero() {
-        // Collinear points: robust_orientation → DEGENERATE → 0.
-        let points = [
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([2.0, 0.0]),
-        ];
-        let sign = resolve_zero_orientation(&points, "collinear test").unwrap();
-        assert_eq!(sign, 0, "collinear points must give DEGENERATE (0)");
+    fn test_k2_flip_would_create_degenerate_cell_degenerate() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        // a, c, d are collinear on the x-axis → replacement cell {a,c,d} is degenerate
+        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let b = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let c = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let d = tds.insert_vertex_with_mapping(vertex!([0.5, 0.0])).unwrap();
+
+        let c1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+            .unwrap();
+        let _c2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
+            .unwrap();
+
+        repair_neighbor_pointers(&mut tds).unwrap();
+
+        let facet = FacetHandle::new(c1, 2);
+        let context = build_k2_flip_context(&tds, facet).unwrap();
+
+        let degenerate = k2_flip_would_create_degenerate_cell(&tds, &context).unwrap();
+        assert!(
+            degenerate,
+            "replacement cells with collinear vertices should be degenerate"
+        );
     }
 
-    /// Exercises the `orientation == 0` fallback in `apply_bistellar_flip`
-    /// where the kernel returns zero and `resolve_zero_orientation` resolves
-    /// the sign via `robust_orientation`.
+    /// Verifies that `k2_flip_would_create_degenerate_cell` returns false for
+    /// non-degenerate cells using `robust_orientation` (kernel-independent).
     #[test]
-    fn test_flip_k2_zero_orientation_kernel_exercises_robust_fallback() {
+    fn test_k2_flip_would_create_degenerate_cell_nondegenerate() {
         init_tracing();
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
@@ -6607,42 +6593,7 @@ mod tests {
 
         assert_context_has_nonzero_robust_orientation(&tds, &context);
 
-        // Now apply the flip with the zero-orientation kernel and verify success.
-        let kernel = ZeroOrientationKernel2d;
-        let result = apply_bistellar_flip_k2(&mut tds, &kernel, &context);
-        assert!(result.is_ok(), "flip should succeed via robust fallback");
-        assert!(tds.is_valid().is_ok());
-    }
-
-    /// Exercises the `orientation == 0` fallback in
-    /// `k2_flip_would_create_degenerate_cell` via `resolve_zero_orientation`.
-    #[test]
-    fn test_k2_flip_would_create_degenerate_cell_zero_orientation_kernel() {
-        init_tracing();
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
-        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
-
-        let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
-            .unwrap();
-        let _c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
-            .unwrap();
-
-        repair_neighbor_pointers(&mut tds).unwrap();
-
-        let facet = FacetHandle::new(c1, 2);
-        let context = build_k2_flip_context(&tds, facet).unwrap();
-
-        assert_context_has_nonzero_robust_orientation(&tds, &context);
-
-        // Then verify k2_flip_would_create_degenerate_cell correctly returns
-        // false when the zero-orientation kernel triggers the fallback.
-        let kernel = ZeroOrientationKernel2d;
-        let degenerate = k2_flip_would_create_degenerate_cell(&tds, &kernel, &context).unwrap();
+        let degenerate = k2_flip_would_create_degenerate_cell(&tds, &context).unwrap();
         assert!(!degenerate);
     }
 
@@ -6677,12 +6628,11 @@ mod tests {
 
         let facet = FacetHandle::new(cell_a, 4);
         let context = build_k2_flip_context(&tds, facet).unwrap();
-        let kernel = FastKernel::<f64>::new();
-        let _info = apply_bistellar_flip_k2(&mut tds, &kernel, &context).unwrap();
+        let _info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
 
         let edge = EdgeKey::new(opposite_a, opposite_b);
         let context_back = build_k2_flip_context_from_edge(&tds, edge).unwrap();
-        let info_back = apply_bistellar_flip_dynamic(&mut tds, &kernel, 4, &context_back).unwrap();
+        let info_back = apply_bistellar_flip_dynamic(&mut tds, 4, &context_back).unwrap();
 
         assert_eq!(info_back.kind.k, 4);
         assert_eq!(info_back.kind.d, 4);
@@ -6709,16 +6659,15 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vertices, None).unwrap())
             .unwrap();
 
-        let kernel = FastKernel::<f64>::new();
         let new_vertex = vertex!([0.1; 4]);
         let new_uuid = new_vertex.uuid();
-        let info = apply_bistellar_flip_k1(&mut tds, &kernel, cell_key, new_vertex).unwrap();
+        let info = apply_bistellar_flip_k1(&mut tds, cell_key, new_vertex).unwrap();
 
         assert_eq!(info.kind.k, 1);
         assert_eq!(info.new_cells.len(), 5);
 
         let new_key = tds.vertex_key_from_uuid(&new_uuid).unwrap();
-        let info_back = apply_bistellar_flip_k1_inverse(&mut tds, &kernel, new_key).unwrap();
+        let info_back = apply_bistellar_flip_k1_inverse(&mut tds, new_key).unwrap();
 
         assert_eq!(info_back.kind.k, 5);
         assert_eq!(info_back.kind.d, 4);
@@ -6767,8 +6716,7 @@ mod tests {
 
         let ridge = RidgeHandle::new(c1, 4, 5);
         let context = build_k3_flip_context(&tds, ridge).unwrap();
-        let kernel = FastKernel::<f64>::new();
-        let info = apply_bistellar_flip_k3(&mut tds, &kernel, &context).unwrap();
+        let info = apply_bistellar_flip_k3(&mut tds, &context).unwrap();
 
         assert_eq!(info.kind.k, 3);
         assert_eq!(info.inserted_face_vertices.len(), 3);
@@ -6779,7 +6727,7 @@ mod tests {
             info.inserted_face_vertices[2],
         );
         let context_back = build_k3_flip_context_from_triangle(&tds, triangle).unwrap();
-        let info_back = apply_bistellar_flip_dynamic(&mut tds, &kernel, 4, &context_back).unwrap();
+        let info_back = apply_bistellar_flip_dynamic(&mut tds, 4, &context_back).unwrap();
 
         assert_eq!(info_back.kind.k, 4);
         assert_eq!(info_back.kind.d, 5);
@@ -6819,12 +6767,11 @@ mod tests {
 
         let facet = FacetHandle::new(cell_a, 5);
         let context = build_k2_flip_context(&tds, facet).unwrap();
-        let kernel = FastKernel::<f64>::new();
-        let _info = apply_bistellar_flip_k2(&mut tds, &kernel, &context).unwrap();
+        let _info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
 
         let edge = EdgeKey::new(opposite_a, opposite_b);
         let context_back = build_k2_flip_context_from_edge(&tds, edge).unwrap();
-        let info_back = apply_bistellar_flip_dynamic(&mut tds, &kernel, 5, &context_back).unwrap();
+        let info_back = apply_bistellar_flip_dynamic(&mut tds, 5, &context_back).unwrap();
 
         assert_eq!(info_back.kind.k, 5);
         assert_eq!(info_back.kind.d, 5);
@@ -6851,16 +6798,15 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vertices, None).unwrap())
             .unwrap();
 
-        let kernel = FastKernel::<f64>::new();
         let new_vertex = vertex!([0.1; 5]);
         let new_uuid = new_vertex.uuid();
-        let info = apply_bistellar_flip_k1(&mut tds, &kernel, cell_key, new_vertex).unwrap();
+        let info = apply_bistellar_flip_k1(&mut tds, cell_key, new_vertex).unwrap();
 
         assert_eq!(info.kind.k, 1);
         assert_eq!(info.new_cells.len(), 6);
 
         let new_key = tds.vertex_key_from_uuid(&new_uuid).unwrap();
-        let info_back = apply_bistellar_flip_k1_inverse(&mut tds, &kernel, new_key).unwrap();
+        let info_back = apply_bistellar_flip_k1_inverse(&mut tds, new_key).unwrap();
 
         assert_eq!(info_back.kind.k, 6);
         assert_eq!(info_back.kind.d, 5);
@@ -6880,17 +6826,16 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
             .unwrap();
 
-        let kernel = FastKernel::<f64>::new();
         let new_vertex = vertex!([0.2, 0.2]);
         let new_uuid = new_vertex.uuid();
-        let info = apply_bistellar_flip_k1(&mut tds, &kernel, cell, new_vertex).unwrap();
+        let info = apply_bistellar_flip_k1(&mut tds, cell, new_vertex).unwrap();
 
         assert_eq!(info.kind.k, 1);
         assert_eq!(info.kind.d, 2);
         assert_eq!(tds.number_of_cells(), 3);
 
         let new_key = tds.vertex_key_from_uuid(&new_uuid).unwrap();
-        let info_back = apply_bistellar_flip_k1_inverse(&mut tds, &kernel, new_key).unwrap();
+        let info_back = apply_bistellar_flip_k1_inverse(&mut tds, new_key).unwrap();
 
         assert_eq!(info_back.kind.k, 3);
         assert_eq!(info_back.kind.d, 2);
@@ -6930,9 +6875,9 @@ mod tests {
 
         let facet = FacetHandle::new(cell_a, 4);
         let context = build_k2_flip_context(&tds, facet).unwrap();
-        let kernel = FastKernel::<f64>::new();
-        let info = apply_bistellar_flip_k2(&mut tds, &kernel, &context).unwrap();
+        let info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
 
+        let kernel = FastKernel::<f64>::new();
         let seed_cells: Vec<CellKey> = info.new_cells.iter().copied().collect();
         let stats = repair_delaunay_with_flips_k2_k3(
             &mut tds,
@@ -6985,9 +6930,9 @@ mod tests {
 
         let ridge = RidgeHandle::new(c1, 4, 5);
         let context = build_k3_flip_context(&tds, ridge).unwrap();
-        let kernel = FastKernel::<f64>::new();
-        let info = apply_bistellar_flip_k3(&mut tds, &kernel, &context).unwrap();
+        let info = apply_bistellar_flip_k3(&mut tds, &context).unwrap();
 
+        let kernel = FastKernel::<f64>::new();
         let seed_cells: Vec<CellKey> = info.new_cells.iter().copied().collect();
         let result = repair_delaunay_with_flips_k2_k3(
             &mut tds,

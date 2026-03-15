@@ -467,7 +467,7 @@ where
 /// Builder for generating random Delaunay triangulations with flexible construction options.
 ///
 /// This builder provides a fluent API for constructing random triangulations with control over:
-/// - Insertion order strategy (`Input`, `Lexicographic`, `Morton`, `Hilbert`)
+/// - Insertion order strategy (`Input`, `Hilbert`)
 /// - Topology guarantee (`None`, `PLManifold`)
 /// - Construction options (deduplication, retry policy)
 /// - Topology/Euler validation (the final triangulation must pass Level-3 checks)

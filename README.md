@@ -45,7 +45,7 @@ combinatorial and geometric checks.
 - [x]  Serialization/deserialization of all data structures to/from [JSON]
 - [x]  Tested for 2-, 3-, 4-, and 5-dimensional triangulations
 - [x]  Configurable predicate kernels: `FastKernel` (speed) vs `RobustKernel` (degenerate / near-degenerate robustness)
-- [x]  Bulk insertion ordering (`InsertionOrderStrategy`): [Hilbert curve] (default), [Z-order curve] / Morton, lexicographic, or input order
+- [x]  Bulk insertion ordering (`InsertionOrderStrategy`): [Hilbert curve] (default) or input order
 - [x]  Batch construction options (`ConstructionOptions`): optional deduplication and deterministic retries
 - [x]  Incremental construction APIs: insertion plus vertex removal (`remove_vertex`)
 - [x]  4-level validation hierarchy (element validity → TDS structural validity → manifold topology → Delaunay property), including full diagnostics via `validation_report`
@@ -150,7 +150,7 @@ controls when Level 3 checks run automatically during incremental insertion.
 The construction pipeline exposes deterministic controls for experiments and regression testing:
 
 - Deterministic insertion ordering via `InsertionOrderStrategy`:
-  `Hilbert` (default), `Morton` (Z-order), `Lexicographic`, or `Input`
+  `Hilbert` (default) or `Input`
   (use `Input` to preserve caller-provided order exactly)
 - Deterministic preprocessing via `DedupPolicy`
 - Deterministic retry behavior via `RetryPolicy` (including seeded shuffled retries) or `RetryPolicy::Disabled`
@@ -331,7 +331,6 @@ Portions of this library were developed with the assistance of these AI tools:
 [Voronoi diagrams]: https://grokipedia.com/page/Voronoi_diagram
 [Convex hulls]: https://grokipedia.com/page/Convex_hull
 [Hilbert curve]: https://grokipedia.com/page/Hilbert_curve
-[Z-order curve]: https://grokipedia.com/page/Z-order_curve
 [ChatGPT]: https://openai.com/chatgpt
 [Claude]: https://www.anthropic.com/claude
 [CodeRabbit]: https://coderabbit.ai/

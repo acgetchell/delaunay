@@ -37,7 +37,6 @@ the guarantees stated in the public API documentation.
     - [Tradeoffs](#tradeoffs)
   - [Insertion ordering and locality heuristics](#insertion-ordering-and-locality-heuristics)
     - [Hilbert ordering](#hilbert-ordering)
-    - [Morton (Z-order) ordering](#morton-z-order-ordering)
   - [Convergence considerations](#convergence-considerations)
   - [Limitations and pathological cases](#limitations-and-pathological-cases)
   - [Footnotes](#footnotes)
@@ -258,7 +257,7 @@ geometric interpretation is undefined.
 - Ridge-link checks are “cheap and local” and therefore viable as an insertion-time safety-net.
 - Vertex-link checks are “expensive and global” and therefore better suited to completion-time
   certification unless strict guarantees are required.
-- Ordering heuristics (Hilbert/Morton) can improve locality and reduce cavity size, improving
+- Ordering heuristics (Hilbert) can improve locality and reduce cavity size, improving
   robustness in practice without changing the formal correctness contract.
 
 ---
@@ -285,24 +284,6 @@ flip complexity can otherwise become large.
 
 In this crate, Hilbert indices are computed using Skilling’s algorithm and used for batch preprocessing
 (see [`src/core/util/hilbert.rs`](../src/core/util/hilbert.rs)).[^skilling2004][^impl-hilbert]
-
-### Morton (Z-order) ordering
-
-Morton (Z-order) ordering sorts points by interleaving coordinate bits (after an appropriate
-normalization; see [`InsertionOrderStrategy::Morton`](../src/core/delaunay_triangulation.rs) and
-`order_vertices_morton` in [`src/core/delaunay_triangulation.rs`](../src/core/delaunay_triangulation.rs)).[^morton1966][^moon2001][^impl-morton]
-Like Hilbert ordering, it is a space-filling curve that tends to preserve locality,
-but typically has weaker locality properties than Hilbert.
-
-In practice:
-
-- Morton is often simpler/faster to compute than Hilbert ordering.
-- It can still reduce cavity growth and improve cache behavior compared to raw input order.
-- It may be preferred in performance-sensitive preprocessing paths where “good enough” locality is
-  sufficient.
-
-As with Hilbert ordering, this affects **performance and robustness**, not the formal correctness
-guarantees: the same invariants are enforced regardless of insertion order.
 
 ---
 
@@ -345,7 +326,7 @@ Some limitations are inherent to incremental high-dimensional computational geom
 
 Ordering and preprocessing can mitigate (but not eliminate) these issues:
 
-- Locality-preserving orders (Hilbert / Morton) tend to keep cavities small and reduce flip cascades.
+- Locality-preserving orders (Hilbert) tend to keep cavities small and reduce flip cascades.
 - Deduplication / near-duplicate rejection avoids many “almost coincident” degeneracies.
 
 For concrete failure modes and recommended workflows, see [`docs/workflows.md`](workflows.md),
@@ -378,5 +359,3 @@ For the project-wide bibliography (including references not cited here), see [`R
 [^cgal-spatial-sorting]: CGAL Project. *Spatial Sorting* documentation. <https://doc.cgal.org/latest/Spatial_sorting/index.html>.
 [^impl-hilbert]: Implementation: [src/core/util/hilbert.rs](../src/core/util/hilbert.rs) (Skilling’s Hilbert index).
 [^skilling2004]: John Skilling. “Programming the Hilbert curve.” *AIP Conference Proceedings* 707, 2004. DOI: <https://doi.org/10.1063/1.1751381>.
-[^morton1966]: G. M. Morton. “A computer oriented geodetic data base and a new technique in file sequencing.” IBM Ltd., 1966. PDF: <https://www.ibm.com/docs/api/v1/content/7f40403c-c547-47ef-91b2-7f258272ae7c/Morton1966.pdf>.
-[^impl-morton]: Implementation: [src/core/delaunay_triangulation.rs](../src/core/delaunay_triangulation.rs) (`InsertionOrderStrategy::Morton`, `order_vertices_morton`, `morton_code`).

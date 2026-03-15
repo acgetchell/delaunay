@@ -42,6 +42,8 @@ use crate::core::triangulation_data_structure::{
 };
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
+use crate::geometry::predicates::Orientation;
+use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use std::hash::{Hash, Hasher};
 
@@ -1454,7 +1456,7 @@ where
     // 2D special-case: if the point is collinear with a boundary edge and lies on
     // that edge segment, split the edge instead of building new hull triangles.
     if D == 2
-        && let Some(edge_facet) = find_boundary_edge_split_facet(tds, kernel, point)?
+        && let Some(edge_facet) = find_boundary_edge_split_facet(tds, point)?
     {
         #[cfg(debug_assertions)]
         if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
@@ -1544,13 +1546,12 @@ where
     clippy::too_many_lines,
     reason = "Visibility and edge-split checks are kept together for clarity"
 )]
-fn find_boundary_edge_split_facet<K, U, V, const D: usize>(
-    tds: &Tds<K::Scalar, U, V, D>,
-    kernel: &K,
-    point: &Point<K::Scalar, D>,
+fn find_boundary_edge_split_facet<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    point: &Point<T, D>,
 ) -> Result<Option<FacetHandle>, InsertionError>
 where
-    K: Kernel<D>,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -1559,7 +1560,7 @@ where
     }
 
     let mut match_facet: Option<FacetHandle> = None;
-    let tol = K::Scalar::default_tolerance();
+    let tol = T::default_tolerance();
 
     let boundary_facets = tds
         .boundary_facets()
@@ -1580,9 +1581,8 @@ where
                 },
             })?;
 
-        let mut edge_points =
-            SmallBuffer::<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-        let mut opposite_point: Option<Point<K::Scalar, D>> = None;
+        let mut edge_points = SmallBuffer::<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+        let mut opposite_point: Option<Point<T, D>> = None;
 
         for (i, &vkey) in cell.vertices().iter().enumerate() {
             let vertex =
@@ -1611,36 +1611,43 @@ where
             },
         })?;
 
-        let mut simplex_points =
-            SmallBuffer::<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+        let mut simplex_points = SmallBuffer::<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
         simplex_points.extend(edge_points.iter().copied());
         simplex_points.push(opposite_point);
-        let orientation_with_opposite =
-            kernel
-                .orientation(&simplex_points)
-                .map_err(|e| InsertionError::HullExtension {
-                    reason: HullExtensionReason::Other {
-                        message: format!("Orientation test failed: {e}"),
-                    },
-                })?;
 
-        if orientation_with_opposite == 0 {
+        // Use exact orientation (not kernel SoS) to detect true degeneracy.
+        // SoS-based kernels never return 0, which would mask the geometric
+        // property we need here: is the opposite simplex truly degenerate?
+        let opposite_degenerate = matches!(
+            robust_orientation(&simplex_points).map_err(|e| InsertionError::HullExtension {
+                reason: HullExtensionReason::Other {
+                    message: format!("Exact orientation test failed: {e}"),
+                },
+            })?,
+            Orientation::DEGENERATE
+        );
+
+        if opposite_degenerate {
             continue;
         }
 
-        let mut edge_line = SmallBuffer::<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+        let mut edge_line = SmallBuffer::<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
         edge_line.extend(edge_points.iter().copied());
         edge_line.push(*point);
-        let orientation_with_point =
-            kernel
-                .orientation(&edge_line)
-                .map_err(|e| InsertionError::HullExtension {
-                    reason: HullExtensionReason::Other {
-                        message: format!("Orientation test failed: {e}"),
-                    },
-                })?;
 
-        if orientation_with_point != 0 {
+        // Use exact orientation (not kernel SoS) to detect true collinearity.
+        // SoS-based kernels never return 0, which would mask the geometric
+        // property we need here: is the point truly on the line through the edge?
+        let is_collinear = matches!(
+            robust_orientation(&edge_line).map_err(|e| InsertionError::HullExtension {
+                reason: HullExtensionReason::Other {
+                    message: format!("Exact orientation test failed: {e}"),
+                },
+            })?,
+            Orientation::DEGENERATE
+        );
+
+        if !is_collinear {
             continue;
         }
 
@@ -3073,10 +3080,9 @@ mod tests {
             vertex!([0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
-        let kernel = FastKernel::<f64>::new();
         let point = Point::new([0.5, 0.0]); // on boundary edge
 
-        let facet = find_boundary_edge_split_facet(dt.tds(), &kernel, &point).unwrap();
+        let facet = find_boundary_edge_split_facet(dt.tds(), &point).unwrap();
         assert!(facet.is_some());
     }
 
@@ -3088,10 +3094,9 @@ mod tests {
             vertex!([0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
-        let kernel = FastKernel::<f64>::new();
         let point = Point::new([2.0, 0.0]); // collinear with an edge line, outside segment
 
-        let facet = find_boundary_edge_split_facet(dt.tds(), &kernel, &point).unwrap();
+        let facet = find_boundary_edge_split_facet(dt.tds(), &point).unwrap();
         assert!(facet.is_none());
     }
 
