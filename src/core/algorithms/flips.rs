@@ -2263,7 +2263,17 @@ where
                 message: e.to_string(),
             })?;
 
-    let context = build_k1_forward_context_from_cell(tds, cell_key, vertex_key)?;
+    let context = match build_k1_forward_context_from_cell(tds, cell_key, vertex_key) {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            // Remove the just-inserted vertex to avoid leaving an orphan.
+            if let Some(inserted) = tds.get_vertex_by_key(vertex_key).copied() {
+                let _ = tds.remove_vertex(&inserted);
+            }
+            return Err(e);
+        }
+    };
+
     let result = apply_bistellar_flip::<T, U, V, D, 1>(tds, &context);
 
     if result.is_err()

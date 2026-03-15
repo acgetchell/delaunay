@@ -226,9 +226,10 @@ construction, or when using a non-Hilbert insertion order.
 ### Choosing a `DedupPolicy`
 
 `DedupPolicy` is a **performance-tuning** knob, not a correctness requirement.
-Layers 1 and 2 are always active regardless of this setting.
+Layer 1 is active when using the default Hilbert ordering, and Layer 2 is always
+active regardless of this setting.
 
-- `DedupPolicy::Off` *(default)*: rely on the unconditional Hilbert dedup (Layer 1)
+- `DedupPolicy::Off` *(default)*: rely on the built-in Hilbert dedup (Layer 1)
   and per-insertion checks (Layer 2).  This is sufficient for most use cases.
 - `DedupPolicy::Exact`: additionally apply `dedup_vertices_exact` before
   construction.  This is a performance optimisation for inputs with many exact

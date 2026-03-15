@@ -156,7 +156,7 @@ fn test_vertex_preservation_many_duplicates_3d() {
     let unique_coords_len = unique_coords.len();
     println!("Unique coordinates: {unique_coords_len}");
 
-    // Use Input ordering to avoid Morton clustering of duplicates causing degenerate initial simplex
+    // Use Input ordering to avoid Hilbert dedup collapsing duplicates before the initial simplex
     let opts = ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
     let dt = DelaunayTriangulation::<_, (), (), 3>::new_with_options(&vertices, opts)
         .expect("Tds construction succeeded");

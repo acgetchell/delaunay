@@ -208,16 +208,18 @@ pub enum InsertionOrderStrategy {
 /// before batch construction.
 ///
 /// This is a **performance-tuning** knob, not a correctness requirement.  The
-/// triangulation engine always applies two unconditional safety layers:
+/// triangulation engine applies two built-in safety layers:
 ///
-/// 1. **Hilbert quantized dedup** — when the default
-///    [`InsertionOrderStrategy::Hilbert`] is active, vertices that map to the
-///    same quantized grid cell are removed in a single O(n) sweep during
-///    sorting (zero extra cost since the quantized coordinates are already
-///    computed).  This is unconditional regardless of `DedupPolicy`.
-/// 2. **Per-insertion duplicate check** — every `insert` call checks the
-///    incoming vertex against existing vertices (squared-distance tolerance
-///    1e-10).  Duplicates are skipped without modifying the triangulation.
+/// 1. **Hilbert quantized dedup** — when
+///    [`InsertionOrderStrategy::Hilbert`] is active (the default), vertices
+///    that map to the same quantized grid cell are removed in a single O(n)
+///    sweep during sorting (zero extra cost since the quantized coordinates
+///    are already computed).  This runs regardless of `DedupPolicy`, but only
+///    when the Hilbert insertion order is selected.
+/// 2. **Per-insertion duplicate check** *(unconditional)* — every `insert`
+///    call checks the incoming vertex against existing vertices
+///    (squared-distance tolerance 1e-10).  Duplicates are skipped without
+///    modifying the triangulation.
 ///
 /// Use `DedupPolicy::Exact` or `DedupPolicy::Epsilon` when your input is
 /// known to contain many duplicates and you want to avoid the per-vertex
@@ -245,7 +247,7 @@ pub enum InsertionOrderStrategy {
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[non_exhaustive]
 pub enum DedupPolicy {
-    /// Do not apply explicit preprocessing dedup (rely on the unconditional
+    /// Do not apply explicit preprocessing dedup (rely on the built-in
     /// Hilbert quantized dedup and per-insertion duplicate checks).
     #[default]
     Off,
@@ -6223,13 +6225,23 @@ mod tests {
             &[1, 3, 5, 7, 0, 2, 4, 6],
         ];
 
-        let expected_vertices = vertices_from_coords_permutation_3d(&coords, permutations[0]);
-        let expected = coord_sequence_3d(&order_vertices_hilbert(expected_vertices, false));
+        // Test both dedup_quantized=false (sort-only) and dedup_quantized=true
+        // (the real code path used by order_vertices_by_strategy).
+        let expected_no_dedup = vertices_from_coords_permutation_3d(&coords, permutations[0]);
+        let expected_no_dedup =
+            coord_sequence_3d(&order_vertices_hilbert(expected_no_dedup, false));
+
+        let expected_dedup = vertices_from_coords_permutation_3d(&coords, permutations[0]);
+        let expected_dedup = coord_sequence_3d(&order_vertices_hilbert(expected_dedup, true));
 
         for perm in &permutations[1..] {
             let vertices = vertices_from_coords_permutation_3d(&coords, perm);
             let got = coord_sequence_3d(&order_vertices_hilbert(vertices, false));
-            assert_eq!(got, expected);
+            assert_eq!(got, expected_no_dedup);
+
+            let vertices = vertices_from_coords_permutation_3d(&coords, perm);
+            let got = coord_sequence_3d(&order_vertices_hilbert(vertices, true));
+            assert_eq!(got, expected_dedup);
         }
     }
 
