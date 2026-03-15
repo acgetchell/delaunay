@@ -8606,6 +8606,76 @@ mod tests {
         );
     }
 
+    // ---- invariant_error_to_insertion_error coverage ----
+
+    #[test]
+    fn test_invariant_error_to_insertion_error_tds_arm() {
+        let inv = InvariantError::Tds(TdsError::InconsistentDataStructure {
+            message: "test".to_string(),
+        });
+        let ins =
+            Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(&inv);
+        assert!(matches!(ins, InsertionError::TopologyValidation(_)));
+    }
+
+    #[test]
+    fn test_invariant_error_to_insertion_error_triangulation_arm() {
+        let inv = InvariantError::Triangulation(TriangulationValidationError::IsolatedVertex {
+            vertex_key: VertexKey::from(KeyData::from_ffi(1)),
+            vertex_uuid: Uuid::nil(),
+        });
+        let ins =
+            Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(&inv);
+        assert!(matches!(
+            ins,
+            InsertionError::TopologyValidationFailed { .. }
+        ));
+    }
+
+    #[test]
+    fn test_invariant_error_to_insertion_error_delaunay_arm() {
+        use crate::core::delaunay_triangulation::DelaunayTriangulationValidationError;
+        let inv =
+            InvariantError::Delaunay(DelaunayTriangulationValidationError::VerificationFailed {
+                message: "test".to_string(),
+            });
+        let ins =
+            Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(&inv);
+        assert!(matches!(
+            ins,
+            InsertionError::DelaunayValidationFailed { .. }
+        ));
+    }
+
+    #[test]
+    fn test_from_manifold_error_for_invariant_error_non_tds() {
+        let err = ManifoldError::ManifoldFacetMultiplicity {
+            facet_key: 999,
+            cell_count: 5,
+        };
+        let inv = InvariantError::from(err);
+        assert!(matches!(
+            inv,
+            InvariantError::Triangulation(
+                TriangulationValidationError::ManifoldFacetMultiplicity {
+                    facet_key: 999,
+                    cell_count: 5
+                }
+            )
+        ));
+    }
+
+    #[test]
+    fn test_triangulation_validation_error_isolated_vertex_display() {
+        let err = TriangulationValidationError::IsolatedVertex {
+            vertex_key: VertexKey::from(KeyData::from_ffi(42)),
+            vertex_uuid: Uuid::nil(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("Isolated vertex"));
+        assert!(msg.contains("not incident to any cell"));
+    }
+
     // ---- repair_stale_incident_cells tests ----
 
     #[test]

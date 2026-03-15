@@ -121,7 +121,16 @@ pub enum DelaunayTriangulationConstructionError {
     Triangulation(#[from] TriangulationConstructionError),
 }
 
-/// Errors that can occur during Delaunay triangulation validation (Level 4).
+/// Errors that can occur during Delaunay triangulation validation (Levels 1–4).
+///
+/// This type is returned by [`DelaunayTriangulation::validate`] and aggregates
+/// errors from all validation layers:
+/// - [`Tds`](Self::Tds) — element or TDS structural errors (Levels 1–2).
+/// - [`Triangulation`](Self::Triangulation) — topology errors (Level 3).
+/// - [`VerificationFailed`](Self::VerificationFailed) — Delaunay property violation (Level 4).
+///
+/// [`DelaunayTriangulation::is_valid`] returns only the Level 4
+/// [`VerificationFailed`](Self::VerificationFailed) variant.
 ///
 /// # Examples
 ///
@@ -5149,7 +5158,11 @@ where
     ///
     /// # Errors
     ///
-    /// Returns error if the vertex-cell incidence cannot be rebuilt, indicating data structure corruption.
+    /// Returns [`InvariantError`] if:
+    /// - The inverse k=1 flip encounters a neighbor-wiring failure (`InvariantError::Tds`).
+    /// - Fan retriangulation fails (`InvariantError::Tds`).
+    /// - Delaunay flip-based repair fails after removal (`InvariantError::Delaunay`).
+    /// - Orientation canonicalization fails after repair (`InvariantError::Tds`).
     ///
     /// # Examples
     ///
@@ -5216,9 +5229,9 @@ where
             let seed_ref = seed_cells.as_deref();
             let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
             repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology).map_err(|e| {
-                TdsError::FinalizationFailed {
+                InvariantError::Delaunay(DelaunayTriangulationValidationError::VerificationFailed {
                     message: format!("Delaunay repair failed after vertex removal: {e}"),
-                }
+                })
             })?;
 
             // Re-canonicalize geometric orientation (#258): flip repair may leave
@@ -8309,6 +8322,25 @@ mod tests {
             msg.contains("flip predicate detected non-Delaunay facet"),
             "Display should contain inner message: {msg}"
         );
+    }
+
+    #[test]
+    fn test_delaunay_validation_error_tds_variant_display() {
+        let inner = TdsError::InconsistentDataStructure {
+            message: "broken link".to_string(),
+        };
+        let err = DelaunayTriangulationValidationError::from(inner);
+        assert!(err.to_string().contains("broken link"));
+    }
+
+    #[test]
+    fn test_delaunay_validation_error_triangulation_variant_display() {
+        let inner = TriangulationValidationError::IsolatedVertex {
+            vertex_key: VertexKey::from(slotmap::KeyData::from_ffi(1)),
+            vertex_uuid: Uuid::nil(),
+        };
+        let err = DelaunayTriangulationValidationError::from(inner);
+        assert!(err.to_string().contains("Isolated vertex"));
     }
 
     // ---- map_orientation_canonicalization_error: OrientationViolation ----

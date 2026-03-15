@@ -4026,9 +4026,14 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`TdsError::OrientationViolation`] on the first violating pair.
-    /// Returns [`TdsError::InconsistentDataStructure`] if neighbor pointers
-    /// reference missing cells or malformed facet indices.
+    /// Returns [`TdsError`] on the first detected problem:
+    /// - [`OrientationViolation`](TdsError::OrientationViolation) — adjacent cells do not induce opposite facet orientations.
+    /// - [`InvalidNeighbors`](TdsError::InvalidNeighbors) — a mirror facet cannot be derived, or a
+    ///   neighbor's back-reference does not point to the originating cell.
+    /// - [`InconsistentDataStructure`](TdsError::InconsistentDataStructure) — a neighbor cell key is
+    ///   missing from storage, or permutation parity cannot be determined.
+    /// - [`IndexOutOfBounds`](TdsError::IndexOutOfBounds) / [`DimensionMismatch`](TdsError::DimensionMismatch)
+    ///   — facet-extraction helpers encounter invalid indices or periodic-offset count mismatches.
     fn validate_coherent_orientation(&self) -> Result<(), TdsError> {
         for (cell_key, cell) in &self.cells {
             let Some(neighbors) = cell.neighbors() else {
@@ -7124,6 +7129,102 @@ mod tests {
         // more precise "missing vertex key" diagnostic.
         let err = tds.is_valid().unwrap_err();
         assert!(matches!(err, TdsError::VertexNotFound { .. }));
+    }
+
+    // ---- Error variant Display / construction coverage ----
+
+    #[test]
+    fn test_geometric_error_display() {
+        let deg = GeometricError::DegenerateOrientation {
+            message: "det=0".to_string(),
+        };
+        assert!(deg.to_string().contains("det=0"));
+
+        let neg = GeometricError::NegativeOrientation {
+            message: "det<0".to_string(),
+        };
+        assert!(neg.to_string().contains("det<0"));
+    }
+
+    #[test]
+    fn test_tds_error_new_variant_display() {
+        let cell_key = CellKey::from(KeyData::from_ffi(1));
+        let vertex_key = VertexKey::from(KeyData::from_ffi(2));
+
+        let err = TdsError::CellNotFound {
+            cell_key,
+            context: "test lookup".to_string(),
+        };
+        assert!(err.to_string().contains("not found"));
+        assert!(err.to_string().contains("test lookup"));
+
+        let err = TdsError::VertexNotFound {
+            vertex_key,
+            context: "test vertex".to_string(),
+        };
+        assert!(err.to_string().contains("not found"));
+        assert!(err.to_string().contains("test vertex"));
+
+        let err = TdsError::DimensionMismatch {
+            expected: 4,
+            actual: 3,
+            context: "simplex check".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains('4') && msg.contains('3') && msg.contains("simplex check"));
+
+        let err = TdsError::IndexOutOfBounds {
+            index: 10,
+            bound: 5,
+            context: "facet index".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("10") && msg.contains('5') && msg.contains("facet index"));
+    }
+
+    #[test]
+    fn test_tds_error_geometric_variant_wraps_geometric_error() {
+        let inner = GeometricError::DegenerateOrientation {
+            message: "test".to_string(),
+        };
+        let err = TdsError::Geometric(inner.clone());
+        assert!(err.to_string().contains("test"));
+        assert_eq!(TdsError::from(inner.clone()), TdsError::Geometric(inner));
+    }
+
+    #[test]
+    fn test_tds_mutation_error_accessors() {
+        let inner = TdsError::InvalidNeighbors {
+            message: "test".to_string(),
+        };
+        let mutation = TdsMutationError::from(inner.clone());
+
+        // as_tds_error returns a reference to the inner error.
+        assert_eq!(mutation.as_tds_error(), &inner);
+
+        // into_inner consumes the wrapper and returns the inner error.
+        let recovered: TdsError = mutation.into_inner();
+        assert_eq!(recovered, inner);
+    }
+
+    #[test]
+    fn test_invariant_error_from_tds_and_triangulation() {
+        use crate::core::triangulation::TriangulationValidationError;
+        use crate::topology::characteristics::euler::TopologyClassification;
+
+        let tds_err = TdsError::InconsistentDataStructure {
+            message: "test".to_string(),
+        };
+        let inv = InvariantError::from(tds_err);
+        assert!(matches!(inv, InvariantError::Tds(_)));
+
+        let tri_err = TriangulationValidationError::EulerCharacteristicMismatch {
+            computed: 1,
+            expected: 2,
+            classification: TopologyClassification::Ball(3),
+        };
+        let inv = InvariantError::from(tri_err);
+        assert!(matches!(inv, InvariantError::Triangulation(_)));
     }
 
     #[test]
