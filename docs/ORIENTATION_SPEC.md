@@ -112,7 +112,9 @@ where
             Ok(canonical)
         }
         Orientation::DEGENERATE => {
-            Err(TdsError::DegenerateCell { ... })
+            Err(TdsError::Geometric(GeometricError::DegenerateOrientation {
+                message: "degenerate cell".to_string(),
+            }))
         }
     }
 }
@@ -248,13 +250,18 @@ For practical D ≤ 5, this is acceptable for validation.
 
 ```rust
 // In TdsError enum
-#[error("Orientation invariant violated: cells {cell1_uuid} and {cell2_uuid} induce same orientation on shared facet")]
+#[error("Orientation invariant violated between cells {cell1_uuid} and {cell2_uuid}; ...")]
 OrientationViolation {
     cell1_key: CellKey,
     cell1_uuid: Uuid,
     cell2_key: CellKey,
     cell2_uuid: Uuid,
+    cell1_facet_index: usize,
+    cell2_facet_index: usize,
     facet_vertices: Vec<VertexKey>,
+    cell2_facet_vertices: Vec<VertexKey>,
+    observed_odd_permutation: bool,
+    expected_odd_permutation: bool,
 },
 ```
 

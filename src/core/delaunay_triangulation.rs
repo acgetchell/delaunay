@@ -27,8 +27,8 @@ use crate::core::triangulation::{
     ValidationPolicy, record_duplicate_detection_metrics,
 };
 use crate::core::triangulation_data_structure::{
-    CellKey, InvariantKind, InvariantViolation, Tds, TdsConstructionError, TdsError,
-    TriangulationValidationReport, VertexKey,
+    CellKey, InvariantError, InvariantKind, InvariantViolation, Tds, TdsConstructionError,
+    TdsError, TriangulationValidationReport, VertexKey,
 };
 use crate::core::util::{
     coords_equal_exact, coords_within_epsilon, hilbert_indices_prequantized, hilbert_quantize,
@@ -143,7 +143,11 @@ pub enum DelaunayTriangulationConstructionError {
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DelaunayTriangulationValidationError {
-    /// Lower-layer validation error (Levels 1–3).
+    /// Lower-layer element or TDS structural validation error (Levels 1–2).
+    #[error(transparent)]
+    Tds(#[from] TdsError),
+
+    /// Lower-layer topology validation error (Level 3).
     #[error(transparent)]
     Triangulation(#[from] TriangulationValidationError),
 
@@ -3369,7 +3373,7 @@ where
             InsertionError::CavityFilling { message } => {
                 TriangulationConstructionError::FailedToCreateCell { message }
             }
-            InsertionError::NeighborWiring { message } => TriangulationConstructionError::from(
+            InsertionError::NeighborWiring { message } => TriangulationConstructionError::Tds(
                 TdsConstructionError::ValidationError(TdsError::InvalidNeighbors { message }),
             ),
             InsertionError::TopologyValidation(source) => {
@@ -5075,32 +5079,18 @@ where
             .normalize_and_promote_positive_orientation()
             .map_err(|err| {
                 let source = match err {
-                    InsertionError::TopologyValidation(source) => {
-                        TriangulationValidationError::from(source)
-                    }
-                    InsertionError::TopologyValidationFailed { source, .. } => *source,
-                    other => {
-                        TriangulationValidationError::Tds(
-                            TdsError::InconsistentDataStructure {
-                                message: format!(
-                                    "Geometric orientation normalization failed after Delaunay repair: {other}",
-                                ),
-                            },
-                        )
-                    }
+                    InsertionError::TopologyValidation(source) => source,
+                    other => TdsError::InconsistentDataStructure {
+                        message: format!(
+                            "Geometric orientation normalization failed after Delaunay repair: {other}",
+                        ),
+                    },
                 };
-                InsertionError::TopologyValidationFailed {
-                    message: "Geometric orientation normalization failed after Delaunay repair"
-                        .to_string(),
-                    source: Box::new(source),
-                }
+                InsertionError::TopologyValidation(source)
             })?;
         self.tri
             .validate_geometric_cell_orientation()
-            .map_err(|err| InsertionError::TopologyValidationFailed {
-                message: "Geometric orientation invalid after Delaunay repair".to_string(),
-                source: Box::new(err),
-            })?;
+            .map_err(InsertionError::TopologyValidation)?;
         Ok((vertex_key, used_heuristic))
     }
 
@@ -5192,7 +5182,7 @@ where
     pub fn remove_vertex(
         &mut self,
         vertex: &Vertex<K::Scalar, U, D>,
-    ) -> Result<usize, TriangulationValidationError>
+    ) -> Result<usize, InvariantError>
     where
         K::Scalar: ScalarSummable,
     {
@@ -5213,10 +5203,11 @@ where
                 }
                 .into());
             }
-            Err(_) => self
-                .tri
-                .remove_vertex(vertex)
-                .map_err(TriangulationValidationError::from)?,
+            Err(_) => self.tri.remove_vertex(vertex).map_err(|e| {
+                InvariantError::Tds(TdsError::InconsistentDataStructure {
+                    message: format!("remove_vertex fan triangulation failed: {e}"),
+                })
+            })?,
         };
 
         let topology = self.tri.topology_guarantee();
@@ -5362,7 +5353,13 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
-        self.tri.validate()?;
+        self.tri.validate().map_err(|e| match e {
+            InvariantError::Tds(tds_err) => DelaunayTriangulationValidationError::Tds(tds_err),
+            InvariantError::Triangulation(tri_err) => {
+                DelaunayTriangulationValidationError::Triangulation(tri_err)
+            }
+            InvariantError::Delaunay(dt_err) => dt_err,
+        })?;
         self.is_valid()
     }
 
@@ -5800,6 +5797,7 @@ mod tests {
     use crate::core::triangulation_data_structure::{EntityKind, GeometricError};
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel, RobustKernel};
     use crate::geometry::traits::coordinate::Coordinate;
+    use crate::topology::characteristics::euler::TopologyClassification;
     use crate::triangulation::flips::BistellarFlips;
     use crate::vertex;
     use rand::{RngExt, SeedableRng};
@@ -7996,11 +7994,11 @@ mod tests {
     fn test_map_orientation_canonicalization_error_topology_validation_failed_is_internal() {
         let error = InsertionError::TopologyValidationFailed {
             message: "post-insertion".to_string(),
-            source: Box::new(TriangulationValidationError::Tds(
-                TdsError::InconsistentDataStructure {
-                    message: "test".to_string(),
-                },
-            )),
+            source: Box::new(TriangulationValidationError::EulerCharacteristicMismatch {
+                computed: 3,
+                expected: 2,
+                classification: TopologyClassification::Ball(3),
+            }),
         };
         let mapped =
             DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
@@ -8205,11 +8203,11 @@ mod tests {
             },
             InsertionError::TopologyValidationFailed {
                 message: "test".to_string(),
-                source: Box::new(TriangulationValidationError::Tds(
-                    TdsError::InconsistentDataStructure {
-                        message: "test".to_string(),
-                    },
-                )),
+                source: Box::new(TriangulationValidationError::EulerCharacteristicMismatch {
+                    computed: 3,
+                    expected: 2,
+                    classification: TopologyClassification::Ball(3),
+                }),
             },
         ];
         for error in geometry_errors {

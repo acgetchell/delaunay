@@ -125,10 +125,10 @@ pub enum ConvexHullValidationError {
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum ConvexHullConstructionError {
-    /// Failed to extract boundary facets from the triangulation due to a TDS validation failure.
+    /// Failed to extract boundary facets from the triangulation.
     #[error("Failed to extract boundary facets from triangulation: {source}")]
     BoundaryFacetExtractionFailed {
-        /// The underlying TDS validation error that caused the failure.
+        /// The underlying triangulation data-structure error.
         #[source]
         source: TdsError,
     },
@@ -165,17 +165,17 @@ pub enum ConvexHullConstructionError {
     /// Coordinate conversion error occurred during geometric computations.
     #[error("Coordinate conversion error: {0}")]
     CoordinateConversion(#[from] CoordinateConversionError),
-    /// Failed to build facet cache due to a TDS validation failure.
+    /// Failed to build facet cache.
     #[error("Failed to build facet cache: {source}")]
     FacetCacheBuildFailed {
-        /// The underlying TDS validation error.
+        /// The underlying triangulation data-structure error.
         #[source]
         source: TdsError,
     },
-    /// Failed to resolve adjacent cell vertices for visibility testing due to a TDS validation failure.
+    /// Failed to resolve adjacent cell vertices for visibility testing.
     #[error("Failed to resolve adjacent cell: {source}")]
     AdjacentCellResolutionFailed {
-        /// The underlying TDS validation error.
+        /// The underlying triangulation data-structure error.
         #[source]
         source: TdsError,
     },

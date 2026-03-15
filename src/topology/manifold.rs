@@ -392,10 +392,8 @@ where
     V: DataType,
 {
     if simplex_vertices.is_empty() {
-        return Err(TdsError::DimensionMismatch {
-            expected: 1,
-            actual: 0,
-            context: "simplex must contain at least one vertex".to_string(),
+        return Err(TdsError::InconsistentDataStructure {
+            message: "simplex_star_cells requires at least one vertex".to_string(),
         }
         .into());
     }
@@ -448,10 +446,8 @@ where
     V: DataType,
 {
     if simplex_vertices.is_empty() {
-        return Err(TdsError::DimensionMismatch {
-            expected: 1,
-            actual: 0,
-            context: "simplex must contain at least one vertex".to_string(),
+        return Err(TdsError::InconsistentDataStructure {
+            message: "simplex_link_simplices_from_star requires at least one vertex".to_string(),
         }
         .into());
     }
@@ -2121,12 +2117,9 @@ mod tests {
         let tds: Tds<f64, (), (), 2> = Tds::empty();
 
         match simplex_star_cells(&tds, &[]) {
-            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
-                expected: 1,
-                actual: 0,
-                ..
-            })) => {}
-            other => panic!("Expected DimensionMismatch(1, 0) for empty simplex, got {other:?}"),
+            Err(ManifoldError::Tds(TdsError::InconsistentDataStructure { ref message }))
+                if message.contains("at least one vertex") => {}
+            other => panic!("Expected InconsistentDataStructure for empty simplex, got {other:?}"),
         }
     }
 
@@ -2145,12 +2138,9 @@ mod tests {
         let tds: Tds<f64, (), (), 2> = Tds::empty();
 
         match simplex_link_simplices_from_star(&tds, &[], &[]) {
-            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
-                expected: 1,
-                actual: 0,
-                ..
-            })) => {}
-            other => panic!("Expected DimensionMismatch(1, 0) for empty simplex, got {other:?}"),
+            Err(ManifoldError::Tds(TdsError::InconsistentDataStructure { ref message }))
+                if message.contains("at least one vertex") => {}
+            other => panic!("Expected InconsistentDataStructure for empty simplex, got {other:?}"),
         }
     }
 

@@ -629,7 +629,21 @@ pub enum TdsError {
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[error(transparent)]
-pub struct TdsMutationError(pub TdsError);
+pub struct TdsMutationError(TdsError);
+
+impl TdsMutationError {
+    /// Returns a reference to the underlying [`TdsError`].
+    #[must_use]
+    pub const fn as_tds_error(&self) -> &TdsError {
+        &self.0
+    }
+
+    /// Consumes this wrapper and returns the underlying [`TdsError`].
+    #[must_use]
+    pub fn into_inner(self) -> TdsError {
+        self.0
+    }
+}
 
 impl From<TdsError> for TdsMutationError {
     fn from(err: TdsError) -> Self {
@@ -1134,11 +1148,9 @@ where
         for (cell_key, cell) in &self.cells {
             let vertex_count = cell.number_of_vertices();
             if vertex_count > MAX_PRACTICAL_DIMENSION_SIZE {
-                return Err(TdsError::DimensionMismatch {
-                    expected: MAX_PRACTICAL_DIMENSION_SIZE,
-                    actual: vertex_count,
-                    context: format!(
-                        "cell {} vertex count exceeds MAX_PRACTICAL_DIMENSION_SIZE (would overflow neighbors buffer)",
+                return Err(TdsError::InconsistentDataStructure {
+                    message: format!(
+                        "cell {} vertex count ({vertex_count}) exceeds storage limit MAX_PRACTICAL_DIMENSION_SIZE ({MAX_PRACTICAL_DIMENSION_SIZE}) (would overflow neighbors buffer)",
                         cell.uuid(),
                     ),
                 });
@@ -1159,17 +1171,19 @@ where
             let (cell_key2, vertex_index2) = facet_infos[1];
 
             // Set neighbors with semantic constraint: neighbors[i] is opposite vertices[i]
-            cell_neighbors.get_mut(&cell_key1).ok_or_else(|| {
-                TdsError::InconsistentDataStructure {
-                    message: format!("Cell key {cell_key1:?} not found in cell neighbors map"),
-                }
-            })?[vertex_index1] = Some(cell_key2);
+            cell_neighbors
+                .get_mut(&cell_key1)
+                .ok_or_else(|| TdsError::CellNotFound {
+                    cell_key: cell_key1,
+                    context: "assign_neighbors: cell missing from local neighbors map".to_string(),
+                })?[vertex_index1] = Some(cell_key2);
 
-            cell_neighbors.get_mut(&cell_key2).ok_or_else(|| {
-                TdsError::InconsistentDataStructure {
-                    message: format!("Cell key {cell_key2:?} not found in cell neighbors map"),
-                }
-            })?[vertex_index2] = Some(cell_key1);
+            cell_neighbors
+                .get_mut(&cell_key2)
+                .ok_or_else(|| TdsError::CellNotFound {
+                    cell_key: cell_key2,
+                    context: "assign_neighbors: cell missing from local neighbors map".to_string(),
+                })?[vertex_index2] = Some(cell_key1);
         }
 
         // Apply updates

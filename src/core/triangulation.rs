@@ -234,18 +234,17 @@ pub(crate) fn record_duplicate_detection_metrics(
 /// structured error information when possible.
 ///
 /// - `TopologyValidation(source)` → returns `source` directly
-/// - `TopologyValidationFailed` wrapping `Tds(source)` → returns the inner TDS error
+/// - `TopologyValidationFailed` → wrapped in [`TdsError::InconsistentDataStructure`]
 /// - All other variants → wrapped in [`TdsError::InconsistentDataStructure`]
 ///   with the provided `context`
-fn extract_tds_validation_error(error: InsertionError, context: &str) -> TdsError {
+fn extract_tds_error(error: InsertionError, context: &str) -> TdsError {
     match error {
         InsertionError::TopologyValidation(source) => source,
-        InsertionError::TopologyValidationFailed { source, .. } => match *source {
-            TriangulationValidationError::Tds(tds_err) => tds_err,
-            other => TdsError::InconsistentDataStructure {
-                message: format!("{context}: {other}"),
-            },
-        },
+        InsertionError::TopologyValidationFailed { source, .. } => {
+            TdsError::InconsistentDataStructure {
+                message: format!("{context}: {source}"),
+            }
+        }
         other => TdsError::InconsistentDataStructure {
             message: format!("{context}: {other}"),
         },
@@ -322,10 +321,15 @@ pub enum TriangulationConstructionError {
 
 /// Errors that can occur during triangulation topology validation (Level 3).
 ///
+/// This type represents **only** Level 3 (topology) errors. It does not contain
+/// TDS-level (Levels 1–2) errors. Cumulative validators that can return errors
+/// from any level use [`InvariantError`] instead.
+///
 /// # Examples
 ///
 /// ```rust
 /// use delaunay::core::triangulation::TriangulationValidationError;
+/// use delaunay::core::triangulation_data_structure::InvariantError;
 /// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
@@ -336,16 +340,12 @@ pub enum TriangulationConstructionError {
 /// ];
 /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
 ///
-/// let result: Result<(), TriangulationValidationError> = dt.as_triangulation().validate();
+/// let result: Result<(), InvariantError> = dt.as_triangulation().validate();
 /// assert!(result.is_ok());
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TriangulationValidationError {
-    /// Lower-layer element or TDS structural validation error (Levels 1–2).
-    #[error(transparent)]
-    Tds(#[from] TdsError),
-
     /// A facet belongs to an unexpected number of cells for a manifold-with-boundary.
     #[error(
         "Non-manifold facet: facet {facet_key:016x} belongs to {cell_count} cells (expected 1 or 2)"
@@ -441,16 +441,15 @@ pub enum TriangulationValidationError {
     },
 }
 
-impl From<TdsMutationError> for TriangulationValidationError {
-    fn from(err: TdsMutationError) -> Self {
-        Self::Tds(err.into())
-    }
-}
-
 impl From<ManifoldError> for TriangulationValidationError {
     fn from(err: ManifoldError) -> Self {
         match err {
-            ManifoldError::Tds(source) => Self::Tds(source),
+            ManifoldError::Tds(_) => {
+                unreachable!(
+                    "ManifoldError::Tds should be routed through InvariantError, \
+                     not TriangulationValidationError"
+                )
+            }
             ManifoldError::ManifoldFacetMultiplicity {
                 facet_key,
                 cell_count,
@@ -497,6 +496,15 @@ impl From<ManifoldError> for TriangulationValidationError {
                 connected,
                 interior_vertex,
             },
+        }
+    }
+}
+
+impl From<ManifoldError> for InvariantError {
+    fn from(err: ManifoldError) -> Self {
+        match err {
+            ManifoldError::Tds(source) => Self::Tds(source),
+            other => Self::Triangulation(TriangulationValidationError::from(other)),
         }
     }
 }
@@ -2116,9 +2124,7 @@ where
     ///
     /// Periodic-lifted cells are validated in lifted coordinates using per-vertex periodic
     /// offsets and toroidal domain periods.
-    pub(in crate::core) fn validate_geometric_cell_orientation(
-        &self,
-    ) -> Result<(), TriangulationValidationError>
+    pub(in crate::core) fn validate_geometric_cell_orientation(&self) -> Result<(), TdsError>
     where
         K::Scalar: CoordinateScalar,
     {
@@ -2139,8 +2145,7 @@ where
                         "Cell {:?} (key {cell_key:?}) has negative geometric orientation; expected positive canonical orientation",
                         cell.uuid(),
                     ),
-                })
-                .into());
+                }));
             }
         }
 
@@ -2423,7 +2428,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`TriangulationValidationError`] if:
+    /// Returns an [`InvariantError`] if:
     /// - The manifold-with-boundary facet property is violated.
     /// - The triangulation is disconnected (multiple cell components).
     /// - An isolated vertex is detected (no incident cell).
@@ -2448,7 +2453,7 @@ where
     /// // Level 3: topology validation (manifold-with-boundary + Euler characteristic)
     /// assert!(dt.as_triangulation().is_valid().is_ok());
     /// ```
-    pub fn is_valid(&self) -> Result<(), TriangulationValidationError>
+    pub fn is_valid(&self) -> Result<(), InvariantError>
     where
         K::Scalar: CoordinateScalar,
     {
@@ -2495,7 +2500,8 @@ where
                 computed: topology_result.chi,
                 expected,
                 classification: topology_result.classification,
-            });
+            }
+            .into());
         }
         // Check geometric orientation after manifold/link checks so topology-specific
         // diagnostics surface first when multiple invariants are violated.
@@ -2527,7 +2533,7 @@ where
     /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
     /// assert!(dt.as_triangulation().validate_at_completion().is_ok());
     /// ```
-    pub fn validate_at_completion(&self) -> Result<(), TriangulationValidationError> {
+    pub fn validate_at_completion(&self) -> Result<(), InvariantError> {
         if !self
             .topology_guarantee
             .requires_vertex_links_at_completion()
@@ -2552,7 +2558,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`TriangulationValidationError`] if:
+    /// Returns an [`InvariantError`] if:
     /// - Any vertex/cell is invalid (Level 1).
     /// - The TDS structural invariants fail (Level 2).
     /// - Topology validation fails (Level 3).
@@ -2575,7 +2581,7 @@ where
     /// // Levels 1–3: elements + TDS structure + topology
     /// assert!(dt.as_triangulation().validate().is_ok());
     /// ```
-    pub fn validate(&self) -> Result<(), TriangulationValidationError>
+    pub fn validate(&self) -> Result<(), InvariantError>
     where
         K::Scalar: CoordinateScalar,
     {
@@ -2649,7 +2655,7 @@ where
         if let Err(e) = self.is_valid() {
             violations.push(InvariantViolation {
                 kind: InvariantKind::Topology,
-                error: e.into(),
+                error: e,
             });
         }
 
@@ -2663,7 +2669,7 @@ where
     /// Validates that the triangulation's cell neighbor graph is a single connected component.
     ///
     /// Delegates to [`Tds::is_connected`], an O(N·D) BFS over neighbor pointers.
-    fn validate_global_connectedness(&self) -> Result<(), TriangulationValidationError> {
+    fn validate_global_connectedness(&self) -> Result<(), TdsError> {
         if !self.tds.is_connected() {
             return Err(TdsError::InconsistentDataStructure {
                 message: format!(
@@ -2671,8 +2677,7 @@ where
                      component ({} cells total)",
                     self.tds.number_of_cells()
                 ),
-            }
-            .into());
+            });
         }
         Ok(())
     }
@@ -3396,8 +3401,31 @@ where
         }
     }
 
+    /// Convert an [`InvariantError`] into the appropriate [`InsertionError`] variant.
+    ///
+    /// - `InvariantError::Tds(e)` → `InsertionError::TopologyValidation(e)`
+    /// - `InvariantError::Triangulation(e)` → `InsertionError::TopologyValidationFailed { source: e }`
+    /// - `InvariantError::Delaunay(e)` → `InsertionError::TopologyValidationFailed` (stringified)
+    fn invariant_error_to_insertion_error(err: &InvariantError) -> InsertionError {
+        match err {
+            InvariantError::Tds(tds_err) => InsertionError::TopologyValidation(tds_err.clone()),
+            InvariantError::Triangulation(tri_err) => InsertionError::TopologyValidationFailed {
+                message: "Topology validation failed".to_string(),
+                source: Box::new(tri_err.clone()),
+            },
+            InvariantError::Delaunay(dt_err) => InsertionError::TopologyValidationFailed {
+                message: format!("Delaunay validation failed: {dt_err}"),
+                source: Box::new(TriangulationValidationError::EulerCharacteristicMismatch {
+                    computed: 0,
+                    expected: 0,
+                    classification: TopologyClassification::Unknown,
+                }),
+            },
+        }
+    }
+
     /// Runs mandatory link checks required by the topology guarantee.
-    fn validate_required_topology_links(&self) -> Result<(), TriangulationValidationError>
+    fn validate_required_topology_links(&self) -> Result<(), InvariantError>
     where
         K::Scalar: CoordinateScalar,
     {
@@ -3409,20 +3437,17 @@ where
             .requires_vertex_links_during_insertion()
         {
             let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
-            validate_facet_degree(&facet_to_cells).map_err(TriangulationValidationError::from)?;
-            validate_closed_boundary(&self.tds, &facet_to_cells)
-                .map_err(TriangulationValidationError::from)?;
-            validate_ridge_links(&self.tds).map_err(TriangulationValidationError::from)?;
-            validate_vertex_links(&self.tds, &facet_to_cells)
-                .map_err(TriangulationValidationError::from)?;
+            validate_facet_degree(&facet_to_cells)?;
+            validate_closed_boundary(&self.tds, &facet_to_cells)?;
+            validate_ridge_links(&self.tds)?;
+            validate_vertex_links(&self.tds, &facet_to_cells)?;
             true
         } else if self.topology_guarantee.requires_ridge_links() {
             // Ridge-link checks assume the pseudomanifold invariants already hold.
             let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
-            validate_facet_degree(&facet_to_cells).map_err(TriangulationValidationError::from)?;
-            validate_closed_boundary(&self.tds, &facet_to_cells)
-                .map_err(TriangulationValidationError::from)?;
-            validate_ridge_links(&self.tds).map_err(TriangulationValidationError::from)?;
+            validate_facet_degree(&facet_to_cells)?;
+            validate_closed_boundary(&self.tds, &facet_to_cells)?;
+            validate_ridge_links(&self.tds)?;
             true
         } else {
             false
@@ -3438,10 +3463,7 @@ where
         Ok(())
     }
 
-    fn validate_after_insertion(
-        &self,
-        suspicion: SuspicionFlags,
-    ) -> Result<(), TriangulationValidationError>
+    fn validate_after_insertion(&self, suspicion: SuspicionFlags) -> Result<(), InvariantError>
     where
         K::Scalar: CoordinateScalar,
     {
@@ -3517,7 +3539,7 @@ where
         vertex: Vertex<K::Scalar, U, D>,
         hint: Option<CellKey>,
         attempt: usize,
-        validation_err: &TriangulationValidationError,
+        validation_err: &InvariantError,
     ) -> Result<TryInsertImplOk, InsertionError>
     where
         K::Scalar: CoordinateScalar,
@@ -3526,11 +3548,7 @@ where
         let location = locate(&self.tds, &self.kernel, &point, hint);
 
         let Ok(LocateResult::InsideCell(start_cell)) = location else {
-            return Err(InsertionError::TopologyValidationFailed {
-                message: "Topology invalid after insertion; star-split fallback requires point to re-locate inside a cell"
-                    .to_string(),
-                source: Box::new(validation_err.clone()),
-            });
+            return Err(Self::invariant_error_to_insertion_error(validation_err));
         };
 
         let mut star_conflict = CellKeyBuffer::new();
@@ -3546,10 +3564,9 @@ where
                 if let Err(fallback_validation_err) =
                     self.validate_after_insertion(fallback_suspicion)
                 {
-                    return Err(InsertionError::TopologyValidationFailed {
-                        message: "Topology invalid after star-split fallback".to_string(),
-                        source: Box::new(fallback_validation_err),
-                    });
+                    return Err(Self::invariant_error_to_insertion_error(
+                        &fallback_validation_err,
+                    ));
                 }
 
                 // Telemetry: the fallback succeeded, meaning we recovered from a topology
@@ -3563,12 +3580,10 @@ where
 
                 Ok((fallback_ok, fallback_removed, fallback_suspicion))
             }
-            Err(fallback_err) => Err(InsertionError::TopologyValidationFailed {
-                message: format!(
-                    "Topology invalid after insertion; star-split fallback failed: {fallback_err}"
-                ),
-                source: Box::new(validation_err.clone()),
-            }),
+            Err(fallback_err) => {
+                let _ = fallback_err;
+                Err(Self::invariant_error_to_insertion_error(validation_err))
+            }
         }
     }
 
@@ -4081,7 +4096,7 @@ where
         let new_cells = fill_cavity(&mut self.tds, v_key, &boundary_facets)?;
         self.canonicalize_positive_orientation_for_cells(&new_cells)
             .map_err(|e| {
-                extract_tds_validation_error(
+                extract_tds_error(
                     e,
                     "Failed to canonicalize positive orientation for cavity cells",
                 )
@@ -5002,7 +5017,7 @@ where
             // cells to positive orientation (#258).
             self.normalize_and_promote_positive_orientation()
                 .map_err(|e| {
-                    extract_tds_validation_error(
+                    extract_tds_error(
                         e,
                         "Orientation canonicalization failed after fan retriangulation",
                     )
@@ -5413,9 +5428,10 @@ mod tests {
             message: "unit test".to_string(),
         };
 
+        // ManifoldError::Tds routes through InvariantError, not TriangulationValidationError.
         assert_eq!(
-            TriangulationValidationError::from(ManifoldError::Tds(tds_err.clone())),
-            TriangulationValidationError::Tds(tds_err)
+            InvariantError::from(ManifoldError::Tds(tds_err.clone())),
+            InvariantError::Tds(tds_err)
         );
 
         assert!(matches!(
@@ -5699,7 +5715,9 @@ mod tests {
         tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
         match tri.validate_at_completion() {
-            Err(TriangulationValidationError::VertexLinkNotManifold { vertex_key, .. }) => {
+            Err(InvariantError::Triangulation(
+                TriangulationValidationError::VertexLinkNotManifold { vertex_key, .. },
+            )) => {
                 assert_eq!(vertex_key, v0);
             }
             other => panic!("Expected VertexLinkNotManifold, got {other:?}"),
@@ -5713,7 +5731,9 @@ mod tests {
 
         assert!(matches!(
             tri.validate_at_completion(),
-            Err(TriangulationValidationError::VertexLinkNotManifold { .. })
+            Err(InvariantError::Triangulation(
+                TriangulationValidationError::VertexLinkNotManifold { .. }
+            ))
         ));
         assert_eq!(tri.validation_policy(), ValidationPolicy::OnSuspicion);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -5828,9 +5848,7 @@ mod tests {
         tri.set_validation_policy(ValidationPolicy::Always);
 
         match tri.validate_after_insertion(SuspicionFlags::default()) {
-            Err(TriangulationValidationError::Tds(TdsError::InconsistentDataStructure {
-                ..
-            })) => {}
+            Err(InvariantError::Tds(TdsError::InconsistentDataStructure { .. })) => {}
             other => panic!("Expected InconsistentDataStructure error, got {other:?}"),
         }
     }
@@ -5861,7 +5879,9 @@ mod tests {
         tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
         match tri.validate_after_insertion(SuspicionFlags::default()) {
-            Err(TriangulationValidationError::ManifoldFacetMultiplicity { cell_count, .. }) => {
+            Err(InvariantError::Triangulation(
+                TriangulationValidationError::ManifoldFacetMultiplicity { cell_count, .. },
+            )) => {
                 assert_eq!(cell_count, 3);
             }
             other => panic!("Expected ManifoldFacetMultiplicity, got {other:?}"),
@@ -6303,7 +6323,7 @@ mod tests {
         // connectedness (two components that share only a vertex).
         assert!(matches!(
             tri.is_valid(),
-            Err(TriangulationValidationError::Tds(
+            Err(InvariantError::Tds(
                 TdsError::InconsistentDataStructure { .. }
             ))
         ));
@@ -6315,15 +6335,17 @@ mod tests {
         // or ridge-link validation.  The two components share only v0 (a vertex, not a facet)
         // so the neighbor graph is disconnected.
         match tri.is_valid() {
-            Err(TriangulationValidationError::VertexLinkNotManifold {
-                vertex_key,
-                link_vertex_count,
-                link_cell_count,
-                boundary_facet_count,
-                max_degree,
-                connected,
-                interior_vertex,
-            }) => {
+            Err(InvariantError::Triangulation(
+                TriangulationValidationError::VertexLinkNotManifold {
+                    vertex_key,
+                    link_vertex_count,
+                    link_cell_count,
+                    boundary_facet_count,
+                    max_degree,
+                    connected,
+                    interior_vertex,
+                },
+            )) => {
                 assert_eq!(vertex_key, v0);
                 assert!(interior_vertex);
                 assert!(link_vertex_count > 0);
@@ -6332,12 +6354,13 @@ mod tests {
                 assert_eq!(max_degree, 2);
                 assert!(!connected);
             }
-            Err(TriangulationValidationError::RidgeLinkNotManifold { .. }) => {}
+            Err(InvariantError::Triangulation(
+                TriangulationValidationError::RidgeLinkNotManifold { .. },
+            )) => {}
             // Connectivity is now checked before link validation; a two-component wedge is
             // also disconnected in the neighbor graph.
-            Err(TriangulationValidationError::Tds(TdsError::InconsistentDataStructure {
-                ref message,
-            })) if message.contains("Disconnected") => {}
+            Err(InvariantError::Tds(TdsError::InconsistentDataStructure { ref message }))
+                if message.contains("Disconnected") => {}
             other => panic!(
                 "Expected RidgeLinkNotManifold, VertexLinkNotManifold, or Disconnected in strict PL-manifold mode, got {other:?}"
             ),
@@ -6406,15 +6429,17 @@ mod tests {
         tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
 
         match tri.is_valid() {
-            Err(TriangulationValidationError::VertexLinkNotManifold {
-                vertex_key,
-                link_vertex_count,
-                link_cell_count,
-                boundary_facet_count,
-                connected,
-                interior_vertex,
-                ..
-            }) => {
+            Err(InvariantError::Triangulation(
+                TriangulationValidationError::VertexLinkNotManifold {
+                    vertex_key,
+                    link_vertex_count,
+                    link_cell_count,
+                    boundary_facet_count,
+                    connected,
+                    interior_vertex,
+                    ..
+                },
+            )) => {
                 assert_eq!(vertex_key, apex);
                 assert!(interior_vertex);
                 assert!(connected);
@@ -6475,9 +6500,7 @@ mod tests {
         // neighbor-graph BFS visits only one of them.  Connectivity is now the first check in
         // `is_valid()`, so the disconnection error is returned first.
         match tri.is_valid() {
-            Err(TriangulationValidationError::Tds(TdsError::InconsistentDataStructure {
-                ref message,
-            })) => {
+            Err(InvariantError::Tds(TdsError::InconsistentDataStructure { ref message })) => {
                 assert!(
                     message.contains("Disconnected"),
                     "Expected disconnection message, got: {message}"
@@ -6520,10 +6543,10 @@ mod tests {
             .expect("bootstrap insertion should succeed");
 
         match tri.is_valid() {
-            Err(TriangulationValidationError::IsolatedVertex {
+            Err(InvariantError::Triangulation(TriangulationValidationError::IsolatedVertex {
                 vertex_key,
                 vertex_uuid,
-            }) => {
+            })) => {
                 assert_eq!(vertex_key, expected_vk);
                 assert_eq!(vertex_uuid, expected_uuid);
             }
@@ -6557,7 +6580,9 @@ mod tests {
             .unwrap();
 
         match tri.is_valid() {
-            Err(TriangulationValidationError::IsolatedVertex { .. }) => {
+            Err(InvariantError::Triangulation(TriangulationValidationError::IsolatedVertex {
+                ..
+            })) => {
                 // Expected: isolated vertex produces a structured IsolatedVertex error.
             }
             other => panic!("Expected IsolatedVertex error, got {other:?}"),
@@ -6670,9 +6695,7 @@ mod tests {
 
         // Level 3 should still fail due to disconnectedness.
         match tri.is_valid() {
-            Err(TriangulationValidationError::Tds(TdsError::InconsistentDataStructure {
-                message,
-            })) => {
+            Err(InvariantError::Tds(TdsError::InconsistentDataStructure { message })) => {
                 assert!(
                     message.contains("Disconnected triangulation"),
                     "Expected disconnectedness error, got message: {message}"
@@ -6818,16 +6841,16 @@ mod tests {
         // visits only one of them.  Connectivity is now the first check in `is_valid()`, so the
         // disconnection error is returned before the non-manifold facet error.
         match tri.is_valid() {
-            Err(TriangulationValidationError::Tds(TdsError::InconsistentDataStructure {
-                ref message,
-            })) => {
+            Err(InvariantError::Tds(TdsError::InconsistentDataStructure { ref message })) => {
                 assert!(
                     message.contains("Disconnected"),
                     "Expected disconnection message, got: {message}"
                 );
             }
             // Non-manifold facet detection is still valid if the cells happen to be connected.
-            Err(TriangulationValidationError::ManifoldFacetMultiplicity { cell_count, .. }) => {
+            Err(InvariantError::Triangulation(
+                TriangulationValidationError::ManifoldFacetMultiplicity { cell_count, .. },
+            )) => {
                 assert_eq!(cell_count, 3);
             }
             other => panic!("Expected Disconnected or ManifoldFacetMultiplicity, got {other:?}"),
@@ -7113,7 +7136,7 @@ mod tests {
         let err = tri.is_valid().unwrap_err();
         assert!(matches!(
             err,
-            TriangulationValidationError::Tds(TdsError::Geometric(GeometricError::NegativeOrientation { message }))
+            InvariantError::Tds(TdsError::Geometric(GeometricError::NegativeOrientation { message }))
                 if message.contains("negative geometric orientation")
         ));
     }
@@ -7206,7 +7229,7 @@ mod tests {
         let err = tri.validate_geometric_cell_orientation().unwrap_err();
         assert!(matches!(
             err,
-            TriangulationValidationError::Tds(TdsError::Geometric(GeometricError::NegativeOrientation { message }))
+            TdsError::Geometric(GeometricError::NegativeOrientation { message })
                 if message.contains("negative geometric orientation")
         ));
     }
@@ -7230,7 +7253,7 @@ mod tests {
         let err = tri.validate_geometric_cell_orientation().unwrap_err();
         assert!(matches!(
             err,
-            TriangulationValidationError::Tds(TdsError::InconsistentDataStructure { message })
+            TdsError::InconsistentDataStructure { message }
                 if message.contains("has periodic offsets")
                     && message.contains("expected periodic-orientation-offset-capable topology")
         ));
@@ -7254,11 +7277,11 @@ mod tests {
         let err = tri.validate_geometric_cell_orientation().unwrap_err();
         assert!(matches!(
             err,
-            TriangulationValidationError::Tds(TdsError::DimensionMismatch {
+            TdsError::DimensionMismatch {
                 expected: 3,
                 actual: 2,
                 ..
-            })
+            }
         ));
     }
 
@@ -7286,7 +7309,7 @@ mod tests {
         let err = tri.validate_geometric_cell_orientation().unwrap_err();
         assert!(matches!(
             err,
-            TriangulationValidationError::Tds(TdsError::InconsistentDataStructure { message })
+            TdsError::InconsistentDataStructure { message }
                 if message.contains("Failed to lift coordinates")
                     && message.contains("Invalid toroidal period")
         ));
@@ -8523,33 +8546,40 @@ mod tests {
         // Reaching here without panic confirms EXPAND and SHRINK branches executed.
     }
 
-    // ---- extract_tds_validation_error tests ----
+    // ---- extract_tds_error tests ----
 
     #[test]
-    fn test_extract_tds_validation_error_topology_validation_returns_source() {
+    fn test_extract_tds_error_topology_validation_returns_source() {
         let source = TdsError::Geometric(GeometricError::DegenerateOrientation {
             message: "det=0".to_string(),
         });
         let error = InsertionError::TopologyValidation(source.clone());
-        let result = extract_tds_validation_error(error, "test context");
+        let result = extract_tds_error(error, "test context");
         assert_eq!(result, source);
     }
 
     #[test]
-    fn test_extract_tds_validation_error_topology_validation_failed_wrapping_tds() {
-        let inner_tds = TdsError::Geometric(GeometricError::NegativeOrientation {
-            message: "det<0".to_string(),
-        });
+    fn test_extract_tds_error_topology_validation_failed_wraps_in_inconsistent() {
         let error = InsertionError::TopologyValidationFailed {
             message: "outer".to_string(),
-            source: Box::new(TriangulationValidationError::Tds(inner_tds.clone())),
+            source: Box::new(TriangulationValidationError::IsolatedVertex {
+                vertex_key: VertexKey::from(KeyData::from_ffi(1)),
+                vertex_uuid: Uuid::nil(),
+            }),
         };
-        let result = extract_tds_validation_error(error, "test context");
-        assert_eq!(result, inner_tds);
+        let result = extract_tds_error(error, "test context");
+        assert!(
+            matches!(
+                result,
+                TdsError::InconsistentDataStructure { ref message }
+                    if message.contains("test context")
+            ),
+            "TopologyValidationFailed should produce InconsistentDataStructure: {result:?}"
+        );
     }
 
     #[test]
-    fn test_extract_tds_validation_error_topology_validation_failed_wrapping_non_tds() {
+    fn test_extract_tds_error_topology_validation_failed_wrapping_non_tds() {
         let error = InsertionError::TopologyValidationFailed {
             message: "outer".to_string(),
             source: Box::new(TriangulationValidationError::ManifoldFacetMultiplicity {
@@ -8557,7 +8587,7 @@ mod tests {
                 cell_count: 3,
             }),
         };
-        let result = extract_tds_validation_error(error, "my context");
+        let result = extract_tds_error(error, "my context");
         assert!(
             matches!(
                 result,
@@ -8569,11 +8599,11 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_tds_validation_error_other_variant_wraps_in_inconsistent() {
+    fn test_extract_tds_error_other_variant_wraps_in_inconsistent() {
         let error = InsertionError::CavityFilling {
             message: "filling failed".to_string(),
         };
-        let result = extract_tds_validation_error(error, "ctx");
+        let result = extract_tds_error(error, "ctx");
         assert!(
             matches!(
                 result,

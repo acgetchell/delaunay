@@ -289,10 +289,9 @@ impl InsertionError {
 
     /// Check whether a TDS-level validation error is geometry-related (retryable).
     ///
-    /// `IsolatedVertex` is retryable because it arises during insertion when
-    /// a geometrically-sensitive conflict region leaves a pre-existing vertex
-    /// with no incident cells; perturbing coordinates changes the conflict
-    /// region and can avoid stranding the vertex.
+    /// Only `Geometric` (FP degeneracy) and `OrientationViolation` (coherent-orientation
+    /// breach after near-degenerate geometry) are retryable at this layer.  All other
+    /// `TdsError` variants represent structural bugs that perturbation cannot fix.
     const fn is_tds_error_retryable(tds_err: &TdsError) -> bool {
         matches!(
             tds_err,
@@ -305,16 +304,16 @@ impl InsertionError {
         match err {
             // Geometry-related topology violations: a near-degenerate insertion can create
             // non-manifold facets, broken links, or boundary violations that perturbation
-            // may resolve.  IsolatedVertex is retryable because a geometrically-sensitive
-            // conflict region can leave a pre-existing vertex with no incident cells;
-            // perturbing coordinates changes the conflict region.
+            // may resolve.
+            //
+            // `IsolatedVertex` is retryable because a geometrically-sensitive conflict
+            // region can leave a pre-existing vertex with no incident cells; perturbing
+            // coordinates changes the conflict region and can avoid stranding the vertex.
             TriangulationValidationError::ManifoldFacetMultiplicity { .. }
             | TriangulationValidationError::BoundaryRidgeMultiplicity { .. }
             | TriangulationValidationError::RidgeLinkNotManifold { .. }
             | TriangulationValidationError::VertexLinkNotManifold { .. }
             | TriangulationValidationError::IsolatedVertex { .. } => true,
-            // TDS-level errors: delegate to the same geometry-variant check.
-            TriangulationValidationError::Tds(tds_err) => Self::is_tds_error_retryable(tds_err),
             // All other variants (structural invariant violations, future additions)
             // are conservatively treated as non-retryable.
             _ => false,
@@ -2695,14 +2694,14 @@ mod tests {
         );
 
         // TopologyValidationFailed wrapping a structural error is non-retryable.
-        let structural_l3 =
-            TriangulationValidationError::from(TdsError::InconsistentDataStructure {
-                message: "test".to_string(),
-            });
         assert!(
             !InsertionError::TopologyValidationFailed {
                 message: "test".to_string(),
-                source: Box::new(structural_l3),
+                source: Box::new(TriangulationValidationError::EulerCharacteristicMismatch {
+                    computed: 3,
+                    expected: 2,
+                    classification: TopologyClassification::Ball(3),
+                }),
             }
             .is_retryable()
         );
@@ -2759,19 +2758,6 @@ mod tests {
                     connected: false,
                     interior_vertex: true,
                 }),
-            }
-            .is_retryable()
-        );
-        // TopologyValidationFailed wrapping Tds(DegenerateOrientation) is retryable
-        // (delegates to is_tds_error_retryable).
-        assert!(
-            InsertionError::TopologyValidationFailed {
-                message: "test".to_string(),
-                source: Box::new(TriangulationValidationError::Tds(TdsError::Geometric(
-                    GeometricError::DegenerateOrientation {
-                        message: "det=0".to_string(),
-                    }
-                ))),
             }
             .is_retryable()
         );
