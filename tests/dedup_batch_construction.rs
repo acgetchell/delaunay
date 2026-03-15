@@ -1,7 +1,8 @@
 //! Integration tests for batch construction with duplicate vertices.
 //!
 //! These tests verify that:
-//! - Hilbert-sort dedup silently removes exact duplicates during batch construction
+//! - Hilbert-sort dedup (unconditional) removes exact duplicates during batch construction
+//! - Hilbert-sort dedup collapses quantization-resolution collisions
 //! - The resulting triangulations are valid (Levels 1–4)
 //! - Cell-level coordinate uniqueness validation catches no violations post-dedup
 //! - Explicit `DedupPolicy::Exact` works for non-Hilbert orderings
@@ -90,10 +91,9 @@ fn simplex_with_one_duplicate<const D: usize>() -> (Vec<Vertex<f64, (), D>>, usi
 
 /// Generate batch construction dedup tests for a given dimension:
 ///
-/// - Hilbert dedup removes exact duplicates
+/// - Hilbert dedup removes exact duplicates (unconditional)
 /// - All-identical input fails gracefully
 /// - `DedupPolicy::Exact` with `Input` ordering removes duplicates
-/// - `DedupPolicy::Exact` with `Lexicographic` ordering removes duplicates
 /// - Many-duplicate stress test collapses correctly
 macro_rules! gen_dedup_batch_tests {
     ($dim:literal) => {
@@ -177,31 +177,6 @@ macro_rules! gen_dedup_batch_tests {
             }
 
             #[test]
-            fn [<test_explicit_dedup_exact_lexicographic_order_ $dim d>]() {
-                init_tracing();
-                let (vertices, distinct) = simplex_with_one_duplicate::<$dim>();
-
-                let opts = ConstructionOptions::default()
-                    .with_insertion_order(InsertionOrderStrategy::Lexicographic)
-                    .with_dedup_policy(DedupPolicy::Exact);
-
-                let dt: DelaunayTriangulation<_, (), (), $dim> =
-                    DelaunayTriangulation::new_with_options(&vertices, opts)
-                        .expect(concat!(
-                            stringify!($dim),
-                            "D: DedupPolicy::Exact + Lexicographic should succeed"
-                        ));
-
-                assert_eq!(
-                    dt.number_of_vertices(),
-                    distinct,
-                    "{}D: DedupPolicy::Exact + Lexicographic should remove duplicate",
-                    $dim
-                );
-                assert!(dt.validate().is_ok());
-            }
-
-            #[test]
             fn [<test_batch_construction_many_duplicates_ $dim d>]() {
                 init_tracing();
                 // D+2 distinct vertices, each repeated 5× = 5(D+2) total
@@ -251,6 +226,7 @@ gen_dedup_batch_tests!(5);
 ///
 /// For D=2, bits=31, grid spacing ≈ 1/(2³¹ − 1) ≈ 4.66×10⁻¹⁰.
 /// Two points differing by ~1×10⁻¹⁰ will collide at quantization resolution.
+/// Hilbert dedup is unconditional and does not require any `DedupPolicy`.
 #[test]
 fn test_hilbert_dedup_quantized_collision_2d() {
     init_tracing();

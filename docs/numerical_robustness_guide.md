@@ -166,13 +166,12 @@ The quantization resolution is `min(128/D, 31)` bits per coordinate, giving:
 - 4D: 31 bits/coord → ~10⁻⁹ relative resolution
 - 5D: 25 bits/coord → ~10⁻⁸ relative resolution
 
-This layer is unconditional when Hilbert ordering is active (the default) and runs in
-O(n log n) time. It removes the vast majority of exact and near-duplicate vertices
-before any insertion occurs. The dedup runs regardless of `DedupPolicy` because it
-guards against SoS failures on identical quantized points — a different failure mode
-than the user-facing duplicate policies.
+This layer is **unconditional** when Hilbert ordering is active (the default) and runs
+in O(n log n) time with zero extra allocation (the quantized coordinates are already
+computed during Hilbert index generation).  It removes the vast majority of exact and
+near-duplicate vertices before any insertion occurs, regardless of `DedupPolicy`.
 
-See `hilbert_dedup_sorted` (called from `preprocess_vertices_for_construction`) in
+See `order_vertices_hilbert` (called from `order_vertices_by_strategy`) in
 [`src/core/delaunay_triangulation.rs`](../src/core/delaunay_triangulation.rs).
 
 ### Layer 2: Per-insertion duplicate coordinate check
@@ -188,8 +187,7 @@ vertex is skipped with `InsertionOutcome::Skipped { error: DuplicateCoordinates 
 and the triangulation is unchanged.
 
 This layer catches duplicates that survive Hilbert dedup (e.g. when using
-`InsertionOrderStrategy::InputOrder` or `::Morton`) and also protects single-vertex
-`insert()` calls.
+`InsertionOrderStrategy::Input`) and also protects single-vertex `insert()` calls.
 
 See `duplicate_coordinates_error` in
 [`src/core/triangulation.rs`](../src/core/triangulation.rs).
@@ -227,18 +225,19 @@ construction, or when using a non-Hilbert insertion order.
 
 ### Choosing a `DedupPolicy`
 
-The `DedupPolicy` enum on `DelaunayTriangulation` controls whether explicit
-preprocessing dedup is applied before batch construction:
+`DedupPolicy` is a **performance-tuning** knob, not a correctness requirement.
+Layers 1 and 2 are always active regardless of this setting.
 
-- `DedupPolicy::Off` *(default)*: rely on the implicit Hilbert dedup (Layer 1) and
-  per-insertion checks (Layer 2). This is sufficient for most use cases.
-- `DedupPolicy::Exact`: apply `dedup_vertices_exact` before construction.
-- `DedupPolicy::Epsilon(value)`: apply `dedup_vertices_epsilon` with the given
-  tolerance before construction.
+- `DedupPolicy::Off` *(default)*: rely on the unconditional Hilbert dedup (Layer 1)
+  and per-insertion checks (Layer 2).  This is sufficient for most use cases.
+- `DedupPolicy::Exact`: additionally apply `dedup_vertices_exact` before
+  construction.  This is a performance optimisation for inputs with many exact
+  duplicates — it avoids paying per-vertex insertion overhead for each one.
+- `DedupPolicy::Epsilon(value)`: additionally apply `dedup_vertices_epsilon`
+  with the given tolerance before construction.
 
-The default (`Off`) is recommended because Hilbert dedup is faster (O(n log n) vs
-O(n²)) and catches near-duplicates at quantization resolution, while per-insertion
-checks handle any remaining cases.
+The default (`Off`) is recommended because Hilbert dedup is free (zero extra cost)
+and per-insertion checks handle any remaining cases.
 
 ## Practical recommendations
 

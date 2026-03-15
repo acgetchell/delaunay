@@ -52,9 +52,10 @@ affected by cavity/topology interactions rather than predicate degeneracies.
   distinct points; only truly identical f64 coordinates yield 0.
 - Callers that need true geometric degeneracy detection (e.g. initial simplex validation,
   flip degenerate-cell guards) now use `robust_orientation` (exact, no SoS) directly.
-- Hilbert-sort dedup extracted into a separate `hilbert_dedup_sorted` pass that runs
-  unconditionally after Hilbert sorting, guarding against SoS failures on identical
-  quantized points.
+- Hilbert-sort quantized dedup integrated into `order_vertices_hilbert` and runs
+  unconditionally when Hilbert ordering is active.  Guards against SoS failures on
+  identical quantized points with zero extra allocation (reuses quantized coordinates
+  from the sorting phase).
 
 ### What remains
 

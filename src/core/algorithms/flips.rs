@@ -5171,10 +5171,10 @@ mod tests {
                 }
             }
             let points = vertices_to_points(tds, &verts).unwrap();
-            assert!(
-                !matches!(robust_orientation(&points), Ok(Orientation::DEGENERATE)),
-                "robust_orientation must resolve to ±1"
-            );
+            match robust_orientation(&points) {
+                Ok(Orientation::POSITIVE | Orientation::NEGATIVE) => {}
+                other => panic!("robust_orientation must resolve to ±1, got {other:?}"),
+            }
         }
     }
 
