@@ -166,13 +166,10 @@ pub enum DelaunayTriangulationValidationError {
 /// Strategy used to order input vertices before batch construction.
 ///
 /// The default is [`InsertionOrderStrategy::Hilbert`], which improves spatial locality during
-/// bulk insertion.
+/// bulk insertion and provides unconditional quantized dedup.
 ///
 /// If you need to preserve the caller-provided order (for example to control the initial simplex
 /// vertices), use [`InsertionOrderStrategy::Input`].
-///
-/// Note: Morton ordering can improve spatial locality, but it may cause flip cycle issues during
-/// Delaunay repair with certain point distributions.
 ///
 /// # Examples
 ///
@@ -197,19 +194,6 @@ pub enum DelaunayTriangulationValidationError {
 pub enum InsertionOrderStrategy {
     /// Preserve the caller-provided input order (no reordering).
     Input,
-    /// Sort vertices by their coordinates (lexicographic order, `OrderedFloat` semantics).
-    ///
-    /// This ordering is deterministic and does not depend on vertex UUIDs (which are random by
-    /// default).
-    Lexicographic,
-    /// Sort vertices by Morton / Z-order curve (quantized, normalized coordinates).
-    ///
-    /// This ordering can improve spatial locality during bulk insertion, reducing point location
-    /// cost. However, it may cause flip cycle issues during Delaunay repair with certain point
-    /// distributions.
-    ///
-    /// Ties are broken lexicographically by coordinates, then by original input index.
-    Morton,
     /// Sort vertices by Hilbert curve (quantized, normalized coordinates).
     ///
     /// This ordering can improve spatial locality during bulk insertion, reducing point location
@@ -223,7 +207,24 @@ pub enum InsertionOrderStrategy {
 /// Policy controlling optional preprocessing to remove duplicate or near-duplicate vertices
 /// before batch construction.
 ///
-/// This is intended as an *explicit* opt-in for callers who want a predictable preprocessing step.
+/// This is a **performance-tuning** knob, not a correctness requirement.  The
+/// triangulation engine applies two built-in safety layers:
+///
+/// 1. **Hilbert quantized dedup** — when
+///    [`InsertionOrderStrategy::Hilbert`] is active (the default), vertices
+///    that map to the same quantized grid cell are removed in a single O(n)
+///    sweep during sorting (zero extra cost since the quantized coordinates
+///    are already computed).  This runs regardless of `DedupPolicy`, but only
+///    when the Hilbert insertion order is selected.
+/// 2. **Per-insertion duplicate check** *(unconditional)* — every `insert`
+///    call checks the incoming vertex against existing vertices
+///    (squared-distance tolerance 1e-10).  Duplicates are skipped without
+///    modifying the triangulation.
+///
+/// Use `DedupPolicy::Exact` or `DedupPolicy::Epsilon` when your input is
+/// known to contain many duplicates and you want to avoid the per-vertex
+/// insertion overhead for each one.
+///
 /// The default is [`DedupPolicy::Off`].
 ///
 /// # Examples
@@ -246,12 +247,16 @@ pub enum InsertionOrderStrategy {
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[non_exhaustive]
 pub enum DedupPolicy {
-    /// Do not preprocess input vertices (legacy behavior).
+    /// Do not apply explicit preprocessing dedup (rely on the built-in
+    /// Hilbert quantized dedup and per-insertion duplicate checks).
     #[default]
     Off,
-    /// Remove exact coordinate duplicates (NaN-aware, +0.0 == -0.0).
+    /// Remove exact coordinate duplicates before construction (NaN-aware, +0.0 == -0.0).
+    ///
+    /// This is a performance optimisation for inputs with many exact duplicates;
+    /// it avoids paying per-vertex insertion cost for each duplicate.
     Exact,
-    /// Remove near-duplicates within the given Euclidean tolerance.
+    /// Remove near-duplicates within the given Euclidean tolerance before construction.
     ///
     /// The tolerance is expressed as an `f64` and is converted to the triangulation's scalar type
     /// at runtime. Invalid (negative / non-finite) tolerances are rejected.
@@ -645,108 +650,6 @@ where
     keyed.into_iter().map(|(v, _, _)| v).collect()
 }
 
-fn morton_bits_per_coord<const D: usize>() -> Option<u32> {
-    if !(2..=5).contains(&D) {
-        return None;
-    }
-
-    let Ok(d_u32) = u32::try_from(D) else {
-        return None;
-    };
-
-    let bits_per_coord = u64::BITS / d_u32;
-    if bits_per_coord == 0 || bits_per_coord >= u64::BITS {
-        return None;
-    }
-
-    Some(bits_per_coord)
-}
-
-fn morton_code<const D: usize>(quantized: [u64; D], bits_per_coord: u32) -> u64 {
-    let mut code = 0_u64;
-
-    for bit in (0..bits_per_coord).rev() {
-        for &q in &quantized {
-            let b = (q >> bit) & 1;
-            code = (code << 1) | b;
-        }
-    }
-
-    code
-}
-
-fn order_vertices_morton<T, U, const D: usize>(
-    vertices: Vec<Vertex<T, U, D>>,
-) -> Vec<Vertex<T, U, D>>
-where
-    T: CoordinateScalar,
-    U: DataType,
-{
-    let Some(bits_per_coord) = morton_bits_per_coord::<D>() else {
-        return order_vertices_lexicographic(vertices);
-    };
-
-    // Compute bounding box in f64 for normalization. If any coordinate is non-finite,
-    // fall back to lexicographic ordering (Morton normalization assumes finite values).
-    let mut min = [f64::INFINITY; D];
-    let mut max = [f64::NEG_INFINITY; D];
-
-    for v in &vertices {
-        let coords = v.point().coords();
-        for axis in 0..D {
-            let Some(c) = coords[axis].to_f64() else {
-                return order_vertices_lexicographic(vertices);
-            };
-            if !c.is_finite() {
-                return order_vertices_lexicographic(vertices);
-            }
-            min[axis] = min[axis].min(c);
-            max[axis] = max[axis].max(c);
-        }
-    }
-
-    let mut inv_range = [0.0_f64; D];
-    for axis in 0..D {
-        let range = max[axis] - min[axis];
-        inv_range[axis] = if range > 0.0 { 1.0 / range } else { 0.0 };
-    }
-
-    let max_quant = (1_u64 << bits_per_coord) - 1;
-    let scale = <f64 as From<u32>>::from(u32::try_from(max_quant).unwrap_or(u32::MAX));
-
-    let mut keyed: Vec<(u64, Vertex<T, U, D>, usize)> = vertices
-        .into_iter()
-        .enumerate()
-        .map(|(input_index, vertex)| {
-            let coords = vertex.point().coords();
-            let mut q = [0_u64; D];
-
-            for axis in 0..D {
-                let c = coords[axis].to_f64().unwrap_or(0.0);
-                let norm = if inv_range[axis] == 0.0 {
-                    0.0
-                } else {
-                    (c - min[axis]) * inv_range[axis]
-                };
-                let clamped = norm.clamp(0.0, 1.0);
-                q[axis] = (clamped * scale).floor().to_u64().unwrap_or(0);
-            }
-
-            let code = morton_code::<D>(q, bits_per_coord);
-            (code, vertex, input_index)
-        })
-        .collect();
-
-    keyed.sort_by(|(a_code, a_vertex, a_idx), (b_code, b_vertex, b_idx)| {
-        a_code
-            .cmp(b_code)
-            .then_with(|| a_vertex.partial_cmp(b_vertex).unwrap_or(Ordering::Equal))
-            .then_with(|| a_idx.cmp(b_idx))
-    });
-
-    keyed.into_iter().map(|(_, v, _)| v).collect()
-}
-
 const BATCH_DEDUP_BUCKET_INLINE_CAPACITY: usize = 8;
 const BATCH_DEDUP_MAX_DIMENSION: usize = 5;
 
@@ -760,9 +663,7 @@ where
 {
     match insertion_order {
         InsertionOrderStrategy::Input => vertices,
-        InsertionOrderStrategy::Lexicographic => order_vertices_lexicographic(vertices),
-        InsertionOrderStrategy::Morton => order_vertices_morton(vertices),
-        InsertionOrderStrategy::Hilbert => order_vertices_hilbert(vertices),
+        InsertionOrderStrategy::Hilbert => order_vertices_hilbert(vertices, true),
     }
 }
 
@@ -1190,8 +1091,12 @@ fn hilbert_bits_per_coord<const D: usize>() -> Option<u32> {
     Some(bits_per_coord)
 }
 
+/// Sort key for Hilbert ordering: `(hilbert_index, quantized_coords, vertex, input_index)`.
+type HilbertSortKey<T, U, const D: usize> = (u128, [u32; D], Vertex<T, U, D>, usize);
+
 fn order_vertices_hilbert<T, U, const D: usize>(
     vertices: Vec<Vertex<T, U, D>>,
+    dedup_quantized: bool,
 ) -> Vec<Vertex<T, U, D>>
 where
     T: CoordinateScalar,
@@ -1247,8 +1152,8 @@ where
         // On bulk index computation error, fall back to true lexicographic ordering
         return order_vertices_lexicographic(vertices);
     };
-    // Phase 3: Pair indices with vertices and input indices
-    let mut keyed: Vec<(u128, Vertex<T, U, D>, usize)> = vertices
+    // Phase 3: Pair indices with vertices, quantized coords, and input indices
+    let mut keyed: Vec<HilbertSortKey<T, U, D>> = vertices
         .into_iter()
         .enumerate()
         .map(|(input_index, vertex)| {
@@ -1257,18 +1162,49 @@ where
                 .copied()
                 // Fallback to input index directly as u128 (no u32 truncation)
                 .unwrap_or(input_index as u128);
-            (idx, vertex, input_index)
+            let q = quantized[input_index];
+            (idx, q, vertex, input_index)
         })
         .collect();
 
-    keyed.sort_by(|(a_idx, a_vertex, a_in), (b_idx, b_vertex, b_in)| {
-        a_idx
-            .cmp(b_idx)
-            .then_with(|| a_vertex.partial_cmp(b_vertex).unwrap_or(Ordering::Equal))
-            .then_with(|| a_in.cmp(b_in))
-    });
+    keyed.sort_by(
+        |(a_idx, a_q, a_vertex, a_in), (b_idx, b_q, b_vertex, b_in)| {
+            a_idx
+                .cmp(b_idx)
+                .then_with(|| a_q.cmp(b_q))
+                .then_with(|| a_vertex.partial_cmp(b_vertex).unwrap_or(Ordering::Equal))
+                .then_with(|| a_in.cmp(b_in))
+        },
+    );
 
-    keyed.into_iter().map(|(_, v, _)| v).collect()
+    if dedup_quantized {
+        // Deduplicate at quantization resolution in a single linear sweep.
+        // Because vertices sharing the same quantized cell are now adjacent
+        // after sorting, we can eliminate duplicates without re-quantizing.
+        let input_len = keyed.len();
+        let mut prev_q: Option<[u32; D]> = None;
+        let deduped: Vec<Vertex<T, U, D>> = keyed
+            .into_iter()
+            .filter_map(|(_, q, v, _)| {
+                if prev_q == Some(q) {
+                    return None;
+                }
+                prev_q = Some(q);
+                Some(v)
+            })
+            .collect();
+
+        let removed = input_len - deduped.len();
+        if removed > 0 {
+            tracing::debug!(
+                "Hilbert-sort dedup removed {removed} vertices (quantized at {bits_per_coord} bits/coord)"
+            );
+        }
+
+        deduped
+    } else {
+        keyed.into_iter().map(|(_, _, v, _)| v).collect()
+    }
 }
 
 /// Delaunay triangulation with incremental insertion support.
@@ -5270,11 +5206,7 @@ where
 
         // Fast path: inverse k=1 flip when the vertex star is a simplex.
         let mut seed_cells: Option<CellKeyBuffer> = None;
-        let cells_removed = match apply_bistellar_flip_k1_inverse(
-            &mut self.tri.tds,
-            &self.tri.kernel,
-            vertex_key,
-        ) {
+        let cells_removed = match apply_bistellar_flip_k1_inverse(&mut self.tri.tds, vertex_key) {
             Ok(info) => {
                 seed_cells = Some(info.new_cells);
                 info.removed_cells.len()
@@ -6273,68 +6205,6 @@ mod tests {
     }
 
     #[test]
-    fn test_insertion_order_lexicographic_is_deterministic_across_permutations_3d() {
-        init_tracing();
-        let coords: [[f64; 3]; 8] = [
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-            [1.0, 1.0, 1.0],
-            [2.0, 0.0, 1.0],
-            [-1.0, 5.0, 0.0],
-            [3.0, 2.0, 1.0],
-        ];
-
-        let permutations: [&[usize]; 4] = [
-            &[0, 1, 2, 3, 4, 5, 6, 7],
-            &[7, 6, 5, 4, 3, 2, 1, 0],
-            &[2, 3, 4, 5, 6, 7, 0, 1],
-            &[1, 3, 5, 7, 0, 2, 4, 6],
-        ];
-
-        let expected_vertices = vertices_from_coords_permutation_3d(&coords, permutations[0]);
-        let expected = coord_sequence_3d(&order_vertices_lexicographic(expected_vertices));
-
-        for perm in &permutations[1..] {
-            let vertices = vertices_from_coords_permutation_3d(&coords, perm);
-            let got = coord_sequence_3d(&order_vertices_lexicographic(vertices));
-            assert_eq!(got, expected);
-        }
-    }
-
-    #[test]
-    fn test_insertion_order_morton_is_deterministic_across_permutations_3d() {
-        init_tracing();
-        let coords: [[f64; 3]; 8] = [
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-            [1.0, 1.0, 1.0],
-            [2.0, 0.0, 1.0],
-            [-1.0, 5.0, 0.0],
-            [3.0, 2.0, 1.0],
-        ];
-
-        let permutations: [&[usize]; 4] = [
-            &[0, 1, 2, 3, 4, 5, 6, 7],
-            &[7, 6, 5, 4, 3, 2, 1, 0],
-            &[2, 3, 4, 5, 6, 7, 0, 1],
-            &[1, 3, 5, 7, 0, 2, 4, 6],
-        ];
-
-        let expected_vertices = vertices_from_coords_permutation_3d(&coords, permutations[0]);
-        let expected = coord_sequence_3d(&order_vertices_morton(expected_vertices));
-
-        for perm in &permutations[1..] {
-            let vertices = vertices_from_coords_permutation_3d(&coords, perm);
-            let got = coord_sequence_3d(&order_vertices_morton(vertices));
-            assert_eq!(got, expected);
-        }
-    }
-
-    #[test]
     fn test_insertion_order_hilbert_is_deterministic_across_permutations_3d() {
         init_tracing();
         let coords: [[f64; 3]; 8] = [
@@ -6355,18 +6225,165 @@ mod tests {
             &[1, 3, 5, 7, 0, 2, 4, 6],
         ];
 
-        let expected_vertices = vertices_from_coords_permutation_3d(&coords, permutations[0]);
-        let expected = coord_sequence_3d(&order_vertices_hilbert(expected_vertices));
+        // Test both dedup_quantized=false (sort-only) and dedup_quantized=true
+        // (the real code path used by order_vertices_by_strategy).
+        let expected_no_dedup = vertices_from_coords_permutation_3d(&coords, permutations[0]);
+        let expected_no_dedup =
+            coord_sequence_3d(&order_vertices_hilbert(expected_no_dedup, false));
+
+        let expected_dedup = vertices_from_coords_permutation_3d(&coords, permutations[0]);
+        let expected_dedup = coord_sequence_3d(&order_vertices_hilbert(expected_dedup, true));
 
         for perm in &permutations[1..] {
             let vertices = vertices_from_coords_permutation_3d(&coords, perm);
-            let got = coord_sequence_3d(&order_vertices_hilbert(vertices));
-            assert_eq!(got, expected);
+            let got = coord_sequence_3d(&order_vertices_hilbert(vertices, false));
+            assert_eq!(got, expected_no_dedup);
+
+            let vertices = vertices_from_coords_permutation_3d(&coords, perm);
+            let got = coord_sequence_3d(&order_vertices_hilbert(vertices, true));
+            assert_eq!(got, expected_dedup);
         }
     }
 
+    // =========================================================================
+    // HILBERT DEDUP — GENERIC HELPERS
+    // =========================================================================
+
+    /// Build D+1 standard simplex vertices: origin + D unit vectors.
+    fn simplex_vertices<const D: usize>() -> Vec<Vertex<f64, (), D>> {
+        let mut verts = Vec::with_capacity(D + 1);
+        verts.push(vertex!([0.0; D]));
+        for i in 0..D {
+            let mut coords = [0.0; D];
+            coords[i] = 1.0;
+            verts.push(vertex!(coords));
+        }
+        verts
+    }
+
+    /// Build simplex vertices plus exact duplicates of the first two.
+    fn simplex_with_duplicates<const D: usize>() -> (Vec<Vertex<f64, (), D>>, usize) {
+        let mut verts = simplex_vertices::<D>();
+        let distinct = verts.len();
+        // Duplicate the origin and first unit vector
+        verts.push(vertex!([0.0; D]));
+        let mut unit = [0.0; D];
+        unit[0] = 1.0;
+        verts.push(vertex!(unit));
+        (verts, distinct)
+    }
+
+    /// Build simplex vertices plus an interior point (all distinct).
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "D ≤ 5 in practice; no precision loss"
+    )]
+    fn simplex_with_interior<const D: usize>() -> Vec<Vertex<f64, (), D>> {
+        let mut verts = simplex_vertices::<D>();
+        let interior = [0.1_f64 / (D as f64); D];
+        verts.push(vertex!(interior));
+        verts
+    }
+
+    // =========================================================================
+    // HILBERT DEDUP — MACRO-GENERATED PER-DIMENSION TESTS (2D–5D)
+    // =========================================================================
+
+    /// Generate Hilbert-sort dedup tests for a given dimension:
+    ///
+    /// - exact duplicates are removed
+    /// - distinct points are preserved
+    /// - all-identical inputs collapse to 1
+    macro_rules! gen_hilbert_dedup_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_hilbert_sort_dedup_removes_exact_duplicates_ $dim d>]() {
+                    init_tracing();
+                    let (vertices, distinct) = simplex_with_duplicates::<$dim>();
+                    assert!(vertices.len() > distinct);
+                    let result = order_vertices_hilbert(vertices, true);
+                    assert_eq!(
+                        result.len(),
+                        distinct,
+                        "{}D: exact duplicates should be removed",
+                        $dim
+                    );
+                }
+
+                #[test]
+                fn [<test_hilbert_sort_dedup_preserves_distinct_points_ $dim d>]() {
+                    init_tracing();
+                    let vertices = simplex_with_interior::<$dim>();
+                    let expected = vertices.len();
+                    let result = order_vertices_hilbert(vertices, true);
+                    assert_eq!(
+                        result.len(),
+                        expected,
+                        "{}D: distinct points should all be preserved",
+                        $dim
+                    );
+                }
+
+                #[test]
+                fn [<test_hilbert_sort_dedup_all_identical_ $dim d>]() {
+                    init_tracing();
+                    let vertices: Vec<Vertex<f64, (), $dim>> = vec![
+                        vertex!([0.5; $dim]),
+                        vertex!([0.5; $dim]),
+                        vertex!([0.5; $dim]),
+                    ];
+                    let result = order_vertices_hilbert(vertices, true);
+                    assert_eq!(
+                        result.len(),
+                        1,
+                        "{}D: all-identical inputs should collapse to 1",
+                        $dim
+                    );
+                }
+            }
+        };
+    }
+
+    gen_hilbert_dedup_tests!(2);
+    gen_hilbert_dedup_tests!(3);
+    gen_hilbert_dedup_tests!(4);
+    gen_hilbert_dedup_tests!(5);
+
+    // =========================================================================
+    // HILBERT DEDUP — STANDALONE EDGE-CASE TESTS
+    // =========================================================================
+
     #[test]
-    fn test_new_with_options_lexicographic_and_morton_smoke_3d() {
+    fn test_hilbert_dedup_empty_input() {
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![];
+        let result = order_vertices_hilbert(vertices, true);
+        assert!(result.is_empty(), "empty input must produce empty output");
+    }
+
+    #[test]
+    fn test_hilbert_dedup_single_vertex() {
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![vertex!([1.0, 2.0, 3.0])];
+        let result = order_vertices_hilbert(vertices, true);
+        assert_eq!(result.len(), 1, "single vertex must be preserved");
+    }
+
+    #[test]
+    fn test_hilbert_dedup_already_unique() {
+        // Distinct vertices — dedup should be a no-op.
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let n = vertices.len();
+        let result = order_vertices_hilbert(vertices, true);
+        assert_eq!(result.len(), n, "already-unique input must be unchanged");
+    }
+
+    #[test]
+    fn test_new_with_options_hilbert_smoke_3d() {
         init_tracing();
         let vertices: Vec<Vertex<f64, (), 3>> = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -6376,21 +6393,15 @@ mod tests {
             vertex!([0.25, 0.25, 0.25]),
         ];
 
-        for insertion_order in [
-            InsertionOrderStrategy::Lexicographic,
-            InsertionOrderStrategy::Morton,
-            InsertionOrderStrategy::Hilbert,
-        ] {
-            let opts = ConstructionOptions::default()
-                .with_insertion_order(insertion_order)
-                .with_retry_policy(RetryPolicy::Disabled);
+        let opts = ConstructionOptions::default()
+            .with_insertion_order(InsertionOrderStrategy::Hilbert)
+            .with_retry_policy(RetryPolicy::Disabled);
 
-            let dt: DelaunayTriangulation<_, (), (), 3> =
-                DelaunayTriangulation::new_with_options(&vertices, opts).unwrap();
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new_with_options(&vertices, opts).unwrap();
 
-            assert_eq!(dt.number_of_vertices(), 5);
-            assert!(dt.validate().is_ok());
-        }
+        assert_eq!(dt.number_of_vertices(), 5);
+        assert!(dt.validate().is_ok());
     }
 
     #[test]

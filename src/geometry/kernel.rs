@@ -73,8 +73,12 @@ pub trait Kernel<const D: usize>: Clone + Default {
     /// - `0`: Degenerate (points are coplanar/collinear)
     /// - `+1`: Positive orientation
     ///
-    /// **Note:** All built-in kernels can return `0` for truly degenerate
-    /// inputs. Generic code should handle all three values.
+    /// **Note:** [`AdaptiveKernel`] resolves degenerate cases via Simulation
+    /// of Simplicity and returns `0` only when points are identical in `f64`
+    /// representation (a case `SoS` cannot resolve). For all distinct-point
+    /// inputs, `AdaptiveKernel` returns ±1. Other kernels (`FastKernel`,
+    /// `RobustKernel`) can return `0` for any degenerate input. Generic
+    /// code should handle all three values.
     ///
     /// # Arguments
     ///
@@ -400,7 +404,9 @@ where
 /// Use this kernel (the default) for Delaunay triangulation. It provides:
 /// - **Zero configuration** — no tolerance to tune or get wrong
 /// - **Provable error bounds** on the fast filter (no heuristic tolerance)
-/// - **Exact orientation** — returns 0 only for truly degenerate inputs
+/// - **`SoS` orientation** — degenerate ties are broken deterministically;
+///   returns ±1 for all distinct-point inputs (returns 0 only when points
+///   are identical in `f64` representation)
 /// - **`SoS` insphere** — cospherical ties are broken deterministically,
 ///   so every insphere query returns ±1 (never 0/BOUNDARY)
 ///
@@ -410,9 +416,10 @@ where
 ///
 /// # Evaluation strategy
 ///
-/// **Orientation** (exact — no `SoS`):
+/// **Orientation** (exact + `SoS` tie-breaking):
 /// 1. **Fast filter**: `det_direct()` + `det_errbound()` (provable for D ≤ 4)
 /// 2. **Exact arithmetic**: `det_sign_exact()` via Bareiss algorithm in `BigRational`
+/// 3. **`SoS` tie-breaking**: Simulation of Simplicity for degenerate cases
 ///
 /// **Insphere** (exact + `SoS` tie-breaking):
 /// 1. **Fast filter** + **exact arithmetic** (same as orientation)
@@ -427,14 +434,14 @@ where
 ///
 /// let kernel = AdaptiveKernel::<f64>::new();
 ///
-/// // Collinear points are correctly reported as degenerate
+/// // Collinear points get a deterministic SoS sign (never 0)
 /// let collinear = [
 ///     Point::new([0.0, 0.0]),
 ///     Point::new([1.0, 0.0]),
 ///     Point::new([2.0, 0.0]),
 /// ];
 /// let orientation = kernel.orientation(&collinear).unwrap();
-/// assert_eq!(orientation, 0); // Exact: truly degenerate
+/// assert!(orientation == 1 || orientation == -1); // SoS: always non-zero
 /// ```
 #[derive(Clone, Default, Debug)]
 pub struct AdaptiveKernel<T: CoordinateScalar> {
@@ -478,23 +485,29 @@ where
             });
         }
 
-        let k = D + 1;
+        // Layer 1+2: exact sign via fast filter + Bareiss in BigRational.
+        // Delegates to robust_orientation to avoid duplicating the homogeneous
+        // matrix build + exact_det_sign pipeline.
+        let exact = robust_orientation(points)?;
+        match exact {
+            Orientation::POSITIVE => return Ok(1),
+            Orientation::NEGATIVE => return Ok(-1),
+            Orientation::DEGENERATE => {}
+        }
 
-        try_with_la_stack_matrix!(k, |matrix| {
-            // Build (D+1)×(D+1) homogeneous orientation matrix.
-            for (i, p) in points.iter().enumerate() {
-                let coords_f64 = safe_coords_to_f64(p.coords())?;
-                for (j, &v) in coords_f64.iter().enumerate() {
-                    matrix_set(&mut matrix, i, j, v);
-                }
-                matrix_set(&mut matrix, i, D, 1.0);
-            }
+        // Layer 3: SoS tie-breaking for truly degenerate orientation.
+        // Same pattern as in_sphere() — convert to f64 points for SoS.
+        let f64_points: Vec<Point<f64, D>> = points
+            .iter()
+            .map(|p| safe_coords_to_f64(p.coords()).map(Point::new))
+            .collect::<Result<_, _>>()?;
 
-            // Exact sign via fast filter + Bareiss in BigRational.
-            // No SoS: orientation must reflect true geometry so that
-            // zero-volume (degenerate) cells are detected, not masked.
-            Ok(exact_det_sign(&matrix))
-        })
+        // SoS guarantees a non-zero sign for distinct points.  If SoS
+        // fails (all cofactors vanish) the points are identical in f64
+        // representation — a true degeneracy that cannot be resolved
+        // symbolically.  Return 0 so callers' existing degenerate-
+        // orientation handling applies.
+        crate::geometry::sos::sos_orientation_sign(&f64_points).map_or(Ok(0), Ok)
     }
 
     fn in_sphere(
@@ -867,15 +880,27 @@ mod tests {
                 }
 
                 #[test]
-                fn [<test_adaptive_orientation_ $dim d_degenerate_exact_zero>]() {
-                    // Exact orientation returns 0 for truly degenerate inputs
-                    // (no SoS on orientation — true geometry must be visible).
+                fn [<test_adaptive_orientation_ $dim d_degenerate_sos_nonzero>]() {
+                    // SoS orientation returns ±1 for degenerate inputs (never 0).
                     let kernel = AdaptiveKernel::<f64>::new();
                     let simplex = degenerate_simplex::<$dim>();
                     let result = kernel.orientation(&simplex).unwrap();
-                    assert_eq!(
-                        result, 0,
-                        "AdaptiveKernel exact orientation must return 0 for degenerate input, got {result}"
+                    assert!(
+                        result == 1 || result == -1,
+                        "AdaptiveKernel SoS orientation must never return 0, got {result}"
+                    );
+                }
+
+                #[test]
+                fn [<test_adaptive_orientation_ $dim d_degenerate_deterministic>]() {
+                    let kernel = AdaptiveKernel::<f64>::new();
+                    let simplex = degenerate_simplex::<$dim>();
+                    let results: Vec<i32> = (0..10)
+                        .map(|_| kernel.orientation(&simplex).unwrap())
+                        .collect();
+                    assert!(
+                        results.iter().all(|&r| r == results[0]),
+                        "Degenerate SoS orientation must be deterministic"
                     );
                 }
 
@@ -1019,4 +1044,36 @@ mod tests {
         let test = Point::new([0.5, 0.5]);
         assert!(kernel.in_sphere(&simplex, &test).is_err());
     }
+
+    // =========================================================================
+    // SoS IDENTICAL-POINTS REGRESSION
+    // =========================================================================
+
+    /// When all D+1 input points are identical in f64, every `SoS` cofactor
+    /// vanishes and `sos_orientation_sign` returns `Err`.  `AdaptiveKernel`
+    /// must map that to `Ok(0)` so callers' degenerate-orientation handling
+    /// applies.  This is a regression guard for the fallback at kernel.rs:518.
+    macro_rules! gen_sos_identical_points_test {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_adaptive_sos_identical_points_ $dim d>]() {
+                    let kernel = AdaptiveKernel::<f64>::new();
+                    let points: Vec<Point<f64, $dim>> =
+                        vec![Point::new([0.42; $dim]); $dim + 1];
+                    let result = kernel.orientation(&points).unwrap();
+                    assert_eq!(
+                        result, 0,
+                        "{}D: identical points must yield orientation 0, got {result}",
+                        $dim
+                    );
+                }
+            }
+        };
+    }
+
+    gen_sos_identical_points_test!(2);
+    gen_sos_identical_points_test!(3);
+    gen_sos_identical_points_test!(4);
+    gen_sos_identical_points_test!(5);
 }
