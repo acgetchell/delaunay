@@ -2956,16 +2956,18 @@ mod tests {
     }
 
     #[test]
-    fn test_ridge_star_cells_rejects_wrong_vertex_count() {
+    fn test_ridge_star_cells_rejects_too_many_vertices() {
         let tds: Tds<f64, (), (), 3> = Tds::empty();
-        // For D=3, ridges have D-1=2 vertices; pass 1 vertex instead.
-        let v = VertexKey::from(KeyData::from_ffi(1));
-        match ridge_star_cells(&tds, &[v]) {
+        // For D=3, ridges have D-1=2 vertices; pass 3 vertices instead.
+        let v0 = VertexKey::from(KeyData::from_ffi(1));
+        let v1 = VertexKey::from(KeyData::from_ffi(2));
+        let v2 = VertexKey::from(KeyData::from_ffi(3));
+        match ridge_star_cells(&tds, &[v0, v1, v2]) {
             Err(ManifoldError::Tds(TdsError::DimensionMismatch {
                 expected, actual, ..
             })) => {
                 assert_eq!(expected, 2);
-                assert_eq!(actual, 1);
+                assert_eq!(actual, 3);
             }
             other => panic!("Expected DimensionMismatch, got {other:?}"),
         }

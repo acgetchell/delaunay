@@ -4030,8 +4030,8 @@ where
     /// - [`OrientationViolation`](TdsError::OrientationViolation) — adjacent cells do not induce opposite facet orientations.
     /// - [`InvalidNeighbors`](TdsError::InvalidNeighbors) — a mirror facet cannot be derived, or a
     ///   neighbor's back-reference does not point to the originating cell.
-    /// - [`InconsistentDataStructure`](TdsError::InconsistentDataStructure) — a neighbor cell key is
-    ///   missing from storage, or permutation parity cannot be determined.
+    /// - [`CellNotFound`](TdsError::CellNotFound) — a neighbor cell key is missing from storage.
+    /// - [`InconsistentDataStructure`](TdsError::InconsistentDataStructure) — permutation parity cannot be determined.
     /// - [`IndexOutOfBounds`](TdsError::IndexOutOfBounds) / [`DimensionMismatch`](TdsError::DimensionMismatch)
     ///   — facet-extraction helpers encounter invalid indices or periodic-offset count mismatches.
     fn validate_coherent_orientation(&self) -> Result<(), TdsError> {
@@ -4054,9 +4054,10 @@ where
                 let neighbor_cell =
                     self.cells
                         .get(neighbor_key)
-                        .ok_or_else(|| TdsError::InconsistentDataStructure {
-                            message: format!(
-                                "Neighbor cell {neighbor_key:?} referenced by cell {cell_key:?} is missing during orientation validation",
+                        .ok_or_else(|| TdsError::CellNotFound {
+                            cell_key: neighbor_key,
+                            context: format!(
+                                "neighbor of cell {cell_key:?} during orientation validation",
                             ),
                         })?;
 
@@ -4677,13 +4678,13 @@ where
                     let cell_key = handle.cell_key();
                     let facet_index = handle.facet_index() as usize;
 
-                    let cell = self.cells.get(cell_key).ok_or_else(|| {
-                        TdsError::InconsistentDataStructure {
-                            message: format!(
-                                "Cell key {cell_key:?} not found during neighbor validation"
-                            ),
-                        }
-                    })?;
+                    let cell = self
+                        .cells
+                        .get(cell_key)
+                        .ok_or_else(|| TdsError::CellNotFound {
+                            cell_key,
+                            context: "neighbor validation (boundary facet)".to_string(),
+                        })?;
 
                     if let Some(neighbors) = cell.neighbors() {
                         let neighbor = neighbors.get(facet_index).and_then(|n| *n);
@@ -4716,20 +4717,22 @@ where
                     let second_cell_key = b.cell_key();
                     let second_facet_index = b.facet_index() as usize;
 
-                    let first_cell = self.cells.get(first_cell_key).ok_or_else(|| {
-                        TdsError::InconsistentDataStructure {
-                            message: format!(
-                                "Cell key {first_cell_key:?} not found during neighbor validation"
-                            ),
-                        }
-                    })?;
-                    let second_cell = self.cells.get(second_cell_key).ok_or_else(|| {
-                        TdsError::InconsistentDataStructure {
-                            message: format!(
-                                "Cell key {second_cell_key:?} not found during neighbor validation"
-                            ),
-                        }
-                    })?;
+                    let first_cell =
+                        self.cells
+                            .get(first_cell_key)
+                            .ok_or_else(|| TdsError::CellNotFound {
+                                cell_key: first_cell_key,
+                                context: "neighbor validation (interior facet, first cell)"
+                                    .to_string(),
+                            })?;
+                    let second_cell =
+                        self.cells
+                            .get(second_cell_key)
+                            .ok_or_else(|| TdsError::CellNotFound {
+                                cell_key: second_cell_key,
+                                context: "neighbor validation (interior facet, second cell)"
+                                    .to_string(),
+                            })?;
 
                     let first_neighbor = first_cell
                         .neighbors()
@@ -4777,11 +4780,8 @@ where
                 continue; // Skip cells without neighbors
             };
 
-            // Convert SmallBuffer to Vec for validation
-            let neighbors: Vec<Option<CellKey>> = neighbors_buf.iter().copied().collect();
-
             // Validate topological invariant (neighbor[i] opposite vertex[i])
-            self.validate_neighbor_topology(cell_key, &neighbors)?;
+            self.validate_neighbor_topology(cell_key, neighbors_buf)?;
 
             let this_vertices = cell_vertices.get(&cell_key).ok_or_else(|| {
                 TdsError::InconsistentDataStructure {
@@ -4792,7 +4792,7 @@ where
                 }
             })?;
 
-            for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
+            for (facet_idx, neighbor_key_opt) in neighbors_buf.iter().enumerate() {
                 // Skip None neighbors (missing neighbors)
                 let Some(neighbor_key) = neighbor_key_opt else {
                     continue;
@@ -7710,5 +7710,346 @@ mod tests {
                 .any(|v| v.kind == InvariantKind::CellMappings),
             "Expected CellMappings violation"
         );
+    }
+
+    // =========================================================================
+    // INSERT CELL WITH MAPPING: ERROR PATHS
+    // =========================================================================
+
+    #[test]
+    fn test_insert_cell_with_mapping_registers_uuid_mapping() {
+        use crate::core::cell::Cell;
+
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell = Cell::new(vec![v0, v1, v2], None).unwrap();
+        let cell_uuid = cell.uuid();
+        let ck = tds.insert_cell_with_mapping(cell).unwrap();
+
+        // UUID mapping should resolve back to the same key.
+        assert_eq!(tds.cell_key_from_uuid(&cell_uuid), Some(ck));
+        assert_eq!(tds.number_of_cells(), 1);
+    }
+
+    #[test]
+    fn test_insert_cell_with_mapping_rejects_missing_vertex() {
+        use crate::core::cell::Cell;
+
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        // Use a stale key that doesn't exist in the TDS.
+        let stale = VertexKey::from(KeyData::from_ffi(0xDEAD));
+
+        let cell = Cell::new(vec![v0, v1, stale], None).unwrap();
+        let err = tds.insert_cell_with_mapping(cell).unwrap_err();
+        assert!(matches!(
+            err,
+            TdsConstructionError::ValidationError(TdsError::VertexNotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn test_insert_cell_with_mapping_rejects_duplicate_uuid() {
+        use crate::core::cell::Cell;
+
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell_a = Cell::new(vec![v0, v1, v2], None).unwrap();
+        let uuid_a = cell_a.uuid();
+        tds.insert_cell_with_mapping(cell_a).unwrap();
+
+        // Create a second cell with the same UUID.
+        let mut cell_b = Cell::new(vec![v0, v1, v2], None).unwrap();
+        cell_b.set_uuid(uuid_a).unwrap();
+        let err = tds.insert_cell_with_mapping(cell_b).unwrap_err();
+        assert!(matches!(err, TdsConstructionError::DuplicateUuid { .. }));
+    }
+
+    // =========================================================================
+    // GET CELL VERTICES: ERROR PATH
+    // =========================================================================
+
+    #[test]
+    fn test_get_cell_vertices_errors_on_missing_vertex_key() {
+        use crate::core::cell::Cell;
+
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let ck = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+
+        // Corrupt: remove a vertex that the cell references.
+        tds.vertices.remove(v2);
+        tds.uuid_to_vertex_key.retain(|_, &mut vk| vk != v2);
+
+        let err = tds.get_cell_vertices(ck).unwrap_err();
+        assert!(matches!(err, TdsError::VertexNotFound { .. }));
+    }
+
+    // =========================================================================
+    // VALIDATE VERTEX INCIDENCE: INCONSISTENT INCIDENT_CELL
+    // =========================================================================
+
+    #[test]
+    fn test_validate_vertex_incidence_detects_inconsistent_incident_cell() {
+        use crate::core::cell::Cell;
+
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let _ck = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        tds.assign_incident_cells().unwrap();
+
+        // Create a second cell that does NOT contain v0, then point v0 at it.
+        let v3 = tds.insert_vertex_with_mapping(vertex!([2.0, 2.0])).unwrap();
+        let ck2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v1, v2, v3], None).unwrap())
+            .unwrap();
+        tds.get_vertex_by_key_mut(v0).unwrap().incident_cell = Some(ck2);
+
+        let err = tds.validate_vertex_incidence().unwrap_err();
+        assert!(matches!(err, TdsError::InconsistentDataStructure { .. }));
+    }
+
+    #[test]
+    fn test_validate_vertex_incidence_detects_dangling_cell_key() {
+        use crate::core::cell::Cell;
+
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        tds.assign_incident_cells().unwrap();
+
+        // Point v0 at a non-existent cell key.
+        let dangling = CellKey::from(KeyData::from_ffi(0xDEAD));
+        tds.get_vertex_by_key_mut(v0).unwrap().incident_cell = Some(dangling);
+
+        let err = tds.validate_vertex_incidence().unwrap_err();
+        assert!(matches!(err, TdsError::CellNotFound { .. }));
+    }
+
+    // =========================================================================
+    // FIND CELLS CONTAINING VERTEX: FAST PATH VS FALLBACK
+    // =========================================================================
+
+    #[test]
+    fn test_find_cells_containing_vertex_fallback_when_no_incident_cell() {
+        use crate::core::cell::Cell;
+
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        // Don't assign incident cells — force fallback scan.
+        let cells = tds.find_cells_containing_vertex_by_key(v0);
+        assert_eq!(cells.len(), 1);
+    }
+
+    // =========================================================================
+    // REMOVE CELLS BY KEYS: BATCH REPAIR
+    // =========================================================================
+
+    #[test]
+    fn test_remove_cells_by_keys_batch_repairs_incidence_and_neighbors() {
+        let vertices = [
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.5, 0.5, 0.5]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let mut tds = dt.tds().clone();
+        assert!(tds.number_of_cells() > 1);
+
+        // Remove the first cell.
+        let first_ck = tds.cell_keys().next().unwrap();
+        let removed = tds.remove_cells_by_keys(&[first_ck]);
+        assert_eq!(removed, 1);
+
+        // All remaining vertex incident_cell pointers should be valid.
+        for (vk, v) in tds.vertices() {
+            if let Some(ic) = v.incident_cell {
+                assert!(
+                    tds.contains_cell(ic),
+                    "Vertex {vk:?} has dangling incident_cell after batch removal"
+                );
+            }
+        }
+
+        // No surviving cell should have a neighbor pointer to the removed cell.
+        for (_, cell) in tds.cells() {
+            if let Some(neighbors) = cell.neighbors() {
+                for nk in neighbors.iter().flatten() {
+                    assert_ne!(*nk, first_ck, "Dangling neighbor pointer to removed cell");
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    // ASSIGN INCIDENT CELLS: ERROR ON DANGLING VERTEX KEY
+    // =========================================================================
+
+    #[test]
+    fn test_assign_incident_cells_errors_on_dangling_vertex_key() {
+        use crate::core::cell::Cell;
+
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let _ck = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+
+        // Remove v2 from the vertex storage, leaving the cell with a dangling reference.
+        tds.vertices.remove(v2);
+        tds.uuid_to_vertex_key.retain(|_, &mut vk| vk != v2);
+
+        let err = tds.assign_incident_cells().unwrap_err();
+        assert!(matches!(
+            err.as_tds_error(),
+            TdsError::VertexNotFound { .. }
+        ));
+    }
+
+    // =========================================================================
+    // NORMALIZE COHERENT ORIENTATION: SINGLE CELL (NO NEIGHBORS)
+    // =========================================================================
+
+    #[test]
+    fn test_normalize_coherent_orientation_handles_single_cell() {
+        let verts = initial_simplex_vertices_3d();
+        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let mut tds = dt.tds().clone();
+        assert_eq!(tds.number_of_cells(), 1);
+
+        // Single cell with no neighbors: should succeed without flipping.
+        assert!(tds.normalize_coherent_orientation().is_ok());
+    }
+
+    #[test]
+    fn test_normalize_coherent_orientation_multi_cell() {
+        let vertices = [
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.5, 0.5, 0.5]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let mut tds = dt.tds().clone();
+        assert!(tds.number_of_cells() > 1);
+
+        // Should succeed for a valid multi-cell triangulation.
+        assert!(tds.normalize_coherent_orientation().is_ok());
+    }
+
+    // =========================================================================
+    // VALIDATE CELL COORDINATE UNIQUENESS
+    // =========================================================================
+
+    #[test]
+    fn test_validate_cell_coordinate_uniqueness_passes_for_distinct_coords() {
+        let verts = initial_simplex_vertices_3d();
+        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let tds = dt.tds();
+        assert!(tds.validate_cell_coordinate_uniqueness().is_ok());
+    }
+
+    // =========================================================================
+    // GENERATION COUNTER
+    // =========================================================================
+
+    #[test]
+    fn test_mark_topology_modified_bumps_generation() {
+        let tds: Tds<f64, (), (), 2> = Tds::empty();
+        let gen_before = tds.generation();
+        tds.mark_topology_modified();
+        assert_eq!(tds.generation(), gen_before + 1);
+    }
+
+    // =========================================================================
+    // REMOVE DUPLICATE CELLS: WITH ACTUAL DUPLICATES
+    // =========================================================================
+
+    #[test]
+    fn test_remove_duplicate_cells_removes_actual_duplicates() {
+        use crate::core::cell::Cell;
+
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        // Insert a duplicate cell (same vertex set, different UUID).
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        assert_eq!(tds.number_of_cells(), 2);
+
+        let removed = tds.remove_duplicate_cells().unwrap();
+        assert_eq!(removed, 1);
+        assert_eq!(tds.number_of_cells(), 1);
+    }
+
+    // =========================================================================
+    // REMOVE CELL BY KEY
+    // =========================================================================
+
+    #[test]
+    fn test_remove_cell_by_key_returns_none_for_missing() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let stale = CellKey::from(KeyData::from_ffi(0xDEAD));
+        assert!(tds.remove_cell_by_key(stale).is_none());
+    }
+
+    // =========================================================================
+    // VALIDATE NEIGHBOR TOPOLOGY: ERROR PATHS
+    // =========================================================================
+
+    #[test]
+    fn test_validate_neighbor_topology_rejects_wrong_length() {
+        use crate::core::cell::Cell;
+
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let ck = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+
+        // Wrong length: 2 instead of D+1=3.
+        let err = tds
+            .validate_neighbor_topology(ck, &[None, None])
+            .unwrap_err();
+        assert!(matches!(err, TdsError::InvalidNeighbors { .. }));
     }
 }

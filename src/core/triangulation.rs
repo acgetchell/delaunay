@@ -9017,4 +9017,476 @@ mod tests {
         let (tri, _, _) = build_single_tet();
         assert!(tri.pick_fan_apex(&[]).is_none());
     }
+
+    // =========================================================================
+    // INSERTION PIPELINE: BOOTSTRAP, INITIAL SIMPLEX, BEYOND-SIMPLEX
+    // =========================================================================
+
+    /// Helper: build a set of D+1 affinely independent vertices for dimension D.
+    fn simplex_vertices<const D: usize>() -> Vec<Vertex<f64, (), D>> {
+        let mut verts = Vec::with_capacity(D + 1);
+        // Origin
+        verts.push(
+            VertexBuilder::default()
+                .point(Point::new([0.0; D]))
+                .build()
+                .unwrap(),
+        );
+        // Unit vectors along each axis
+        for i in 0..D {
+            let mut coords = [0.0; D];
+            coords[i] = 1.0;
+            verts.push(
+                VertexBuilder::default()
+                    .point(Point::new(coords))
+                    .build()
+                    .unwrap(),
+            );
+        }
+        verts
+    }
+
+    /// Macro: dimension-parametric insertion pipeline tests.
+    macro_rules! test_insert_pipeline {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_insert_bootstrap_phase_ $dim d>]() {
+                    let mut tri: Triangulation<FastKernel<f64>, (), (), $dim> =
+                        Triangulation::new_empty(FastKernel::new());
+
+                    // Insert fewer than D+1 vertices: should remain in bootstrap (no cells).
+                    let verts = simplex_vertices::<$dim>();
+                    for v in &verts[..$dim] {
+                        let (vk, hint) = tri.insert(*v, None, None).unwrap();
+                        assert!(hint.is_none(), "{}D: no hint during bootstrap", $dim);
+                        assert!(tri.tds.get_vertex_by_key(vk).is_some());
+                    }
+                    assert_eq!(tri.number_of_vertices(), $dim);
+                    assert_eq!(tri.number_of_cells(), 0, "{}D: no cells during bootstrap", $dim);
+                }
+
+                #[test]
+                fn [<test_insert_initial_simplex_via_insert_ $dim d>]() {
+                    let mut tri: Triangulation<FastKernel<f64>, (), (), $dim> =
+                        Triangulation::new_empty(FastKernel::new());
+
+                    let verts = simplex_vertices::<$dim>();
+                    for v in &verts {
+                        tri.insert(*v, None, None).unwrap();
+                    }
+                    assert_eq!(tri.number_of_vertices(), $dim + 1);
+                    assert_eq!(tri.number_of_cells(), 1, "{}D: exactly 1 cell after D+1 vertices", $dim);
+
+                    // The cell must have D+1 vertices.
+                    let (_, cell) = tri.cells().next().unwrap();
+                    assert_eq!(cell.number_of_vertices(), $dim + 1);
+                }
+
+                #[test]
+                fn [<test_insert_beyond_initial_simplex_ $dim d>]() {
+                    let mut tri: Triangulation<FastKernel<f64>, (), (), $dim> =
+                        Triangulation::new_empty(FastKernel::new());
+
+                    // Build initial simplex.
+                    let verts = simplex_vertices::<$dim>();
+                    for v in &verts {
+                        tri.insert(*v, None, None).unwrap();
+                    }
+                    assert_eq!(tri.number_of_cells(), 1);
+
+                    // Insert an interior point.
+                    let mut interior = [0.0; $dim];
+                    for c in interior.iter_mut() {
+                        *c = 1.0 / (<f64 as std::convert::From<i32>>::from($dim + 1) * 2.0);
+                    }
+                    let interior_vertex = VertexBuilder::default()
+                        .point(Point::new(interior))
+                        .build()
+                        .unwrap();
+                    let (_, hint) = tri
+                        .insert(interior_vertex, None, None)
+                        .unwrap();
+
+                    assert!(hint.is_some(), "{}D: hint returned after D+2 insertion", $dim);
+                    assert!(tri.number_of_cells() > 1, "{}D: cell count increased", $dim);
+                    assert!(tri.is_valid().is_ok(), "{}D: topology valid after insertion", $dim);
+                }
+            }
+        };
+    }
+
+    test_insert_pipeline!(2);
+    test_insert_pipeline!(3);
+    test_insert_pipeline!(4);
+
+    // =========================================================================
+    // INSERT_WITH_STATISTICS: STATISTICS TRACKING
+    // =========================================================================
+
+    #[test]
+    fn test_insert_with_statistics_tracks_cells_removed() {
+        // Build a 2D triangulation with several points, verify stats fields.
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+
+        let points = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [0.5, 0.5]];
+        for coords in &points {
+            let (outcome, stats) = tri
+                .insert_with_statistics(vertex!(*coords), None, None)
+                .unwrap();
+            assert!(stats.success());
+            assert!(matches!(outcome, InsertionOutcome::Inserted { .. }));
+            assert_eq!(stats.attempts, 1);
+        }
+        assert_eq!(tri.number_of_vertices(), 4);
+        assert!(tri.number_of_cells() >= 2);
+    }
+
+    // =========================================================================
+    // VALIDATION REPORT: MULTIPLE VIOLATIONS
+    // =========================================================================
+
+    #[test]
+    fn test_validation_report_collects_multiple_violations() {
+        // Create a triangulation with an isolated vertex AND a bad neighbor buffer
+        // so that validation_report collects both VertexValidity + Topology violations.
+        let (mut tri, _, ck) = build_single_tet();
+
+        // Add an isolated vertex (no incident cell).
+        let _ = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([5.0, 5.0, 5.0]))
+            .unwrap();
+
+        // Corrupt a cell's neighbor buffer length to trigger CellValidity violation.
+        let cell = tri.tds.get_cell_by_key_mut(ck).unwrap();
+        let mut bad_neighbors = NeighborBuffer::<Option<CellKey>>::new();
+        bad_neighbors.resize(2, None); // wrong: should be D+1 = 4
+        cell.neighbors = Some(bad_neighbors);
+
+        let report = tri.validation_report().unwrap_err();
+        assert!(
+            report.violations.len() >= 2,
+            "Expected at least 2 violations, got {}",
+            report.violations.len()
+        );
+    }
+
+    // =========================================================================
+    // REMOVE VERTEX: RETRIANGULATION AND TOPOLOGY
+    // =========================================================================
+
+    #[test]
+    fn test_remove_vertex_retriangulates_cavity_2d() {
+        // Build 2D triangulation with 4 vertices, remove one, verify valid.
+        let vertices = [
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([0.5, 0.5]),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let initial_cells = dt.number_of_cells();
+        let vertex_to_remove = dt
+            .vertices()
+            .find(|(_, v)| {
+                let c = v.point().coords();
+                (c[0] - 0.5).abs() < 1e-10 && (c[1] - 0.5).abs() < 1e-10
+            })
+            .map(|(_, v)| *v)
+            .unwrap();
+
+        let removed = dt.remove_vertex(&vertex_to_remove).unwrap();
+        assert!(removed > 0, "Should have removed at least 1 cell");
+        assert!(dt.number_of_cells() <= initial_cells);
+        assert_eq!(dt.number_of_vertices(), 3);
+    }
+
+    #[test]
+    fn test_remove_vertex_entire_triangulation_2d() {
+        // When we remove a vertex from a single-cell triangulation,
+        // the empty boundary case triggers Tds::remove_vertex fallback.
+        let vertices = [
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let vertex_to_remove = *dt.vertices().next().unwrap().1;
+        let removed = dt.remove_vertex(&vertex_to_remove).unwrap();
+        assert!(removed >= 1);
+        assert_eq!(dt.number_of_vertices(), 2);
+    }
+
+    // =========================================================================
+    // VALIDATE CONNECTEDNESS: ERROR PATHS
+    // =========================================================================
+
+    #[test]
+    fn test_validate_connectedness_rejects_empty_new_cells() {
+        let (tri, _, _) = build_single_tet();
+
+        // Empty new_cells buffer: should error because no surviving new cells.
+        let empty: CellKeyBuffer = CellKeyBuffer::new();
+        let err = tri.validate_connectedness(&empty).unwrap_err();
+        assert!(matches!(err, InsertionError::TopologyValidation(_)));
+    }
+
+    #[test]
+    fn test_validate_connectedness_passes_for_valid_new_cells() {
+        let (tri, _, ck) = build_single_tet();
+
+        // Single cell is both the new set and the whole triangulation.
+        let mut new_cells = CellKeyBuffer::new();
+        new_cells.push(ck);
+        assert!(tri.validate_connectedness(&new_cells).is_ok());
+    }
+
+    // =========================================================================
+    // FIND CONFLICT REGION GLOBAL
+    // =========================================================================
+
+    #[test]
+    fn test_find_conflict_region_global_returns_cells() {
+        // Build a 3D simplex, then check that a point outside has a conflict region.
+        let vertices = [
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
+        let tri = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
+
+        // A point inside the circumsphere but outside the simplex.
+        let conflict = tri
+            .find_conflict_region_global(&Point::new([0.5, 0.5, 0.5]))
+            .unwrap();
+        // The single cell's circumsphere should contain this point.
+        assert!(
+            !conflict.is_empty(),
+            "Point near circumcenter should produce a conflict region"
+        );
+    }
+
+    // =========================================================================
+    // CONFLICT REGION TOUCHES BOUNDARY
+    // =========================================================================
+
+    #[test]
+    fn test_conflict_region_touches_boundary_single_cell() {
+        // A single simplex: all facets are boundary.
+        let vertices = [
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+
+        let cell_key = tri.tds.cell_keys().next().unwrap();
+        let mut buf = CellKeyBuffer::new();
+        buf.push(cell_key);
+
+        let touches = tri.conflict_region_touches_boundary(&buf).unwrap();
+        assert!(touches, "Single cell has only boundary facets");
+    }
+
+    #[test]
+    fn test_conflict_region_touches_boundary_empty() {
+        let (tri, _, _) = build_single_tet();
+        let empty = CellKeyBuffer::new();
+        let touches = tri.conflict_region_touches_boundary(&empty).unwrap();
+        assert!(!touches, "Empty conflict region touches no boundary");
+    }
+
+    // =========================================================================
+    // FAN FILL CAVITY: ERROR CASE
+    // =========================================================================
+
+    #[test]
+    fn test_fan_fill_cavity_errors_when_no_cells_produced() {
+        // If the apex is on every boundary facet, fan_fill_cavity should error.
+        let (mut tri, vkeys, ck) = build_single_tet();
+
+        // Use vkeys[0] as apex; construct boundary facets that ALL include vkeys[0].
+        // In a tet, facet 0 is opposite vkeys[0] (does NOT include it),
+        // but facets 1,2,3 each include vkeys[0].
+        let boundary_facets: CavityBoundaryBuffer =
+            (1..=3).map(|i| FacetHandle::new(ck, i)).collect();
+
+        let result = tri.fan_fill_cavity(vkeys[0], &boundary_facets);
+        // All facets include vkeys[0], so no cells should be created.
+        assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // REPAIR LOCAL FACET ISSUES: NON-EMPTY ISSUES MAP
+    // =========================================================================
+
+    #[test]
+    fn test_repair_local_facet_issues_with_overshared_facet() {
+        // Build 2D triangulation with enough cells to have interior facets,
+        // then artificially create an over-shared facet by duplicating a cell.
+        let vertices = [
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let tri = dt.as_triangulation_mut();
+
+        // Add a duplicate cell with the same vertices as an existing cell.
+        let (_, existing_cell) = tri.tds.cells().next().unwrap();
+        let vkeys: Vec<_> = existing_cell.vertices().to_vec();
+        let dup_cell = Cell::new(vkeys, None).unwrap();
+        let _ = tri.tds.insert_cell_with_mapping(dup_cell).unwrap();
+
+        // Now detect issues.
+        let all_cells: Vec<_> = tri.tds.cell_keys().collect();
+        let issues = tri.detect_local_facet_issues(&all_cells).unwrap();
+        assert!(issues.is_some(), "Should detect over-shared facet");
+
+        let removed = tri.repair_local_facet_issues(&issues.unwrap()).unwrap();
+        assert!(removed > 0, "Should remove at least one duplicate cell");
+    }
+
+    // =========================================================================
+    // DUPLICATE COORDINATES ERROR: LINEAR FALLBACK (NO INDEX)
+    // =========================================================================
+
+    #[test]
+    fn test_duplicate_coordinates_error_linear_scan_no_index() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+        let _ = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([3.0, 4.0]))
+            .unwrap();
+
+        let tol = 1e-10_f64;
+        // No index provided: should fall back to linear scan.
+        let err = tri.duplicate_coordinates_error(&[3.0, 4.0], tol * tol, None);
+        assert!(matches!(
+            err,
+            Some(InsertionError::DuplicateCoordinates { .. })
+        ));
+
+        // Non-duplicate should return None.
+        let no_err = tri.duplicate_coordinates_error(&[99.0, 99.0], tol * tol, None);
+        assert!(no_err.is_none());
+    }
+
+    // =========================================================================
+    // VALIDATE_AFTER_INSERTION: EDGE CASES
+    // =========================================================================
+
+    #[test]
+    fn test_validate_after_insertion_ok_for_valid_simplex() {
+        // Use a properly constructed triangulation (with neighbors/incidence).
+        let vertices = [
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let tri = dt.as_triangulation();
+        let suspicion = SuspicionFlags {
+            repair_loop_entered: true,
+            ..Default::default()
+        };
+        // With Always policy and a suspicious flag, validation should still pass.
+        assert!(tri.validate_after_insertion(suspicion).is_ok());
+    }
+
+    // =========================================================================
+    // INVARIANT ERROR CONVERSION
+    // =========================================================================
+
+    #[test]
+    fn test_invariant_error_to_insertion_error_all_arms() {
+        // Tds arm
+        let tds_err = InvariantError::Tds(TdsError::InvalidNeighbors {
+            message: "test".into(),
+        });
+        let ie = Triangulation::<FastKernel<f64>, (), (), 2>::invariant_error_to_insertion_error(
+            &tds_err,
+        );
+        assert!(matches!(ie, InsertionError::TopologyValidation(_)));
+
+        // Triangulation arm
+        let tri_err = InvariantError::Triangulation(
+            TriangulationValidationError::EulerCharacteristicMismatch {
+                computed: 0,
+                expected: 1,
+                classification: TopologyClassification::Unknown,
+            },
+        );
+        let ie = Triangulation::<FastKernel<f64>, (), (), 2>::invariant_error_to_insertion_error(
+            &tri_err,
+        );
+        assert!(matches!(
+            ie,
+            InsertionError::TopologyValidationFailed { .. }
+        ));
+
+        // Delaunay arm
+        let dt_err = InvariantError::Delaunay(
+            crate::core::delaunay_triangulation::DelaunayTriangulationValidationError::VerificationFailed {
+                message: "test violation".to_string(),
+            },
+        );
+        let ie = Triangulation::<FastKernel<f64>, (), (), 2>::invariant_error_to_insertion_error(
+            &dt_err,
+        );
+        assert!(matches!(
+            ie,
+            InsertionError::DelaunayValidationFailed { .. }
+        ));
+    }
+
+    // =========================================================================
+    // ESTIMATE LOCAL PERTURBATION SCALE: NO VERTICES
+    // =========================================================================
+
+    #[test]
+    fn test_estimate_local_perturbation_scale_no_vertices() {
+        let tri: Triangulation<FastKernel<f64>, (), (), 3> =
+            Triangulation::new_empty(FastKernel::new());
+        let scale = tri.estimate_local_perturbation_scale(&[1.0, 2.0, 3.0], None);
+        // With no vertices, scale should be 1.0 (the default).
+        approx::assert_abs_diff_eq!(scale, 1.0, epsilon = 1e-12);
+    }
+
+    // =========================================================================
+    // VALIDATE_AT_COMPLETION: VARIOUS GUARANTEES
+    // =========================================================================
+
+    #[test]
+    fn test_validate_at_completion_ok_for_pseudomanifold_empty() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 3> =
+            Triangulation::new_empty(FastKernel::new());
+        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+        // Pseudomanifold does not require vertex links at completion.
+        assert!(tri.validate_at_completion().is_ok());
+    }
+
+    #[test]
+    fn test_validate_at_completion_ok_for_pl_manifold_no_cells() {
+        let tri: Triangulation<FastKernel<f64>, (), (), 3> =
+            Triangulation::new_empty(FastKernel::new());
+        // PLManifold requires vertex links at completion, but with 0 cells it short-circuits.
+        assert!(tri.validate_at_completion().is_ok());
+    }
 }

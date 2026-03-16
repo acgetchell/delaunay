@@ -287,14 +287,19 @@ where
     
     // Level 2: Coherent orientation
     if !self.is_coherently_oriented() {
-        // Find the violating pair for error reporting
-        let (cell1, cell2, facet) = self.find_orientation_violation()?;
+    // Find the violating pair for error reporting
+        let violation = self.find_orientation_violation()?;
         return Err(TdsError::OrientationViolation {
-            cell1_key: cell1,
-            cell1_uuid: self.cells[cell1].uuid(),
-            cell2_key: cell2,
-            cell2_uuid: self.cells[cell2].uuid(),
-            facet_vertices: facet,
+            cell1_key: violation.cell1_key,
+            cell1_uuid: self.cells[violation.cell1_key].uuid(),
+            cell2_key: violation.cell2_key,
+            cell2_uuid: self.cells[violation.cell2_key].uuid(),
+            cell1_facet_index: violation.cell1_facet_index,
+            cell2_facet_index: violation.cell2_facet_index,
+            facet_vertices: violation.facet_vertices,
+            cell2_facet_vertices: violation.cell2_facet_vertices,
+            observed_odd_permutation: violation.observed_odd_permutation,
+            expected_odd_permutation: violation.expected_odd_permutation,
         });
     }
     
