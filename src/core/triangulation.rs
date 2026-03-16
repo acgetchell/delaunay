@@ -133,7 +133,7 @@ use crate::core::operations::{
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation_data_structure::{
     CellKey, GeometricError, InvariantError, InvariantKind, InvariantViolation, Tds,
-    TdsConstructionError, TdsError, TdsMutationError, TriangulationValidationReport, VertexKey,
+    TdsConstructionError, TdsError, TriangulationValidationReport, VertexKey,
 };
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
@@ -230,25 +230,24 @@ pub(crate) fn record_duplicate_detection_metrics(
     }
 }
 
-/// Extract the inner [`TdsError`] from an [`InsertionError`], preserving
-/// structured error information when possible.
+/// Convert an [`InsertionError`] into the appropriate [`InvariantError`], preserving
+/// structured error information across all layers.
 ///
-/// - `TopologyValidation(source)` → returns `source` directly
-/// - `TopologyValidationFailed` → wrapped in [`TdsError::InconsistentDataStructure`]
-///   with both the high-level `message` and the structured `source`
-/// - All other variants → wrapped in [`TdsError::InconsistentDataStructure`]
-///   with the provided `context`
-fn extract_tds_error(error: InsertionError, context: &str) -> TdsError {
+/// - `TopologyValidation(source)` → `InvariantError::Tds(source)` (Level 1–2 preserved)
+/// - `TopologyValidationFailed { source }` → `InvariantError::Triangulation(*source)` (Level 3 preserved)
+/// - All other variants → `InvariantError::Tds(InconsistentDataStructure { .. })` with `context`
+pub(in crate::core) fn insertion_error_to_invariant_error(
+    error: InsertionError,
+    context: &str,
+) -> InvariantError {
     match error {
-        InsertionError::TopologyValidation(source) => source,
-        InsertionError::TopologyValidationFailed { message, source } => {
-            TdsError::InconsistentDataStructure {
-                message: format!("{context}: {message}: {source}"),
-            }
+        InsertionError::TopologyValidation(source) => InvariantError::Tds(source),
+        InsertionError::TopologyValidationFailed { source, .. } => {
+            InvariantError::Triangulation(*source)
         }
-        other => TdsError::InconsistentDataStructure {
+        other => InvariantError::Tds(TdsError::InconsistentDataStructure {
             message: format!("{context}: {other}"),
-        },
+        }),
     }
 }
 
@@ -3353,15 +3352,15 @@ where
     /// - `InvariantError::Tds(e)` → `InsertionError::TopologyValidation(e)`
     /// - `InvariantError::Triangulation(e)` → `InsertionError::TopologyValidationFailed { source: e }`
     /// - `InvariantError::Delaunay(e)` → `InsertionError::DelaunayValidationFailed { message }`
-    fn invariant_error_to_insertion_error(err: &InvariantError) -> InsertionError {
+    fn invariant_error_to_insertion_error(err: InvariantError) -> InsertionError {
         match err {
-            InvariantError::Tds(tds_err) => InsertionError::TopologyValidation(tds_err.clone()),
+            InvariantError::Tds(tds_err) => InsertionError::TopologyValidation(tds_err),
             InvariantError::Triangulation(tri_err) => InsertionError::TopologyValidationFailed {
                 message: "Topology validation failed".to_string(),
-                source: Box::new(tri_err.clone()),
+                source: Box::new(tri_err),
             },
             InvariantError::Delaunay(dt_err) => InsertionError::DelaunayValidationFailed {
-                message: format!("Delaunay validation failed after insertion: {dt_err}"),
+                source: Box::new(dt_err),
             },
         }
     }
@@ -3463,7 +3462,7 @@ where
                 vertex,
                 hint,
                 attempt,
-                &validation_err,
+                validation_err,
             );
         }
 
@@ -3481,7 +3480,7 @@ where
         vertex: Vertex<K::Scalar, U, D>,
         hint: Option<CellKey>,
         attempt: usize,
-        validation_err: &InvariantError,
+        validation_err: InvariantError,
     ) -> Result<TryInsertImplOk, InsertionError>
     where
         K::Scalar: CoordinateScalar,
@@ -3507,7 +3506,7 @@ where
                     self.validate_after_insertion(fallback_suspicion)
                 {
                     return Err(Self::invariant_error_to_insertion_error(
-                        &fallback_validation_err,
+                        fallback_validation_err,
                     ));
                 }
 
@@ -4033,13 +4032,7 @@ where
 
         // Fill cavity BEFORE removing old cells
         let new_cells = fill_cavity(&mut self.tds, v_key, &boundary_facets)?;
-        self.canonicalize_positive_orientation_for_cells(&new_cells)
-            .map_err(|e| {
-                extract_tds_error(
-                    e,
-                    "Failed to canonicalize positive orientation for cavity cells",
-                )
-            })?;
+        self.canonicalize_positive_orientation_for_cells(&new_cells)?;
 
         // Wire neighbors (while both old and new cells exist)
         let external_facets =
@@ -4839,16 +4832,13 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`TdsMutationError`]
-    /// if the removal cannot be completed while maintaining triangulation invariants.
-    ///
-    /// (Note: `TdsMutationError` is currently a thin wrapper around
-    /// [`TdsError`]; the wrapper exists to make mutation call sites/docs more semantically explicit.)
-    ///
+    /// Returns [`InvariantError`] if the removal cannot be completed while maintaining
+    /// triangulation invariants. The error preserves structured information from whichever
+    /// layer (TDS or Topology) detected the failure.
     pub(crate) fn remove_vertex(
         &mut self,
         vertex: &Vertex<K::Scalar, U, D>,
-    ) -> Result<usize, TdsMutationError>
+    ) -> Result<usize, InvariantError>
     where
         K::Scalar: CoordinateScalar,
     {
@@ -4872,7 +4862,10 @@ where
 
         if cells_to_remove.is_empty() {
             // Vertex exists but has no incident cells - use Tds removal
-            return self.tds.remove_vertex(vertex);
+            return self
+                .tds
+                .remove_vertex(vertex)
+                .map_err(|e| InvariantError::Tds(e.into_inner()));
         }
 
         // Extract cavity boundary BEFORE removing cells
@@ -4886,7 +4879,10 @@ where
         // If boundary is empty, we're removing the entire triangulation
         if boundary_facets.is_empty() {
             // Use Tds removal for empty boundary case
-            return self.tds.remove_vertex(vertex);
+            return self
+                .tds
+                .remove_vertex(vertex)
+                .map_err(|e| InvariantError::Tds(e.into_inner()));
         }
 
         // Pick apex vertex for fan triangulation (first vertex of first boundary facet)
@@ -4899,19 +4895,17 @@ where
         // Snapshot before destructive retriangulation edits so we can roll back if any
         // subsequent orientation/finalization step fails.
         let tds_snapshot = self.tds.clone();
-        let retriangulation_result = (|| -> Result<usize, TdsMutationError> {
+        let retriangulation_result = (|| -> Result<usize, InvariantError> {
             // Fill cavity with fan triangulation BEFORE removing old cells
             // Use fan triangulation that skips boundary facets which already include the apex
             let new_cells = self
                 .fan_fill_cavity(apex_vertex_key, &boundary_facets)
-                .map_err(|e| TdsError::FailedToCreateCell {
-                    message: format!("Fan triangulation failed: {e}"),
-                })?;
+                .map_err(|e| insertion_error_to_invariant_error(e, "Fan triangulation failed"))?;
             // Wire neighbors for the new cells (while both old and new cells exist)
             let external_facets =
                 external_facets_for_boundary(&self.tds, &cells_to_remove, &boundary_facets)
-                    .map_err(|e| TdsError::InvalidNeighbors {
-                        message: format!("External-facet collection failed: {e}"),
+                    .map_err(|e| {
+                        insertion_error_to_invariant_error(e, "External-facet collection failed")
                     })?;
             wire_cavity_neighbors(
                 &mut self.tds,
@@ -4919,9 +4913,7 @@ where
                 external_facets.iter().copied(),
                 Some(&cells_to_remove),
             )
-            .map_err(|e| TdsError::InvalidNeighbors {
-                message: format!("Neighbor wiring failed: {e}"),
-            })?;
+            .map_err(|e| insertion_error_to_invariant_error(e, "Neighbor wiring failed"))?;
 
             // Remove the cells containing the vertex (now that new cells are wired up)
             // Note: remove_cells_by_keys() automatically clears neighbor pointers in surviving
@@ -4944,11 +4936,10 @@ where
                 // This ensures neighbor consistency after repair operations
                 if removed > 0 {
                     repair_neighbor_pointers(&mut self.tds).map_err(|e| {
-                        TdsError::InvalidNeighbors {
-                            message: format!(
-                                "Neighbor repair after facet issue repair failed: {e}"
-                            ),
-                        }
+                        insertion_error_to_invariant_error(
+                            e,
+                            "Neighbor repair after facet issue repair failed",
+                        )
                     })?;
                 }
             }
@@ -4956,17 +4947,21 @@ where
             // cells to positive orientation (#258).
             self.normalize_and_promote_positive_orientation()
                 .map_err(|e| {
-                    extract_tds_error(
+                    insertion_error_to_invariant_error(
                         e,
                         "Orientation canonicalization failed after fan retriangulation",
                     )
                 })?;
 
             // Rebuild vertex-cell incidence for all vertices
-            self.tds.assign_incident_cells()?;
+            self.tds
+                .assign_incident_cells()
+                .map_err(|e| InvariantError::Tds(e.into_inner()))?;
 
             // Remove the vertex using Tds method (handles internal bookkeeping)
-            self.tds.remove_vertex(vertex)?;
+            self.tds
+                .remove_vertex(vertex)
+                .map_err(|e| InvariantError::Tds(e.into_inner()))?;
 
             Ok(cells_removed)
         })();
@@ -8477,68 +8472,42 @@ mod tests {
         // Reaching here without panic confirms EXPAND and SHRINK branches executed.
     }
 
-    // ---- extract_tds_error tests ----
+    // ---- insertion_error_to_invariant_error tests ----
 
     #[test]
-    fn test_extract_tds_error_topology_validation_returns_source() {
+    fn test_insertion_error_to_invariant_error_tds_arm() {
         let source = TdsError::Geometric(GeometricError::DegenerateOrientation {
             message: "det=0".to_string(),
         });
         let error = InsertionError::TopologyValidation(source.clone());
-        let result = extract_tds_error(error, "test context");
-        assert_eq!(result, source);
+        let result = insertion_error_to_invariant_error(error, "ctx");
+        assert_eq!(result, InvariantError::Tds(source));
     }
 
     #[test]
-    fn test_extract_tds_error_topology_validation_failed_wraps_in_inconsistent() {
+    fn test_insertion_error_to_invariant_error_triangulation_arm() {
+        let inner = TriangulationValidationError::IsolatedVertex {
+            vertex_key: VertexKey::from(KeyData::from_ffi(1)),
+            vertex_uuid: Uuid::nil(),
+        };
         let error = InsertionError::TopologyValidationFailed {
             message: "outer".to_string(),
-            source: Box::new(TriangulationValidationError::IsolatedVertex {
-                vertex_key: VertexKey::from(KeyData::from_ffi(1)),
-                vertex_uuid: Uuid::nil(),
-            }),
+            source: Box::new(inner.clone()),
         };
-        let result = extract_tds_error(error, "test context");
-        assert!(
-            matches!(
-                result,
-                TdsError::InconsistentDataStructure { ref message }
-                    if message.contains("test context") && message.contains("outer")
-            ),
-            "TopologyValidationFailed should produce InconsistentDataStructure preserving message: {result:?}"
-        );
+        let result = insertion_error_to_invariant_error(error, "ctx");
+        assert_eq!(result, InvariantError::Triangulation(inner));
     }
 
     #[test]
-    fn test_extract_tds_error_topology_validation_failed_wrapping_non_tds() {
-        let error = InsertionError::TopologyValidationFailed {
-            message: "outer".to_string(),
-            source: Box::new(TriangulationValidationError::ManifoldFacetMultiplicity {
-                facet_key: 42,
-                cell_count: 3,
-            }),
-        };
-        let result = extract_tds_error(error, "my context");
-        assert!(
-            matches!(
-                result,
-                TdsError::InconsistentDataStructure { ref message }
-                    if message.contains("my context") && message.contains("outer")
-            ),
-            "Non-Tds inner error should produce InconsistentDataStructure preserving message: {result:?}"
-        );
-    }
-
-    #[test]
-    fn test_extract_tds_error_other_variant_wraps_in_inconsistent() {
+    fn test_insertion_error_to_invariant_error_other_arm() {
         let error = InsertionError::CavityFilling {
             message: "filling failed".to_string(),
         };
-        let result = extract_tds_error(error, "ctx");
+        let result = insertion_error_to_invariant_error(error, "ctx");
         assert!(
             matches!(
                 result,
-                TdsError::InconsistentDataStructure { ref message }
+                InvariantError::Tds(TdsError::InconsistentDataStructure { ref message })
                     if message.contains("ctx") && message.contains("filling failed")
             ),
             "CavityFilling should wrap to InconsistentDataStructure: {result:?}"
@@ -8553,7 +8522,7 @@ mod tests {
             message: "test".to_string(),
         });
         let ins =
-            Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(&inv);
+            Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(inv);
         assert!(matches!(ins, InsertionError::TopologyValidation(_)));
     }
 
@@ -8564,7 +8533,7 @@ mod tests {
             vertex_uuid: Uuid::nil(),
         });
         let ins =
-            Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(&inv);
+            Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(inv);
         assert!(matches!(
             ins,
             InsertionError::TopologyValidationFailed { .. }
@@ -8579,7 +8548,7 @@ mod tests {
                 message: "test".to_string(),
             });
         let ins =
-            Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(&inv);
+            Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(inv);
         assert!(matches!(
             ins,
             InsertionError::DelaunayValidationFailed { .. }
@@ -9421,7 +9390,7 @@ mod tests {
             message: "test".into(),
         });
         let ie = Triangulation::<FastKernel<f64>, (), (), 2>::invariant_error_to_insertion_error(
-            &tds_err,
+            tds_err,
         );
         assert!(matches!(ie, InsertionError::TopologyValidation(_)));
 
@@ -9434,7 +9403,7 @@ mod tests {
             },
         );
         let ie = Triangulation::<FastKernel<f64>, (), (), 2>::invariant_error_to_insertion_error(
-            &tri_err,
+            tri_err,
         );
         assert!(matches!(
             ie,
@@ -9447,9 +9416,8 @@ mod tests {
                 message: "test violation".to_string(),
             },
         );
-        let ie = Triangulation::<FastKernel<f64>, (), (), 2>::invariant_error_to_insertion_error(
-            &dt_err,
-        );
+        let ie =
+            Triangulation::<FastKernel<f64>, (), (), 2>::invariant_error_to_insertion_error(dt_err);
         assert!(matches!(
             ie,
             InsertionError::DelaunayValidationFailed { .. }

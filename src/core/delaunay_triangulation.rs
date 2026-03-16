@@ -24,7 +24,7 @@ use crate::core::operations::{
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{
     TopologyGuarantee, Triangulation, TriangulationConstructionError, TriangulationValidationError,
-    ValidationPolicy, record_duplicate_detection_metrics,
+    ValidationPolicy, insertion_error_to_invariant_error, record_duplicate_detection_metrics,
 };
 use crate::core::triangulation_data_structure::{
     CellKey, InvariantError, InvariantKind, InvariantViolation, Tds, TdsConstructionError,
@@ -3365,6 +3365,7 @@ where
             | InsertionError::NonManifoldTopology { .. }
             | InsertionError::HullExtension { .. }
             | InsertionError::DelaunayValidationFailed { .. }
+            | InsertionError::DelaunayRepairFailed { .. }
             | InsertionError::DuplicateCoordinates { .. }) => {
                 TriangulationConstructionError::GeometricDegeneracy {
                     message: format!(
@@ -3417,6 +3418,7 @@ where
             | InsertionError::NonManifoldTopology { .. }
             | InsertionError::HullExtension { .. }
             | InsertionError::DelaunayValidationFailed { .. }
+            | InsertionError::DelaunayRepairFailed { .. }
             | InsertionError::TopologyValidationFailed { .. }) => {
                 TriangulationConstructionError::GeometricDegeneracy {
                     message: insertion_error.to_string(),
@@ -4922,10 +4924,6 @@ where
         }
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "Post-repair safety/rollback checks are intentionally centralized for transactional correctness"
-    )]
     fn maybe_repair_after_insertion(
         &mut self,
         mut vertex_key: VertexKey,
@@ -4985,10 +4983,9 @@ where
         if Self::force_heuristic_rebuild_enabled() {
             used_heuristic = self
                 .run_flip_repair_fallbacks(seed_ref)
-                .map_err(|fallback_err| InsertionError::CavityFilling {
-                    message: format!(
-                        "Delaunay repair failed (forced heuristic rebuild); robust repair fallback also failed; heuristic rebuild fallback also failed ({fallback_err})"
-                    ),
+                .map_err(|fallback_err| InsertionError::DelaunayRepairFailed {
+                    source: Box::new(fallback_err),
+                    context: "forced heuristic rebuild; all repair fallbacks failed".to_string(),
                 })?;
             if used_heuristic {
                 vertex_key = self.remap_vertex_key_by_uuid(vertex_uuid)?;
@@ -5009,20 +5006,20 @@ where
                     //
                     // NOTE: This is intentionally expensive, but is only triggered when local repair
                     // fails to converge or leaves a detectable Delaunay violation.
-                    used_heuristic = self
-                        .run_flip_repair_fallbacks(seed_ref)
-                        .map_err(|fallback_err| InsertionError::CavityFilling {
-                            message: format!(
-                                "Delaunay repair failed ({e}); robust repair fallback also failed; heuristic rebuild fallback also failed ({fallback_err})"
-                            ),
-                        })?;
+                    used_heuristic =
+                        self.run_flip_repair_fallbacks(seed_ref)
+                            .map_err(|fallback_err| InsertionError::DelaunayRepairFailed {
+                                source: Box::new(fallback_err),
+                                context: format!("local repair failed ({e}); all fallbacks failed"),
+                            })?;
                     if used_heuristic {
                         vertex_key = self.remap_vertex_key_by_uuid(vertex_uuid)?;
                     }
                 }
                 Err(e) => {
-                    return Err(InsertionError::CavityFilling {
-                        message: format!("Delaunay repair failed: {e}"),
+                    return Err(InsertionError::DelaunayRepairFailed {
+                        source: Box::new(e),
+                        context: "Delaunay repair failed (non-recoverable)".to_string(),
                     });
                 }
             }
@@ -5048,18 +5045,7 @@ where
         }
         // Flip-based repair mutates cell orderings; restore canonical positive geometric
         // orientation before exposing the updated triangulation state.
-        self.tri
-            .normalize_and_promote_positive_orientation()
-            .map_err(|err| match err {
-                InsertionError::TopologyValidation(source) => {
-                    InsertionError::TopologyValidation(source)
-                }
-                other => InsertionError::TopologyValidation(TdsError::FinalizationFailed {
-                    message: format!(
-                        "Geometric orientation normalization failed after Delaunay repair: {other}",
-                    ),
-                }),
-            })?;
+        self.tri.normalize_and_promote_positive_orientation()?;
         self.tri
             .validate_geometric_cell_orientation()
             .map_err(InsertionError::TopologyValidation)?;
@@ -5082,7 +5068,7 @@ where
 
         self.is_valid()
             .map_err(|e| InsertionError::DelaunayValidationFailed {
-                message: e.to_string(),
+                source: Box::new(e),
             })
     }
 
@@ -5179,10 +5165,7 @@ where
                 }
                 .into());
             }
-            Err(_) => self
-                .tri
-                .remove_vertex(vertex)
-                .map_err(|e| InvariantError::Tds(e.into_inner()))?,
+            Err(_) => self.tri.remove_vertex(vertex)?,
         };
 
         let topology = self.tri.topology_guarantee();
@@ -5199,10 +5182,11 @@ where
             // the global sign negative.
             self.tri
                 .normalize_and_promote_positive_orientation()
-                .map_err(|e| TdsError::FinalizationFailed {
-                    message: format!(
-                        "Orientation canonicalization failed after vertex removal: {e}"
-                    ),
+                .map_err(|e| {
+                    insertion_error_to_invariant_error(
+                        e,
+                        "Orientation canonicalization failed after vertex removal",
+                    )
                 })?;
         }
 
@@ -8041,7 +8025,15 @@ mod tests {
                 reason: HullExtensionReason::NoVisibleFacets,
             },
             InsertionError::DelaunayValidationFailed {
-                message: "test".to_string(),
+                source: Box::new(DelaunayTriangulationValidationError::VerificationFailed {
+                    message: "test".to_string(),
+                }),
+            },
+            InsertionError::DelaunayRepairFailed {
+                source: Box::new(DelaunayRepairError::PostconditionFailed {
+                    message: "test".to_string(),
+                }),
+                context: "test".to_string(),
             },
             InsertionError::DuplicateCoordinates {
                 coordinates: "[0,0,0]".to_string(),
@@ -8177,7 +8169,15 @@ mod tests {
                 reason: HullExtensionReason::NoVisibleFacets,
             },
             InsertionError::DelaunayValidationFailed {
-                message: "test".to_string(),
+                source: Box::new(DelaunayTriangulationValidationError::VerificationFailed {
+                    message: "test".to_string(),
+                }),
+            },
+            InsertionError::DelaunayRepairFailed {
+                source: Box::new(DelaunayRepairError::PostconditionFailed {
+                    message: "test".to_string(),
+                }),
+                context: "test".to_string(),
             },
             InsertionError::TopologyValidationFailed {
                 message: "test".to_string(),

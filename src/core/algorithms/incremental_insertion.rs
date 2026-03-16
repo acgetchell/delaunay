@@ -42,7 +42,7 @@ use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
-use crate::geometry::traits::coordinate::CoordinateScalar;
+use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
 use std::hash::{Hash, Hasher};
 
 pub use crate::core::operations::{InsertionOutcome, InsertionResult, InsertionStatistics};
@@ -58,6 +58,7 @@ pub use crate::core::operations::{InsertionOutcome, InsertionResult, InsertionSt
 /// assert!(matches!(reason, HullExtensionReason::NoVisibleFacets));
 /// ```
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum HullExtensionReason {
     /// No visible boundary facets (coplanar with hull surface).
     NoVisibleFacets,
@@ -66,6 +67,16 @@ pub enum HullExtensionReason {
         /// Details about why the patch was invalid.
         details: String,
     },
+    /// Geometric predicate (orientation / in-sphere) failed.
+    ///
+    /// Preserves the structured [`CoordinateConversionError`] from the kernel or
+    /// robust-predicate evaluation rather than collapsing it into a string.
+    PredicateFailed(CoordinateConversionError),
+    /// Lower-layer TDS error encountered during hull extension.
+    ///
+    /// Preserves the structured [`TdsError`] (e.g. from boundary-facet retrieval)
+    /// rather than collapsing it into a string.
+    Tds(TdsError),
     /// Other failure.
     Other {
         /// Underlying error message.
@@ -83,6 +94,10 @@ impl std::fmt::Display for HullExtensionReason {
                 f,
                 "Visible boundary facets are not a valid patch: {details}"
             ),
+            Self::PredicateFailed(source) => {
+                write!(f, "Geometric predicate failed: {source}")
+            }
+            Self::Tds(source) => write!(f, "TDS error: {source}"),
             Self::Other { message } => f.write_str(message),
         }
     }
@@ -154,10 +169,26 @@ pub enum InsertionError {
     ///
     /// This indicates the triangulation is structurally valid but violates the
     /// empty-circumsphere property (Level 4).
-    #[error("Delaunay validation failed: {message}")]
+    #[error("Delaunay validation failed: {source}")]
     DelaunayValidationFailed {
-        /// Error message
-        message: String,
+        /// The structured Level 4 validation error.
+        #[source]
+        source: Box<crate::core::delaunay_triangulation::DelaunayTriangulationValidationError>,
+    },
+
+    /// Flip-based Delaunay repair failed.
+    ///
+    /// This variant is used when a Delaunay repair pass (local or fallback)
+    /// cannot converge or otherwise fails. It preserves the structured
+    /// [`DelaunayRepairError`](crate::core::algorithms::flips::DelaunayRepairError)
+    /// rather than collapsing it into a string.
+    #[error("Delaunay repair failed ({context}): {source}")]
+    DelaunayRepairFailed {
+        /// The underlying repair error.
+        #[source]
+        source: Box<crate::core::algorithms::flips::DelaunayRepairError>,
+        /// Operational context describing the repair path that failed.
+        context: String,
     },
 
     /// Attempted to insert a vertex with coordinates that already exist.
@@ -282,6 +313,7 @@ impl InsertionError {
             | Self::Construction(_)
             | Self::CavityFilling { .. }
             | Self::DelaunayValidationFailed { .. }
+            | Self::DelaunayRepairFailed { .. }
             | Self::DuplicateCoordinates { .. }
             | Self::DuplicateUuid { .. } => false,
         }
@@ -1539,10 +1571,6 @@ where
     Ok(new_cells)
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "Visibility and edge-split checks are kept together for clarity"
-)]
 fn find_boundary_edge_split_facet<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     point: &Point<T, D>,
@@ -1562,9 +1590,7 @@ where
     let boundary_facets = tds
         .boundary_facets()
         .map_err(|e| InsertionError::HullExtension {
-            reason: HullExtensionReason::Other {
-                message: format!("Failed to get boundary facets: {e}"),
-            },
+            reason: HullExtensionReason::Tds(e),
         })?;
 
     for facet_view in boundary_facets {
@@ -1617,9 +1643,7 @@ where
         // property we need here: is the opposite simplex truly degenerate?
         let opposite_degenerate = matches!(
             robust_orientation(&simplex_points).map_err(|e| InsertionError::HullExtension {
-                reason: HullExtensionReason::Other {
-                    message: format!("Exact orientation test failed: {e}"),
-                },
+                reason: HullExtensionReason::PredicateFailed(e),
             })?,
             Orientation::DEGENERATE
         );
@@ -1637,9 +1661,7 @@ where
         // property we need here: is the point truly on the line through the edge?
         let is_collinear = matches!(
             robust_orientation(&edge_line).map_err(|e| InsertionError::HullExtension {
-                reason: HullExtensionReason::Other {
-                    message: format!("Exact orientation test failed: {e}"),
-                },
+                reason: HullExtensionReason::PredicateFailed(e),
             })?,
             Orientation::DEGENERATE
         );
@@ -1755,9 +1777,7 @@ where
     let boundary_facets = tds
         .boundary_facets()
         .map_err(|e| InsertionError::HullExtension {
-            reason: HullExtensionReason::Other {
-                message: format!("Failed to get boundary facets: {e}"),
-            },
+            reason: HullExtensionReason::Tds(e),
         })?;
 
     // Test each boundary facet for visibility
@@ -1816,9 +1836,7 @@ where
             kernel
                 .orientation(&simplex_points)
                 .map_err(|e| InsertionError::HullExtension {
-                    reason: HullExtensionReason::Other {
-                        message: format!("Orientation test failed: {e}"),
-                    },
+                    reason: HullExtensionReason::PredicateFailed(e),
                 })?;
 
         // Replace opposite vertex with query point (last entry in canonical order).
@@ -1828,9 +1846,7 @@ where
             kernel
                 .orientation(&simplex_points)
                 .map_err(|e| InsertionError::HullExtension {
-                    reason: HullExtensionReason::Other {
-                        message: format!("Orientation test failed: {e}"),
-                    },
+                    reason: HullExtensionReason::PredicateFailed(e),
                 })?;
 
         #[cfg(debug_assertions)]
@@ -2893,6 +2909,29 @@ mod tests {
                 reason: HullExtensionReason::Other {
                     message: "Failed to get boundary facets: test".to_string()
                 }
+            }
+            .is_retryable()
+        );
+
+        assert!(
+            !InsertionError::HullExtension {
+                reason: HullExtensionReason::PredicateFailed(
+                    CoordinateConversionError::ConversionFailed {
+                        coordinate_index: 0,
+                        coordinate_value: "test".to_string(),
+                        from_type: "f64",
+                        to_type: "f64",
+                    }
+                )
+            }
+            .is_retryable()
+        );
+
+        assert!(
+            !InsertionError::HullExtension {
+                reason: HullExtensionReason::Tds(TdsError::InconsistentDataStructure {
+                    message: "test".to_string(),
+                })
             }
             .is_retryable()
         );

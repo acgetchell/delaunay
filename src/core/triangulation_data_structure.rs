@@ -573,12 +573,6 @@ pub enum TdsError {
     /// Facet operation failed during validation.
     #[error("Facet operation failed: {0}")]
     FacetError(#[from] super::facet::FacetError),
-    /// Finalization failed during triangulation operations.
-    #[error("Finalization failed: {message}")]
-    FinalizationFailed {
-        /// Description of the finalization failure, including underlying error details.
-        message: String,
-    },
     /// A cell contains two or more vertices with identical coordinates.
     ///
     /// This is distinct from [`CellValidationError::DuplicateVertices`] which checks
@@ -3275,6 +3269,7 @@ where
             for vertex in self.vertices.values_mut() {
                 vertex.incident_cell = None;
             }
+            self.bump_generation();
             return Ok(());
         }
 
@@ -3302,6 +3297,7 @@ where
             }
         }
 
+        self.bump_generation();
         Ok(())
     }
 
