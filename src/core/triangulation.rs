@@ -328,7 +328,6 @@ pub enum TriangulationConstructionError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::triangulation::TriangulationValidationError;
 /// use delaunay::core::triangulation_data_structure::InvariantError;
 /// use delaunay::prelude::triangulation::*;
 ///

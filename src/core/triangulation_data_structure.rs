@@ -3283,13 +3283,16 @@ where
         // Single-pass rebuild: assign the first cell encountered for each vertex.
         for (cell_key, cell) in &self.cells {
             for &vertex_key in cell.vertices() {
-                let vertex =
-                    self.vertices
-                        .get_mut(vertex_key)
-                        .ok_or_else(|| TdsError::VertexNotFound {
-                            vertex_key,
-                            context: "incident cell assignment".to_string(),
-                        })?;
+                let Some(vertex) = self.vertices.get_mut(vertex_key) else {
+                    // State has already been mutated (incident cells cleared above),
+                    // so bump generation before returning the error.
+                    self.bump_generation();
+                    return Err(TdsError::VertexNotFound {
+                        vertex_key,
+                        context: "incident cell assignment".to_string(),
+                    }
+                    .into());
+                };
 
                 if vertex.incident_cell.is_none() {
                     vertex.incident_cell = Some(cell_key);
