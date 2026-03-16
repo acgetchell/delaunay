@@ -24,11 +24,11 @@ use crate::core::operations::{
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{
     TopologyGuarantee, Triangulation, TriangulationConstructionError, TriangulationValidationError,
-    ValidationPolicy, record_duplicate_detection_metrics,
+    ValidationPolicy, insertion_error_to_invariant_error, record_duplicate_detection_metrics,
 };
 use crate::core::triangulation_data_structure::{
-    CellKey, InvariantKind, InvariantViolation, Tds, TdsConstructionError, TdsValidationError,
-    TriangulationValidationReport, VertexKey,
+    CellKey, InvariantError, InvariantKind, InvariantViolation, Tds, TdsConstructionError,
+    TdsError, TriangulationValidationReport, VertexKey,
 };
 use crate::core::util::{
     coords_equal_exact, coords_within_epsilon, hilbert_indices_prequantized, hilbert_quantize,
@@ -121,7 +121,16 @@ pub enum DelaunayTriangulationConstructionError {
     Triangulation(#[from] TriangulationConstructionError),
 }
 
-/// Errors that can occur during Delaunay triangulation validation (Level 4).
+/// Errors that can occur during Delaunay triangulation validation (Levels 1–4).
+///
+/// This type is returned by [`DelaunayTriangulation::validate`] and aggregates
+/// errors from all validation layers:
+/// - [`Tds`](Self::Tds) — element or TDS structural errors (Levels 1–2).
+/// - [`Triangulation`](Self::Triangulation) — topology errors (Level 3).
+/// - [`VerificationFailed`](Self::VerificationFailed) — Delaunay property violation (Level 4).
+///
+/// [`DelaunayTriangulation::is_valid`] returns only the Level 4
+/// [`VerificationFailed`](Self::VerificationFailed) variant.
 ///
 /// # Examples
 ///
@@ -143,7 +152,11 @@ pub enum DelaunayTriangulationConstructionError {
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DelaunayTriangulationValidationError {
-    /// Lower-layer validation error (Levels 1–3).
+    /// Lower-layer element or TDS structural validation error (Levels 1–2).
+    #[error(transparent)]
+    Tds(#[from] TdsError),
+
+    /// Lower-layer topology validation error (Level 3).
     #[error(transparent)]
     Triangulation(#[from] TriangulationValidationError),
 
@@ -3317,17 +3330,15 @@ where
             // Construction already wraps a TriangulationConstructionError — preserve it
             // directly rather than rewrapping, mirroring map_insertion_error.
             InsertionError::Construction(source) => source,
-            // Degenerate orientation (det ≈ 0 or predicate failure) and negative
-            // orientation (det < 0 after canonicalization, FP sign instability) are
+            // Geometric orientation errors (degenerate or negative) are
             // geometry problems, not internal bugs.
-            InsertionError::TopologyValidation(
-                error @ (TdsValidationError::DegenerateOrientation { .. }
-                | TdsValidationError::NegativeOrientation { .. }),
-            ) => TriangulationConstructionError::GeometricDegeneracy {
-                message: format!(
-                    "Failed to canonicalize orientation after post-construction repair: {error}"
-                ),
-            },
+            InsertionError::TopologyValidation(error @ TdsError::Geometric(_)) => {
+                TriangulationConstructionError::GeometricDegeneracy {
+                    message: format!(
+                        "Failed to canonicalize orientation after post-construction repair: {error}"
+                    ),
+                }
+            }
             // Structural / data-structure errors indicate algorithmic bugs,
             // not input-geometry problems.
             //
@@ -3354,6 +3365,7 @@ where
             | InsertionError::NonManifoldTopology { .. }
             | InsertionError::HullExtension { .. }
             | InsertionError::DelaunayValidationFailed { .. }
+            | InsertionError::DelaunayRepairFailed { .. }
             | InsertionError::DuplicateCoordinates { .. }) => {
                 TriangulationConstructionError::GeometricDegeneracy {
                     message: format!(
@@ -3372,9 +3384,9 @@ where
                 TriangulationConstructionError::FailedToCreateCell { message }
             }
             InsertionError::NeighborWiring { message } => {
-                TriangulationConstructionError::from(TdsConstructionError::ValidationError(
-                    TdsValidationError::InvalidNeighbors { message },
-                ))
+                TriangulationConstructionError::InternalInconsistency {
+                    message: format!("Neighbor wiring failed: {message}"),
+                }
             }
             InsertionError::TopologyValidation(source) => {
                 TriangulationConstructionError::from(TdsConstructionError::ValidationError(source))
@@ -3406,6 +3418,7 @@ where
             | InsertionError::NonManifoldTopology { .. }
             | InsertionError::HullExtension { .. }
             | InsertionError::DelaunayValidationFailed { .. }
+            | InsertionError::DelaunayRepairFailed { .. }
             | InsertionError::TopologyValidationFailed { .. }) => {
                 TriangulationConstructionError::GeometricDegeneracy {
                     message: insertion_error.to_string(),
@@ -3413,44 +3426,6 @@ where
             }
         }
     }
-
-    // TODO: Implement after bistellar flips + robust insertion (v0.7.0+)
-    // /// Create a Delaunay triangulation with a specified topological space.
-    // ///
-    // /// This will allow constructing Delaunay triangulations on different topologies
-    // /// (Euclidean, spherical, toroidal) with appropriate boundary conditions
-    // /// and topology validation. This method should delegate to
-    // /// [`Triangulation::with_topology`] after constructing the TDS.
-    // ///
-    // /// Requires:
-    // /// - Bistellar flips for topology-preserving operations
-    // /// - Robust Delaunay insertion that respects topology constraints
-    // ///
-    // /// # Examples (future)
-    // ///
-    // /// ```rust,ignore
-    // /// use delaunay::prelude::query::*;
-    // /// use delaunay::topology::spaces::ToroidalSpace;
-    // ///
-    // /// let space = ToroidalSpace::new([1.0, 1.0, 1.0]);
-    // /// let dt = DelaunayTriangulation::with_topology(
-    // ///     FastKernel::new(),
-    // ///     space,
-    // ///     &vertices
-    // /// ).unwrap();
-    // /// ```
-    // pub fn with_topology<T>(
-    //     kernel: K,
-    //     topology: T,
-    //     vertices: &[Vertex<K::Scalar, U, D>],
-    // ) -> Result<Self, TriangulationConstructionError>
-    // where
-    //     K::Scalar: CoordinateScalar,
-    //     T: TopologicalSpace,
-    // {
-    //     // Build TDS with Delaunay property, then delegate to Triangulation layer
-    //     unimplemented!("Requires bistellar flips + robust insertion")
-    // }
 
     /// Returns the number of vertices in the triangulation.
     ///
@@ -4949,10 +4924,6 @@ where
         }
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "Post-repair safety/rollback checks are intentionally centralized for transactional correctness"
-    )]
     fn maybe_repair_after_insertion(
         &mut self,
         mut vertex_key: VertexKey,
@@ -5012,10 +4983,9 @@ where
         if Self::force_heuristic_rebuild_enabled() {
             used_heuristic = self
                 .run_flip_repair_fallbacks(seed_ref)
-                .map_err(|fallback_err| InsertionError::CavityFilling {
-                    message: format!(
-                        "Delaunay repair failed (forced heuristic rebuild); robust repair fallback also failed; heuristic rebuild fallback also failed ({fallback_err})"
-                    ),
+                .map_err(|fallback_err| InsertionError::DelaunayRepairFailed {
+                    source: Box::new(fallback_err),
+                    context: "forced heuristic rebuild; all repair fallbacks failed".to_string(),
                 })?;
             if used_heuristic {
                 vertex_key = self.remap_vertex_key_by_uuid(vertex_uuid)?;
@@ -5036,20 +5006,20 @@ where
                     //
                     // NOTE: This is intentionally expensive, but is only triggered when local repair
                     // fails to converge or leaves a detectable Delaunay violation.
-                    used_heuristic = self
-                        .run_flip_repair_fallbacks(seed_ref)
-                        .map_err(|fallback_err| InsertionError::CavityFilling {
-                            message: format!(
-                                "Delaunay repair failed ({e}); robust repair fallback also failed; heuristic rebuild fallback also failed ({fallback_err})"
-                            ),
-                        })?;
+                    used_heuristic =
+                        self.run_flip_repair_fallbacks(seed_ref)
+                            .map_err(|fallback_err| InsertionError::DelaunayRepairFailed {
+                                source: Box::new(fallback_err),
+                                context: format!("local repair failed ({e}); all fallbacks failed"),
+                            })?;
                     if used_heuristic {
                         vertex_key = self.remap_vertex_key_by_uuid(vertex_uuid)?;
                     }
                 }
                 Err(e) => {
-                    return Err(InsertionError::CavityFilling {
-                        message: format!("Delaunay repair failed: {e}"),
+                    return Err(InsertionError::DelaunayRepairFailed {
+                        source: Box::new(e),
+                        context: "Delaunay repair failed (non-recoverable)".to_string(),
                     });
                 }
             }
@@ -5075,36 +5045,10 @@ where
         }
         // Flip-based repair mutates cell orderings; restore canonical positive geometric
         // orientation before exposing the updated triangulation state.
-        self.tri
-            .normalize_and_promote_positive_orientation()
-            .map_err(|err| {
-                let source = match err {
-                    InsertionError::TopologyValidation(source) => {
-                        TriangulationValidationError::from(source)
-                    }
-                    InsertionError::TopologyValidationFailed { source, .. } => *source,
-                    other => {
-                        TriangulationValidationError::Tds(
-                            TdsValidationError::InconsistentDataStructure {
-                                message: format!(
-                                    "Geometric orientation normalization failed after Delaunay repair: {other}",
-                                ),
-                            },
-                        )
-                    }
-                };
-                InsertionError::TopologyValidationFailed {
-                    message: "Geometric orientation normalization failed after Delaunay repair"
-                        .to_string(),
-                    source: Box::new(source),
-                }
-            })?;
+        self.tri.normalize_and_promote_positive_orientation()?;
         self.tri
             .validate_geometric_cell_orientation()
-            .map_err(|err| InsertionError::TopologyValidationFailed {
-                message: "Geometric orientation invalid after Delaunay repair".to_string(),
-                source: Box::new(err),
-            })?;
+            .map_err(InsertionError::TopologyValidation)?;
         Ok((vertex_key, used_heuristic))
     }
 
@@ -5124,7 +5068,7 @@ where
 
         self.is_valid()
             .map_err(|e| InsertionError::DelaunayValidationFailed {
-                message: e.to_string(),
+                source: Box::new(e),
             })
     }
 
@@ -5161,7 +5105,11 @@ where
     ///
     /// # Errors
     ///
-    /// Returns error if the vertex-cell incidence cannot be rebuilt, indicating data structure corruption.
+    /// Returns [`InvariantError`] if:
+    /// - The inverse k=1 flip encounters a neighbor-wiring failure (`InvariantError::Tds`).
+    /// - Fan retriangulation fails (`InvariantError::Tds`).
+    /// - Delaunay flip-based repair fails after removal (`InvariantError::Delaunay`).
+    /// - Orientation canonicalization fails after repair (`InvariantError::Tds`).
     ///
     /// # Examples
     ///
@@ -5196,7 +5144,7 @@ where
     pub fn remove_vertex(
         &mut self,
         vertex: &Vertex<K::Scalar, U, D>,
-    ) -> Result<usize, TriangulationValidationError>
+    ) -> Result<usize, InvariantError>
     where
         K::Scalar: ScalarSummable,
     {
@@ -5212,15 +5160,12 @@ where
                 info.removed_cells.len()
             }
             Err(FlipError::NeighborWiring { message }) => {
-                return Err(TdsValidationError::InvalidNeighbors {
+                return Err(TdsError::InvalidNeighbors {
                     message: format!("inverse k=1 flip failed during remove_vertex: {message}"),
                 }
                 .into());
             }
-            Err(_) => self
-                .tri
-                .remove_vertex(vertex)
-                .map_err(TriangulationValidationError::from)?,
+            Err(_) => self.tri.remove_vertex(vertex)?,
         };
 
         let topology = self.tri.topology_guarantee();
@@ -5228,19 +5173,20 @@ where
             let seed_ref = seed_cells.as_deref();
             let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
             repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology).map_err(|e| {
-                TdsValidationError::FinalizationFailed {
+                InvariantError::Delaunay(DelaunayTriangulationValidationError::VerificationFailed {
                     message: format!("Delaunay repair failed after vertex removal: {e}"),
-                }
+                })
             })?;
 
             // Re-canonicalize geometric orientation (#258): flip repair may leave
             // the global sign negative.
             self.tri
                 .normalize_and_promote_positive_orientation()
-                .map_err(|e| TdsValidationError::FinalizationFailed {
-                    message: format!(
-                        "Orientation canonicalization failed after vertex removal: {e}"
-                    ),
+                .map_err(|e| {
+                    insertion_error_to_invariant_error(
+                        e,
+                        "Orientation canonicalization failed after vertex removal",
+                    )
                 })?;
         }
 
@@ -5366,7 +5312,13 @@ where
     where
         K::Scalar: CoordinateScalar,
     {
-        self.tri.validate()?;
+        self.tri.validate().map_err(|e| match e {
+            InvariantError::Tds(tds_err) => DelaunayTriangulationValidationError::Tds(tds_err),
+            InvariantError::Triangulation(tri_err) => {
+                DelaunayTriangulationValidationError::Triangulation(tri_err)
+            }
+            InvariantError::Delaunay(dt_err) => dt_err,
+        })?;
         self.is_valid()
     }
 
@@ -5801,9 +5753,10 @@ impl DelaunayCheckPolicy {
 mod tests {
     use super::*;
     use crate::core::algorithms::flips::DelaunayRepairError;
-    use crate::core::triangulation_data_structure::EntityKind;
+    use crate::core::triangulation_data_structure::{EntityKind, GeometricError};
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel, RobustKernel};
     use crate::geometry::traits::coordinate::Coordinate;
+    use crate::topology::characteristics::euler::TopologyClassification;
     use crate::triangulation::flips::BistellarFlips;
     use crate::vertex;
     use rand::{RngExt, SeedableRng};
@@ -7894,10 +7847,9 @@ mod tests {
 
     #[test]
     fn test_map_orientation_canonicalization_error_topology_validation_is_internal() {
-        let error =
-            InsertionError::TopologyValidation(TdsValidationError::InconsistentDataStructure {
-                message: "missing cell".to_string(),
-            });
+        let error = InsertionError::TopologyValidation(TdsError::InconsistentDataStructure {
+            message: "missing cell".to_string(),
+        });
         let mapped =
             DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(
@@ -7916,9 +7868,11 @@ mod tests {
 
     #[test]
     fn test_map_orientation_canonicalization_error_degenerate_orientation_is_degeneracy() {
-        let error = InsertionError::TopologyValidation(TdsValidationError::DegenerateOrientation {
-            message: "det=0".to_string(),
-        });
+        let error = InsertionError::TopologyValidation(TdsError::Geometric(
+            GeometricError::DegenerateOrientation {
+                message: "det=0".to_string(),
+            },
+        ));
         let mapped =
             DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(
@@ -7937,9 +7891,11 @@ mod tests {
 
     #[test]
     fn test_map_orientation_canonicalization_error_negative_orientation_is_degeneracy() {
-        let error = InsertionError::TopologyValidation(TdsValidationError::NegativeOrientation {
-            message: "det<0 after canonicalization".to_string(),
-        });
+        let error = InsertionError::TopologyValidation(TdsError::Geometric(
+            GeometricError::NegativeOrientation {
+                message: "det<0 after canonicalization".to_string(),
+            },
+        ));
         let mapped =
             DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(
@@ -7958,10 +7914,13 @@ mod tests {
 
     #[test]
     fn test_map_orientation_canonicalization_error_isolated_vertex_is_internal() {
-        let error = InsertionError::TopologyValidation(TdsValidationError::IsolatedVertex {
-            vertex_key: VertexKey::from(slotmap::KeyData::from_ffi(1)),
-            vertex_uuid: Uuid::nil(),
-        });
+        let error = InsertionError::TopologyValidationFailed {
+            message: "test".to_string(),
+            source: Box::new(TriangulationValidationError::IsolatedVertex {
+                vertex_key: VertexKey::from(slotmap::KeyData::from_ffi(1)),
+                vertex_uuid: Uuid::nil(),
+            }),
+        };
         let mapped =
             DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(
@@ -7994,11 +7953,11 @@ mod tests {
     fn test_map_orientation_canonicalization_error_topology_validation_failed_is_internal() {
         let error = InsertionError::TopologyValidationFailed {
             message: "post-insertion".to_string(),
-            source: Box::new(TriangulationValidationError::Tds(
-                TdsValidationError::InconsistentDataStructure {
-                    message: "test".to_string(),
-                },
-            )),
+            source: Box::new(TriangulationValidationError::EulerCharacteristicMismatch {
+                computed: 3,
+                expected: 2,
+                classification: TopologyClassification::Ball(3),
+            }),
         };
         let mapped =
             DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
@@ -8066,7 +8025,15 @@ mod tests {
                 reason: HullExtensionReason::NoVisibleFacets,
             },
             InsertionError::DelaunayValidationFailed {
-                message: "test".to_string(),
+                source: Box::new(DelaunayTriangulationValidationError::VerificationFailed {
+                    message: "test".to_string(),
+                }),
+            },
+            InsertionError::DelaunayRepairFailed {
+                source: Box::new(DelaunayRepairError::PostconditionFailed {
+                    message: "test".to_string(),
+                }),
+                context: "test".to_string(),
             },
             InsertionError::DuplicateCoordinates {
                 coordinates: "[0,0,0]".to_string(),
@@ -8129,17 +8096,19 @@ mod tests {
         let mapped =
             DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_insertion_error(error);
         assert!(
-            matches!(mapped, TriangulationConstructionError::Tds(_)),
-            "NeighborWiring should map to Tds(ValidationError(InvalidNeighbors)), got: {mapped:?}"
+            matches!(
+                mapped,
+                TriangulationConstructionError::InternalInconsistency { .. }
+            ),
+            "NeighborWiring should map to InternalInconsistency, got: {mapped:?}"
         );
     }
 
     #[test]
     fn test_map_insertion_error_topology_validation() {
-        let error =
-            InsertionError::TopologyValidation(TdsValidationError::InconsistentDataStructure {
-                message: "broken".to_string(),
-            });
+        let error = InsertionError::TopologyValidation(TdsError::InconsistentDataStructure {
+            message: "broken".to_string(),
+        });
         let mapped =
             DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_insertion_error(error);
         assert!(
@@ -8200,15 +8169,23 @@ mod tests {
                 reason: HullExtensionReason::NoVisibleFacets,
             },
             InsertionError::DelaunayValidationFailed {
-                message: "test".to_string(),
+                source: Box::new(DelaunayTriangulationValidationError::VerificationFailed {
+                    message: "test".to_string(),
+                }),
+            },
+            InsertionError::DelaunayRepairFailed {
+                source: Box::new(DelaunayRepairError::PostconditionFailed {
+                    message: "test".to_string(),
+                }),
+                context: "test".to_string(),
             },
             InsertionError::TopologyValidationFailed {
                 message: "test".to_string(),
-                source: Box::new(TriangulationValidationError::Tds(
-                    TdsValidationError::InconsistentDataStructure {
-                        message: "test".to_string(),
-                    },
-                )),
+                source: Box::new(TriangulationValidationError::EulerCharacteristicMismatch {
+                    computed: 3,
+                    expected: 2,
+                    classification: TopologyClassification::Ball(3),
+                }),
             },
         ];
         for error in geometry_errors {
@@ -8229,9 +8206,11 @@ mod tests {
 
     #[test]
     fn test_is_retryable_degenerate_orientation_is_retryable() {
-        let error = InsertionError::TopologyValidation(TdsValidationError::DegenerateOrientation {
-            message: "det=0".to_string(),
-        });
+        let error = InsertionError::TopologyValidation(TdsError::Geometric(
+            GeometricError::DegenerateOrientation {
+                message: "det=0".to_string(),
+            },
+        ));
         assert!(
             error.is_retryable(),
             "DegenerateOrientation should be retryable"
@@ -8240,9 +8219,11 @@ mod tests {
 
     #[test]
     fn test_is_retryable_negative_orientation_is_retryable() {
-        let error = InsertionError::TopologyValidation(TdsValidationError::NegativeOrientation {
-            message: "det<0".to_string(),
-        });
+        let error = InsertionError::TopologyValidation(TdsError::Geometric(
+            GeometricError::NegativeOrientation {
+                message: "det<0".to_string(),
+            },
+        ));
         assert!(
             error.is_retryable(),
             "NegativeOrientation should be retryable"
@@ -8251,10 +8232,13 @@ mod tests {
 
     #[test]
     fn test_is_retryable_isolated_vertex_is_retryable() {
-        let error = InsertionError::TopologyValidation(TdsValidationError::IsolatedVertex {
-            vertex_key: VertexKey::from(slotmap::KeyData::from_ffi(1)),
-            vertex_uuid: Uuid::nil(),
-        });
+        let error = InsertionError::TopologyValidationFailed {
+            message: "test".to_string(),
+            source: Box::new(TriangulationValidationError::IsolatedVertex {
+                vertex_key: VertexKey::from(slotmap::KeyData::from_ffi(1)),
+                vertex_uuid: Uuid::nil(),
+            }),
+        };
         assert!(
             error.is_retryable(),
             "IsolatedVertex should be retryable (geometry-sensitive conflict region)"
@@ -8263,10 +8247,9 @@ mod tests {
 
     #[test]
     fn test_is_retryable_inconsistent_data_structure_is_not_retryable() {
-        let error =
-            InsertionError::TopologyValidation(TdsValidationError::InconsistentDataStructure {
-                message: "missing cell".to_string(),
-            });
+        let error = InsertionError::TopologyValidation(TdsError::InconsistentDataStructure {
+            message: "missing cell".to_string(),
+        });
         assert!(
             !error.is_retryable(),
             "InconsistentDataStructure should NOT be retryable"
@@ -8275,7 +8258,7 @@ mod tests {
 
     #[test]
     fn test_is_retryable_failed_to_create_cell_is_not_retryable() {
-        let error = InsertionError::TopologyValidation(TdsValidationError::FailedToCreateCell {
+        let error = InsertionError::TopologyValidation(TdsError::FailedToCreateCell {
             message: "test".to_string(),
         });
         assert!(
@@ -8302,12 +8285,88 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_delaunay_validation_error_tds_variant_display() {
+        let inner = TdsError::InconsistentDataStructure {
+            message: "broken link".to_string(),
+        };
+        let err = DelaunayTriangulationValidationError::from(inner);
+        assert!(err.to_string().contains("broken link"));
+    }
+
+    #[test]
+    fn test_delaunay_validation_error_triangulation_variant_display() {
+        let inner = TriangulationValidationError::IsolatedVertex {
+            vertex_key: VertexKey::from(slotmap::KeyData::from_ffi(1)),
+            vertex_uuid: Uuid::nil(),
+        };
+        let err = DelaunayTriangulationValidationError::from(inner);
+        assert!(err.to_string().contains("Isolated vertex"));
+    }
+
+    // ---- DT validate() error-mapping tests ----
+
+    #[test]
+    fn test_dt_validate_maps_tds_error_to_tds_variant() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        // Break vertex mapping so Level 2 structural validation fails.
+        let vk = dt.tds().vertex_keys().next().unwrap();
+        let uuid = dt.tds().get_vertex_by_key(vk).unwrap().uuid();
+        dt.tds_mut().uuid_to_vertex_key.remove(&uuid);
+
+        match dt.validate() {
+            Err(DelaunayTriangulationValidationError::Tds(TdsError::MappingInconsistency {
+                ..
+            })) => {}
+            other => panic!(
+                "Expected DelaunayTriangulationValidationError::Tds(MappingInconsistency), got {other:?}"
+            ),
+        }
+    }
+
+    #[test]
+    fn test_dt_validate_maps_topology_error_to_triangulation_variant() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        // Add an isolated vertex so Level 3 (topology) fails.
+        let _ = dt
+            .tds_mut()
+            .insert_vertex_with_mapping(vertex!([0.5, 0.5, 0.5]))
+            .unwrap();
+
+        match dt.validate() {
+            Err(DelaunayTriangulationValidationError::Triangulation(
+                TriangulationValidationError::IsolatedVertex { .. },
+            )) => {}
+            other => panic!(
+                "Expected DelaunayTriangulationValidationError::Triangulation(IsolatedVertex), got {other:?}"
+            ),
+        }
+    }
+
     // ---- map_orientation_canonicalization_error: OrientationViolation ----
 
     #[test]
     fn test_map_orientation_canonicalization_error_orientation_violation_is_internal_inconsistency()
     {
-        let error = InsertionError::TopologyValidation(TdsValidationError::OrientationViolation {
+        let error = InsertionError::TopologyValidation(TdsError::OrientationViolation {
             cell1_key: CellKey::from(slotmap::KeyData::from_ffi(1)),
             cell1_uuid: Uuid::nil(),
             cell2_key: CellKey::from(slotmap::KeyData::from_ffi(2)),

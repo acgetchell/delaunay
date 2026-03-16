@@ -7,7 +7,7 @@
 use super::data_type::DataType;
 use crate::core::{
     collections::FacetToCellsMap,
-    triangulation_data_structure::{Tds, TdsValidationError},
+    triangulation_data_structure::{Tds, TdsError},
 };
 use crate::geometry::traits::coordinate::ScalarAccumulative;
 use arc_swap::ArcSwapOption;
@@ -103,19 +103,19 @@ where
     /// A `Result` containing:
     /// - `Ok(Some(Arc<FacetToCellsMap>))`: The old cache value before update
     /// - `Ok(None)`: No cache existed before this build
-    /// - `Err(TdsValidationError)`: If facet map building fails
+    /// - `Err(TdsError)`: If facet map building fails
     ///
     /// # Errors
     ///
-    /// Returns a `TdsValidationError` if the TDS has corrupted data
+    /// Returns a `TdsError` if the TDS has corrupted data
     /// (e.g., missing vertex keys) that prevents building a complete facet map.
     fn try_build_cache_with_rcu(
         &self,
         tds: &Tds<T, U, V, D>,
-    ) -> Result<Option<Arc<FacetToCellsMap>>, TdsValidationError> {
+    ) -> Result<Option<Arc<FacetToCellsMap>>, TdsError> {
         // We memoize the built cache outside the RCU closure to avoid recomputation
         // if RCU needs to retry due to concurrent updates.
-        let mut built: Option<Result<Arc<FacetToCellsMap>, TdsValidationError>> = None;
+        let mut built: Option<Result<Arc<FacetToCellsMap>, TdsError>> = None;
 
         let old_cache = self.facet_cache().rcu(|old| {
             if let Some(existing) = old {
@@ -164,7 +164,7 @@ where
     ///
     /// A `Result` containing:
     /// - `Ok(Arc<FacetToCellsMap>)`: The current facet-to-cells mapping
-    /// - `Err(TdsValidationError)`: If facet map building fails
+    /// - `Err(TdsError)`: If facet map building fails
     ///
     /// # Performance
     ///
@@ -175,7 +175,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a `TdsValidationError` if the TDS has corrupted data
+    /// Returns a `TdsError` if the TDS has corrupted data
     /// (e.g., missing vertex keys) that prevents building a complete facet map.
     ///
     /// # Examples
@@ -204,7 +204,7 @@ where
     fn try_get_or_build_facet_cache(
         &self,
         tds: &Tds<T, U, V, D>,
-    ) -> Result<Arc<FacetToCellsMap>, TdsValidationError> {
+    ) -> Result<Arc<FacetToCellsMap>, TdsError> {
         let mut current_generation = tds.generation();
 
         loop {

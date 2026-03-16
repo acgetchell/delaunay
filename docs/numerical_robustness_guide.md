@@ -204,7 +204,7 @@ detects only exact floating-point matches — it is a strict invariant that shou
 never be violated if Layers 1 and 2 are working correctly.
 
 If violated, the error is
-`TdsValidationError::DuplicateCoordinatesInCell { cell_id, message }`.
+`TdsError::DuplicateCoordinatesInCell { cell_id, message }`.
 
 See `validate_cell_coordinate_uniqueness` in
 [`src/core/triangulation_data_structure.rs`](../src/core/triangulation_data_structure.rs).

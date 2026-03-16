@@ -37,7 +37,7 @@ use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
 use crate::core::traits::facet_cache::FacetCacheProvider;
 use crate::core::triangulation::Triangulation;
-use crate::core::triangulation_data_structure::TdsValidationError;
+use crate::core::triangulation_data_structure::TdsError;
 use crate::core::util::checked_facet_key_from_vertex_keys;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
@@ -125,12 +125,12 @@ pub enum ConvexHullValidationError {
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum ConvexHullConstructionError {
-    /// Failed to extract boundary facets from the triangulation due to a TDS validation failure.
+    /// Failed to extract boundary facets from the triangulation.
     #[error("Failed to extract boundary facets from triangulation: {source}")]
     BoundaryFacetExtractionFailed {
-        /// The underlying TDS validation error that caused the failure.
+        /// The underlying triangulation data-structure error.
         #[source]
-        source: TdsValidationError,
+        source: TdsError,
     },
     /// Failed to check facet visibility from a point.
     #[error("Failed to check facet visibility from point: {source}")]
@@ -165,19 +165,19 @@ pub enum ConvexHullConstructionError {
     /// Coordinate conversion error occurred during geometric computations.
     #[error("Coordinate conversion error: {0}")]
     CoordinateConversion(#[from] CoordinateConversionError),
-    /// Failed to build facet cache due to a TDS validation failure.
+    /// Failed to build facet cache.
     #[error("Failed to build facet cache: {source}")]
     FacetCacheBuildFailed {
-        /// The underlying TDS validation error.
+        /// The underlying triangulation data-structure error.
         #[source]
-        source: TdsValidationError,
+        source: TdsError,
     },
-    /// Failed to resolve adjacent cell vertices for visibility testing due to a TDS validation failure.
+    /// Failed to resolve adjacent cell vertices for visibility testing.
     #[error("Failed to resolve adjacent cell: {source}")]
     AdjacentCellResolutionFailed {
-        /// The underlying TDS validation error.
+        /// The underlying triangulation data-structure error.
         #[source]
-        source: TdsValidationError,
+        source: TdsError,
     },
     /// Failed to access facet data during convex hull construction.
     #[error("Failed to access facet data during convex hull construction: {source}")]
@@ -1609,7 +1609,7 @@ mod tests {
     };
     use crate::core::traits::facet_cache::FacetCacheProvider;
     use crate::core::triangulation::TriangulationConstructionError;
-    use crate::core::triangulation_data_structure::TdsValidationError;
+    use crate::core::triangulation_data_structure::TdsError;
     use crate::core::util::{checked_facet_key_from_vertex_keys, facet_view_to_vertices};
     use crate::geometry::kernel::FastKernel;
     use crate::vertex;
@@ -4237,7 +4237,7 @@ mod tests {
     fn test_facet_cache_build_failed_error() {
         println!("Testing FacetCacheBuildFailed error path");
 
-        // This test is challenging because we need to trigger a TdsValidationError
+        // This test is challenging because we need to trigger a TdsError
         // during facet cache building. In practice, this is rare with valid TDS objects.
         // We'll test the error propagation pattern by verifying the error types are properly
         // connected and that the method signature returns the right error type.
@@ -4255,7 +4255,7 @@ mod tests {
         let test_facet = hull.get_facet(0).unwrap();
         let test_point = Point::new([2.0, 2.0, 2.0]);
 
-        // Call the method that should propagate TdsValidationError as FacetCacheBuildFailed
+        // Call the method that should propagate TdsError as FacetCacheBuildFailed
         let result =
             hull.is_facet_visible_from_point(test_facet, &test_point, dt.as_triangulation());
 
@@ -4689,7 +4689,7 @@ mod tests {
         // by creating a synthetic error (we can't easily trigger the actual error path
         // with a valid TDS, but we can verify the error type is properly defined)
         let synthetic_error = ConvexHullConstructionError::AdjacentCellResolutionFailed {
-            source: TdsValidationError::InconsistentDataStructure {
+            source: TdsError::InconsistentDataStructure {
                 message: "Test error for adjacent cell resolution".to_string(),
             },
         };
@@ -4709,7 +4709,7 @@ mod tests {
         );
 
         println!("  ✓ AdjacentCellResolutionFailed error variant properly implemented");
-        println!("  ✓ Error preserves underlying TdsValidationError as source");
+        println!("  ✓ Error preserves underlying TdsError as source");
         println!("  ✓ Error display format correct: {error_message}");
     }
 
@@ -4899,7 +4899,7 @@ mod tests {
         println!("  Testing ConvexHullConstructionError variants...");
 
         let boundary_error = ConvexHullConstructionError::BoundaryFacetExtractionFailed {
-            source: TdsValidationError::InconsistentDataStructure {
+            source: TdsError::InconsistentDataStructure {
                 message: "Test boundary extraction failure".to_string(),
             },
         };

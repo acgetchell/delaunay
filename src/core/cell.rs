@@ -844,6 +844,31 @@ where
         self.uuid
     }
 
+    /// Sets the cell UUID with validation.
+    ///
+    /// This is a test-only utility for creating cells with specific UUIDs
+    /// to test error handling (e.g., duplicate UUID detection).
+    ///
+    /// # Arguments
+    ///
+    /// * `uuid` - The new UUID to set for this cell
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the UUID is valid and was set successfully,
+    /// otherwise returns a `CellValidationError::InvalidUuid` if the UUID
+    /// is nil or has an invalid version.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CellValidationError::InvalidUuid` if the UUID is nil or invalid.
+    #[cfg(test)]
+    pub(crate) fn set_uuid(&mut self, uuid: Uuid) -> Result<(), CellValidationError> {
+        validate_uuid(&uuid)?;
+        self.uuid = uuid;
+        Ok(())
+    }
+
     /// Clears the neighbors of the [Cell].
     ///
     /// **Internal API**: This method is `pub(crate)` to enforce that all neighbor

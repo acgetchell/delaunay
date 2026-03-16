@@ -8,7 +8,7 @@
 use super::{
     facet::{BoundaryFacetsIter, FacetView},
     traits::{boundary_analysis::BoundaryAnalysis, data_type::DataType},
-    triangulation_data_structure::{Tds, TdsValidationError},
+    triangulation_data_structure::{Tds, TdsError},
 };
 use crate::prelude::CoordinateScalar;
 
@@ -40,12 +40,12 @@ where
     ///
     /// # Returns
     ///
-    /// A `Result<BoundaryFacetsIter<'_, T, U, V, D>, TdsValidationError>` containing an iterator over boundary facets.
+    /// A `Result<BoundaryFacetsIter<'_, T, U, V, D>, TdsError>` containing an iterator over boundary facets.
     /// The iterator yields facets lazily without pre-allocating vectors, providing better performance.
     ///
     /// # Errors
     ///
-    /// Returns a [`TdsValidationError`] (typically
+    /// Returns a [`TdsError`] (typically
     /// [`crate::core::facet::FacetError`]) if:
     /// - Any boundary facet cannot be created from the cells
     /// - A facet index is out of bounds (indicates data corruption)
@@ -68,12 +68,12 @@ where
     /// // High-level API (infallible): panics if the underlying TDS is corrupted.
     /// assert_eq!(dt.boundary_facets().count(), 4);
     ///
-    /// // TDS-level API (fallible): returns `TdsValidationError` on corruption.
+    /// // TDS-level API (fallible): returns `TdsError` on corruption.
     /// let count = dt.tds().boundary_facets()?.count();
     /// assert_eq!(count, 4);
-    /// # Ok::<(), delaunay::core::triangulation_data_structure::TdsValidationError>(())
+    /// # Ok::<(), delaunay::core::triangulation_data_structure::TdsError>(())
     /// ```
-    fn boundary_facets(&self) -> Result<BoundaryFacetsIter<'_, T, U, V, D>, TdsValidationError> {
+    fn boundary_facets(&self) -> Result<BoundaryFacetsIter<'_, T, U, V, D>, TdsError> {
         // Build a map from facet keys to the cells that contain them
         let facet_to_cells = self.build_facet_to_cells_map()?;
 
@@ -119,10 +119,7 @@ where
     /// assert!(dt.tds().is_boundary_facet(&first_facet).unwrap());
     /// ```
     #[inline]
-    fn is_boundary_facet(
-        &self,
-        facet: &FacetView<'_, T, U, V, D>,
-    ) -> Result<bool, TdsValidationError> {
+    fn is_boundary_facet(&self, facet: &FacetView<'_, T, U, V, D>) -> Result<bool, TdsError> {
         let facet_to_cells = self.build_facet_to_cells_map()?;
         self.is_boundary_facet_with_map(facet, &facet_to_cells)
     }
@@ -171,9 +168,9 @@ where
         &self,
         facet: &FacetView<'_, T, U, V, D>,
         facet_to_cells: &crate::core::collections::FacetToCellsMap,
-    ) -> Result<bool, TdsValidationError> {
+    ) -> Result<bool, TdsError> {
         // Use FacetView's key() method which is more efficient
-        let facet_key = facet.key().map_err(TdsValidationError::FacetError)?;
+        let facet_key = facet.key().map_err(TdsError::FacetError)?;
 
         Ok(facet_to_cells
             .get(&facet_key)
@@ -189,11 +186,11 @@ where
     /// # Returns
     ///
     /// A `Result` containing the number of boundary facets in the triangulation,
-    /// or a `TdsValidationError` if the facet map cannot be built.
+    /// or a `TdsError` if the facet map cannot be built.
     ///
     /// # Errors
     ///
-    /// Returns a [`TdsValidationError`] if the facet-to-cells map cannot be built.
+    /// Returns a [`TdsError`] if the facet-to-cells map cannot be built.
     ///
     /// # Examples
     ///
@@ -210,9 +207,9 @@ where
     ///
     /// // A single tetrahedron has 4 boundary facets
     /// assert_eq!(dt.tds().number_of_boundary_facets()?, 4);
-    /// # Ok::<(), delaunay::core::triangulation_data_structure::TdsValidationError>(())
+    /// # Ok::<(), delaunay::core::triangulation_data_structure::TdsError>(())
     /// ```
-    fn number_of_boundary_facets(&self) -> Result<usize, TdsValidationError> {
+    fn number_of_boundary_facets(&self) -> Result<usize, TdsError> {
         self.build_facet_to_cells_map()
             .map(|m| m.values().filter(|v| v.len() == 1).count())
     }
@@ -223,7 +220,7 @@ mod tests {
     use super::BoundaryAnalysis;
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
     use crate::core::facet::FacetError;
-    use crate::core::triangulation_data_structure::TdsValidationError;
+    use crate::core::triangulation_data_structure::TdsError;
     use crate::core::vertex::Vertex;
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};
 
@@ -614,7 +611,7 @@ mod tests {
         // We test this by confirming the error structure exists and can be created.
 
         // Test that the error can be created and has correct structure
-        let error = TdsValidationError::FacetError(FacetError::InvalidFacetIndex {
+        let error = TdsError::FacetError(FacetError::InvalidFacetIndex {
             index: 42,
             facet_count: 4,
         });
@@ -643,7 +640,7 @@ mod tests {
         // We test the error structure.
 
         // Test that the error can be created
-        let error = TdsValidationError::FacetError(FacetError::CellNotFoundInTriangulation);
+        let error = TdsError::FacetError(FacetError::CellNotFoundInTriangulation);
 
         // Verify error display is meaningful
         let error_string = format!("{error}");
@@ -794,7 +791,7 @@ mod tests {
 
         for (multiplicity, description) in &test_cases {
             let facet_key = 0x1234_5678_9ABC_DEF0_u64; // Example facet key
-            let error = TdsValidationError::FacetError(FacetError::InvalidFacetMultiplicity {
+            let error = TdsError::FacetError(FacetError::InvalidFacetMultiplicity {
                 facet_key,
                 found: *multiplicity,
             });

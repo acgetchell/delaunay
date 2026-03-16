@@ -11,7 +11,7 @@
 #![forbid(unsafe_code)]
 
 use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
-use delaunay::core::triangulation_data_structure::{Tds, TdsValidationError};
+use delaunay::core::triangulation_data_structure::{Tds, TdsError};
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::triangulation::*;
 use proptest::prelude::*;
@@ -90,7 +90,7 @@ macro_rules! gen_orientation_construction_and_tamper_props {
                         prop_assert!(
                             matches!(
                                 tampered_tds.is_valid(),
-                                Err(TdsValidationError::OrientationViolation { .. })
+                                Err(TdsError::OrientationViolation { .. })
                             ),
                             "{}D: tampered triangulation should fail with OrientationViolation",
                             $dim

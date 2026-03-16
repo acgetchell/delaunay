@@ -93,7 +93,7 @@ use crate::core::{
     edge::EdgeKey,
     facet::facet_key_from_vertices,
     traits::DataType,
-    triangulation_data_structure::{CellKey, Tds, TdsValidationError, VertexKey},
+    triangulation_data_structure::{CellKey, Tds, TdsError, VertexKey},
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::topology::characteristics::euler::{
@@ -119,7 +119,7 @@ use thiserror::Error;
 pub enum ManifoldError {
     /// The underlying triangulation data structure is internally inconsistent.
     #[error(transparent)]
-    Tds(#[from] TdsValidationError),
+    Tds(#[from] TdsError),
 
     /// A facet belongs to an unexpected number of cells for a manifold-with-boundary.
     #[error(
@@ -320,11 +320,10 @@ where
         // Derive the facet's vertex keys from the owning cell.
         let cell_vertices = tds.get_cell_vertices(cell_key)?;
         if facet_index >= cell_vertices.len() {
-            return Err(TdsValidationError::InconsistentDataStructure {
-                message: format!(
-                    "Boundary facet index {facet_index} out of bounds: cell {cell_key:?} has {} vertices",
-                    cell_vertices.len()
-                ),
+            return Err(TdsError::IndexOutOfBounds {
+                index: facet_index,
+                bound: cell_vertices.len(),
+                context: format!("boundary facet index for cell {cell_key:?}"),
             }
             .into());
         }
@@ -338,10 +337,11 @@ where
         }
 
         if facet_vertices.len() != D {
-            return Err(TdsValidationError::InconsistentDataStructure {
-                message: format!(
-                    "Boundary facet expected {D} vertices, got {} (cell_key={cell_key:?}, facet_index={facet_index})",
-                    facet_vertices.len()
+            return Err(TdsError::DimensionMismatch {
+                expected: D,
+                actual: facet_vertices.len(),
+                context: format!(
+                    "boundary facet vertex count (cell_key={cell_key:?}, facet_index={facet_index})"
                 ),
             }
             .into());
@@ -392,8 +392,8 @@ where
     V: DataType,
 {
     if simplex_vertices.is_empty() {
-        return Err(TdsValidationError::InconsistentDataStructure {
-            message: "Simplex must contain at least one vertex".to_string(),
+        return Err(TdsError::InconsistentDataStructure {
+            message: "simplex_star_cells requires at least one vertex".to_string(),
         }
         .into());
     }
@@ -404,8 +404,9 @@ where
     // callers use this helper on stale keys.
     for &vk in simplex_vertices {
         if !tds.contains_vertex_key(vk) {
-            return Err(TdsValidationError::InconsistentDataStructure {
-                message: format!("Simplex vertex {vk:?} not found in vertices storage map"),
+            return Err(TdsError::VertexNotFound {
+                vertex_key: vk,
+                context: "simplex star computation".to_string(),
             }
             .into());
         }
@@ -445,8 +446,8 @@ where
     V: DataType,
 {
     if simplex_vertices.is_empty() {
-        return Err(TdsValidationError::InconsistentDataStructure {
-            message: "Simplex must contain at least one vertex".to_string(),
+        return Err(TdsError::InconsistentDataStructure {
+            message: "simplex_link_simplices_from_star requires at least one vertex".to_string(),
         }
         .into());
     }
@@ -468,11 +469,10 @@ where
         }
 
         if link_vertices.len() != expected_link_vertices {
-            return Err(TdsValidationError::InconsistentDataStructure {
-                message: format!(
-                    "Simplex link expected {expected_link_vertices} link vertices for {D}D, got {} (cell_key={cell_key:?})",
-                    link_vertices.len(),
-                ),
+            return Err(TdsError::DimensionMismatch {
+                expected: expected_link_vertices,
+                actual: link_vertices.len(),
+                context: format!("simplex link vertex count for {D}D (cell_key={cell_key:?})"),
             }
             .into());
         }
@@ -513,11 +513,10 @@ where
 
     let expected_ridge_vertices = D.saturating_sub(1);
     if ridge_vertices.len() != expected_ridge_vertices {
-        return Err(TdsValidationError::InconsistentDataStructure {
-            message: format!(
-                "Ridge expected {expected_ridge_vertices} vertices for {D}D, got {}",
-                ridge_vertices.len(),
-            ),
+        return Err(TdsError::DimensionMismatch {
+            expected: expected_ridge_vertices,
+            actual: ridge_vertices.len(),
+            context: format!("ridge vertex count for {D}D"),
         }
         .into());
     }
@@ -542,11 +541,10 @@ where
 
     let expected_ridge_vertices = D.saturating_sub(1);
     if ridge_vertices.len() != expected_ridge_vertices {
-        return Err(TdsValidationError::InconsistentDataStructure {
-            message: format!(
-                "Ridge expected {expected_ridge_vertices} vertices for {D}D, got {}",
-                ridge_vertices.len(),
-            ),
+        return Err(TdsError::DimensionMismatch {
+            expected: expected_ridge_vertices,
+            actual: ridge_vertices.len(),
+            context: format!("ridge vertex count for {D}D (link edges)"),
         }
         .into());
     }
@@ -567,17 +565,16 @@ where
         }
 
         if link_vertices.len() != 2 {
-            return Err(TdsValidationError::InconsistentDataStructure {
-                message: format!(
-                    "Ridge link expected 2 link vertices for {D}D, got {} (cell_key={cell_key:?})",
-                    link_vertices.len(),
-                ),
+            return Err(TdsError::DimensionMismatch {
+                expected: 2,
+                actual: link_vertices.len(),
+                context: format!("ridge link vertex count for {D}D (cell_key={cell_key:?})"),
             }
             .into());
         }
 
         if link_vertices[0] == link_vertices[1] {
-            return Err(TdsValidationError::InconsistentDataStructure {
+            return Err(TdsError::InconsistentDataStructure {
                 message: format!(
                     "Ridge link edge is a self-loop: link vertex {vk:?} repeated (cell_key={cell_key:?})",
                     vk = link_vertices[0],
@@ -640,12 +637,10 @@ where
         let cell_vertices = tds.get_cell_vertices(cell_key)?;
 
         if cell_vertices.len() != D + 1 {
-            return Err(TdsValidationError::InconsistentDataStructure {
-                message: format!(
-                    "Cell {cell_key:?} expected {} vertices for {D}D, got {}",
-                    D + 1,
-                    cell_vertices.len(),
-                ),
+            return Err(TdsError::DimensionMismatch {
+                expected: D + 1,
+                actual: cell_vertices.len(),
+                context: format!("cell {cell_key:?} vertex count for {D}D"),
             }
             .into());
         }
@@ -662,12 +657,10 @@ where
                 }
 
                 if ridge_vertices.len() != D.saturating_sub(1) {
-                    return Err(TdsValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Ridge expected {} vertices for {D}D, got {} (cell_key={cell_key:?}, omit_a={omit_a}, omit_b={omit_b})",
-                            D.saturating_sub(1),
-                            ridge_vertices.len(),
-                        ),
+                    return Err(TdsError::DimensionMismatch {
+                        expected: D.saturating_sub(1),
+                        actual: ridge_vertices.len(),
+                        context: format!("ridge vertex count for {D}D (cell_key={cell_key:?}, omit_a={omit_a}, omit_b={omit_b})"),
                     }
                     .into());
                 }
@@ -719,12 +712,10 @@ where
 
         let cell_vertices = tds.get_cell_vertices(cell_key)?;
         if cell_vertices.len() != D + 1 {
-            return Err(TdsValidationError::InconsistentDataStructure {
-                message: format!(
-                    "Cell {cell_key:?} expected {} vertices for {D}D, got {}",
-                    D + 1,
-                    cell_vertices.len(),
-                ),
+            return Err(TdsError::DimensionMismatch {
+                expected: D + 1,
+                actual: cell_vertices.len(),
+                context: format!("cell {cell_key:?} vertex count for {D}D (local ridge map)"),
             }
             .into());
         }
@@ -741,12 +732,10 @@ where
                 }
 
                 if ridge_vertices.len() != D.saturating_sub(1) {
-                    return Err(TdsValidationError::InconsistentDataStructure {
-                        message: format!(
-                            "Ridge expected {} vertices for {D}D, got {} (cell_key={cell_key:?}, omit_a={omit_a}, omit_b={omit_b})",
-                            D.saturating_sub(1),
-                            ridge_vertices.len(),
-                        ),
+                    return Err(TdsError::DimensionMismatch {
+                        expected: D.saturating_sub(1),
+                        actual: ridge_vertices.len(),
+                        context: format!("ridge vertex count for {D}D (cell_key={cell_key:?}, omit_a={omit_a}, omit_b={omit_b})"),
                     }
                     .into());
                 }
@@ -1056,11 +1045,10 @@ where
 
         let cell_vertices = tds.get_cell_vertices(cell_key)?;
         if facet_index >= cell_vertices.len() {
-            return Err(TdsValidationError::InconsistentDataStructure {
-                message: format!(
-                    "Boundary facet index {facet_index} out of bounds: cell {cell_key:?} has {} vertices",
-                    cell_vertices.len()
-                ),
+            return Err(TdsError::IndexOutOfBounds {
+                index: facet_index,
+                bound: cell_vertices.len(),
+                context: format!("boundary facet index for cell {cell_key:?}"),
             }
             .into());
         }
@@ -1075,9 +1063,11 @@ where
         }
 
         if facet_vertex_count != D {
-            return Err(TdsValidationError::InconsistentDataStructure {
-                message: format!(
-                    "Boundary facet expected {D} vertices, got {facet_vertex_count} (cell_key={cell_key:?}, facet_index={facet_index})",
+            return Err(TdsError::DimensionMismatch {
+                expected: D,
+                actual: facet_vertex_count,
+                context: format!(
+                    "boundary facet vertex count (cell_key={cell_key:?}, facet_index={facet_index})"
                 ),
             }
             .into());
@@ -1770,13 +1760,13 @@ mod tests {
         facet_to_cells.insert(0_u64, handles);
 
         match validate_closed_boundary(&tds, &facet_to_cells) {
-            Err(ManifoldError::Tds(TdsValidationError::InconsistentDataStructure { message })) => {
+            Err(ManifoldError::Tds(TdsError::IndexOutOfBounds { index, bound, .. })) => {
                 assert!(
-                    message.contains("out of bounds"),
-                    "Unexpected message: {message}"
+                    index >= bound,
+                    "Expected index ({index}) >= bound ({bound})"
                 );
             }
-            other => panic!("Expected out-of-bounds facet index error, got {other:?}"),
+            other => panic!("Expected IndexOutOfBounds error, got {other:?}"),
         }
     }
 
@@ -2127,10 +2117,9 @@ mod tests {
         let tds: Tds<f64, (), (), 2> = Tds::empty();
 
         match simplex_star_cells(&tds, &[]) {
-            Err(ManifoldError::Tds(TdsValidationError::InconsistentDataStructure { message })) => {
-                assert!(message.contains("Simplex must contain at least one vertex"));
-            }
-            other => panic!("Expected empty-simplex error, got {other:?}"),
+            Err(ManifoldError::Tds(TdsError::InconsistentDataStructure { ref message }))
+                if message.contains("at least one vertex") => {}
+            other => panic!("Expected InconsistentDataStructure for empty simplex, got {other:?}"),
         }
     }
 
@@ -2149,10 +2138,9 @@ mod tests {
         let tds: Tds<f64, (), (), 2> = Tds::empty();
 
         match simplex_link_simplices_from_star(&tds, &[], &[]) {
-            Err(ManifoldError::Tds(TdsValidationError::InconsistentDataStructure { message })) => {
-                assert!(message.contains("Simplex must contain at least one vertex"));
-            }
-            other => panic!("Expected empty-simplex error, got {other:?}"),
+            Err(ManifoldError::Tds(TdsError::InconsistentDataStructure { ref message }))
+                if message.contains("at least one vertex") => {}
+            other => panic!("Expected InconsistentDataStructure for empty simplex, got {other:?}"),
         }
     }
 
@@ -2175,13 +2163,14 @@ mod tests {
             .unwrap();
 
         match simplex_link_simplices_from_star(&tds, &[v0, v3], &[cell_key]) {
-            Err(ManifoldError::Tds(TdsValidationError::InconsistentDataStructure { message })) => {
-                assert!(
-                    message.contains("Simplex link expected 1 link vertices"),
-                    "Unexpected message: {message}"
-                );
+            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
+                expected: 1,
+                actual,
+                ..
+            })) => {
+                assert_ne!(actual, 1, "Expected actual != 1 for unrelated vertex");
             }
-            other => panic!("Expected link-size mismatch error, got {other:?}"),
+            other => panic!("Expected DimensionMismatch for link-size mismatch, got {other:?}"),
         }
     }
 
@@ -2227,13 +2216,12 @@ mod tests {
 
         // In 3D, ridges are edges (2 vertices). Passing a single vertex is invalid.
         match ridge_star_cells(&tds, &[v0]) {
-            Err(ManifoldError::Tds(TdsValidationError::InconsistentDataStructure { message })) => {
-                assert!(
-                    message.contains("Ridge expected 2 vertices"),
-                    "Unexpected message: {message}"
-                );
-            }
-            other => panic!("Expected wrong-ridge-size error, got {other:?}"),
+            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
+                expected: 2,
+                actual: 1,
+                ..
+            })) => {}
+            other => panic!("Expected DimensionMismatch(2, 1) for wrong ridge size, got {other:?}"),
         }
     }
 
@@ -2260,13 +2248,12 @@ mod tests {
 
         // In 3D, ridges are edges (2 vertices). Passing a single vertex is invalid.
         match ridge_link_edges_from_star(&tds, &[v0], &[cell_key]) {
-            Err(ManifoldError::Tds(TdsValidationError::InconsistentDataStructure { message })) => {
-                assert!(
-                    message.contains("Ridge expected 2 vertices"),
-                    "Unexpected message: {message}"
-                );
-            }
-            other => panic!("Expected wrong-ridge-size error, got {other:?}"),
+            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
+                expected: 2,
+                actual: 1,
+                ..
+            })) => {}
+            other => panic!("Expected DimensionMismatch(2, 1) for wrong ridge size, got {other:?}"),
         }
     }
 
@@ -2306,10 +2293,10 @@ mod tests {
         let missing = VertexKey::from(KeyData::from_ffi(u64::MAX));
 
         match ridge_star_cells(&tds, &[missing]) {
-            Err(ManifoldError::Tds(TdsValidationError::InconsistentDataStructure { message })) => {
-                assert!(message.contains("not found"));
+            Err(ManifoldError::Tds(TdsError::VertexNotFound { vertex_key, .. })) => {
+                assert_eq!(vertex_key, missing);
             }
-            other => panic!("Expected missing-vertex error, got {other:?}"),
+            other => panic!("Expected VertexNotFound error, got {other:?}"),
         }
     }
 
@@ -2338,7 +2325,7 @@ mod tests {
 
         // For ridge (vertex) v0, the link edge becomes (v1, v1), which is not a simplicial edge.
         match ridge_link_edges_from_star(&tds, &[v0], &[cell_key]) {
-            Err(ManifoldError::Tds(TdsValidationError::InconsistentDataStructure { message })) => {
+            Err(ManifoldError::Tds(TdsError::InconsistentDataStructure { message })) => {
                 assert!(
                     message.contains("self-loop"),
                     "Unexpected message: {message}"
@@ -2385,10 +2372,16 @@ mod tests {
         }
 
         match validate_ridge_links(&tds) {
-            Err(ManifoldError::Tds(TdsValidationError::InconsistentDataStructure { message })) => {
-                assert!(message.contains("Ridge link expected 2 link vertices"));
+            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
+                expected: 2,
+                actual,
+                ..
+            })) => {
+                assert_ne!(actual, 2, "Expected actual != 2 for corrupted link");
             }
-            other => panic!("Expected ridge-link structural error, got {other:?}"),
+            other => {
+                panic!("Expected DimensionMismatch for ridge-link structural error, got {other:?}")
+            }
         }
     }
 
@@ -2618,13 +2611,12 @@ mod tests {
         }
 
         match build_ridge_star_map(&tds) {
-            Err(ManifoldError::Tds(TdsValidationError::InconsistentDataStructure { message })) => {
-                assert!(
-                    message.contains("expected 3 vertices"),
-                    "Unexpected message: {message}"
-                );
-            }
-            other => panic!("Expected corrupted-cell error, got {other:?}"),
+            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
+                expected: 3,
+                actual: 2,
+                ..
+            })) => {}
+            other => panic!("Expected DimensionMismatch(3, 2) for corrupted cell, got {other:?}"),
         }
     }
 
@@ -2778,13 +2770,12 @@ mod tests {
         }
 
         match build_ridge_star_map_for_cells(&tds, &[cell_key]) {
-            Err(ManifoldError::Tds(TdsValidationError::InconsistentDataStructure { message })) => {
-                assert!(
-                    message.contains("expected 3 vertices"),
-                    "Unexpected message: {message}"
-                );
-            }
-            other => panic!("Expected corrupted-cell error, got {other:?}"),
+            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
+                expected: 3,
+                actual: 2,
+                ..
+            })) => {}
+            other => panic!("Expected DimensionMismatch(3, 2) for corrupted cell, got {other:?}"),
         }
     }
 
@@ -2946,6 +2937,113 @@ mod tests {
             Ok(()) => panic!("Expected VertexLinkNotManifold for cone apex, got Ok(())"),
             other => panic!("Expected VertexLinkNotManifold for cone apex, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_simplex_star_cells_rejects_missing_vertex() {
+        let tds: Tds<f64, (), (), 2> = Tds::empty();
+        let stale_key = VertexKey::from(KeyData::from_ffi(0xDEAD));
+        match simplex_star_cells(&tds, &[stale_key]) {
+            Err(ManifoldError::Tds(TdsError::VertexNotFound {
+                vertex_key,
+                ref context,
+            })) => {
+                assert_eq!(vertex_key, stale_key);
+                assert!(context.contains("simplex star"));
+            }
+            other => panic!("Expected VertexNotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_ridge_star_cells_rejects_too_many_vertices() {
+        let tds: Tds<f64, (), (), 3> = Tds::empty();
+        // For D=3, ridges have D-1=2 vertices; pass 3 vertices instead.
+        let v0 = VertexKey::from(KeyData::from_ffi(1));
+        let v1 = VertexKey::from(KeyData::from_ffi(2));
+        let v2 = VertexKey::from(KeyData::from_ffi(3));
+        match ridge_star_cells(&tds, &[v0, v1, v2]) {
+            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
+                expected, actual, ..
+            })) => {
+                assert_eq!(expected, 2);
+                assert_eq!(actual, 3);
+            }
+            other => panic!("Expected DimensionMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_closed_boundary_dimension_mismatch_on_corrupted_cell() {
+        // Create a 3D TDS with a cell that has too few vertices (corrupted state),
+        // then trigger the DimensionMismatch path in validate_closed_boundary.
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+
+        let v0 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v3], None).unwrap())
+            .unwrap();
+
+        // Build a facet-to-cells map with a synthetic boundary facet pointing at facet_index=0
+        // but then corrupt the cell to only have 2 vertices.
+        {
+            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            // Replace with only 2 vertices so the facet subtraction produces wrong count.
+            cell.clear_vertex_keys();
+            cell.push_vertex_key(v0);
+            cell.push_vertex_key(v1);
+        }
+
+        let mut facet_to_cells: FacetToCellsMap = FacetToCellsMap::default();
+        let mut handles: SmallBuffer<crate::core::facet::FacetHandle, 2> = SmallBuffer::new();
+        handles.push(crate::core::facet::FacetHandle::new(cell_key, 0));
+        facet_to_cells.insert(0_u64, handles);
+
+        match validate_closed_boundary(&tds, &facet_to_cells) {
+            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
+                expected, actual, ..
+            })) => {
+                assert_eq!(expected, 3, "D=3: boundary facet should have 3 vertices");
+                assert!(
+                    actual != 3,
+                    "Corrupted cell should produce wrong vertex count"
+                );
+            }
+            other => panic!("Expected DimensionMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_manifold_error_display_variants() {
+        let err = ManifoldError::ManifoldFacetMultiplicity {
+            facet_key: 0xABCD,
+            cell_count: 3,
+        };
+        assert!(err.to_string().contains("Non-manifold facet"));
+
+        let err = ManifoldError::BoundaryRidgeMultiplicity {
+            ridge_key: 0x1234,
+            boundary_facet_count: 4,
+        };
+        assert!(err.to_string().contains("Boundary is not closed"));
+
+        let tds_err = TdsError::InconsistentDataStructure {
+            message: "inner".to_string(),
+        };
+        let err = ManifoldError::from(tds_err);
+        assert!(err.to_string().contains("inner"));
     }
 
     #[test]

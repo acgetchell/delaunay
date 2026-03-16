@@ -91,7 +91,7 @@ Eliminate UUID→Key lookups in hot paths by implementing direct key-based opera
 ```rust
 // New key-based helper method
 fn get_cell_vertices(&self, cell_key: CellKey)
-    -> Result<VertexKeyBuffer, TdsValidationError>
+    -> Result<VertexKeyBuffer, TdsError>
 ```
 
 #### Key-Based Methods Added
