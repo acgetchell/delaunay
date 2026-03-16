@@ -243,22 +243,22 @@ paths inline. This keeps code readable and consistent.
 Prefer:
 
 ```rust
-use crate::core::triangulation_data_structure::TdsValidationError;
+use crate::core::triangulation_data_structure::TdsError;
 
-fn check(err: &TdsValidationError) -> bool { ... }
+fn check(err: &TdsError) -> bool { ... }
 ```
 
 Instead of:
 
 ```rust
-fn check(err: &crate::core::triangulation_data_structure::TdsValidationError) -> bool { ... }
+fn check(err: &crate::core::triangulation_data_structure::TdsError) -> bool { ... }
 ```
 
 Group imports from the same module into a single `use` statement with braces:
 
 ```rust
 use crate::core::triangulation_data_structure::{
-    CellKey, EntityKind, Tds, TdsValidationError, VertexKey,
+    CellKey, EntityKind, Tds, TdsError, VertexKey,
 };
 ```
 

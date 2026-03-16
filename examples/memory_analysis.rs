@@ -58,7 +58,7 @@ macro_rules! generate_memory_analysis {
         )]
         #[expect(
             clippy::result_large_err,
-            reason = "ConvexHullConstructionError contains TdsValidationError which is large; performance impact is negligible in this example"
+            reason = "ConvexHullConstructionError contains TdsError which is large; performance impact is negligible in this example"
         )]
         fn $name(point_counts: &[usize], seeds: &[u64]) {
             let mut any_success = false;

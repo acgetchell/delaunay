@@ -37,14 +37,12 @@ use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::TriangulationConstructionError;
 use crate::core::triangulation::TriangulationValidationError;
-use crate::core::triangulation_data_structure::{
-    CellKey, EntityKind, Tds, TdsValidationError, VertexKey,
-};
+use crate::core::triangulation_data_structure::{CellKey, EntityKind, Tds, TdsError, VertexKey};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
-use crate::geometry::traits::coordinate::CoordinateScalar;
+use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
 use std::hash::{Hash, Hasher};
 
 pub use crate::core::operations::{InsertionOutcome, InsertionResult, InsertionStatistics};
@@ -60,6 +58,7 @@ pub use crate::core::operations::{InsertionOutcome, InsertionResult, InsertionSt
 /// assert!(matches!(reason, HullExtensionReason::NoVisibleFacets));
 /// ```
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum HullExtensionReason {
     /// No visible boundary facets (coplanar with hull surface).
     NoVisibleFacets,
@@ -68,6 +67,16 @@ pub enum HullExtensionReason {
         /// Details about why the patch was invalid.
         details: String,
     },
+    /// Geometric predicate (orientation / in-sphere) failed.
+    ///
+    /// Preserves the structured [`CoordinateConversionError`] from the kernel or
+    /// robust-predicate evaluation rather than collapsing it into a string.
+    PredicateFailed(CoordinateConversionError),
+    /// Lower-layer TDS error encountered during hull extension.
+    ///
+    /// Preserves the structured [`TdsError`] (e.g. from boundary-facet retrieval)
+    /// rather than collapsing it into a string.
+    Tds(TdsError),
     /// Other failure.
     Other {
         /// Underlying error message.
@@ -85,6 +94,10 @@ impl std::fmt::Display for HullExtensionReason {
                 f,
                 "Visible boundary facets are not a valid patch: {details}"
             ),
+            Self::PredicateFailed(source) => {
+                write!(f, "Geometric predicate failed: {source}")
+            }
+            Self::Tds(source) => write!(f, "TDS error: {source}"),
             Self::Other { message } => f.write_str(message),
         }
     }
@@ -156,10 +169,26 @@ pub enum InsertionError {
     ///
     /// This indicates the triangulation is structurally valid but violates the
     /// empty-circumsphere property (Level 4).
-    #[error("Delaunay validation failed: {message}")]
+    #[error("Delaunay validation failed: {source}")]
     DelaunayValidationFailed {
-        /// Error message
-        message: String,
+        /// The structured Level 4 validation error.
+        #[source]
+        source: Box<crate::core::delaunay_triangulation::DelaunayTriangulationValidationError>,
+    },
+
+    /// Flip-based Delaunay repair failed.
+    ///
+    /// This variant is used when a Delaunay repair pass (local or fallback)
+    /// cannot converge or otherwise fails. It preserves the structured
+    /// [`DelaunayRepairError`](crate::core::algorithms::flips::DelaunayRepairError)
+    /// rather than collapsing it into a string.
+    #[error("Delaunay repair failed ({context}): {source}")]
+    DelaunayRepairFailed {
+        /// The underlying repair error.
+        #[source]
+        source: Box<crate::core::algorithms::flips::DelaunayRepairError>,
+        /// Operational context describing the repair path that failed.
+        context: String,
     },
 
     /// Attempted to insert a vertex with coordinates that already exist.
@@ -182,12 +211,12 @@ pub enum InsertionError {
 
     /// Topology validation or repair failed.
     #[error("Topology validation error: {0}")]
-    TopologyValidation(#[from] TdsValidationError),
+    TopologyValidation(#[from] TdsError),
 
     /// Level 3 topology validation failed (Triangulation layer).
     ///
     /// This preserves the structured [`TriangulationValidationError`] without wrapping it into a
-    /// [`TdsValidationError`],
+    /// [`TdsError`],
     /// avoiding lower-layer (`Tds`) errors depending on higher-layer (`Triangulation`) errors.
     #[error("{message}: {source}")]
     TopologyValidationFailed {
@@ -284,6 +313,7 @@ impl InsertionError {
             | Self::Construction(_)
             | Self::CavityFilling { .. }
             | Self::DelaunayValidationFailed { .. }
+            | Self::DelaunayRepairFailed { .. }
             | Self::DuplicateCoordinates { .. }
             | Self::DuplicateUuid { .. } => false,
         }
@@ -291,17 +321,13 @@ impl InsertionError {
 
     /// Check whether a TDS-level validation error is geometry-related (retryable).
     ///
-    /// `IsolatedVertex` is retryable because it arises during insertion when
-    /// a geometrically-sensitive conflict region leaves a pre-existing vertex
-    /// with no incident cells; perturbing coordinates changes the conflict
-    /// region and can avoid stranding the vertex.
-    const fn is_tds_error_retryable(tds_err: &TdsValidationError) -> bool {
+    /// Only `Geometric` (FP degeneracy) and `OrientationViolation` (coherent-orientation
+    /// breach after near-degenerate geometry) are retryable at this layer.  All other
+    /// `TdsError` variants represent structural bugs that perturbation cannot fix.
+    const fn is_tds_error_retryable(tds_err: &TdsError) -> bool {
         matches!(
             tds_err,
-            TdsValidationError::DegenerateOrientation { .. }
-                | TdsValidationError::NegativeOrientation { .. }
-                | TdsValidationError::OrientationViolation { .. }
-                | TdsValidationError::IsolatedVertex { .. }
+            TdsError::Geometric(_) | TdsError::OrientationViolation { .. }
         )
     }
 
@@ -311,12 +337,15 @@ impl InsertionError {
             // Geometry-related topology violations: a near-degenerate insertion can create
             // non-manifold facets, broken links, or boundary violations that perturbation
             // may resolve.
+            //
+            // `IsolatedVertex` is retryable because a geometrically-sensitive conflict
+            // region can leave a pre-existing vertex with no incident cells; perturbing
+            // coordinates changes the conflict region and can avoid stranding the vertex.
             TriangulationValidationError::ManifoldFacetMultiplicity { .. }
             | TriangulationValidationError::BoundaryRidgeMultiplicity { .. }
             | TriangulationValidationError::RidgeLinkNotManifold { .. }
-            | TriangulationValidationError::VertexLinkNotManifold { .. } => true,
-            // TDS-level errors: delegate to the same geometry-variant check.
-            TriangulationValidationError::Tds(tds_err) => Self::is_tds_error_retryable(tds_err),
+            | TriangulationValidationError::VertexLinkNotManifold { .. }
+            | TriangulationValidationError::IsolatedVertex { .. } => true,
             // All other variants (structural invariant violations, future additions)
             // are conservatively treated as non-retryable.
             _ => false,
@@ -1542,10 +1571,6 @@ where
     Ok(new_cells)
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "Visibility and edge-split checks are kept together for clarity"
-)]
 fn find_boundary_edge_split_facet<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     point: &Point<T, D>,
@@ -1565,9 +1590,7 @@ where
     let boundary_facets = tds
         .boundary_facets()
         .map_err(|e| InsertionError::HullExtension {
-            reason: HullExtensionReason::Other {
-                message: format!("Failed to get boundary facets: {e}"),
-            },
+            reason: HullExtensionReason::Tds(e),
         })?;
 
     for facet_view in boundary_facets {
@@ -1620,9 +1643,7 @@ where
         // property we need here: is the opposite simplex truly degenerate?
         let opposite_degenerate = matches!(
             robust_orientation(&simplex_points).map_err(|e| InsertionError::HullExtension {
-                reason: HullExtensionReason::Other {
-                    message: format!("Exact orientation test failed: {e}"),
-                },
+                reason: HullExtensionReason::PredicateFailed(e),
             })?,
             Orientation::DEGENERATE
         );
@@ -1640,9 +1661,7 @@ where
         // property we need here: is the point truly on the line through the edge?
         let is_collinear = matches!(
             robust_orientation(&edge_line).map_err(|e| InsertionError::HullExtension {
-                reason: HullExtensionReason::Other {
-                    message: format!("Exact orientation test failed: {e}"),
-                },
+                reason: HullExtensionReason::PredicateFailed(e),
             })?,
             Orientation::DEGENERATE
         );
@@ -1758,9 +1777,7 @@ where
     let boundary_facets = tds
         .boundary_facets()
         .map_err(|e| InsertionError::HullExtension {
-            reason: HullExtensionReason::Other {
-                message: format!("Failed to get boundary facets: {e}"),
-            },
+            reason: HullExtensionReason::Tds(e),
         })?;
 
     // Test each boundary facet for visibility
@@ -1819,9 +1836,7 @@ where
             kernel
                 .orientation(&simplex_points)
                 .map_err(|e| InsertionError::HullExtension {
-                    reason: HullExtensionReason::Other {
-                        message: format!("Orientation test failed: {e}"),
-                    },
+                    reason: HullExtensionReason::PredicateFailed(e),
                 })?;
 
         // Replace opposite vertex with query point (last entry in canonical order).
@@ -1831,9 +1846,7 @@ where
             kernel
                 .orientation(&simplex_points)
                 .map_err(|e| InsertionError::HullExtension {
-                    reason: HullExtensionReason::Other {
-                        message: format!("Orientation test failed: {e}"),
-                    },
+                    reason: HullExtensionReason::PredicateFailed(e),
                 })?;
 
         #[cfg(debug_assertions)]
@@ -2291,6 +2304,7 @@ mod tests {
     use super::*;
     use crate::core::collections::CellKeyBuffer;
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
+    use crate::core::triangulation_data_structure::GeometricError;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::traits::coordinate::{Coordinate, CoordinateConversionError};
     use crate::topology::characteristics::euler::TopologyClassification;
@@ -2644,26 +2658,30 @@ mod tests {
 
         // InconsistentDataStructure is now non-retryable (structural bug, not geometry).
         assert!(
-            !InsertionError::TopologyValidation(TdsValidationError::InconsistentDataStructure {
+            !InsertionError::TopologyValidation(TdsError::InconsistentDataStructure {
                 message: "test".to_string()
             })
             .is_retryable()
         );
         // Geometry-related variants are still retryable.
         assert!(
-            InsertionError::TopologyValidation(TdsValidationError::DegenerateOrientation {
-                message: "test".to_string()
-            })
+            InsertionError::TopologyValidation(TdsError::Geometric(
+                GeometricError::DegenerateOrientation {
+                    message: "test".to_string()
+                }
+            ))
             .is_retryable()
         );
         assert!(
-            InsertionError::TopologyValidation(TdsValidationError::NegativeOrientation {
-                message: "test".to_string()
-            })
+            InsertionError::TopologyValidation(TdsError::Geometric(
+                GeometricError::NegativeOrientation {
+                    message: "test".to_string()
+                }
+            ))
             .is_retryable()
         );
         assert!(
-            InsertionError::TopologyValidation(TdsValidationError::OrientationViolation {
+            InsertionError::TopologyValidation(TdsError::OrientationViolation {
                 cell1_key: CellKey::from(KeyData::from_ffi(1)),
                 cell1_uuid: uuid::Uuid::nil(),
                 cell2_key: CellKey::from(KeyData::from_ffi(2)),
@@ -2681,22 +2699,25 @@ mod tests {
         // conflict region can leave a pre-existing vertex with no incident cells;
         // perturbing coordinates changes the conflict region.
         assert!(
-            InsertionError::TopologyValidation(TdsValidationError::IsolatedVertex {
-                vertex_key: VertexKey::from(KeyData::from_ffi(1)),
-                vertex_uuid: uuid::Uuid::nil(),
-            })
+            InsertionError::TopologyValidationFailed {
+                message: "test".to_string(),
+                source: Box::new(TriangulationValidationError::IsolatedVertex {
+                    vertex_key: VertexKey::from(KeyData::from_ffi(1)),
+                    vertex_uuid: uuid::Uuid::nil(),
+                }),
+            }
             .is_retryable()
         );
 
         // TopologyValidationFailed wrapping a structural error is non-retryable.
-        let structural_l3 =
-            TriangulationValidationError::from(TdsValidationError::InconsistentDataStructure {
-                message: "test".to_string(),
-            });
         assert!(
             !InsertionError::TopologyValidationFailed {
                 message: "test".to_string(),
-                source: Box::new(structural_l3),
+                source: Box::new(TriangulationValidationError::EulerCharacteristicMismatch {
+                    computed: 3,
+                    expected: 2,
+                    classification: TopologyClassification::Ball(3),
+                }),
             }
             .is_retryable()
         );
@@ -2753,19 +2774,6 @@ mod tests {
                     connected: false,
                     interior_vertex: true,
                 }),
-            }
-            .is_retryable()
-        );
-        // TopologyValidationFailed wrapping Tds(DegenerateOrientation) is retryable
-        // (delegates to is_tds_error_retryable).
-        assert!(
-            InsertionError::TopologyValidationFailed {
-                message: "test".to_string(),
-                source: Box::new(TriangulationValidationError::Tds(
-                    TdsValidationError::DegenerateOrientation {
-                        message: "det=0".to_string(),
-                    }
-                )),
             }
             .is_retryable()
         );
@@ -2901,6 +2909,29 @@ mod tests {
                 reason: HullExtensionReason::Other {
                     message: "Failed to get boundary facets: test".to_string()
                 }
+            }
+            .is_retryable()
+        );
+
+        assert!(
+            !InsertionError::HullExtension {
+                reason: HullExtensionReason::PredicateFailed(
+                    CoordinateConversionError::ConversionFailed {
+                        coordinate_index: 0,
+                        coordinate_value: "test".to_string(),
+                        from_type: "f64",
+                        to_type: "f64",
+                    }
+                )
+            }
+            .is_retryable()
+        );
+
+        assert!(
+            !InsertionError::HullExtension {
+                reason: HullExtensionReason::Tds(TdsError::InconsistentDataStructure {
+                    message: "test".to_string(),
+                })
             }
             .is_retryable()
         );
