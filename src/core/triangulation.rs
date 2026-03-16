@@ -438,6 +438,19 @@ pub enum TriangulationValidationError {
         /// UUID of the isolated vertex.
         vertex_uuid: Uuid,
     },
+
+    /// The cell neighbor graph is not a single connected component.
+    ///
+    /// A valid triangulation-with-boundary must be connected; multiple disconnected
+    /// components indicate a structural problem (e.g. cells that share only a vertex
+    /// or edge but no facet, so no neighbor pointers link them).
+    #[error(
+        "Disconnected triangulation: cell neighbor graph is not a single connected component ({cell_count} cells total)"
+    )]
+    Disconnected {
+        /// Total number of cells in the triangulation.
+        cell_count: usize,
+    },
 }
 
 impl From<ManifoldError> for TriangulationValidationError {
@@ -2614,14 +2627,10 @@ where
     /// Validates that the triangulation's cell neighbor graph is a single connected component.
     ///
     /// Delegates to [`Tds::is_connected`], an O(N·D) BFS over neighbor pointers.
-    fn validate_global_connectedness(&self) -> Result<(), TdsError> {
+    fn validate_global_connectedness(&self) -> Result<(), TriangulationValidationError> {
         if !self.tds.is_connected() {
-            return Err(TdsError::InconsistentDataStructure {
-                message: format!(
-                    "Disconnected triangulation: cell neighbor graph is not a single connected \
-                     component ({} cells total)",
-                    self.tds.number_of_cells()
-                ),
+            return Err(TriangulationValidationError::Disconnected {
+                cell_count: self.tds.number_of_cells(),
             });
         }
         Ok(())
@@ -5773,8 +5782,10 @@ mod tests {
         tri.set_validation_policy(ValidationPolicy::Always);
 
         match tri.validate_after_insertion(SuspicionFlags::default()) {
-            Err(InvariantError::Tds(TdsError::InconsistentDataStructure { .. })) => {}
-            other => panic!("Expected InconsistentDataStructure error, got {other:?}"),
+            Err(InvariantError::Triangulation(TriangulationValidationError::Disconnected {
+                ..
+            })) => {}
+            other => panic!("Expected Disconnected error, got {other:?}"),
         }
     }
 
@@ -6248,8 +6259,8 @@ mod tests {
         // connectedness (two components that share only a vertex).
         assert!(matches!(
             tri.is_valid(),
-            Err(InvariantError::Tds(
-                TdsError::InconsistentDataStructure { .. }
+            Err(InvariantError::Triangulation(
+                TriangulationValidationError::Disconnected { .. }
             ))
         ));
 
@@ -6279,13 +6290,12 @@ mod tests {
                 assert_eq!(max_degree, 2);
                 assert!(!connected);
             }
+            // Connectivity is checked before link validation; a two-component wedge is
+            // also disconnected in the neighbor graph, so either error is acceptable.
             Err(InvariantError::Triangulation(
-                TriangulationValidationError::RidgeLinkNotManifold { .. },
+                TriangulationValidationError::RidgeLinkNotManifold { .. }
+                | TriangulationValidationError::Disconnected { .. },
             )) => {}
-            // Connectivity is now checked before link validation; a two-component wedge is
-            // also disconnected in the neighbor graph.
-            Err(InvariantError::Tds(TdsError::InconsistentDataStructure { ref message }))
-                if message.contains("Disconnected") => {}
             other => panic!(
                 "Expected RidgeLinkNotManifold, VertexLinkNotManifold, or Disconnected in strict PL-manifold mode, got {other:?}"
             ),
@@ -6425,13 +6435,15 @@ mod tests {
         // neighbor-graph BFS visits only one of them.  Connectivity is now the first check in
         // `is_valid()`, so the disconnection error is returned first.
         match tri.is_valid() {
-            Err(InvariantError::Tds(TdsError::InconsistentDataStructure { ref message })) => {
-                assert!(
-                    message.contains("Disconnected"),
-                    "Expected disconnection message, got: {message}"
+            Err(InvariantError::Triangulation(TriangulationValidationError::Disconnected {
+                cell_count,
+            })) => {
+                assert_eq!(
+                    cell_count, 2,
+                    "Expected 2 cells in disconnected triangulation"
                 );
             }
-            other => panic!("Expected Disconnected InconsistentDataStructure, got {other:?}"),
+            other => panic!("Expected Disconnected, got {other:?}"),
         }
     }
     #[test]
@@ -6620,13 +6632,15 @@ mod tests {
 
         // Level 3 should still fail due to disconnectedness.
         match tri.is_valid() {
-            Err(InvariantError::Tds(TdsError::InconsistentDataStructure { message })) => {
-                assert!(
-                    message.contains("Disconnected triangulation"),
-                    "Expected disconnectedness error, got message: {message}"
+            Err(InvariantError::Triangulation(TriangulationValidationError::Disconnected {
+                cell_count,
+            })) => {
+                assert_eq!(
+                    cell_count, 5,
+                    "Expected 5 cells (2 path + 3 cycle) in disconnected triangulation"
                 );
             }
-            other => panic!("Expected disconnectedness error, got {other:?}"),
+            other => panic!("Expected Disconnected, got {other:?}"),
         }
     }
 
@@ -6766,12 +6780,9 @@ mod tests {
         // visits only one of them.  Connectivity is now the first check in `is_valid()`, so the
         // disconnection error is returned before the non-manifold facet error.
         match tri.is_valid() {
-            Err(InvariantError::Tds(TdsError::InconsistentDataStructure { ref message })) => {
-                assert!(
-                    message.contains("Disconnected"),
-                    "Expected disconnection message, got: {message}"
-                );
-            }
+            Err(InvariantError::Triangulation(TriangulationValidationError::Disconnected {
+                ..
+            })) => {}
             // Non-manifold facet detection is still valid if the cells happen to be connected.
             Err(InvariantError::Triangulation(
                 TriangulationValidationError::ManifoldFacetMultiplicity { cell_count, .. },
@@ -8609,19 +8620,21 @@ mod tests {
     }
 
     #[test]
-    fn test_is_valid_returns_tds_error_for_disconnected() {
+    fn test_is_valid_returns_triangulation_error_for_disconnected() {
         let tds = build_disconnected_two_triangles_tds_2d();
         let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
 
         match tri.is_valid() {
-            Err(InvariantError::Tds(TdsError::InconsistentDataStructure { ref message })) => {
-                assert!(
-                    message.contains("Disconnected"),
-                    "Expected 'Disconnected' in: {message}"
+            Err(InvariantError::Triangulation(TriangulationValidationError::Disconnected {
+                cell_count,
+            })) => {
+                assert_eq!(
+                    cell_count, 2,
+                    "Expected 2 cells in disconnected triangulation"
                 );
             }
             other => {
-                panic!("Expected InvariantError::Tds(InconsistentDataStructure), got {other:?}")
+                panic!("Expected InvariantError::Triangulation(Disconnected), got {other:?}")
             }
         }
     }

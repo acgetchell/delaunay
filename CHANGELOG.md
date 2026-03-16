@@ -16,11 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Apply SoS to AdaptiveKernel::orientation() and tolerate degener… [#264](https://github.com/acgetchell/delaunay/pull/264)
 - Remove RobustPredicateConfig and config_presets [#259](https://github.com/acgetchell/delaunay/pull/259)
   [#260](https://github.com/acgetchell/delaunay/pull/260)
+- Make TriangulationValidationError purely Level 3 [#262](https://github.com/acgetchell/delaunay/pull/262)
+- Preserve structured errors and use specific error variants [#262](https://github.com/acgetchell/delaunay/pull/262)
 - Replace custom changelog pipeline with git-cliff [#247](https://github.com/acgetchell/delaunay/pull/247)
 
 ### Merged Pull Requests
 
 - Apply SoS to AdaptiveKernel::orientation() and tolerate degener… [#264](https://github.com/acgetchell/delaunay/pull/264)
+- Rename TdsValidationError to TdsError [#262](https://github.com/acgetchell/delaunay/pull/262)
+- Make TriangulationValidationError purely Level 3 [#262](https://github.com/acgetchell/delaunay/pull/262)
+- Preserve structured errors and use specific error variants [#262](https://github.com/acgetchell/delaunay/pull/262)
+- Add error hierarchy coverage tests for patch coverage [#262](https://github.com/acgetchell/delaunay/pull/262)
+- Orthogonalize error mapping and add error hierarchy tests [#262](https://github.com/acgetchell/delaunay/pull/262)
 - Canonicalize positive orientation after bulk construction repair… [#261](https://github.com/acgetchell/delaunay/pull/261)
 - Remove RobustPredicateConfig and config_presets [#259](https://github.com/acgetchell/delaunay/pull/259)
   [#260](https://github.com/acgetchell/delaunay/pull/260)
@@ -271,6 +278,189 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Update numerical_robustness_guide.md: document AdaptiveKernel as the
     default kernel, remove config_presets references
 
+- Rename TdsValidationError to TdsError [#262](https://github.com/acgetchell/delaunay/pull/262)
+  [`7e1442e`](https://github.com/acgetchell/delaunay/commit/7e1442ef5fdd6a2ea7451d0147013df4e800cb7c)
+
+- Rename TdsValidationError -> TdsError across all source files
+  - Remove the type alias that bridged the old name
+  - Update all references in production code, tests, and examples
+  - Part of error hierarchy orthogonalization (Phase 5)
+- [**breaking**] Make TriangulationValidationError purely Level 3 [#262](https://github.com/acgetchell/delaunay/pull/262)
+  [`f62280d`](https://github.com/acgetchell/delaunay/commit/f62280d98e82e51baec8e5e5803db0ab75d281e0)
+
+Remove the Tds variant from TriangulationValidationError so it contains
+  only Level 3 (topology) errors.  TDS-level errors now flow through
+  InvariantError, keeping Levels 1–2 orthogonal from Level 3.
+
+  API changes:
+
+- is_valid, validate, validate_at_completion, validate_after_insertion
+    now return InvariantError instead of TriangulationValidationError
+
+- validate_geometric_cell_orientation returns TdsError directly
+- remove_vertex returns InvariantError
+- Add Tds variant to DelaunayTriangulationValidationError
+- TdsMutationError inner field made private; add as_tds_error() and
+    into_inner() accessors
+
+- Remove From<TdsMutationError> for TriangulationValidationError
+- Add From<ManifoldError> for InvariantError
+- [**breaking**] Preserve structured errors and use specific error variants [#262](https://github.com/acgetchell/delaunay/pull/262)
+  [`6907e55`](https://github.com/acgetchell/delaunay/commit/6907e55c5d43f62a7928945cd383dadbc312ef5c)
+
+- Preserve original TdsError in remove_vertex instead of fabricating
+    InconsistentDataStructure (use TdsMutationError::into_inner)
+
+  - Map NeighborWiring to InternalInconsistency (non-retryable) instead
+    of Tds(ValidationError(InvalidNeighbors))
+
+  - Map InvariantError::Delaunay to DelaunayValidationFailed instead of
+    fabricating EulerCharacteristicMismatch with zeroed fields
+
+  - Return fallback_err directly in star-split Err arm instead of
+    discarding it and returning the original validation_err
+
+  - Use IndexOutOfBounds for facet index checks and DimensionMismatch
+    for periodic offset count mismatches in orientation validation
+
+  - Update doc comments on normalize_coherent_orientation and
+    build_facet_to_cells_map to enumerate all returned TdsError variants
+
+- Add error hierarchy coverage tests for patch coverage [#262](https://github.com/acgetchell/delaunay/pull/262)
+  [`2908797`](https://github.com/acgetchell/delaunay/commit/290879779309139e4b6767b557a386de241a0f89)
+
+- Add Display/formatting tests for GeometricError, TdsError new variants
+    (CellNotFound, VertexNotFound, DimensionMismatch, IndexOutOfBounds)
+
+  - Add TdsMutationError::as_tds_error() and into_inner() accessor tests
+  - Add invariant_error_to_insertion_error tests for all three arms
+    (Tds, Triangulation, Delaunay)
+
+  - Add From<ManifoldError> for InvariantError non-Tds arm test
+  - Add TriangulationValidationError::IsolatedVertex Display test
+  - Add DelaunayTriangulationValidationError Tds and Triangulation
+    variant construction and Display tests
+
+  - Fix repair_delaunay_with_flips error mapping in remove_vertex to use
+    InvariantError::Delaunay(VerificationFailed) instead of
+    TdsError::FinalizationFailed
+
+  - Update DelaunayTriangulationValidationError doc to describe Levels 1-4
+  - Update validate_coherent_orientation doc to include InvalidNeighbors
+- Orthogonalize error mapping and add error hierarchy tests [#262](https://github.com/acgetchell/delaunay/pull/262)
+  [`f5c0950`](https://github.com/acgetchell/delaunay/commit/f5c09503eda5c7af969858e673f64e3d8be77006)
+
+- Map finalization failures to TdsError::FinalizationFailed instead of
+    re-wrapping the original error variant
+
+  - Handle TopologyValidationFailed in extract_tds_error by combining
+    context, message, and source into InconsistentDataStructure
+
+  - Add tests for DT validate error mapping to correct validation variants
+  - Add tests for invariant error conversions from Delaunay validation errors
+  - Add tests for manifold operations (simplex star, ridge star, closed
+    boundary validation) and ManifoldError display variants
+
+  - Add tests verifying error message propagation through the hierarchy
+- Clean up stale comments, deprecated API, and boost test coverage
+  [`1e994e5`](https://github.com/acgetchell/delaunay/commit/1e994e5236bc7038dab135c1a748ead1e0eb9f1b)
+
+- Remove deprecated TopologyGuarantee::requires_vertex_links(); callers
+    should use requires_vertex_links_during_insertion() or
+    requires_vertex_links_at_completion()
+
+  - Remove commented-out with_topology() stubs from Triangulation and
+    DelaunayTriangulation (future work tracked in issues, not dead code)
+
+  - Remove stale Phase 2 TODO comments (locate/geometric ops are implemented)
+  - Update doc comment on validate_at_completion to reference InvariantError
+  - Update CellNotFound context strings for periodic vertex identity
+  - Remove duplicate tests in topology::manifold
+  - Add 17 tests to triangulation_data_structure (serde round-trips,
+    orientation normalization, generation counter, remove_duplicate_cells,
+    validation error paths, facet-to-cells map, validation report)
+
+  - Add 11 tests to triangulation (topology queries, adjacency index,
+    local facet detection, ensure_non_empty_conflict_cells,
+    star_split_boundary_facets, validation_report, global connectedness)
+
+- Improve coverage for triangulation and TDS modules [`e8cec78`](https://github.com/acgetchell/delaunay/commit/e8cec7801585879b9c59c9073971d981a85c4d74)
+
+- Add 26 tests to triangulation.rs covering insertion pipeline
+    (bootstrap, initial simplex, beyond-simplex) for 2D/3D/4D,
+    insert_with_statistics, validation_report, remove_vertex,
+    validate_connectedness, find_conflict_region_global,
+    conflict_region_touches_boundary, fan_fill_cavity,
+    repair_local_facet_issues, duplicate_coordinates_error,
+    validate_after_insertion, invariant_error_to_insertion_error,
+    estimate_local_perturbation_scale, and validate_at_completion
+
+  - Add 16 tests to triangulation_data_structure.rs covering
+    insert_cell_with_mapping (UUID mapping, missing vertex, duplicate
+    UUID), get_cell_vertices error path, validate_vertex_incidence
+    (inconsistent incident cell, dangling cell key),
+    find_cells_containing_vertex fallback, remove_cells_by_keys batch
+    repair, assign_incident_cells dangling vertex, normalize_coherent
+    orientation (single and multi cell), validate_cell_coordinate
+    uniqueness, generation counter, remove_duplicate_cells,
+    remove_cell_by_key missing key, and validate_neighbor_topology
+
+  - Add Cell::set_uuid test helper (#[cfg(test)]) mirroring
+    Vertex::set_uuid for duplicate UUID detection testing
+
+  - Use TdsError::CellNotFound instead of InconsistentDataStructure
+    for cell-key lookups in neighbor validation and orientation
+    validation (4 sites)
+
+  - Remove unnecessary Vec allocation in
+    validate_neighbors_with_precomputed_vertex_sets by passing
+    SmallVec slice directly
+
+  - Update ORIENTATION_SPEC.md pseudocode to include all
+    OrientationViolation fields
+
+  - De-duplicate ridge_star_cells test to cover too-many-vertices
+    case instead of repeating too-few-vertices scenario
+
+  - Fix clippy lint in test_insert_pipeline macro (as f64 → From)
+- Orthogonalize error hierarchy for structure-preserving propagation
+  [`690aaa2`](https://github.com/acgetchell/delaunay/commit/690aaa2a1f35b859208ab5db6710ca6b44fc4f37)
+
+- Replace InsertionError::DelaunayValidationFailed { message: String } with
+    structured { source: Box<DelaunayTriangulationValidationError> } to preserve
+    Level 4 validation errors through the error chain
+
+  - Add InsertionError::DelaunayRepairFailed { source, context } variant that
+    preserves the structured DelaunayRepairError instead of misusing CavityFilling
+
+  - Remove TdsError::FinalizationFailed — it was a double-wrapping layer violation;
+    the single remaining call site now uses ? directly
+
+  - Simplify remove_vertex closure re-wrapping: replace 4 manual
+    InsertionError→TdsError→InvariantError chains with
+    insertion_error_to_invariant_error() calls
+
+  - Add HullExtensionReason::PredicateFailed(CoordinateConversionError) to preserve
+    structured orientation/predicate errors instead of format!("{e}") stringification
+
+  - Add HullExtensionReason::Tds(TdsError) for boundary-facet retrieval failures
+  - Add #[non_exhaustive] to HullExtensionReason for API stability (consistent with
+    all other error enums in the hierarchy)
+
+  - Derive Clone on FlipError and DelaunayRepairError (required by
+    InsertionError::DelaunayRepairFailed)
+
+  - Update insertion_error_to_invariant_error and invariant_error_to_insertion_error
+    converters for new variants
+
+  - Update exhaustive matches in is_retryable, map_orientation_canonicalization_error,
+    and map_insertion_error
+
+  - Remove 3 unfulfilled #[expect(clippy::too_many_lines)] attributes that became
+    stale after simplifications
+
+  - Add retryability tests for PredicateFailed, Tds, and DelaunayRepairFailed variants
+
 ### Fixed
 
 - Canonicalize positive orientation after bulk construction repair… [#261](https://github.com/acgetchell/delaunay/pull/261)
@@ -291,6 +481,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to separate algorithmic bugs from input-related `GeometricDegeneracy`
   during post-repair orientation canonicalization. Added topology
   validation to the issue #228 regression test to ensure manifold parity.
+
+- Bump generation before early return in assign_incident_cells
+  [`d3ca4db`](https://github.com/acgetchell/delaunay/commit/d3ca4db8932b9e4b6cd1b81f192a2fde66bb45ee)
+
+- Remove stale `TriangulationValidationError` import from
+    `TriangulationValidationError` doc example (glob import already
+    covers it)
+
+  - In `assign_incident_cells`, replace `?`-based `ok_or_else` with
+    `let Some(...) else` so that `bump_generation()` is called before
+    returning `VertexNotFound`, ensuring the generation counter reflects
+    the incident-cell clearing mutation on the error path
 
 ### Maintenance
 
