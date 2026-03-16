@@ -163,8 +163,8 @@ The library separates **construction-time** failures from **validation-time** in
 
 ### Validation errors (checking invariants)
 
-- `TdsValidationError` (Levels 1–2): element + structural invariants.
-- `TriangulationValidationError` (Level 3): wraps `TdsValidationError` and adds
+- `TdsError` (Levels 1–2): element + structural invariants.
+- `TriangulationValidationError` (Level 3): wraps `TdsError` and adds
   codimension-1 manifoldness + codimension-2 boundary manifoldness (closed boundary) +
   (optional) vertex-link PL-manifold checks + connectedness + isolated-vertex + Euler characteristic checks.
 - `DelaunayTriangulationValidationError` (Level 4): wraps `TriangulationValidationError` and adds
@@ -175,7 +175,7 @@ The library separates **construction-time** failures from **validation-time** in
 `DelaunayTriangulation::validation_report()` returns `Result<(), TriangulationValidationReport>`.
 On failure, the `Err(TriangulationValidationReport)` contains a `Vec<InvariantViolation>`; each
 `InvariantViolation` stores an `InvariantKind` plus an `InvariantError` **enum** that wraps the
-structured error from the failing layer (`TdsValidationError`, `TriangulationValidationError`, or
+structured error from the failing layer (`TdsError`, `TriangulationValidationError`, or
 `DelaunayTriangulationValidationError`).
 
 ---

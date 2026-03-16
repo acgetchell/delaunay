@@ -87,13 +87,13 @@ We already have `simplex_orientation()` in `src/geometry/predicates.rs` that com
 fn canonicalize_vertex_order<T, U, const D: usize>(
     vertices: &[VertexKey],
     tds: &Tds<T, U, V, D>,
-) -> Result<Vec<VertexKey>, TdsValidationError>
+) -> Result<Vec<VertexKey>, TdsError>
 where
     T: CoordinateScalar,
     U: DataType,
 {
     if vertices.len() != D + 1 {
-        return Err(TdsValidationError::InconsistentDataStructure { ... });
+        return Err(TdsError::InconsistentDataStructure { ... });
     }
     
     // Extract points from vertices
@@ -112,7 +112,9 @@ where
             Ok(canonical)
         }
         Orientation::DEGENERATE => {
-            Err(TdsValidationError::DegenerateCell { ... })
+            Err(TdsError::Geometric(GeometricError::DegenerateOrientation {
+                message: "degenerate cell".to_string(),
+            }))
         }
     }
 }
@@ -133,7 +135,7 @@ Update `Tds::insert_cell()` and related methods to canonicalize vertices:
 
 ```rust
 pub fn insert_cell(&mut self, vertices: Vec<VertexKey>, data: Option<V>) 
-    -> Result<CellKey, TdsValidationError>
+    -> Result<CellKey, TdsError>
 where
     T: CoordinateScalar,
 {
@@ -247,14 +249,19 @@ For practical D ≤ 5, this is acceptable for validation.
 #### 3.1 Add Error Variant
 
 ```rust
-// In TdsValidationError enum
-#[error("Orientation invariant violated: cells {cell1_uuid} and {cell2_uuid} induce same orientation on shared facet")]
+// In TdsError enum
+#[error("Orientation invariant violated between cells {cell1_uuid} and {cell2_uuid}; ...")]
 OrientationViolation {
     cell1_key: CellKey,
     cell1_uuid: Uuid,
     cell2_key: CellKey,
     cell2_uuid: Uuid,
+    cell1_facet_index: usize,
+    cell2_facet_index: usize,
     facet_vertices: Vec<VertexKey>,
+    cell2_facet_vertices: Vec<VertexKey>,
+    observed_odd_permutation: bool,
+    expected_odd_permutation: bool,
 },
 ```
 
@@ -272,7 +279,7 @@ pub enum InvariantKind {
 
 ```rust
 // In Tds::is_valid()
-pub fn is_valid(&self) -> Result<(), TdsValidationError>
+pub fn is_valid(&self) -> Result<(), TdsError>
 where
     T: CoordinateScalar,
 {
@@ -280,14 +287,19 @@ where
     
     // Level 2: Coherent orientation
     if !self.is_coherently_oriented() {
-        // Find the violating pair for error reporting
-        let (cell1, cell2, facet) = self.find_orientation_violation()?;
-        return Err(TdsValidationError::OrientationViolation {
-            cell1_key: cell1,
-            cell1_uuid: self.cells[cell1].uuid(),
-            cell2_key: cell2,
-            cell2_uuid: self.cells[cell2].uuid(),
-            facet_vertices: facet,
+    // Find the violating pair for error reporting
+        let violation = self.find_orientation_violation()?;
+        return Err(TdsError::OrientationViolation {
+            cell1_key: violation.cell1_key,
+            cell1_uuid: self.cells[violation.cell1_key].uuid(),
+            cell2_key: violation.cell2_key,
+            cell2_uuid: self.cells[violation.cell2_key].uuid(),
+            cell1_facet_index: violation.cell1_facet_index,
+            cell2_facet_index: violation.cell2_facet_index,
+            facet_vertices: violation.facet_vertices,
+            cell2_facet_vertices: violation.cell2_facet_vertices,
+            observed_odd_permutation: violation.observed_odd_permutation,
+            expected_odd_permutation: violation.expected_odd_permutation,
         });
     }
     
