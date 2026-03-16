@@ -1034,7 +1034,7 @@ where
             .get(cell_key)
             .ok_or_else(|| TdsError::CellNotFound {
                 cell_key,
-                context: "building periodic vertex key".to_string(),
+                context: "building periodic vertex identity (UUID/offset)".to_string(),
             })?;
 
         let periodic_offsets = cell.periodic_vertex_offsets();
@@ -1056,7 +1056,7 @@ where
                 .ok_or_else(|| TdsError::VertexNotFound {
                     vertex_key,
                     context: format!(
-                        "referenced by cell {cell_key:?} at index {vertex_idx} while building periodic vertex key",
+                        "referenced by cell {cell_key:?} at index {vertex_idx} while building periodic vertex identity (UUID/offset)",
                     ),
                 })?;
             let offset = periodic_offsets.map_or([0_i8; D], |offsets| offsets[vertex_idx]);
@@ -7346,6 +7346,369 @@ mod tests {
         assert!(
             !tds.is_connected(),
             "TDS with two isolated cells (no neighbor wiring) must not be connected"
+        );
+    }
+
+    // =========================================================================
+    // SERDE ROUND-TRIP TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_serde_round_trip_preserves_tds_structure() {
+        let verts = initial_simplex_vertices_3d();
+        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let original = dt.tds().clone();
+
+        let json = serde_json::to_string(&original).expect("serialize failed");
+        let deserialized: Tds<f64, (), (), 3> =
+            serde_json::from_str(&json).expect("deserialize failed");
+
+        assert_eq!(
+            deserialized.number_of_vertices(),
+            original.number_of_vertices()
+        );
+        assert_eq!(deserialized.number_of_cells(), original.number_of_cells());
+        assert_eq!(deserialized.dim(), original.dim());
+        assert_eq!(deserialized, original);
+        assert!(deserialized.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_serde_round_trip_multi_cell_triangulation() {
+        // 5 vertices in 3D → multiple tetrahedra
+        let vertices = [
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.5, 0.5, 0.5]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let original = dt.tds().clone();
+        assert!(original.number_of_cells() > 1);
+
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: Tds<f64, (), (), 3> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized, original);
+        assert!(deserialized.is_valid().is_ok());
+        assert!(deserialized.is_connected());
+        assert!(deserialized.is_coherently_oriented());
+    }
+
+    #[test]
+    fn test_serde_round_trip_2d() {
+        let vertices = [
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 1.0]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let original = dt.tds().clone();
+
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: Tds<f64, (), (), 2> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized, original);
+        assert!(deserialized.is_valid().is_ok());
+    }
+
+    // =========================================================================
+    // COHERENT ORIENTATION NORMALIZATION & GENERATION COUNTER
+    // =========================================================================
+
+    #[test]
+    fn test_normalize_coherent_orientation_produces_coherent_result() {
+        use crate::core::cell::Cell;
+
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        // Two triangles sharing edge v1-v2, with deliberately inconsistent vertex order
+        let c0 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let c1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v1, v2, v3], None).unwrap())
+            .unwrap();
+
+        // Assign neighbors: shared facet is edge v1-v2.
+        // c0[v0,v1,v2]: facet opposite v0 (index 0) = edge [v1,v2] → neighbor c1
+        // c1[v1,v2,v3]: facet opposite v3 (index 2) = edge [v1,v2] → neighbor c0
+        tds.get_cell_by_key_mut(c0).unwrap().neighbors =
+            Some(NeighborBuffer::from_iter([Some(c1), None, None]));
+        tds.get_cell_by_key_mut(c1).unwrap().neighbors =
+            Some(NeighborBuffer::from_iter([None, None, Some(c0)]));
+
+        tds.normalize_coherent_orientation().unwrap();
+        assert!(tds.is_coherently_oriented());
+    }
+
+    #[test]
+    fn test_generation_counter_bumps_on_topology_modification() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        assert_eq!(tds.generation(), 0);
+
+        let _v = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        assert!(tds.generation() > 0);
+
+        let gen_before = tds.generation();
+        tds.mark_topology_modified();
+        assert!(tds.generation() > gen_before);
+    }
+
+    #[test]
+    fn test_remove_duplicate_cells_removes_exact_duplicates() {
+        use crate::core::cell::Cell;
+
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        // Insert the same cell twice
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        assert_eq!(tds.number_of_cells(), 2);
+
+        let removed = tds.remove_duplicate_cells().unwrap();
+        assert_eq!(removed, 1);
+        assert_eq!(tds.number_of_cells(), 1);
+    }
+
+    #[test]
+    fn test_remove_duplicate_cells_noop_when_no_duplicates() {
+        let verts = initial_simplex_vertices_3d();
+        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let mut tds = dt.tds().clone();
+
+        let removed = tds.remove_duplicate_cells().unwrap();
+        assert_eq!(removed, 0);
+    }
+
+    // =========================================================================
+    // VALIDATION ERROR PATHS
+    // =========================================================================
+
+    #[test]
+    fn test_validate_vertex_incidence_detects_dangling_incident_cell() {
+        use crate::core::cell::Cell;
+
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let ck = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        tds.assign_incident_cells().unwrap();
+
+        // Remove the cell but leave the vertex's incident_cell pointer dangling
+        tds.cells.remove(ck);
+
+        let err = tds.validate_vertex_incidence().unwrap_err();
+        assert!(matches!(err, TdsError::CellNotFound { .. }));
+    }
+
+    #[test]
+    fn test_validate_cell_coordinate_uniqueness_rejects_duplicate_coords() {
+        use crate::core::cell::Cell;
+
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        // Two distinct vertex keys with identical coordinates
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+
+        let err = tds.validate_cell_coordinate_uniqueness().unwrap_err();
+        assert!(
+            matches!(err, TdsError::DuplicateCoordinatesInCell { .. }),
+            "Expected DuplicateCoordinatesInCell, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_validate_facet_sharing_rejects_triple_shared_facet() {
+        use crate::core::cell::Cell;
+
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v3 = tds.insert_vertex_with_mapping(vertex!([0.5, 0.5])).unwrap();
+        let v4 = tds.insert_vertex_with_mapping(vertex!([0.3, 0.3])).unwrap();
+
+        // Three cells sharing the v0-v1 edge (facet):
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v3], None).unwrap())
+            .unwrap();
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v4], None).unwrap())
+            .unwrap();
+
+        let err = tds.validate_facet_sharing().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                TdsError::InconsistentDataStructure { ref message }
+                    if message.contains("shared by")
+            ),
+            "Expected over-shared facet error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_validate_no_duplicate_cells_detects_dupes() {
+        use crate::core::cell::Cell;
+
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+
+        let err = tds.validate_no_duplicate_cells().unwrap_err();
+        assert!(matches!(err, TdsError::DuplicateCells { .. }));
+    }
+
+    #[test]
+    fn test_tds_is_valid_passes_for_valid_simplex() {
+        let verts = initial_simplex_vertices_3d();
+        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        assert!(dt.tds().is_valid().is_ok());
+        assert!(dt.tds().validate().is_ok());
+    }
+
+    #[test]
+    fn test_tds_partial_eq_different_structures_not_equal() {
+        let verts_a = [
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let verts_b = [
+            vertex!([0.0, 0.0]),
+            vertex!([2.0, 0.0]),
+            vertex!([0.0, 2.0]),
+        ];
+        let dt_a: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&verts_a).unwrap();
+        let dt_b: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&verts_b).unwrap();
+        assert_ne!(dt_a.tds(), dt_b.tds());
+    }
+
+    #[test]
+    fn test_clear_all_neighbors_and_rebuild() {
+        // Use 5 vertices so there are multiple cells with actual neighbor pointers
+        let vertices = [
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.5, 0.5, 0.5]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let mut tds = dt.tds().clone();
+        assert!(tds.number_of_cells() > 1);
+
+        // Multi-cell: cells that share facets have Some(neighbor) entries
+        let has_any_neighbor = tds.cells().any(|(_, cell)| {
+            cell.neighbors()
+                .is_some_and(|nb| nb.iter().any(Option::is_some))
+        });
+        assert!(has_any_neighbor);
+
+        tds.clear_all_neighbors();
+
+        // After clearing, no cell should have neighbors
+        for (_, cell) in tds.cells() {
+            assert!(cell.neighbors().is_none());
+        }
+    }
+
+    #[test]
+    fn test_build_facet_to_cells_map_basic() {
+        let verts = initial_simplex_vertices_3d();
+        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let tds = dt.tds();
+
+        let facet_map = tds.build_facet_to_cells_map().unwrap();
+        // A single tetrahedron in 3D has 4 facets, all boundary (degree 1)
+        assert_eq!(facet_map.len(), 4);
+        for handles in facet_map.values() {
+            assert_eq!(handles.len(), 1);
+        }
+    }
+
+    #[test]
+    fn test_find_cells_containing_vertex_by_key() {
+        let vertices = [
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.5, 0.5, 0.5]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let tds = dt.tds();
+
+        // Every vertex should be in at least one cell
+        for (vk, _) in tds.vertices() {
+            let cells = tds.find_cells_containing_vertex_by_key(vk);
+            assert!(
+                !cells.is_empty(),
+                "Vertex {vk:?} should be in at least one cell"
+            );
+        }
+
+        // Stale key should return empty set
+        let stale_key = VertexKey::from(KeyData::from_ffi(0xDEAD));
+        assert!(
+            tds.find_cells_containing_vertex_by_key(stale_key)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn test_validation_report_accumulates_violations() {
+        use crate::core::cell::Cell;
+
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        // Create a cell, then corrupt the UUID mapping
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        // Corrupt: add a stray UUID mapping pointing to a non-existent key
+        tds.uuid_to_cell_key
+            .insert(Uuid::new_v4(), CellKey::from(KeyData::from_ffi(0xBAD)));
+
+        let report = tds.validation_report().unwrap_err();
+        assert!(!report.is_empty());
+        assert!(
+            report
+                .violations
+                .iter()
+                .any(|v| v.kind == InvariantKind::CellMappings),
+            "Expected CellMappings violation"
         );
     }
 }

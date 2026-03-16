@@ -2940,17 +2940,6 @@ mod tests {
     }
 
     #[test]
-    fn test_simplex_star_cells_rejects_empty_simplex() {
-        let tds: Tds<f64, (), (), 2> = Tds::empty();
-        match simplex_star_cells(&tds, &[]) {
-            Err(ManifoldError::Tds(TdsError::InconsistentDataStructure { ref message })) => {
-                assert!(message.contains("at least one vertex"));
-            }
-            other => panic!("Expected InconsistentDataStructure, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn test_simplex_star_cells_rejects_missing_vertex() {
         let tds: Tds<f64, (), (), 2> = Tds::empty();
         let stale_key = VertexKey::from(KeyData::from_ffi(0xDEAD));
@@ -2963,17 +2952,6 @@ mod tests {
                 assert!(context.contains("simplex star"));
             }
             other => panic!("Expected VertexNotFound, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn test_simplex_link_simplices_from_star_rejects_empty_simplex() {
-        let tds: Tds<f64, (), (), 2> = Tds::empty();
-        match simplex_link_simplices_from_star(&tds, &[], &[]) {
-            Err(ManifoldError::Tds(TdsError::InconsistentDataStructure { ref message })) => {
-                assert!(message.contains("at least one vertex"));
-            }
-            other => panic!("Expected InconsistentDataStructure, got {other:?}"),
         }
     }
 

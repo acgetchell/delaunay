@@ -662,17 +662,6 @@ impl TopologyGuarantee {
         matches!(self, Self::PLManifold | Self::PLManifoldStrict)
     }
 
-    /// Legacy method for backward compatibility.
-    #[deprecated(
-        since = "0.7.0",
-        note = "Use requires_vertex_links_during_insertion or requires_vertex_links_at_completion"
-    )]
-    #[inline]
-    #[must_use]
-    pub const fn requires_vertex_links(self) -> bool {
-        matches!(self, Self::PLManifold | Self::PLManifoldStrict)
-    }
-
     /// Returns `true` if this guarantee is compatible with the given validation policy.
     ///
     /// `PLManifold` requires at least end-of-construction validation, so it's incompatible
@@ -694,9 +683,6 @@ impl TopologyGuarantee {
 /// - `U`: User data type for vertices
 /// - `V`: User data type for cells
 /// - `D`: Dimension of the triangulation
-///
-/// # Phase 2 TODO
-/// Add geometric operations that use the kernel for predicates.
 ///
 /// # Examples
 ///
@@ -1032,47 +1018,6 @@ where
             topology_guarantee: TopologyGuarantee::DEFAULT,
         }
     }
-
-    // TODO: Implement after bistellar flips + robust insertion (v0.7.0+)
-    // /// Create a triangulation with a specified topological space.
-    // ///
-    // /// This is the generic triangulation layer method that constructs
-    // /// triangulations on different topological spaces. The Delaunay layer's
-    // /// `with_topology` method should delegate to this.
-    // ///
-    // /// Requires:
-    // /// - Bistellar flips for topology-preserving operations
-    // /// - Insertion algorithm that respects topology constraints
-    // /// - Topology-aware boundary handling
-    // ///
-    // /// # Examples (future)
-    // ///
-    // /// ```rust,ignore
-    // /// use delaunay::prelude::triangulation::*;
-    // /// use delaunay::topology::spaces::SphericalSpace;
-    // ///
-    // /// let space = SphericalSpace::new();
-    // /// let tri = Triangulation::with_topology(
-    // ///     FastKernel::new(),
-    // ///     space,
-    // ///     tds
-    // /// );
-    // /// ```
-    // #[must_use]
-    // pub fn with_topology<T>(
-    //     kernel: K,
-    //     topology: T,
-    //     tds: Tds<K::Scalar, U, V, D>,
-    // ) -> Self
-    // where
-    //     T: TopologicalSpace,
-    // {
-    //     Self {
-    //         kernel,
-    //         tds,
-    //         // topology: Box::new(topology),
-    //     }
-    // }
 
     /// Returns an iterator over all cells in the triangulation.
     ///
@@ -2518,7 +2463,8 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`TriangulationValidationError`] if vertex-link validation fails.
+    /// Returns an [`InvariantError`] if vertex-link validation fails
+    /// (e.g. a vertex link is not a PL-sphere/ball as required for PL-manifoldness).
     ///
     /// # Examples
     ///
@@ -5129,10 +5075,7 @@ where
         Ok(new_cells)
     }
 
-    // Phase 2 TODO: Add geometric operations using kernel predicates
-    // - locate(point) - point location using facet walking
-
-    /// Detects over-shared facets within a specific set of cells (localized check).
+    /// Detects over-shared facets
     ///
     /// This is an **O(k * D)** operation where k = number of cells to check,
     /// unlike global validation which is O(N * D) for the entire triangulation.
@@ -5560,7 +5503,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_topology_guarantee_helper_matrix_and_policy_compatibility() {
         assert_eq!(TopologyGuarantee::default(), TopologyGuarantee::DEFAULT);
         assert_eq!(TopologyGuarantee::DEFAULT, TopologyGuarantee::PLManifold);
@@ -5575,10 +5517,6 @@ mod tests {
         assert!(!TopologyGuarantee::Pseudomanifold.requires_ridge_links());
         assert!(TopologyGuarantee::PLManifold.requires_ridge_links());
         assert!(TopologyGuarantee::PLManifoldStrict.requires_ridge_links());
-
-        assert!(!TopologyGuarantee::Pseudomanifold.requires_vertex_links());
-        assert!(TopologyGuarantee::PLManifold.requires_vertex_links());
-        assert!(TopologyGuarantee::PLManifoldStrict.requires_vertex_links());
 
         for policy in [
             ValidationPolicy::Never,
@@ -8836,5 +8774,247 @@ mod tests {
             ),
             "Truly isolated vertex should produce IsolatedVertex error: {result:?}"
         );
+    }
+
+    // =========================================================================
+    // TOPOLOGY QUERY COVERAGE
+    // =========================================================================
+
+    #[test]
+    fn test_topology_queries_on_two_tet_triangulation() {
+        // 5 vertices in 3D → multi-cell triangulation exercises all query paths
+        let vertices = [
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([1.0, 1.0, 1.0]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let tri = dt.as_triangulation();
+
+        // edges()
+        let edge_count = tri.number_of_edges();
+        let edges_collected: std::collections::HashSet<_> = tri.edges().collect();
+        assert_eq!(edges_collected.len(), edge_count);
+        assert!(edge_count >= 6); // at least a tetrahedron's worth
+
+        // facets() and boundary_facets()
+        assert!(tri.facets().next().is_some());
+        assert!(tri.boundary_facets().next().is_some());
+
+        // cell_vertices() and vertex_coords()
+        let (ck, _) = tri.cells().next().unwrap();
+        let cell_verts = tri.cell_vertices(ck).unwrap();
+        assert_eq!(cell_verts.len(), 4);
+        for &vk in cell_verts {
+            let coords = tri.vertex_coords(vk).unwrap();
+            assert_eq!(coords.len(), 3);
+        }
+
+        // Returns None for missing keys
+        let missing_ck = CellKey::from(KeyData::from_ffi(0xDEAD));
+        assert!(tri.cell_vertices(missing_ck).is_none());
+        let absent_vk = VertexKey::from(KeyData::from_ffi(0xBEEF));
+        assert!(tri.vertex_coords(absent_vk).is_none());
+
+        // adjacent_cells()
+        let v0 = tri.vertices().next().unwrap().0;
+        assert!(tri.adjacent_cells(v0).next().is_some());
+
+        // cell_neighbors()
+        // Multi-cell triangulation has at least one internal neighbor
+        assert!(tri.cell_neighbors(ck).next().is_some());
+
+        // incident_edges()
+        let inc_edges: Vec<_> = tri.incident_edges(v0).collect();
+        assert!(!inc_edges.is_empty());
+        assert_eq!(tri.number_of_incident_edges(v0), inc_edges.len());
+    }
+
+    // =========================================================================
+    // ADJACENCY INDEX + _WITH_INDEX METHODS
+    // =========================================================================
+
+    #[test]
+    fn test_adjacency_index_with_index_methods() {
+        let vertices = [
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([1.0, 1.0, 1.0]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let tri = dt.as_triangulation();
+        let index = tri.build_adjacency_index().unwrap();
+
+        // edges_with_index matches edges()
+        let idx_edges: std::collections::HashSet<_> = tri.edges_with_index(&index).collect();
+        let direct_edges: std::collections::HashSet<_> = tri.edges().collect();
+        assert_eq!(idx_edges, direct_edges);
+        assert_eq!(
+            tri.number_of_edges_with_index(&index),
+            tri.number_of_edges()
+        );
+
+        let v0 = tri.vertices().next().unwrap().0;
+
+        // adjacent_cells_with_index
+        let idx_adj: std::collections::HashSet<_> =
+            tri.adjacent_cells_with_index(&index, v0).collect();
+        let direct_adj: std::collections::HashSet<_> = tri.adjacent_cells(v0).collect();
+        assert_eq!(idx_adj, direct_adj);
+        assert_eq!(
+            tri.number_of_adjacent_cells_with_index(&index, v0),
+            direct_adj.len()
+        );
+
+        // cell_neighbors_with_index
+        let ck = tri.cells().next().unwrap().0;
+        let direct_neighbors: Vec<_> = tri.cell_neighbors(ck).collect();
+        assert_eq!(
+            tri.cell_neighbors_with_index(&index, ck).count(),
+            direct_neighbors.len()
+        );
+        assert_eq!(
+            tri.number_of_cell_neighbors_with_index(&index, ck),
+            direct_neighbors.len()
+        );
+
+        // incident_edges_with_index
+        let idx_inc: std::collections::HashSet<_> =
+            tri.incident_edges_with_index(&index, v0).collect();
+        let direct_inc: std::collections::HashSet<_> = tri.incident_edges(v0).collect();
+        assert_eq!(idx_inc, direct_inc);
+        assert_eq!(
+            tri.number_of_incident_edges_with_index(&index, v0),
+            direct_inc.len()
+        );
+    }
+
+    // =========================================================================
+    // DETECT / REPAIR LOCAL FACET ISSUES
+    // =========================================================================
+
+    #[test]
+    fn test_detect_local_facet_issues_none_for_valid_triangulation() {
+        let vertices = [
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 1.0]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let tri = dt.as_triangulation();
+
+        let cell_keys: Vec<_> = tri.cells().map(|(ck, _)| ck).collect();
+        let issues = tri.detect_local_facet_issues(&cell_keys).unwrap();
+        assert!(issues.is_none());
+    }
+
+    #[test]
+    fn test_ensure_non_empty_conflict_cells_passthrough_when_nonempty() {
+        let mut buf = CellKeyBuffer::new();
+        buf.push(CellKey::from(KeyData::from_ffi(1)));
+
+        let owned = Cow::Owned(buf);
+        let fallback = CellKey::from(KeyData::from_ffi(999));
+        let result = Triangulation::<FastKernel<f64>, (), (), 2>::ensure_non_empty_conflict_cells(
+            owned, fallback,
+        );
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_ensure_non_empty_conflict_cells_uses_fallback_when_empty() {
+        let buf = CellKeyBuffer::new();
+        let fallback = CellKey::from(KeyData::from_ffi(42));
+        let result = Triangulation::<FastKernel<f64>, (), (), 2>::ensure_non_empty_conflict_cells(
+            Cow::Owned(buf),
+            fallback,
+        );
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], fallback);
+    }
+
+    #[test]
+    fn test_star_split_boundary_facets_produces_d_plus_1_facets() {
+        let ck = CellKey::from(KeyData::from_ffi(7));
+        let facets = Triangulation::<FastKernel<f64>, (), (), 3>::star_split_boundary_facets(ck);
+        assert_eq!(facets.len(), 4); // D+1 = 4 for 3D
+        for (i, fh) in facets.iter().enumerate() {
+            assert_eq!(fh.cell_key(), ck);
+            assert_eq!(<usize as From<u8>>::from(fh.facet_index()), i);
+        }
+    }
+    // =========================================================================
+    // VALIDATION REPORT
+    // =========================================================================
+
+    #[test]
+    fn test_validation_report_ok_for_valid_two_tet() {
+        let vertices = [
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.5, 0.5, 0.5]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        assert!(dt.as_triangulation().validation_report().is_ok());
+    }
+
+    #[test]
+    fn test_validation_report_reports_isolated_vertex_topology_violation() {
+        let (mut tri, _, _) = build_single_tet();
+        let _ = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.5, 0.5, 0.5]))
+            .unwrap();
+
+        let report = tri.validation_report().unwrap_err();
+        assert!(!report.is_empty());
+        assert!(
+            report
+                .violations
+                .iter()
+                .any(|v| v.kind == InvariantKind::Topology),
+            "Expected Topology violation in report"
+        );
+    }
+
+    // =========================================================================
+    // TOPOLOGY GUARANTEE / VALIDATION POLICY COVERAGE
+    // =========================================================================
+
+    #[test]
+    fn test_topology_guarantee_requires_vertex_links_at_completion_predicate() {
+        assert!(TopologyGuarantee::PLManifold.requires_vertex_links_at_completion());
+        assert!(TopologyGuarantee::PLManifoldStrict.requires_vertex_links_at_completion());
+        assert!(!TopologyGuarantee::Pseudomanifold.requires_vertex_links_at_completion());
+    }
+
+    #[test]
+    fn test_validate_global_connectedness_ok_for_connected() {
+        let (tri, _, _) = build_single_tet();
+        assert!(tri.validate_global_connectedness().is_ok());
+    }
+
+    #[test]
+    fn test_validate_no_isolated_vertices_ok_when_no_vertices() {
+        let tri: Triangulation<FastKernel<f64>, (), (), 3> =
+            Triangulation::new_empty(FastKernel::new());
+        assert!(tri.validate_no_isolated_vertices().is_ok());
+    }
+
+    #[test]
+    fn test_pick_fan_apex_returns_none_for_empty_facets() {
+        let (tri, _, _) = build_single_tet();
+        assert!(tri.pick_fan_apex(&[]).is_none());
     }
 }
