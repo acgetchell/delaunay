@@ -80,6 +80,40 @@ let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
 assert!(dt.is_valid().is_ok());
 ```
 
+### Identity-based SoS perturbation via canonical vertex ordering
+
+The `SoS` (Simulation of Simplicity) implementation assigns perturbation priority
+by slice position: the first point in the array gets the lowest-order perturbation
+term, the second gets the next, and so on. If different call sites present the
+same vertex set in different orders, SoS tie-breaking can produce inconsistent
+signs for the same geometric query — leading to flip cycles, invalid conflict
+regions, or non-deterministic triangulations.
+
+To eliminate this, **all kernel call sites canonically sort simplex vertices by
+`VertexKey` identity** (`vk.data().as_ffi()`) before passing them to orientation
+or insphere predicates. This makes the existing slice-position SoS identity-based
+by construction: a vertex's perturbation priority depends only on its stable key,
+not on how the cell happened to store its vertices.
+
+**Convention for contributors:**
+
+- **Insphere calls:** sort all D+1 simplex vertices by `VertexKey` before calling
+  `kernel.in_sphere()`. The test point is separate and not sorted.
+- **Orientation for facet comparison:** sort the D facet vertices by `VertexKey`;
+  the extra vertex (opposite or query) is always appended last.
+- **Orientation for degeneracy check:** sort all D+1 vertices by `VertexKey`.
+
+Helper functions in `src/core/util/canonical_points.rs` implement these patterns:
+
+- `sorted_cell_points(tds, cell)` — collects cell vertices in canonical order
+- `sorted_facet_points_with_extra(tds, facet_keys, extra)` — collects facet
+  vertices in canonical order, then appends `extra` at position D
+
+Both return `Option`, with `None` indicating an unresolvable vertex key.
+
+When adding new kernel call sites, **always** use canonical ordering. Failure to
+do so will re-introduce order-dependent SoS behavior.
+
 ### Transactional insertion, retries, and skips
 
 Incremental insertion is transactional: if an insertion attempt fails, the triangulation is
