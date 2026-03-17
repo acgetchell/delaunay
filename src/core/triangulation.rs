@@ -9260,6 +9260,61 @@ mod tests {
         );
     }
 
+    /// `find_conflict_region_global` uses `sorted_cell_points` to collect
+    /// vertices in canonical order.  A cell containing a missing vertex key
+    /// causes the helper to return `None`, which is converted to
+    /// `ConflictError::CellDataAccessFailed`.
+    #[test]
+    fn test_find_conflict_region_global_missing_vertex_returns_cell_data_access_failed() {
+        let (mut tri, vkeys, ck) = build_single_tet();
+
+        // Replace one vertex key with a missing key.
+        let missing = VertexKey::from(KeyData::from_ffi(999_999));
+        {
+            let cell = tri.tds.get_cell_by_key_mut(ck).unwrap();
+            cell.clear_vertex_keys();
+            cell.push_vertex_key(vkeys[0]);
+            cell.push_vertex_key(vkeys[1]);
+            cell.push_vertex_key(vkeys[2]);
+            cell.push_vertex_key(missing);
+        }
+
+        let result = tri.find_conflict_region_global(&Point::new([0.5, 0.5, 0.5]));
+        assert!(
+            matches!(
+                result,
+                Err(ConflictError::CellDataAccessFailed { cell_key, .. }) if cell_key == ck
+            ),
+            "expected CellDataAccessFailed for missing vertex, got {result:?}"
+        );
+    }
+
+    /// `find_conflict_region_global` checks that `sorted_cell_points` returns
+    /// exactly D+1 points.  A cell with fewer than D+1 vertex keys (all
+    /// resolvable) triggers `CellDataAccessFailed` with a vertex-count message.
+    #[test]
+    fn test_find_conflict_region_global_underdimensioned_cell_returns_cell_data_access_failed() {
+        let (mut tri, vkeys, ck) = build_single_tet();
+
+        // Shrink the cell to only 3 vertices (all valid) in a D=3 triangulation.
+        {
+            let cell = tri.tds.get_cell_by_key_mut(ck).unwrap();
+            cell.clear_vertex_keys();
+            cell.push_vertex_key(vkeys[0]);
+            cell.push_vertex_key(vkeys[1]);
+            cell.push_vertex_key(vkeys[2]);
+        }
+
+        let result = tri.find_conflict_region_global(&Point::new([0.5, 0.5, 0.5]));
+        assert!(
+            matches!(
+                result,
+                Err(ConflictError::CellDataAccessFailed { cell_key, .. }) if cell_key == ck
+            ),
+            "expected CellDataAccessFailed for underdimensioned cell, got {result:?}"
+        );
+    }
+
     // =========================================================================
     // CONFLICT REGION TOUCHES BOUNDARY
     // =========================================================================

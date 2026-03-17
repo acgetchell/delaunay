@@ -2168,9 +2168,75 @@ mod tests {
         ));
     }
 
-    /// `is_point_outside_facet` collects vertex points via `filter_map`, so a cell whose
-    /// vertex-key list contains a key that does not exist in the TDS will produce fewer
-    /// than `D+1` points and hit the degenerate-cell guard on line 613.
+    /// A cell with fewer than D+1 vertex keys is detected early by the
+    /// `cell_vertex_keys.len() != D + 1` guard and returns `Ok(None)`.
+    #[test]
+    fn test_is_point_outside_facet_underdimensioned_cell_returns_none() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+
+        // Shrink cell to only 2 vertices (D+1 = 3 required for D=2).
+        {
+            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            cell.clear_vertex_keys();
+            cell.push_vertex_key(v0);
+            cell.push_vertex_key(v1);
+        }
+
+        let kernel = FastKernel::<f64>::new();
+        let point = Point::new([0.3, 0.3]);
+        let result = is_point_outside_facet(&tds, &kernel, cell_key, 0, &point);
+        assert!(
+            matches!(result, Ok(None)),
+            "underdimensioned cell should return Ok(None), got {result:?}"
+        );
+    }
+
+    /// When the vertex at `facet_idx` (the opposite vertex) is unresolvable,
+    /// `is_point_outside_facet` returns `Ok(None)` before reaching the
+    /// canonical ordering helpers.
+    #[test]
+    fn test_is_point_outside_facet_unresolvable_opposite_vertex_returns_none() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+
+        // Replace vertex at index 0 (the opposite vertex for facet_idx=0)
+        // with a missing key, keeping the cell at D+1 vertex keys.
+        let missing = VertexKey::from(KeyData::from_ffi(999_999));
+        {
+            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            cell.clear_vertex_keys();
+            cell.push_vertex_key(missing); // index 0 = opposite vertex for facet_idx=0
+            cell.push_vertex_key(v1);
+            cell.push_vertex_key(v2);
+        }
+
+        let kernel = FastKernel::<f64>::new();
+        let point = Point::new([0.3, 0.3]);
+        // facet_idx=0 → opposite_key = missing → unresolvable → Ok(None)
+        let result = is_point_outside_facet(&tds, &kernel, cell_key, 0, &point);
+        assert!(
+            matches!(result, Ok(None)),
+            "unresolvable opposite vertex should return Ok(None), got {result:?}"
+        );
+    }
+
+    /// `is_point_outside_facet` resolves vertex points via the canonical ordering
+    /// helper `sorted_facet_points_with_extra`.  A cell whose vertex-key list
+    /// contains a key absent from the TDS causes the helper to return `None`,
+    /// which the function converts to `Ok(None)` (degenerate/unresolvable cell).
     #[test]
     fn test_is_point_outside_facet_degenerate_cell_missing_vertex_returns_none() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
@@ -2203,9 +2269,79 @@ mod tests {
         );
     }
 
-    /// `find_conflict_region` collects simplex points via `filter_map` in the BFS loop;
-    /// a conflict cell whose vertex-key list contains a key absent from the TDS produces
-    /// fewer than `D+1` points and returns `Err(CellDataAccessFailed)` (lines 793-795).
+    /// When a conflict cell's neighbor list references a non-existent cell key,
+    /// the BFS in `find_conflict_region` pops that key and fails to retrieve the
+    /// cell, returning `CellDataAccessFailed` with a "vanished" message.
+    #[test]
+    fn test_find_conflict_region_vanished_neighbor_returns_cell_data_access_failed() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+
+        // Wire a neighbor that doesn't exist in the TDS.
+        let ghost = CellKey::from(KeyData::from_ffi(777_777));
+        {
+            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            let buf = cell.ensure_neighbors_buffer_mut();
+            buf[0] = Some(ghost);
+        }
+
+        let kernel = FastKernel::<f64>::new();
+        // Point inside the circumcircle so the start cell is in conflict
+        // and BFS tries to visit the ghost neighbor.
+        let point = Point::new([0.2, 0.2]);
+        let result = find_conflict_region(&tds, &kernel, &point, cell_key);
+        assert!(
+            matches!(
+                result,
+                Err(ConflictError::CellDataAccessFailed { cell_key: ck, .. }) if ck == ghost
+            ),
+            "expected CellDataAccessFailed for vanished neighbor, got {result:?}"
+        );
+    }
+
+    /// When a cell in the BFS has fewer than D+1 vertex keys (all resolvable),
+    /// `sorted_cell_points` returns a short buffer and the vertex-count guard
+    /// fires `CellDataAccessFailed`.
+    #[test]
+    fn test_find_conflict_region_underdimensioned_cell_returns_cell_data_access_failed() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+
+        // Shrink cell to only 2 vertices (both valid).
+        {
+            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            cell.clear_vertex_keys();
+            cell.push_vertex_key(v0);
+            cell.push_vertex_key(v1);
+        }
+
+        let kernel = FastKernel::<f64>::new();
+        let point = Point::new([0.3, 0.3]);
+        let result = find_conflict_region(&tds, &kernel, &point, cell_key);
+        assert!(
+            matches!(
+                result,
+                Err(ConflictError::CellDataAccessFailed { cell_key: ck, .. }) if ck == cell_key
+            ),
+            "expected CellDataAccessFailed for underdimensioned cell, got {result:?}"
+        );
+    }
+
+    /// `find_conflict_region` uses `sorted_cell_points` in the BFS loop;
+    /// a conflict cell whose vertex-key list contains a key absent from the TDS
+    /// causes the helper to return `None`, yielding `Err(CellDataAccessFailed)`.
     #[test]
     fn test_find_conflict_region_degenerate_cell_returns_cell_data_access_failed() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();

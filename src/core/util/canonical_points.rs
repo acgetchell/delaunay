@@ -282,7 +282,7 @@ mod tests {
         );
     }
 
-    /// Same test for 3D: verify insphere sign is identical across all
+    /// Same test for 3D: verify insphere sign is identical across **all 24**
     /// permutations of a co-spherical 3D simplex.
     #[test]
     fn test_canonical_insphere_permutation_invariant_3d() {
@@ -298,14 +298,13 @@ mod tests {
         let test_point = Point::new([1.0, 1.0, 1.0]);
         let kernel = AdaptiveKernel::<f64>::new();
 
-        // Test a representative subset of 24 permutations
-        let perms: [[usize; 4]; 6] = [
-            [0, 1, 2, 3],
-            [3, 2, 1, 0],
-            [1, 3, 0, 2],
-            [2, 0, 3, 1],
-            [3, 0, 2, 1],
-            [1, 2, 3, 0],
+        // All 24 permutations of 4 vertices
+        #[rustfmt::skip]
+        let perms: [[usize; 4]; 24] = [
+            [0,1,2,3], [0,1,3,2], [0,2,1,3], [0,2,3,1], [0,3,1,2], [0,3,2,1],
+            [1,0,2,3], [1,0,3,2], [1,2,0,3], [1,2,3,0], [1,3,0,2], [1,3,2,0],
+            [2,0,1,3], [2,0,3,1], [2,1,0,3], [2,1,3,0], [2,3,0,1], [2,3,1,0],
+            [3,0,1,2], [3,0,2,1], [3,1,0,2], [3,1,2,0], [3,2,0,1], [3,2,1,0],
         ];
 
         let mut signs = Vec::new();
