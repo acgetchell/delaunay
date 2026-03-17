@@ -995,6 +995,7 @@ mod tests {
   - `jaccard.rs`: set similarity utilities + diagnostics macro `assert_jaccard_gte!`
   - `delaunay_validation.rs`: Delaunay property validation helpers (expensive; debug-oriented)
   - `hilbert.rs`: Hilbert ordering utilities (pure; triangulation-agnostic)
+  - `canonical_points.rs`: Canonical vertex-ordering helpers for geometric predicate call sites (SoS consistency)
 - Unit tests live alongside each submodule for cohesion (instead of a single giant util test module).
 
 ### Key Conventions

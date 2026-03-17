@@ -135,6 +135,7 @@ use crate::core::triangulation_data_structure::{
     CellKey, GeometricError, InvariantError, InvariantKind, InvariantViolation, Tds,
     TdsConstructionError, TdsError, TriangulationValidationReport, VertexKey,
 };
+use crate::core::util::canonical_points::sorted_cell_points;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
@@ -3695,11 +3696,14 @@ where
             {
                 cells_scanned = cells_scanned.saturating_add(1);
             }
-            let simplex_points: SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
-                cell.vertices()
-                    .iter()
-                    .filter_map(|&vkey| self.tds.get_vertex_by_key(vkey).map(|v| *v.point()))
-                    .collect();
+            // Collect cell vertex points in canonical VertexKey order for consistent
+            // SoS perturbation priority.
+            let simplex_points = sorted_cell_points(&self.tds, cell).ok_or_else(|| {
+                ConflictError::CellDataAccessFailed {
+                    cell_key,
+                    message: format!("Failed to resolve all {} cell vertices", D + 1),
+                }
+            })?;
 
             if simplex_points.len() != D + 1 {
                 return Err(ConflictError::CellDataAccessFailed {

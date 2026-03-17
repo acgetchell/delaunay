@@ -434,6 +434,7 @@ pub mod core {
 
     /// General utility functions organized by functionality.
     pub mod util {
+        pub(crate) mod canonical_points;
         pub mod deduplication;
         pub mod delaunay_validation;
         pub mod facet_keys;

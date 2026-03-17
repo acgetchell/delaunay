@@ -24,6 +24,7 @@ use crate::core::collections::{
 use crate::core::facet::FacetHandle;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation_data_structure::{CellKey, Tds, VertexKey};
+use crate::core::util::canonical_points::{sorted_cell_points, sorted_facet_points_with_extra};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
@@ -602,41 +603,38 @@ where
         .get_cell(cell_key)
         .ok_or(LocateError::InvalidCell { cell_key })?;
 
-    // Get all cell vertices
-    let cell_vertices: SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE> = cell
-        .vertices()
-        .iter()
-        .filter_map(|&vkey| tds.get_vertex_by_key(vkey).map(|v| *v.point()))
-        .collect();
-
-    if cell_vertices.len() != D + 1 {
+    let cell_vertex_keys = cell.vertices();
+    if cell_vertex_keys.len() != D + 1 {
         return Ok(None); // Degenerate cell
     }
 
-    // Get the opposite vertex (the one NOT on the facet)
-    let opposite_vertex = cell_vertices[facet_idx];
+    // The vertex at facet_idx is opposite the facet
+    let opposite_key = cell_vertex_keys[facet_idx];
+    let Some(opposite_point) = tds.get_vertex_by_key(opposite_key).map(|v| *v.point()) else {
+        return Ok(None); // Unresolvable vertex → degenerate cell
+    };
 
-    // Build facet simplex + opposite vertex in canonical order:
-    // All facet vertices first, then opposite vertex
-    let mut canonical_cell =
-        SmallBuffer::<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-    for (i, point) in cell_vertices.iter().enumerate() {
-        if i != facet_idx {
-            canonical_cell.push(*point);
-        }
-    }
-    canonical_cell.push(opposite_vertex);
+    // Facet keys: all vertex keys except the one at facet_idx
+    let facet_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> = cell_vertex_keys
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| i != facet_idx)
+        .map(|(_, &vk)| vk)
+        .collect();
+
+    // Build facet simplex + opposite vertex in canonical key order.
+    // If any facet vertex is unresolvable, treat as degenerate.
+    let Some(canonical_cell) = sorted_facet_points_with_extra(tds, &facet_keys, opposite_point)
+    else {
+        return Ok(None);
+    };
 
     let cell_orientation = kernel.orientation(&canonical_cell)?;
 
-    // Build facet simplex + query point in same canonical order
-    let mut query_simplex = SmallBuffer::<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-    for (i, point) in cell_vertices.iter().enumerate() {
-        if i != facet_idx {
-            query_simplex.push(*point);
-        }
-    }
-    query_simplex.push(*query_point);
+    // Build facet simplex + query point in same canonical key order
+    let Some(query_simplex) = sorted_facet_points_with_extra(tds, &facet_keys, *query_point) else {
+        return Ok(None);
+    };
 
     let query_orientation = kernel.orientation(&query_simplex)?;
 
@@ -780,14 +778,18 @@ where
         // Get cell vertices for in_sphere test
         let cell = tds
             .get_cell(cell_key)
-            .ok_or(ConflictError::InvalidStartCell { cell_key })?;
+            .ok_or_else(|| ConflictError::CellDataAccessFailed {
+                cell_key,
+                message: "Cell vanished during BFS traversal".to_string(),
+            })?;
 
-        // Collect cell vertex points
-        let simplex_points: SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE> = cell
-            .vertices()
-            .iter()
-            .filter_map(|&vkey| tds.get_vertex_by_key(vkey).map(|v| *v.point()))
-            .collect();
+        // Collect cell vertex points in canonical VertexKey order for consistent
+        // SoS perturbation priority.
+        let simplex_points =
+            sorted_cell_points(tds, cell).ok_or_else(|| ConflictError::CellDataAccessFailed {
+                cell_key,
+                message: format!("Failed to resolve all {} cell vertices", D + 1),
+            })?;
 
         if simplex_points.len() != D + 1 {
             return Err(ConflictError::CellDataAccessFailed {

@@ -1755,6 +1755,10 @@ where
     cell_vertices[0].push(opposite_a);
     cell_vertices[1].push(opposite_b);
 
+    // Sort by VertexKey for canonical SoS perturbation ordering
+    cell_vertices[0].sort_unstable_by_key(|v| v.data().as_ffi());
+    cell_vertices[1].sort_unstable_by_key(|v| v.data().as_ffi());
+
     let points_a = vertices_to_points(tds, &cell_vertices[0])?;
     let points_b = vertices_to_points(tds, &cell_vertices[1])?;
 
@@ -2185,6 +2189,9 @@ where
                 cell_vertices.push(v);
             }
         }
+
+        // Sort by VertexKey for canonical SoS perturbation ordering
+        cell_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
 
         let points = vertices_to_points(tds, &cell_vertices)?;
         let missing_point = tds
