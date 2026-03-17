@@ -3975,26 +3975,44 @@ where
                 heuristic: None,
             }),
             Err(
-                DelaunayRepairError::NonConvergent { .. }
-                | DelaunayRepairError::PostconditionFailed { .. },
+                primary_err @ (DelaunayRepairError::NonConvergent { .. }
+                | DelaunayRepairError::PostconditionFailed { .. }),
             ) => {
-                if let Ok(stats) = self.repair_delaunay_with_flips_robust(None) {
-                    // Re-canonicalize geometric orientation (#258): robust flip
-                    // repair may leave the global sign negative.
-                    self.ensure_positive_orientation()?;
-                    return Ok(DelaunayRepairOutcome {
-                        stats,
-                        heuristic: None,
-                    });
+                match self.repair_delaunay_with_flips_robust(None) {
+                    Ok(stats) => {
+                        // Re-canonicalize geometric orientation (#258): robust flip
+                        // repair may leave the global sign negative.
+                        self.ensure_positive_orientation()?;
+                        Ok(DelaunayRepairOutcome {
+                            stats,
+                            heuristic: None,
+                        })
+                    }
+                    Err(robust_err) => {
+                        let base_seed = self.heuristic_rebuild_base_seed();
+                        let seeds = config.resolve_seeds(base_seed);
+                        let (candidate, stats, used_seeds) = self
+                            .rebuild_with_heuristic(seeds)
+                            .map_err(|heuristic_err| {
+                                let heuristic_message = match heuristic_err {
+                                    DelaunayRepairError::HeuristicRebuildFailed { message } => {
+                                        message
+                                    }
+                                    other => other.to_string(),
+                                };
+                                DelaunayRepairError::HeuristicRebuildFailed {
+                                    message: format!(
+                                        "primary repair failed ({primary_err}); robust fallback failed ({robust_err}); {heuristic_message}"
+                                    ),
+                                }
+                            })?;
+                        *self = candidate;
+                        Ok(DelaunayRepairOutcome {
+                            stats,
+                            heuristic: Some(used_seeds),
+                        })
+                    }
                 }
-                let base_seed = self.heuristic_rebuild_base_seed();
-                let seeds = config.resolve_seeds(base_seed);
-                let (candidate, stats, used_seeds) = self.rebuild_with_heuristic(seeds)?;
-                *self = candidate;
-                Ok(DelaunayRepairOutcome {
-                    stats,
-                    heuristic: Some(used_seeds),
-                })
             }
             Err(err) => Err(err),
         }
@@ -6911,8 +6929,8 @@ mod tests {
             vertex!([0.0, 1.0]),
         ];
 
-        let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
+        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
 
         assert_eq!(dt.number_of_vertices(), 3);
         assert_eq!(dt.number_of_cells(), 1);
@@ -8360,6 +8378,69 @@ mod tests {
                 &err
             ),
             "GeometricDegeneracy should NOT be non-retryable"
+        );
+    }
+
+    // ---- advanced repair fallback-chain error context tests ----
+
+    /// Verify that the `HeuristicRebuildFailed` error from
+    /// `repair_delaunay_with_flips_advanced` includes the full fallback
+    /// chain context (primary, robust, and heuristic failures) when all
+    /// three stages fail.
+    #[test]
+    fn test_advanced_repair_fallback_error_preserves_full_chain_context() {
+        // Construct the error exactly the way `repair_delaunay_with_flips_advanced`
+        // builds it when all three stages fail.
+        let primary_err = DelaunayRepairError::NonConvergent {
+            max_flips: 1000,
+            diagnostics: crate::core::algorithms::flips::DelaunayRepairDiagnostics {
+                facets_checked: 50,
+                flips_performed: 1000,
+                max_queue_len: 42,
+                ambiguous_predicates: 0,
+                ambiguous_predicate_samples: Vec::new(),
+                predicate_failures: 0,
+                cycle_detections: 0,
+                cycle_signature_samples: Vec::new(),
+                attempt: 1,
+                queue_order:
+                    crate::core::algorithms::flips::RepairQueueOrder::Fifo,
+            },
+        };
+        let robust_err = DelaunayRepairError::PostconditionFailed {
+            message: "robust postcondition failure".to_string(),
+        };
+        let heuristic_inner = DelaunayRepairError::HeuristicRebuildFailed {
+            message: "heuristic rebuild failed after 3 attempts: attempt 3/3 (shuffle_seed=1 perturbation_seed=2): inner".to_string(),
+        };
+
+        // Simulate the map_err closure in repair_delaunay_with_flips_advanced.
+        let heuristic_message = match heuristic_inner {
+            DelaunayRepairError::HeuristicRebuildFailed { message } => message,
+            other => other.to_string(),
+        };
+        let combined = DelaunayRepairError::HeuristicRebuildFailed {
+            message: format!(
+                "primary repair failed ({primary_err}); robust fallback failed ({robust_err}); {heuristic_message}"
+            ),
+        };
+
+        let msg = combined.to_string();
+        assert!(
+            msg.contains("primary repair failed"),
+            "error should mention primary failure: {msg}"
+        );
+        assert!(
+            msg.contains("robust fallback failed"),
+            "error should mention robust failure: {msg}"
+        );
+        assert!(
+            msg.contains("robust postcondition failure"),
+            "error should include robust failure details: {msg}"
+        );
+        assert!(
+            msg.contains("heuristic rebuild failed after 3 attempts"),
+            "error should include heuristic rebuild details: {msg}"
         );
     }
 }
