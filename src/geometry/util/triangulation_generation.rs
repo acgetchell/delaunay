@@ -62,7 +62,7 @@ fn random_triangulation_try_build<K, T, U, V, const D: usize>(
     topology_guarantee: TopologyGuarantee,
 ) -> Option<DelaunayTriangulation<K, U, V, D>>
 where
-    K: crate::geometry::kernel::Kernel<D, Scalar = T> + crate::geometry::kernel::ExactPredicates,
+    K: crate::geometry::kernel::Kernel<D, Scalar = T>,
     T: ScalarAccumulative,
     U: DataType,
     V: DataType,

@@ -43,7 +43,7 @@ use crate::core::triangulation::TopologyGuarantee;
 use crate::core::triangulation_data_structure::{CellKey, Tds, VertexKey};
 use crate::core::util::stable_hash_u64_slice;
 use crate::core::vertex::Vertex;
-use crate::geometry::kernel::{ExactPredicates, Kernel};
+use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
@@ -2531,7 +2531,7 @@ pub(crate) fn repair_delaunay_with_flips_k2_k3<K, U, V, const D: usize>(
     topology: TopologyGuarantee,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
-    K: Kernel<D> + ExactPredicates,
+    K: Kernel<D>,
     K::Scalar: ScalarSummable,
     U: DataType,
     V: DataType,
@@ -2550,7 +2550,8 @@ where
     }
 
     // Two-attempt strategy: FIFO then LIFO queue ordering.
-    // The `ExactPredicates` bound guarantees predicate correctness;
+    // Predicate correctness depends on the caller supplying a kernel with
+    // exact predicates (e.g. `AdaptiveKernel` or `RobustKernel`);
     // the retry exists only to escape queue-order-dependent flip cycles.
     let attempt1 = RepairAttemptConfig {
         attempt: 1,
@@ -2650,13 +2651,14 @@ pub(crate) fn repair_delaunay_local_single_pass<K, U, V, const D: usize>(
     max_flips: usize,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
-    K: Kernel<D> + ExactPredicates,
+    K: Kernel<D>,
     K::Scalar: ScalarSummable,
     U: DataType,
     V: DataType,
 {
     // Two-attempt strategy: FIFO then LIFO queue ordering.
-    // The `ExactPredicates` bound guarantees predicate correctness;
+    // Predicate correctness depends on the caller supplying a kernel with
+    // exact predicates (e.g. `AdaptiveKernel` or `RobustKernel`);
     // the retry exists only to escape queue-order-dependent flip cycles.
     let attempt1 = RepairAttemptConfig {
         attempt: 1,

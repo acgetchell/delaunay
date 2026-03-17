@@ -115,7 +115,7 @@ use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionErr
 use crate::core::triangulation_data_structure::{CellKey, VertexKey};
 use crate::core::util::periodic_facet_key_from_lifted_vertices;
 use crate::core::vertex::{Vertex, VertexBuilder};
-use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates, Kernel};
+use crate::geometry::kernel::{AdaptiveKernel, Kernel};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar, ScalarAccumulative};
 use crate::topology::spaces::toroidal::ToroidalSpace;
@@ -787,7 +787,14 @@ where
     ///
     /// [`build()`](Self::build) already defaults to [`AdaptiveKernel`], so this method is
     /// only needed when you want a different kernel (e.g. [`FastKernel`](crate::geometry::kernel::FastKernel)
-    /// for 2D-only workloads or a custom implementation).
+    /// for workloads that prioritize speed over exact predicate correctness, or a custom
+    /// implementation).
+    ///
+    /// **Note:** `FastKernel` is accepted for construction, but the explicit repair methods
+    /// ([`repair_delaunay_with_flips`](DelaunayTriangulation::repair_delaunay_with_flips),
+    /// [`repair_delaunay_with_flips_advanced`](DelaunayTriangulation::repair_delaunay_with_flips_advanced))
+    /// require [`ExactPredicates`](crate::geometry::kernel::ExactPredicates) and are not available
+    /// for `FastKernel`.
     ///
     /// # Errors
     ///
@@ -820,7 +827,7 @@ where
         kernel: &K,
     ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
-        K: Kernel<D, Scalar = T> + ExactPredicates,
+        K: Kernel<D, Scalar = T>,
         K::Scalar: ScalarAccumulative,
         V: DataType,
     {
@@ -930,7 +937,7 @@ where
         construction_options: ConstructionOptions,
     ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
-        K: Kernel<D, Scalar = T> + ExactPredicates,
+        K: Kernel<D, Scalar = T>,
         K::Scalar: ScalarAccumulative,
         V: DataType,
         M: GlobalTopologyModel<D>,
