@@ -608,6 +608,10 @@ where
         return Ok(None); // Degenerate cell
     }
 
+    if facet_idx > D {
+        return Ok(None); // Out-of-range facet index
+    }
+
     // The vertex at facet_idx is opposite the facet
     let opposite_key = cell_vertex_keys[facet_idx];
     let Some(opposite_point) = tds.get_vertex_by_key(opposite_key).map(|v| *v.point()) else {
@@ -631,10 +635,11 @@ where
 
     let cell_orientation = kernel.orientation(&canonical_cell)?;
 
-    // Build facet simplex + query point in same canonical key order
-    let Some(query_simplex) = sorted_facet_points_with_extra(tds, &facet_keys, *query_point) else {
-        return Ok(None);
-    };
+    // Build query simplex by reusing the canonical facet ordering:
+    // replace the last element (opposite → query point).
+    let mut query_simplex = canonical_cell;
+    let last = query_simplex.len() - 1;
+    query_simplex[last] = *query_point;
 
     let query_orientation = kernel.orientation(&query_simplex)?;
 
