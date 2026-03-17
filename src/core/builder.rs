@@ -115,7 +115,7 @@ use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionErr
 use crate::core::triangulation_data_structure::{CellKey, VertexKey};
 use crate::core::util::periodic_facet_key_from_lifted_vertices;
 use crate::core::vertex::{Vertex, VertexBuilder};
-use crate::geometry::kernel::{AdaptiveKernel, Kernel};
+use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates, Kernel};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar, ScalarAccumulative};
 use crate::topology::spaces::toroidal::ToroidalSpace;
@@ -820,7 +820,7 @@ where
         kernel: &K,
     ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
-        K: Kernel<D, Scalar = T>,
+        K: Kernel<D, Scalar = T> + ExactPredicates,
         K::Scalar: ScalarAccumulative,
         V: DataType,
     {
@@ -930,7 +930,7 @@ where
         construction_options: ConstructionOptions,
     ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
-        K: Kernel<D, Scalar = T>,
+        K: Kernel<D, Scalar = T> + ExactPredicates,
         K::Scalar: ScalarAccumulative,
         V: DataType,
         M: GlobalTopologyModel<D>,
@@ -1914,7 +1914,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geometry::kernel::FastKernel;
     use crate::topology::traits::global_topology_model::{
         GlobalTopologyModel, GlobalTopologyModelError,
     };
@@ -2611,7 +2610,7 @@ mod tests {
 
     #[test]
     fn test_build_periodic_requires_periodic_domain() {
-        let kernel = FastKernel::new();
+        let kernel = AdaptiveKernel::new();
         let canonical_vertices = vec![
             vertex!([0.1_f64, 0.1_f64]),
             vertex!([0.9_f64, 0.2_f64]),

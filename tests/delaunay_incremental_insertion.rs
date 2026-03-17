@@ -182,8 +182,8 @@ test_insert_5_points!(
 // =========================================================================
 
 #[test]
-fn test_fast_kernel_vs_robust_kernel_2d() {
-    use delaunay::geometry::kernel::{FastKernel, RobustKernel};
+fn test_adaptive_kernel_vs_robust_kernel_2d() {
+    use delaunay::geometry::kernel::{AdaptiveKernel, RobustKernel};
 
     let vertices = vec![
         vertex!([0.0, 0.0]),
@@ -192,9 +192,9 @@ fn test_fast_kernel_vs_robust_kernel_2d() {
         vertex!([0.5, 0.5]),
     ];
 
-    let dt_fast: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+    let dt_adaptive: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
         DelaunayTriangulation::with_topology_guarantee(
-            &FastKernel::new(),
+            &AdaptiveKernel::new(),
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -209,11 +209,14 @@ fn test_fast_kernel_vs_robust_kernel_2d() {
         .unwrap();
 
     // Both should produce same vertex count
-    assert_eq!(dt_fast.number_of_vertices(), dt_robust.number_of_vertices());
-    assert_eq!(dt_fast.number_of_vertices(), 4);
+    assert_eq!(
+        dt_adaptive.number_of_vertices(),
+        dt_robust.number_of_vertices()
+    );
+    assert_eq!(dt_adaptive.number_of_vertices(), 4);
 
     // Both should create valid triangulations
-    assert!(dt_fast.number_of_cells() > 0);
+    assert!(dt_adaptive.number_of_cells() > 0);
     assert!(dt_robust.number_of_cells() > 0);
 }
 
@@ -428,7 +431,7 @@ fn test_minimal_simplex_then_insert() {
 
 #[test]
 fn test_f32_coordinates() {
-    use delaunay::geometry::kernel::FastKernel;
+    use delaunay::geometry::kernel::AdaptiveKernel;
 
     let vertices = vec![
         vertex!([0.0f32, 0.0f32]),
@@ -436,9 +439,9 @@ fn test_f32_coordinates() {
         vertex!([0.0f32, 1.0f32]),
     ];
 
-    let mut dt: DelaunayTriangulation<FastKernel<f32>, (), (), 2> =
+    let mut dt: DelaunayTriangulation<AdaptiveKernel<f32>, (), (), 2> =
         DelaunayTriangulation::with_topology_guarantee(
-            &FastKernel::new(),
+            &AdaptiveKernel::new(),
             &vertices,
             TopologyGuarantee::PLManifold,
         )

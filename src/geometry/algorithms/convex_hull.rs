@@ -1611,7 +1611,7 @@ mod tests {
     use crate::core::triangulation::TriangulationConstructionError;
     use crate::core::triangulation_data_structure::TdsError;
     use crate::core::util::{checked_facet_key_from_vertex_keys, facet_view_to_vertices};
-    use crate::geometry::kernel::FastKernel;
+    use crate::geometry::kernel::AdaptiveKernel;
     use crate::vertex;
     use serde::Serialize;
     use serde::de::DeserializeOwned;
@@ -1629,8 +1629,8 @@ mod tests {
     /// Since we need ownership, we create the `DelaunayTriangulation` and extract the `Triangulation`.
     fn create_triangulation<const D: usize>(
         vertices: &[crate::core::vertex::Vertex<f64, (), D>],
-    ) -> DelaunayTriangulation<FastKernel<f64>, (), (), D> {
-        DelaunayTriangulation::with_kernel(&FastKernel::new(), vertices).unwrap()
+    ) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
+        DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), vertices).unwrap()
     }
 
     /// Helper function to extract vertices from a facet handle.
@@ -1714,7 +1714,7 @@ mod tests {
                 fn $test_name() {
                     let vertices = $vertices;
                     let dt = create_triangulation(&vertices);
-                    let hull: ConvexHull<FastKernel<f64>, (), (), $dim> =
+                    let hull: ConvexHull<AdaptiveKernel<f64>, (), (), $dim> =
                         ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
                     assert_eq!(
@@ -1745,7 +1745,7 @@ mod tests {
                     fn [<$test_name _facet_access>]() {
                         let vertices = $vertices;
                         let dt = create_triangulation(&vertices);
-                        let hull: ConvexHull<FastKernel<f64>, (), (), $dim> =
+                        let hull: ConvexHull<AdaptiveKernel<f64>, (), (), $dim> =
                             ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
                         // Test facet iterator
@@ -1774,7 +1774,7 @@ mod tests {
                     fn [<$test_name _point_containment>]() {
                         let vertices = $vertices;
                         let dt = create_triangulation(&vertices);
-                        let hull: ConvexHull<FastKernel<f64>, (), (), $dim> =
+                        let hull: ConvexHull<AdaptiveKernel<f64>, (), (), $dim> =
                             ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
                         // Test with inside point (scaled to ensure it's inside the unit simplex)
@@ -1857,7 +1857,7 @@ mod tests {
         let dt_3d = create_triangulation(&vertices_3d);
 
         // Test empty hull (default constructor)
-        let empty_hull: ConvexHull3D<FastKernel<f64>, (), ()> = ConvexHull::default();
+        let empty_hull: ConvexHull3D<AdaptiveKernel<f64>, (), ()> = ConvexHull::default();
 
         // Basic empty hull properties
         assert_eq!(
@@ -1925,7 +1925,7 @@ mod tests {
             vertex!([0.0, 1.0]),
         ];
         let dt_2d = create_triangulation(&vertices_2d);
-        let hull_2d: ConvexHull2D<FastKernel<f64>, (), ()> =
+        let hull_2d: ConvexHull2D<AdaptiveKernel<f64>, (), ()> =
             ConvexHull::from_triangulation(dt_2d.as_triangulation()).unwrap();
 
         let inside_point_2d = Point::new([0.1, 0.1]);
@@ -1973,7 +1973,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let dt_3d = create_triangulation(&vertices_3d);
-        let hull_3d: ConvexHull3D<FastKernel<f64>, (), ()> =
+        let hull_3d: ConvexHull3D<AdaptiveKernel<f64>, (), ()> =
             ConvexHull::from_triangulation(dt_3d.as_triangulation()).unwrap();
 
         let inside_point_3d = Point::new([0.2, 0.2, 0.2]);
@@ -2136,7 +2136,7 @@ mod tests {
             vertex!([0.0, 0.0, 0.0, 1.0]),
         ];
         let dt_4d = create_triangulation(&vertices_4d);
-        let hull_4d: ConvexHull4D<FastKernel<f64>, (), ()> =
+        let hull_4d: ConvexHull4D<AdaptiveKernel<f64>, (), ()> =
             ConvexHull::from_triangulation(dt_4d.as_triangulation()).unwrap();
 
         let inside_point_4d = Point::new([0.1, 0.1, 0.1, 0.1]);
@@ -2168,7 +2168,7 @@ mod tests {
             vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
         ];
         let dt_5d = create_triangulation(&vertices_5d);
-        let hull_5d: ConvexHull<FastKernel<f64>, (), (), 5> =
+        let hull_5d: ConvexHull<AdaptiveKernel<f64>, (), (), 5> =
             ConvexHull::from_triangulation(dt_5d.as_triangulation()).unwrap();
 
         let inside_point_5d = Point::new([0.1, 0.1, 0.1, 0.1, 0.1]);
@@ -2227,7 +2227,7 @@ mod tests {
         let mut visibility_results = Vec::new();
         for (point, description) in &distance_test_points {
             let is_visible = ConvexHull::<
-                crate::geometry::kernel::FastKernel<f64>,
+                crate::geometry::kernel::AdaptiveKernel<f64>,
                 (),
                 (),
                 3,
@@ -2257,7 +2257,7 @@ mod tests {
 
         for (point, description) in degenerate_points {
             let result = ConvexHull::<
-                crate::geometry::kernel::FastKernel<f64>,
+                crate::geometry::kernel::AdaptiveKernel<f64>,
                 (),
                 (),
                 3,
@@ -2274,7 +2274,7 @@ mod tests {
         let consistency_point = Point::new([2.0, 2.0, 2.0]);
         let consistency_results: Vec<bool> = (0..5)
             .map(|_| {
-                ConvexHull::<crate::geometry::kernel::FastKernel<f64>, (), (), 3>::fallback_visibility_test(
+                ConvexHull::<crate::geometry::kernel::AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
                     &test_facet_vertices,
                     &consistency_point,
                 )
@@ -2313,7 +2313,7 @@ mod tests {
 
         for point in precise_points {
             let result = ConvexHull::<
-                crate::geometry::kernel::FastKernel<f64>,
+                crate::geometry::kernel::AdaptiveKernel<f64>,
                 (),
                 (),
                 3,
@@ -2338,13 +2338,13 @@ mod tests {
             vertex!([0.0, 1.0]),
         ];
         let dt_2d = create_triangulation(&vertices_2d);
-        let hull_2d: ConvexHull<FastKernel<f64>, (), (), 2> =
+        let hull_2d: ConvexHull<AdaptiveKernel<f64>, (), (), 2> =
             ConvexHull::from_triangulation(dt_2d.as_triangulation()).unwrap();
         let test_facet_2d_vertices =
             extract_facet_vertices(&hull_2d.hull_facets[0], dt_2d.as_triangulation()).unwrap();
         let test_point_2d = Point::new([2.0, 2.0]);
         let result_2d = ConvexHull::<
-            crate::geometry::kernel::FastKernel<f64>,
+            crate::geometry::kernel::AdaptiveKernel<f64>,
             (),
             (),
             2,
@@ -2361,13 +2361,13 @@ mod tests {
             vertex!([0.0, 0.0, 0.0, 1.0]),
         ];
         let dt_4d = create_triangulation(&vertices_4d);
-        let hull_4d: ConvexHull<FastKernel<f64>, (), (), 4> =
+        let hull_4d: ConvexHull<AdaptiveKernel<f64>, (), (), 4> =
             ConvexHull::from_triangulation(dt_4d.as_triangulation()).unwrap();
         let test_facet_4d_vertices =
             extract_facet_vertices(&hull_4d.hull_facets[0], dt_4d.as_triangulation()).unwrap();
         let test_point_4d = Point::new([2.0, 2.0, 2.0, 2.0]);
         let result_4d = ConvexHull::<
-            crate::geometry::kernel::FastKernel<f64>,
+            crate::geometry::kernel::AdaptiveKernel<f64>,
             (),
             (),
             4,
@@ -2435,7 +2435,7 @@ mod tests {
         // Most validation edge cases are covered by the existing comprehensive tests
 
         // Test empty hull validation (should pass)
-        let empty_hull: ConvexHull<FastKernel<f64>, (), (), 3> = ConvexHull::default();
+        let empty_hull: ConvexHull<AdaptiveKernel<f64>, (), (), 3> = ConvexHull::default();
         // Create a dummy triangulation for validation
         let dummy_vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -2485,7 +2485,7 @@ mod tests {
         // Test 1D hull (empty hull validation)
         let dummy_vertices_1d = vec![vertex!([0.0]), vertex!([1.0])];
         let dummy_dt_1d = create_triangulation(&dummy_vertices_1d);
-        let hull_1d: ConvexHull<FastKernel<f64>, (), (), 1> = ConvexHull::default();
+        let hull_1d: ConvexHull<AdaptiveKernel<f64>, (), (), 1> = ConvexHull::default();
         assert!(
             hull_1d.validate(dummy_dt_1d.as_triangulation()).is_ok(),
             "1D empty hull should validate"
@@ -2499,7 +2499,7 @@ mod tests {
             vertex!([0.0, 1.0]),
         ];
         let dt_2d = create_triangulation(&vertices_2d);
-        let hull_2d: ConvexHull<FastKernel<f64>, (), (), 2> =
+        let hull_2d: ConvexHull<AdaptiveKernel<f64>, (), (), 2> =
             ConvexHull::from_triangulation(dt_2d.as_triangulation()).unwrap();
         assert!(
             hull_2d.validate(dt_2d.as_triangulation()).is_ok(),
@@ -2522,7 +2522,7 @@ mod tests {
         );
 
         // Test empty 2D hull validation
-        let empty_hull_2d: ConvexHull<FastKernel<f64>, (), (), 2> = ConvexHull::default();
+        let empty_hull_2d: ConvexHull<AdaptiveKernel<f64>, (), (), 2> = ConvexHull::default();
         assert!(
             empty_hull_2d.validate(dt_2d.as_triangulation()).is_ok(),
             "2D empty hull should validate successfully"
@@ -2536,7 +2536,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let dt_3d = create_triangulation(&vertices_3d);
-        let hull_3d: ConvexHull<FastKernel<f64>, (), (), 3> =
+        let hull_3d: ConvexHull<AdaptiveKernel<f64>, (), (), 3> =
             ConvexHull::from_triangulation(dt_3d.as_triangulation()).unwrap();
         assert!(
             hull_3d.validate(dt_3d.as_triangulation()).is_ok(),
@@ -2559,7 +2559,7 @@ mod tests {
         );
 
         // Test empty 3D hull validation
-        let empty_hull_3d: ConvexHull<FastKernel<f64>, (), (), 3> = ConvexHull::default();
+        let empty_hull_3d: ConvexHull<AdaptiveKernel<f64>, (), (), 3> = ConvexHull::default();
         assert!(
             empty_hull_3d.validate(dt_3d.as_triangulation()).is_ok(),
             "3D empty hull should validate successfully"
@@ -2574,7 +2574,7 @@ mod tests {
             vertex!([0.0, 0.0, 0.0, 1.0]),
         ];
         let dt_4d = create_triangulation(&vertices_4d);
-        let hull_4d: ConvexHull<FastKernel<f64>, (), (), 4> =
+        let hull_4d: ConvexHull<AdaptiveKernel<f64>, (), (), 4> =
             ConvexHull::from_triangulation(dt_4d.as_triangulation()).unwrap();
         assert!(
             hull_4d.validate(dt_4d.as_triangulation()).is_ok(),
@@ -2597,7 +2597,7 @@ mod tests {
         );
 
         // Test empty 4D hull validation
-        let empty_hull_4d: ConvexHull<FastKernel<f64>, (), (), 4> = ConvexHull::default();
+        let empty_hull_4d: ConvexHull<AdaptiveKernel<f64>, (), (), 4> = ConvexHull::default();
         assert!(
             empty_hull_4d.validate(dt_4d.as_triangulation()).is_ok(),
             "4D empty hull should validate successfully"
@@ -2613,7 +2613,7 @@ mod tests {
             vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
         ];
         let dt_5d = create_triangulation(&vertices_5d);
-        let hull_5d: ConvexHull<FastKernel<f64>, (), (), 5> =
+        let hull_5d: ConvexHull<AdaptiveKernel<f64>, (), (), 5> =
             ConvexHull::from_triangulation(dt_5d.as_triangulation()).unwrap();
         assert!(
             hull_5d.validate(dt_5d.as_triangulation()).is_ok(),
@@ -2636,7 +2636,7 @@ mod tests {
         );
 
         // Test empty 5D hull validation
-        let empty_hull_5d: ConvexHull<FastKernel<f64>, (), (), 5> = ConvexHull::default();
+        let empty_hull_5d: ConvexHull<AdaptiveKernel<f64>, (), (), 5> = ConvexHull::default();
         assert!(
             empty_hull_5d.validate(dt_5d.as_triangulation()).is_ok(),
             "5D empty hull should validate successfully"
@@ -2657,8 +2657,8 @@ mod tests {
             vertex!([0.0, 1.0, 0.0], 3i32),
             vertex!([0.0, 0.0, 1.0], 4i32),
         ];
-        let dt_int = DelaunayTriangulation::<FastKernel<f64>, i32, (), 3>::with_kernel(
-            &FastKernel::new(),
+        let dt_int = DelaunayTriangulation::<AdaptiveKernel<f64>, i32, (), 3>::with_kernel(
+            &AdaptiveKernel::new(),
             &vertices_int,
         )
         .unwrap();
@@ -2675,8 +2675,8 @@ mod tests {
             vertex!([0.0, 1.0, 0.0], 'C'),
             vertex!([0.0, 0.0, 1.0], 'D'),
         ];
-        let dt_char = DelaunayTriangulation::<FastKernel<f64>, char, (), 3>::with_kernel(
-            &FastKernel::new(),
+        let dt_char = DelaunayTriangulation::<AdaptiveKernel<f64>, char, (), 3>::with_kernel(
+            &AdaptiveKernel::new(),
             &vertices_char,
         )
         .unwrap();
@@ -2833,7 +2833,7 @@ mod tests {
         }
 
         // Test validation with empty hull
-        let empty_hull: ConvexHull<FastKernel<f64>, (), (), 3> = ConvexHull::default();
+        let empty_hull: ConvexHull<AdaptiveKernel<f64>, (), (), 3> = ConvexHull::default();
         assert!(
             empty_hull.validate(dt_3d.as_triangulation()).is_ok(),
             "Empty hull validation should succeed"
@@ -2847,7 +2847,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let perf_dt = create_triangulation(&perf_vertices);
-        let perf_hull: ConvexHull<FastKernel<f64>, (), (), 3> =
+        let perf_hull: ConvexHull<AdaptiveKernel<f64>, (), (), 3> =
             ConvexHull::from_triangulation(perf_dt.as_triangulation()).unwrap();
 
         let start_time = std::time::Instant::now();
@@ -3016,8 +3016,8 @@ mod tests {
             vertex!([0.0, 1.0, 0.0], 3i32),
             vertex!([0.0, 0.0, 1.0], 4i32),
         ];
-        let dt_int = DelaunayTriangulation::<FastKernel<f64>, i32, (), 3>::with_kernel(
-            &FastKernel::new(),
+        let dt_int = DelaunayTriangulation::<AdaptiveKernel<f64>, i32, (), 3>::with_kernel(
+            &AdaptiveKernel::new(),
             &vertices_int,
         )
         .unwrap();
@@ -3034,8 +3034,8 @@ mod tests {
             vertex!([0.0, 1.0, 0.0], 'C'),
             vertex!([0.0, 0.0, 1.0], 'D'),
         ];
-        let dt_char = DelaunayTriangulation::<FastKernel<f64>, char, (), 3>::with_kernel(
-            &FastKernel::new(),
+        let dt_char = DelaunayTriangulation::<AdaptiveKernel<f64>, char, (), 3>::with_kernel(
+            &AdaptiveKernel::new(),
             &vertices_char,
         )
         .unwrap();
@@ -3053,8 +3053,8 @@ mod tests {
             vertex!([0.0, 0.0, 1.0], Some(4)),
         ];
         let dt_with_data =
-            DelaunayTriangulation::<FastKernel<f64>, Option<i32>, (), 3>::with_kernel(
-                &FastKernel::new(),
+            DelaunayTriangulation::<AdaptiveKernel<f64>, Option<i32>, (), 3>::with_kernel(
+                &AdaptiveKernel::new(),
                 &vertices_with_data,
             )
             .unwrap();
@@ -3147,13 +3147,13 @@ mod tests {
             vertex!([0.0, 1.0]),
         ];
         let dummy_dt_2d = create_triangulation(&dummy_vertices_2d);
-        let hull_2d: ConvexHull<FastKernel<f64>, (), (), 2> = ConvexHull::default();
+        let hull_2d: ConvexHull<AdaptiveKernel<f64>, (), (), 2> = ConvexHull::default();
         assert!(hull_2d.is_empty());
         assert_eq!(hull_2d.number_of_facets(), 0);
         assert_eq!(hull_2d.dimension(), 2);
         assert!(hull_2d.validate(dummy_dt_2d.as_triangulation()).is_ok());
 
-        let hull_3d_default: ConvexHull<FastKernel<f64>, (), (), 3> = ConvexHull::default();
+        let hull_3d_default: ConvexHull<AdaptiveKernel<f64>, (), (), 3> = ConvexHull::default();
         assert!(hull_3d_default.is_empty());
         assert_eq!(hull_3d_default.number_of_facets(), 0);
         assert_eq!(hull_3d_default.dimension(), 3);
@@ -3167,7 +3167,7 @@ mod tests {
             vertex!([0.0, 0.0, 0.0, 1.0]),
         ];
         let dummy_dt_4d = create_triangulation(&dummy_vertices_4d);
-        let hull_4d: ConvexHull<FastKernel<f64>, (), (), 4> = ConvexHull::default();
+        let hull_4d: ConvexHull<AdaptiveKernel<f64>, (), (), 4> = ConvexHull::default();
         assert!(hull_4d.is_empty());
         assert_eq!(hull_4d.number_of_facets(), 0);
         assert_eq!(hull_4d.dimension(), 4);
@@ -3183,7 +3183,7 @@ mod tests {
             vertex!([0.0, 1.0]),
         ];
         let dt = create_triangulation(&vertices);
-        let _hull_2d: ConvexHull2D<FastKernel<f64>, (), ()> =
+        let _hull_2d: ConvexHull2D<AdaptiveKernel<f64>, (), ()> =
             ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         let vertices_3d = vec![
@@ -3193,7 +3193,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let dt_3d = create_triangulation(&vertices_3d);
-        let _hull_3d: ConvexHull3D<FastKernel<f64>, (), ()> =
+        let _hull_3d: ConvexHull3D<AdaptiveKernel<f64>, (), ()> =
             ConvexHull::from_triangulation(dt_3d.as_triangulation()).unwrap();
 
         let vertices_4d = vec![
@@ -3204,7 +3204,7 @@ mod tests {
             vertex!([0.0, 0.0, 0.0, 1.0]),
         ];
         let dt_4d = create_triangulation(&vertices_4d);
-        let _hull_4d: ConvexHull4D<FastKernel<f64>, (), ()> =
+        let _hull_4d: ConvexHull4D<AdaptiveKernel<f64>, (), ()> =
             ConvexHull::from_triangulation(dt_4d.as_triangulation()).unwrap();
     }
 
@@ -3243,7 +3243,7 @@ mod tests {
         tds.insert_vertex_with_mapping(vertex).unwrap();
 
         // Use the test-only constructor to avoid brittle struct literals.
-        let tri = Triangulation::new_with_tds(FastKernel::new(), tds);
+        let tri = Triangulation::new_with_tds(AdaptiveKernel::new(), tds);
 
         let result = ConvexHull::from_triangulation(&tri);
         assert!(result.is_err());
@@ -3323,7 +3323,7 @@ mod tests {
 
             // Test with a point very close to the facet (should not be visible)
             let close_point = Point::new([0.1, 0.1, 0.1]);
-            let result = ConvexHull::<FastKernel<f64>, (), (), 3>::fallback_visibility_test(
+            let result = ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
                 &facet_vertices,
                 &close_point,
             );
@@ -3331,7 +3331,7 @@ mod tests {
 
             // Test with a point far from the facet (should be visible)
             let far_point = Point::new([10.0, 10.0, 10.0]);
-            let result = ConvexHull::<FastKernel<f64>, (), (), 3>::fallback_visibility_test(
+            let result = ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
                 &facet_vertices,
                 &far_point,
             );
@@ -3557,19 +3557,19 @@ mod tests {
     #[test]
     fn test_dimensional_consistency() {
         // Test that dimension() always returns D regardless of hull state
-        let empty_hull_1d: ConvexHull<FastKernel<f64>, (), (), 1> = ConvexHull::default();
+        let empty_hull_1d: ConvexHull<AdaptiveKernel<f64>, (), (), 1> = ConvexHull::default();
         assert_eq!(empty_hull_1d.dimension(), 1);
 
-        let empty_hull_2d: ConvexHull<FastKernel<f64>, (), (), 2> = ConvexHull::default();
+        let empty_hull_2d: ConvexHull<AdaptiveKernel<f64>, (), (), 2> = ConvexHull::default();
         assert_eq!(empty_hull_2d.dimension(), 2);
 
-        let empty_hull_3d: ConvexHull<FastKernel<f64>, (), (), 3> = ConvexHull::default();
+        let empty_hull_3d: ConvexHull<AdaptiveKernel<f64>, (), (), 3> = ConvexHull::default();
         assert_eq!(empty_hull_3d.dimension(), 3);
 
-        let empty_hull_4d: ConvexHull<FastKernel<f64>, (), (), 4> = ConvexHull::default();
+        let empty_hull_4d: ConvexHull<AdaptiveKernel<f64>, (), (), 4> = ConvexHull::default();
         assert_eq!(empty_hull_4d.dimension(), 4);
 
-        let empty_hull_ten_d: ConvexHull<FastKernel<f64>, (), (), 10> = ConvexHull::default();
+        let empty_hull_ten_d: ConvexHull<AdaptiveKernel<f64>, (), (), 10> = ConvexHull::default();
         assert_eq!(empty_hull_ten_d.dimension(), 10);
 
         // Test with populated hull
@@ -3586,7 +3586,7 @@ mod tests {
 
         // Dimension is a const generic parameter, so it never changes
         // Empty hulls also preserve the dimension
-        let empty_hull: ConvexHull<FastKernel<f64>, (), (), 3> = ConvexHull::default();
+        let empty_hull: ConvexHull<AdaptiveKernel<f64>, (), (), 3> = ConvexHull::default();
         assert_eq!(empty_hull.dimension(), 3);
     }
 
@@ -3607,7 +3607,7 @@ mod tests {
         let test_facet_vertices =
             extract_facet_vertices(&hull.hull_facets[0], dt.as_triangulation()).unwrap();
         let test_point = Point::new([1e-20, 1e-20, 1e-20]);
-        let result = ConvexHull::<FastKernel<f64>, (), (), 3>::fallback_visibility_test(
+        let result = ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
             &test_facet_vertices,
             &test_point,
         );
@@ -3709,7 +3709,7 @@ mod tests {
                 )
                 .unwrap();
                 let fallback_result =
-                    ConvexHull::<FastKernel<f64>, (), (), 3>::fallback_visibility_test(
+                    ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
                         &facet_vertices,
                         &test_point,
                     );
@@ -5134,7 +5134,7 @@ mod tests {
 
         for (i, point) in extreme_points.iter().enumerate() {
             let fallback_result =
-                ConvexHull::<FastKernel<f64>, (), (), 3>::fallback_visibility_test(
+                ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
                     &test_facet_vertices,
                     point,
                 );
@@ -5205,7 +5205,7 @@ mod tests {
 
         for (point, description, category) in test_cases {
             let fallback_result =
-                ConvexHull::<FastKernel<f64>, (), (), 3>::fallback_visibility_test(
+                ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
                     &test_facet_vertices,
                     &point,
                 );
@@ -5276,7 +5276,7 @@ mod tests {
                         let test_point = Point::new([1.5, 0.5, 0.5]);
 
                         let collinear_result =
-                            ConvexHull::<FastKernel<f64>, (), (), 3>::fallback_visibility_test(
+                            ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
                                 &collinear_facet_vertices,
                                 &test_point,
                             );
@@ -5327,7 +5327,7 @@ mod tests {
                         let test_point = Point::new([1e-3, 1e-3, 1e-3]);
 
                         let tiny_result =
-                            ConvexHull::<FastKernel<f64>, (), (), 3>::fallback_visibility_test(
+                            ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
                                 &tiny_facet_vertices,
                                 &test_point,
                             );
@@ -5387,7 +5387,7 @@ mod tests {
             let distance = base_distance * multiplier;
             let test_point = Point::new([distance, distance, distance]);
 
-            let result = ConvexHull::<FastKernel<f64>, (), (), 3>::fallback_visibility_test(
+            let result = ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
                 &test_facet_vertices,
                 &test_point,
             );
@@ -5483,7 +5483,7 @@ mod tests {
                         let test_point = Point::new([5.0, 5.0, 5.0]);
 
                         let edge_result =
-                            ConvexHull::<FastKernel<f64>, (), (), 3>::fallback_visibility_test(
+                            ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
                                 &edge_facet_vertices,
                                 &test_point,
                             );
@@ -6050,12 +6050,10 @@ mod tests {
 
         let start_time = std::time::Instant::now();
 
-        // Use FastKernel: its insphere_lifted uses a 4×4 matrix in 3D
-        // (within la-stack's fast-filter range).  RobustKernel builds a
-        // 5×5 insphere matrix that can still hit exact Bareiss on
-        // near-cospherical inputs.
+        // Use AdaptiveKernel: it tries a fast floating-point filter first and
+        // falls back to exact arithmetic only for near-degenerate inputs.
         match DelaunayTriangulation::<_, (), (), 3>::with_kernel(
-            &FastKernel::new(),
+            &AdaptiveKernel::new(),
             &large_vertices,
         ) {
             Ok(large_dt) => {
@@ -6133,10 +6131,10 @@ mod tests {
 
         let start_2d = std::time::Instant::now();
 
-        // Use FastKernel: its insphere_lifted uses a 3×3 matrix (within
-        // la-stack's fast-filter range) for consistent benchmark times.
+        // Use AdaptiveKernel: fast filter for most queries, exact fallback
+        // only for near-degenerate inputs.
         match DelaunayTriangulation::<_, (), (), 2>::with_kernel(
-            &FastKernel::<f64>::new(),
+            &AdaptiveKernel::<f64>::new(),
             &large_2d_vertices,
         ) {
             Ok(large_2d_dt) => match ConvexHull::from_triangulation(large_2d_dt.as_triangulation())
@@ -6452,9 +6450,9 @@ mod tests {
         println!("  Testing multiple hull instances with shared TDS...");
 
         // Create multiple hull instances from the same triangulation
-        let hull1: ConvexHull<FastKernel<f64>, (), (), 3> =
+        let hull1: ConvexHull<AdaptiveKernel<f64>, (), (), 3> =
             ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
-        let hull2: ConvexHull<FastKernel<f64>, (), (), 3> =
+        let hull2: ConvexHull<AdaptiveKernel<f64>, (), (), 3> =
             ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         // Each should have independent cache
@@ -7009,7 +7007,7 @@ mod tests {
         ]);
 
         println!("  Creating first hull and building cache...");
-        let hull1: ConvexHull<FastKernel<f64>, (), (), 3> =
+        let hull1: ConvexHull<AdaptiveKernel<f64>, (), (), 3> =
             ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
         let test_point = Point::new([2.0, 2.0, 2.0]);
         hull1
@@ -7017,7 +7015,7 @@ mod tests {
             .unwrap();
 
         println!("  Creating second hull from same triangulation...");
-        let hull2: ConvexHull<FastKernel<f64>, (), (), 3> =
+        let hull2: ConvexHull<AdaptiveKernel<f64>, (), (), 3> =
             ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         println!("  Second hull also has cache built during construction...");

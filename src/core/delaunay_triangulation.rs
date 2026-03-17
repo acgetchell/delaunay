@@ -35,7 +35,7 @@ use crate::core::util::{
     stable_hash_u64_slice,
 };
 use crate::core::vertex::Vertex;
-use crate::geometry::kernel::{AdaptiveKernel, Kernel, RobustKernel};
+use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates, Kernel, RobustKernel};
 use crate::geometry::traits::coordinate::{CoordinateScalar, ScalarAccumulative, ScalarSummable};
 use crate::topology::manifold::validate_ridge_links_for_cells;
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
@@ -1738,6 +1738,7 @@ where
         vertices: &[Vertex<K::Scalar, U, D>],
     ) -> Result<Self, DelaunayTriangulationConstructionError>
     where
+        K: ExactPredicates,
         K::Scalar: ScalarSummable,
     {
         Self::with_topology_guarantee(kernel, vertices, TopologyGuarantee::DEFAULT)
@@ -1788,6 +1789,7 @@ where
         topology_guarantee: TopologyGuarantee,
     ) -> Result<Self, DelaunayTriangulationConstructionError>
     where
+        K: ExactPredicates,
         K::Scalar: ScalarSummable,
     {
         Self::with_topology_guarantee_and_options(
@@ -1847,6 +1849,7 @@ where
         options: ConstructionOptions,
     ) -> Result<Self, DelaunayTriangulationConstructionError>
     where
+        K: ExactPredicates,
         K::Scalar: ScalarSummable,
     {
         let ConstructionOptions {
@@ -1943,6 +1946,7 @@ where
         options: ConstructionOptions,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     where
+        K: ExactPredicates,
         K::Scalar: ScalarSummable,
     {
         let ConstructionOptions {
@@ -2159,6 +2163,7 @@ where
         use_global_repair_fallback: bool,
     ) -> Result<Self, DelaunayTriangulationConstructionError>
     where
+        K: ExactPredicates,
         K::Scalar: ScalarSummable,
     {
         let base_seed = base_seed.unwrap_or_else(|| Self::construction_shuffle_seed(vertices));
@@ -2297,6 +2302,7 @@ where
         use_global_repair_fallback: bool,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     where
+        K: ExactPredicates,
         K::Scalar: ScalarSummable,
     {
         let base_seed = base_seed.unwrap_or_else(|| Self::construction_shuffle_seed(vertices));
@@ -2472,6 +2478,7 @@ where
         use_global_repair_fallback: bool,
     ) -> Result<Self, DelaunayTriangulationConstructionError>
     where
+        K: ExactPredicates,
         K::Scalar: ScalarSummable,
     {
         let dt = Self::build_with_kernel_inner_seeded(
@@ -2537,6 +2544,7 @@ where
         use_global_repair_fallback: bool,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     where
+        K: ExactPredicates,
         K::Scalar: ScalarSummable,
     {
         let (dt, stats) = Self::build_with_kernel_inner_seeded_with_construction_statistics(
@@ -2613,6 +2621,7 @@ where
         use_global_repair_fallback: bool,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     where
+        K: ExactPredicates,
         K::Scalar: ScalarSummable,
     {
         if vertices.len() < D + 1 {
@@ -2734,6 +2743,7 @@ where
         use_global_repair_fallback: bool,
     ) -> Result<Self, DelaunayTriangulationConstructionError>
     where
+        K: ExactPredicates,
         K::Scalar: ScalarSummable,
     {
         if vertices.len() < D + 1 {
@@ -2820,6 +2830,7 @@ where
         repair_err: &DelaunayRepairError,
     ) -> Result<(), DelaunayTriangulationConstructionError>
     where
+        K: ExactPredicates,
         K::Scalar: ScalarSummable,
     {
         if use_global_repair_fallback {
@@ -2867,6 +2878,7 @@ where
         soft_fail_seeds: &mut Vec<CellKey>,
     ) -> Result<(), DelaunayTriangulationConstructionError>
     where
+        K: ExactPredicates,
         K::Scalar: ScalarSummable,
     {
         let mut grid_index = grid_cell_size.map(HashGridIndex::new);
@@ -3215,6 +3227,7 @@ where
         soft_fail_seeds: &[CellKey],
     ) -> Result<(), DelaunayTriangulationConstructionError>
     where
+        K: ExactPredicates,
         K::Scalar: ScalarSummable,
     {
         // Restore policies after batch construction.
@@ -3830,6 +3843,7 @@ where
     /// ```
     pub fn repair_delaunay_with_flips(&mut self) -> Result<DelaunayRepairStats, DelaunayRepairError>
     where
+        K: ExactPredicates,
         K::Scalar: ScalarSummable,
     {
         let operation = TopologicalOperation::FacetFlip;
@@ -3926,6 +3940,7 @@ where
         seed_cells: Option<&[CellKey]>,
     ) -> Result<bool, DelaunayRepairError>
     where
+        K: ExactPredicates,
         K::Scalar: ScalarSummable,
     {
         // Avoid unbounded recursion (and stack overflows) when heuristic rebuild itself triggers
@@ -4000,6 +4015,7 @@ where
         config: DelaunayRepairHeuristicConfig,
     ) -> Result<DelaunayRepairOutcome, DelaunayRepairError>
     where
+        K: ExactPredicates,
         K::Scalar: ScalarSummable,
     {
         if Self::force_heuristic_rebuild_enabled() {
@@ -4049,6 +4065,7 @@ where
         base_seeds: DelaunayRepairHeuristicSeeds,
     ) -> Result<(Self, DelaunayRepairStats, DelaunayRepairHeuristicSeeds), DelaunayRepairError>
     where
+        K: ExactPredicates,
         K::Scalar: ScalarSummable,
     {
         use rand::{SeedableRng, seq::SliceRandom};
@@ -4735,6 +4752,7 @@ where
     /// ```
     pub fn insert(&mut self, vertex: Vertex<K::Scalar, U, D>) -> Result<VertexKey, InsertionError>
     where
+        K: ExactPredicates,
         K::Scalar: ScalarSummable,
     {
         self.ensure_spatial_index_seeded();
@@ -4849,6 +4867,7 @@ where
         vertex: Vertex<K::Scalar, U, D>,
     ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError>
     where
+        K: ExactPredicates,
         K::Scalar: ScalarSummable,
     {
         self.ensure_spatial_index_seeded();
@@ -4930,6 +4949,7 @@ where
         hint: Option<CellKey>,
     ) -> Result<(VertexKey, bool), InsertionError>
     where
+        K: ExactPredicates,
         K::Scalar: ScalarSummable,
     {
         let topology = self.tri.topology_guarantee();
@@ -5146,6 +5166,7 @@ where
         vertex: &Vertex<K::Scalar, U, D>,
     ) -> Result<usize, InvariantError>
     where
+        K: ExactPredicates,
         K::Scalar: ScalarSummable,
     {
         let Some(vertex_key) = self.tri.tds.vertex_key_from_uuid(&vertex.uuid()) else {
@@ -6083,7 +6104,7 @@ mod tests {
             vertex!([2.0, 2.0, 2.0]),
         ];
 
-        let preprocess = DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::preprocess_vertices_for_construction(
+        let preprocess = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::preprocess_vertices_for_construction(
             &vertices,
             DedupPolicy::Off,
             InsertionOrderStrategy::Input,
@@ -6107,7 +6128,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let result = DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::preprocess_vertices_for_construction(
+        let result = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::preprocess_vertices_for_construction(
             &vertices,
             DedupPolicy::Epsilon { tolerance: -1.0 },
             InsertionOrderStrategy::Input,
@@ -6399,7 +6420,7 @@ mod tests {
         assert_eq!(dt_empty.topology_guarantee(), TopologyGuarantee::PLManifold);
 
         let dt_with_kernel: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
+            DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
 
         assert_eq!(
             dt_with_kernel.topology_guarantee(),
@@ -6946,7 +6967,7 @@ mod tests {
 
         // with_kernel() constructor path should also use the default policy
         let dt_with_kernel: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
+            DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
         assert_eq!(
             dt_with_kernel.validation_policy(),
             ValidationPolicy::OnSuspicion
@@ -7006,8 +7027,8 @@ mod tests {
             vertex!([0.0, 1.0]),
         ];
 
-        let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
+        let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
 
         assert_eq!(dt.number_of_vertices(), 3);
         assert_eq!(dt.number_of_cells(), 1);
@@ -7034,8 +7055,8 @@ mod tests {
         init_tracing();
         let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0])];
 
-        let result: Result<DelaunayTriangulation<FastKernel<f64>, (), (), 2>, _> =
-            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices);
+        let result: Result<DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2>, _> =
+            DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices);
 
         assert!(result.is_err());
         match result {
@@ -7057,8 +7078,8 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
         ];
 
-        let result: Result<DelaunayTriangulation<FastKernel<f64>, (), (), 3>, _> =
-            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices);
+        let result: Result<DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>, _> =
+            DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices);
 
         assert!(result.is_err());
         match result {
@@ -7080,8 +7101,8 @@ mod tests {
             vertex!([0.0f32, 1.0f32]),
         ];
 
-        let dt: DelaunayTriangulation<FastKernel<f32>, (), (), 2> =
-            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
+        let dt: DelaunayTriangulation<AdaptiveKernel<f32>, (), (), 2> =
+            DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
 
         assert_eq!(dt.number_of_vertices(), 3);
         assert_eq!(dt.number_of_cells(), 1);
@@ -7436,8 +7457,8 @@ mod tests {
         let dup_uuid = vertices[0].uuid();
         vertices[3].set_uuid(dup_uuid).unwrap();
 
-        let result: Result<DelaunayTriangulation<FastKernel<f64>, (), (), 2>, _> =
-            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices);
+        let result: Result<DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2>, _> =
+            DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices);
 
         match result.unwrap_err() {
             DelaunayTriangulationConstructionError::Triangulation(
@@ -7851,7 +7872,7 @@ mod tests {
             message: "missing cell".to_string(),
         });
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(
             matches!(
                 mapped,
@@ -7874,7 +7895,7 @@ mod tests {
             },
         ));
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(
             matches!(
                 mapped,
@@ -7897,7 +7918,7 @@ mod tests {
             },
         ));
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(
             matches!(
                 mapped,
@@ -7922,7 +7943,7 @@ mod tests {
             }),
         };
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(
             matches!(
                 mapped,
@@ -7939,7 +7960,7 @@ mod tests {
                 message: "test".to_string(),
             });
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(
             matches!(
                 mapped,
@@ -7960,7 +7981,7 @@ mod tests {
             }),
         };
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(
             matches!(
                 mapped,
@@ -7976,7 +7997,7 @@ mod tests {
             message: "test".to_string(),
         };
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(matches!(
             mapped,
             TriangulationConstructionError::InternalInconsistency { .. }
@@ -7989,7 +8010,7 @@ mod tests {
             message: "test".to_string(),
         };
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(matches!(
             mapped,
             TriangulationConstructionError::InternalInconsistency { .. }
@@ -8003,7 +8024,7 @@ mod tests {
             uuid: Uuid::nil(),
         };
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(matches!(
             mapped,
             TriangulationConstructionError::InternalInconsistency { .. }
@@ -8042,7 +8063,7 @@ mod tests {
         for error in geometry_errors {
             let label = format!("{error}");
             let mapped =
-                DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
+                DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
             assert!(
                 matches!(
                     mapped,
@@ -8062,7 +8083,7 @@ mod tests {
                 message: "inner".to_string(),
             });
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_insertion_error(error);
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_insertion_error(error);
         assert!(
             matches!(
                 mapped,
@@ -8078,7 +8099,7 @@ mod tests {
             message: "test".to_string(),
         };
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_insertion_error(error);
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_insertion_error(error);
         assert!(
             matches!(
                 mapped,
@@ -8094,7 +8115,7 @@ mod tests {
             message: "bad wiring".to_string(),
         };
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_insertion_error(error);
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_insertion_error(error);
         assert!(
             matches!(
                 mapped,
@@ -8110,7 +8131,7 @@ mod tests {
             message: "broken".to_string(),
         });
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_insertion_error(error);
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_insertion_error(error);
         assert!(
             matches!(mapped, TriangulationConstructionError::Tds(_)),
             "TopologyValidation should map to Tds(ValidationError), got: {mapped:?}"
@@ -8124,7 +8145,7 @@ mod tests {
             uuid: Uuid::nil(),
         };
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_insertion_error(error);
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_insertion_error(error);
         assert!(
             matches!(mapped, TriangulationConstructionError::Tds(_)),
             "DuplicateUuid should map to Tds(DuplicateUuid), got: {mapped:?}"
@@ -8137,7 +8158,7 @@ mod tests {
             coordinates: "[1,2,3]".to_string(),
         };
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_insertion_error(error);
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_insertion_error(error);
         assert!(
             matches!(
                 mapped,
@@ -8191,7 +8212,7 @@ mod tests {
         for error in geometry_errors {
             let label = format!("{error}");
             let mapped =
-                DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_insertion_error(error);
+                DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_insertion_error(error);
             assert!(
                 matches!(
                     mapped,
@@ -8379,7 +8400,7 @@ mod tests {
             expected_odd_permutation: false,
         });
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(
             matches!(
                 mapped,
@@ -8400,7 +8421,7 @@ mod tests {
             cell_count: 3,
         });
         let mapped =
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
         assert!(
             matches!(
                 mapped,
@@ -8421,7 +8442,7 @@ mod tests {
             })
             .into();
         assert!(
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::is_non_retryable_construction_error(
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::is_non_retryable_construction_error(
                 &err
             ),
             "DuplicateUuid should be non-retryable"
@@ -8436,7 +8457,7 @@ mod tests {
             }
             .into();
         assert!(
-            DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::is_non_retryable_construction_error(
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::is_non_retryable_construction_error(
                 &err
             ),
             "InternalInconsistency should be non-retryable"
@@ -8451,7 +8472,7 @@ mod tests {
             }
             .into();
         assert!(
-            !DelaunayTriangulation::<FastKernel<f64>, (), (), 3>::is_non_retryable_construction_error(
+            !DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::is_non_retryable_construction_error(
                 &err
             ),
             "GeometricDegeneracy should NOT be non-retryable"

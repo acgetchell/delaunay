@@ -43,7 +43,7 @@ use crate::core::triangulation::TopologyGuarantee;
 use crate::core::triangulation_data_structure::{CellKey, Tds, VertexKey};
 use crate::core::util::stable_hash_u64_slice;
 use crate::core::vertex::Vertex;
-use crate::geometry::kernel::Kernel;
+use crate::geometry::kernel::{ExactPredicates, Kernel};
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
@@ -2531,7 +2531,7 @@ pub(crate) fn repair_delaunay_with_flips_k2_k3<K, U, V, const D: usize>(
     topology: TopologyGuarantee,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D> + ExactPredicates,
     K::Scalar: ScalarSummable,
     U: DataType,
     V: DataType,
@@ -2550,7 +2550,7 @@ where
     }
 
     // Two-attempt strategy: FIFO then LIFO queue ordering.
-    // With exact+SoS predicates from AdaptiveKernel, predicate correctness is guaranteed;
+    // The `ExactPredicates` bound guarantees predicate correctness;
     // the retry exists only to escape queue-order-dependent flip cycles.
     let attempt1 = RepairAttemptConfig {
         attempt: 1,
@@ -2650,13 +2650,13 @@ pub(crate) fn repair_delaunay_local_single_pass<K, U, V, const D: usize>(
     max_flips: usize,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D> + ExactPredicates,
     K::Scalar: ScalarSummable,
     U: DataType,
     V: DataType,
 {
     // Two-attempt strategy: FIFO then LIFO queue ordering.
-    // With exact+SoS predicates from AdaptiveKernel, predicate correctness is guaranteed;
+    // The `ExactPredicates` bound guarantees predicate correctness;
     // the retry exists only to escape queue-order-dependent flip cycles.
     let attempt1 = RepairAttemptConfig {
         attempt: 1,
@@ -2742,7 +2742,7 @@ where
 /// ```
 /// use delaunay::prelude::triangulation::*;
 /// use delaunay::core::algorithms::flips::verify_delaunay_via_flip_predicates;
-/// use delaunay::geometry::kernel::FastKernel;
+/// use delaunay::geometry::kernel::AdaptiveKernel;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -2752,7 +2752,7 @@ where
 /// ];
 ///
 /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-/// let kernel = FastKernel::<f64>::new();
+/// let kernel = AdaptiveKernel::<f64>::new();
 ///
 /// // Fast O(N) verification
 /// assert!(verify_delaunay_via_flip_predicates(dt.tds(), &kernel).is_ok());
@@ -5094,7 +5094,7 @@ mod tests {
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
     use crate::core::collections::Uuid;
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
-    use crate::geometry::kernel::FastKernel;
+    use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::vertex;
     use rand::{RngExt, SeedableRng, rngs::StdRng};
 
@@ -6405,7 +6405,7 @@ mod tests {
     #[test]
     fn test_repair_delaunay_flips_non_delaunay_edge_2d() {
         init_tracing();
-        let kernel = FastKernel::<f64>::new();
+        let kernel = AdaptiveKernel::<f64>::new();
         let a_coords = [0.0, 0.0];
         let b_coords = [1.0, 1.0];
         let c_coords = [1.0, 0.0];
@@ -6510,7 +6510,7 @@ mod tests {
     fn test_repair_delaunay_with_flips_rejects_unsupported_dimension_1d() {
         init_tracing();
         let mut tds: Tds<f64, (), (), 1> = Tds::empty();
-        let kernel = FastKernel::<f64>::new();
+        let kernel = AdaptiveKernel::<f64>::new();
 
         let result = repair_delaunay_with_flips_k2_k3(
             &mut tds,
@@ -6894,7 +6894,7 @@ mod tests {
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
 
-        let kernel = FastKernel::<f64>::new();
+        let kernel = AdaptiveKernel::<f64>::new();
         let seed_cells: Vec<CellKey> = info.new_cells.iter().copied().collect();
         let stats = repair_delaunay_with_flips_k2_k3(
             &mut tds,
@@ -6949,7 +6949,7 @@ mod tests {
         let context = build_k3_flip_context(&tds, ridge).unwrap();
         let info = apply_bistellar_flip_k3(&mut tds, &context).unwrap();
 
-        let kernel = FastKernel::<f64>::new();
+        let kernel = AdaptiveKernel::<f64>::new();
         let seed_cells: Vec<CellKey> = info.new_cells.iter().copied().collect();
         let result = repair_delaunay_with_flips_k2_k3(
             &mut tds,
@@ -6983,7 +6983,7 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
         let mut tds = dt.tds().clone();
-        let kernel = FastKernel::<f64>::new();
+        let kernel = AdaptiveKernel::<f64>::new();
 
         let seed_cell = tds.cell_keys().next().unwrap();
         let stats = repair_delaunay_with_flips_k2_k3(
