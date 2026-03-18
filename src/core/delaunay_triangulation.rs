@@ -36,7 +36,7 @@ use crate::core::util::{
 };
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates, Kernel, RobustKernel};
-use crate::geometry::traits::coordinate::{CoordinateScalar, ScalarAccumulative, ScalarSummable};
+use crate::geometry::traits::coordinate::{CoordinateScalar, ScalarAccumulative};
 use crate::topology::manifold::validate_ridge_links_for_cells;
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
 use core::cmp::Ordering;
@@ -1739,10 +1739,7 @@ where
     pub fn with_kernel(
         kernel: &K,
         vertices: &[Vertex<K::Scalar, U, D>],
-    ) -> Result<Self, DelaunayTriangulationConstructionError>
-    where
-        K::Scalar: ScalarSummable,
-    {
+    ) -> Result<Self, DelaunayTriangulationConstructionError> {
         Self::with_topology_guarantee(kernel, vertices, TopologyGuarantee::DEFAULT)
     }
 
@@ -1789,10 +1786,7 @@ where
         kernel: &K,
         vertices: &[Vertex<K::Scalar, U, D>],
         topology_guarantee: TopologyGuarantee,
-    ) -> Result<Self, DelaunayTriangulationConstructionError>
-    where
-        K::Scalar: ScalarSummable,
-    {
+    ) -> Result<Self, DelaunayTriangulationConstructionError> {
         Self::with_topology_guarantee_and_options(
             kernel,
             vertices,
@@ -1848,10 +1842,7 @@ where
         vertices: &[Vertex<K::Scalar, U, D>],
         topology_guarantee: TopologyGuarantee,
         options: ConstructionOptions,
-    ) -> Result<Self, DelaunayTriangulationConstructionError>
-    where
-        K::Scalar: ScalarSummable,
-    {
+    ) -> Result<Self, DelaunayTriangulationConstructionError> {
         let ConstructionOptions {
             insertion_order,
             dedup_policy,
@@ -1945,8 +1936,6 @@ where
         topology_guarantee: TopologyGuarantee,
         options: ConstructionOptions,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
-    where
-        K::Scalar: ScalarSummable,
     {
         let ConstructionOptions {
             insertion_order,
@@ -2035,10 +2024,7 @@ where
         dedup_policy: DedupPolicy,
         insertion_order: InsertionOrderStrategy,
         initial_simplex: InitialSimplexStrategy,
-    ) -> PreprocessVerticesResult<K::Scalar, U, D>
-    where
-        K::Scalar: ScalarSummable,
-    {
+    ) -> PreprocessVerticesResult<K::Scalar, U, D> {
         let default_tolerance = default_duplicate_tolerance::<K::Scalar>();
 
         let mut epsilon: Option<K::Scalar> = None;
@@ -2160,10 +2146,7 @@ where
         base_seed: Option<u64>,
         grid_cell_size: Option<K::Scalar>,
         use_global_repair_fallback: bool,
-    ) -> Result<Self, DelaunayTriangulationConstructionError>
-    where
-        K::Scalar: ScalarSummable,
-    {
+    ) -> Result<Self, DelaunayTriangulationConstructionError> {
         let base_seed = base_seed.unwrap_or_else(|| Self::construction_shuffle_seed(vertices));
 
         #[cfg(debug_assertions)]
@@ -2299,8 +2282,6 @@ where
         grid_cell_size: Option<K::Scalar>,
         use_global_repair_fallback: bool,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
-    where
-        K::Scalar: ScalarSummable,
     {
         let base_seed = base_seed.unwrap_or_else(|| Self::construction_shuffle_seed(vertices));
 
@@ -2473,10 +2454,7 @@ where
         topology_guarantee: TopologyGuarantee,
         grid_cell_size: Option<K::Scalar>,
         use_global_repair_fallback: bool,
-    ) -> Result<Self, DelaunayTriangulationConstructionError>
-    where
-        K::Scalar: ScalarSummable,
-    {
+    ) -> Result<Self, DelaunayTriangulationConstructionError> {
         let dt = Self::build_with_kernel_inner_seeded(
             kernel,
             vertices,
@@ -2539,8 +2517,6 @@ where
         grid_cell_size: Option<K::Scalar>,
         use_global_repair_fallback: bool,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
-    where
-        K::Scalar: ScalarSummable,
     {
         let (dt, stats) = Self::build_with_kernel_inner_seeded_with_construction_statistics(
             kernel,
@@ -2615,8 +2591,6 @@ where
         grid_cell_size: Option<K::Scalar>,
         use_global_repair_fallback: bool,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
-    where
-        K::Scalar: ScalarSummable,
     {
         if vertices.len() < D + 1 {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
@@ -2735,10 +2709,7 @@ where
         run_final_repair: bool,
         grid_cell_size: Option<K::Scalar>,
         use_global_repair_fallback: bool,
-    ) -> Result<Self, DelaunayTriangulationConstructionError>
-    where
-        K::Scalar: ScalarSummable,
-    {
+    ) -> Result<Self, DelaunayTriangulationConstructionError> {
         if vertices.len() < D + 1 {
             return Err(TriangulationConstructionError::InsufficientVertices {
                 dimension: D,
@@ -2821,10 +2792,7 @@ where
         use_global_repair_fallback: bool,
         index: usize,
         repair_err: &DelaunayRepairError,
-    ) -> Result<(), DelaunayTriangulationConstructionError>
-    where
-        K::Scalar: ScalarSummable,
-    {
+    ) -> Result<(), DelaunayTriangulationConstructionError> {
         if use_global_repair_fallback {
             tracing::debug!(
                 error = %repair_err,
@@ -2868,10 +2836,7 @@ where
         grid_cell_size: Option<K::Scalar>,
         construction_stats: Option<&mut ConstructionStatistics>,
         soft_fail_seeds: &mut Vec<CellKey>,
-    ) -> Result<(), DelaunayTriangulationConstructionError>
-    where
-        K::Scalar: ScalarSummable,
-    {
+    ) -> Result<(), DelaunayTriangulationConstructionError> {
         let mut grid_index = grid_cell_size.map(HashGridIndex::new);
         if let Some(grid) = grid_index.as_mut()
             && !grid.is_usable()
@@ -3216,10 +3181,7 @@ where
         original_repair_policy: DelaunayRepairPolicy,
         run_final_repair: bool,
         soft_fail_seeds: &[CellKey],
-    ) -> Result<(), DelaunayTriangulationConstructionError>
-    where
-        K::Scalar: ScalarSummable,
-    {
+    ) -> Result<(), DelaunayTriangulationConstructionError> {
         // Restore policies after batch construction.
         self.tri.validation_policy = original_validation_policy;
         self.insertion_state.delaunay_repair_policy = original_repair_policy;
@@ -3834,7 +3796,6 @@ where
     pub fn repair_delaunay_with_flips(&mut self) -> Result<DelaunayRepairStats, DelaunayRepairError>
     where
         K: ExactPredicates,
-        K::Scalar: ScalarSummable,
     {
         let operation = TopologicalOperation::FacetFlip;
         let topology = self.tri.topology_guarantee();
@@ -3857,10 +3818,7 @@ where
 
     /// Canonicalize geometric orientation to the positive sign, mapping failures
     /// to [`DelaunayRepairError::PostconditionFailed`].
-    fn ensure_positive_orientation(&mut self) -> Result<(), DelaunayRepairError>
-    where
-        K::Scalar: ScalarSummable,
-    {
+    fn ensure_positive_orientation(&mut self) -> Result<(), DelaunayRepairError> {
         self.tri
             .normalize_and_promote_positive_orientation()
             .map_err(|e| DelaunayRepairError::PostconditionFailed {
@@ -3871,10 +3829,7 @@ where
     fn repair_delaunay_with_flips_robust(
         &mut self,
         seed_cells: Option<&[CellKey]>,
-    ) -> Result<DelaunayRepairStats, DelaunayRepairError>
-    where
-        K::Scalar: ScalarSummable,
-    {
+    ) -> Result<DelaunayRepairStats, DelaunayRepairError> {
         let topology = self.tri.topology_guarantee();
         let kernel = RobustKernel::<K::Scalar>::new();
         let (tds, kernel) = (&mut self.tri.tds, &kernel);
@@ -3957,7 +3912,6 @@ where
     ) -> Result<DelaunayRepairOutcome, DelaunayRepairError>
     where
         K: ExactPredicates,
-        K::Scalar: ScalarSummable,
     {
         if Self::force_heuristic_rebuild_enabled() {
             let base_seed = self.heuristic_rebuild_base_seed();
@@ -4025,7 +3979,6 @@ where
     ) -> Result<(Self, DelaunayRepairStats, DelaunayRepairHeuristicSeeds), DelaunayRepairError>
     where
         K: ExactPredicates,
-        K::Scalar: ScalarSummable,
     {
         use rand::{SeedableRng, seq::SliceRandom};
 
@@ -4700,10 +4653,7 @@ where
     /// assert_eq!(dt.number_of_vertices(), 6);
     /// assert!(dt.number_of_cells() > 1);
     /// ```
-    pub fn insert(&mut self, vertex: Vertex<K::Scalar, U, D>) -> Result<VertexKey, InsertionError>
-    where
-        K::Scalar: ScalarSummable,
-    {
+    pub fn insert(&mut self, vertex: Vertex<K::Scalar, U, D>) -> Result<VertexKey, InsertionError> {
         self.ensure_spatial_index_seeded();
 
         // Fully delegate to Triangulation layer
@@ -4811,10 +4761,7 @@ where
     pub fn insert_with_statistics(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
-    ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError>
-    where
-        K::Scalar: ScalarSummable,
-    {
+    ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError> {
         self.ensure_spatial_index_seeded();
 
         // Transactional guard: post-steps (flip repair and/or global Delaunay checks) can fail.
@@ -4886,10 +4833,7 @@ where
         &mut self,
         vertex_key: VertexKey,
         hint: Option<CellKey>,
-    ) -> Result<(), InsertionError>
-    where
-        K::Scalar: ScalarSummable,
-    {
+    ) -> Result<(), InsertionError> {
         let topology = self.tri.topology_guarantee();
         if !self.should_run_delaunay_repair_for(
             topology,
@@ -4987,10 +4931,7 @@ where
         Ok(())
     }
 
-    fn maybe_check_after_insertion(&self) -> Result<(), InsertionError>
-    where
-        K::Scalar: ScalarSummable,
-    {
+    fn maybe_check_after_insertion(&self) -> Result<(), InsertionError> {
         if self.tri.tds.number_of_cells() == 0 {
             return Ok(());
         }
@@ -5079,10 +5020,7 @@ where
     pub fn remove_vertex(
         &mut self,
         vertex: &Vertex<K::Scalar, U, D>,
-    ) -> Result<usize, InvariantError>
-    where
-        K::Scalar: ScalarSummable,
-    {
+    ) -> Result<usize, InvariantError> {
         let Some(vertex_key) = self.tri.tds.vertex_key_from_uuid(&vertex.uuid()) else {
             return Ok(0);
         };
@@ -5163,10 +5101,7 @@ where
     /// // Level 4: Delaunay property only
     /// assert!(dt.is_valid().is_ok());
     /// ```
-    pub fn is_valid(&self) -> Result<(), DelaunayTriangulationValidationError>
-    where
-        K::Scalar: ScalarSummable,
-    {
+    pub fn is_valid(&self) -> Result<(), DelaunayTriangulationValidationError> {
         // Use fast flip-based verification (O(cells) instead of O(cells × vertices))
         self.is_delaunay_via_flips().map_err(|err| {
             DelaunayTriangulationValidationError::VerificationFailed {
@@ -5204,10 +5139,7 @@ where
     /// // Fast O(N) verification
     /// assert!(dt.is_delaunay_via_flips().is_ok());
     /// ```
-    pub fn is_delaunay_via_flips(&self) -> Result<(), DelaunayRepairError>
-    where
-        K::Scalar: ScalarSummable,
-    {
+    pub fn is_delaunay_via_flips(&self) -> Result<(), DelaunayRepairError> {
         crate::core::algorithms::flips::verify_delaunay_via_flip_predicates(
             &self.tri.tds,
             &self.tri.kernel,
@@ -6645,6 +6577,42 @@ mod tests {
         assert!(
             !matches!(result, Err(DelaunayRepairError::InvalidTopology { .. })),
             "Flip-based repair should be admissible under PLManifold topology"
+        );
+    }
+
+    /// `repair_delaunay_with_flips` delegates to `repair_delaunay_with_flips_k2_k3`
+    /// which requires D ≥ 2.  On a 1D triangulation the inner function returns
+    /// `FlipError::UnsupportedDimension`, surfaced as `DelaunayRepairError::Flip`.
+    #[test]
+    fn test_repair_delaunay_with_flips_returns_flip_error_for_1d() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 1>> = vec![vertex!([0.0]), vertex!([1.0])];
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 1> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let result = dt.repair_delaunay_with_flips();
+        assert!(
+            matches!(result, Err(DelaunayRepairError::Flip(..))),
+            "Expected Flip(UnsupportedDimension) for D=1, got: {result:?}"
+        );
+    }
+
+    /// `repair_delaunay_with_flips_advanced` passes through non-retryable errors
+    /// (anything other than `NonConvergent` / `PostconditionFailed`) from the
+    /// inner `repair_delaunay_with_flips` call.  A 1D triangulation triggers
+    /// `UnsupportedDimension` which must hit the `Err(err) => Err(err)` arm.
+    #[test]
+    fn test_repair_delaunay_with_flips_advanced_passes_through_non_retryable_error() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 1>> = vec![vertex!([0.0]), vertex!([1.0])];
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 1> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let result =
+            dt.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default());
+        assert!(
+            matches!(result, Err(DelaunayRepairError::Flip(..))),
+            "Expected non-retryable Flip error pass-through for D=1, got: {result:?}"
         );
     }
 
@@ -8403,8 +8371,7 @@ mod tests {
                 cycle_detections: 0,
                 cycle_signature_samples: Vec::new(),
                 attempt: 1,
-                queue_order:
-                    crate::core::algorithms::flips::RepairQueueOrder::Fifo,
+                queue_order: crate::core::algorithms::flips::RepairQueueOrder::Fifo,
             },
         };
         let robust_err = DelaunayRepairError::PostconditionFailed {

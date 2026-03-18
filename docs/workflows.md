@@ -70,6 +70,10 @@ The Builder API is designed to construct Delaunay triangulations, and (by defaul
 flip-based repair passes after insertions.
 
 Automatic repair scheduling is controlled by `DelaunayRepairPolicy` (default: `EveryInsertion`).
+The explicit repair methods (`repair_delaunay_with_flips`, `repair_delaunay_with_flips_advanced`,
+`rebuild_with_heuristic`) require `K: ExactPredicates` at compile time. `AdaptiveKernel` and
+`RobustKernel` implement this trait; `FastKernel` does not. See
+[`numerical_robustness_guide.md`](numerical_robustness_guide.md) for kernel selection guidance.
 
 ```rust
 use delaunay::prelude::triangulation::*;
@@ -100,10 +104,15 @@ let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&ve
 let _stats = dt.repair_delaunay_with_flips().unwrap();
 ```
 
-### Topology requirement
+### Topology and kernel requirements
 
 Flip-based repair requires a PL-manifold topology guarantee. If your triangulation is configured as
 `TopologyGuarantee::Pseudomanifold`, `repair_delaunay_with_flips()` returns an error.
+
+Additionally, all explicit repair methods require `K: ExactPredicates` (compile-time bound).
+The default `AdaptiveKernel` satisfies this. `FastKernel` does not — its automatic
+insertion-time repair uses a `RobustKernel` fallback internally, but the public repair
+methods are not available.
 
 ### Repair attempts and diagnostics
 
@@ -281,7 +290,7 @@ let _cells_removed = dt.remove_vertex(&vertex_to_remove).unwrap();
 // Topology should still be valid:
 assert!(dt.as_triangulation().validate().is_ok());
 
-// If you need Delaunay after edits:
+// If you need Delaunay after edits (requires K: ExactPredicates):
 // dt.repair_delaunay_with_flips().unwrap();
 // dt.is_valid().unwrap();
 ```
@@ -321,7 +330,7 @@ let _ = dt.flip_k1_remove(inserted_vertex).unwrap();
 // Validate the stack (Levels 1–3) after topological edits.
 assert!(dt.as_triangulation().validate().is_ok());
 
-// If you need Delaunay after edits:
+// If you need Delaunay after edits (requires K: ExactPredicates):
 // dt.repair_delaunay_with_flips().unwrap();
 // dt.is_valid().unwrap();
 ```

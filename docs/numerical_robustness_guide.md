@@ -56,8 +56,10 @@ Kernels control which predicate implementations are used by the triangulation al
   your application needs to detect cospherical/coplanar/collinear configurations directly
   (SoS would mask these). Implements `ExactPredicates`.
 - `FastKernel<T>`: raw f64 arithmetic, no robustness guarantees. Only suitable for 2D with
-  well-conditioned input. Does **not** implement `ExactPredicates` and cannot be used
-  with batch construction or flip-based Delaunay repair.
+  well-conditioned input. Does **not** implement `ExactPredicates`. Construction and
+  insertion work (automatic repair uses a `RobustKernel` fallback internally), but the
+  explicit public repair methods (`repair_delaunay_with_flips`,
+  `repair_delaunay_with_flips_advanced`) are compile-time blocked.
 
 ### `ExactPredicates` marker trait (v0.8.0+)
 
@@ -66,10 +68,13 @@ predicates return the mathematically correct sign for all inputs, including near
 configurations. Both `AdaptiveKernel` and `RobustKernel` implement this trait;
 `FastKernel` does not.
 
-All functions that perform Delaunay repair (flip-based construction, insertion, and explicit
-repair methods) require `K: ExactPredicates`. This is enforced at compile time, preventing
-silent misclassification from floating-point-only predicates that can lead to infinite flip
-cycles, invalid topology, or non-Delaunay results.
+The explicit public repair methods (`repair_delaunay_with_flips`,
+`repair_delaunay_with_flips_advanced`, `rebuild_with_heuristic`) require
+`K: ExactPredicates`. This is enforced at compile time, preventing silent
+misclassification from floating-point-only predicates that can lead to infinite flip
+cycles, invalid topology, or non-Delaunay results. Construction and insertion do **not**
+require the bound — the internal repair path uses the caller's kernel first and falls
+back to `RobustKernel` automatically.
 
 The convenience constructors (`DelaunayTriangulation::new()`, `::empty()`, etc.) use
 `AdaptiveKernel`. To opt into a different kernel, use the explicit-kernel constructors:
@@ -297,6 +302,12 @@ and per-insertion checks handle any remaining cases.
   This handles near-degenerate configurations correctly out of the box.
 - If you need explicit `BOUNDARY`/`DEGENERATE` signals (e.g. to detect and handle cospherical
   configurations yourself), switch to `RobustKernel`.
+- If you use `FastKernel` for 2D performance, consider setting
+  `DelaunayRepairPolicy::EveryN(n)` (e.g. `n = 10`) instead of the default `EveryInsertion`.
+  This reduces the frequency of the automatic robust-fallback repair pass while still
+  maintaining the Delaunay property periodically. Note that the explicit repair methods
+  (`repair_delaunay_with_flips`, etc.) are not available with `FastKernel` — use
+  `AdaptiveKernel` or `RobustKernel` if you need manual repair control.
 - If you see retryable insertion errors, frequent perturbation retries, or skipped vertices,
   preprocess your input (dedup / rescale if appropriate).
 - Treat `InsertionOutcome::Skipped { .. }` as an expected outcome on pathological data; decide

@@ -383,8 +383,8 @@ Validates the geometric optimality of the triangulation.
   [Issue #120 Investigation](archive/issue_120_investigation.md).
 - **Heuristic fallback**: If flip-based repair does not converge, you can opt into a heuristic
   rebuild fallback via `DelaunayTriangulation::repair_delaunay_with_flips_advanced`.
-  This requires `TopologyGuarantee::PLManifold` and records the shuffle/perturbation seeds used.
-  See [Numerical Robustness Guide](numerical_robustness_guide.md).
+  This requires `TopologyGuarantee::PLManifold` and `K: ExactPredicates`, and records the
+  shuffle/perturbation seeds used. See [Numerical Robustness Guide](numerical_robustness_guide.md).
 
 ### Complexity
 
@@ -535,8 +535,10 @@ ensure no isolated vertices, and verify the cell neighbor graph is connected
 **Likely Cause**: Repair disabled or non-convergent, geometric degeneracy, numerical precision,
 or missing higher-dimensional flip coverage
 **Fix**: Keep flip repair enabled, handle insertion errors, check for near-coplanar/collinear points,
-and consider using RobustKernel instead of FastKernel. If repair fails to converge, consider the
-opt-in heuristic rebuild fallback via `dt.repair_delaunay_with_flips_advanced(...)` (PL-manifold only).
+and consider using `RobustKernel` or `AdaptiveKernel` instead of `FastKernel` (explicit repair
+methods require `K: ExactPredicates`, which `FastKernel` does not implement). If repair fails to
+converge, consider the opt-in heuristic rebuild fallback via
+`dt.repair_delaunay_with_flips_advanced(...)` (requires PL-manifold + `ExactPredicates`).
 
 ---
 
