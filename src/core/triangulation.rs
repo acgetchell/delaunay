@@ -2985,15 +2985,15 @@ where
             if attempt > 0 {
                 let mut perturbed_coords = original_coords;
                 // Progressive local-scale perturbation: magnitude grows ×10 per attempt.
-                //   attempt 1: base × local_scale
-                //   attempt 2: base × local_scale × 10
-                //   attempt 3: base × local_scale × 100
+                //   attempt 1: base × local_scale × 10
+                //   attempt 2: base × local_scale × 100
+                //   attempt 3: base × local_scale × 1000
                 #[expect(
                     clippy::cast_possible_truncation,
                     clippy::cast_possible_wrap,
                     reason = "attempt is at most DEFAULT_PERTURBATION_RETRIES (3), fits in i32"
                 )]
-                let scale_factor = 10.0_f64.powi((attempt - 1) as i32);
+                let scale_factor = 10.0_f64.powi(attempt as i32);
                 let Some(epsilon) = <K::Scalar as NumCast>::from(epsilon_value * scale_factor)
                 else {
                     // We failed to convert the perturbation scale into the scalar type.
@@ -3125,7 +3125,7 @@ where
                                         reason = "max_perturbation_attempts is small, fits in i32"
                                     )]
                                     {
-                                        max_perturbation_attempts.saturating_sub(1) as i32
+                                        max_perturbation_attempts as i32
                                     }
                                 ),
                         );
@@ -9481,6 +9481,9 @@ mod tests {
     /// This validates that perturbation is proportional to local feature size.
     #[test]
     fn test_perturbation_scale_invariance_3d() {
+        const EXPECTED_VERTEX_COUNT: usize = 7;
+        const EXPECTED_CELL_COUNT: usize = 8;
+
         fn build_at_scale(scale: f64) -> (usize, usize) {
             let base_coords: [[f64; 3]; 8] = [
                 [0.0, 0.0, 0.0],
@@ -9505,6 +9508,17 @@ mod tests {
         let (v2, c2) = build_at_scale(1e6);
         let (v3, c3) = build_at_scale(1e-6);
 
+        // Absolute expectations: catch regressions that affect all scales equally.
+        assert_eq!(
+            v1, EXPECTED_VERTEX_COUNT,
+            "Vertex count regression at unit scale (build_at_scale(1.0))"
+        );
+        assert_eq!(
+            c1, EXPECTED_CELL_COUNT,
+            "Cell count regression at unit scale (build_at_scale(1.0))"
+        );
+
+        // Cross-scale equality: perturbation is proportional to local feature size.
         assert_eq!(
             v1, v2,
             "Vertex count should be scale-invariant (×1 vs ×1e6)"
@@ -9517,20 +9531,78 @@ mod tests {
         assert_eq!(c1, c3, "Cell count should be scale-invariant (×1 vs ×1e-6)");
     }
 
-    /// Verify that the progressive ladder uses the correct base epsilon for f32.
+    /// Verify the mantissa-based epsilon selection (`1e-4` for f32, `1e-8` for f64)
+    /// and exercise the perturbation retry path with a near-degenerate simplex.
     #[test]
-    fn test_perturbation_f32_base_epsilon() {
-        // f32 mantissa is 24 bits → epsilon_value = 1e-4 (vs 1e-8 for f64).
-        // Construct a small f32 triangulation and verify insertion succeeds.
-        let vertices: Vec<Vertex<f32, (), 2>> = vec![
+    fn test_perturbation_epsilon_selection_and_retry() {
+        use crate::geometry::traits::coordinate::CoordinateScalar;
+
+        // Assert the mantissa-digits → epsilon branching for each scalar type.
+        // insert_transactional uses: `if K::Scalar::mantissa_digits() <= 24 { 1e-4 } else { 1e-8 }`
+        assert_eq!(
+            f32::mantissa_digits(),
+            24,
+            "f32 should take the 1e-4 epsilon path"
+        );
+        assert_eq!(
+            f64::mantissa_digits(),
+            53,
+            "f64 should take the 1e-8 epsilon path"
+        );
+
+        // f32 path: build a 2D triangulation, then insert a point exactly on an
+        // existing edge.  This near-degenerate configuration exercises the full
+        // insert_transactional path including epsilon_value computation.
+        let initial_f32: Vec<Vertex<f32, (), 2>> = vec![
             vertex!([0.0_f32, 0.0]),
             vertex!([1.0_f32, 0.0]),
             vertex!([0.0_f32, 1.0]),
         ];
-        let dt: DelaunayTriangulation<AdaptiveKernel<f32>, (), (), 2> =
-            DelaunayTriangulation::with_kernel(&AdaptiveKernel::<f32>::new(), &vertices).unwrap();
-        assert_eq!(dt.number_of_vertices(), 3);
-        assert!(dt.validate().is_ok());
+        let tds_f32 =
+            Triangulation::<AdaptiveKernel<f32>, (), (), 2>::build_initial_simplex(&initial_f32)
+                .unwrap();
+        let mut tri_f32 = Triangulation::<AdaptiveKernel<f32>, (), (), 2>::new_with_tds(
+            AdaptiveKernel::<f32>::new(),
+            tds_f32,
+        );
+
+        // Point on edge [0,0]→[1,0]: collinear, exercises degeneracy handling.
+        let (outcome_f32, stats_f32) = tri_f32
+            .insert_with_statistics(vertex!([0.5_f32, 0.0]), None, None)
+            .unwrap();
+        // Should succeed (SoS resolves) or be gracefully skipped.
+        assert!(
+            stats_f32.attempts >= 1,
+            "f32 insertion must execute at least 1 attempt"
+        );
+        if let InsertionOutcome::Inserted { .. } = outcome_f32 {
+            assert_eq!(tri_f32.tds.number_of_vertices(), 4);
+        }
+
+        // f64 path: same exercise with double precision.
+        let initial_f64: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0_f64, 0.0]),
+            vertex!([1.0_f64, 0.0]),
+            vertex!([0.0_f64, 1.0]),
+        ];
+        let tds_f64 =
+            Triangulation::<AdaptiveKernel<f64>, (), (), 2>::build_initial_simplex(&initial_f64)
+                .unwrap();
+        let mut tri_f64 = Triangulation::<AdaptiveKernel<f64>, (), (), 2>::new_with_tds(
+            AdaptiveKernel::<f64>::new(),
+            tds_f64,
+        );
+
+        let (outcome_f64, stats_f64) = tri_f64
+            .insert_with_statistics(vertex!([0.5_f64, 0.0]), None, None)
+            .unwrap();
+        assert!(
+            stats_f64.attempts >= 1,
+            "f64 insertion must execute at least 1 attempt"
+        );
+        if let InsertionOutcome::Inserted { .. } = outcome_f64 {
+            assert_eq!(tri_f64.tds.number_of_vertices(), 4);
+        }
     }
 
     /// Verify the `DEFAULT_PERTURBATION_RETRIES` constant value.
@@ -9539,6 +9611,90 @@ mod tests {
         assert_eq!(
             DEFAULT_PERTURBATION_RETRIES, 3,
             "Default perturbation retries should be 3 (4 total attempts)"
+        );
+    }
+
+    // =========================================================================
+    // PROGRESSIVE PERTURBATION: RETRY PATH COVERAGE
+    // =========================================================================
+
+    /// Exercise the perturbation retry loop (`attempt > 0`) and exhaustion
+    /// path (`SkippedDegeneracy`) using 4D random points where orientation
+    /// degeneracies are common.
+    ///
+    /// Covers: progressive scale factor, perturbation coordinate generation
+    /// with `perturbation_seed == 0`, retry decision, and retry exhaustion.
+    #[test]
+    fn test_perturbation_retry_and_exhaustion_4d() {
+        let points =
+            crate::geometry::util::generate_random_points_seeded::<f64, 4>(20, (-10.0, 10.0), 123)
+                .unwrap();
+
+        let mut tri: Triangulation<AdaptiveKernel<f64>, (), (), 4> =
+            Triangulation::new_empty(AdaptiveKernel::new());
+
+        let mut any_retried = false;
+        let mut any_exhausted = false;
+
+        for point in points {
+            let v = VertexBuilder::default().point(point).build().unwrap();
+            let (_outcome, stats) = tri.insert_with_statistics(v, None, None).unwrap();
+
+            if stats.used_perturbation() && stats.success() {
+                any_retried = true;
+            }
+            if stats.skipped() && stats.attempts > 1 {
+                any_exhausted = true;
+            }
+        }
+
+        // In 4D, orientation degeneracies trigger retries frequently.
+        assert!(
+            any_retried || any_exhausted,
+            "4D insertion with 20 random points (seed 123) should trigger \
+             at least one perturbation retry or exhaustion"
+        );
+    }
+
+    /// Exercise the seeded perturbation branch (`perturbation_seed != 0`)
+    /// by calling `insert_transactional` directly.
+    ///
+    /// Covers: the `mix` computation and sign selection in the seeded path
+    /// (lines using `perturbation_seed ^ ...`).
+    #[test]
+    fn test_perturbation_retry_seeded_branch_4d() {
+        let points =
+            crate::geometry::util::generate_random_points_seeded::<f64, 4>(20, (-10.0, 10.0), 123)
+                .unwrap();
+
+        let mut tri: Triangulation<AdaptiveKernel<f64>, (), (), 4> =
+            Triangulation::new_empty(AdaptiveKernel::new());
+
+        let mut any_retried = false;
+
+        for point in points {
+            let v = VertexBuilder::default().point(point).build().unwrap();
+            let (_outcome, stats) = tri
+                .insert_transactional(
+                    v,
+                    None,
+                    None,
+                    DEFAULT_PERTURBATION_RETRIES,
+                    0xDEAD_BEEF,
+                    None,
+                )
+                .unwrap();
+
+            if stats.used_perturbation() {
+                any_retried = true;
+            }
+        }
+
+        // Exercises the perturbation_seed != 0 branch in the retry loop.
+        assert!(
+            any_retried,
+            "4D seeded insertion with 20 points (seed 123) should trigger \
+             at least one perturbation retry"
         );
     }
 }

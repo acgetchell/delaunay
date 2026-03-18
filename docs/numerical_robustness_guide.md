@@ -144,9 +144,9 @@ scale-invariant — it is proportional to the local feature size (nearest-vertex
 and uses ≈√machine_epsilon as the base factor (`1e-8` for `f64`, `1e-4` for `f32`).
 With the default 3 retries, the ladder is:
 
-- attempt 1: `1e-8 × local_scale`
-- attempt 2: `1e-7 × local_scale`
-- attempt 3: `1e-6 × local_scale`
+- attempt 1: `1e-7 × local_scale`
+- attempt 2: `1e-6 × local_scale`
+- attempt 3: `1e-5 × local_scale`
 
 If all retries are exhausted, the vertex is skipped and you get
 `InsertionOutcome::Skipped { .. }` (the triangulation is unchanged).
