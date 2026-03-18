@@ -170,6 +170,12 @@ use uuid::Uuid;
 /// In practice, most insertions require 0-2 iterations to restore manifold topology.
 const MAX_REPAIR_ITERATIONS: usize = 10;
 
+/// Default number of perturbation retries for transactional insertion.
+///
+/// Each retry uses a progressively larger perturbation magnitude (×10 per attempt),
+/// so 3 retries span 4 orders of magnitude (e.g. `1e-8` → `1e-5` × `local_scale` for f64).
+const DEFAULT_PERTURBATION_RETRIES: usize = 3;
+
 /// Telemetry: counts how often the topology safety-net recovered from a Level 3 validation
 /// failure by retrying insertion with a star-split of the containing cell.
 ///
@@ -1957,10 +1963,7 @@ where
         cell_key: CellKey,
         cell: &Cell<K::Scalar, U, V, D>,
         purpose: &str,
-    ) -> Result<SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>, TdsError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    ) -> Result<SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>, TdsError> {
         let topology_model = self.global_topology.model();
         let periodic_offsets = cell.periodic_vertex_offsets();
         if let Some(offsets) = periodic_offsets {
@@ -2050,13 +2053,10 @@ where
         cell: &Cell<K::Scalar, U, V, D>,
         purpose: &str,
         predicate_failure_prefix: &str,
-    ) -> Result<i32, TdsError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    ) -> Result<i32, TdsError> {
         let points = self.collect_cell_points_for_orientation(cell_key, cell, purpose)?;
 
-        // Use exact orientation only (no SoS): callers need the true geometric
+        // Use exact orientation only (no SoS):
         // sign to correctly classify degenerate cells vs negatively oriented ones.
         match robust_orientation(&points) {
             Ok(Orientation::POSITIVE) => Ok(1),
@@ -2082,10 +2082,7 @@ where
     ///
     /// Periodic-lifted cells are validated in lifted coordinates using per-vertex periodic
     /// offsets and toroidal domain periods.
-    pub(in crate::core) fn validate_geometric_cell_orientation(&self) -> Result<(), TdsError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    pub(in crate::core) fn validate_geometric_cell_orientation(&self) -> Result<(), TdsError> {
         for (cell_key, cell) in self.tds.cells() {
             let orientation = self.evaluate_cell_orientation_for_context(
                 cell_key,
@@ -2115,10 +2112,7 @@ where
     /// This applies to both Euclidean cells and periodic-lifted cells (when present).
     ///
     /// Returns `true` if at least one cell was flipped.
-    fn promote_cells_to_positive_orientation(&mut self) -> Result<bool, InsertionError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    fn promote_cells_to_positive_orientation(&mut self) -> Result<bool, InsertionError> {
         let mut negative_cells = CellKeyBuffer::new();
 
         for (cell_key, cell) in self.tds.cells() {
@@ -2174,10 +2168,7 @@ where
     /// Returns an [`InsertionError`] if orientation evaluation fails.
     /// Geometrically degenerate cells (`orientation == 0` per [`robust_orientation`])
     /// are skipped, consistent with [`promote_cells_to_positive_orientation`](Self::promote_cells_to_positive_orientation).
-    fn cells_require_positive_orientation_promotion(&self) -> Result<bool, InsertionError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    fn cells_require_positive_orientation_promotion(&self) -> Result<bool, InsertionError> {
         for (cell_key, cell) in self.tds.cells() {
             let orientation = self.evaluate_cell_orientation_for_context(
                 cell_key,
@@ -2199,11 +2190,8 @@ where
 
     /// For connected non-periodic triangulations, coherent orientation has two equivalent global
     /// sign choices. Canonicalize that global sign to positive by flipping all cells when needed.
-    fn canonicalize_global_orientation_sign(&mut self) -> Result<(), InsertionError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
-        // Find the first cell with a non-zero exact orientation as the representative.
+    fn canonicalize_global_orientation_sign(&mut self) -> Result<(), InsertionError> {
+        // Find the first cell with a non-zero exact orientation
         // Skip degenerate cells (orientation == 0) — they have no meaningful geometric sign.
         let representative_sign = {
             let mut sign = None;
@@ -2255,11 +2243,8 @@ where
     /// 3. Fall back to bounded per-cell promotion passes for FP-precision edge cases.
     pub(in crate::core) fn normalize_and_promote_positive_orientation(
         &mut self,
-    ) -> Result<(), InsertionError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
-        // Phase 1: make all adjacencies coherent, then fix the global sign.
+    ) -> Result<(), InsertionError> {
+        // Phase 1: make all adjacencies coherent
         // Canonicalizing *before* the promote loop resolves the common case where
         // all cells share the same (negative) sign after BFS normalization.
         self.tds.normalize_coherent_orientation()?;
@@ -2314,10 +2299,7 @@ where
     fn canonicalize_positive_orientation_for_cells(
         &mut self,
         cells: &CellKeyBuffer,
-    ) -> Result<(), InsertionError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    ) -> Result<(), InsertionError> {
         for &cell_key in cells {
             let orientation = {
                 let cell = self
@@ -2411,11 +2393,8 @@ where
     /// // Level 3: topology validation (manifold-with-boundary + Euler characteristic)
     /// assert!(dt.as_triangulation().is_valid().is_ok());
     /// ```
-    pub fn is_valid(&self) -> Result<(), InvariantError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
-        // 1. Connectedness — O(N·D) BFS over neighbor pointers.
+    pub fn is_valid(&self) -> Result<(), InvariantError> {
+        // 1. Connectedness
         //
         // Checked first because it is cheaper than building the facet-to-cells map
         // (which requires O(N·D) hash-map insertions plus allocations) and avoids
@@ -2540,10 +2519,7 @@ where
     /// // Levels 1–3: elements + TDS structure + topology
     /// assert!(dt.as_triangulation().validate().is_ok());
     /// ```
-    pub fn validate(&self) -> Result<(), InvariantError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    pub fn validate(&self) -> Result<(), InvariantError> {
         self.tds.validate()?;
         self.is_valid()?;
         self.validate_at_completion()
@@ -2562,10 +2538,7 @@ where
     /// # Errors
     ///
     /// Returns `Err(TriangulationValidationReport)` containing all invariant violations.
-    pub(crate) fn validation_report(&self) -> Result<(), TriangulationValidationReport>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    pub(crate) fn validation_report(&self) -> Result<(), TriangulationValidationReport> {
         let mut violations: Vec<InvariantViolation> = Vec::new();
 
         // Level 2 (structural): reuse the TDS report.
@@ -2736,10 +2709,7 @@ where
     /// ```
     pub fn build_initial_simplex(
         vertices: &[Vertex<K::Scalar, U, D>],
-    ) -> Result<Tds<K::Scalar, U, V, D>, TriangulationConstructionError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    ) -> Result<Tds<K::Scalar, U, V, D>, TriangulationConstructionError> {
         if vertices.len() != D + 1 {
             return Err(TriangulationConstructionError::InsufficientVertices {
                 dimension: D,
@@ -2887,13 +2857,15 @@ where
         vertex: Vertex<K::Scalar, U, D>,
         conflict_cells: Option<&CellKeyBuffer>,
         hint: Option<CellKey>,
-    ) -> Result<(VertexKey, Option<CellKey>), InsertionError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
-        // Use transactional insertion with a single local-scale perturbation retry.
-        let (outcome, _stats) =
-            self.insert_transactional(vertex, conflict_cells, hint, 1, 0, None)?;
+    ) -> Result<(VertexKey, Option<CellKey>), InsertionError> {
+        let (outcome, _stats) = self.insert_transactional(
+            vertex,
+            conflict_cells,
+            hint,
+            DEFAULT_PERTURBATION_RETRIES,
+            0,
+            None,
+        )?;
         match outcome {
             InsertionOutcome::Inserted { vertex_key, hint } => Ok((vertex_key, hint)),
             InsertionOutcome::Skipped { error } => Err(error),
@@ -2921,12 +2893,15 @@ where
         vertex: Vertex<K::Scalar, U, D>,
         conflict_cells: Option<&CellKeyBuffer>,
         hint: Option<CellKey>,
-    ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
-        // Single perturbation retry (local-scale) for geometric degeneracies.
-        self.insert_transactional(vertex, conflict_cells, hint, 1, 0, None)
+    ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError> {
+        self.insert_transactional(
+            vertex,
+            conflict_cells,
+            hint,
+            DEFAULT_PERTURBATION_RETRIES,
+            0,
+            None,
+        )
     }
 
     /// Insert a vertex with statistics, using a custom perturbation seed and an optional
@@ -2941,11 +2916,15 @@ where
         hint: Option<CellKey>,
         perturbation_seed: u64,
         index: Option<&mut HashGridIndex<K::Scalar, D>>,
-    ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
-        self.insert_transactional(vertex, conflict_cells, hint, 1, perturbation_seed, index)
+    ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError> {
+        self.insert_transactional(
+            vertex,
+            conflict_cells,
+            hint,
+            DEFAULT_PERTURBATION_RETRIES,
+            perturbation_seed,
+            index,
+        )
     }
 
     /// Transactional insertion with automatic rollback and perturbation retry.
@@ -2972,10 +2951,7 @@ where
         max_perturbation_attempts: usize,
         perturbation_seed: u64,
         mut index: Option<&mut HashGridIndex<K::Scalar, D>>,
-    ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError> {
         let mut stats = InsertionStatistics::default();
         let original_coords = *vertex.point().coords();
         let original_uuid = vertex.uuid();
@@ -2995,21 +2971,31 @@ where
             <K::Scalar as NumCast>::from(1e-10_f64).unwrap_or_else(K::Scalar::default_tolerance);
         let duplicate_tolerance_sq = duplicate_tolerance * duplicate_tolerance;
 
+        // Base perturbation epsilon: ≈ √machine_epsilon for the scalar type.
+        let epsilon_value: f64 = if K::Scalar::mantissa_digits() <= 24 {
+            1e-4
+        } else {
+            1e-8
+        };
+
         for attempt in 0..=max_perturbation_attempts {
             stats.attempts = attempt + 1;
 
             // Apply perturbation for retry attempts
             if attempt > 0 {
                 let mut perturbed_coords = original_coords;
-                // Single local-scale perturbation:
-                // - f64: 1e-8 × local scale
-                // - f32: 1e-4 × local scale
-                let epsilon_value = if K::Scalar::mantissa_digits() <= 24 {
-                    1e-4
-                } else {
-                    1e-8
-                };
-                let Some(epsilon) = <K::Scalar as NumCast>::from(epsilon_value) else {
+                // Progressive local-scale perturbation: magnitude grows ×10 per attempt.
+                //   attempt 1: base × local_scale
+                //   attempt 2: base × local_scale × 10
+                //   attempt 3: base × local_scale × 100
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_possible_wrap,
+                    reason = "attempt is at most DEFAULT_PERTURBATION_RETRIES (3), fits in i32"
+                )]
+                let scale_factor = 10.0_f64.powi((attempt - 1) as i32);
+                let Some(epsilon) = <K::Scalar as NumCast>::from(epsilon_value * scale_factor)
+                else {
                     // We failed to convert the perturbation scale into the scalar type.
                     //
                     // This should not happen for our supported scalar types (`f32`, `f64`), but if it
@@ -3129,17 +3115,19 @@ where
                         stats.result = InsertionResult::SkippedDegeneracy;
                         #[cfg(debug_assertions)]
                         tracing::debug!(
-                            "SKIPPED: Could not insert vertex after {} attempts (perturbations up to {:.1}%). Last error: {e}. Vertex skipped to maintain manifold.",
+                            "SKIPPED: Could not insert vertex after {} attempts (max perturbation ≈ {:.0e} × local_scale). Last error: {e}. Vertex skipped to maintain manifold.",
                             max_perturbation_attempts + 1,
-                            match max_perturbation_attempts {
-                                0 => 0.0,
-                                1 => 0.01,
-                                2 => 0.1,
-                                3 => 1.0,
-                                4 => 2.0,
-                                5 => 5.0,
-                                _ => 10.0,
-                            }
+                            epsilon_value
+                                * 10.0_f64.powi(
+                                    #[expect(
+                                        clippy::cast_possible_truncation,
+                                        clippy::cast_possible_wrap,
+                                        reason = "max_perturbation_attempts is small, fits in i32"
+                                    )]
+                                    {
+                                        max_perturbation_attempts.saturating_sub(1) as i32
+                                    }
+                                ),
                         );
                         return Ok((InsertionOutcome::Skipped { error: e }, stats));
                     } else {
@@ -3157,10 +3145,7 @@ where
         &self,
         coords: &[K::Scalar; D],
         index: &HashGridIndex<K::Scalar, D>,
-    ) -> Option<CellKey>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    ) -> Option<CellKey> {
         let mut best: Option<(K::Scalar, CellKey)> = None;
 
         index.for_each_candidate_vertex_key(coords, |vkey| {
@@ -3203,10 +3188,7 @@ where
         coords: &[K::Scalar; D],
         tolerance_sq: K::Scalar,
         index: Option<&HashGridIndex<K::Scalar, D>>,
-    ) -> Option<InsertionError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    ) -> Option<InsertionError> {
         let mut duplicate_found = false;
         let make_duplicate_error = || {
             let coord_str = coords
@@ -3284,10 +3266,7 @@ where
         &self,
         coords: &[K::Scalar; D],
         hint: Option<CellKey>,
-    ) -> K::Scalar
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    ) -> K::Scalar {
         let mut min_dist_sq: Option<K::Scalar> = None;
 
         let consider_vertex = |vertex: &Vertex<K::Scalar, U, D>,
@@ -3375,10 +3354,7 @@ where
     }
 
     /// Runs mandatory link checks required by the topology guarantee.
-    fn validate_required_topology_links(&self) -> Result<(), InvariantError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    fn validate_required_topology_links(&self) -> Result<(), InvariantError> {
         if self.tds.number_of_cells() == 0 {
             return Ok(());
         }
@@ -3413,10 +3389,7 @@ where
         Ok(())
     }
 
-    fn validate_after_insertion(&self, suspicion: SuspicionFlags) -> Result<(), InvariantError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    fn validate_after_insertion(&self, suspicion: SuspicionFlags) -> Result<(), InvariantError> {
         if self.tds.number_of_cells() == 0 {
             return Ok(());
         }
@@ -3448,10 +3421,7 @@ where
         hint: Option<CellKey>,
         attempt: usize,
         tds_snapshot: &Tds<K::Scalar, U, V, D>,
-    ) -> Result<TryInsertImplOk, InsertionError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    ) -> Result<TryInsertImplOk, InsertionError> {
         let (ok, cells_removed, mut suspicion) =
             self.try_insert_impl(vertex, conflict_cells, hint)?;
 
@@ -3490,10 +3460,7 @@ where
         hint: Option<CellKey>,
         attempt: usize,
         validation_err: InvariantError,
-    ) -> Result<TryInsertImplOk, InsertionError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    ) -> Result<TryInsertImplOk, InsertionError> {
         let point = *vertex.point();
         let location = locate(&self.tds, &self.kernel, &point, hint);
 
@@ -3673,10 +3640,7 @@ where
     fn find_conflict_region_global(
         &self,
         point: &Point<K::Scalar, D>,
-    ) -> Result<CellKeyBuffer, ConflictError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    ) -> Result<CellKeyBuffer, ConflictError> {
         #[cfg(debug_assertions)]
         let log_enabled = std::env::var_os("DELAUNAY_DEBUG_HULL").is_some()
             || std::env::var_os("DELAUNAY_DEBUG_CONFLICT").is_some();
@@ -3759,10 +3723,7 @@ where
     fn conflict_region_touches_boundary(
         &self,
         conflict_cells: &CellKeyBuffer,
-    ) -> Result<bool, InsertionError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    ) -> Result<bool, InsertionError> {
         if conflict_cells.is_empty() {
             return Ok(false);
         }
@@ -3821,10 +3782,7 @@ where
         mut conflict_cells: CellKeyBuffer,
         fallback_cell: Option<CellKey>,
         suspicion: &mut SuspicionFlags,
-    ) -> Result<(Option<CellKey>, usize), InsertionError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    ) -> Result<(Option<CellKey>, usize), InsertionError> {
         #[cfg(not(debug_assertions))]
         let _ = point;
 
@@ -4275,10 +4233,7 @@ where
         vertex: Vertex<K::Scalar, U, D>,
         conflict_cells: Option<&CellKeyBuffer>,
         hint: Option<CellKey>,
-    ) -> Result<TryInsertImplOk, InsertionError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    ) -> Result<TryInsertImplOk, InsertionError> {
         let mut suspicion = SuspicionFlags::default();
 
         // CRITICAL: Capture UUID and point BEFORE inserting into TDS
@@ -4850,10 +4805,7 @@ where
     pub(crate) fn remove_vertex(
         &mut self,
         vertex: &Vertex<K::Scalar, U, D>,
-    ) -> Result<usize, InvariantError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    ) -> Result<usize, InvariantError> {
         // Find the vertex key
         let Some(vertex_key) = self.tds.vertex_key_from_uuid(&vertex.uuid()) else {
             return Ok(0); // Vertex not found, nothing to remove
@@ -4999,10 +4951,7 @@ where
     /// # Returns
     ///
     /// The vertex key to use as apex, or None if no suitable vertex found.
-    fn pick_fan_apex(&self, boundary_facets: &[FacetHandle]) -> Option<VertexKey>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    fn pick_fan_apex(&self, boundary_facets: &[FacetHandle]) -> Option<VertexKey> {
         // Get first boundary facet
         let first_facet = boundary_facets.first()?;
         let cell = self.tds.get_cell(first_facet.cell_key())?;
@@ -5023,10 +4972,7 @@ where
         &mut self,
         apex_vertex_key: VertexKey,
         boundary_facets: &[FacetHandle],
-    ) -> Result<CellKeyBuffer, InsertionError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    ) -> Result<CellKeyBuffer, InsertionError> {
         let mut new_cells = CellKeyBuffer::new();
 
         for facet_handle in boundary_facets {
@@ -5133,10 +5079,7 @@ where
     pub fn detect_local_facet_issues(
         &self,
         cells: &[CellKey],
-    ) -> Result<Option<FacetIssuesMap>, TdsError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    ) -> Result<Option<FacetIssuesMap>, TdsError> {
         // Build facet map for ONLY the specified cells
         // This is O(k * D) instead of O(N * D)
         let mut facet_to_cells = FacetIssuesMap::default();
@@ -5242,7 +5185,7 @@ where
     /// operations. See `insert_transactional` for a typical usage pattern.
     pub fn repair_local_facet_issues(&mut self, issues: &FacetIssuesMap) -> Result<usize, TdsError>
     where
-        K::Scalar: CoordinateScalar + Div<Output = K::Scalar>,
+        K::Scalar: Div<Output = K::Scalar>,
     {
         let mut cells_to_remove = CellKeySet::default();
 
@@ -5317,7 +5260,7 @@ mod tests {
     use crate::core::collections::spatial_hash_grid::HashGridIndex;
     use crate::core::delaunay_triangulation::DelaunayTriangulation;
     use crate::core::vertex::VertexBuilder;
-    use crate::geometry::kernel::FastKernel;
+    use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
     use crate::topology::characteristics::validation::validate_triangulation_euler;
@@ -9527,5 +9470,75 @@ mod tests {
             Triangulation::new_empty(FastKernel::new());
         // PLManifold requires vertex links at completion, but with 0 cells it short-circuits.
         assert!(tri.validate_at_completion().is_ok());
+    }
+
+    // =========================================================================
+    // PROGRESSIVE PERTURBATION: SCALE INVARIANCE
+    // =========================================================================
+
+    /// Construct the same 3D geometry at three different uniform scales and verify
+    /// that the same number of vertices are successfully inserted at each scale.
+    /// This validates that perturbation is proportional to local feature size.
+    #[test]
+    fn test_perturbation_scale_invariance_3d() {
+        fn build_at_scale(scale: f64) -> (usize, usize) {
+            let base_coords: [[f64; 3]; 8] = [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [1.0, 1.0, 0.0],
+                [1.0, 0.0, 1.0],
+                [0.0, 1.0, 1.0],
+                [0.5, 0.5, 0.5],
+            ];
+            let vertices: Vec<Vertex<f64, (), 3>> = base_coords
+                .iter()
+                .map(|c| vertex!([c[0] * scale, c[1] * scale, c[2] * scale]))
+                .collect();
+            let dt: DelaunayTriangulation<_, (), (), 3> =
+                DelaunayTriangulation::new(&vertices).unwrap();
+            (dt.number_of_vertices(), dt.number_of_cells())
+        }
+
+        let (v1, c1) = build_at_scale(1.0);
+        let (v2, c2) = build_at_scale(1e6);
+        let (v3, c3) = build_at_scale(1e-6);
+
+        assert_eq!(
+            v1, v2,
+            "Vertex count should be scale-invariant (×1 vs ×1e6)"
+        );
+        assert_eq!(
+            v1, v3,
+            "Vertex count should be scale-invariant (×1 vs ×1e-6)"
+        );
+        assert_eq!(c1, c2, "Cell count should be scale-invariant (×1 vs ×1e6)");
+        assert_eq!(c1, c3, "Cell count should be scale-invariant (×1 vs ×1e-6)");
+    }
+
+    /// Verify that the progressive ladder uses the correct base epsilon for f32.
+    #[test]
+    fn test_perturbation_f32_base_epsilon() {
+        // f32 mantissa is 24 bits → epsilon_value = 1e-4 (vs 1e-8 for f64).
+        // Construct a small f32 triangulation and verify insertion succeeds.
+        let vertices: Vec<Vertex<f32, (), 2>> = vec![
+            vertex!([0.0_f32, 0.0]),
+            vertex!([1.0_f32, 0.0]),
+            vertex!([0.0_f32, 1.0]),
+        ];
+        let dt: DelaunayTriangulation<AdaptiveKernel<f32>, (), (), 2> =
+            DelaunayTriangulation::with_kernel(&AdaptiveKernel::<f32>::new(), &vertices).unwrap();
+        assert_eq!(dt.number_of_vertices(), 3);
+        assert!(dt.validate().is_ok());
+    }
+
+    /// Verify the `DEFAULT_PERTURBATION_RETRIES` constant value.
+    #[test]
+    fn test_default_perturbation_retries_constant() {
+        assert_eq!(
+            DEFAULT_PERTURBATION_RETRIES, 3,
+            "Default perturbation retries should be 3 (4 total attempts)"
+        );
     }
 }

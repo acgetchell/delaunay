@@ -137,9 +137,19 @@ do so will re-introduce order-dependent SoS behavior.
 Incremental insertion is transactional: if an insertion attempt fails, the triangulation is
 rolled back to the pre-insertion state.
 
-Some geometric degeneracies are retryable via a small deterministic perturbation. If retries
-are exhausted, the vertex is skipped and you get `InsertionOutcome::Skipped { .. }`
-(the triangulation is unchanged).
+Some geometric degeneracies are retryable via a small deterministic perturbation with
+**progressive magnitude**: each retry multiplies the perturbation by ×10, spanning
+several orders of magnitude across the retry budget. The base magnitude is
+scale-invariant — it is proportional to the local feature size (nearest-vertex distance)
+and uses ≈√machine_epsilon as the base factor (`1e-8` for `f64`, `1e-4` for `f32`).
+With the default 3 retries, the ladder is:
+
+- attempt 1: `1e-8 × local_scale`
+- attempt 2: `1e-7 × local_scale`
+- attempt 3: `1e-6 × local_scale`
+
+If all retries are exhausted, the vertex is skipped and you get
+`InsertionOutcome::Skipped { .. }` (the triangulation is unchanged).
 
 **Note:** With the default `AdaptiveKernel`, SoS resolves most orientation degeneracies
 symbolically, so perturbation retries are rarely needed. The primary remaining retryable
