@@ -67,6 +67,7 @@ thread_local! {
 #[cfg(test)]
 thread_local! {
     static FORCE_HEURISTIC_REBUILD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FORCE_REPAIR_NONCONVERGENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 struct HeuristicRebuildRecursionGuard {
@@ -3797,6 +3798,10 @@ where
     where
         K: ExactPredicates,
     {
+        #[cfg(test)]
+        if tests::force_repair_nonconvergent_enabled() {
+            return Err(tests::synthetic_nonconvergent_error());
+        }
         let operation = TopologicalOperation::FacetFlip;
         let topology = self.tri.topology_guarantee();
         if !operation.is_admissible_under(topology) {
@@ -3870,7 +3875,7 @@ where
         }
     }
 
-    /// Runs flip-based Delaunay repair with an optional heuristic rebuild fallback.
+    /// Runs flip-based Delaunay repair
     ///
     /// This first attempts the standard two-pass flip repair. If it fails to converge (or if
     /// the result cannot be verified as Delaunay), it rebuilds the triangulation from the
@@ -4878,6 +4883,13 @@ where
             repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology).map(|_| ())
         };
 
+        #[cfg(test)]
+        let repair_result = if tests::force_repair_nonconvergent_enabled() {
+            Err(tests::synthetic_nonconvergent_error())
+        } else {
+            repair_result
+        };
+
         match repair_result {
             Ok(()) => {}
             Err(
@@ -5619,13 +5631,37 @@ impl DelaunayCheckPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::algorithms::flips::DelaunayRepairError;
+    use crate::core::algorithms::flips::{
+        DelaunayRepairDiagnostics, DelaunayRepairError, FlipError, RepairQueueOrder,
+    };
     use crate::core::triangulation_data_structure::{EntityKind, GeometricError};
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel, RobustKernel};
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::topology::characteristics::euler::TopologyClassification;
     use crate::triangulation::flips::BistellarFlips;
     use crate::vertex;
+
+    pub(super) fn force_repair_nonconvergent_enabled() -> bool {
+        FORCE_REPAIR_NONCONVERGENT.with(std::cell::Cell::get)
+    }
+
+    pub(super) fn synthetic_nonconvergent_error() -> DelaunayRepairError {
+        DelaunayRepairError::NonConvergent {
+            max_flips: 0,
+            diagnostics: DelaunayRepairDiagnostics {
+                facets_checked: 0,
+                flips_performed: 0,
+                max_queue_len: 0,
+                ambiguous_predicates: 0,
+                ambiguous_predicate_samples: Vec::new(),
+                predicate_failures: 0,
+                cycle_detections: 0,
+                cycle_signature_samples: Vec::new(),
+                attempt: 0,
+                queue_order: RepairQueueOrder::Fifo,
+            },
+        }
+    }
     use rand::{RngExt, SeedableRng};
     fn init_tracing() {
         static INIT: std::sync::Once = std::sync::Once::new();
@@ -5657,6 +5693,27 @@ mod tests {
     impl Drop for ForceHeuristicRebuildGuard {
         fn drop(&mut self) {
             FORCE_HEURISTIC_REBUILD.with(|flag| flag.set(self.prior));
+        }
+    }
+
+    struct ForceRepairNonconvergentGuard {
+        prior: bool,
+    }
+
+    impl ForceRepairNonconvergentGuard {
+        fn enable() -> Self {
+            let prior = FORCE_REPAIR_NONCONVERGENT.with(|flag| {
+                let prior = flag.get();
+                flag.set(true);
+                prior
+            });
+            Self { prior }
+        }
+    }
+
+    impl Drop for ForceRepairNonconvergentGuard {
+        fn drop(&mut self) {
+            FORCE_REPAIR_NONCONVERGENT.with(|flag| flag.set(self.prior));
         }
     }
 
@@ -6580,6 +6637,54 @@ mod tests {
         );
     }
 
+    /// When the primary flip repair returns `NonConvergent`, the advanced repair
+    /// method falls back to `repair_delaunay_with_flips_robust`.  On a valid
+    /// triangulation the robust pass succeeds, so the outcome reports no
+    /// heuristic rebuild.
+    #[test]
+    fn test_repair_delaunay_with_flips_advanced_robust_fallback_succeeds() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let _guard = ForceRepairNonconvergentGuard::enable();
+        let outcome = dt
+            .repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())
+            .unwrap();
+        assert!(
+            !outcome.used_heuristic(),
+            "Robust fallback should succeed without needing heuristic rebuild"
+        );
+    }
+
+    /// When the primary per-insertion repair returns `NonConvergent`, the robust
+    /// fallback in `maybe_repair_after_insertion` should rescue the insertion.
+    #[test]
+    fn test_maybe_repair_after_insertion_robust_fallback_on_forced_nonconvergent() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let _guard = ForceRepairNonconvergentGuard::enable();
+        let result = dt.insert(vertex!([0.5, 0.5]));
+        assert!(
+            result.is_ok(),
+            "Insertion should succeed via robust fallback: {result:?}"
+        );
+        assert!(dt.validate().is_ok());
+    }
+
     /// `repair_delaunay_with_flips` delegates to `repair_delaunay_with_flips_k2_k3`
     /// which requires D ≥ 2.  On a 1D triangulation the inner function returns
     /// `FlipError::UnsupportedDimension`, surfaced as `DelaunayRepairError::Flip`.
@@ -6592,8 +6697,13 @@ mod tests {
 
         let result = dt.repair_delaunay_with_flips();
         assert!(
-            matches!(result, Err(DelaunayRepairError::Flip(..))),
-            "Expected Flip(UnsupportedDimension) for D=1, got: {result:?}"
+            matches!(
+                result,
+                Err(DelaunayRepairError::Flip(FlipError::UnsupportedDimension {
+                    dimension: 1
+                }))
+            ),
+            "Expected Flip(UnsupportedDimension {{ dimension: 1 }}) for D=1, got: {result:?}"
         );
     }
 
@@ -6611,8 +6721,13 @@ mod tests {
         let result =
             dt.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default());
         assert!(
-            matches!(result, Err(DelaunayRepairError::Flip(..))),
-            "Expected non-retryable Flip error pass-through for D=1, got: {result:?}"
+            matches!(
+                result,
+                Err(DelaunayRepairError::Flip(FlipError::UnsupportedDimension {
+                    dimension: 1
+                }))
+            ),
+            "Expected non-retryable Flip(UnsupportedDimension) pass-through for D=1, got: {result:?}"
         );
     }
 
