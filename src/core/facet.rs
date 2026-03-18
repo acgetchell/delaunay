@@ -1362,15 +1362,15 @@ mod tests {
     fn facet_with_typed_data() {
         // Create 3D triangulation with typed vertex data
         use crate::core::vertex::Vertex;
-        use crate::geometry::kernel::FastKernel;
+        use crate::geometry::kernel::AdaptiveKernel;
         let vertices: Vec<Vertex<f64, i32, 3>> = vec![
             vertex!([0.0, 0.0, 0.0], 1),
             vertex!([1.0, 0.0, 0.0], 2),
             vertex!([0.0, 1.0, 0.0], 3),
             vertex!([0.0, 0.0, 1.0], 4),
         ];
-        let dt: DelaunayTriangulation<FastKernel<f64>, i32, (), 3> =
-            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
+        let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 3> =
+            DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
 
         // Create facet view for facet 0 (excludes vertex 0)

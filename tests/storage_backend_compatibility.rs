@@ -50,7 +50,7 @@
 
 use delaunay::assert_jaccard_gte;
 use delaunay::core::util::extract_edge_set;
-use delaunay::geometry::kernel::FastKernel;
+use delaunay::geometry::kernel::AdaptiveKernel;
 use delaunay::prelude::triangulation::*;
 
 // =============================================================================
@@ -207,8 +207,8 @@ macro_rules! test_vertex_data {
         #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
         fn $name() {
             let vertices: Vec<_> = $vertices;
-            let dt = DelaunayTriangulation::<FastKernel<f64>, Option<i32>, (), $dim>::with_topology_guarantee(
-                &FastKernel::default(),
+            let dt = DelaunayTriangulation::<AdaptiveKernel<f64>, Option<i32>, (), $dim>::with_topology_guarantee(
+                &AdaptiveKernel::default(),
                 &vertices,
                 TopologyGuarantee::PLManifold,
             )
@@ -229,8 +229,8 @@ macro_rules! test_cell_data {
         #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
         fn $name() {
             let vertices: Vec<_> = $vertices;
-            let dt = DelaunayTriangulation::<FastKernel<f64>, (), i32, $dim>::with_topology_guarantee(
-                &FastKernel::default(),
+            let dt = DelaunayTriangulation::<AdaptiveKernel<f64>, (), i32, $dim>::with_topology_guarantee(
+                &AdaptiveKernel::default(),
                 &vertices,
                 TopologyGuarantee::PLManifold,
             )

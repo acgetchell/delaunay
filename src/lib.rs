@@ -949,7 +949,9 @@ pub mod prelude {
         pub use crate::core::traits::data_type::DataType;
         pub use crate::core::{Cell, Vertex};
         pub use crate::geometry::Point;
-        pub use crate::geometry::kernel::{AdaptiveKernel, FastKernel, Kernel, RobustKernel};
+        pub use crate::geometry::kernel::{
+            AdaptiveKernel, ExactPredicates, FastKernel, Kernel, RobustKernel,
+        };
         pub use crate::geometry::traits::coordinate::Coordinate;
 
         // Read-only predicates (useful in benchmarks / lightweight geometry checks)

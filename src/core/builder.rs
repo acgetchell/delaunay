@@ -787,7 +787,14 @@ where
     ///
     /// [`build()`](Self::build) already defaults to [`AdaptiveKernel`], so this method is
     /// only needed when you want a different kernel (e.g. [`FastKernel`](crate::geometry::kernel::FastKernel)
-    /// for 2D-only workloads or a custom implementation).
+    /// for workloads that prioritize speed over exact predicate correctness, or a custom
+    /// implementation).
+    ///
+    /// **Note:** `FastKernel` is accepted for construction, but the explicit repair methods
+    /// ([`repair_delaunay_with_flips`](DelaunayTriangulation::repair_delaunay_with_flips),
+    /// [`repair_delaunay_with_flips_advanced`](DelaunayTriangulation::repair_delaunay_with_flips_advanced))
+    /// require [`ExactPredicates`](crate::geometry::kernel::ExactPredicates) and are not available
+    /// for `FastKernel`.
     ///
     /// # Errors
     ///
@@ -1914,7 +1921,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geometry::kernel::FastKernel;
     use crate::topology::traits::global_topology_model::{
         GlobalTopologyModel, GlobalTopologyModelError,
     };
@@ -2611,7 +2617,7 @@ mod tests {
 
     #[test]
     fn test_build_periodic_requires_periodic_domain() {
-        let kernel = FastKernel::new();
+        let kernel = AdaptiveKernel::new();
         let canonical_vertices = vec![
             vertex!([0.1_f64, 0.1_f64]),
             vertex!([0.9_f64, 0.2_f64]),

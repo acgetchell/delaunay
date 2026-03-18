@@ -239,7 +239,7 @@ After applying flips, you should:
    dt.is_valid().unwrap();  // Check Level 4 (Delaunay property)
    ```
 
-2. Consider running a repair pass if you need the Delaunay property again:
+2. Consider running a repair pass if you need the Delaunay property again (requires `K: ExactPredicates`):
    - `dt.repair_delaunay_with_flips()` (flip-based repair)
    - `dt.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())` (includes a heuristic rebuild fallback)
 

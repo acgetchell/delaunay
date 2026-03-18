@@ -177,6 +177,52 @@ pub trait Kernel<const D: usize>: Clone + Default {
     ) -> Result<i32, CoordinateConversionError>;
 }
 
+/// Marker trait for kernels that provide exact geometric predicates.
+///
+/// Exact-predicate kernels guarantee that [`Kernel::orientation`] and
+/// [`Kernel::in_sphere`] return the mathematically correct sign for all
+/// inputs, including near-degenerate configurations.  This eliminates
+/// the silent misclassification that can occur with floating-point-only
+/// kernels like [`FastKernel`].
+///
+/// # Implementors
+///
+/// - [`AdaptiveKernel`] — exact arithmetic + Simulation of Simplicity
+///   (never returns `0` for distinct points)
+/// - [`RobustKernel`] — exact Bareiss arithmetic (may return `0` for
+///   boundary/degenerate, but never a *wrong* non-zero sign)
+///
+/// [`FastKernel`] does **not** implement this trait because its raw
+/// floating-point arithmetic can produce incorrect signs for
+/// near-degenerate inputs.
+///
+/// # Usage
+///
+/// Functions that require predicate correctness for safety — such as
+/// flip-based Delaunay repair — should bound their kernel parameter
+/// with this trait:
+///
+/// ```rust,ignore
+/// fn repair<K, const D: usize>(kernel: &K)
+/// where
+///     K: Kernel<D> + ExactPredicates,
+/// { /* ... */ }
+/// ```
+///
+/// # Negative example
+///
+/// [`FastKernel`] does not implement `ExactPredicates`, so this fails:
+///
+/// ```compile_fail
+/// use delaunay::geometry::kernel::{ExactPredicates, FastKernel};
+/// fn requires_exact<T: ExactPredicates>() {}
+/// requires_exact::<FastKernel<f64>>(); // ERROR: FastKernel doesn't implement ExactPredicates
+/// ```
+pub trait ExactPredicates {}
+
+impl<T: CoordinateScalar> ExactPredicates for RobustKernel<T> {}
+impl<T: CoordinateScalar> ExactPredicates for AdaptiveKernel<T> {}
+
 /// Fast floating-point kernel.
 ///
 /// Uses standard floating-point arithmetic for maximum performance.
@@ -1076,4 +1122,38 @@ mod tests {
     gen_sos_identical_points_test!(3);
     gen_sos_identical_points_test!(4);
     gen_sos_identical_points_test!(5);
+
+    // =========================================================================
+    // ExactPredicates MARKER TRAIT — COMPILE-TIME ASSERTIONS
+    // =========================================================================
+
+    /// Helper that requires `T: ExactPredicates` — compilation succeeds only
+    /// for types that implement the marker trait.
+    const fn assert_exact_predicates<T: ExactPredicates>() {}
+
+    #[test]
+    fn test_adaptive_kernel_implements_exact_predicates() {
+        assert_exact_predicates::<AdaptiveKernel<f64>>();
+        assert_exact_predicates::<AdaptiveKernel<f32>>();
+    }
+
+    #[test]
+    fn test_robust_kernel_implements_exact_predicates() {
+        assert_exact_predicates::<RobustKernel<f64>>();
+        assert_exact_predicates::<RobustKernel<f32>>();
+    }
+
+    /// Negative compile-time assertion: `FastKernel` must NOT implement
+    /// `ExactPredicates`.  This is verified by the `compile_fail` doctest
+    /// on [`ExactPredicates`] (see trait doc) and by the absence of an impl
+    /// block; this test documents the intent.
+    #[test]
+    fn test_fast_kernel_does_not_implement_exact_predicates() {
+        // If `FastKernel` ever gains an `ExactPredicates` impl, the
+        // compile_fail doctest will break.  This test serves as a
+        // human-readable reminder of the design invariant.
+        fn _requires_exact<T: ExactPredicates>() {}
+        // Uncomment the next line to verify it fails to compile:
+        // _requires_exact::<FastKernel<f64>>();
+    }
 }

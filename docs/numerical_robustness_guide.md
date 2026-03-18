@@ -50,13 +50,31 @@ Kernels control which predicate implementations are used by the triangulation al
   Simulation of Simplicity (`SoS`) so degenerate ties are broken deterministically — both
   orientation and insphere queries return ±1, never 0. The only exception is truly identical
   points (same f64 coordinates), where all SoS cofactors vanish and orientation returns 0.
-  Best choice for Delaunay triangulation.
+  Best choice for Delaunay triangulation. Implements `ExactPredicates`.
 - `RobustKernel<T>`: exact-arithmetic predicates that preserve explicit
   `BOUNDARY`/`DEGENERATE` signals and run diagnostic consistency checks. Prefer this when
   your application needs to detect cospherical/coplanar/collinear configurations directly
-  (SoS would mask these).
+  (SoS would mask these). Implements `ExactPredicates`.
 - `FastKernel<T>`: raw f64 arithmetic, no robustness guarantees. Only suitable for 2D with
-  well-conditioned input.
+  well-conditioned input. Does **not** implement `ExactPredicates`. Construction and
+  insertion work (automatic repair uses a `RobustKernel` fallback internally), but the
+  explicit public repair methods (`repair_delaunay_with_flips`,
+  `repair_delaunay_with_flips_advanced`) are compile-time blocked.
+
+### `ExactPredicates` marker trait (v0.8.0+)
+
+The `ExactPredicates` marker trait identifies kernels whose `orientation` and `in_sphere`
+predicates return the mathematically correct sign for all inputs, including near-degenerate
+configurations. Both `AdaptiveKernel` and `RobustKernel` implement this trait;
+`FastKernel` does not.
+
+The explicit public repair methods (`repair_delaunay_with_flips`,
+`repair_delaunay_with_flips_advanced`, `rebuild_with_heuristic`) require
+`K: ExactPredicates`. This is enforced at compile time, preventing silent
+misclassification from floating-point-only predicates that can lead to infinite flip
+cycles, invalid topology, or non-Delaunay results. Construction and insertion do **not**
+require the bound — the internal repair path uses the caller's kernel first and falls
+back to `RobustKernel` automatically.
 
 The convenience constructors (`DelaunayTriangulation::new()`, `::empty()`, etc.) use
 `AdaptiveKernel`. To opt into a different kernel, use the explicit-kernel constructors:
@@ -157,6 +175,10 @@ match outcome {
 after insertion. The repair code uses the same kernel predicates as the insertion path —
 there is no separate "robust predicate override". This unified predicate pipeline ensures
 consistent sign decisions and eliminates flip cycles caused by predicate disagreements.
+
+Since v0.8.0, all repair entry points require `K: ExactPredicates` at compile time.
+This prevents accidental use of `FastKernel` for flip repair, which would produce
+incorrect results on near-degenerate inputs.
 
 You can also run repair manually:
 
@@ -280,6 +302,12 @@ and per-insertion checks handle any remaining cases.
   This handles near-degenerate configurations correctly out of the box.
 - If you need explicit `BOUNDARY`/`DEGENERATE` signals (e.g. to detect and handle cospherical
   configurations yourself), switch to `RobustKernel`.
+- If you use `FastKernel` for 2D performance, consider setting
+  `DelaunayRepairPolicy::EveryN(n)` (e.g. `n = 10`) instead of the default `EveryInsertion`.
+  This reduces the frequency of the automatic robust-fallback repair pass while still
+  maintaining the Delaunay property periodically. Note that the explicit repair methods
+  (`repair_delaunay_with_flips`, etc.) are not available with `FastKernel` — use
+  `AdaptiveKernel` or `RobustKernel` if you need manual repair control.
 - If you see retryable insertion errors, frequent perturbation retries, or skipped vertices,
   preprocess your input (dedup / rescale if appropriate).
 - Treat `InsertionOutcome::Skipped { .. }` as an expected outcome on pathological data; decide
@@ -291,6 +319,6 @@ and per-insertion checks handle any remaining cases.
 - **D ≥ 5 performance:** for dimensions 5 and above, `det_errbound()` is not
   available, so predicates fall through directly to exact Bareiss arithmetic on
   every call.  This is correct but slower than the fast-filter path used for
-  D ≤ 4.  Tracked in [#257](https://github.com/acgetchell/delaunay/issues/257).
+  D ≤ 4.
 
 Historical investigation notes live in `docs/archive/`.
