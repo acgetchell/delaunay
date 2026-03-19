@@ -27,7 +27,27 @@ use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 
+fn canonicalize_public_flip_orientation<K, U, V, const D: usize>(
+    tri: &mut Triangulation<K, U, V, D>,
+) -> Result<(), FlipError>
+where
+    K: Kernel<D>,
+    K::Scalar: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    tri.normalize_and_promote_positive_orientation()
+        .map_err(|error| FlipError::TdsMutation {
+            message: format!(
+                "orientation canonicalization failed after public flip application: {error}"
+            ),
+        })
+}
+
 /// High-level triangulation editing operations via bistellar flips.
+///
+/// Successful flip operations preserve coherent orientation and re-canonicalize cells to
+/// positive geometric orientation before returning.
 ///
 /// # Example
 ///
@@ -230,26 +250,36 @@ where
         cell_key: CellKey,
         vertex: Vertex<K::Scalar, U, D>,
     ) -> Result<FlipInfo<D>, FlipError> {
-        apply_bistellar_flip_k1(&mut self.tds, cell_key, vertex)
+        let info = apply_bistellar_flip_k1(&mut self.tds, cell_key, vertex)?;
+        canonicalize_public_flip_orientation(self)?;
+        Ok(info)
     }
 
     fn flip_k1_remove(&mut self, vertex_key: VertexKey) -> Result<FlipInfo<D>, FlipError> {
-        apply_bistellar_flip_k1_inverse(&mut self.tds, vertex_key)
+        let info = apply_bistellar_flip_k1_inverse(&mut self.tds, vertex_key)?;
+        canonicalize_public_flip_orientation(self)?;
+        Ok(info)
     }
 
     fn flip_k2(&mut self, facet: FacetHandle) -> Result<FlipInfo<D>, FlipError> {
         let context = build_k2_flip_context(&self.tds, facet)?;
-        apply_bistellar_flip_k2(&mut self.tds, &context)
+        let info = apply_bistellar_flip_k2(&mut self.tds, &context)?;
+        canonicalize_public_flip_orientation(self)?;
+        Ok(info)
     }
 
     fn flip_k3(&mut self, ridge: RidgeHandle) -> Result<FlipInfo<D>, FlipError> {
         let context = build_k3_flip_context(&self.tds, ridge)?;
-        apply_bistellar_flip_k3(&mut self.tds, &context)
+        let info = apply_bistellar_flip_k3(&mut self.tds, &context)?;
+        canonicalize_public_flip_orientation(self)?;
+        Ok(info)
     }
 
     fn flip_k2_inverse_from_edge(&mut self, edge: EdgeKey) -> Result<FlipInfo<D>, FlipError> {
         let context = build_k2_flip_context_from_edge(&self.tds, edge)?;
-        apply_bistellar_flip_dynamic(&mut self.tds, D, &context)
+        let info = apply_bistellar_flip_dynamic(&mut self.tds, D, &context)?;
+        canonicalize_public_flip_orientation(self)?;
+        Ok(info)
     }
 
     fn flip_k3_inverse_from_triangle(
@@ -268,7 +298,9 @@ where
             .checked_sub(1)
             .ok_or(FlipError::UnsupportedDimension { dimension: D })?;
 
-        apply_bistellar_flip_dynamic(&mut self.tds, k_move, &context)
+        let info = apply_bistellar_flip_dynamic(&mut self.tds, k_move, &context)?;
+        canonicalize_public_flip_orientation(self)?;
+        Ok(info)
     }
 }
 

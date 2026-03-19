@@ -6644,6 +6644,32 @@ mod tests {
     }
 
     #[test]
+    fn test_public_flip_k1_roundtrip_recanonicalizes_orientation_2d() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([3.0, 0.0]),
+            vertex!([1.5, 2.5]),
+        ];
+
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).expect("failed to construct 2D triangulation");
+
+        let cell_key = dt.cells().next().expect("missing initial cell").0;
+        let inserted = dt
+            .flip_k1_insert(cell_key, vertex!([1.5, 0.8]))
+            .expect("k=1 insertion should succeed")
+            .inserted_face_vertices[0];
+
+        dt.flip_k1_remove(inserted)
+            .expect("inverse k=1 removal should succeed");
+
+        assert_eq!(dt.number_of_vertices(), 3);
+        assert_eq!(dt.number_of_cells(), 1);
+        assert!(dt.validate().is_ok());
+    }
+
+    #[test]
     fn test_repair_delaunay_with_flips_allows_pl_manifold() {
         init_tracing();
         let vertices: Vec<Vertex<f64, (), 2>> = vec![

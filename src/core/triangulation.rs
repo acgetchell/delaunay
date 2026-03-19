@@ -2269,7 +2269,7 @@ where
     /// 2. Canonicalize the global sign — for a connected orientable manifold all cells
     ///    share the same sign after normalization, so a single global flip resolves it.
     /// 3. Fall back to bounded per-cell promotion passes for FP-precision edge cases.
-    pub(in crate::core) fn normalize_and_promote_positive_orientation(
+    pub(crate) fn normalize_and_promote_positive_orientation(
         &mut self,
     ) -> Result<(), InsertionError> {
         // Phase 1: make all adjacencies coherent
