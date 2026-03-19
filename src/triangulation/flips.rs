@@ -23,31 +23,54 @@ use crate::core::algorithms::flips::{
 use crate::core::delaunay_triangulation::DelaunayTriangulation;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
+use crate::core::triangulation_data_structure::Tds;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 
-fn canonicalize_public_flip_orientation<K, U, V, const D: usize>(
+fn apply_public_flip_transactionally<K, U, V, F, const D: usize>(
     tri: &mut Triangulation<K, U, V, D>,
-) -> Result<(), FlipError>
+    apply: F,
+) -> Result<FlipInfo<D>, FlipError>
 where
     K: Kernel<D>,
     K::Scalar: CoordinateScalar,
     U: DataType,
     V: DataType,
+    F: FnOnce(&mut Tds<K::Scalar, U, V, D>) -> Result<FlipInfo<D>, FlipError>,
 {
-    tri.normalize_and_promote_positive_orientation()
-        .map_err(|error| FlipError::TdsMutation {
+    // Public editing APIs should be all-or-nothing: if the flip or the follow-on
+    // orientation canonicalization fails, restore the original TDS snapshot.
+    let tds_snapshot = tri.tds.clone();
+
+    let info = match apply(&mut tri.tds) {
+        Ok(info) => info,
+        Err(error) => {
+            tri.tds = tds_snapshot;
+            return Err(error);
+        }
+    };
+
+    if let Err(error) = tri.normalize_and_promote_positive_orientation() {
+        tri.tds = tds_snapshot;
+        return Err(FlipError::TdsMutation {
             message: format!(
-                "orientation canonicalization failed after public flip application: {error}"
+                "orientation canonicalization failed after public flip application; \
+                 rolled back flip: {error}"
             ),
-        })
+        });
+    }
+
+    Ok(info)
 }
 
 /// High-level triangulation editing operations via bistellar flips.
 ///
-/// Successful flip operations preserve coherent orientation and re-canonicalize cells to
-/// positive geometric orientation before returning.
+/// Successful flip operations preserve coherent orientation and call
+/// `normalize_and_promote_positive_orientation()` before returning.
+/// That pass attempts to re-canonicalize cells to positive geometric orientation,
+/// but near-degenerate cases may still leave residual negative cells while
+/// returning `Ok(())`.
 ///
 /// # Example
 ///
@@ -250,36 +273,32 @@ where
         cell_key: CellKey,
         vertex: Vertex<K::Scalar, U, D>,
     ) -> Result<FlipInfo<D>, FlipError> {
-        let info = apply_bistellar_flip_k1(&mut self.tds, cell_key, vertex)?;
-        canonicalize_public_flip_orientation(self)?;
-        Ok(info)
+        apply_public_flip_transactionally(self, |tds| {
+            apply_bistellar_flip_k1(tds, cell_key, vertex)
+        })
     }
 
     fn flip_k1_remove(&mut self, vertex_key: VertexKey) -> Result<FlipInfo<D>, FlipError> {
-        let info = apply_bistellar_flip_k1_inverse(&mut self.tds, vertex_key)?;
-        canonicalize_public_flip_orientation(self)?;
-        Ok(info)
+        apply_public_flip_transactionally(self, |tds| {
+            apply_bistellar_flip_k1_inverse(tds, vertex_key)
+        })
     }
 
     fn flip_k2(&mut self, facet: FacetHandle) -> Result<FlipInfo<D>, FlipError> {
         let context = build_k2_flip_context(&self.tds, facet)?;
-        let info = apply_bistellar_flip_k2(&mut self.tds, &context)?;
-        canonicalize_public_flip_orientation(self)?;
-        Ok(info)
+        apply_public_flip_transactionally(self, |tds| apply_bistellar_flip_k2(tds, &context))
     }
 
     fn flip_k3(&mut self, ridge: RidgeHandle) -> Result<FlipInfo<D>, FlipError> {
         let context = build_k3_flip_context(&self.tds, ridge)?;
-        let info = apply_bistellar_flip_k3(&mut self.tds, &context)?;
-        canonicalize_public_flip_orientation(self)?;
-        Ok(info)
+        apply_public_flip_transactionally(self, |tds| apply_bistellar_flip_k3(tds, &context))
     }
 
     fn flip_k2_inverse_from_edge(&mut self, edge: EdgeKey) -> Result<FlipInfo<D>, FlipError> {
         let context = build_k2_flip_context_from_edge(&self.tds, edge)?;
-        let info = apply_bistellar_flip_dynamic(&mut self.tds, D, &context)?;
-        canonicalize_public_flip_orientation(self)?;
-        Ok(info)
+        apply_public_flip_transactionally(self, |tds| {
+            apply_bistellar_flip_dynamic(tds, D, &context)
+        })
     }
 
     fn flip_k3_inverse_from_triangle(
@@ -298,9 +317,9 @@ where
             .checked_sub(1)
             .ok_or(FlipError::UnsupportedDimension { dimension: D })?;
 
-        let info = apply_bistellar_flip_dynamic(&mut self.tds, k_move, &context)?;
-        canonicalize_public_flip_orientation(self)?;
-        Ok(info)
+        apply_public_flip_transactionally(self, |tds| {
+            apply_bistellar_flip_dynamic(tds, k_move, &context)
+        })
     }
 }
 

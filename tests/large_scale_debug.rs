@@ -1219,6 +1219,20 @@ fn regression_issue_230_4d_100_orientation() {
                 dt.as_triangulation().validate().is_ok(),
                 "Topology validation (L1-L3) must pass (#230 regression, seed=0x{seed:X})"
             );
+            assert_eq!(
+                stats.total_skipped(),
+                0,
+                "#230 regression must not skip vertices (inserted={} skipped={}, seed=0x{seed:X})",
+                stats.inserted,
+                stats.total_skipped()
+            );
+            assert_eq!(
+                stats.inserted,
+                vertices.len(),
+                "#230 regression must insert all vertices (inserted={} expected={}, seed=0x{seed:X})",
+                stats.inserted,
+                vertices.len()
+            );
             println!(
                 "#230 regression: inserted={} skipped={} (seed=0x{seed:X})",
                 stats.inserted,

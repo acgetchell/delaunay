@@ -2624,33 +2624,37 @@ where
                 global_topology: GlobalTopology::DEFAULT,
                 validation_policy: ValidationPolicy::default(),
                 topology_guarantee,
+                defer_geometric_orientation_validation_until_completion: false,
             },
             insertion_state: DelaunayInsertionState::new(),
             spatial_index: None,
         };
 
         // During batch construction, use suspicion-driven validation instead of
-        // per-insertion validation.  Running a full O(cells) topology check after
-        // every insertion is prohibitively expensive at scale (O(n²) total).  The
-        // OnSuspicion policy only validates when the insertion logic itself flags a
-        // potential issue (e.g. after rollback/retry).  A comprehensive post-
-        // construction validation in finalize_bulk_construction catches any issues
-        // that slip through.
+        // per-insertion full validation. Running a complete O(cells) topology pass after
+        // every insertion is prohibitively expensive at scale (O(n²) total).
         //
-        // Exception: PLManifoldStrict requires per-insertion vertex-link validation,
-        // so we must use ValidationPolicy::Always to satisfy that guarantee.
+        // Required ridge/vertex-link checks are still enforced on every insertion via
+        // Triangulation::validate_after_insertion even under OnSuspicion. For D>=4 we also
+        // defer geometric-orientation rejection until completion, because the final global
+        // normalization pass can repair transient negative signs that are not topological
+        // failures (#230).
         let original_validation_policy = dt.tri.validation_policy;
-        dt.tri.validation_policy = if dt
+        let original_defer_orientation_validation = dt
             .tri
-            .topology_guarantee
-            .requires_vertex_links_during_insertion()
+            .defer_geometric_orientation_validation_until_completion;
+        dt.tri.validation_policy = if dt.tri.topology_guarantee.requires_ridge_links()
+            || dt
+                .tri
+                .topology_guarantee
+                .requires_vertex_links_during_insertion()
         {
-            ValidationPolicy::Always
-        } else if dt.tri.topology_guarantee.requires_ridge_links() {
             ValidationPolicy::OnSuspicion
         } else {
             ValidationPolicy::DebugOnly
         };
+        dt.tri
+            .defer_geometric_orientation_validation_until_completion = D >= 4;
 
         // Disable maybe_repair_after_insertion during bulk construction: its full pipeline
         // (multi-pass repair + topology validation + heuristic rebuild) is too expensive
@@ -2689,6 +2693,7 @@ where
 
         if let Err(error) = dt.finalize_bulk_construction(
             original_validation_policy,
+            original_defer_orientation_validation,
             original_repair_policy,
             run_final_repair,
             &soft_fail_seeds,
@@ -2734,29 +2739,32 @@ where
                 global_topology: GlobalTopology::DEFAULT,
                 validation_policy: ValidationPolicy::default(),
                 topology_guarantee,
+                defer_geometric_orientation_validation_until_completion: false,
             },
             insertion_state: DelaunayInsertionState::new(),
             spatial_index: None,
         };
 
         // During batch construction, use suspicion-driven validation instead of
-        // per-insertion validation (see _with_construction_statistics variant for
-        // rationale: O(n²) avoidance + post-construction catch-all).
-        //
-        // Exception: PLManifoldStrict requires per-insertion vertex-link validation,
-        // so we must use ValidationPolicy::Always to satisfy that guarantee.
+        // per-insertion full validation (see the variant above for the rationale:
+        // O(n²) avoidance, required link checks still enforced, and D>=4 orientation
+        // rejection deferred until the final global normalize pass).
         let original_validation_policy = dt.tri.validation_policy;
-        dt.tri.validation_policy = if dt
+        let original_defer_orientation_validation = dt
             .tri
-            .topology_guarantee
-            .requires_vertex_links_during_insertion()
+            .defer_geometric_orientation_validation_until_completion;
+        dt.tri.validation_policy = if dt.tri.topology_guarantee.requires_ridge_links()
+            || dt
+                .tri
+                .topology_guarantee
+                .requires_vertex_links_during_insertion()
         {
-            ValidationPolicy::Always
-        } else if dt.tri.topology_guarantee.requires_ridge_links() {
             ValidationPolicy::OnSuspicion
         } else {
             ValidationPolicy::DebugOnly
         };
+        dt.tri
+            .defer_geometric_orientation_validation_until_completion = D >= 4;
 
         // See the _with_construction_statistics variant for the repair policy rationale.
         let original_repair_policy = dt.insertion_state.delaunay_repair_policy;
@@ -2772,6 +2780,7 @@ where
         )?;
         dt.finalize_bulk_construction(
             original_validation_policy,
+            original_defer_orientation_validation,
             original_repair_policy,
             run_final_repair,
             &soft_fail_seeds,
@@ -2945,6 +2954,9 @@ where
                                     } else {
                                         (seed_cells.len() * (D + 1) * 4).max(16)
                                     };
+                                    let repair_snapshot = (D >= 4
+                                        && topology.requires_ridge_links())
+                                    .then(|| self.tri.tds.clone());
                                     let repair_result = {
                                         let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
                                         repair_delaunay_local_single_pass(
@@ -2954,25 +2966,56 @@ where
                                             max_flips,
                                         )
                                     };
-                                    if let Err(repair_err) = repair_result {
-                                        if D < 4 {
-                                            Self::try_d_lt4_global_repair_fallback(
-                                                &mut self.tri.tds,
-                                                &self.tri.kernel,
-                                                topology,
-                                                self.insertion_state.use_global_repair_fallback,
-                                                index,
-                                                &repair_err,
-                                            )?;
-                                            continue;
+                                    match repair_result {
+                                        Ok(repair_stats) => {
+                                            // insert_with_statistics_seeded_indexed already
+                                            // canonicalizes orientation after the insertion
+                                            // itself. Re-run the global orientation pass only
+                                            // if local repair actually flipped cells.
+                                            if D >= 4 && repair_stats.flips_performed > 0 {
+                                                self.tri
+                                                    .normalize_and_promote_positive_orientation()
+                                                    .map_err(
+                                                        Self::map_orientation_canonicalization_error,
+                                                    )?;
+                                                if topology.requires_ridge_links()
+                                                    && self.tri.validate().is_err()
+                                                {
+                                                    if let Some(snapshot) = repair_snapshot {
+                                                        self.tri.tds = snapshot;
+                                                    }
+                                                    tracing::debug!(
+                                                        idx = index,
+                                                        "bulk D≥4: rolled back per-insertion repair after topology validation failure"
+                                                    );
+                                                    soft_fail_seeds
+                                                        .extend(seed_cells.iter().copied());
+                                                }
+                                            }
                                         }
-                                        tracing::debug!(
-                                            error = %repair_err,
-                                            idx = index,
-                                            "bulk D≥4: per-insertion repair non-convergent; \
-                                             continuing (both_positive_artifact handled)"
-                                        );
-                                        soft_fail_seeds.extend(seed_cells.iter().copied());
+                                        Err(repair_err) => {
+                                            if D < 4 {
+                                                Self::try_d_lt4_global_repair_fallback(
+                                                    &mut self.tri.tds,
+                                                    &self.tri.kernel,
+                                                    topology,
+                                                    self.insertion_state.use_global_repair_fallback,
+                                                    index,
+                                                    &repair_err,
+                                                )?;
+                                                continue;
+                                            }
+                                            if let Some(snapshot) = repair_snapshot {
+                                                self.tri.tds = snapshot;
+                                            }
+                                            tracing::debug!(
+                                                error = %repair_err,
+                                                idx = index,
+                                                "bulk D≥4: per-insertion repair non-convergent; \
+                                                 continuing (both_positive_artifact handled)"
+                                            );
+                                            soft_fail_seeds.extend(seed_cells.iter().copied());
+                                        }
                                     }
                                 }
                             }
@@ -3087,6 +3130,9 @@ where
                                     } else {
                                         (seed_cells.len() * (D + 1) * 4).max(16)
                                     };
+                                    let repair_snapshot = (D >= 4
+                                        && topology.requires_ridge_links())
+                                    .then(|| self.tri.tds.clone());
                                     let repair_result = {
                                         let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
                                         repair_delaunay_local_single_pass(
@@ -3096,25 +3142,56 @@ where
                                             max_flips,
                                         )
                                     };
-                                    if let Err(repair_err) = repair_result {
-                                        if D < 4 {
-                                            Self::try_d_lt4_global_repair_fallback(
-                                                &mut self.tri.tds,
-                                                &self.tri.kernel,
-                                                topology,
-                                                self.insertion_state.use_global_repair_fallback,
-                                                index,
-                                                &repair_err,
-                                            )?;
-                                            continue;
+                                    match repair_result {
+                                        Ok(repair_stats) => {
+                                            // insert_with_statistics_seeded_indexed already
+                                            // canonicalizes orientation after the insertion
+                                            // itself. Re-run the global orientation pass only
+                                            // if local repair actually flipped cells.
+                                            if D >= 4 && repair_stats.flips_performed > 0 {
+                                                self.tri
+                                                    .normalize_and_promote_positive_orientation()
+                                                    .map_err(
+                                                        Self::map_orientation_canonicalization_error,
+                                                    )?;
+                                                if topology.requires_ridge_links()
+                                                    && self.tri.validate().is_err()
+                                                {
+                                                    if let Some(snapshot) = repair_snapshot {
+                                                        self.tri.tds = snapshot;
+                                                    }
+                                                    tracing::debug!(
+                                                        idx = index,
+                                                        "bulk D≥4: rolled back per-insertion repair after topology validation failure"
+                                                    );
+                                                    soft_fail_seeds
+                                                        .extend(seed_cells.iter().copied());
+                                                }
+                                            }
                                         }
-                                        tracing::debug!(
-                                            error = %repair_err,
-                                            idx = index,
-                                            "bulk D≥4: per-insertion repair non-convergent; \
-                                             continuing (both_positive_artifact handled)"
-                                        );
-                                        soft_fail_seeds.extend(seed_cells.iter().copied());
+                                        Err(repair_err) => {
+                                            if D < 4 {
+                                                Self::try_d_lt4_global_repair_fallback(
+                                                    &mut self.tri.tds,
+                                                    &self.tri.kernel,
+                                                    topology,
+                                                    self.insertion_state.use_global_repair_fallback,
+                                                    index,
+                                                    &repair_err,
+                                                )?;
+                                                continue;
+                                            }
+                                            if let Some(snapshot) = repair_snapshot {
+                                                self.tri.tds = snapshot;
+                                            }
+                                            tracing::debug!(
+                                                error = %repair_err,
+                                                idx = index,
+                                                "bulk D≥4: per-insertion repair non-convergent; \
+                                                 continuing (both_positive_artifact handled)"
+                                            );
+                                            soft_fail_seeds.extend(seed_cells.iter().copied());
+                                        }
                                     }
                                 }
                             }
@@ -3179,12 +3256,16 @@ where
     fn finalize_bulk_construction(
         &mut self,
         original_validation_policy: ValidationPolicy,
+        original_defer_orientation_validation: bool,
         original_repair_policy: DelaunayRepairPolicy,
         run_final_repair: bool,
         soft_fail_seeds: &[CellKey],
     ) -> Result<(), DelaunayTriangulationConstructionError> {
         // Restore policies after batch construction.
         self.tri.validation_policy = original_validation_policy;
+        self.tri
+            .defer_geometric_orientation_validation_until_completion =
+            original_defer_orientation_validation;
         self.insertion_state.delaunay_repair_policy = original_repair_policy;
 
         let topology = self.tri.topology_guarantee();
@@ -3200,9 +3281,10 @@ where
             //   falls back to global repair_delaunay_with_flips_k2_k3 on
             //   local non-convergence, so soft_fail_seeds is typically empty
             //   for D<4.  The seeded path below is kept for completeness.
-            if D >= 4 {
+            if D >= 4 && !topology.requires_ridge_links() {
                 let cell_count = self.tri.tds.number_of_cells();
                 if cell_count > 0 {
+                    let tds_snapshot = self.tri.tds.clone();
                     let all_cells: Vec<CellKey> = self.tri.tds.cell_keys().collect();
                     tracing::debug!(
                         cell_count,
@@ -3213,13 +3295,33 @@ where
                         let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
                         repair_delaunay_local_single_pass(tds, kernel, &all_cells, 512).map(|_| ())
                     };
+                    let mut kept_repair_state = repair_result.is_ok();
+                    if kept_repair_state {
+                        kept_repair_state = self
+                            .tri
+                            .normalize_and_promote_positive_orientation()
+                            .is_ok();
+                    }
+                    if kept_repair_state && topology.requires_ridge_links() {
+                        kept_repair_state = self.tri.validate().is_ok();
+                    }
+                    if !kept_repair_state {
+                        self.tri.tds = tds_snapshot;
+                    }
                     tracing::debug!(
                         elapsed = ?repair_started.elapsed(),
                         success = repair_result.is_ok(),
+                        kept_repair_state,
                         "post-construction: D≥4 finalize repair completed (soft-fail)"
                     );
-                    // Always soft-fail: is_delaunay_property_only() validates correctness.
+                    // Always soft-fail: if the global repair fails or breaks the requested
+                    // topology guarantee, keep the pre-repair triangulation and let the
+                    // caller's final validation / Delaunay check judge the result.
                 }
+            } else if D >= 4 {
+                tracing::debug!(
+                    "post-construction: skipping global D≥4 finalize repair under manifold topology guarantee"
+                );
             } else if !soft_fail_seeds.is_empty() {
                 // D<4 seeded repair (unused in practice; kept for completeness).
                 tracing::debug!(
@@ -3834,11 +3936,12 @@ where
     fn repair_delaunay_with_flips_robust(
         &mut self,
         seed_cells: Option<&[CellKey]>,
+        max_flips: Option<usize>,
     ) -> Result<DelaunayRepairStats, DelaunayRepairError> {
         let topology = self.tri.topology_guarantee();
         let kernel = RobustKernel::<K::Scalar>::new();
         let (tds, kernel) = (&mut self.tri.tds, &kernel);
-        repair_delaunay_with_flips_k2_k3(tds, kernel, seed_cells, topology, None)
+        repair_delaunay_with_flips_k2_k3(tds, kernel, seed_cells, topology, max_flips)
     }
 
     fn should_run_delaunay_repair_for(
@@ -3921,7 +4024,8 @@ where
         if Self::force_heuristic_rebuild_enabled() {
             let base_seed = self.heuristic_rebuild_base_seed();
             let seeds = config.resolve_seeds(base_seed);
-            let (candidate, stats, used_seeds) = self.rebuild_with_heuristic(seeds)?;
+            let (candidate, stats, used_seeds) =
+                self.rebuild_with_heuristic(seeds, config.max_flips)?;
             *self = candidate;
             return Ok(DelaunayRepairOutcome {
                 stats,
@@ -3950,7 +4054,7 @@ where
                 primary_err @ (DelaunayRepairError::NonConvergent { .. }
                 | DelaunayRepairError::PostconditionFailed { .. }),
             ) => {
-                match self.repair_delaunay_with_flips_robust(None) {
+                match self.repair_delaunay_with_flips_robust(None, config.max_flips) {
                     Ok(stats) => {
                         // Re-canonicalize geometric orientation (#258): robust flip
                         // repair may leave the global sign negative.
@@ -3964,7 +4068,7 @@ where
                         let base_seed = self.heuristic_rebuild_base_seed();
                         let seeds = config.resolve_seeds(base_seed);
                         let (candidate, stats, used_seeds) = self
-                            .rebuild_with_heuristic(seeds)
+                            .rebuild_with_heuristic(seeds, config.max_flips)
                             .map_err(|heuristic_err| {
                                 let heuristic_message = match heuristic_err {
                                     DelaunayRepairError::HeuristicRebuildFailed { message } => {
@@ -3994,6 +4098,7 @@ where
     fn rebuild_with_heuristic(
         &self,
         base_seeds: DelaunayRepairHeuristicSeeds,
+        max_flips: Option<usize>,
     ) -> Result<(Self, DelaunayRepairStats, DelaunayRepairHeuristicSeeds), DelaunayRepairError>
     where
         K: ExactPredicates,
@@ -4129,7 +4234,8 @@ where
 
                 let topology = candidate.tri.topology_guarantee();
                 let (tds, kernel) = (&mut candidate.tri.tds, &candidate.tri.kernel);
-                let stats = repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology, None)?;
+                let stats =
+                    repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology, max_flips)?;
 
                 // Re-canonicalize geometric orientation (#258): the final flip
                 // repair may leave the global sign negative.
@@ -4915,7 +5021,7 @@ where
                 // If the robust pass also fails, return an error. Callers that need
                 // the full heuristic rebuild (shuffled re-insertion) can invoke
                 // `repair_delaunay_with_flips_advanced()` explicitly.
-                self.repair_delaunay_with_flips_robust(seed_ref)
+                self.repair_delaunay_with_flips_robust(seed_ref, None)
                     .map_err(|robust_err| InsertionError::DelaunayRepairFailed {
                         source: Box::new(robust_err),
                         context: format!("local repair failed ({e}); robust fallback also failed"),
@@ -5278,6 +5384,7 @@ where
                 global_topology: GlobalTopology::DEFAULT,
                 validation_policy: ValidationPolicy::OnSuspicion,
                 topology_guarantee: TopologyGuarantee::DEFAULT,
+                defer_geometric_orientation_validation_until_completion: false,
             },
             insertion_state: DelaunayInsertionState::new(),
             spatial_index: None,
@@ -5301,6 +5408,7 @@ where
                 global_topology: GlobalTopology::DEFAULT,
                 validation_policy: ValidationPolicy::OnSuspicion,
                 topology_guarantee,
+                defer_geometric_orientation_validation_until_completion: false,
             },
             insertion_state: DelaunayInsertionState::new(),
             spatial_index: None,
@@ -5660,10 +5768,15 @@ mod tests {
     use super::*;
     use crate::core::algorithms::flips::{
         DelaunayRepairDiagnostics, DelaunayRepairError, FlipError, RepairQueueOrder,
+        verify_delaunay_via_flip_predicates,
     };
+    use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
+    use crate::core::cell::Cell;
+    use crate::core::triangulation_data_structure::Tds;
     use crate::core::triangulation_data_structure::{EntityKind, GeometricError};
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel, RobustKernel};
     use crate::geometry::traits::coordinate::Coordinate;
+    use crate::geometry::util::generate_random_points_in_ball_seeded;
     use crate::topology::characteristics::euler::TopologyClassification;
     use crate::triangulation::flips::BistellarFlips;
     use crate::vertex;
@@ -5700,6 +5813,50 @@ mod tests {
                 .with_test_writer()
                 .try_init();
         });
+    }
+
+    fn build_non_delaunay_quad_2d() -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> {
+        let kernel = AdaptiveKernel::<f64>::new();
+        let d_candidates = [[0.0, 1.2], [0.1, 1.1], [0.2, 0.9], [-0.1, 1.3]];
+
+        for d_coords in d_candidates {
+            let mut candidate: Tds<f64, (), (), 2> = Tds::empty();
+            let a = candidate
+                .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+                .expect("vertex a insertion should succeed");
+            let b = candidate
+                .insert_vertex_with_mapping(vertex!([1.0, 1.0]))
+                .expect("vertex b insertion should succeed");
+            let c = candidate
+                .insert_vertex_with_mapping(vertex!([1.0, 0.0]))
+                .expect("vertex c insertion should succeed");
+            let d = candidate
+                .insert_vertex_with_mapping(vertex!(d_coords))
+                .expect("vertex d insertion should succeed");
+
+            candidate
+                .insert_cell_with_mapping(
+                    Cell::new(vec![a, b, c], None).expect("first 2D cell should be valid"),
+                )
+                .expect("first 2D cell insertion should succeed");
+            candidate
+                .insert_cell_with_mapping(
+                    Cell::new(vec![a, b, d], None).expect("second 2D cell should be valid"),
+                )
+                .expect("second 2D cell insertion should succeed");
+            repair_neighbor_pointers(&mut candidate)
+                .expect("neighbor repair should succeed for test setup");
+
+            if verify_delaunay_via_flip_predicates(&candidate, &kernel).is_err() {
+                return DelaunayTriangulation::from_tds_with_topology_guarantee(
+                    candidate,
+                    AdaptiveKernel::new(),
+                    TopologyGuarantee::PLManifold,
+                );
+            }
+        }
+
+        panic!("expected a non-Delaunay configuration from candidates");
     }
 
     struct ForceHeuristicRebuildGuard {
@@ -5863,6 +6020,34 @@ mod tests {
         assert_eq!(sample.attempts, 1);
         assert!(sample.error.contains("Duplicate coordinates"));
     }
+
+    #[test]
+    fn test_issue_230_prefix_4d_construction_does_not_skip_first_failure_point() {
+        const ISSUE_230_CASE_SEED: u64 = 0x9B77_86C9_99C5_6A16;
+
+        init_tracing();
+        let points =
+            generate_random_points_in_ball_seeded::<f64, 4>(100, 100.0, ISSUE_230_CASE_SEED)
+                .expect("point generation should succeed");
+        let vertices: Vec<Vertex<f64, (), 4>> =
+            points.into_iter().take(13).map(|p| vertex!(p)).collect();
+        let kernel = RobustKernel::<f64>::new();
+
+        let (dt, stats) = DelaunayTriangulation::<_, (), (), 4>::
+            with_topology_guarantee_and_options_with_construction_statistics(
+                &kernel,
+                &vertices,
+                TopologyGuarantee::PLManifoldStrict,
+                ConstructionOptions::default(),
+            )
+            .expect("4D prefix should construct without #230-style skips");
+
+        assert_eq!(stats.inserted, vertices.len());
+        assert_eq!(stats.total_skipped(), 0);
+        assert_eq!(dt.number_of_vertices(), vertices.len());
+        assert!(dt.as_triangulation().validate().is_ok());
+    }
+
     #[test]
     fn test_construction_statistics_record_insertion_tracks_inserted_common_fields() {
         init_tracing();
@@ -6761,32 +6946,49 @@ mod tests {
     }
 
     /// When `max_flips: Some(n)` is set, `repair_delaunay_with_flips_advanced`
-    /// uses the capped repair path (passing `max_flips` to
-    /// `repair_delaunay_with_flips_k2_k3`) instead of the uncapped
-    /// `repair_delaunay_with_flips`.  On a valid triangulation the capped
-    /// path succeeds without needing the heuristic fallback.
+    /// uses the capped repair path instead of the uncapped
+    /// `repair_delaunay_with_flips`. Build a 2D non-Delaunay quad that needs
+    /// a single diagonal flip, then verify that a budget of 1 succeeds without
+    /// using the heuristic fallback.
     #[test]
     fn test_repair_delaunay_with_flips_advanced_max_flips_cap_succeeds() {
         init_tracing();
-        let vertices: Vec<Vertex<f64, (), 2>> = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-            vertex!([1.0, 1.0]),
-        ];
-        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+        let mut dt = build_non_delaunay_quad_2d();
+        let kernel = AdaptiveKernel::<f64>::new();
+        assert!(
+            verify_delaunay_via_flip_predicates(dt.tds(), &kernel).is_err(),
+            "test setup must start non-Delaunay"
+        );
 
         let config = DelaunayRepairHeuristicConfig {
-            max_flips: Some(1000),
+            max_flips: Some(1),
             ..Default::default()
         };
         let outcome = dt.repair_delaunay_with_flips_advanced(config).unwrap();
         assert!(
             !outcome.used_heuristic(),
-            "Capped repair on a valid triangulation should succeed without heuristic fallback"
+            "single-flip repair should succeed within the cap without heuristic fallback"
+        );
+        assert!(
+            outcome.stats.flips_performed > 0,
+            "capped repair should perform at least one flip on the non-Delaunay setup"
         );
         assert!(dt.validate().is_ok());
+    }
+
+    #[test]
+    fn test_repair_delaunay_with_flips_robust_honors_max_flips_cap() {
+        init_tracing();
+        let mut dt = build_non_delaunay_quad_2d();
+
+        let result = dt.repair_delaunay_with_flips_robust(None, Some(0));
+        assert!(
+            matches!(
+                result,
+                Err(DelaunayRepairError::NonConvergent { max_flips: 0, .. })
+            ),
+            "robust repair should honor a zero-flip cap, got: {result:?}"
+        );
     }
 
     /// `repair_delaunay_with_flips_advanced` passes through non-retryable errors

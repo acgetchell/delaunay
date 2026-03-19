@@ -727,6 +727,13 @@ where
     pub(crate) global_topology: GlobalTopology<D>,
     pub(crate) validation_policy: ValidationPolicy,
     pub(crate) topology_guarantee: TopologyGuarantee,
+    /// Internal batch-construction flag for D>=4.
+    ///
+    /// Bulk insertion can transiently leave cells with negative geometric orientation even when
+    /// the final global orientation normalization at construction completion can repair them.
+    /// When enabled, insertion-time validation still checks structural/manifold invariants but
+    /// defers geometric-orientation rejection until completion.
+    pub(crate) defer_geometric_orientation_validation_until_completion: bool,
 }
 
 // =============================================================================
@@ -830,6 +837,7 @@ where
             global_topology: GlobalTopology::DEFAULT,
             validation_policy: ValidationPolicy::default(),
             topology_guarantee: TopologyGuarantee::DEFAULT,
+            defer_geometric_orientation_validation_until_completion: false,
         }
     }
 
@@ -1034,6 +1042,7 @@ where
             global_topology: GlobalTopology::DEFAULT,
             validation_policy: ValidationPolicy::default(),
             topology_guarantee: TopologyGuarantee::DEFAULT,
+            defer_geometric_orientation_validation_until_completion: false,
         }
     }
 
@@ -2279,11 +2288,22 @@ where
         self.canonicalize_global_orientation_sign()?;
 
         // Phase 2 (fallback): bounded promote + normalize passes for stragglers.
-        for _round in 0..3 {
+        //
+        // In D>=4 a local sign mismatch can take several propagate/normalize iterations to
+        // settle after facet rewiring and flip-based repair (#230). Re-canonicalize the
+        // component sign after each BFS pass rather than only before/after the loop.
+        let max_promotion_rounds = if D >= 4 { 16 } else { 3 };
+        for _round in 0..max_promotion_rounds {
             if !self.promote_cells_to_positive_orientation()? {
                 break;
             }
+            repair_neighbor_pointers(&mut self.tds).map_err(|e| InsertionError::CavityFilling {
+                message: format!(
+                    "Failed to rebuild neighbors during orientation canonicalization: {e}"
+                ),
+            })?;
             self.tds.normalize_coherent_orientation()?;
+            self.canonicalize_global_orientation_sign()?;
         }
 
         // Soft post-condition: after normalize + canonicalize + bounded promote
@@ -2318,6 +2338,65 @@ where
             );
         }
         self.canonicalize_global_orientation_sign()?;
+        Ok(())
+    }
+
+    fn validate_level3_topology(
+        &self,
+        check_geometric_orientation: bool,
+    ) -> Result<(), InvariantError> {
+        // 1. Connectedness
+        //
+        // Checked first because it is cheaper than building the facet-to-cells map
+        // (which requires O(N·D) hash-map insertions plus allocations) and avoids
+        // all subsequent work when the triangulation is disconnected.
+        self.validate_global_connectedness()?;
+
+        // 2. Manifold facet multiplicity (codimension-1 pseudomanifold condition)
+        //
+        // Build the facet map once and reuse it for manifold validation and Euler counting.
+        let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
+        validate_facet_degree(&facet_to_cells)?;
+
+        // 2b. Boundary manifoldness in codimension 2: the boundary must be "closed"
+        // (i.e., its ridges must have degree 2 within boundary facets).
+        validate_closed_boundary(&self.tds, &facet_to_cells)?;
+
+        // 2c. Ridge-link validation for PLManifold/PLManifoldStrict (fast, catches many PL issues).
+        if self.topology_guarantee.requires_ridge_links() {
+            validate_ridge_links(&self.tds)?;
+        }
+        // 2d. PL-manifold vertex-link condition during insertion (strict mode).
+        if self
+            .topology_guarantee
+            .requires_vertex_links_during_insertion()
+        {
+            validate_vertex_links(&self.tds, &facet_to_cells)?;
+        }
+
+        // 3. Vertex incidence (manifold invariant): every vertex must be incident to at least one cell.
+        self.validate_no_isolated_vertices()?;
+
+        // 4. Euler characteristic using the topology module
+        let topology_result =
+            validate_triangulation_euler_with_facet_to_cells_map(&self.tds, &facet_to_cells);
+
+        if let Some(expected) = topology_result.expected
+            && topology_result.chi != expected
+        {
+            return Err(TriangulationValidationError::EulerCharacteristicMismatch {
+                computed: topology_result.chi,
+                expected,
+                classification: topology_result.classification,
+            }
+            .into());
+        }
+        if check_geometric_orientation {
+            // Check geometric orientation after manifold/link checks so topology-specific
+            // diagnostics surface first when multiple invariants are violated.
+            self.validate_geometric_cell_orientation()?;
+        }
+
         Ok(())
     }
 
@@ -2368,57 +2447,7 @@ where
     /// assert!(dt.as_triangulation().is_valid().is_ok());
     /// ```
     pub fn is_valid(&self) -> Result<(), InvariantError> {
-        // 1. Connectedness
-        //
-        // Checked first because it is cheaper than building the facet-to-cells map
-        // (which requires O(N·D) hash-map insertions plus allocations) and avoids
-        // all subsequent work when the triangulation is disconnected.
-        self.validate_global_connectedness()?;
-
-        // 2. Manifold facet multiplicity (codimension-1 pseudomanifold condition)
-        //
-        // Build the facet map once and reuse it for manifold validation and Euler counting.
-        let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
-        validate_facet_degree(&facet_to_cells)?;
-
-        // 2b. Boundary manifoldness in codimension 2: the boundary must be "closed"
-        // (i.e., its ridges must have degree 2 within boundary facets).
-        validate_closed_boundary(&self.tds, &facet_to_cells)?;
-
-        // 2c. Ridge-link validation for PLManifold/PLManifoldStrict (fast, catches many PL issues).
-        if self.topology_guarantee.requires_ridge_links() {
-            validate_ridge_links(&self.tds)?;
-        }
-        // 2d. PL-manifold vertex-link condition during insertion (strict mode).
-        if self
-            .topology_guarantee
-            .requires_vertex_links_during_insertion()
-        {
-            validate_vertex_links(&self.tds, &facet_to_cells)?;
-        }
-
-        // 3. Vertex incidence (manifold invariant): every vertex must be incident to at least one cell.
-        self.validate_no_isolated_vertices()?;
-
-        // 4. Euler characteristic using the topology module
-        let topology_result =
-            validate_triangulation_euler_with_facet_to_cells_map(&self.tds, &facet_to_cells);
-
-        if let Some(expected) = topology_result.expected
-            && topology_result.chi != expected
-        {
-            return Err(TriangulationValidationError::EulerCharacteristicMismatch {
-                computed: topology_result.chi,
-                expected,
-                classification: topology_result.classification,
-            }
-            .into());
-        }
-        // Check geometric orientation after manifold/link checks so topology-specific
-        // diagnostics surface first when multiple invariants are violated.
-        self.validate_geometric_cell_orientation()?;
-
-        Ok(())
+        self.validate_level3_topology(true)
     }
 
     /// Validates vertex-link condition at construction completion.
@@ -3327,31 +3356,40 @@ where
         }
     }
 
+    #[inline]
+    const fn should_defer_geometric_orientation_validation_during_insertion(&self) -> bool {
+        self.defer_geometric_orientation_validation_until_completion && D >= 4
+    }
+
     /// Runs mandatory link checks required by the topology guarantee.
-    fn validate_required_topology_links(&self) -> Result<(), InvariantError> {
+    fn validate_required_topology_links_impl(
+        &self,
+        check_geometric_orientation: bool,
+    ) -> Result<(), InvariantError> {
         if self.tds.number_of_cells() == 0 {
             return Ok(());
         }
-        let need_orientation_check = if self
-            .topology_guarantee
-            .requires_vertex_links_during_insertion()
-        {
-            let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
-            validate_facet_degree(&facet_to_cells)?;
-            validate_closed_boundary(&self.tds, &facet_to_cells)?;
-            validate_ridge_links(&self.tds)?;
-            validate_vertex_links(&self.tds, &facet_to_cells)?;
-            true
-        } else if self.topology_guarantee.requires_ridge_links() {
-            // Ridge-link checks assume the pseudomanifold invariants already hold.
-            let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
-            validate_facet_degree(&facet_to_cells)?;
-            validate_closed_boundary(&self.tds, &facet_to_cells)?;
-            validate_ridge_links(&self.tds)?;
-            true
-        } else {
-            false
-        };
+        let need_orientation_check = check_geometric_orientation
+            && if self
+                .topology_guarantee
+                .requires_vertex_links_during_insertion()
+            {
+                let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
+                validate_facet_degree(&facet_to_cells)?;
+                validate_closed_boundary(&self.tds, &facet_to_cells)?;
+                validate_ridge_links(&self.tds)?;
+                validate_vertex_links(&self.tds, &facet_to_cells)?;
+                true
+            } else if self.topology_guarantee.requires_ridge_links() {
+                // Ridge-link checks assume the pseudomanifold invariants already hold.
+                let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
+                validate_facet_degree(&facet_to_cells)?;
+                validate_closed_boundary(&self.tds, &facet_to_cells)?;
+                validate_ridge_links(&self.tds)?;
+                true
+            } else {
+                false
+            };
 
         if need_orientation_check {
             // Keep geometric orientation non-negotiable during incremental insertion for
@@ -3379,10 +3417,12 @@ where
         }
 
         self.log_validation_trigger_if_enabled(suspicion);
+        let check_geometric_orientation =
+            !self.should_defer_geometric_orientation_validation_during_insertion();
         if should_validate {
-            self.is_valid()
+            self.validate_level3_topology(check_geometric_orientation)
         } else {
-            self.validate_required_topology_links()
+            self.validate_required_topology_links_impl(check_geometric_orientation)
         }
     }
 
@@ -3792,60 +3832,101 @@ where
         //   • D<3:  fall through to the existing star-split fallback (the 2D flip repair
         //     guarantees convergence even from star-split configurations).
         let mut boundary_facets = {
+            const MIN_CAVITY_ITERATIONS: usize = 32;
             let mut extraction_result = extract_cavity_boundary(&self.tds, &conflict_cells);
+            let trace_cavity = std::env::var_os("DELAUNAY_INSERT_TRACE").is_some();
+            let mut stalled = false;
+            let mut iterations: usize = 0;
+            let mut max_cavity_iterations =
+                MIN_CAVITY_ITERATIONS.max(conflict_cells.len().saturating_mul(2));
+            let mut ridge_fan_shrinks = 0usize;
+            let mut disconnected_expands = 0usize;
+            let mut disconnected_shrinks = 0usize;
+            let mut open_shrinks = 0usize;
 
             {
-                const MAX_CAVITY_ITERATIONS: usize = 32;
-                let mut iterations: usize = 0;
-
+                // Large higher-dimensional conflict regions can require many single-cell
+                // reductions before the boundary becomes manifold (#230), so keep a
+                // generous budget that scales with the current cavity size.
                 loop {
-                    if iterations >= MAX_CAVITY_ITERATIONS {
+                    if iterations >= max_cavity_iterations {
                         break;
                     }
                     iterations += 1;
 
                     match &extraction_result {
                         // RidgeFan: SHRINK – remove the cells contributing extra boundary facets.
+                        //
+                        // A conflict region can be retriangulated from a single remaining cell.
+                        // In minimal fans, however, the deduplicated `extra_cells` payload can
+                        // still span the whole conflict region because one cell may contribute
+                        // multiple boundary facets around the same ridge. Preserve an anchor cell
+                        // (prefer the containing `fallback_cell`) so the reduction always leaves
+                        // at least one cell to replace instead of surfacing an avoidable retry
+                        // path (#230).
                         Err(ConflictError::RidgeFan { extra_cells, .. })
-                            if !extra_cells.is_empty() && conflict_cells.len() > D + 1 =>
+                            if !extra_cells.is_empty() && conflict_cells.len() > 1 =>
                         {
+                            let anchor_cell = fallback_cell
+                                .filter(|cell| conflict_cells.contains(cell))
+                                .or_else(|| conflict_cells.first().copied());
+                            let mut remove_set: FastHashSet<CellKey> =
+                                extra_cells.iter().copied().collect();
+                            if remove_set.len() >= conflict_cells.len()
+                                && let Some(anchor_cell) = anchor_cell
+                            {
+                                remove_set.remove(&anchor_cell);
+                            }
+                            if remove_set.is_empty() {
+                                stalled = true;
+                                break;
+                            }
                             #[cfg(debug_assertions)]
                             tracing::debug!(
-                                remove_count = extra_cells.len(),
+                                remove_count = remove_set.len(),
                                 conflict_cells_before = conflict_cells.len(),
                                 "D={D}: cavity reduction (RidgeFan shrink)"
                             );
-                            let remove_set: FastHashSet<CellKey> =
-                                extra_cells.iter().copied().collect();
+                            ridge_fan_shrinks = ridge_fan_shrinks.saturating_add(1);
                             conflict_cells.retain(|k| !remove_set.contains(k));
                         }
 
-                        // DisconnectedBoundary: EXPAND – add non-conflict neighbors of the
-                        // disconnected cells to fill the topological hole.  These cells form the
-                        // "inner wall" of a donut-shaped conflict region; their non-conflict
-                        // neighbors are the hole cells that, when added, reconnect the boundary.
-                        // Falls back to SHRINK if no non-conflict neighbors exist.
+                        // DisconnectedBoundary:
+                        //   • D<4  – EXPAND by adding non-conflict neighbors of the disconnected
+                        //            cells to fill the topological hole. These cells form the
+                        //            "inner wall" of a donut-shaped conflict region; their
+                        //            non-conflict neighbors are the hole cells that, when added,
+                        //            reconnect the boundary.
+                        //   • D>=4 – prefer SHRINK of the disconnected component. In large 4D
+                        //            cavities the expansion heuristic can reintroduce ridge fans
+                        //            and balloon the reduction loop (#230).
+                        // Falls back to SHRINK when expansion is skipped or finds no new cells.
                         Err(ConflictError::DisconnectedBoundary {
                             disconnected_cells, ..
                         }) if !disconnected_cells.is_empty() => {
-                            let conflict_set: FastHashSet<CellKey> =
-                                conflict_cells.iter().copied().collect();
+                            let can_shrink = disconnected_cells.len() < conflict_cells.len();
+                            let prefer_shrink = D >= 4 && can_shrink;
                             let mut cells_to_add: FastHashSet<CellKey> = FastHashSet::default();
-                            for &dc in disconnected_cells {
-                                if let Some(cell) = self.tds.get_cell(dc)
-                                    && let Some(neighbors) = cell.neighbors()
-                                {
-                                    for &neighbor_opt in neighbors {
-                                        if let Some(nk) = neighbor_opt
-                                            && !conflict_set.contains(&nk)
-                                        {
-                                            cells_to_add.insert(nk);
+
+                            if !prefer_shrink {
+                                let conflict_set: FastHashSet<CellKey> =
+                                    conflict_cells.iter().copied().collect();
+                                for &dc in disconnected_cells {
+                                    if let Some(cell) = self.tds.get_cell(dc)
+                                        && let Some(neighbors) = cell.neighbors()
+                                    {
+                                        for &neighbor_opt in neighbors {
+                                            if let Some(nk) = neighbor_opt
+                                                && !conflict_set.contains(&nk)
+                                            {
+                                                cells_to_add.insert(nk);
+                                            }
                                         }
                                     }
                                 }
                             }
 
-                            if !cells_to_add.is_empty() {
+                            if !prefer_shrink && !cells_to_add.is_empty() {
                                 // EXPAND: add the hole-filling cells.
                                 #[cfg(debug_assertions)]
                                 tracing::debug!(
@@ -3853,10 +3934,11 @@ where
                                     conflict_cells_before = conflict_cells.len(),
                                     "D={D}: cavity expansion (DisconnectedBoundary hole-fill)"
                                 );
+                                disconnected_expands = disconnected_expands.saturating_add(1);
                                 for k in cells_to_add {
                                     conflict_cells.push(k);
                                 }
-                            } else if conflict_cells.len() > D + 1 {
+                            } else if can_shrink {
                                 // SHRINK fallback: no non-conflict neighbors found.
                                 #[cfg(debug_assertions)]
                                 tracing::debug!(
@@ -3864,6 +3946,7 @@ where
                                     conflict_cells_before = conflict_cells.len(),
                                     "D={D}: cavity reduction (DisconnectedBoundary shrink fallback)"
                                 );
+                                disconnected_shrinks = disconnected_shrinks.saturating_add(1);
                                 let remove_set: FastHashSet<CellKey> =
                                     disconnected_cells.iter().copied().collect();
                                 conflict_cells.retain(|k| !remove_set.contains(k));
@@ -3882,6 +3965,7 @@ where
                                 conflict_cells_before = conflict_cells.len(),
                                 "D={D}: cavity reduction (OpenBoundary shrink)"
                             );
+                            open_shrinks = open_shrinks.saturating_add(1);
                             let open = *open_cell;
                             conflict_cells.retain(|k| *k != open);
                         }
@@ -3889,6 +3973,8 @@ where
                         _ => break,
                     }
 
+                    max_cavity_iterations =
+                        max_cavity_iterations.max(conflict_cells.len().saturating_mul(2));
                     extraction_result = extract_cavity_boundary(&self.tds, &conflict_cells);
                 }
             }
@@ -3896,6 +3982,17 @@ where
             match extraction_result {
                 Ok(boundary) => boundary,
                 Err(err) => {
+                    if trace_cavity {
+                        eprintln!(
+                            "[cavity] unresolved after iterations={iterations}/{max_cavity_iterations} conflict={} stalled={} ridge_shrinks={} disconnected_expands={} disconnected_shrinks={} open_shrinks={} err={err}",
+                            conflict_cells.len(),
+                            stalled,
+                            ridge_fan_shrinks,
+                            disconnected_expands,
+                            disconnected_shrinks,
+                            open_shrinks
+                        );
+                    }
                     // For D=3 and D≥4: do NOT fall back to star-split once cavity reduction
                     // is exhausted.  Star-splits create heavily non-Delaunay configurations
                     // (the star of the new vertex is only D+1 cells instead of the correct
@@ -8053,19 +8150,17 @@ mod tests {
     // insert_with_conflict_region: cavity reduction loop branch coverage
     //
     // These tests exercise `insert_with_conflict_region` directly via a synthetic
-    // TDS rather than through the public API.  The goal is to cover the loop arms
-    // (RidgeFan SHRINK, DisconnectedBoundary EXPAND / SHRINK-fallback / else-break,
-    // and the post-loop error paths) that are not reachable through normal Delaunay
-    // insertions.
+    // TDS rather than through the public API. The goal is to cover the loop arms
+    // (RidgeFan SHRINK and DisconnectedBoundary EXPAND / SHRINK-fallback) plus the
+    // post-loop error paths that are not reachable through normal Delaunay insertions.
     // =============================================================================
 
-    /// `DisconnectedBoundary` where disconnected cells have no non-conflict neighbours:
-    /// `else { break; }` fires, then the D<3 star-split fallback is taken.
+    /// `DisconnectedBoundary` where the disconnected cells have no non-conflict neighbours:
+    /// the shrink fallback removes the unreachable component instead of star-splitting.
     ///
-    /// Covers: `DisconnectedBoundary` `else { break; }` (line 3492), `should_fallback=true`
-    /// path (lines 3530-3555), and `suspicion.fallback_star_split` being set.
+    /// Covers the `DisconnectedBoundary` shrink-fallback path with `cells_to_add.is_empty()`.
     #[test]
-    fn test_cavity_reduction_disconnected_no_neighbors_sets_star_split_2d() {
+    fn test_cavity_reduction_disconnected_no_neighbors_shrinks_in_2d() {
         let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_empty(FastKernel::new());
 
@@ -8104,8 +8199,8 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vec![v3, v4, v5], None).unwrap())
             .unwrap();
 
-        // Neither cell has any neighbour pointers, so `cells_to_add` will be empty on
-        // the first iteration and the `else { break; }` arm fires immediately.
+        // Neither cell has any neighbour pointers, so `cells_to_add` stays empty and
+        // the shrink fallback removes the unreachable component.
         let new_v = tri
             .tds
             .insert_vertex_with_mapping(vertex!([0.5, 0.3]))
@@ -8125,11 +8220,12 @@ mod tests {
             &mut suspicion,
         );
 
-        // `else { break; }` → Err(DisconnectedBoundary) → should_fallback=true (D<3)
-        // → star-split fallback sets suspicion.fallback_star_split.
+        // This synthetic conflict region is intentionally pathological, so the direct
+        // internal insertion call may still return an error. The key regression guard is
+        // that 2D now attempts shrink fallback before considering star-split recovery.
         assert!(
-            suspicion.fallback_star_split,
-            "DisconnectedBoundary with no non-conflict neighbours should trigger star-split (D=2)"
+            !suspicion.fallback_star_split,
+            "DisconnectedBoundary without hole-fill neighbours should shrink instead of star-splitting in 2D"
         );
     }
 
@@ -8294,6 +8390,84 @@ mod tests {
             &mut suspicion,
         );
         // Reaching here confirms the SHRINK branch executed successfully.
+    }
+
+    /// Even at the minimal `conflict_cells.len() == D + 1` size, a ridge fan can still be
+    /// reduced safely as long as at least one conflict cell remains. Otherwise 2D falls back
+    /// to a star-split and higher dimensions surface an avoidable retry/skip (#230).
+    #[test]
+    fn test_cavity_reduction_ridge_fan_shrink_fires_at_minimal_size_2d() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+
+        // Three disjoint triangles sharing only `center` create a RidgeFan at the shared
+        // vertex with `conflict_cells.len() == D + 1 == 3`.
+        let center = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+            .unwrap();
+        let va = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([-1.0, 2.0]))
+            .unwrap();
+        let vb = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([1.0, 2.0]))
+            .unwrap();
+        let vc = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([-3.0, -2.0]))
+            .unwrap();
+        let vd = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([-2.0, -3.0]))
+            .unwrap();
+        let ve = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([3.0, -2.0]))
+            .unwrap();
+        let vf = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([2.0, -3.0]))
+            .unwrap();
+
+        let cell1 = tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(vec![center, va, vb], None).unwrap())
+            .unwrap();
+        let cell2 = tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(vec![center, vc, vd], None).unwrap())
+            .unwrap();
+        let cell3 = tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(vec![center, ve, vf], None).unwrap())
+            .unwrap();
+
+        let new_v = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.3, 1.0]))
+            .unwrap();
+        let point = Point::new([0.3_f64, 1.0_f64]);
+
+        let mut conflict_cells = CellKeyBuffer::new();
+        conflict_cells.push(cell1);
+        conflict_cells.push(cell2);
+        conflict_cells.push(cell3);
+
+        let mut suspicion = SuspicionFlags::default();
+        let _ = tri.insert_with_conflict_region(
+            new_v,
+            &point,
+            conflict_cells,
+            Some(cell1),
+            &mut suspicion,
+        );
+
+        assert!(
+            !suspicion.fallback_star_split,
+            "minimal ridge fan should shrink instead of falling back to a star-split"
+        );
     }
 
     /// Two completely disconnected 2D conflict cells that each have one non-conflict
@@ -9590,83 +9764,150 @@ mod tests {
     // PROGRESSIVE PERTURBATION: RETRY PATH COVERAGE
     // =========================================================================
 
-    /// Exercise the perturbation retry loop (`attempt > 0`) and exhaustion
-    /// path (`SkippedDegeneracy`) using 4D random points where orientation
-    /// degeneracies are common.
-    ///
-    /// Covers: progressive scale factor, perturbation coordinate generation
-    /// with `perturbation_seed == 0`, retry decision, and retry exhaustion.
-    #[test]
-    fn test_perturbation_retry_and_exhaustion_4d() {
-        let points =
-            crate::geometry::util::generate_random_points_seeded::<f64, 4>(20, (-10.0, 10.0), 123)
-                .unwrap();
+    type RetryableConflictSetup4D = (
+        Triangulation<AdaptiveKernel<f64>, (), (), 4>,
+        Vertex<f64, (), 4>,
+        CellKeyBuffer,
+        CellKey,
+    );
 
+    /// Build a deterministic 4D retryable conflict region.
+    ///
+    /// Three 4-simplices sharing the same tetrahedral facet force
+    /// `ConflictError::NonManifoldFacet`, which is retryable in D>=3 and therefore
+    /// deterministically exercises the perturbation retry loop.
+    fn build_retryable_nonmanifold_conflict_region_4d() -> RetryableConflictSetup4D {
         let mut tri: Triangulation<AdaptiveKernel<f64>, (), (), 4> =
             Triangulation::new_empty(AdaptiveKernel::new());
 
-        let mut any_retried = false;
-        let mut any_exhausted = false;
+        let v0 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0]))
+            .unwrap();
+        let v1 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0, 0.0]))
+            .unwrap();
+        let v2 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0, 0.0]))
+            .unwrap();
+        let v3 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0, 0.0]))
+            .unwrap();
+        let v4 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 1.0]))
+            .unwrap();
+        let v5 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, -1.0]))
+            .unwrap();
+        let v6 = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.2, 0.2, 0.2, 2.0]))
+            .unwrap();
 
-        for point in points {
-            let v = VertexBuilder::default().point(point).build().unwrap();
-            let (_outcome, stats) = tri.insert_with_statistics(v, None, None).unwrap();
+        let cell_a = tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v3, v4], None).unwrap())
+            .unwrap();
+        let cell_b = tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v3, v5], None).unwrap())
+            .unwrap();
+        let cell_c = tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v3, v6], None).unwrap())
+            .unwrap();
 
-            if stats.used_perturbation() && stats.success() {
-                any_retried = true;
-            }
-            if stats.skipped() && stats.attempts > 1 {
-                any_exhausted = true;
-            }
-        }
+        let mut conflict_cells = CellKeyBuffer::new();
+        conflict_cells.push(cell_a);
+        conflict_cells.push(cell_b);
+        conflict_cells.push(cell_c);
 
-        // In 4D, orientation degeneracies trigger retries frequently.
+        let vertex = vertex!([0.1_f64, 0.1, 0.1, 0.2]);
+        (tri, vertex, conflict_cells, cell_a)
+    }
+
+    /// Exercise the perturbation retry loop (`attempt > 0`) and exhaustion path
+    /// (`SkippedDegeneracy`) with a deterministic retryable 4D conflict region.
+    ///
+    /// Covers: progressive scale factor, `perturbation_seed == 0`, retry decision,
+    /// and retry exhaustion.
+    #[test]
+    fn test_perturbation_retry_and_exhaustion_4d() {
+        let (mut tri, vertex, conflict_cells, hint) =
+            build_retryable_nonmanifold_conflict_region_4d();
+
+        let original_vertex_count = tri.tds.number_of_vertices();
+        let original_cell_count = tri.tds.number_of_cells();
+
+        let (outcome, stats) = tri
+            .insert_transactional(
+                vertex,
+                Some(&conflict_cells),
+                Some(hint),
+                DEFAULT_PERTURBATION_RETRIES,
+                0,
+                None,
+            )
+            .unwrap();
+
         assert!(
-            any_retried || any_exhausted,
-            "4D insertion with 20 random points (seed 123) should trigger \
-             at least one perturbation retry or exhaustion"
+            matches!(
+                outcome,
+                InsertionOutcome::Skipped {
+                    error: InsertionError::ConflictRegion(ConflictError::NonManifoldFacet { .. }),
+                }
+            ),
+            "retryable 4D non-manifold conflict should exhaust retries and skip deterministically"
         );
+        assert_eq!(stats.attempts, DEFAULT_PERTURBATION_RETRIES + 1);
+        assert!(stats.used_perturbation());
+        assert!(stats.skipped());
+        assert_eq!(tri.tds.number_of_vertices(), original_vertex_count);
+        assert_eq!(tri.tds.number_of_cells(), original_cell_count);
     }
 
     /// Exercise the seeded perturbation branch (`perturbation_seed != 0`)
-    /// by calling `insert_transactional` directly.
+    /// with the same deterministic retryable 4D conflict region.
     ///
-    /// Covers: the `mix` computation and sign selection in the seeded path
-    /// (lines using `perturbation_seed ^ ...`).
+    /// Covers the `mix` computation and sign selection in the seeded path
+    /// (lines using `perturbation_seed ^ ...`) without depending on random data.
     #[test]
     fn test_perturbation_retry_seeded_branch_4d() {
-        let points =
-            crate::geometry::util::generate_random_points_seeded::<f64, 4>(20, (-10.0, 10.0), 123)
-                .unwrap();
+        let (mut tri, vertex, conflict_cells, hint) =
+            build_retryable_nonmanifold_conflict_region_4d();
 
-        let mut tri: Triangulation<AdaptiveKernel<f64>, (), (), 4> =
-            Triangulation::new_empty(AdaptiveKernel::new());
+        let original_vertex_count = tri.tds.number_of_vertices();
+        let original_cell_count = tri.tds.number_of_cells();
 
-        let mut any_retried = false;
+        let (outcome, stats) = tri
+            .insert_transactional(
+                vertex,
+                Some(&conflict_cells),
+                Some(hint),
+                DEFAULT_PERTURBATION_RETRIES,
+                0xDEAD_BEEF,
+                None,
+            )
+            .unwrap();
 
-        for point in points {
-            let v = VertexBuilder::default().point(point).build().unwrap();
-            let (_outcome, stats) = tri
-                .insert_transactional(
-                    v,
-                    None,
-                    None,
-                    DEFAULT_PERTURBATION_RETRIES,
-                    0xDEAD_BEEF,
-                    None,
-                )
-                .unwrap();
-
-            if stats.used_perturbation() {
-                any_retried = true;
-            }
-        }
-
-        // Exercises the perturbation_seed != 0 branch in the retry loop.
         assert!(
-            any_retried,
-            "4D seeded insertion with 20 points (seed 123) should trigger \
-             at least one perturbation retry"
+            matches!(
+                outcome,
+                InsertionOutcome::Skipped {
+                    error: InsertionError::ConflictRegion(ConflictError::NonManifoldFacet { .. }),
+                }
+            ),
+            "seeded 4D retries should preserve the retryable non-manifold error until exhaustion"
         );
+        assert_eq!(stats.attempts, DEFAULT_PERTURBATION_RETRIES + 1);
+        assert!(stats.used_perturbation());
+        assert!(stats.skipped());
+        assert_eq!(tri.tds.number_of_vertices(), original_vertex_count);
+        assert_eq!(tri.tds.number_of_cells(), original_cell_count);
     }
 }
