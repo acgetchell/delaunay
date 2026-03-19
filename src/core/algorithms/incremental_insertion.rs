@@ -588,13 +588,14 @@ where
 
         // Add the new vertex as the apex
         new_cell_vertices.push(new_vertex_key);
-        // The facet order copied above matches the boundary-cell facet order.
-        // For coherent orientation across that shared facet, odd permutation is required
-        // exactly when (facet_idx + apex_idx) is even (apex_idx = D).
-        let expected_odd_permutation = (facet_idx + D).is_multiple_of(2);
-        if expected_odd_permutation && D >= 2 {
-            new_cell_vertices.swap(0, 1);
-        }
+        // Do NOT pre-swap vertices for per-cell coherence here.  Each new cell
+        // shares a facet with its boundary neighbor AND with sibling new cells.
+        // A local swap that fixes coherence with the boundary neighbor can break
+        // coherence between siblings, creating cells that BFS normalize later
+        // flips to negative geometric orientation (issue #230).  Instead, leave
+        // vertex ordering as-is and let the global BFS in
+        // `normalize_and_promote_positive_orientation` establish coherent +
+        // positive orientation for the entire mesh after wiring.
 
         // Create and insert the new cell
         let new_cell =
@@ -902,9 +903,7 @@ where
                     );
                     continue;
                 };
-                let neighbor_back = neighbor_cell
-                    .neighbors()
-                    .and_then(|ns| ns.get(mirror_idx).copied().flatten());
+                let neighbor_back = neighbor_cell.neighbor(mirror_idx);
                 if neighbor_back != Some(cell_key) {
                     mismatches += 1;
                     tracing::warn!(
@@ -2350,10 +2349,18 @@ mod tests {
                     )
                     .unwrap();
 
+                    // The real insertion pipeline runs
+                    // normalize_and_promote_positive_orientation after wiring,
+                    // which calls normalize_coherent_orientation to establish
+                    // global coherence via BFS.  fill_cavity intentionally does
+                    // NOT pre-swap vertices for per-cell coherence (see issue
+                    // #230), so we must normalize here before validation.
+                    tds.normalize_coherent_orientation().unwrap();
+
                     // Validate neighbor consistency
                     assert!(
                         tds.is_valid().is_ok(),
-                        "TDS should be valid after cavity filling and neighbor wiring: {:?}",
+                        "TDS should be valid after cavity filling, wiring, and orientation normalization: {:?}",
                         tds.is_valid().err()
                     );
 

@@ -582,6 +582,48 @@ where
         self.neighbors.as_ref()
     }
 
+    /// Returns the neighbor opposite `vertices()[facet_idx]`, or `None` if
+    /// neighbors are unassigned or there is no neighbor at that facet.
+    ///
+    /// This is a convenience accessor that flattens the double-`Option`
+    /// pattern `cell.neighbors().and_then(|ns| ns.get(i).copied().flatten())`.
+    ///
+    /// # Arguments
+    ///
+    /// * `facet_idx` - The positional index of the facet (opposite the
+    ///   same-indexed vertex).
+    ///
+    /// # Returns
+    ///
+    /// `Some(CellKey)` if a neighbor exists at that position, `None` otherwise.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use delaunay::prelude::triangulation::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    ///     vertex!([1.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let tds = dt.tds();
+    ///
+    /// // In a two-triangle triangulation each cell has at least one neighbor.
+    /// let (_, cell) = tds.cells().next().unwrap();
+    /// let has_any_neighbor = (0..cell.number_of_vertices())
+    ///     .any(|i| cell.neighbor(i).is_some());
+    /// assert!(has_any_neighbor);
+    /// ```
+    #[inline]
+    pub fn neighbor(&self, facet_idx: usize) -> Option<CellKey> {
+        self.neighbors
+            .as_ref()
+            .and_then(|ns| ns.get(facet_idx).copied().flatten())
+    }
+
     /// Returns the vertex keys for this cell.
     ///
     /// # Phase 3A

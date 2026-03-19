@@ -2095,10 +2095,38 @@ where
             // valid (BFS coherent orientation handles them) and do not indicate
             // a sign mismatch.  Only flag cells with negative orientation.
             if orientation < 0 {
+                // Collect diagnostic context for the failing cell.
+                let vertex_keys: Vec<_> = cell.vertices().to_vec();
+                let vertex_coords: Vec<_> = vertex_keys
+                    .iter()
+                    .filter_map(|&vk| {
+                        self.tds
+                            .get_vertex_by_key(vk)
+                            .map(|v| format!("{vk:?}={:?}", v.point().coords()))
+                    })
+                    .collect();
+                let neighbor_keys: Vec<_> = cell
+                    .neighbors()
+                    .map(|nbrs| nbrs.iter().filter_map(|n| *n).collect::<Vec<_>>())
+                    .unwrap_or_default();
+
+                tracing::warn!(
+                    cell_uuid = %cell.uuid(),
+                    ?cell_key,
+                    orientation,
+                    vertices = %vertex_coords.join(", "),
+                    neighbors = ?neighbor_keys,
+                    "negative geometric orientation detected in 4D+ validation"
+                );
+
                 return Err(TdsError::Geometric(GeometricError::NegativeOrientation {
                     message: format!(
-                        "Cell {:?} (key {cell_key:?}) has negative geometric orientation; expected positive canonical orientation",
+                        "Cell {:?} (key {cell_key:?}) has negative geometric orientation; \
+                         expected positive canonical orientation \
+                         [vertices=[{}], neighbors={:?}]",
                         cell.uuid(),
+                        vertex_coords.join(", "),
+                        neighbor_keys,
                     ),
                 }));
             }
@@ -2251,7 +2279,7 @@ where
         self.canonicalize_global_orientation_sign()?;
 
         // Phase 2 (fallback): bounded promote + normalize passes for stragglers.
-        for _ in 0..3 {
+        for _round in 0..3 {
             if !self.promote_cells_to_positive_orientation()? {
                 break;
             }
@@ -2292,62 +2320,8 @@ where
         self.canonicalize_global_orientation_sign()?;
         Ok(())
     }
-    /// Canonicalize a set of newly created cells to positive geometric orientation.
-    ///
-    /// This preserves cell-local slot alignment (vertices/neighbors/periodic offsets) by using
-    /// `swap_vertex_slots(0, 1)` for negatively oriented cells.
-    fn canonicalize_positive_orientation_for_cells(
-        &mut self,
-        cells: &CellKeyBuffer,
-    ) -> Result<(), InsertionError> {
-        for &cell_key in cells {
-            let orientation = {
-                let cell = self
-                    .tds
-                    .get_cell(cell_key)
-                    .ok_or_else(|| TdsError::CellNotFound {
-                        cell_key,
-                        context: "canonicalizing insertion orientation".to_string(),
-                    })?;
-                self.evaluate_cell_orientation_for_context(
-                    cell_key,
-                    cell,
-                    "insertion orientation canonicalization",
-                    "Geometric orientation predicate failed while canonicalizing cell",
-                )?
-            };
 
-            if orientation == 0 {
-                // Keep temporary degenerate cells unchanged here. Downstream local-repair and
-                // topology/geometry validation decide whether they are removed or rejected.
-                continue;
-            }
-
-            if orientation < 0 {
-                let cell = self.tds.get_cell_by_key_mut(cell_key).ok_or_else(|| {
-                    TdsError::CellNotFound {
-                        cell_key,
-                        context: "applying insertion orientation canonicalization".to_string(),
-                    }
-                })?;
-                if cell.number_of_vertices() < 2 {
-                    return Err(TdsError::DimensionMismatch {
-                        expected: 2,
-                        actual: cell.number_of_vertices(),
-                        context: format!(
-                            "cell {cell_key:?} needs >= 2 vertices for orientation canonicalization"
-                        ),
-                    }
-                    .into());
-                }
-                cell.swap_vertex_slots(0, 1);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Validates topological invariants of the triangulation (Level 3).
+    /// Validates topological invariants
     ///
     /// This checks the triangulation/topology layer **only**:
     /// - Codimension-1 pseudomanifold condition: each facet is incident to 1 (boundary) or 2 (interior) cells
@@ -4002,7 +3976,6 @@ where
 
         // Fill cavity BEFORE removing old cells
         let new_cells = fill_cavity(&mut self.tds, v_key, &boundary_facets)?;
-        self.canonicalize_positive_orientation_for_cells(&new_cells)?;
 
         // Wire neighbors (while both old and new cells exist)
         let external_facets =
@@ -4572,7 +4545,6 @@ where
                         return Err(err);
                     }
                 };
-                self.canonicalize_positive_orientation_for_cells(&new_cells)?;
                 #[cfg(debug_assertions)]
                 if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
                     tracing::debug!(

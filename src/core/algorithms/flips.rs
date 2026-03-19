@@ -331,10 +331,17 @@ where
 
         let points = vertices_to_points(tds, vertices)?;
 
-        // Exact orientation: reject degenerate cells and canonicalize to
-        // positive orientation in one pass.  This function uses
-        // robust_orientation (exact arithmetic, no SoS) rather than any
-        // kernel predicate, so it is kernel-independent.
+        // Exact orientation: reject degenerate cells only.  This function
+        // uses robust_orientation (exact arithmetic, no SoS) rather than
+        // any kernel predicate, so it is kernel-independent.
+        //
+        // We intentionally do NOT canonicalize individual cells to positive
+        // geometric orientation here.  The coherent-orientation BFS
+        // (normalize_coherent_orientation) that runs after all cells are
+        // wired imposes a globally consistent sign.  Swapping vertices on
+        // a per-cell basis would break mutual coherence between sibling
+        // cells, forcing BFS to undo the swap and leaving cells
+        // geometrically negative — the root cause of issue #230.
         match robust_orientation(&points) {
             Err(e) => {
                 return Err(FlipError::PredicateFailure {
@@ -354,11 +361,7 @@ where
                 }
                 return Err(FlipError::DegenerateCell);
             }
-            Ok(Orientation::NEGATIVE) => {
-                // Canonicalize to positive orientation by swapping two vertices.
-                vertices.swap(0, 1);
-            }
-            Ok(Orientation::POSITIVE) => {}
+            Ok(Orientation::NEGATIVE | Orientation::POSITIVE) => {}
         }
     }
 
@@ -2529,6 +2532,7 @@ pub(crate) fn repair_delaunay_with_flips_k2_k3<K, U, V, const D: usize>(
     kernel: &K,
     seed_cells: Option<&[CellKey]>,
     topology: TopologyGuarantee,
+    max_flips_override: Option<usize>,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -2556,13 +2560,13 @@ where
     let attempt1 = RepairAttemptConfig {
         attempt: 1,
         queue_order: RepairQueueOrder::Fifo,
-        max_flips_override: None,
+        max_flips_override,
     };
 
     let attempt2 = RepairAttemptConfig {
         attempt: 2,
         queue_order: RepairQueueOrder::Lifo,
-        max_flips_override: None,
+        max_flips_override,
     };
 
     // Snapshot the pre-repair state so a failed attempt doesn't poison retries.
@@ -4530,21 +4534,18 @@ where
 
         cells.push(cell_key);
 
-        if let Some(neighbors) = cell.neighbors() {
-            for &omit_idx in &omit_indices {
-                if let Some(neighbor_key) = neighbors.get(omit_idx).copied().flatten() {
-                    if !tds.contains_cell(neighbor_key) {
-                        continue;
-                    }
-                    let neighbor_cell =
-                        tds.get_cell(neighbor_key).ok_or(FlipError::MissingCell {
-                            cell_key: neighbor_key,
-                        })?;
-                    if !ridge.iter().all(|v| neighbor_cell.contains_vertex(*v)) {
-                        return Err(FlipError::InvalidRidgeAdjacency { cell_key });
-                    }
-                    queue.push_back(neighbor_key);
+        for &omit_idx in &omit_indices {
+            if let Some(neighbor_key) = cell.neighbor(omit_idx) {
+                if !tds.contains_cell(neighbor_key) {
+                    continue;
                 }
+                let neighbor_cell = tds.get_cell(neighbor_key).ok_or(FlipError::MissingCell {
+                    cell_key: neighbor_key,
+                })?;
+                if !ridge.iter().all(|v| neighbor_cell.contains_vertex(*v)) {
+                    return Err(FlipError::InvalidRidgeAdjacency { cell_key });
+                }
+                queue.push_back(neighbor_key);
             }
         }
     }
@@ -5339,10 +5340,8 @@ mod tests {
         let facet_idx_glue_edge =
             facet_index_for_edge_2d(&tds, cell_external_left, v_left_bottom, v_left_top);
         let external_cell = tds.get_cell(cell_external_left).unwrap();
-        let neighbors = external_cell
-            .neighbors()
-            .expect("external neighbors should exist");
-        let neighbor_key_glue = neighbors[usize::from(facet_idx_glue_edge)]
+        let neighbor_key_glue = external_cell
+            .neighbor(usize::from(facet_idx_glue_edge))
             .expect("external cell should have a neighbor across the glue edge after the flip");
 
         assert!(tds.contains_cell(neighbor_key_glue));
@@ -5359,9 +5358,7 @@ mod tests {
         let mirror_idx = external_cell
             .mirror_facet_index(usize::from(facet_idx_glue_edge), neighbor_cell)
             .expect("mirror facet index should exist");
-        let neighbor_back = neighbor_cell
-            .neighbors()
-            .and_then(|ns| ns.get(mirror_idx).copied().flatten());
+        let neighbor_back = neighbor_cell.neighbor(mirror_idx);
         assert_eq!(neighbor_back, Some(cell_external_left));
 
         // Ensure flip did not leave any dangling neighbor pointers in the newly inserted cells.
@@ -5481,10 +5478,8 @@ mod tests {
         let glue_face_facet_index =
             facet_index_for_face_3d(&tds, cell_external, v_edge_start, v_cycle_0, v_cycle_1);
         let external_cell = tds.get_cell(cell_external).unwrap();
-        let neighbors = external_cell
-            .neighbors()
-            .expect("external cell should have neighbors after repair");
-        let glued_neighbor = neighbors[usize::from(glue_face_facet_index)]
+        let glued_neighbor = external_cell
+            .neighbor(usize::from(glue_face_facet_index))
             .expect("external cell should have a neighbor across the glue face");
 
         assert!(tds.contains_cell(glued_neighbor));
@@ -5501,9 +5496,7 @@ mod tests {
         let mirror_idx = external_cell
             .mirror_facet_index(usize::from(glue_face_facet_index), neighbor_cell)
             .expect("mirror facet index should exist");
-        let neighbor_back = neighbor_cell
-            .neighbors()
-            .and_then(|ns| ns.get(mirror_idx).copied().flatten());
+        let neighbor_back = neighbor_cell.neighbor(mirror_idx);
         assert_eq!(neighbor_back, Some(cell_external));
 
         // Ensure the newly inserted cells do not reference removed cells.
@@ -6451,6 +6444,7 @@ mod tests {
             &kernel,
             None,
             TopologyGuarantee::PLManifold,
+            None,
         )
         .unwrap();
 
@@ -6519,6 +6513,7 @@ mod tests {
             &kernel,
             None,
             TopologyGuarantee::PLManifold,
+            None,
         );
 
         assert!(matches!(
@@ -6903,6 +6898,7 @@ mod tests {
             &kernel,
             Some(seed_cells.as_slice()),
             TopologyGuarantee::PLManifold,
+            None,
         )
         .unwrap();
         assert!(stats.facets_checked > 0);
@@ -6958,6 +6954,7 @@ mod tests {
             &kernel,
             Some(seed_cells.as_slice()),
             TopologyGuarantee::PLManifold,
+            None,
         );
 
         match result {
@@ -6993,9 +6990,116 @@ mod tests {
             &kernel,
             Some(&[seed_cell]),
             TopologyGuarantee::PLManifold,
+            None,
         )
         .unwrap();
         assert!(stats.facets_checked > 0);
         assert!(tds.is_valid().is_ok());
+    }
+
+    /// Verify that `max_flips_override: Some(n)` caps the repair budget.
+    ///
+    /// Constructs a non-Delaunay 2D configuration and calls repair with a
+    /// budget of 0 flips.  The repair must return `NonConvergent` because
+    /// it cannot perform the flip(s) needed to fix the violation.
+    #[test]
+    fn test_repair_k2_k3_max_flips_override_caps_budget() {
+        init_tracing();
+        let kernel = AdaptiveKernel::<f64>::new();
+
+        // Build a non-Delaunay 2-triangle configuration (same setup as
+        // test_repair_delaunay_flips_non_delaunay_edge_2d).
+        let d_candidates = [[0.0, 1.2], [0.1, 1.1], [0.2, 0.9], [-0.1, 1.3]];
+        let mut tds = None;
+        for d_coords in d_candidates {
+            let mut candidate: Tds<f64, (), (), 2> = Tds::empty();
+            let a = candidate
+                .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+                .unwrap();
+            let b = candidate
+                .insert_vertex_with_mapping(vertex!([1.0, 1.0]))
+                .unwrap();
+            let c = candidate
+                .insert_vertex_with_mapping(vertex!([1.0, 0.0]))
+                .unwrap();
+            let d = candidate
+                .insert_vertex_with_mapping(vertex!(d_coords))
+                .unwrap();
+            let _c1 = candidate
+                .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+                .unwrap();
+            let _c2 = candidate
+                .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
+                .unwrap();
+            repair_neighbor_pointers(&mut candidate).unwrap();
+            if verify_delaunay_via_flip_predicates(&candidate, &kernel).is_err() {
+                tds = Some(candidate);
+                break;
+            }
+        }
+        let mut tds = tds.expect("expected a non-Delaunay configuration from candidates");
+
+        // With a budget of 0 flips, repair must fail.
+        let result = repair_delaunay_with_flips_k2_k3(
+            &mut tds,
+            &kernel,
+            None,
+            TopologyGuarantee::PLManifold,
+            Some(0),
+        );
+        assert!(
+            matches!(result, Err(DelaunayRepairError::NonConvergent { .. })),
+            "Expected NonConvergent with max_flips_override=0, got: {result:?}"
+        );
+    }
+
+    /// Verify that `max_flips_override: Some(n)` with a generous budget still
+    /// allows repair to succeed.
+    #[test]
+    fn test_repair_k2_k3_max_flips_override_generous_budget_succeeds() {
+        init_tracing();
+        let kernel = AdaptiveKernel::<f64>::new();
+
+        let d_candidates = [[0.0, 1.2], [0.1, 1.1], [0.2, 0.9], [-0.1, 1.3]];
+        let mut tds = None;
+        for d_coords in d_candidates {
+            let mut candidate: Tds<f64, (), (), 2> = Tds::empty();
+            let a = candidate
+                .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+                .unwrap();
+            let b = candidate
+                .insert_vertex_with_mapping(vertex!([1.0, 1.0]))
+                .unwrap();
+            let c = candidate
+                .insert_vertex_with_mapping(vertex!([1.0, 0.0]))
+                .unwrap();
+            let d = candidate
+                .insert_vertex_with_mapping(vertex!(d_coords))
+                .unwrap();
+            let _c1 = candidate
+                .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+                .unwrap();
+            let _c2 = candidate
+                .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
+                .unwrap();
+            repair_neighbor_pointers(&mut candidate).unwrap();
+            if verify_delaunay_via_flip_predicates(&candidate, &kernel).is_err() {
+                tds = Some(candidate);
+                break;
+            }
+        }
+        let mut tds = tds.expect("expected a non-Delaunay configuration from candidates");
+
+        // With a generous budget, repair should succeed.
+        let stats = repair_delaunay_with_flips_k2_k3(
+            &mut tds,
+            &kernel,
+            None,
+            TopologyGuarantee::PLManifold,
+            Some(1000),
+        )
+        .unwrap();
+        assert!(stats.flips_performed > 0);
+        assert!(verify_delaunay_via_flip_predicates(&tds, &kernel).is_ok());
     }
 }
