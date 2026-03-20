@@ -112,7 +112,6 @@ use crate::core::algorithms::incremental_insertion::{
     HullExtensionReason, InsertionError, extend_hull, external_facets_for_boundary, fill_cavity,
     repair_neighbor_pointers, wire_cavity_neighbors,
 };
-#[cfg(debug_assertions)]
 use crate::core::algorithms::locate::locate_with_stats;
 use crate::core::algorithms::locate::{
     ConflictError, LocateResult, extract_cavity_boundary, find_conflict_region, locate,
@@ -126,7 +125,7 @@ use crate::core::collections::{
     fast_hash_map_with_capacity, fast_hash_set_with_capacity,
 };
 use crate::core::edge::EdgeKey;
-use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter, FacetHandle, facet_key_from_vertices};
+use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter, FacetHandle};
 use crate::core::operations::{
     InsertionOutcome, InsertionResult, InsertionStatistics, SuspicionFlags,
 };
@@ -161,6 +160,7 @@ use std::sync::{
     OnceLock,
     atomic::{AtomicU64, Ordering},
 };
+use std::time::Instant;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -734,6 +734,13 @@ where
     /// When enabled, insertion-time validation still checks structural/manifold invariants but
     /// defers geometric-orientation rejection until completion.
     pub(crate) defer_geometric_orientation_validation_until_completion: bool,
+    /// Internal batch-construction flag for D>=4 manifold topologies.
+    ///
+    /// Full ridge-link / vertex-link validation rebuilds global adjacency maps and becomes
+    /// prohibitively expensive when repeated after every ordinary batch insertion. When enabled,
+    /// non-suspicious insertions defer those mandatory link checks until construction completion;
+    /// suspicious insertions still run the full validation path immediately.
+    pub(crate) defer_topological_link_validation_until_completion: bool,
 }
 
 // =============================================================================
@@ -838,6 +845,7 @@ where
             validation_policy: ValidationPolicy::default(),
             topology_guarantee: TopologyGuarantee::DEFAULT,
             defer_geometric_orientation_validation_until_completion: false,
+            defer_topological_link_validation_until_completion: false,
         }
     }
 
@@ -1043,6 +1051,7 @@ where
             validation_policy: ValidationPolicy::default(),
             topology_guarantee: TopologyGuarantee::DEFAULT,
             defer_geometric_orientation_validation_until_completion: false,
+            defer_topological_link_validation_until_completion: false,
         }
     }
 
@@ -2125,7 +2134,7 @@ where
                     orientation,
                     vertices = %vertex_coords.join(", "),
                     neighbors = ?neighbor_keys,
-                    "negative geometric orientation detected in 4D+ validation"
+                    "negative geometric orientation detected during dimensional validation"
                 );
 
                 return Err(TdsError::Geometric(GeometricError::NegativeOrientation {
@@ -2225,6 +2234,163 @@ where
         Ok(false)
     }
 
+    /// Count negatively oriented cells and return a small sample of their keys for diagnostics.
+    fn sample_negative_orientation_cells(
+        &self,
+        sample_cap: usize,
+    ) -> Result<(usize, Vec<CellKey>), InsertionError> {
+        let mut residual_count = 0_usize;
+        let mut sampled = Vec::with_capacity(sample_cap);
+
+        for (cell_key, cell) in self.tds.cells() {
+            let orientation = self.evaluate_cell_orientation_for_context(
+                cell_key,
+                cell,
+                "residual negative-orientation sampling",
+                "Geometric orientation predicate failed while sampling residual negatives for cell",
+            )?;
+            if orientation < 0 {
+                if sampled.len() < sample_cap {
+                    sampled.push(cell_key);
+                }
+                residual_count += 1;
+            }
+        }
+
+        Ok((residual_count, sampled))
+    }
+
+    /// Count negatively oriented cells in a caller-provided subset and sample a few keys.
+    fn sample_negative_orientation_cells_in_subset(
+        &self,
+        cell_keys: &[CellKey],
+        sample_cap: usize,
+    ) -> Result<(usize, Vec<CellKey>), InsertionError> {
+        let mut residual_count = 0_usize;
+        let mut sampled = Vec::with_capacity(sample_cap);
+
+        for &cell_key in cell_keys {
+            let Some(cell) = self.tds.get_cell(cell_key) else {
+                continue;
+            };
+            let orientation = self.evaluate_cell_orientation_for_context(
+                cell_key,
+                cell,
+                "residual negative-orientation subset sampling",
+                "Geometric orientation predicate failed while sampling residual negatives for a local cell",
+            )?;
+            if orientation < 0 {
+                if sampled.len() < sample_cap {
+                    sampled.push(cell_key);
+                }
+                residual_count += 1;
+            }
+        }
+
+        Ok((residual_count, sampled))
+    }
+
+    /// Collect up to `limit` negatively oriented cells for targeted post-construction repair.
+    pub(in crate::core) fn collect_negative_orientation_cells_limited(
+        &self,
+        limit: usize,
+    ) -> Result<CellKeyBuffer, InsertionError> {
+        let mut negative_cells = CellKeyBuffer::new();
+        if limit == 0 {
+            return Ok(negative_cells);
+        }
+
+        for (cell_key, cell) in self.tds.cells() {
+            let orientation = self.evaluate_cell_orientation_for_context(
+                cell_key,
+                cell,
+                "negative-orientation repair seed collection",
+                "Geometric orientation predicate failed while collecting negative-orientation repair seeds for cell",
+            )?;
+            if orientation < 0 {
+                negative_cells.push(cell_key);
+                if negative_cells.len() >= limit {
+                    break;
+                }
+            }
+        }
+
+        Ok(negative_cells)
+    }
+
+    fn run_positive_orientation_canonicalization(
+        &mut self,
+        max_promotion_rounds: usize,
+    ) -> Result<(), InsertionError> {
+        self.tds.normalize_coherent_orientation()?;
+        self.canonicalize_global_orientation_sign()?;
+
+        for _round in 0..max_promotion_rounds {
+            if !self.promote_cells_to_positive_orientation()? {
+                break;
+            }
+            repair_neighbor_pointers(&mut self.tds).map_err(|e| InsertionError::CavityFilling {
+                message: format!(
+                    "Failed to rebuild neighbors during orientation canonicalization: {e}"
+                ),
+            })?;
+            self.tds.normalize_coherent_orientation()?;
+            self.canonicalize_global_orientation_sign()?;
+        }
+
+        self.canonicalize_global_orientation_sign()?;
+        Ok(())
+    }
+
+    /// On rare D>=4 failure paths, a residual negative cell can persist because repeatedly
+    /// swapping slots 0/1 is not the transposition that leads to a globally coherent positive
+    /// assignment for that local neighborhood. Try a bounded search over alternative odd
+    /// transpositions on the first few residual negative cells and keep the first state that
+    /// fully eliminates the remaining negatives.
+    fn try_negative_orientation_transposition_rescue(
+        &mut self,
+        max_promotion_rounds: usize,
+    ) -> Result<bool, InsertionError> {
+        const MAX_RESCUE_CELLS: usize = 3;
+
+        if D < 4 {
+            return Ok(false);
+        }
+
+        let negative_cells = self.collect_negative_orientation_cells_limited(MAX_RESCUE_CELLS)?;
+        if negative_cells.is_empty() {
+            return Ok(false);
+        }
+
+        let baseline_tds = self.tds.clone();
+
+        for cell_key in negative_cells {
+            for first in 0..D {
+                for second in (first + 1)..=D {
+                    self.tds = baseline_tds.clone();
+                    let Some(cell) = self.tds.get_cell_by_key_mut(cell_key) else {
+                        continue;
+                    };
+                    cell.swap_vertex_slots(first, second);
+                    self.tds.mark_topology_modified();
+                    self.run_positive_orientation_canonicalization(max_promotion_rounds)?;
+                    if !self.cells_require_positive_orientation_promotion()? {
+                        tracing::debug!(
+                            ?cell_key,
+                            first,
+                            second,
+                            "normalize_and_promote_positive_orientation: rescued residual negatives via alternate transposition"
+                        );
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+
+        self.tds = baseline_tds;
+        Ok(false)
+    }
+
     /// For connected non-periodic triangulations, coherent orientation has two equivalent global
     /// sign choices. Canonicalize that global sign to positive by flipping all cells when needed.
     fn canonicalize_global_orientation_sign(&mut self) -> Result<(), InsertionError> {
@@ -2281,63 +2447,72 @@ where
     pub(crate) fn normalize_and_promote_positive_orientation(
         &mut self,
     ) -> Result<(), InsertionError> {
-        // Phase 1: make all adjacencies coherent
-        // Canonicalizing *before* the promote loop resolves the common case where
-        // all cells share the same (negative) sign after BFS normalization.
-        self.tds.normalize_coherent_orientation()?;
-        self.canonicalize_global_orientation_sign()?;
-
-        // Phase 2 (fallback): bounded promote + normalize passes for stragglers.
-        //
-        // In D>=4 a local sign mismatch can take several propagate/normalize iterations to
-        // settle after facet rewiring and flip-based repair (#230). Re-canonicalize the
-        // component sign after each BFS pass rather than only before/after the loop.
         let max_promotion_rounds = if D >= 4 { 16 } else { 3 };
-        for _round in 0..max_promotion_rounds {
-            if !self.promote_cells_to_positive_orientation()? {
-                break;
-            }
-            repair_neighbor_pointers(&mut self.tds).map_err(|e| InsertionError::CavityFilling {
-                message: format!(
-                    "Failed to rebuild neighbors during orientation canonicalization: {e}"
-                ),
-            })?;
-            self.tds.normalize_coherent_orientation()?;
-            self.canonicalize_global_orientation_sign()?;
-        }
+        self.run_positive_orientation_canonicalization(max_promotion_rounds)?;
 
-        // Soft post-condition: after normalize + canonicalize + bounded promote
-        // passes, any remaining "negative" cells are near-degenerate (det ≈ 0)
-        // where the fast kernel's sign is unreliable.  Log a diagnostic but do
-        // not fail — the BFS normalization guarantees coherent orientation and
-        // the global canonicalization ensures the dominant sign is positive.
-        if self.cells_require_positive_orientation_promotion()? {
-            let mut residual_count = 0_usize;
-            let mut sample_keys: [Option<CellKey>; 5] = [None; 5];
-            for (cell_key, cell) in self.tds.cells() {
-                let orientation = self.evaluate_cell_orientation_for_context(
-                    cell_key,
-                    cell,
-                    "residual negative-orientation sampling",
-                    "Geometric orientation predicate failed while sampling residual negatives for cell",
-                )?;
-                if orientation < 0 {
-                    if residual_count < sample_keys.len() {
-                        sample_keys[residual_count] = Some(cell_key);
-                    }
-                    residual_count += 1;
-                }
-            }
-            let sampled: Vec<CellKey> = sample_keys.into_iter().flatten().collect();
+        let mut residual_negatives = self.cells_require_positive_orientation_promotion()?;
+        if residual_negatives {
+            let (residual_count, sampled) = self.sample_negative_orientation_cells(5)?;
             tracing::debug!(
                 residual_count,
                 sampled_keys = ?sampled,
                 "normalize_and_promote_positive_orientation: \
-                 {residual_count} cells still appear negative after bounded promotion \
-                 passes (likely near-degenerate FP noise); accepting coherent orientation"
+                 {residual_count} cells still appear negative after bounded promotion passes"
             );
+                if std::env::var_os("DELAUNAY_INSERT_TRACE").is_some() {
+                    eprintln!(
+                        "[orientation] residual_negatives count={residual_count} connected={} coherent={}",
+                        self.tds.is_connected()
+                        ,
+                        self.tds.is_coherently_oriented()
+                    );
+                }
+
+            // `wire_cavity_neighbors` and local flip rewiring are intentionally local.
+            // If they left stale facet-slot pairings behind, rebuilding the full
+            // neighbor graph can recover a coherent global orientation assignment.
+            // Retry once in D>=4 before surfacing the exact negative cell.
+            if D >= 4 {
+                let repaired = repair_neighbor_pointers(&mut self.tds).map_err(|e| {
+                    InsertionError::CavityFilling {
+                        message: format!(
+                            "Failed to rebuild neighbors after residual negative orientation: {e}"
+                        ),
+                    }
+                })?;
+                if repaired > 0 {
+                    tracing::debug!(
+                        repaired_neighbor_slots = repaired,
+                        "normalize_and_promote_positive_orientation: retrying after global neighbor rebuild"
+                    );
+                    self.run_positive_orientation_canonicalization(max_promotion_rounds)?;
+                    residual_negatives = self.cells_require_positive_orientation_promotion()?;
+                }
+                if residual_negatives
+                    && self.try_negative_orientation_transposition_rescue(max_promotion_rounds)?
+                {
+                    residual_negatives = self.cells_require_positive_orientation_promotion()?;
+                }
+            }
         }
-        self.canonicalize_global_orientation_sign()?;
+
+        if self.defer_geometric_orientation_validation_until_completion && D >= 4 {
+            if residual_negatives {
+                let (residual_count, sampled) = self.sample_negative_orientation_cells(5)?;
+                tracing::debug!(
+                    residual_count,
+                    sampled_keys = ?sampled,
+                    "normalize_and_promote_positive_orientation: \
+                     deferring residual negative-orientation rejection until construction completion"
+                );
+            }
+            return Ok(());
+        }
+
+        // Residual negative cells are not acceptable: the validator uses the same
+        // exact orientation predicate, so accepting them here only defers the failure
+        // until final validation and prevents transactional insertion retries.
+        self.validate_geometric_cell_orientation()?;
         Ok(())
     }
 
@@ -2962,10 +3137,10 @@ where
         let mut last_retryable_error: Option<InsertionError> = None;
 
         let mut hint = hint;
-        if hint.is_none()
-            && let Some(index_ref) = index.as_deref()
-        {
-            hint = self.select_locate_hint_from_hash_grid(&original_coords, index_ref);
+        if let Some(index_ref) = index.as_deref() {
+            hint = self
+                .select_locate_hint_from_hash_grid(&original_coords, index_ref)
+                .or(hint);
         }
 
         let local_scale = self.estimate_local_perturbation_scale(&original_coords, hint);
@@ -3090,6 +3265,8 @@ where
                         index.insert_vertex(vertex_key, vertex.point().coords());
                     }
 
+                    self.trace_orientation_probe_after_insertion(original_uuid)?;
+
                     return Ok((InsertionOutcome::Inserted { vertex_key, hint }, stats));
                 }
                 Err(e) => {
@@ -3109,6 +3286,14 @@ where
 
                     if is_retryable && attempt < max_perturbation_attempts {
                         last_retryable_error = Some(e.clone());
+                        if std::env::var_os("DELAUNAY_INSERT_TRACE").is_some() {
+                            eprintln!(
+                                "[insert] retrying attempt={} of {} due to retryable error: {}",
+                                attempt + 2,
+                                max_perturbation_attempts + 1,
+                                e
+                            );
+                        }
                         #[cfg(debug_assertions)]
                         tracing::debug!(
                             "RETRYING: Attempt {} failed with: {e}. Applying perturbation...",
@@ -3116,6 +3301,13 @@ where
                         );
                     } else if is_retryable {
                         stats.result = InsertionResult::SkippedDegeneracy;
+                        if std::env::var_os("DELAUNAY_INSERT_TRACE").is_some() {
+                            eprintln!(
+                                "[insert] skipping after exhausting {} attempt(s) due to retryable error: {}",
+                                max_perturbation_attempts + 1,
+                                e
+                            );
+                        }
                         #[cfg(debug_assertions)]
                         tracing::debug!(
                             "SKIPPED: Could not insert vertex after {} attempts (max perturbation ≈ {:.0e} × local_scale). Last error: {e}. Vertex skipped to maintain manifold.",
@@ -3142,6 +3334,243 @@ where
         }
 
         unreachable!("Loop should have returned in all cases");
+    }
+
+    fn trace_orientation_probe_after_insertion(
+        &mut self,
+        original_uuid: uuid::Uuid,
+    ) -> Result<(), InsertionError> {
+        if std::env::var_os("DELAUNAY_INSERT_ORIENTATION_PROBE").is_none() || D < 4 {
+            return Ok(());
+        }
+        if self.tds.number_of_cells() == 0 {
+            return Ok(());
+        }
+
+        let tds_snapshot = self.tds.clone();
+        let original_defer = self.defer_geometric_orientation_validation_until_completion;
+        self.defer_geometric_orientation_validation_until_completion = false;
+
+        let probe_result = self.normalize_and_promote_positive_orientation();
+        match &probe_result {
+            Ok(()) => {
+                eprintln!("[orientation-probe] uuid={original_uuid} result=ok");
+            }
+            Err(err) => {
+                let residual = self
+                    .sample_negative_orientation_cells(4)
+                    .map(|(count, sampled)| format!(" residual_negatives={count} sampled={sampled:?}"))
+                    .unwrap_or_default();
+                eprintln!(
+                    "[orientation-probe] uuid={original_uuid} result=err err={err}{residual}"
+                );
+            }
+        }
+
+        self.tds = tds_snapshot;
+        self.defer_geometric_orientation_validation_until_completion = original_defer;
+        let _ = probe_result;
+        Ok(())
+    }
+
+    fn permutation_is_odd<Id: PartialEq>(source_order: &[Id], target_order: &[Id]) -> Option<bool> {
+        if source_order.len() != target_order.len() {
+            return None;
+        }
+
+        let mut target_positions: SmallBuffer<usize, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(source_order.len());
+        let mut used_target_indices: SmallBuffer<bool, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::from_elem(false, target_order.len());
+
+        for source_vertex in source_order {
+            let mut matched_target_position = None;
+            for (target_idx, target_vertex) in target_order.iter().enumerate() {
+                if target_vertex == source_vertex && !used_target_indices[target_idx] {
+                    matched_target_position = Some(target_idx);
+                    used_target_indices[target_idx] = true;
+                    break;
+                }
+            }
+            target_positions.push(matched_target_position?);
+        }
+
+        if used_target_indices.iter().any(|used| !*used) {
+            return None;
+        }
+
+        let mut is_odd = false;
+        for i in 0..target_positions.len() {
+            for j in (i + 1)..target_positions.len() {
+                if target_positions[i] > target_positions[j] {
+                    is_odd = !is_odd;
+                }
+            }
+        }
+
+        Some(is_odd)
+    }
+
+    fn cell_vertex_order_orientation(
+        &mut self,
+        ordered_vertices: &[VertexKey],
+    ) -> Result<Orientation, InsertionError> {
+        let mut simplex_points = SmallBuffer::<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+        for &vertex_key in ordered_vertices {
+            let vertex = self
+                .tds
+                .get_vertex_by_key(vertex_key)
+                .ok_or_else(|| InsertionError::CavityFilling {
+                    message: format!(
+                        "Vertex {vertex_key:?} not found while evaluating cavity cell orientation"
+                    ),
+                })?;
+            simplex_points.push(*vertex.point());
+        }
+
+        robust_orientation(&simplex_points).map_err(|err| InsertionError::CavityFilling {
+            message: format!("Failed to evaluate cavity cell orientation: {err}"),
+        })
+    }
+
+    fn build_facet_vertex_order(
+        vertices: &[VertexKey],
+        omitted_index: usize,
+    ) -> Result<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>, InsertionError> {
+        if omitted_index >= vertices.len() {
+            return Err(InsertionError::CavityFilling {
+                message: format!(
+                    "Facet index {omitted_index} out of range for {}-vertex simplex",
+                    vertices.len()
+                ),
+            });
+        }
+
+        let mut facet_vertices = SmallBuffer::with_capacity(vertices.len().saturating_sub(1));
+        for (slot, &vertex_key) in vertices.iter().enumerate() {
+            if slot != omitted_index {
+                facet_vertices.push(vertex_key);
+            }
+        }
+        Ok(facet_vertices)
+    }
+
+    fn vertex_order_is_boundary_coherent_and_positive(
+        &mut self,
+        ordered_vertices: &[VertexKey],
+        boundary_facet_order: &[VertexKey],
+        boundary_facet_idx: usize,
+        apex_vertex_key: VertexKey,
+    ) -> Result<bool, InsertionError> {
+        if !matches!(
+            self.cell_vertex_order_orientation(ordered_vertices)?,
+            Orientation::POSITIVE
+        ) {
+            return Ok(false);
+        }
+
+        let Some(apex_slot) = ordered_vertices
+            .iter()
+            .position(|&vertex_key| vertex_key == apex_vertex_key)
+        else {
+            return Err(InsertionError::CavityFilling {
+                message: format!(
+                    "Apex vertex {apex_vertex_key:?} missing from candidate cavity cell ordering"
+                ),
+            });
+        };
+
+        let candidate_facet_order = Self::build_facet_vertex_order(ordered_vertices, apex_slot)?;
+        let observed_odd =
+            Self::permutation_is_odd(&candidate_facet_order, boundary_facet_order).ok_or_else(
+                || InsertionError::CavityFilling {
+                    message: "Candidate cavity cell facet order is not a permutation of the boundary facet".to_string(),
+                },
+            )?;
+        let expected_odd = (apex_slot + boundary_facet_idx).is_multiple_of(2);
+
+        Ok(observed_odd == expected_odd)
+    }
+
+    fn search_boundary_coherent_positive_permutation(
+        &mut self,
+        ordered_vertices: &mut SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+        start: usize,
+        boundary_facet_order: &[VertexKey],
+        boundary_facet_idx: usize,
+        apex_vertex_key: VertexKey,
+    ) -> Result<bool, InsertionError> {
+        if start == ordered_vertices.len() {
+            return self.vertex_order_is_boundary_coherent_and_positive(
+                ordered_vertices,
+                boundary_facet_order,
+                boundary_facet_idx,
+                apex_vertex_key,
+            );
+        }
+
+        for swap_idx in start..ordered_vertices.len() {
+            ordered_vertices.swap(start, swap_idx);
+            if self.search_boundary_coherent_positive_permutation(
+                ordered_vertices,
+                start + 1,
+                boundary_facet_order,
+                boundary_facet_idx,
+                apex_vertex_key,
+            )? {
+                return Ok(true);
+            }
+            ordered_vertices.swap(start, swap_idx);
+        }
+
+        Ok(false)
+    }
+
+    fn apply_vertex_order_to_cell(
+        &mut self,
+        cell_key: CellKey,
+        desired_order: &[VertexKey],
+    ) -> Result<bool, InsertionError> {
+        let mut changed = false;
+
+        for target_slot in 0..desired_order.len() {
+            let current_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> = self
+                .tds
+                .get_cell(cell_key)
+                .ok_or_else(|| InsertionError::CavityFilling {
+                    message: format!(
+                        "New cavity cell {cell_key:?} disappeared while applying a repaired vertex order"
+                    ),
+                })?
+                .vertices()
+                .iter()
+                .copied()
+                .collect();
+            if current_vertices[target_slot] == desired_order[target_slot] {
+                continue;
+            }
+
+            let swap_slot = current_vertices
+                .iter()
+                .position(|&vertex_key| vertex_key == desired_order[target_slot])
+                .ok_or_else(|| InsertionError::CavityFilling {
+                    message: format!(
+                        "Desired vertex {:?} missing while applying a repaired order to cell {cell_key:?}",
+                        desired_order[target_slot]
+                    ),
+                })?;
+            self.tds
+                .get_cell_by_key_mut(cell_key)
+                .ok_or_else(|| InsertionError::CavityFilling {
+                    message: format!(
+                        "New cavity cell {cell_key:?} disappeared before applying a repaired vertex order"
+                    ),
+                })?
+                .swap_vertex_slots(target_slot, swap_slot);
+            changed = true;
+        }
+
+        Ok(changed)
     }
 
     fn select_locate_hint_from_hash_grid(
@@ -3361,6 +3790,11 @@ where
         self.defer_geometric_orientation_validation_until_completion && D >= 4
     }
 
+    #[inline]
+    const fn should_defer_topological_link_validation_during_insertion(&self) -> bool {
+        self.defer_topological_link_validation_until_completion && D >= 4
+    }
+
     /// Runs mandatory link checks required by the topology guarantee.
     fn validate_required_topology_links_impl(
         &self,
@@ -3401,16 +3835,34 @@ where
         Ok(())
     }
 
+    /// Restore the orientation invariants needed after a local insertion mutation.
+    ///
+    /// During batched D>=4 construction we defer the expensive exact positive-orientation pass
+    /// until completion, but we still normalize combinatorial coherence so subsequent local
+    /// operations (and any eventual final flip repair) see a coherently oriented TDS.
+    fn restore_orientation_after_insertion(&mut self) -> Result<(), InsertionError> {
+        if self.defer_geometric_orientation_validation_until_completion && D >= 4 {
+            self.tds
+                .normalize_coherent_orientation()
+                .map_err(InsertionError::TopologyValidation)?;
+            return Ok(());
+        }
+
+        self.normalize_and_promote_positive_orientation()
+    }
+
     fn validate_after_insertion(&self, suspicion: SuspicionFlags) -> Result<(), InvariantError> {
         if self.tds.number_of_cells() == 0 {
             return Ok(());
         }
 
         let should_validate = self.validation_policy.should_validate(suspicion);
-        let requires_link_checks = self.topology_guarantee.requires_ridge_links()
-            || self
-                .topology_guarantee
-                .requires_vertex_links_during_insertion();
+        let requires_link_checks = !self
+            .should_defer_topological_link_validation_during_insertion()
+            && (self.topology_guarantee.requires_ridge_links()
+                || self
+                    .topology_guarantee
+                    .requires_vertex_links_during_insertion());
 
         if !should_validate && !requires_link_checks {
             return Ok(());
@@ -3741,24 +4193,6 @@ where
         if conflict_cells.is_empty() {
             return Ok(false);
         }
-
-        let facet_to_cells = self
-            .tds
-            .build_facet_to_cells_map()
-            .map_err(InsertionError::TopologyValidation)?;
-
-        let mut boundary_facets: FastHashSet<u64> =
-            fast_hash_set_with_capacity(facet_to_cells.len());
-        for (facet_key, cell_list) in &facet_to_cells {
-            if cell_list.len() == 1 {
-                boundary_facets.insert(*facet_key);
-            }
-        }
-
-        if boundary_facets.is_empty() {
-            return Ok(false);
-        }
-
         for &cell_key in conflict_cells {
             let cell = self.tds.get_cell(cell_key).ok_or_else(|| {
                 InsertionError::TopologyValidation(TdsError::CellNotFound {
@@ -3766,22 +4200,172 @@ where
                     context: "checking boundary facets for conflict region".to_string(),
                 })
             })?;
-            for facet_idx in 0..cell.number_of_vertices() {
-                let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-                    SmallBuffer::with_capacity(D);
-                for (i, &vkey) in cell.vertices().iter().enumerate() {
-                    if i != facet_idx {
-                        facet_vertices.push(vkey);
-                    }
-                }
-                let facet_key = facet_key_from_vertices(&facet_vertices);
-                if boundary_facets.contains(&facet_key) {
-                    return Ok(true);
-                }
+            if cell
+                .neighbors()
+                .is_some_and(|neighbors| neighbors.iter().any(Option::is_none))
+            {
+                return Ok(true);
             }
         }
 
         Ok(false)
+    }
+
+    /// Returns whether an exterior conflict region can be retriangulated by directly coning its
+    /// boundary facets to `point`.
+    ///
+    /// For a valid cavity fill, the query point must lie on the opposite side of every boundary
+    /// facet from the removed conflict cell. When that fails, the global outside conflict set is
+    /// not star-shaped with respect to `point`, so filling the whole boundary creates inverted
+    /// simplices even if the topology remains manifold. Recoverable boundary pathologies (ridge
+    /// fans, disconnected/open boundaries) are treated as "not safe for direct cavity fill" so
+    /// outside insertion can fall back to hull extension instead of surfacing a retryable
+    /// conflict-region error before cavity reduction gets a chance to run.
+    fn outside_conflict_region_supports_cavity_insertion(
+        &self,
+        point: &Point<K::Scalar, D>,
+        conflict_cells: &CellKeyBuffer,
+    ) -> Result<bool, ConflictError> {
+        if conflict_cells.is_empty() {
+            return Ok(false);
+        }
+
+        let boundary_facets = match extract_cavity_boundary(&self.tds, conflict_cells) {
+            Ok(boundary_facets) => boundary_facets,
+            Err(
+                ConflictError::RidgeFan { .. }
+                | ConflictError::DisconnectedBoundary { .. }
+                | ConflictError::OpenBoundary { .. },
+            ) => {
+                #[cfg(debug_assertions)]
+                if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some()
+                    || std::env::var_os("DELAUNAY_DEBUG_CAVITY").is_some()
+                {
+                    tracing::debug!(
+                        "Outside insertion: global conflict region boundary is not directly retriangulable; using hull extension"
+                    );
+                }
+                return Ok(false);
+            }
+            Err(err) => return Err(err),
+        };
+        #[cfg(debug_assertions)]
+        let debug_enabled = std::env::var_os("DELAUNAY_DEBUG_HULL").is_some()
+            || std::env::var_os("DELAUNAY_DEBUG_CAVITY").is_some();
+        #[cfg(debug_assertions)]
+        let mut same_side_samples: Vec<(CellKey, usize, VertexKey, Orientation, Orientation)> =
+            Vec::new();
+        #[cfg(debug_assertions)]
+        let mut same_side_boundary_facets = 0usize;
+        let mut is_star_shaped = true;
+
+        for facet_handle in &boundary_facets {
+            let cell_key = facet_handle.cell_key();
+            let boundary_cell =
+                self.tds
+                    .get_cell(cell_key)
+                    .ok_or_else(|| ConflictError::CellDataAccessFailed {
+                        cell_key,
+                        message: "Boundary facet cell not found during outside-cavity check"
+                            .to_string(),
+                    })?;
+            let facet_idx = <usize as From<u8>>::from(facet_handle.facet_index());
+            if facet_idx >= boundary_cell.number_of_vertices() {
+                return Err(ConflictError::CellDataAccessFailed {
+                    cell_key,
+                    message: format!(
+                        "Boundary facet index {facet_idx} out of range during outside-cavity check"
+                    ),
+                });
+            }
+
+            let old_opposite_key = boundary_cell.vertices()[facet_idx];
+            let old_opposite_vertex = self.tds.get_vertex_by_key(old_opposite_key).ok_or_else(|| {
+                ConflictError::CellDataAccessFailed {
+                    cell_key,
+                    message: format!(
+                        "Missing opposite vertex {old_opposite_key:?} during outside-cavity check"
+                    ),
+                }
+            })?;
+
+            let mut facet_points =
+                SmallBuffer::<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+            for (i, &vertex_key) in boundary_cell.vertices().iter().enumerate() {
+                if i == facet_idx {
+                    continue;
+                }
+                let vertex = self
+                    .tds
+                    .get_vertex_by_key(vertex_key)
+                    .ok_or_else(|| ConflictError::CellDataAccessFailed {
+                        cell_key,
+                        message: format!(
+                            "Missing facet vertex {vertex_key:?} during outside-cavity check"
+                        ),
+                    })?;
+                facet_points.push(*vertex.point());
+            }
+
+            let mut old_simplex = facet_points.clone();
+            old_simplex.push(*old_opposite_vertex.point());
+            let mut new_simplex = facet_points;
+            new_simplex.push(*point);
+
+            let old_sign = robust_orientation(&old_simplex).map_err(|err| {
+                ConflictError::CellDataAccessFailed {
+                    cell_key,
+                    message: format!(
+                        "Failed to orient boundary cell during outside-cavity check: {err}"
+                    ),
+                }
+            })?;
+            let new_sign = robust_orientation(&new_simplex).map_err(|err| {
+                ConflictError::CellDataAccessFailed {
+                    cell_key,
+                    message: format!(
+                        "Failed to orient candidate cavity cell during outside-cavity check: {err}"
+                    ),
+                }
+            })?;
+
+            let opposite_sides = matches!(
+                (old_sign, new_sign),
+                (Orientation::POSITIVE, Orientation::NEGATIVE)
+                    | (Orientation::NEGATIVE, Orientation::POSITIVE)
+            );
+            if !opposite_sides {
+                is_star_shaped = false;
+                #[cfg(debug_assertions)]
+                if debug_enabled {
+                    same_side_boundary_facets = same_side_boundary_facets.saturating_add(1);
+                    if same_side_samples.len() < 8 {
+                        same_side_samples.push((
+                            cell_key,
+                            facet_idx,
+                            old_opposite_key,
+                            old_sign,
+                            new_sign,
+                        ));
+                    }
+                }
+                #[cfg(debug_assertions)]
+                if !debug_enabled {
+                    return Ok(false);
+                }
+            }
+        }
+
+        #[cfg(debug_assertions)]
+        if !is_star_shaped && debug_enabled {
+            tracing::debug!(
+                same_side_boundary_facets,
+                samples = ?same_side_samples,
+                "Outside insertion: conflict region is not star-shaped with respect to the query point"
+            );
+        }
+
+        Ok(is_star_shaped)
     }
 
     /// Perform cavity insertion given an explicit conflict region.
@@ -4073,6 +4657,126 @@ where
 
         // Fill cavity BEFORE removing old cells
         let new_cells = fill_cavity(&mut self.tds, v_key, &boundary_facets)?;
+        let mut negative_boundary_info: Vec<(
+            CellKey,
+            SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+            usize,
+        )> = Vec::new();
+
+        if D >= 4 && fallback_cell.is_some() {
+            let trace_insert = std::env::var_os("DELAUNAY_INSERT_TRACE").is_some();
+            let mut negative_before_wiring = 0usize;
+            let mut reoriented_any = false;
+            let mut reoriented_count = 0usize;
+            for (&cell_key, facet_handle) in new_cells.iter().zip(boundary_facets.iter()) {
+                let current_orientation = {
+                    let cell = self.tds.get_cell(cell_key).ok_or_else(|| {
+                        InsertionError::CavityFilling {
+                            message: format!(
+                                "New cavity cell {cell_key:?} not found before boundary-coherent reorientation"
+                            ),
+                        }
+                    })?;
+                    self.evaluate_cell_orientation_for_context(
+                        cell_key,
+                        cell,
+                        "interior cavity boundary-coherent pre-wire reorientation",
+                        "Failed to evaluate orientation for a new interior cavity cell",
+                    )?
+                };
+                if current_orientation >= 0 {
+                    continue;
+                }
+                negative_before_wiring = negative_before_wiring.saturating_add(1);
+
+                let boundary_cell_vertices = self
+                    .tds
+                    .get_cell(facet_handle.cell_key())
+                    .ok_or_else(|| InsertionError::CavityFilling {
+                        message: format!(
+                            "Boundary cell {:?} disappeared while reorienting cavity cell {cell_key:?}",
+                            facet_handle.cell_key()
+                        ),
+                    })?
+                    .vertices()
+                    .iter()
+                    .copied()
+                    .collect::<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>();
+                let boundary_facet_idx = <usize as From<u8>>::from(facet_handle.facet_index());
+                let boundary_facet_order =
+                    Self::build_facet_vertex_order(&boundary_cell_vertices, boundary_facet_idx)?;
+                negative_boundary_info.push((
+                    cell_key,
+                    boundary_facet_order.clone(),
+                    boundary_facet_idx,
+                ));
+                let mut desired_order = self
+                    .tds
+                    .get_cell(cell_key)
+                    .ok_or_else(|| InsertionError::CavityFilling {
+                        message: format!(
+                            "New cavity cell {cell_key:?} disappeared before reorientation search"
+                        ),
+                    })?
+                    .vertices()
+                    .iter()
+                    .copied()
+                    .collect::<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>();
+
+                if !self.search_boundary_coherent_positive_permutation(
+                    &mut desired_order,
+                    0,
+                    &boundary_facet_order,
+                    boundary_facet_idx,
+                    v_key,
+                )? {
+                    return Err(InsertionError::CavityFilling {
+                        message: format!(
+                            "Failed to find a positive boundary-coherent ordering for new cavity cell {cell_key:?}"
+                        ),
+                    });
+                }
+
+                let changed = self.apply_vertex_order_to_cell(cell_key, &desired_order)?;
+                reoriented_any |= changed;
+                if changed {
+                    reoriented_count = reoriented_count.saturating_add(1);
+                }
+            }
+
+            if reoriented_any {
+                self.tds.mark_topology_modified();
+            }
+            if trace_insert {
+                let mut negative_after_reorientation = 0usize;
+                for &cell_key in &new_cells {
+                    let cell = self.tds.get_cell(cell_key).ok_or_else(|| {
+                        InsertionError::CavityFilling {
+                            message: format!(
+                                "New cavity cell {cell_key:?} disappeared while rechecking prewire orientation"
+                            ),
+                        }
+                    })?;
+                    let orientation = self.evaluate_cell_orientation_for_context(
+                        cell_key,
+                        cell,
+                        "interior cavity post-reorientation pre-wire check",
+                        "Failed to evaluate orientation for a reoriented interior cavity cell",
+                    )?;
+                    if orientation < 0 {
+                        negative_after_reorientation =
+                            negative_after_reorientation.saturating_add(1);
+                    }
+                }
+                eprintln!(
+                    "[insert] cavity prewire-orientation new_cells={} negative_before_wiring={} reoriented={} negative_after_reorientation={}",
+                    new_cells.len(),
+                    negative_before_wiring,
+                    reoriented_count,
+                    negative_after_reorientation
+                );
+            }
+        }
 
         // Wire neighbors (while both old and new cells exist)
         let external_facets =
@@ -4189,8 +4893,46 @@ where
             suspicion.neighbor_pointers_rebuilt = repaired > 0;
         }
 
-        // Canonicalize cell ordering and geometric orientation invariants.
-        self.normalize_and_promote_positive_orientation()?;
+        // Restore the local orientation invariants needed for the next insertion.
+        //
+        // For deferred D>=4 construction, keep the cheaper coherent-only restore for pure
+        // exterior hull growth (`fallback_cell == None`). Interior cavity retriangulations are
+        // the first place large negative-orientation pockets appear in #230, so force the full
+        // positive-orientation canonicalization path there even though final rejection is still
+        // deferred until completion.
+        if self.defer_geometric_orientation_validation_until_completion
+            && D >= 4
+            && fallback_cell.is_none()
+        {
+            self.tds
+                .normalize_coherent_orientation()
+                .map_err(InsertionError::TopologyValidation)?;
+        } else if self.defer_geometric_orientation_validation_until_completion
+            && D >= 4
+            && fallback_cell.is_some()
+        {
+            self.run_positive_orientation_canonicalization(16)?;
+            let (residual_new_count, sampled_new_cells) =
+                self.sample_negative_orientation_cells_in_subset(&new_cells, 5)?;
+            if residual_new_count > 0 {
+                if std::env::var_os("DELAUNAY_INSERT_TRACE").is_some() {
+                    eprintln!(
+                        "[insert] deferring interior cavity residual_negative_new_cells count={} sampled={:?}",
+                        residual_new_count,
+                        sampled_new_cells
+                    );
+                }
+                tracing::debug!(
+                    residual_new_count,
+                    sampled_new_cells = ?sampled_new_cells,
+                    new_cells = new_cells.len(),
+                    conflict_cells = conflict_cells.len(),
+                    "insert_with_conflict_region: deferring residual negative interior cavity cells to caller-side repair"
+                );
+            }
+        } else {
+            self.normalize_and_promote_positive_orientation()?;
+        }
 
         // Assign an incident cell for the inserted vertex without a global rebuild.
         let hint = new_cells.iter().copied().find(|&ck| {
@@ -4305,6 +5047,7 @@ where
         hint: Option<CellKey>,
     ) -> Result<TryInsertImplOk, InsertionError> {
         let mut suspicion = SuspicionFlags::default();
+        let trace_insert = std::env::var_os("DELAUNAY_INSERT_TRACE").is_some();
 
         // CRITICAL: Capture UUID and point BEFORE inserting into TDS
         // Rationale:
@@ -4355,31 +5098,26 @@ where
         }
 
         // 3. Locate containing cell (for vertex D+2 and beyond)
-        #[cfg(debug_assertions)]
-        let (location, locate_stats) = {
-            #[cfg(debug_assertions)]
-            {
-                let log_locate = std::env::var_os("DELAUNAY_DEBUG_HULL").is_some()
-                    || std::env::var_os("DELAUNAY_DEBUG_LOCATE").is_some();
-                if log_locate {
-                    let (location, stats) =
-                        locate_with_stats(&self.tds, &self.kernel, &point, hint)?;
-                    (location, Some(stats))
-                } else {
-                    (locate(&self.tds, &self.kernel, &point, hint)?, None)
-                }
-            }
-            #[cfg(not(debug_assertions))]
-            {
-                (locate(&self.tds, &self.kernel, &point, hint)?, None)
-            }
+        let log_locate = std::env::var_os("DELAUNAY_DEBUG_HULL").is_some()
+            || std::env::var_os("DELAUNAY_DEBUG_LOCATE").is_some()
+            || trace_insert;
+        let (location, locate_stats) = if log_locate {
+            let (location, stats) = locate_with_stats(&self.tds, &self.kernel, &point, hint)?;
+            (location, Some(stats))
+        } else {
+            (locate(&self.tds, &self.kernel, &point, hint)?, None)
         };
 
-        #[cfg(not(debug_assertions))]
-        let location = locate(&self.tds, &self.kernel, &point, hint)?;
-
-        #[cfg(debug_assertions)]
-        if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some()
+        if trace_insert {
+            if let Some(stats) = locate_stats.as_ref() {
+                eprintln!(
+                    "[insert] locate point={point:?} location={location:?} start_cell={:?} used_hint={} walk_steps={} fallback={:?}",
+                    stats.start_cell, stats.used_hint, stats.walk_steps, stats.fallback,
+                );
+            } else {
+                eprintln!("[insert] locate point={point:?} location={location:?}");
+            }
+        } else if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some()
             || std::env::var_os("DELAUNAY_DEBUG_LOCATE").is_some()
         {
             if let Some(stats) = locate_stats {
@@ -4418,7 +5156,15 @@ where
                 //
                 // Fallback: treat the containing cell as the conflict region, effectively performing
                 // a star-split of that cell to keep the simplicial complex connected.
+                let conflict_started = trace_insert.then(Instant::now);
                 let computed = find_conflict_region(&self.tds, &self.kernel, &point, start_cell)?;
+                if trace_insert && let Some(started) = conflict_started {
+                    eprintln!(
+                        "[insert] conflict start_cell={start_cell:?} size={} elapsed={:?}",
+                        computed.len(),
+                        started.elapsed()
+                    );
+                }
                 if computed.is_empty() {
                     suspicion.empty_conflict_region = true;
                     suspicion.fallback_star_split = true;
@@ -4443,13 +5189,17 @@ where
                 ))
             }
             (LocateResult::Outside, None) => {
-                // 2D exterior insertions skip the global conflict-region scan and go straight to
-                // hull extension, which is cheaper and more reliable in 2D. For D>2 we attempt
-                // cavity insertion first using a global conflict scan.
+                // 2D exterior insertions already go straight to hull extension.
+                //
+                // For D>=3, prefer a full global conflict scan first. An exterior point can still
+                // conflict with boundary-touching interior cells, and reducing that case to pure
+                // visible-facet hull extension can leave a manifold but non-Delaunay complex in 4D
+                // (#230). If the computed outside conflict region cannot be retriangulated cleanly,
+                // the cavity-insertion path below will fall back to hull extension.
                 if D == 2 {
                     #[cfg(debug_assertions)]
                     tracing::debug!(
-                        "Outside insertion in 2D: skipping global conflict-region scan; using hull extension"
+                        "Outside insertion in D={D}: using hull extension"
                     );
                     None
                 } else {
@@ -4466,13 +5216,15 @@ where
                             );
                         }
                         None
-                    } else if self.conflict_region_touches_boundary(&computed)? {
+                    } else if self.conflict_region_touches_boundary(&computed)?
+                        && !self.outside_conflict_region_supports_cavity_insertion(&point, &computed)?
+                    {
                         #[cfg(debug_assertions)]
-                        tracing::debug!(
-                            "Outside insertion (D={D}) conflict region touches hull; skipping cavity insertion"
-                        );
-                        // Avoid cavity insertion when the conflict region touches the hull.
-                        // These mixed boundaries can yield ridge-link singularities in higher dimensions.
+                        if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
+                            tracing::debug!(
+                                "Outside insertion (D={D}) conflict region is not star-shaped; using hull extension"
+                            );
+                        }
                         None
                     } else {
                         #[cfg(debug_assertions)]
@@ -4520,6 +5272,8 @@ where
                 let conflict_cells = conflict_cells
                     .expect("conflict_cells should be computed above")
                     .into_owned();
+                let conflict_len = conflict_cells.len();
+                let cavity_started = trace_insert.then(Instant::now);
                 let (hint, total_removed) = self.insert_with_conflict_region(
                     v_key,
                     &point,
@@ -4527,6 +5281,12 @@ where
                     Some(start_cell),
                     &mut suspicion,
                 )?;
+                if trace_insert && let Some(started) = cavity_started {
+                    eprintln!(
+                        "[insert] cavity inside start_cell={start_cell:?} conflict_cells={conflict_len} elapsed={:?} removed_cells={total_removed}",
+                        started.elapsed()
+                    );
+                }
                 Ok(((v_key, hint), total_removed, suspicion))
             }
             LocateResult::Outside => {
@@ -4793,8 +5553,8 @@ where
                     suspicion.neighbor_pointers_rebuilt = repaired > 0;
                 }
 
-                // Canonicalize cell ordering and geometric orientation invariants.
-                self.normalize_and_promote_positive_orientation()?;
+                // Restore the local orientation invariants needed for the next insertion.
+                self.restore_orientation_after_insertion()?;
 
                 // Assign an incident cell for the inserted vertex without a global rebuild.
                 let hint = new_cells.iter().copied().find(|&ck| {
@@ -5056,22 +5816,27 @@ where
 
             let facet_idx = <usize as From<_>>::from(facet_handle.facet_index());
 
-            // Gather facet vertices (all except the opposite vertex)
-            let mut facet_vertices = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-            for (i, &vkey) in boundary_cell.vertices().iter().enumerate() {
-                if i != facet_idx {
-                    facet_vertices.push(vkey);
-                }
-            }
-
-            // Skip facets that already contain the apex to avoid duplicate vertices
-            if facet_vertices.contains(&apex_vertex_key) {
+            // Skip facets that already contain the apex to avoid duplicate vertices.
+            if boundary_cell
+                .vertices()
+                .iter()
+                .enumerate()
+                .any(|(i, &vkey)| i != facet_idx && vkey == apex_vertex_key)
+            {
                 continue;
             }
 
-            // Build new cell vertices = facet_vertices + apex
-            let mut new_cell_vertices = facet_vertices;
-            new_cell_vertices.push(apex_vertex_key);
+            // Preserve the removed cell's slot layout by replacing the vertex
+            // opposite the boundary facet with the chosen apex in the same slot.
+            let mut new_cell_vertices =
+                SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+            for (i, &vkey) in boundary_cell.vertices().iter().enumerate() {
+                if i == facet_idx {
+                    new_cell_vertices.push(apex_vertex_key);
+                } else {
+                    new_cell_vertices.push(vkey);
+                }
+            }
 
             // Create and insert the new cell
             let new_cell =

@@ -9,6 +9,7 @@ use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
 use crate::core::algorithms::flips::{
     DelaunayRepairError, DelaunayRepairStats, FlipError, apply_bistellar_flip_k1_inverse,
     repair_delaunay_local_single_pass, repair_delaunay_with_flips_k2_k3,
+    repair_from_first_verification_failure,
 };
 use crate::core::algorithms::incremental_insertion::InsertionError;
 use crate::core::builder::DelaunayTriangulationBuilder;
@@ -89,6 +90,11 @@ impl Drop for HeuristicRebuildRecursionGuard {
     fn drop(&mut self) {
         HEURISTIC_REBUILD_DEPTH.with(|depth| depth.set(self.prior_depth));
     }
+}
+
+enum DGe4LocalRepairFollowup<'a> {
+    Applied { flips_performed: usize },
+    Failed { error: &'a DelaunayRepairError },
 }
 
 /// Errors that can occur during Delaunay triangulation construction.
@@ -2456,7 +2462,7 @@ where
         grid_cell_size: Option<K::Scalar>,
         use_global_repair_fallback: bool,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
-        let dt = Self::build_with_kernel_inner_seeded(
+        let mut dt = Self::build_with_kernel_inner_seeded(
             kernel,
             vertices,
             topology_guarantee,
@@ -2483,6 +2489,9 @@ where
                 "post-construction: topology validation (build) completed"
             );
             if let Err(err) = validation_result {
+                if D >= 4 && dt.try_d_ge4_postconstruction_verification_frontier_repair() {
+                    return Ok(dt);
+                }
                 return Err(TriangulationConstructionError::GeometricDegeneracy {
                     message: format!("PL-manifold validation failed after construction: {err}"),
                 }
@@ -2500,9 +2509,76 @@ where
             success = delaunay_result.is_ok(),
             "post-construction: Delaunay validation (build) completed"
         );
-        delaunay_result.map_err(|err| TriangulationConstructionError::GeometricDegeneracy {
-            message: format!("Delaunay property violated after construction: {err}"),
-        })?;
+        if let Err(err) = delaunay_result {
+            if D >= 4 {
+                if dt.try_d_ge4_postconstruction_verification_frontier_repair() {
+                    return Ok(dt);
+                }
+                let fallback_error = Some(
+                    "post-construction D≥4 verifier-frontier repair fallback failed after Delaunay validation failure"
+                        .to_string(),
+                );
+                if let Some(fallback_error) = fallback_error {
+                    let robust_rebuild_result: Result<
+                        DelaunayTriangulation<RobustKernel<K::Scalar>, U, V, D>,
+                        DelaunayTriangulationConstructionError,
+                    > = (|| {
+                        let candidate = DelaunayTriangulation::<RobustKernel<K::Scalar>, U, V, D>::build_with_kernel_inner_seeded(
+                            RobustKernel::<K::Scalar>::new(),
+                            vertices,
+                            topology_guarantee,
+                            0,
+                            true,
+                            grid_cell_size,
+                            use_global_repair_fallback,
+                        )?;
+                        if candidate
+                            .tri
+                            .topology_guarantee
+                            .requires_vertex_links_at_completion()
+                        {
+                            candidate.tri.validate().map_err(|topology_err| {
+                                TriangulationConstructionError::GeometricDegeneracy {
+                                    message: format!(
+                                        "robust-kernel rebuild failed topology validation after construction: {topology_err}"
+                                    ),
+                                }
+                            })?;
+                        }
+                        candidate.is_valid().map_err(|delaunay_err| {
+                            TriangulationConstructionError::GeometricDegeneracy {
+                                message: format!(
+                                    "robust-kernel rebuild violated Delaunay property after construction: {delaunay_err}"
+                                ),
+                            }
+                        })?;
+                        Ok(candidate)
+                    })();
+                    match robust_rebuild_result {
+                        Ok(candidate) => {
+                            dt.tri.tds = candidate.tri.tds;
+                            dt.insertion_state = candidate.insertion_state;
+                            dt.spatial_index = candidate.spatial_index;
+                        }
+                        Err(rebuild_err) => {
+                            return Err(TriangulationConstructionError::GeometricDegeneracy {
+                                message: format!(
+                                    "Delaunay property violated after construction: {err}; \
+                                     {fallback_error}; \
+                                     robust-kernel rebuild also failed: {rebuild_err}"
+                                ),
+                            }
+                            .into());
+                        }
+                    }
+                }
+            } else {
+                return Err(TriangulationConstructionError::GeometricDegeneracy {
+                    message: format!("Delaunay property violated after construction: {err}"),
+                }
+                .into());
+            }
+        }
 
         Ok(dt)
     }
@@ -2519,7 +2595,7 @@ where
         use_global_repair_fallback: bool,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
-        let (dt, stats) = Self::build_with_kernel_inner_seeded_with_construction_statistics(
+        let (mut dt, stats) = Self::build_with_kernel_inner_seeded_with_construction_statistics(
             kernel,
             vertices,
             topology_guarantee,
@@ -2546,6 +2622,9 @@ where
                 "post-construction: topology validation (build stats) completed"
             );
             if let Err(err) = validation_result {
+                if D >= 4 && dt.try_d_ge4_postconstruction_verification_frontier_repair() {
+                    return Ok((dt, stats));
+                }
                 return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                     error: TriangulationConstructionError::GeometricDegeneracy {
                         message: format!("PL-manifold validation failed after construction: {err}"),
@@ -2567,13 +2646,98 @@ where
             "post-construction: Delaunay validation (build stats) completed"
         );
         if let Err(err) = delaunay_result {
-            return Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                error: TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!("Delaunay property violated after construction: {err}"),
+            if D >= 4 {
+                if dt.try_d_ge4_postconstruction_verification_frontier_repair() {
+                    return Ok((dt, stats));
                 }
-                .into(),
-                statistics: stats,
-            });
+                let fallback_error = Some(
+                    "post-construction D≥4 verifier-frontier repair fallback failed after Delaunay validation failure"
+                        .to_string(),
+                );
+                if let Some(fallback_error) = fallback_error {
+                    let robust_rebuild_result: Result<
+                        (
+                            DelaunayTriangulation<RobustKernel<K::Scalar>, U, V, D>,
+                            ConstructionStatistics,
+                        ),
+                        DelaunayTriangulationConstructionErrorWithStatistics,
+                    > = (|| {
+                        let (candidate, candidate_stats) = DelaunayTriangulation::<
+                            RobustKernel<K::Scalar>,
+                            U,
+                            V,
+                            D,
+                        >::build_with_kernel_inner_seeded_with_construction_statistics(
+                            RobustKernel::<K::Scalar>::new(),
+                            vertices,
+                            topology_guarantee,
+                            0,
+                            true,
+                            grid_cell_size,
+                            use_global_repair_fallback,
+                        )?;
+                        if candidate
+                            .tri
+                            .topology_guarantee
+                            .requires_vertex_links_at_completion()
+                        {
+                            candidate.tri.validate().map_err(|topology_err| {
+                                DelaunayTriangulationConstructionErrorWithStatistics {
+                                    error: TriangulationConstructionError::GeometricDegeneracy {
+                                        message: format!(
+                                            "robust-kernel rebuild failed topology validation after construction: {topology_err}"
+                                        ),
+                                    }
+                                    .into(),
+                                    statistics: candidate_stats.clone(),
+                                }
+                            })?;
+                        }
+                        candidate.is_valid().map_err(|delaunay_err| {
+                            DelaunayTriangulationConstructionErrorWithStatistics {
+                                error: TriangulationConstructionError::GeometricDegeneracy {
+                                    message: format!(
+                                        "robust-kernel rebuild violated Delaunay property after construction: {delaunay_err}"
+                                    ),
+                                }
+                                .into(),
+                                statistics: candidate_stats.clone(),
+                            }
+                        })?;
+                        Ok((candidate, candidate_stats))
+                    })();
+                    match robust_rebuild_result {
+                        Ok((candidate, candidate_stats)) => {
+                            dt.tri.tds = candidate.tri.tds;
+                            dt.insertion_state = candidate.insertion_state;
+                            dt.spatial_index = candidate.spatial_index;
+                            return Ok((dt, candidate_stats));
+                        }
+                        Err(rebuild_err) => {
+                            return Err(DelaunayTriangulationConstructionErrorWithStatistics {
+                                error: TriangulationConstructionError::GeometricDegeneracy {
+                                    message: format!(
+                                        "Delaunay property violated after construction: {err}; \
+                                         {fallback_error}; \
+                                         robust-kernel rebuild also failed: {}",
+                                        rebuild_err.error
+                                    ),
+                                }
+                                .into(),
+                                statistics: stats,
+                            });
+                        }
+                    }
+                }
+            } else {
+                return Err(DelaunayTriangulationConstructionErrorWithStatistics {
+                    error: TriangulationConstructionError::GeometricDegeneracy {
+                        message: format!("Delaunay property violated after construction: {err}"),
+                    }
+                    .into(),
+                    statistics: stats,
+                });
+            }
         }
 
         Ok((dt, stats))
@@ -2625,6 +2789,7 @@ where
                 validation_policy: ValidationPolicy::default(),
                 topology_guarantee,
                 defer_geometric_orientation_validation_until_completion: false,
+                defer_topological_link_validation_until_completion: false,
             },
             insertion_state: DelaunayInsertionState::new(),
             spatial_index: None,
@@ -2634,15 +2799,17 @@ where
         // per-insertion full validation. Running a complete O(cells) topology pass after
         // every insertion is prohibitively expensive at scale (O(n²) total).
         //
-        // Required ridge/vertex-link checks are still enforced on every insertion via
-        // Triangulation::validate_after_insertion even under OnSuspicion. For D>=4 we also
-        // defer geometric-orientation rejection until completion, because the final global
-        // normalization pass can repair transient negative signs that are not topological
-        // failures (#230).
+        // For D>=4 manifold topologies, also defer the mandatory ridge/vertex-link checks for
+        // non-suspicious insertions until completion. Suspicious insertions still trigger the
+        // full validation path immediately. Geometric-orientation rejection is deferred too,
+        // because the final global normalization pass can repair transient negative signs that
+        // are not topological failures (#230).
         let original_validation_policy = dt.tri.validation_policy;
         let original_defer_orientation_validation = dt
             .tri
             .defer_geometric_orientation_validation_until_completion;
+        let original_defer_link_validation =
+            dt.tri.defer_topological_link_validation_until_completion;
         dt.tri.validation_policy = if dt.tri.topology_guarantee.requires_ridge_links()
             || dt
                 .tri
@@ -2655,17 +2822,24 @@ where
         };
         dt.tri
             .defer_geometric_orientation_validation_until_completion = D >= 4;
+        dt.tri.defer_topological_link_validation_until_completion = D >= 4
+            && (dt.tri.topology_guarantee.requires_ridge_links()
+                || dt
+                    .tri
+                    .topology_guarantee
+                    .requires_vertex_links_during_insertion());
 
-        // Disable maybe_repair_after_insertion during bulk construction: its full pipeline
-        // (multi-pass repair + topology validation + heuristic rebuild) is too expensive
-        // per insertion.  Instead, insert_remaining_vertices_seeded calls
-        // repair_delaunay_local_single_pass directly after each insertion (no topology
-        // check, no heuristic rebuild, soft-fail on non-convergence for D≥4).  Soft-failed
-        // insertions (D≥4 only) record their adjacent cells in soft_fail_seeds, which is
-        // used as the seed for the final seeded repair in finalize_bulk_construction.  If
-        // no soft-fails occurred the seed is empty and finalize skips the repair entirely.
+        // Batch construction does not use `maybe_repair_after_insertion()`'s uncapped global
+        // repair path. Instead, `insert_remaining_vertices_seeded()` runs a bounded seed-local
+        // repair on a batch-specific schedule and defers only the neighborhoods that still fail.
+        //
+        // In 4D manifold builds, repairing after every insertion is too expensive, but deferring
+        // all repairs to finalize lets non-Delaunay intermediate states accumulate until cavity
+        // extraction breaks down. Use a small periodic cadence during batch construction to keep
+        // the intermediate complex near-Delaunay without paying the full eager cost.
         let original_repair_policy = dt.insertion_state.delaunay_repair_policy;
-        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
+        dt.insertion_state.delaunay_repair_policy =
+            Self::batch_construction_repair_policy(topology_guarantee);
         dt.insertion_state.use_global_repair_fallback = use_global_repair_fallback;
 
         let mut stats = ConstructionStatistics::default();
@@ -2678,12 +2852,14 @@ where
         }
 
         let mut soft_fail_seeds: Vec<CellKey> = Vec::new();
+        let mut deferred_finalize_repair_seeds: Vec<CellKey> = Vec::new();
         if let Err(error) = dt.insert_remaining_vertices_seeded(
             vertices,
             perturbation_seed,
             grid_cell_size,
             Some(&mut stats),
             &mut soft_fail_seeds,
+            &mut deferred_finalize_repair_seeds,
         ) {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                 error,
@@ -2694,9 +2870,11 @@ where
         if let Err(error) = dt.finalize_bulk_construction(
             original_validation_policy,
             original_defer_orientation_validation,
+            original_defer_link_validation,
             original_repair_policy,
             run_final_repair,
             &soft_fail_seeds,
+            &deferred_finalize_repair_seeds,
         ) {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                 error,
@@ -2740,6 +2918,7 @@ where
                 validation_policy: ValidationPolicy::default(),
                 topology_guarantee,
                 defer_geometric_orientation_validation_until_completion: false,
+                defer_topological_link_validation_until_completion: false,
             },
             insertion_state: DelaunayInsertionState::new(),
             spatial_index: None,
@@ -2747,12 +2926,15 @@ where
 
         // During batch construction, use suspicion-driven validation instead of
         // per-insertion full validation (see the variant above for the rationale:
-        // O(n²) avoidance, required link checks still enforced, and D>=4 orientation
-        // rejection deferred until the final global normalize pass).
+        // O(n²) avoidance, deferred D>=4 manifold link checks for non-suspicious
+        // insertions, and D>=4 orientation rejection deferred until the final global
+        // normalize pass).
         let original_validation_policy = dt.tri.validation_policy;
         let original_defer_orientation_validation = dt
             .tri
             .defer_geometric_orientation_validation_until_completion;
+        let original_defer_link_validation =
+            dt.tri.defer_topological_link_validation_until_completion;
         dt.tri.validation_policy = if dt.tri.topology_guarantee.requires_ridge_links()
             || dt
                 .tri
@@ -2765,28 +2947,83 @@ where
         };
         dt.tri
             .defer_geometric_orientation_validation_until_completion = D >= 4;
+        dt.tri.defer_topological_link_validation_until_completion = D >= 4
+            && (dt.tri.topology_guarantee.requires_ridge_links()
+                || dt
+                    .tri
+                    .topology_guarantee
+                    .requires_vertex_links_during_insertion());
 
         // See the _with_construction_statistics variant for the repair policy rationale.
         let original_repair_policy = dt.insertion_state.delaunay_repair_policy;
-        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
+        dt.insertion_state.delaunay_repair_policy =
+            Self::batch_construction_repair_policy(topology_guarantee);
         dt.insertion_state.use_global_repair_fallback = use_global_repair_fallback;
         let mut soft_fail_seeds: Vec<CellKey> = Vec::new();
+        let mut deferred_finalize_repair_seeds: Vec<CellKey> = Vec::new();
         dt.insert_remaining_vertices_seeded(
             vertices,
             perturbation_seed,
             grid_cell_size,
             None,
             &mut soft_fail_seeds,
+            &mut deferred_finalize_repair_seeds,
         )?;
         dt.finalize_bulk_construction(
             original_validation_policy,
             original_defer_orientation_validation,
+            original_defer_link_validation,
             original_repair_policy,
             run_final_repair,
             &soft_fail_seeds,
+            &deferred_finalize_repair_seeds,
         )?;
 
         Ok(dt)
+    }
+
+    fn batch_construction_repair_policy(topology: TopologyGuarantee) -> DelaunayRepairPolicy {
+        if D >= 4 && topology.requires_ridge_links() {
+            DelaunayRepairPolicy::EveryN(
+                NonZeroUsize::new(4).expect("batch-construction repair interval is non-zero"),
+            )
+        } else {
+            DelaunayRepairPolicy::EveryInsertion
+        }
+    }
+
+    fn inserted_vertex_star_touches_boundary(
+        &self,
+        inserted_vertex: VertexKey,
+        seed_cells: &[CellKey],
+    ) -> Result<bool, DelaunayTriangulationConstructionError> {
+        for &cell_key in seed_cells {
+            let cell =
+                self.tri
+                    .tds
+                    .get_cell(cell_key)
+                    .ok_or_else(|| TriangulationConstructionError::InternalInconsistency {
+                        message: format!(
+                            "inserted vertex star referenced missing cell {cell_key:?}"
+                        ),
+                    })?;
+            let inserted_vertex_idx = cell
+                .vertices()
+                .iter()
+                .position(|&vertex_key| vertex_key == inserted_vertex)
+                .ok_or_else(|| TriangulationConstructionError::InternalInconsistency {
+                    message: format!(
+                        "inserted vertex {inserted_vertex:?} missing from adjacent cell {cell_key:?}"
+                    ),
+                })?;
+            for facet_idx in 0..cell.number_of_vertices() {
+                if facet_idx != inserted_vertex_idx && cell.neighbor(facet_idx).is_none() {
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
     }
 
     /// Handle D<4 local repair non-convergence by falling back to global repair or
@@ -2838,6 +3075,329 @@ where
         .into())
     }
 
+    fn try_d_ge4_postconstruction_verification_frontier_repair(&mut self) -> bool {
+        const MAX_D_GE4_VERIFICATION_FRONTIER_REPAIR_FLIPS: usize = 256;
+
+        debug_assert!(
+            D >= 4,
+            "post-construction verifier-frontier repair is only used in D>=4"
+        );
+
+        let topology = self.tri.topology_guarantee();
+        let tds_snapshot = self.tri.tds.clone();
+        let repair_started = Instant::now();
+        let mut repair_stats = DelaunayRepairStats::default();
+        let mut kept_repair_state = false;
+        let mut failure_detail = String::from("no verifier-frontier repair candidate succeeded");
+
+        tracing::debug!(
+            max_flips = MAX_D_GE4_VERIFICATION_FRONTIER_REPAIR_FLIPS,
+            "post-construction: starting D≥4 verifier-frontier repair fallback"
+        );
+
+        match repair_from_first_verification_failure(
+            &mut self.tri.tds,
+            &self.tri.kernel,
+            Some(MAX_D_GE4_VERIFICATION_FRONTIER_REPAIR_FLIPS),
+        ) {
+            Ok(Some(stats)) => {
+                repair_stats = stats;
+                match self.tri.normalize_and_promote_positive_orientation() {
+                    Ok(()) => {
+                        let topology_result = if topology.requires_vertex_links_at_completion() {
+                            self.tri.validate().map_err(|err| {
+                                format!(
+                                    "topology validation failed after verifier-frontier repair: {err}"
+                                )
+                            })
+                        } else {
+                            Ok(())
+                        };
+                        match topology_result {
+                            Ok(()) => match self.is_valid() {
+                                Ok(()) => {
+                                    kept_repair_state = true;
+                                    failure_detail.clear();
+                                }
+                                Err(err) => {
+                                    failure_detail = format!(
+                                        "Delaunay validation failed after verifier-frontier repair: {err}"
+                                    );
+                                }
+                            },
+                            Err(err) => {
+                                failure_detail = err;
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        failure_detail = format!(
+                            "orientation normalization failed after verifier-frontier repair: {}",
+                            Self::map_orientation_canonicalization_error(err)
+                        );
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(err) => {
+                failure_detail = format!("verifier-frontier repair failed: {err}");
+            }
+        }
+
+        if !kept_repair_state {
+            self.tri.tds = tds_snapshot;
+        }
+
+        tracing::debug!(
+            elapsed = ?repair_started.elapsed(),
+            kept_repair_state,
+            flips_performed = repair_stats.flips_performed,
+            facets_checked = repair_stats.facets_checked,
+            error = if kept_repair_state { "none" } else { &failure_detail },
+            "post-construction: D≥4 verifier-frontier repair fallback completed"
+        );
+
+        kept_repair_state
+    }
+
+    fn try_d_ge4_postconstruction_seeded_repair(
+        &mut self,
+        seed_cells: &[CellKey],
+        reason: &'static str,
+    ) -> bool {
+        debug_assert!(
+            D >= 4,
+            "post-construction seeded repair is only used in D>=4"
+        );
+
+        if seed_cells.is_empty() {
+            return false;
+        }
+
+        let trace_insertion = std::env::var_os("DELAUNAY_INSERT_TRACE").is_some();
+        let topology = self.tri.topology_guarantee();
+        let max_flips = (seed_cells.len() * (D + 1) * 16).clamp(512, 4096);
+        let tds_snapshot = self.tri.tds.clone();
+        let repair_started = Instant::now();
+        let repair_result = {
+            let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
+            repair_delaunay_local_single_pass(tds, kernel, seed_cells, max_flips).map(|_| ())
+        };
+        let mut kept_repair_state = repair_result.is_ok();
+        if kept_repair_state {
+            kept_repair_state = self
+                .tri
+                .normalize_and_promote_positive_orientation()
+                .is_ok();
+        }
+        if kept_repair_state && topology.requires_ridge_links() {
+            kept_repair_state = self.tri.validate().is_ok();
+        }
+        if !kept_repair_state {
+            self.tri.tds = tds_snapshot;
+        }
+
+        tracing::debug!(
+            reason,
+            elapsed = ?repair_started.elapsed(),
+            seed_count = seed_cells.len(),
+            max_flips,
+            success = repair_result.is_ok(),
+            kept_repair_state,
+            "post-construction: seeded D≥4 repair completed"
+        );
+        if trace_insertion {
+            eprintln!(
+                "[bulk-finalize] done seeded-repair reason={reason} elapsed={:?} seed_count={} success={} kept_repair_state={}",
+                repair_started.elapsed(),
+                seed_cells.len(),
+                repair_result.is_ok(),
+                kept_repair_state
+            );
+        }
+
+        kept_repair_state
+    }
+
+    fn try_d_ge4_postconstruction_negative_orientation_repair(&mut self) -> bool {
+        const MAX_NEGATIVE_ORIENTATION_REPAIR_SEED_CELLS: usize = 24;
+
+        debug_assert!(
+            D >= 4,
+            "post-construction negative-orientation repair is only used in D>=4"
+        );
+
+        let seed_cells = match self
+            .tri
+            .collect_negative_orientation_cells_limited(MAX_NEGATIVE_ORIENTATION_REPAIR_SEED_CELLS)
+        {
+            Ok(seed_cells) => seed_cells,
+            Err(err) => {
+                tracing::debug!(
+                    error = %err,
+                    "post-construction: failed to collect negative-orientation repair seeds"
+                );
+                return false;
+            }
+        };
+        if seed_cells.is_empty() {
+            tracing::debug!(
+                "post-construction: no negative-orientation seed cells available for targeted repair"
+            );
+            return false;
+        }
+
+        let topology = self.tri.topology_guarantee();
+        let max_flips = (seed_cells.len() * (D + 1) * 8).clamp(128, 1024);
+        let tds_snapshot = self.tri.tds.clone();
+        let repair_started = Instant::now();
+        let mut repair_stats = DelaunayRepairStats::default();
+        let mut kept_repair_state = false;
+        let mut failure_detail =
+            String::from("negative-orientation seeded repair did not produce a valid state");
+
+        tracing::debug!(
+            seed_count = seed_cells.len(),
+            max_flips,
+            "post-construction: starting negative-orientation seeded repair"
+        );
+
+        match repair_delaunay_local_single_pass(
+            &mut self.tri.tds,
+            &self.tri.kernel,
+            &seed_cells,
+            max_flips,
+        ) {
+            Ok(stats) => {
+                repair_stats = stats;
+                match self.tri.normalize_and_promote_positive_orientation() {
+                    Ok(()) => {
+                        let topology_result = if topology.requires_vertex_links_at_completion() {
+                            self.tri.validate().map_err(|err| {
+                                format!(
+                                    "topology validation failed after negative-orientation repair: {err}"
+                                )
+                            })
+                        } else {
+                            Ok(())
+                        };
+                        match topology_result {
+                            Ok(()) => {
+                                kept_repair_state = true;
+                                failure_detail.clear();
+                            }
+                            Err(err) => {
+                                failure_detail = err;
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        failure_detail = format!(
+                            "orientation normalization failed after negative-orientation repair: {}",
+                            Self::map_orientation_canonicalization_error(err)
+                        );
+                    }
+                }
+            }
+            Err(err) => {
+                failure_detail =
+                    format!("negative-orientation seeded repair failed before normalization: {err}");
+            }
+        }
+
+        if !kept_repair_state {
+            self.tri.tds = tds_snapshot;
+        }
+
+        tracing::debug!(
+            elapsed = ?repair_started.elapsed(),
+            kept_repair_state,
+            flips_performed = repair_stats.flips_performed,
+            facets_checked = repair_stats.facets_checked,
+            error = if kept_repair_state { "none" } else { &failure_detail },
+            "post-construction: negative-orientation seeded repair completed"
+        );
+
+        kept_repair_state
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Keeps the two D>=4 local-repair branches behaviorally identical"
+    )]
+    fn handle_d_ge4_local_repair_followup(
+        &mut self,
+        topology: TopologyGuarantee,
+        index: usize,
+        repair_snapshot: Option<Tds<K::Scalar, U, V, D>>,
+        soft_fail_seeds: &mut Vec<CellKey>,
+        seed_cells: &[CellKey],
+        repair_followup: DGe4LocalRepairFollowup<'_>,
+    ) -> Result<(), DelaunayTriangulationConstructionError> {
+        debug_assert!(
+            D >= 4,
+            "D>=4 helper should not be used for lower dimensions"
+        );
+
+        match repair_followup {
+            DGe4LocalRepairFollowup::Applied { flips_performed } => {
+                // insert_with_statistics_seeded_indexed already canonicalizes orientation
+                // after the insertion itself. Re-run the global orientation pass only if
+                // local repair actually flipped cells.
+                if flips_performed == 0 {
+                    return Ok(());
+                }
+
+                self.tri
+                    .normalize_and_promote_positive_orientation()
+                    .map_err(Self::map_orientation_canonicalization_error)?;
+
+                if topology.requires_ridge_links() && self.tri.validate().is_err() {
+                    if let Some(snapshot) = repair_snapshot.as_ref() {
+                        self.tri.tds = snapshot.clone();
+                    }
+                    if self.try_d_ge4_postconstruction_verification_frontier_repair() {
+                        return Ok(());
+                    }
+                    tracing::debug!(
+                        idx = index,
+                        "bulk D≥4: rolled back per-insertion repair after topology validation failure; deferring to finalize repair"
+                    );
+                    Self::extend_finalize_repair_seeds_unique(soft_fail_seeds, seed_cells);
+                }
+            }
+            DGe4LocalRepairFollowup::Failed { error } => {
+                if let Some(snapshot) = repair_snapshot.as_ref() {
+                    self.tri.tds = snapshot.clone();
+                }
+                if topology.requires_ridge_links()
+                    && self.try_d_ge4_postconstruction_verification_frontier_repair()
+                {
+                    return Ok(());
+                }
+                tracing::debug!(
+                    error = %error,
+                    idx = index,
+                    "bulk D≥4: per-insertion repair non-convergent; rolled back and deferred to finalize repair"
+                );
+                Self::extend_finalize_repair_seeds_unique(soft_fail_seeds, seed_cells);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn extend_finalize_repair_seeds_unique(
+        finalize_repair_seeds: &mut Vec<CellKey>,
+        extra: &[CellKey],
+    ) {
+        for &cell_key in extra {
+            if !finalize_repair_seeds.contains(&cell_key) {
+                finalize_repair_seeds.push(cell_key);
+            }
+        }
+    }
+
     #[allow(clippy::too_many_lines)]
     fn insert_remaining_vertices_seeded(
         &mut self,
@@ -2846,6 +3406,7 @@ where
         grid_cell_size: Option<K::Scalar>,
         construction_stats: Option<&mut ConstructionStatistics>,
         soft_fail_seeds: &mut Vec<CellKey>,
+        deferred_finalize_repair_seeds: &mut Vec<CellKey>,
     ) -> Result<(), DelaunayTriangulationConstructionError> {
         let mut grid_index = grid_cell_size.map(HashGridIndex::new);
         if let Some(grid) = grid_index.as_mut()
@@ -2934,26 +3495,71 @@ where
                             // co-spherical configurations), roll back the insertion and retry
                             // with perturbation to break the co-sphericity.
                             //
-                            // For D≥4: Bowyer-Watson with the fast kernel can produce
-                            // non-Delaunay facets when the conflict region is detected
-                            // imprecisely (co-spherical configurations).  A bounded
-                            // per-insertion repair pass fixes these violations.  If repair
-                            // does not converge (e.g. co-spherical cycling suppressed by
-                            // both_positive_artifact), the soft-fail path lets construction
-                            // continue; the final is_valid() check validates the result.
+                            // For D≥4 manifold topologies: try a small, seed-local repair, but
+                            // if it cycles or breaks ridge-link validation then roll back to the
+                            // post-insertion snapshot and defer that neighborhood to the final
+                            // global repair pass. Per-insertion global repair is too expensive
+                            // and often discarded anyway.
+                            //
+                            // For D≥4 without ridge-link validation: keep the bounded local
+                            // repair path as-is.
                             let topology = self.tri.topology_guarantee();
                             if D >= 2
                                 && TopologicalOperation::FacetFlip.is_admissible_under(topology)
                                 && self.tri.tds.number_of_cells() > 0
                             {
+                                let should_repair_now = self.should_run_delaunay_repair_for(
+                                    topology,
+                                    self.insertion_state.delaunay_repair_insertion_count,
+                                );
                                 let seed_cells: Vec<CellKey> =
                                     self.tri.adjacent_cells(v_key).collect();
                                 if !seed_cells.is_empty() {
+                                    let defer_boundary_repair = D >= 4
+                                        && topology.requires_ridge_links()
+                                        && self
+                                            .inserted_vertex_star_touches_boundary(
+                                                v_key, &seed_cells,
+                                            )?;
+                                    if defer_boundary_repair {
+                                        if trace_insertion {
+                                            eprintln!(
+                                                "[bulk-repair] deferred idx={index} seed_cells={} reason=boundary-finalize",
+                                                seed_cells.len()
+                                            );
+                                        }
+                                        continue;
+                                    }
+                                    let force_interior_repair = D >= 4
+                                        && topology.requires_ridge_links()
+                                        && !defer_boundary_repair;
+                                    if !should_repair_now && !force_interior_repair {
+                                        if D >= 4 && topology.requires_ridge_links() {
+                                            Self::extend_finalize_repair_seeds_unique(
+                                                deferred_finalize_repair_seeds,
+                                                &seed_cells,
+                                            );
+                                            if trace_insertion {
+                                                eprintln!(
+                                                    "[bulk-repair] deferred idx={index} seed_cells={} reason=scheduled-finalize",
+                                                    seed_cells.len()
+                                                );
+                                            }
+                                        }
+                                        continue;
+                                    }
                                     let max_flips = if D >= 4 {
-                                        (seed_cells.len() * (D + 1) * 2).max(8)
+                                        (seed_cells.len() * (D + 1) * 2).clamp(64, 128)
                                     } else {
                                         (seed_cells.len() * (D + 1) * 4).max(16)
                                     };
+                                    if trace_insertion {
+                                        eprintln!(
+                                            "[bulk-repair] start idx={index} seed_cells={} max_flips={max_flips}",
+                                            seed_cells.len()
+                                        );
+                                    }
+                                    let repair_started = trace_insertion.then(Instant::now);
                                     let repair_snapshot = (D >= 4
                                         && topology.requires_ridge_links())
                                     .then(|| self.tri.tds.clone());
@@ -2968,32 +3574,37 @@ where
                                     };
                                     match repair_result {
                                         Ok(repair_stats) => {
-                                            // insert_with_statistics_seeded_indexed already
-                                            // canonicalizes orientation after the insertion
-                                            // itself. Re-run the global orientation pass only
-                                            // if local repair actually flipped cells.
-                                            if D >= 4 && repair_stats.flips_performed > 0 {
-                                                self.tri
-                                                    .normalize_and_promote_positive_orientation()
-                                                    .map_err(
-                                                        Self::map_orientation_canonicalization_error,
-                                                    )?;
-                                                if topology.requires_ridge_links()
-                                                    && self.tri.validate().is_err()
-                                                {
-                                                    if let Some(snapshot) = repair_snapshot {
-                                                        self.tri.tds = snapshot;
-                                                    }
-                                                    tracing::debug!(
-                                                        idx = index,
-                                                        "bulk D≥4: rolled back per-insertion repair after topology validation failure"
-                                                    );
-                                                    soft_fail_seeds
-                                                        .extend(seed_cells.iter().copied());
-                                                }
+                                            if trace_insertion && let Some(started) = repair_started
+                                            {
+                                                eprintln!(
+                                                    "[bulk-repair] done idx={index} elapsed={:?} flips={} checked={}",
+                                                    started.elapsed(),
+                                                    repair_stats.flips_performed,
+                                                    repair_stats.facets_checked
+                                                );
+                                            }
+                                            if D >= 4 {
+                                                self.handle_d_ge4_local_repair_followup(
+                                                    topology,
+                                                    index,
+                                                    repair_snapshot,
+                                                    soft_fail_seeds,
+                                                    &seed_cells,
+                                                    DGe4LocalRepairFollowup::Applied {
+                                                        flips_performed: repair_stats
+                                                            .flips_performed,
+                                                    },
+                                                )?;
                                             }
                                         }
                                         Err(repair_err) => {
+                                            if trace_insertion && let Some(started) = repair_started
+                                            {
+                                                eprintln!(
+                                                    "[bulk-repair] failed idx={index} elapsed={:?} err={repair_err}",
+                                                    started.elapsed()
+                                                );
+                                            }
                                             if D < 4 {
                                                 Self::try_d_lt4_global_repair_fallback(
                                                     &mut self.tri.tds,
@@ -3005,16 +3616,16 @@ where
                                                 )?;
                                                 continue;
                                             }
-                                            if let Some(snapshot) = repair_snapshot {
-                                                self.tri.tds = snapshot;
-                                            }
-                                            tracing::debug!(
-                                                error = %repair_err,
-                                                idx = index,
-                                                "bulk D≥4: per-insertion repair non-convergent; \
-                                                 continuing (both_positive_artifact handled)"
-                                            );
-                                            soft_fail_seeds.extend(seed_cells.iter().copied());
+                                            self.handle_d_ge4_local_repair_followup(
+                                                topology,
+                                                index,
+                                                repair_snapshot,
+                                                soft_fail_seeds,
+                                                &seed_cells,
+                                                DGe4LocalRepairFollowup::Failed {
+                                                    error: &repair_err,
+                                                },
+                                            )?;
                                         }
                                     }
                                 }
@@ -3115,21 +3726,65 @@ where
                                 .insertion_state
                                 .delaunay_repair_insertion_count
                                 .saturating_add(1);
-                            // Per-insertion local repair: see the non-stats branch
-                            // comment for full details.
+                            // Per-insertion local repair: see the non-stats branch comment for
+                            // the D≥4 rollback/defer behavior and rationale.
                             let topology = self.tri.topology_guarantee();
                             if D >= 2
                                 && TopologicalOperation::FacetFlip.is_admissible_under(topology)
                                 && self.tri.tds.number_of_cells() > 0
                             {
+                                let should_repair_now = self.should_run_delaunay_repair_for(
+                                    topology,
+                                    self.insertion_state.delaunay_repair_insertion_count,
+                                );
                                 let seed_cells: Vec<CellKey> =
                                     self.tri.adjacent_cells(v_key).collect();
                                 if !seed_cells.is_empty() {
+                                    let defer_boundary_repair = D >= 4
+                                        && topology.requires_ridge_links()
+                                        && self
+                                            .inserted_vertex_star_touches_boundary(
+                                                v_key, &seed_cells,
+                                            )?;
+                                    if defer_boundary_repair {
+                                        if trace_insertion {
+                                            eprintln!(
+                                                "[bulk-repair] deferred idx={index} seed_cells={} reason=boundary-finalize",
+                                                seed_cells.len()
+                                            );
+                                        }
+                                        continue;
+                                    }
+                                    let force_interior_repair = D >= 4
+                                        && topology.requires_ridge_links()
+                                        && !defer_boundary_repair;
+                                    if !should_repair_now && !force_interior_repair {
+                                        if D >= 4 && topology.requires_ridge_links() {
+                                            Self::extend_finalize_repair_seeds_unique(
+                                                deferred_finalize_repair_seeds,
+                                                &seed_cells,
+                                            );
+                                            if trace_insertion {
+                                                eprintln!(
+                                                    "[bulk-repair] deferred idx={index} seed_cells={} reason=scheduled-finalize",
+                                                    seed_cells.len()
+                                                );
+                                            }
+                                        }
+                                        continue;
+                                    }
                                     let max_flips = if D >= 4 {
-                                        (seed_cells.len() * (D + 1) * 2).max(8)
+                                        (seed_cells.len() * (D + 1) * 2).clamp(64, 128)
                                     } else {
                                         (seed_cells.len() * (D + 1) * 4).max(16)
                                     };
+                                    if trace_insertion {
+                                        eprintln!(
+                                            "[bulk-repair] start idx={index} seed_cells={} max_flips={max_flips}",
+                                            seed_cells.len()
+                                        );
+                                    }
+                                    let repair_started = trace_insertion.then(Instant::now);
                                     let repair_snapshot = (D >= 4
                                         && topology.requires_ridge_links())
                                     .then(|| self.tri.tds.clone());
@@ -3144,32 +3799,37 @@ where
                                     };
                                     match repair_result {
                                         Ok(repair_stats) => {
-                                            // insert_with_statistics_seeded_indexed already
-                                            // canonicalizes orientation after the insertion
-                                            // itself. Re-run the global orientation pass only
-                                            // if local repair actually flipped cells.
-                                            if D >= 4 && repair_stats.flips_performed > 0 {
-                                                self.tri
-                                                    .normalize_and_promote_positive_orientation()
-                                                    .map_err(
-                                                        Self::map_orientation_canonicalization_error,
-                                                    )?;
-                                                if topology.requires_ridge_links()
-                                                    && self.tri.validate().is_err()
-                                                {
-                                                    if let Some(snapshot) = repair_snapshot {
-                                                        self.tri.tds = snapshot;
-                                                    }
-                                                    tracing::debug!(
-                                                        idx = index,
-                                                        "bulk D≥4: rolled back per-insertion repair after topology validation failure"
-                                                    );
-                                                    soft_fail_seeds
-                                                        .extend(seed_cells.iter().copied());
-                                                }
+                                            if trace_insertion && let Some(started) = repair_started
+                                            {
+                                                eprintln!(
+                                                    "[bulk-repair] done idx={index} elapsed={:?} flips={} checked={}",
+                                                    started.elapsed(),
+                                                    repair_stats.flips_performed,
+                                                    repair_stats.facets_checked
+                                                );
+                                            }
+                                            if D >= 4 {
+                                                self.handle_d_ge4_local_repair_followup(
+                                                    topology,
+                                                    index,
+                                                    repair_snapshot,
+                                                    soft_fail_seeds,
+                                                    &seed_cells,
+                                                    DGe4LocalRepairFollowup::Applied {
+                                                        flips_performed: repair_stats
+                                                            .flips_performed,
+                                                    },
+                                                )?;
                                             }
                                         }
                                         Err(repair_err) => {
+                                            if trace_insertion && let Some(started) = repair_started
+                                            {
+                                                eprintln!(
+                                                    "[bulk-repair] failed idx={index} elapsed={:?} err={repair_err}",
+                                                    started.elapsed()
+                                                );
+                                            }
                                             if D < 4 {
                                                 Self::try_d_lt4_global_repair_fallback(
                                                     &mut self.tri.tds,
@@ -3181,16 +3841,16 @@ where
                                                 )?;
                                                 continue;
                                             }
-                                            if let Some(snapshot) = repair_snapshot {
-                                                self.tri.tds = snapshot;
-                                            }
-                                            tracing::debug!(
-                                                error = %repair_err,
-                                                idx = index,
-                                                "bulk D≥4: per-insertion repair non-convergent; \
-                                                 continuing (both_positive_artifact handled)"
-                                            );
-                                            soft_fail_seeds.extend(seed_cells.iter().copied());
+                                            self.handle_d_ge4_local_repair_followup(
+                                                topology,
+                                                index,
+                                                repair_snapshot,
+                                                soft_fail_seeds,
+                                                &seed_cells,
+                                                DGe4LocalRepairFollowup::Failed {
+                                                    error: &repair_err,
+                                                },
+                                            )?;
                                         }
                                     }
                                 }
@@ -3257,71 +3917,41 @@ where
         &mut self,
         original_validation_policy: ValidationPolicy,
         original_defer_orientation_validation: bool,
+        original_defer_link_validation: bool,
         original_repair_policy: DelaunayRepairPolicy,
         run_final_repair: bool,
         soft_fail_seeds: &[CellKey],
+        deferred_finalize_repair_seeds: &[CellKey],
     ) -> Result<(), DelaunayTriangulationConstructionError> {
+        let trace_insertion = std::env::var_os("DELAUNAY_INSERT_TRACE").is_some();
+
         // Restore policies after batch construction.
         self.tri.validation_policy = original_validation_policy;
         self.tri
             .defer_geometric_orientation_validation_until_completion =
             original_defer_orientation_validation;
+        self.tri.defer_topological_link_validation_until_completion =
+            original_defer_link_validation;
         self.insertion_state.delaunay_repair_policy = original_repair_policy;
 
         let topology = self.tri.topology_guarantee();
         if run_final_repair && self.should_run_delaunay_repair_for(topology, 0) {
-            // For D≥4: always run a global repair seeded from ALL cells.
-            //   BW with the fast kernel can produce non-Delaunay facets anywhere,
-            //   not only in the star of soft-failed insertions.  A small fixed
-            //   budget ensures we fail fast on cycling rather than spending minutes.
-            //   Non-convergence is a soft-fail; correctness is validated by
-            //   is_delaunay_property_only() in build_with_shuffled_retries.
+            // For D≥4 ridge-link topologies, explicit repair rollbacks are escalated through the
+            // bounded verifier-frontier repair instead of replaying the same high-budget seeded
+            // local search that already failed during insertion. Purely deferred insertion
+            // neighborhoods are saved separately and are only used if completion validation later
+            // fails.
             //
             // For D<4: repair is proven convergent; per-insertion repair now
             //   falls back to global repair_delaunay_with_flips_k2_k3 on
             //   local non-convergence, so soft_fail_seeds is typically empty
             //   for D<4.  The seeded path below is kept for completeness.
-            if D >= 4 && !topology.requires_ridge_links() {
-                let cell_count = self.tri.tds.number_of_cells();
-                if cell_count > 0 {
-                    let tds_snapshot = self.tri.tds.clone();
-                    let all_cells: Vec<CellKey> = self.tri.tds.cell_keys().collect();
-                    tracing::debug!(
-                        cell_count,
-                        "post-construction: starting global D≥4 finalize repair"
-                    );
-                    let repair_started = Instant::now();
-                    let repair_result = {
-                        let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-                        repair_delaunay_local_single_pass(tds, kernel, &all_cells, 512).map(|_| ())
-                    };
-                    let mut kept_repair_state = repair_result.is_ok();
-                    if kept_repair_state {
-                        kept_repair_state = self
-                            .tri
-                            .normalize_and_promote_positive_orientation()
-                            .is_ok();
-                    }
-                    if kept_repair_state && topology.requires_ridge_links() {
-                        kept_repair_state = self.tri.validate().is_ok();
-                    }
-                    if !kept_repair_state {
-                        self.tri.tds = tds_snapshot;
-                    }
-                    tracing::debug!(
-                        elapsed = ?repair_started.elapsed(),
-                        success = repair_result.is_ok(),
-                        kept_repair_state,
-                        "post-construction: D≥4 finalize repair completed (soft-fail)"
-                    );
-                    // Always soft-fail: if the global repair fails or breaks the requested
-                    // topology guarantee, keep the pre-repair triangulation and let the
-                    // caller's final validation / Delaunay check judge the result.
-                }
-            } else if D >= 4 {
-                tracing::debug!(
-                    "post-construction: skipping global D≥4 finalize repair under manifold topology guarantee"
-                );
+            let should_run_global_d_ge4_finalize_repair = D >= 4 && !soft_fail_seeds.is_empty();
+            if should_run_global_d_ge4_finalize_repair {
+                let _ = self.try_d_ge4_postconstruction_verification_frontier_repair();
+                // Always soft-fail: if the global repair fails or breaks the requested
+                // topology guarantee, keep the pre-repair triangulation and let the
+                // caller's final validation / Delaunay check judge the result.
             } else if !soft_fail_seeds.is_empty() {
                 // D<4 seeded repair (unused in practice; kept for completeness).
                 tracing::debug!(
@@ -3355,12 +3985,60 @@ where
         // Flip-based repair calls normalize_coherent_orientation() which makes all cells
         // combinatorially coherent but can leave the global sign negative.  Re-canonicalize
         // geometric orientation to positive before validation (#258).
-        self.tri
-            .normalize_and_promote_positive_orientation()
-            .map_err(Self::map_orientation_canonicalization_error)?;
+        if trace_insertion {
+            eprintln!("[bulk-finalize] start orientation-normalize");
+        }
+        let orientation_started = Instant::now();
+        let orientation_snapshot = (D >= 4).then(|| self.tri.tds.clone());
+        if let Err(err) = self.tri.normalize_and_promote_positive_orientation() {
+            if D >= 4 {
+                if let Some(snapshot) = orientation_snapshot.as_ref() {
+                    self.tri.tds = snapshot.clone();
+                }
+                if !deferred_finalize_repair_seeds.is_empty()
+                    && self.try_d_ge4_postconstruction_seeded_repair(
+                        deferred_finalize_repair_seeds,
+                        "deferred",
+                    )
+                {
+                    if trace_insertion {
+                        eprintln!(
+                            "[bulk-finalize] done orientation-normalize elapsed={:?} via deferred seeded repair",
+                            orientation_started.elapsed()
+                        );
+                    }
+                } else if self.try_d_ge4_postconstruction_negative_orientation_repair() {
+                    if trace_insertion {
+                        eprintln!(
+                            "[bulk-finalize] done orientation-normalize elapsed={:?} via negative-orientation seeded repair",
+                            orientation_started.elapsed()
+                        );
+                    }
+                } else {
+                    if let Some(snapshot) = orientation_snapshot.as_ref() {
+                        self.tri.tds = snapshot.clone();
+                    }
+                    if self.try_d_ge4_postconstruction_verification_frontier_repair() {
+                        return Ok(());
+                    }
+                    return Err(Self::map_orientation_canonicalization_error(err).into());
+                }
+            } else {
+                return Err(Self::map_orientation_canonicalization_error(err).into());
+            }
+        }
+        if trace_insertion {
+            eprintln!(
+                "[bulk-finalize] done orientation-normalize elapsed={:?}",
+                orientation_started.elapsed()
+            );
+        }
 
         if topology.requires_vertex_links_at_completion() {
             tracing::debug!("post-construction: starting topology validation (finalize)");
+            if trace_insertion {
+                eprintln!("[bulk-finalize] start topology-validate");
+            }
             let validation_started = Instant::now();
             let validation_result = self.tri.validate();
             tracing::debug!(
@@ -3368,6 +4046,13 @@ where
                 success = validation_result.is_ok(),
                 "post-construction: topology validation (finalize) completed"
             );
+            if trace_insertion {
+                eprintln!(
+                    "[bulk-finalize] done topology-validate elapsed={:?} success={}",
+                    validation_started.elapsed(),
+                    validation_result.is_ok()
+                );
+            }
             if let Err(err) = validation_result {
                 return Err(TriangulationConstructionError::GeometricDegeneracy {
                     message: format!("PL-manifold validation failed after construction: {err}"),
@@ -5385,6 +6070,7 @@ where
                 validation_policy: ValidationPolicy::OnSuspicion,
                 topology_guarantee: TopologyGuarantee::DEFAULT,
                 defer_geometric_orientation_validation_until_completion: false,
+                defer_topological_link_validation_until_completion: false,
             },
             insertion_state: DelaunayInsertionState::new(),
             spatial_index: None,
@@ -5409,6 +6095,7 @@ where
                 validation_policy: ValidationPolicy::OnSuspicion,
                 topology_guarantee,
                 defer_geometric_orientation_validation_until_completion: false,
+                defer_topological_link_validation_until_completion: false,
             },
             insertion_state: DelaunayInsertionState::new(),
             spatial_index: None,
@@ -5771,6 +6458,7 @@ mod tests {
         verify_delaunay_via_flip_predicates,
     };
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
+    use crate::core::algorithms::locate::{LocateResult, locate_by_scan};
     use crate::core::cell::Cell;
     use crate::core::triangulation_data_structure::Tds;
     use crate::core::triangulation_data_structure::{EntityKind, GeometricError};
@@ -6029,6 +6717,9 @@ mod tests {
         let points =
             generate_random_points_in_ball_seeded::<f64, 4>(100, 100.0, ISSUE_230_CASE_SEED)
                 .expect("point generation should succeed");
+        // Keep this as the minimal prefix that historically reproduced the first
+        // #230 skip. The full 100-point seed remains covered by the slow regression
+        // in tests/large_scale_debug.rs.
         let vertices: Vec<Vertex<f64, (), 4>> =
             points.into_iter().take(13).map(|p| vertex!(p)).collect();
         let kernel = RobustKernel::<f64>::new();
@@ -6046,6 +6737,464 @@ mod tests {
         assert_eq!(stats.total_skipped(), 0);
         assert_eq!(dt.number_of_vertices(), vertices.len());
         assert!(dt.as_triangulation().validate().is_ok());
+    }
+
+    #[test]
+    fn test_issue_230_4d_43_prefix_batch_construction_stays_valid() {
+        const ISSUE_230_CASE_SEED: u64 = 0x9B77_86C9_99C5_6A16;
+        const PREFIX_LEN: usize = 43;
+
+        init_tracing();
+        let points =
+            generate_random_points_in_ball_seeded::<f64, 4>(100, 100.0, ISSUE_230_CASE_SEED)
+                .expect("point generation should succeed");
+        let input_vertices: Vec<Vertex<f64, (), 4>> =
+            points.into_iter().map(|p| vertex!(p)).collect();
+        let preprocess = DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::
+            preprocess_vertices_for_construction(
+                &input_vertices,
+                DedupPolicy::Off,
+                InsertionOrderStrategy::Hilbert,
+                InitialSimplexStrategy::First,
+            )
+            .expect("issue #230 vertices should preprocess successfully");
+        let vertices: Vec<Vertex<f64, (), 4>> = preprocess
+            .primary_slice(&input_vertices)
+            .iter()
+            .copied()
+            .take(PREFIX_LEN)
+            .collect();
+        let kernel = RobustKernel::<f64>::new();
+        let construction_started = Instant::now();
+
+        let (dt, stats) = DelaunayTriangulation::<_, (), (), 4>::
+            with_topology_guarantee_and_options_with_construction_statistics(
+                &kernel,
+                &vertices,
+                TopologyGuarantee::PLManifoldStrict,
+                ConstructionOptions::default(),
+            )
+            .expect("4D 43-prefix should construct without skips or post-build invalidity");
+        println!(
+            "4D 43-prefix construction completed in {:?}",
+            construction_started.elapsed()
+        );
+
+        assert_eq!(stats.inserted, PREFIX_LEN);
+        assert_eq!(stats.total_skipped(), 0);
+        assert_eq!(dt.number_of_vertices(), PREFIX_LEN);
+        let validation_started = Instant::now();
+        let validation_report = dt.validation_report();
+        println!(
+            "4D 43-prefix validation_report completed in {:?}",
+            validation_started.elapsed()
+        );
+        assert!(
+            validation_report.is_ok(),
+            "4D 43-prefix batch construction should fully validate"
+        );
+    }
+
+    #[test]
+    fn test_issue_230_first_hilbert_ordered_4d_insertion_stays_orientable() {
+        const ISSUE_230_CASE_SEED: u64 = 0x9B77_86C9_99C5_6A16;
+
+        init_tracing();
+        let input_points =
+            generate_random_points_in_ball_seeded::<f64, 4>(100, 100.0, ISSUE_230_CASE_SEED)
+                .expect("point generation should succeed");
+        let input_vertices: Vec<Vertex<f64, (), 4>> =
+            input_points.into_iter().map(|p| vertex!(p)).collect();
+        let preprocess =
+            DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::preprocess_vertices_for_construction(
+                &input_vertices,
+                DedupPolicy::Off,
+                InsertionOrderStrategy::Hilbert,
+                InitialSimplexStrategy::First,
+            )
+            .expect("issue #230 vertices should preprocess successfully");
+        let ordered_vertices = preprocess.primary_slice(&input_vertices);
+        let tds = Triangulation::<RobustKernel<f64>, (), (), 4>::build_initial_simplex(
+            &ordered_vertices[..=4],
+        )
+        .expect("initial simplex should build");
+        let mut tri = Triangulation {
+            kernel: RobustKernel::<f64>::new(),
+            tds,
+            global_topology: GlobalTopology::DEFAULT,
+            validation_policy: ValidationPolicy::OnSuspicion,
+            topology_guarantee: TopologyGuarantee::PLManifoldStrict,
+            defer_geometric_orientation_validation_until_completion: true,
+            defer_topological_link_validation_until_completion: true,
+        };
+
+        let first_inserted = ordered_vertices[5];
+        let point = *first_inserted.point();
+        assert!(
+            matches!(
+                locate_by_scan(&tri.tds, &tri.kernel, &point).expect("scan locate should succeed"),
+                LocateResult::Outside
+            ),
+            "issue #230 first reordered insertion should be geometrically outside the initial simplex"
+        );
+
+        let (outcome, _stats) = tri
+            .insert_with_statistics_seeded_indexed(first_inserted, None, None, 0, None)
+            .expect("first reordered insertion should not hard-fail");
+        let InsertionOutcome::Inserted { vertex_key, .. } = outcome else {
+            panic!("issue #230 first reordered insertion unexpectedly skipped");
+        };
+        let inserted_star: Vec<CellKey> = tri.adjacent_cells(vertex_key).collect();
+        assert!(
+            inserted_star.len() <= 4,
+            "a true exterior insertion from a single 4-simplex should not create a 5-cell star (star={:?})",
+            inserted_star
+        );
+
+        tri.defer_geometric_orientation_validation_until_completion = false;
+        tri.defer_topological_link_validation_until_completion = false;
+        assert!(
+            tri.normalize_and_promote_positive_orientation().is_ok(),
+            "first reordered insertion should remain positively orientable (cells={}, star={:?}, point={:?})",
+            tri.tds.number_of_cells(),
+            inserted_star,
+            point.coords()
+        );
+    }
+
+    #[test]
+    fn test_issue_230_4d_43_prefix_pre_finalize_probe() {
+        const ISSUE_230_CASE_SEED: u64 = 0x9B77_86C9_99C5_6A16;
+        const PREFIX_LEN: usize = 43;
+
+        init_tracing();
+        let input_points =
+            generate_random_points_in_ball_seeded::<f64, 4>(100, 100.0, ISSUE_230_CASE_SEED)
+                .expect("point generation should succeed");
+        let input_vertices: Vec<Vertex<f64, (), 4>> =
+            input_points.into_iter().map(|p| vertex!(p)).collect();
+        let preprocess =
+            DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::preprocess_vertices_for_construction(
+                &input_vertices,
+                DedupPolicy::Off,
+                InsertionOrderStrategy::Hilbert,
+                InitialSimplexStrategy::First,
+            )
+            .expect("issue #230 vertices should preprocess successfully");
+        let vertices: Vec<Vertex<f64, (), 4>> = preprocess
+            .primary_slice(&input_vertices)
+            .iter()
+            .copied()
+            .take(PREFIX_LEN)
+            .collect();
+        let kernel = RobustKernel::<f64>::new();
+        let started = std::time::Instant::now();
+
+        let initial_vertices = &vertices[..=4];
+        let tds = Triangulation::<RobustKernel<f64>, (), (), 4>::build_initial_simplex(
+            initial_vertices,
+        )
+            .expect("initial simplex should construct");
+        let mut dt = DelaunayTriangulation {
+            tri: Triangulation {
+                kernel,
+                tds,
+                global_topology: GlobalTopology::DEFAULT,
+                validation_policy: ValidationPolicy::OnSuspicion,
+                topology_guarantee: TopologyGuarantee::PLManifoldStrict,
+                defer_geometric_orientation_validation_until_completion: true,
+                defer_topological_link_validation_until_completion: true,
+            },
+            insertion_state: DelaunayInsertionState::new(),
+            spatial_index: None,
+        };
+        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
+        dt.insertion_state.use_global_repair_fallback = true;
+
+        let mut soft_fail_seeds = Vec::new();
+        let mut deferred_finalize_repair_seeds = Vec::new();
+        println!("building raw 4D prefix to pre-finalize state...");
+        dt.insert_remaining_vertices_seeded(
+            &vertices,
+            0,
+            None,
+            None,
+            &mut soft_fail_seeds,
+            &mut deferred_finalize_repair_seeds,
+        )
+        .expect("pre-finalize 4D batch insertion should complete");
+        println!("pre-finalize build completed in {:?}", started.elapsed());
+        assert_eq!(dt.number_of_vertices(), PREFIX_LEN);
+        println!("pre-finalize soft_fail_seeds={}", soft_fail_seeds.len());
+        println!(
+            "pre-finalize deferred_finalize_repair_seeds={}",
+            deferred_finalize_repair_seeds.len()
+        );
+        println!("pre-finalize connected={}", dt.tri.tds.is_connected());
+        println!(
+            "pre-finalize topology_validate={:?}",
+            dt.as_triangulation().validate()
+        );
+
+        let mut probe = Triangulation {
+            kernel: RobustKernel::<f64>::new(),
+            tds: dt.tri.tds.clone(),
+            global_topology: GlobalTopology::DEFAULT,
+            validation_policy: ValidationPolicy::OnSuspicion,
+            topology_guarantee: TopologyGuarantee::PLManifoldStrict,
+            defer_geometric_orientation_validation_until_completion: false,
+            defer_topological_link_validation_until_completion: false,
+        };
+        println!(
+            "pre-finalize orientation_normalize={:?}",
+            probe.normalize_and_promote_positive_orientation()
+        );
+        println!("post-normalize topology_validate={:?}", probe.validate());
+    }
+
+    #[test]
+    fn test_issue_230_4d_43_prefix_every_insertion_repair_probe() {
+        const ISSUE_230_CASE_SEED: u64 = 0x9B77_86C9_99C5_6A16;
+        const PREFIX_LEN: usize = 43;
+
+        init_tracing();
+        let input_points =
+            generate_random_points_in_ball_seeded::<f64, 4>(100, 100.0, ISSUE_230_CASE_SEED)
+                .expect("point generation should succeed");
+        let input_vertices: Vec<Vertex<f64, (), 4>> =
+            input_points.into_iter().map(|p| vertex!(p)).collect();
+        let preprocess = DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::
+            preprocess_vertices_for_construction(
+                &input_vertices,
+                DedupPolicy::Off,
+                InsertionOrderStrategy::Hilbert,
+                InitialSimplexStrategy::First,
+            )
+            .expect("issue #230 vertices should preprocess successfully");
+        let vertices: Vec<Vertex<f64, (), 4>> = preprocess
+            .primary_slice(&input_vertices)
+            .iter()
+            .copied()
+            .take(PREFIX_LEN)
+            .collect();
+
+        let mut dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 4> =
+            DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
+                RobustKernel::<f64>::new(),
+                TopologyGuarantee::PLManifoldStrict,
+            );
+        let started = std::time::Instant::now();
+
+        for (index, vertex) in vertices.iter().enumerate() {
+            let (outcome, _stats) = dt.insert_with_statistics(*vertex).unwrap_or_else(|err| {
+                panic!(
+                    "issue #230 repaired prefix insertion failed at index {} (prefix_len={} uuid={}): {err}",
+                    index,
+                    index + 1,
+                    vertex.uuid()
+                )
+            });
+            if let InsertionOutcome::Skipped { error } = outcome {
+                panic!(
+                    "issue #230 repaired prefix insertion unexpectedly skipped at index {} (prefix_len={} uuid={}): {error}",
+                    index,
+                    index + 1,
+                    vertex.uuid()
+                );
+            }
+            if (index + 1).is_multiple_of(5) || index + 1 >= 40 {
+                println!("issue #230 repaired prefix_len={} inserted", index + 1);
+            }
+        }
+
+        println!(
+            "issue #230 repaired 4D prefix built in {:?}",
+            started.elapsed()
+        );
+        assert_eq!(dt.number_of_vertices(), PREFIX_LEN);
+        assert!(
+            dt.validation_report().is_ok(),
+            "issue #230 repaired 4D prefix should validate after {} insertions",
+            PREFIX_LEN
+        );
+    }
+
+    #[test]
+    fn test_issue_230_4d_first_non_orientable_prefix_probe() {
+        const ISSUE_230_CASE_SEED: u64 = 0x9B77_86C9_99C5_6A16;
+        const CHECKPOINTS: &[usize] = &[20, 40, 60, 80, 90, 95, 100];
+
+        init_tracing();
+        let input_points =
+            generate_random_points_in_ball_seeded::<f64, 4>(100, 100.0, ISSUE_230_CASE_SEED)
+                .expect("point generation should succeed");
+        let input_vertices: Vec<Vertex<f64, (), 4>> =
+            input_points.into_iter().map(|p| vertex!(p)).collect();
+        let preprocess = DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::
+            preprocess_vertices_for_construction(
+                &input_vertices,
+                DedupPolicy::Off,
+                InsertionOrderStrategy::Hilbert,
+                InitialSimplexStrategy::First,
+            )
+            .expect("issue #230 vertices should preprocess successfully");
+        let ordered_vertices = preprocess.primary_slice(&input_vertices);
+
+        let tds = Triangulation::<RobustKernel<f64>, (), (), 4>::build_initial_simplex(
+            &ordered_vertices[..=4],
+        )
+        .expect("initial simplex should construct");
+        let mut tri = Triangulation {
+            kernel: RobustKernel::<f64>::new(),
+            tds,
+            global_topology: GlobalTopology::DEFAULT,
+            validation_policy: ValidationPolicy::OnSuspicion,
+            topology_guarantee: TopologyGuarantee::PLManifoldStrict,
+            defer_geometric_orientation_validation_until_completion: true,
+            defer_topological_link_validation_until_completion: true,
+        };
+        let mut last_inserted_cell = None;
+        let mut checkpoint_index = 0usize;
+
+        for (index, vertex) in ordered_vertices.iter().enumerate().skip(5) {
+            let (outcome, _stats) = tri
+                .insert_with_statistics_seeded_indexed(*vertex, None, last_inserted_cell, 0, None)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "issue #230 ordered prefix insertion failed at index {} (prefix_len={} uuid={}): {err}",
+                        index,
+                        index + 1,
+                        vertex.uuid()
+                    )
+                });
+            let InsertionOutcome::Inserted { hint, .. } = outcome else {
+                panic!(
+                    "issue #230 ordered prefix insertion unexpectedly skipped at index {} (prefix_len={} uuid={})",
+                    index,
+                    index + 1,
+                    vertex.uuid()
+                );
+            };
+            last_inserted_cell = hint;
+
+            let prefix_len = index + 1;
+            if CHECKPOINTS
+                .get(checkpoint_index)
+                .is_none_or(|checkpoint| *checkpoint != prefix_len)
+            {
+                continue;
+            }
+            checkpoint_index = checkpoint_index.saturating_add(1);
+
+            let mut probe = Triangulation {
+                kernel: RobustKernel::<f64>::new(),
+                tds: tri.tds.clone(),
+                global_topology: GlobalTopology::DEFAULT,
+                validation_policy: ValidationPolicy::OnSuspicion,
+                topology_guarantee: TopologyGuarantee::PLManifoldStrict,
+                defer_geometric_orientation_validation_until_completion: false,
+                defer_topological_link_validation_until_completion: false,
+            };
+
+            if let Err(err) = probe.normalize_and_promote_positive_orientation() {
+                panic!(
+                    "issue #230 first non-orientable checkpoint prefix_len={} ordered_index={} uuid={} err={err}",
+                    prefix_len,
+                    index,
+                    vertex.uuid()
+                );
+            }
+            if let Err(err) = probe.validate() {
+                panic!(
+                    "issue #230 first topology-invalid checkpoint prefix_len={} ordered_index={} uuid={} err={err}",
+                    prefix_len,
+                    index,
+                    vertex.uuid()
+                );
+            }
+            println!("issue #230 checkpoint prefix_len={prefix_len}: ok");
+        }
+    }
+
+    #[test]
+    fn test_issue_230_first_two_hilbert_ordered_4d_insertions_stay_orientable() {
+        const ISSUE_230_CASE_SEED: u64 = 0x9B77_86C9_99C5_6A16;
+
+        init_tracing();
+        let input_points =
+            generate_random_points_in_ball_seeded::<f64, 4>(100, 100.0, ISSUE_230_CASE_SEED)
+                .expect("point generation should succeed");
+        let input_vertices: Vec<Vertex<f64, (), 4>> =
+            input_points.into_iter().map(|p| vertex!(p)).collect();
+        let preprocess =
+            DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::preprocess_vertices_for_construction(
+                &input_vertices,
+                DedupPolicy::Off,
+                InsertionOrderStrategy::Hilbert,
+                InitialSimplexStrategy::First,
+            )
+            .expect("issue #230 vertices should preprocess successfully");
+        let ordered_vertices = preprocess.primary_slice(&input_vertices);
+        let tds = Triangulation::<RobustKernel<f64>, (), (), 4>::build_initial_simplex(
+            &ordered_vertices[..=4],
+        )
+        .expect("initial simplex should build");
+        let mut tri = Triangulation {
+            kernel: RobustKernel::<f64>::new(),
+            tds,
+            global_topology: GlobalTopology::DEFAULT,
+            validation_policy: ValidationPolicy::OnSuspicion,
+            topology_guarantee: TopologyGuarantee::PLManifoldStrict,
+            defer_geometric_orientation_validation_until_completion: true,
+            defer_topological_link_validation_until_completion: true,
+        };
+
+        let mut last_inserted_cell = None;
+        for (index, vertex) in ordered_vertices.iter().enumerate().skip(5).take(2) {
+            let (outcome, _stats) = tri
+                .insert_with_statistics_seeded_indexed(*vertex, None, last_inserted_cell, 0, None)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "issue #230 early ordered insertion failed at index {} (uuid={}): {err}",
+                        index,
+                        vertex.uuid()
+                    )
+                });
+            let InsertionOutcome::Inserted { hint, .. } = outcome else {
+                panic!(
+                    "issue #230 early ordered insertion unexpectedly skipped at index {} (uuid={})",
+                    index,
+                    vertex.uuid()
+                );
+            };
+            last_inserted_cell = hint;
+
+            let mut probe = Triangulation {
+                kernel: RobustKernel::<f64>::new(),
+                tds: tri.tds.clone(),
+                global_topology: GlobalTopology::DEFAULT,
+                validation_policy: ValidationPolicy::OnSuspicion,
+                topology_guarantee: TopologyGuarantee::PLManifoldStrict,
+                defer_geometric_orientation_validation_until_completion: false,
+                defer_topological_link_validation_until_completion: false,
+            };
+            probe
+                .normalize_and_promote_positive_orientation()
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "issue #230 first two insertions should stay orientable after ordered index {} (uuid={}): {err}",
+                        index,
+                        vertex.uuid()
+                    )
+                });
+            probe.validate().unwrap_or_else(|err| {
+                panic!(
+                    "issue #230 first two insertions should stay topologically valid after ordered index {} (uuid={}): {err}",
+                    index,
+                    vertex.uuid()
+                )
+            });
+        }
     }
 
     #[test]

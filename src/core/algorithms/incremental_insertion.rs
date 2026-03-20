@@ -579,23 +579,17 @@ where
         let facet_idx = usize::from(facet_handle.facet_index());
         let mut new_cell_vertices = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
 
-        // Get vertices of the facet (all except the opposite vertex)
+        // Preserve the removed cell's slot layout by replacing the vertex opposite
+        // the boundary facet with the new apex in the same position. This keeps the
+        // shared-facet orientation close to the removed conflict cell instead of
+        // forcing a later global BFS to rediscover it (#230).
         for (i, &vertex_key) in boundary_cell.vertices().iter().enumerate() {
-            if i != facet_idx {
+            if i == facet_idx {
+                new_cell_vertices.push(new_vertex_key);
+            } else {
                 new_cell_vertices.push(vertex_key);
             }
         }
-
-        // Add the new vertex as the apex
-        new_cell_vertices.push(new_vertex_key);
-        // Do NOT pre-swap vertices for per-cell coherence here.  Each new cell
-        // shares a facet with its boundary neighbor AND with sibling new cells.
-        // A local swap that fixes coherence with the boundary neighbor can break
-        // coherence between siblings, creating cells that BFS normalize later
-        // flips to negative geometric orientation (issue #230).  Instead, leave
-        // vertex ordering as-is and let the global BFS in
-        // `normalize_and_promote_positive_orientation` establish coherent +
-        // positive orientation for the entire mesh after wiring.
 
         // Create and insert the new cell
         let new_cell =
