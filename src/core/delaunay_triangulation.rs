@@ -173,11 +173,12 @@ pub enum DelaunayTriangulationValidationError {
         message: String,
     },
 
-    /// Flip-based Delaunay repair did not converge.
+    /// Flip-based Delaunay repair failed.
     ///
     /// This is returned by mutating operations that invoke flip-based repair
-    /// internally (e.g. [`DelaunayTriangulation::remove_vertex`]) when the
-    /// repair exhausts its flip budget without restoring the Delaunay property.
+    /// internally (e.g. [`DelaunayTriangulation::remove_vertex`]) when repair
+    /// encounters any error (budget exhaustion, topology violation, predicate
+    /// failure, etc.).
     ///
     /// **Not** returned by `validate()` or `is_valid()` — those use
     /// [`VerificationFailed`](Self::VerificationFailed) for passive checks.
@@ -6782,6 +6783,10 @@ mod tests {
         };
         let outcome = dt.repair_delaunay_with_flips_advanced(config).unwrap();
         assert_eq!(outcome.stats.flips_performed, 0);
+        assert!(
+            !outcome.used_heuristic(),
+            "Already-Delaunay triangulation should not trigger heuristic rebuild"
+        );
     }
 
     /// Sub-case 2 of the `max_flips` budget test: force the primary repair to fail
@@ -6807,13 +6812,17 @@ mod tests {
         // The primary repair is forced to fail; the robust fallback should succeed
         // because the triangulation is actually Delaunay.
         let outcome = dt.repair_delaunay_with_flips_advanced(config).unwrap();
+        assert_eq!(
+            outcome.stats.flips_performed, 0,
+            "max_flips=0 should prevent any flips even on the robust fallback path"
+        );
         assert!(
             !outcome.used_heuristic(),
             "Robust fallback should succeed without heuristic rebuild"
         );
     }
 
-    /// Sub-case 3: construct a genuinely non-Delaunay 2D triangulation via `from_tds`,
+    /// Sub-case 3:
     /// verify `max_flips=0` returns `NonConvergent`, then retry with a sufficient budget
     /// and verify repair succeeds with flips performed.
     #[test]

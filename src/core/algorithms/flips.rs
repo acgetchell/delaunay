@@ -6574,10 +6574,11 @@ mod tests {
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        // Only proceed if this config is actually non-Delaunay.
-        if verify_delaunay_via_flip_predicates(&tds, &kernel).is_ok() {
-            return; // Config happens to be Delaunay; skip.
-        }
+        // The fixture must be non-Delaunay for this test to be meaningful.
+        assert!(
+            verify_delaunay_via_flip_predicates(&tds, &kernel).is_err(),
+            "3D fixture must be non-Delaunay (e inside circumsphere of {{a,b,c,d}})"
+        );
 
         let before = snapshot_topology(&tds);
         let result = repair_delaunay_with_flips_k2_k3(
