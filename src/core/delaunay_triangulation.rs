@@ -5700,7 +5700,9 @@ mod tests {
     use super::*;
     use crate::core::algorithms::flips::{
         DelaunayRepairDiagnostics, DelaunayRepairError, FlipError, RepairQueueOrder,
+        verify_delaunay_via_flip_predicates,
     };
+    use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
     use crate::core::triangulation_data_structure::{EntityKind, GeometricError};
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel, RobustKernel};
     use crate::geometry::traits::coordinate::Coordinate;
@@ -6808,6 +6810,114 @@ mod tests {
         assert!(
             !outcome.used_heuristic(),
             "Robust fallback should succeed without heuristic rebuild"
+        );
+    }
+
+    /// Sub-case 3: construct a genuinely non-Delaunay 2D triangulation via `from_tds`,
+    /// verify `max_flips=0` returns `NonConvergent`, then retry with a sufficient budget
+    /// and verify repair succeeds with flips performed.
+    #[test]
+    fn test_repair_advanced_max_flips_on_non_delaunay_triangulation() {
+        init_tracing();
+
+        // Build a non-Delaunay 2D TDS manually (same config as flips.rs tests).
+        let d_candidates = [[0.0, 1.2], [0.1, 1.1], [0.2, 0.9], [-0.1, 1.3]];
+        let kernel = AdaptiveKernel::<f64>::new();
+        let mut raw_tds = None;
+        for d_coords in d_candidates {
+            let mut candidate: Tds<f64, (), (), 2> = Tds::empty();
+            let a = candidate
+                .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+                .unwrap();
+            let b = candidate
+                .insert_vertex_with_mapping(vertex!([1.0, 1.0]))
+                .unwrap();
+            let c = candidate
+                .insert_vertex_with_mapping(vertex!([1.0, 0.0]))
+                .unwrap();
+            let d = candidate
+                .insert_vertex_with_mapping(vertex!(d_coords))
+                .unwrap();
+            let _ = candidate
+                .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+                .unwrap();
+            let _ = candidate
+                .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
+                .unwrap();
+            repair_neighbor_pointers(&mut candidate).unwrap();
+            if verify_delaunay_via_flip_predicates(&candidate, &kernel).is_err() {
+                raw_tds = Some(candidate);
+                break;
+            }
+        }
+        let tds = raw_tds.expect("need a non-Delaunay 2D config");
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::from_tds(tds, kernel);
+        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+
+        // max_flips=0 should fail (flips are needed but budget is zero).
+        let config_zero = DelaunayRepairHeuristicConfig {
+            max_flips: Some(0),
+            ..DelaunayRepairHeuristicConfig::default()
+        };
+        // The advanced path tries primary (fails at budget=0), then robust fallback.
+        // The robust fallback also respects the budget, so it should also fail at 0,
+        // then the heuristic rebuild fires. The key assertion: it should not silently
+        // succeed with 0 flips on the primary path.
+        let outcome_zero = dt.repair_delaunay_with_flips_advanced(config_zero);
+        // Either heuristic rebuild succeeds or we get an error — both are acceptable.
+        // What would be wrong is a silent Ok with 0 flips on a non-Delaunay input.
+        if let Ok(ref outcome) = outcome_zero {
+            assert!(
+                outcome.used_heuristic() || outcome.stats.flips_performed > 0,
+                "max_flips=0 on non-Delaunay input must not silently succeed with 0 flips and no heuristic"
+            );
+        }
+
+        // Now retry with a generous budget — should succeed.
+        let config_generous = DelaunayRepairHeuristicConfig {
+            max_flips: Some(100),
+            ..DelaunayRepairHeuristicConfig::default()
+        };
+        // Reconstruct dt from the same raw TDS in case the previous attempt mutated it.
+        let kernel2 = AdaptiveKernel::<f64>::new();
+        let mut raw_tds2 = None;
+        for d_coords in d_candidates {
+            let mut candidate: Tds<f64, (), (), 2> = Tds::empty();
+            let a = candidate
+                .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+                .unwrap();
+            let b = candidate
+                .insert_vertex_with_mapping(vertex!([1.0, 1.0]))
+                .unwrap();
+            let c = candidate
+                .insert_vertex_with_mapping(vertex!([1.0, 0.0]))
+                .unwrap();
+            let d = candidate
+                .insert_vertex_with_mapping(vertex!(d_coords))
+                .unwrap();
+            let _ = candidate
+                .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+                .unwrap();
+            let _ = candidate
+                .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
+                .unwrap();
+            repair_neighbor_pointers(&mut candidate).unwrap();
+            if verify_delaunay_via_flip_predicates(&candidate, &kernel2).is_err() {
+                raw_tds2 = Some(candidate);
+                break;
+            }
+        }
+        let tds2 = raw_tds2.unwrap();
+        let mut dt2: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::from_tds(tds2, AdaptiveKernel::new());
+        dt2.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        let outcome_generous = dt2
+            .repair_delaunay_with_flips_advanced(config_generous)
+            .unwrap();
+        assert!(
+            outcome_generous.stats.flips_performed > 0,
+            "Generous budget should allow flips to repair the non-Delaunay triangulation"
         );
     }
 

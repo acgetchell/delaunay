@@ -6506,8 +6506,10 @@ mod tests {
         }
 
         let mut tds = tds.expect("expected a non-Delaunay configuration from candidates");
+        let before = snapshot_topology(&tds);
 
-        // With max_flips=0 the repair must fail immediately with zero flips performed.
+        // With max_flips=0 the repair must fail immediately with zero flips performed
+        // and leave the TDS unchanged.
         let result = repair_delaunay_with_flips_k2_k3(
             &mut tds,
             &kernel,
@@ -6525,6 +6527,77 @@ mod tests {
             }
             other => panic!("expected NonConvergent, got: {other:?}"),
         }
+        assert_eq!(
+            snapshot_topology(&tds),
+            before,
+            "TDS must remain unchanged when max_flips=0 prevents all flips"
+        );
+    }
+
+    /// 3D variant of the `max_flips` cap test.
+    ///
+    /// Exercises `process_facet_queue_step` and `process_ridge_queue_step` (only
+    /// reached for D≥3) to verify the pre-flip budget guard works in the
+    /// multi-queue repair loop.
+    #[test]
+    #[expect(
+        clippy::many_single_char_names,
+        reason = "vertex names a-e mirror standard simplex labelling in geometry tests"
+    )]
+    fn test_repair_max_flips_override_caps_repair_3d() {
+        init_tracing();
+        let kernel = AdaptiveKernel::<f64>::new();
+
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let a = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .unwrap();
+        let d = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .unwrap();
+        let e = tds
+            .insert_vertex_with_mapping(vertex!([0.3, 0.3, 0.3]))
+            .unwrap();
+
+        let _c1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, c, d], None).unwrap())
+            .unwrap();
+        let _c2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, c, e], None).unwrap())
+            .unwrap();
+
+        repair_neighbor_pointers(&mut tds).unwrap();
+
+        // Only proceed if this config is actually non-Delaunay.
+        if verify_delaunay_via_flip_predicates(&tds, &kernel).is_ok() {
+            return; // Config happens to be Delaunay; skip.
+        }
+
+        let before = snapshot_topology(&tds);
+        let result = repair_delaunay_with_flips_k2_k3(
+            &mut tds,
+            &kernel,
+            None,
+            TopologyGuarantee::PLManifold,
+            Some(0),
+        );
+        match result {
+            Err(DelaunayRepairError::NonConvergent { diagnostics, .. }) => {
+                assert_eq!(diagnostics.flips_performed, 0);
+            }
+            other => panic!("expected NonConvergent for 3D, got: {other:?}"),
+        }
+        assert_eq!(
+            snapshot_topology(&tds),
+            before,
+            "3D TDS must remain unchanged when max_flips=0 prevents all flips"
+        );
     }
 
     #[test]

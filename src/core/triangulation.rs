@@ -7040,11 +7040,11 @@ mod tests {
         ));
     }
 
-    /// Exercises the `tracing::warn!` diagnostic path in `validate_geometric_cell_orientation()`
-    /// by calling it directly (not through `is_valid()` which may short-circuit on coherent
-    /// orientation checks).
+    /// Calls `validate_geometric_cell_orientation()` directly (not through `is_valid()`
+    /// which may short-circuit on coherent orientation checks) and asserts the returned
+    /// error contains vertex keys for debuggability.
     #[test]
-    fn test_validate_geometric_cell_orientation_emits_diagnostic_on_negative() {
+    fn test_validate_geometric_cell_orientation_returns_enriched_error_on_negative() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
