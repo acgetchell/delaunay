@@ -118,17 +118,21 @@ pub enum DelaunayTriangulationConstructionError {
     Triangulation(#[from] TriangulationConstructionError),
 }
 
-/// Errors that can occur during Delaunay triangulation validation (Levels 1–4).
+/// Errors that can occur during Delaunay triangulation validation and repair.
 ///
-/// This type is returned by [`DelaunayTriangulation::validate`] and aggregates
-/// errors from all validation layers:
+/// The first three variants are returned by [`DelaunayTriangulation::validate`]
+/// (validation Levels 1–4):
 /// - [`Tds`](Self::Tds) — element or TDS structural errors (Levels 1–2).
 /// - [`Triangulation`](Self::Triangulation) — topology errors (Level 3).
 /// - [`VerificationFailed`](Self::VerificationFailed) — Delaunay property violation (Level 4).
-/// - [`RepairFailed`](Self::RepairFailed) — flip-based repair non-convergence.
 ///
 /// [`DelaunayTriangulation::is_valid`] returns only the Level 4
 /// [`VerificationFailed`](Self::VerificationFailed) variant.
+///
+/// The [`RepairFailed`](Self::RepairFailed) variant is **not** returned by
+/// `validate()` or `is_valid()`. It is produced by mutating operations that
+/// invoke flip-based repair internally (e.g.
+/// [`DelaunayTriangulation::remove_vertex`]).
 ///
 /// # Examples
 ///
@@ -171,10 +175,12 @@ pub enum DelaunayTriangulationValidationError {
 
     /// Flip-based Delaunay repair did not converge.
     ///
-    /// This is returned when a repair operation (e.g. after vertex removal)
-    /// exhausts its flip budget without restoring the Delaunay property.
-    /// It is distinct from [`VerificationFailed`](Self::VerificationFailed)
-    /// which indicates a passive check found a violation.
+    /// This is returned by mutating operations that invoke flip-based repair
+    /// internally (e.g. [`DelaunayTriangulation::remove_vertex`]) when the
+    /// repair exhausts its flip budget without restoring the Delaunay property.
+    ///
+    /// **Not** returned by `validate()` or `is_valid()` — those use
+    /// [`VerificationFailed`](Self::VerificationFailed) for passive checks.
     #[error("Delaunay repair failed: {message}")]
     RepairFailed {
         /// Description of the repair failure.
@@ -4105,7 +4111,11 @@ where
                                 .saturating_add(1);
 
                             candidate
-                                .maybe_repair_after_insertion(vertex_key, hint)
+                                .maybe_repair_after_insertion_capped(
+                                    vertex_key,
+                                    hint,
+                                    max_flips_override,
+                                )
                                 .map_err(|e| DelaunayRepairError::HeuristicRebuildFailed {
                                     message: format!(
                                         "heuristic rebuild repair failed at idx={idx} uuid={uuid} coords={coords:?}: {e}"
@@ -4873,6 +4883,17 @@ where
         vertex_key: VertexKey,
         hint: Option<CellKey>,
     ) -> Result<(), InsertionError> {
+        self.maybe_repair_after_insertion_capped(vertex_key, hint, None)
+    }
+
+    /// Like [`maybe_repair_after_insertion`](Self::maybe_repair_after_insertion) but
+    /// forwards an optional per-attempt flip cap to the underlying repair functions.
+    fn maybe_repair_after_insertion_capped(
+        &mut self,
+        vertex_key: VertexKey,
+        hint: Option<CellKey>,
+        max_flips: Option<usize>,
+    ) -> Result<(), InsertionError> {
         let topology = self.tri.topology_guarantee();
         if !self.should_run_delaunay_repair_for(
             topology,
@@ -4914,7 +4935,7 @@ where
 
         let repair_result = {
             let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-            repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology, None).map(|_| ())
+            repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology, max_flips).map(|_| ())
         };
 
         #[cfg(test)]
@@ -4936,7 +4957,7 @@ where
                 // If the robust pass also fails, return an error. Callers that need
                 // the full heuristic rebuild (shuffled re-insertion) can invoke
                 // `repair_delaunay_with_flips_advanced()` explicitly.
-                self.repair_delaunay_with_flips_robust(seed_ref, None)
+                self.repair_delaunay_with_flips_robust(seed_ref, max_flips)
                     .map_err(|robust_err| InsertionError::DelaunayRepairFailed {
                         source: Box::new(robust_err),
                         context: format!("local repair failed ({e}); robust fallback also failed"),

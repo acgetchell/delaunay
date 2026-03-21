@@ -4356,6 +4356,11 @@ where
         config,
     )?;
 
+    // Enforce flip budget before applying the flip so that Some(0) means zero flips.
+    if stats.flips_performed >= max_flips {
+        return Err(non_convergent_error(max_flips, stats, diagnostics, config));
+    }
+
     let info = match apply_bistellar_flip_k2(tds, &context) {
         Ok(info) => info,
         Err(
@@ -4412,10 +4417,6 @@ where
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     ));
-
-    if stats.flips_performed > max_flips {
-        return Err(non_convergent_error(max_flips, stats, diagnostics, config));
-    }
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
