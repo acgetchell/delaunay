@@ -3811,6 +3811,17 @@ where
     where
         K: ExactPredicates,
     {
+        self.repair_delaunay_with_flips_capped(None)
+    }
+
+    /// Internal helper: runs flip-based repair with an optional per-attempt flip cap.
+    fn repair_delaunay_with_flips_capped(
+        &mut self,
+        max_flips: Option<usize>,
+    ) -> Result<DelaunayRepairStats, DelaunayRepairError>
+    where
+        K: ExactPredicates,
+    {
         #[cfg(test)]
         if tests::force_repair_nonconvergent_enabled() {
             return Err(tests::synthetic_nonconvergent_error());
@@ -3825,7 +3836,7 @@ where
             });
         }
         let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-        let stats = repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology, None)?;
+        let stats = repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology, max_flips)?;
 
         // Re-canonicalize geometric orientation (#258): flip repair may leave
         // the global sign negative.
@@ -3935,7 +3946,8 @@ where
         if Self::force_heuristic_rebuild_enabled() {
             let base_seed = self.heuristic_rebuild_base_seed();
             let seeds = config.resolve_seeds(base_seed);
-            let (candidate, stats, used_seeds) = self.rebuild_with_heuristic(seeds)?;
+            let (candidate, stats, used_seeds) =
+                self.rebuild_with_heuristic(seeds, config.max_flips)?;
             *self = candidate;
             return Ok(DelaunayRepairOutcome {
                 stats,
@@ -3943,7 +3955,7 @@ where
             });
         }
         let max_flips = config.max_flips;
-        match self.repair_delaunay_with_flips() {
+        match self.repair_delaunay_with_flips_capped(max_flips) {
             Ok(stats) => Ok(DelaunayRepairOutcome {
                 stats,
                 heuristic: None,
@@ -3966,7 +3978,7 @@ where
                         let base_seed = self.heuristic_rebuild_base_seed();
                         let seeds = config.resolve_seeds(base_seed);
                         let (candidate, stats, used_seeds) = self
-                            .rebuild_with_heuristic(seeds)
+                            .rebuild_with_heuristic(seeds, max_flips)
                             .map_err(|heuristic_err| {
                                 let heuristic_message = match heuristic_err {
                                     DelaunayRepairError::HeuristicRebuildFailed { message } => {
@@ -3996,6 +4008,7 @@ where
     fn rebuild_with_heuristic(
         &self,
         base_seeds: DelaunayRepairHeuristicSeeds,
+        max_flips_override: Option<usize>,
     ) -> Result<(Self, DelaunayRepairStats, DelaunayRepairHeuristicSeeds), DelaunayRepairError>
     where
         K: ExactPredicates,
@@ -4131,7 +4144,13 @@ where
 
                 let topology = candidate.tri.topology_guarantee();
                 let (tds, kernel) = (&mut candidate.tri.tds, &candidate.tri.kernel);
-                let stats = repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology, None)?;
+                let stats = repair_delaunay_with_flips_k2_k3(
+                    tds,
+                    kernel,
+                    None,
+                    topology,
+                    max_flips_override,
+                )?;
 
                 // Re-canonicalize geometric orientation (#258): the final flip
                 // repair may leave the global sign negative.
@@ -5505,14 +5524,13 @@ impl DelaunayRepairPolicy {
 /// ```rust
 /// use delaunay::core::delaunay_triangulation::DelaunayRepairHeuristicConfig;
 ///
-/// let config = DelaunayRepairHeuristicConfig {
-///     shuffle_seed: Some(7),
-///     perturbation_seed: Some(11),
-///     max_flips: None,
-/// };
+/// let mut config = DelaunayRepairHeuristicConfig::default();
+/// config.shuffle_seed = Some(7);
+/// config.perturbation_seed = Some(11);
 /// assert_eq!(config.shuffle_seed, Some(7));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct DelaunayRepairHeuristicConfig {
     /// Optional RNG seed used to shuffle vertex insertion order.
     pub shuffle_seed: Option<u64>,
@@ -6716,9 +6734,12 @@ mod tests {
     /// Verifies that `DelaunayRepairHeuristicConfig::max_flips` caps the repair budget
     /// when called through the public `repair_delaunay_with_flips_advanced` API.
     ///
-    /// A budget of 0 on a triangulation that is already Delaunay should succeed
-    /// (the initial repair pass finds no violations). A budget of 0 on a
-    /// non-Delaunay state should hit the `NonConvergent` → robust fallback path.
+    /// Sub-case 1: A budget of 0 on a triangulation that is already Delaunay should succeed
+    /// (the initial repair pass finds no violations).
+    ///
+    /// Sub-case 2: A budget of 0 on a forced-non-convergent state should hit the
+    /// robust fallback path (the primary pass returns `NonConvergent`, the robust
+    /// pass succeeds because the triangulation is actually Delaunay).
     #[test]
     fn test_repair_advanced_max_flips_zero_on_valid_triangulation_succeeds() {
         init_tracing();
@@ -6731,13 +6752,42 @@ mod tests {
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
-        // Already Delaunay: max_flips=0 should succeed (no flips needed).
+        // Sub-case 1: Already Delaunay — max_flips=0 should succeed (no flips needed).
         let config = DelaunayRepairHeuristicConfig {
             max_flips: Some(0),
             ..DelaunayRepairHeuristicConfig::default()
         };
         let outcome = dt.repair_delaunay_with_flips_advanced(config).unwrap();
         assert_eq!(outcome.stats.flips_performed, 0);
+    }
+
+    /// Sub-case 2 of the `max_flips` budget test: force the primary repair to fail
+    /// (via `ForceRepairNonconvergentGuard`) with `max_flips=0`, then verify the
+    /// robust fallback succeeds (the triangulation is actually valid).
+    #[test]
+    fn test_repair_advanced_max_flips_zero_forced_nonconvergent_hits_robust_fallback() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let _guard = ForceRepairNonconvergentGuard::enable();
+        let config = DelaunayRepairHeuristicConfig {
+            max_flips: Some(0),
+            ..DelaunayRepairHeuristicConfig::default()
+        };
+        // The primary repair is forced to fail; the robust fallback should succeed
+        // because the triangulation is actually Delaunay.
+        let outcome = dt.repair_delaunay_with_flips_advanced(config).unwrap();
+        assert!(
+            !outcome.used_heuristic(),
+            "Robust fallback should succeed without heuristic rebuild"
+        );
     }
 
     /// `repair_delaunay_with_flips` delegates to `repair_delaunay_with_flips_k2_k3`

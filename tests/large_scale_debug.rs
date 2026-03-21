@@ -812,10 +812,8 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
         println!();
         println!("Running final flip-based repair (advanced)...");
         let t_repair = Instant::now();
-        let repair_config = DelaunayRepairHeuristicConfig {
-            max_flips: repair_max_flips,
-            ..DelaunayRepairHeuristicConfig::default()
-        };
+        let mut repair_config = DelaunayRepairHeuristicConfig::default();
+        repair_config.max_flips = repair_max_flips;
         match dt.repair_delaunay_with_flips_advanced(repair_config) {
             Ok(outcome) => {
                 println!(

@@ -2450,6 +2450,16 @@ where
             config,
         )?;
 
+        // Enforce flip budget before applying the flip so that Some(0) means zero flips.
+        if stats.flips_performed >= max_flips {
+            return Err(non_convergent_error(
+                max_flips,
+                &stats,
+                &diagnostics,
+                config,
+            ));
+        }
+
         let info = match apply_bistellar_flip_k2(tds, &context) {
             Ok(info) => info,
             Err(
@@ -2479,15 +2489,6 @@ where
         };
         stats.flips_performed += 1;
         diagnostics.record_flip_signature(signature);
-
-        if stats.flips_performed > max_flips {
-            return Err(non_convergent_error(
-                max_flips,
-                &stats,
-                &diagnostics,
-                config,
-            ));
-        }
 
         for &cell_key in &info.new_cells {
             enqueue_cell_facets(
@@ -3858,6 +3859,11 @@ where
         config,
     )?;
 
+    // Enforce flip budget before applying the flip so that Some(0) means zero flips.
+    if stats.flips_performed >= max_flips {
+        return Err(non_convergent_error(max_flips, stats, diagnostics, config));
+    }
+
     let info = match apply_bistellar_flip_k3(tds, &context) {
         Ok(info) => info,
         Err(
@@ -3904,10 +3910,6 @@ where
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     ));
-
-    if stats.flips_performed > max_flips {
-        return Err(non_convergent_error(max_flips, stats, diagnostics, config));
-    }
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
@@ -4029,6 +4031,11 @@ where
         config,
     )?;
 
+    // Enforce flip budget before applying the flip so that Some(0) means zero flips.
+    if stats.flips_performed >= max_flips {
+        return Err(non_convergent_error(max_flips, stats, diagnostics, config));
+    }
+
     let info = match apply_bistellar_flip_dynamic(tds, D, &context) {
         Ok(info) => info,
         Err(
@@ -4075,10 +4082,6 @@ where
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     ));
-
-    if stats.flips_performed > max_flips {
-        return Err(non_convergent_error(max_flips, stats, diagnostics, config));
-    }
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
@@ -4192,6 +4195,11 @@ where
         config,
     )?;
 
+    // Enforce flip budget before applying the flip so that Some(0) means zero flips.
+    if stats.flips_performed >= max_flips {
+        return Err(non_convergent_error(max_flips, stats, diagnostics, config));
+    }
+
     let info = match apply_bistellar_flip_dynamic(tds, D - 1, &context) {
         Ok(info) => info,
         Err(
@@ -4240,10 +4248,6 @@ where
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     ));
-
-    if stats.flips_performed > max_flips {
-        return Err(non_convergent_error(max_flips, stats, diagnostics, config));
-    }
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
@@ -6502,7 +6506,7 @@ mod tests {
 
         let mut tds = tds.expect("expected a non-Delaunay configuration from candidates");
 
-        // With max_flips=0 the repair must fail immediately.
+        // With max_flips=0 the repair must fail immediately with zero flips performed.
         let result = repair_delaunay_with_flips_k2_k3(
             &mut tds,
             &kernel,
@@ -6510,10 +6514,16 @@ mod tests {
             TopologyGuarantee::PLManifold,
             Some(0),
         );
-        assert!(
-            matches!(result, Err(DelaunayRepairError::NonConvergent { .. })),
-            "max_flips_override=Some(0) should cause NonConvergent, got: {result:?}"
-        );
+        match result {
+            Err(DelaunayRepairError::NonConvergent { diagnostics, .. }) => {
+                assert_eq!(
+                    diagnostics.flips_performed, 0,
+                    "max_flips_override=Some(0) should prevent any flips, got: {}",
+                    diagnostics.flips_performed
+                );
+            }
+            other => panic!("expected NonConvergent, got: {other:?}"),
+        }
     }
 
     #[test]
