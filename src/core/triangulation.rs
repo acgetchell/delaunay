@@ -2095,9 +2095,25 @@ where
             // valid (BFS coherent orientation handles them) and do not indicate
             // a sign mismatch.  Only flag cells with negative orientation.
             if orientation < 0 {
+                // Emit structured diagnostic context for debugging (especially 4D+ cases).
+                let vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                    cell.vertices().iter().copied().collect();
+                let neighbor_keys: SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE> =
+                    cell.neighbors()
+                        .map(|n| n.iter().copied().collect())
+                        .unwrap_or_default();
+                tracing::warn!(
+                    cell_uuid = %cell.uuid(),
+                    ?cell_key,
+                    ?vertex_keys,
+                    ?neighbor_keys,
+                    orientation,
+                    "negative geometric orientation detected during validation",
+                );
+
                 return Err(TdsError::Geometric(GeometricError::NegativeOrientation {
                     message: format!(
-                        "Cell {:?} (key {cell_key:?}) has negative geometric orientation; expected positive canonical orientation",
+                        "Cell {:?} (key {cell_key:?}, vertices {vertex_keys:?}) has negative geometric orientation; expected positive canonical orientation",
                         cell.uuid(),
                     ),
                 }));
@@ -7022,6 +7038,37 @@ mod tests {
             InvariantError::Tds(TdsError::Geometric(GeometricError::NegativeOrientation { message }))
                 if message.contains("negative geometric orientation")
         ));
+    }
+
+    /// Calls `validate_geometric_cell_orientation()` directly (not through `is_valid()`
+    /// which may short-circuit on coherent orientation checks) and asserts the returned
+    /// error contains vertex keys for debuggability.
+    #[test]
+    fn test_validate_geometric_cell_orientation_returns_enriched_error_on_negative() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+
+        let cell_key = tds.cell_keys().next().unwrap();
+        tds.get_cell_by_key_mut(cell_key)
+            .unwrap()
+            .swap_vertex_slots(0, 1);
+
+        let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        let err = tri.validate_geometric_cell_orientation().unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                TdsError::Geometric(GeometricError::NegativeOrientation { message })
+                    if message.contains("negative geometric orientation")
+                       && message.contains("vertices")
+            ),
+            "Error should contain vertex keys: {err}"
+        );
     }
 
     #[test]

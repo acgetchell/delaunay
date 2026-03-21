@@ -2450,6 +2450,16 @@ where
             config,
         )?;
 
+        // Enforce flip budget before applying the flip so that Some(0) means zero flips.
+        if stats.flips_performed >= max_flips {
+            return Err(non_convergent_error(
+                max_flips,
+                &stats,
+                &diagnostics,
+                config,
+            ));
+        }
+
         let info = match apply_bistellar_flip_k2(tds, &context) {
             Ok(info) => info,
             Err(
@@ -2479,15 +2489,6 @@ where
         };
         stats.flips_performed += 1;
         diagnostics.record_flip_signature(signature);
-
-        if stats.flips_performed > max_flips {
-            return Err(non_convergent_error(
-                max_flips,
-                &stats,
-                &diagnostics,
-                config,
-            ));
-        }
 
         for &cell_key in &info.new_cells {
             enqueue_cell_facets(
@@ -2529,6 +2530,7 @@ pub(crate) fn repair_delaunay_with_flips_k2_k3<K, U, V, const D: usize>(
     kernel: &K,
     seed_cells: Option<&[CellKey]>,
     topology: TopologyGuarantee,
+    max_flips_override: Option<usize>,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -2556,13 +2558,13 @@ where
     let attempt1 = RepairAttemptConfig {
         attempt: 1,
         queue_order: RepairQueueOrder::Fifo,
-        max_flips_override: None,
+        max_flips_override,
     };
 
     let attempt2 = RepairAttemptConfig {
         attempt: 2,
         queue_order: RepairQueueOrder::Lifo,
-        max_flips_override: None,
+        max_flips_override,
     };
 
     // Snapshot the pre-repair state so a failed attempt doesn't poison retries.
@@ -3857,6 +3859,11 @@ where
         config,
     )?;
 
+    // Enforce flip budget before applying the flip so that Some(0) means zero flips.
+    if stats.flips_performed >= max_flips {
+        return Err(non_convergent_error(max_flips, stats, diagnostics, config));
+    }
+
     let info = match apply_bistellar_flip_k3(tds, &context) {
         Ok(info) => info,
         Err(
@@ -3903,10 +3910,6 @@ where
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     ));
-
-    if stats.flips_performed > max_flips {
-        return Err(non_convergent_error(max_flips, stats, diagnostics, config));
-    }
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
@@ -4028,6 +4031,11 @@ where
         config,
     )?;
 
+    // Enforce flip budget before applying the flip so that Some(0) means zero flips.
+    if stats.flips_performed >= max_flips {
+        return Err(non_convergent_error(max_flips, stats, diagnostics, config));
+    }
+
     let info = match apply_bistellar_flip_dynamic(tds, D, &context) {
         Ok(info) => info,
         Err(
@@ -4074,10 +4082,6 @@ where
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     ));
-
-    if stats.flips_performed > max_flips {
-        return Err(non_convergent_error(max_flips, stats, diagnostics, config));
-    }
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
@@ -4191,6 +4195,11 @@ where
         config,
     )?;
 
+    // Enforce flip budget before applying the flip so that Some(0) means zero flips.
+    if stats.flips_performed >= max_flips {
+        return Err(non_convergent_error(max_flips, stats, diagnostics, config));
+    }
+
     let info = match apply_bistellar_flip_dynamic(tds, D - 1, &context) {
         Ok(info) => info,
         Err(
@@ -4239,10 +4248,6 @@ where
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     ));
-
-    if stats.flips_performed > max_flips {
-        return Err(non_convergent_error(max_flips, stats, diagnostics, config));
-    }
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
@@ -4351,6 +4356,11 @@ where
         config,
     )?;
 
+    // Enforce flip budget before applying the flip so that Some(0) means zero flips.
+    if stats.flips_performed >= max_flips {
+        return Err(non_convergent_error(max_flips, stats, diagnostics, config));
+    }
+
     let info = match apply_bistellar_flip_k2(tds, &context) {
         Ok(info) => info,
         Err(
@@ -4407,10 +4417,6 @@ where
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     ));
-
-    if stats.flips_performed > max_flips {
-        return Err(non_convergent_error(max_flips, stats, diagnostics, config));
-    }
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
@@ -6451,12 +6457,148 @@ mod tests {
             &kernel,
             None,
             TopologyGuarantee::PLManifold,
+            None,
         )
         .unwrap();
 
         assert!(stats.flips_performed > 0);
         assert!(verify_delaunay_via_flip_predicates(&tds, &kernel).is_ok());
         assert!(tds.is_valid().is_ok());
+    }
+
+    /// Verifies that `max_flips_override: Some(0)` causes immediate `NonConvergent` when
+    /// there is at least one Delaunay violation requiring a flip.
+    #[test]
+    fn test_repair_max_flips_override_caps_repair() {
+        init_tracing();
+        let kernel = AdaptiveKernel::<f64>::new();
+        let d_candidates = [[0.0, 1.2], [0.1, 1.1], [0.2, 0.9], [-0.1, 1.3]];
+
+        let mut tds = None;
+        for d_coords in d_candidates {
+            let mut candidate: Tds<f64, (), (), 2> = Tds::empty();
+            let a = candidate
+                .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+                .unwrap();
+            let b = candidate
+                .insert_vertex_with_mapping(vertex!([1.0, 1.0]))
+                .unwrap();
+            let c = candidate
+                .insert_vertex_with_mapping(vertex!([1.0, 0.0]))
+                .unwrap();
+            let d = candidate
+                .insert_vertex_with_mapping(vertex!(d_coords))
+                .unwrap();
+
+            let _c1 = candidate
+                .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+                .unwrap();
+            let _c2 = candidate
+                .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
+                .unwrap();
+
+            repair_neighbor_pointers(&mut candidate).unwrap();
+
+            if verify_delaunay_via_flip_predicates(&candidate, &kernel).is_err() {
+                tds = Some(candidate);
+                break;
+            }
+        }
+
+        let mut tds = tds.expect("expected a non-Delaunay configuration from candidates");
+        let before = snapshot_topology(&tds);
+
+        // With max_flips=0 the repair must fail immediately with zero flips performed
+        // and leave the TDS unchanged.
+        let result = repair_delaunay_with_flips_k2_k3(
+            &mut tds,
+            &kernel,
+            None,
+            TopologyGuarantee::PLManifold,
+            Some(0),
+        );
+        match result {
+            Err(DelaunayRepairError::NonConvergent { diagnostics, .. }) => {
+                assert_eq!(
+                    diagnostics.flips_performed, 0,
+                    "max_flips_override=Some(0) should prevent any flips, got: {}",
+                    diagnostics.flips_performed
+                );
+            }
+            other => panic!("expected NonConvergent, got: {other:?}"),
+        }
+        assert_eq!(
+            snapshot_topology(&tds),
+            before,
+            "TDS must remain unchanged when max_flips=0 prevents all flips"
+        );
+    }
+
+    /// 3D variant of the `max_flips` cap test.
+    ///
+    /// Exercises `process_facet_queue_step` and `process_ridge_queue_step` (only
+    /// reached for D≥3) to verify the pre-flip budget guard works in the
+    /// multi-queue repair loop.
+    #[test]
+    #[expect(
+        clippy::many_single_char_names,
+        reason = "vertex names a-e mirror standard simplex labelling in geometry tests"
+    )]
+    fn test_repair_max_flips_override_caps_repair_3d() {
+        init_tracing();
+        let kernel = AdaptiveKernel::<f64>::new();
+
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let a = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .unwrap();
+        let d = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .unwrap();
+        let e = tds
+            .insert_vertex_with_mapping(vertex!([0.3, 0.3, 0.3]))
+            .unwrap();
+
+        let _c1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, c, d], None).unwrap())
+            .unwrap();
+        let _c2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, c, e], None).unwrap())
+            .unwrap();
+
+        repair_neighbor_pointers(&mut tds).unwrap();
+
+        // The fixture must be non-Delaunay for this test to be meaningful.
+        assert!(
+            verify_delaunay_via_flip_predicates(&tds, &kernel).is_err(),
+            "3D fixture must be non-Delaunay (e inside circumsphere of {{a,b,c,d}})"
+        );
+
+        let before = snapshot_topology(&tds);
+        let result = repair_delaunay_with_flips_k2_k3(
+            &mut tds,
+            &kernel,
+            None,
+            TopologyGuarantee::PLManifold,
+            Some(0),
+        );
+        match result {
+            Err(DelaunayRepairError::NonConvergent { diagnostics, .. }) => {
+                assert_eq!(diagnostics.flips_performed, 0);
+            }
+            other => panic!("expected NonConvergent for 3D, got: {other:?}"),
+        }
+        assert_eq!(
+            snapshot_topology(&tds),
+            before,
+            "3D TDS must remain unchanged when max_flips=0 prevents all flips"
+        );
     }
 
     #[test]
@@ -6519,6 +6661,7 @@ mod tests {
             &kernel,
             None,
             TopologyGuarantee::PLManifold,
+            None,
         );
 
         assert!(matches!(
@@ -6903,6 +7046,7 @@ mod tests {
             &kernel,
             Some(seed_cells.as_slice()),
             TopologyGuarantee::PLManifold,
+            None,
         )
         .unwrap();
         assert!(stats.facets_checked > 0);
@@ -6958,6 +7102,7 @@ mod tests {
             &kernel,
             Some(seed_cells.as_slice()),
             TopologyGuarantee::PLManifold,
+            None,
         );
 
         match result {
@@ -6993,6 +7138,7 @@ mod tests {
             &kernel,
             Some(&[seed_cell]),
             TopologyGuarantee::PLManifold,
+            None,
         )
         .unwrap();
         assert!(stats.facets_checked > 0);
