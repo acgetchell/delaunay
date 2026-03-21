@@ -125,6 +125,7 @@ pub enum DelaunayTriangulationConstructionError {
 /// - [`Tds`](Self::Tds) — element or TDS structural errors (Levels 1–2).
 /// - [`Triangulation`](Self::Triangulation) — topology errors (Level 3).
 /// - [`VerificationFailed`](Self::VerificationFailed) — Delaunay property violation (Level 4).
+/// - [`RepairFailed`](Self::RepairFailed) — flip-based repair non-convergence.
 ///
 /// [`DelaunayTriangulation::is_valid`] returns only the Level 4
 /// [`VerificationFailed`](Self::VerificationFailed) variant.
@@ -165,6 +166,18 @@ pub enum DelaunayTriangulationValidationError {
     #[error("Delaunay verification failed: {message}")]
     VerificationFailed {
         /// Description of the verification failure.
+        message: String,
+    },
+
+    /// Flip-based Delaunay repair did not converge.
+    ///
+    /// This is returned when a repair operation (e.g. after vertex removal)
+    /// exhausts its flip budget without restoring the Delaunay property.
+    /// It is distinct from [`VerificationFailed`](Self::VerificationFailed)
+    /// which indicates a passive check found a violation.
+    #[error("Delaunay repair failed: {message}")]
+    RepairFailed {
+        /// Description of the repair failure.
         message: String,
     },
 }
@@ -2800,7 +2813,7 @@ where
                 idx = index,
                 "bulk D<4: local repair cycling; falling back to global repair"
             );
-            let global_result = repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology);
+            let global_result = repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology, None);
             if let Err(global_err) = global_result {
                 tracing::debug!(
                     error = %global_err,
@@ -3812,7 +3825,7 @@ where
             });
         }
         let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-        let stats = repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology)?;
+        let stats = repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology, None)?;
 
         // Re-canonicalize geometric orientation (#258): flip repair may leave
         // the global sign negative.
@@ -3834,11 +3847,12 @@ where
     fn repair_delaunay_with_flips_robust(
         &mut self,
         seed_cells: Option<&[CellKey]>,
+        max_flips: Option<usize>,
     ) -> Result<DelaunayRepairStats, DelaunayRepairError> {
         let topology = self.tri.topology_guarantee();
         let kernel = RobustKernel::<K::Scalar>::new();
         let (tds, kernel) = (&mut self.tri.tds, &kernel);
-        repair_delaunay_with_flips_k2_k3(tds, kernel, seed_cells, topology)
+        repair_delaunay_with_flips_k2_k3(tds, kernel, seed_cells, topology, max_flips)
     }
 
     fn should_run_delaunay_repair_for(
@@ -3928,6 +3942,7 @@ where
                 heuristic: Some(used_seeds),
             });
         }
+        let max_flips = config.max_flips;
         match self.repair_delaunay_with_flips() {
             Ok(stats) => Ok(DelaunayRepairOutcome {
                 stats,
@@ -3937,7 +3952,7 @@ where
                 primary_err @ (DelaunayRepairError::NonConvergent { .. }
                 | DelaunayRepairError::PostconditionFailed { .. }),
             ) => {
-                match self.repair_delaunay_with_flips_robust(None) {
+                match self.repair_delaunay_with_flips_robust(None, max_flips) {
                     Ok(stats) => {
                         // Re-canonicalize geometric orientation (#258): robust flip
                         // repair may leave the global sign negative.
@@ -4116,7 +4131,7 @@ where
 
                 let topology = candidate.tri.topology_guarantee();
                 let (tds, kernel) = (&mut candidate.tri.tds, &candidate.tri.kernel);
-                let stats = repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology)?;
+                let stats = repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology, None)?;
 
                 // Re-canonicalize geometric orientation (#258): the final flip
                 // repair may leave the global sign negative.
@@ -4880,7 +4895,7 @@ where
 
         let repair_result = {
             let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-            repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology).map(|_| ())
+            repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology, None).map(|_| ())
         };
 
         #[cfg(test)]
@@ -4902,7 +4917,7 @@ where
                 // If the robust pass also fails, return an error. Callers that need
                 // the full heuristic rebuild (shuffled re-insertion) can invoke
                 // `repair_delaunay_with_flips_advanced()` explicitly.
-                self.repair_delaunay_with_flips_robust(seed_ref)
+                self.repair_delaunay_with_flips_robust(seed_ref, None)
                     .map_err(|robust_err| InsertionError::DelaunayRepairFailed {
                         source: Box::new(robust_err),
                         context: format!("local repair failed ({e}); robust fallback also failed"),
@@ -5057,11 +5072,13 @@ where
         if self.should_run_delaunay_repair_for(topology, 0) {
             let seed_ref = seed_cells.as_deref();
             let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-            repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology).map_err(|e| {
-                InvariantError::Delaunay(DelaunayTriangulationValidationError::VerificationFailed {
-                    message: format!("Delaunay repair failed after vertex removal: {e}"),
-                })
-            })?;
+            repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology, None).map_err(
+                |e| {
+                    InvariantError::Delaunay(DelaunayTriangulationValidationError::RepairFailed {
+                        message: format!("Delaunay repair failed after vertex removal: {e}"),
+                    })
+                },
+            )?;
 
             // Re-canonicalize geometric orientation (#258): flip repair may leave
             // the global sign negative.
@@ -5491,6 +5508,7 @@ impl DelaunayRepairPolicy {
 /// let config = DelaunayRepairHeuristicConfig {
 ///     shuffle_seed: Some(7),
 ///     perturbation_seed: Some(11),
+///     max_flips: None,
 /// };
 /// assert_eq!(config.shuffle_seed, Some(7));
 /// ```
@@ -5500,6 +5518,16 @@ pub struct DelaunayRepairHeuristicConfig {
     pub shuffle_seed: Option<u64>,
     /// Optional seed used to vary the deterministic perturbation pattern.
     pub perturbation_seed: Option<u64>,
+    /// Optional per-attempt flip budget cap.
+    ///
+    /// When set, each repair attempt is limited to at most this many flips.
+    /// `None` (the default) uses the dimension-dependent internal budget
+    /// computed from the triangulation size.
+    ///
+    /// This is primarily useful for debug harnesses that want to study
+    /// repair convergence behavior at different budgets without disabling
+    /// repair entirely.
+    pub max_flips: Option<usize>,
 }
 
 impl DelaunayRepairHeuristicConfig {
@@ -6683,6 +6711,33 @@ mod tests {
             "Insertion should succeed via robust fallback: {result:?}"
         );
         assert!(dt.validate().is_ok());
+    }
+
+    /// Verifies that `DelaunayRepairHeuristicConfig::max_flips` caps the repair budget
+    /// when called through the public `repair_delaunay_with_flips_advanced` API.
+    ///
+    /// A budget of 0 on a triangulation that is already Delaunay should succeed
+    /// (the initial repair pass finds no violations). A budget of 0 on a
+    /// non-Delaunay state should hit the `NonConvergent` → robust fallback path.
+    #[test]
+    fn test_repair_advanced_max_flips_zero_on_valid_triangulation_succeeds() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        // Already Delaunay: max_flips=0 should succeed (no flips needed).
+        let config = DelaunayRepairHeuristicConfig {
+            max_flips: Some(0),
+            ..DelaunayRepairHeuristicConfig::default()
+        };
+        let outcome = dt.repair_delaunay_with_flips_advanced(config).unwrap();
+        assert_eq!(outcome.stats.flips_performed, 0);
     }
 
     /// `repair_delaunay_with_flips` delegates to `repair_delaunay_with_flips_k2_k3`

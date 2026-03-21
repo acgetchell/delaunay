@@ -2095,9 +2095,25 @@ where
             // valid (BFS coherent orientation handles them) and do not indicate
             // a sign mismatch.  Only flag cells with negative orientation.
             if orientation < 0 {
+                // Emit structured diagnostic context for debugging (especially 4D+ cases).
+                let vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                    cell.vertices().iter().copied().collect();
+                let neighbor_keys: SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE> =
+                    cell.neighbors()
+                        .map(|n| n.iter().copied().collect())
+                        .unwrap_or_default();
+                tracing::warn!(
+                    cell_uuid = %cell.uuid(),
+                    ?cell_key,
+                    ?vertex_keys,
+                    ?neighbor_keys,
+                    orientation,
+                    "negative geometric orientation detected during validation",
+                );
+
                 return Err(TdsError::Geometric(GeometricError::NegativeOrientation {
                     message: format!(
-                        "Cell {:?} (key {cell_key:?}) has negative geometric orientation; expected positive canonical orientation",
+                        "Cell {:?} (key {cell_key:?}, vertices {vertex_keys:?}) has negative geometric orientation; expected positive canonical orientation",
                         cell.uuid(),
                     ),
                 }));

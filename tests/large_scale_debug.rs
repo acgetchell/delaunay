@@ -371,6 +371,78 @@ fn seed_for_case<const D: usize>(base_seed: u64, n_points: usize) -> u64 {
         .wrapping_add((n_points as u64).wrapping_mul(SEED_SALT))
         .wrapping_add((D as u64).wrapping_mul(SEED_SALT.rotate_left(17)))
 }
+/// Classifies debug harness outcomes into distinct categories for structured reporting.
+///
+/// The harness still prints full diagnostic output during the run; this enum captures
+/// the final outcome so callers can emit a single summary line and fail tests explicitly.
+#[derive(Debug, Clone)]
+enum DebugOutcome {
+    Success,
+    ConstructionFailure {
+        error: String,
+    },
+    SkippedVertices {
+        skipped: usize,
+        total: usize,
+    },
+    RepairNonConvergence {
+        error: String,
+    },
+    ValidationFailure {
+        kind: InvariantKind,
+        details: String,
+    },
+}
+
+impl std::fmt::Display for DebugOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Success => write!(f, "Success"),
+            Self::ConstructionFailure { error } => {
+                write!(f, "ConstructionFailure | {error}")
+            }
+            Self::SkippedVertices { skipped, total } => {
+                write!(f, "SkippedVertices | {skipped}/{total} skipped")
+            }
+            Self::RepairNonConvergence { error } => {
+                write!(f, "RepairNonConvergence | {error}")
+            }
+            Self::ValidationFailure { kind, details } => {
+                write!(f, "ValidationFailure({kind:?}) | {details}")
+            }
+        }
+    }
+}
+
+fn print_abort_summary<const D: usize>(
+    outcome: &DebugOutcome,
+    seed: u64,
+    n_points: usize,
+    phase: &str,
+) {
+    println!();
+    println!("OUTCOME: {outcome}");
+    println!("Phase:   {phase}");
+    println!();
+    println!("Replay command:");
+    println!(
+        "  DELAUNAY_LARGE_DEBUG_N_{D}D={n_points} DELAUNAY_LARGE_DEBUG_CASE_SEED_{D}D=0x{seed:X} DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 cargo test --test large_scale_debug debug_large_scale_{D}d -- --ignored --nocapture"
+    );
+}
+
+fn classify_validation_report(report: &TriangulationValidationReport) -> DebugOutcome {
+    let first = report.violations.first();
+    let (kind, details) = first.map_or_else(
+        || {
+            (
+                InvariantKind::Topology,
+                "no violations captured".to_string(),
+            )
+        },
+        |violation| (violation.kind, format!("{}", violation.error)),
+    );
+    DebugOutcome::ValidationFailure { kind, details }
+}
 
 fn print_validation_report(report: &TriangulationValidationReport) {
     println!(
@@ -426,7 +498,7 @@ fn print_insertion_summary<const D: usize>(summary: &InsertionSummary<D>, elapse
     clippy::too_many_lines,
     reason = "Intentional debug harness; kept as a single flow for manual inspection"
 )]
-fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usize) {
+fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usize) -> DebugOutcome {
     init_tracing();
 
     // Install a hard wall-clock cap so the harness doesn't hang indefinitely.
@@ -466,6 +538,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
     // - 1 runs repair after every insertion
     // - N>1 runs repair after every N successful insertions
     let repair_every = env_usize("DELAUNAY_LARGE_DEBUG_REPAIR_EVERY").unwrap_or(128);
+    let repair_max_flips = env_usize("DELAUNAY_LARGE_DEBUG_REPAIR_MAX_FLIPS");
     let validate_every = env_usize("DELAUNAY_LARGE_DEBUG_VALIDATE_EVERY").or_else(|| {
         if matches!(debug_mode, DebugMode::Cadenced) {
             (repair_every != 0).then_some(repair_every)
@@ -498,6 +571,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
     println!("  allow_skips:   {allow_skips}");
     println!("  skip_final_repair: {skip_final_repair}");
     println!("  repair_every:  {repair_every}");
+    println!("  repair_max_flips: {repair_max_flips:?}");
     if max_runtime_secs > 0 {
         println!("  max_runtime_secs: {max_runtime_secs}");
     }
@@ -566,7 +640,11 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
                     print_insertion_summary(&summary, t_insert.elapsed());
                     println!("Batch construction failed after {:?}", t_batch.elapsed());
                     println!("construction failed: {error}");
-                    panic!("aborting: batch construction failed");
+                    let outcome = DebugOutcome::ConstructionFailure {
+                        error: format!("{error}"),
+                    };
+                    print_abort_summary::<D>(&outcome, seed, n_points, "batch construction");
+                    return outcome;
                 }
             }
         }
@@ -619,6 +697,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
 
             let mut summary: InsertionSummary<D> = InsertionSummary::default();
             let mut had_cells = false;
+            let mut t_last_progress = Instant::now();
 
             for (idx, vertex) in vertices.iter().copied().enumerate() {
                 let coords = *vertex.point().coords();
@@ -649,8 +728,11 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
                         } else {
                             println!("validation_report: OK (after rollback)");
                         }
-
-                        panic!("aborting: non-retryable insertion error");
+                        let outcome = DebugOutcome::ConstructionFailure {
+                            error: format!("{err}"),
+                        };
+                        print_abort_summary::<D>(&outcome, seed, n_points, "incremental insertion");
+                        return outcome;
                     }
                 }
 
@@ -666,22 +748,37 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
                     && let Err(e) = dt.as_triangulation().is_valid()
                 {
                     println!("Topology validation failed at idx={idx}: {e}");
-                    if let Err(report) = dt.validation_report() {
+                    let outcome = if let Err(report) = dt.validation_report() {
                         print_validation_report(&report);
-                    }
-                    panic!("aborting: topology validation failure");
+                        classify_validation_report(&report)
+                    } else {
+                        DebugOutcome::ValidationFailure {
+                            kind: InvariantKind::Topology,
+                            details: format!("{e}"),
+                        }
+                    };
+                    print_abort_summary::<D>(&outcome, seed, n_points, "periodic validation");
+                    return outcome;
                 }
 
                 if (idx + 1) % progress_every == 0 {
+                    let chunk_elapsed = t_last_progress.elapsed();
+                    let progress_f64: f64 =
+                        delaunay::geometry::util::safe_usize_to_scalar(progress_every)
+                            .unwrap_or(f64::NAN);
+                    let rate = progress_f64 / chunk_elapsed.as_secs_f64().max(1e-9);
                     println!(
-                        "progress: {}/{} inserted={} skipped={} cells={} elapsed={:?}",
+                        "progress: {}/{} inserted={} skipped={} cells={} elapsed={:?} ({:.1} pts/s last {})",
                         idx + 1,
                         n_points,
                         summary.inserted,
                         summary.total_skipped(),
                         dt.number_of_cells(),
-                        t_insert.elapsed()
+                        t_insert.elapsed(),
+                        rate,
+                        progress_every,
                     );
+                    t_last_progress = Instant::now();
                 }
             }
 
@@ -701,16 +798,25 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
         dt.dim()
     );
 
-    assert!(
-        allow_skips || skipped_total == 0,
-        "{skipped_total} vertices were skipped (set DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 to allow)"
-    );
+    if !allow_skips && skipped_total > 0 {
+        let outcome = DebugOutcome::SkippedVertices {
+            skipped: skipped_total,
+            total: n_points,
+        };
+        print_abort_summary::<D>(&outcome, seed, n_points, "skip check");
+        return outcome;
+    }
 
+    let mut repair_failure: Option<String> = None;
     if !skip_final_repair && dt.number_of_cells() > 0 {
         println!();
         println!("Running final flip-based repair (advanced)...");
         let t_repair = Instant::now();
-        match dt.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default()) {
+        let repair_config = DelaunayRepairHeuristicConfig {
+            max_flips: repair_max_flips,
+            ..DelaunayRepairHeuristicConfig::default()
+        };
+        match dt.repair_delaunay_with_flips_advanced(repair_config) {
             Ok(outcome) => {
                 println!(
                     "repair: checked={} flips={} max_queue={} used_heuristic={}",
@@ -728,6 +834,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
             }
             Err(e) => {
                 println!("repair failed: {e}");
+                repair_failure = Some(format!("{e}"));
             }
         }
         println!("repair wall time: {:?}", t_repair.elapsed());
@@ -742,12 +849,24 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
         Ok(()) => println!("validation_report: OK"),
         Err(report) => {
             print_validation_report(&report);
-            panic!("aborting: validation_report failed");
+            let outcome = classify_validation_report(&report);
+            print_abort_summary::<D>(&outcome, seed, n_points, "final validation");
+            return outcome;
         }
+    }
+
+    // If repair failed but validation passed, surface the repair failure as the outcome.
+    // This ensures operators see repair non-convergence even when the triangulation
+    // happens to pass L1-L4 validation (e.g. the violations are below the flip budget).
+    if let Some(error) = repair_failure {
+        let outcome = DebugOutcome::RepairNonConvergence { error };
+        print_abort_summary::<D>(&outcome, seed, n_points, "final repair");
+        return outcome;
     }
 
     println!();
     println!("Total wall time: {:?}", t_gen.elapsed());
+    DebugOutcome::Success
 }
 
 #[derive(Debug, Clone)]
@@ -1054,26 +1173,76 @@ fn regression_issue_228_3d_1000_flip_repair_convergence() {
     );
 }
 
+/// Regression test for issue #230: 4D 100-point orientation failure path.
+///
+/// This locks in the 4D seed used by the debug harness:
+/// `seed_for_case::<4>(42, 100)` with ball distribution (radius=100).
+///
+/// Current expected behavior:
+/// - Batch construction succeeds
+/// - Some vertices may be skipped due to degeneracy handling/retries
+/// - Resulting triangulation passes topology validation (L1-L3)
+///
+/// Gated behind `slow-tests` and `#[ignore]` because 4D construction can
+/// take multiple minutes in debug mode.
+#[cfg(feature = "slow-tests")]
+#[test]
+#[ignore = "4D 100-point construction can take minutes in debug mode"]
+fn regression_issue_230_4d_100_orientation() {
+    use delaunay::core::triangulation::TopologyGuarantee;
+
+    let seed = seed_for_case::<4>(42, 100);
+    let points = generate_random_points_in_ball_seeded::<f64, 4>(100, 100.0, seed)
+        .expect("point generation should succeed");
+    let vertices: Vec<Vertex<f64, (), 4>> = points.into_iter().map(|p| vertex!(p)).collect();
+
+    let kernel = RobustKernel::<f64>::new();
+    let (dt, stats) = DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::with_topology_guarantee_and_options_with_construction_statistics(
+        &kernel,
+        &vertices,
+        TopologyGuarantee::PLManifoldStrict,
+        ConstructionOptions::default(),
+    )
+    .expect("construction must not fail (#230 regression)");
+
+    println!(
+        "regression_issue_230: inserted={} skipped={} (duplicate={} degeneracy={}) seed=0x{seed:X}",
+        stats.inserted,
+        stats.total_skipped(),
+        stats.skipped_duplicate,
+        stats.skipped_degeneracy
+    );
+
+    assert!(
+        dt.as_triangulation().validate().is_ok(),
+        "Topology validation (L1-L3) must pass (#230 regression, seed=0x{seed:X})"
+    );
+}
+
 #[test]
 #[ignore = "large-scale debug harness (manual run)"]
 fn debug_large_scale_2d() {
-    debug_large_case::<2>("2D", 10_000);
+    let outcome = debug_large_case::<2>("2D", 10_000);
+    assert!(matches!(outcome, DebugOutcome::Success), "{outcome}");
 }
 
 #[test]
 #[ignore = "large-scale debug harness (manual run)"]
 fn debug_large_scale_3d() {
-    debug_large_case::<3>("3D", 10_000);
+    let outcome = debug_large_case::<3>("3D", 10_000);
+    assert!(matches!(outcome, DebugOutcome::Success), "{outcome}");
 }
 
 #[test]
 #[ignore = "large-scale debug harness (manual run)"]
 fn debug_large_scale_4d() {
-    debug_large_case::<4>("4D", 3_000);
+    let outcome = debug_large_case::<4>("4D", 3_000);
+    assert!(matches!(outcome, DebugOutcome::Success), "{outcome}");
 }
 
 #[test]
 #[ignore = "large-scale debug harness (manual run)"]
 fn debug_large_scale_5d() {
-    debug_large_case::<5>("5D", 1_000);
+    let outcome = debug_large_case::<5>("5D", 1_000);
+    assert!(matches!(outcome, DebugOutcome::Success), "{outcome}");
 }

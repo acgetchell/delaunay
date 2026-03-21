@@ -2529,6 +2529,7 @@ pub(crate) fn repair_delaunay_with_flips_k2_k3<K, U, V, const D: usize>(
     kernel: &K,
     seed_cells: Option<&[CellKey]>,
     topology: TopologyGuarantee,
+    max_flips_override: Option<usize>,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -2556,13 +2557,13 @@ where
     let attempt1 = RepairAttemptConfig {
         attempt: 1,
         queue_order: RepairQueueOrder::Fifo,
-        max_flips_override: None,
+        max_flips_override,
     };
 
     let attempt2 = RepairAttemptConfig {
         attempt: 2,
         queue_order: RepairQueueOrder::Lifo,
-        max_flips_override: None,
+        max_flips_override,
     };
 
     // Snapshot the pre-repair state so a failed attempt doesn't poison retries.
@@ -6451,12 +6452,68 @@ mod tests {
             &kernel,
             None,
             TopologyGuarantee::PLManifold,
+            None,
         )
         .unwrap();
 
         assert!(stats.flips_performed > 0);
         assert!(verify_delaunay_via_flip_predicates(&tds, &kernel).is_ok());
         assert!(tds.is_valid().is_ok());
+    }
+
+    /// Verifies that `max_flips_override: Some(0)` causes immediate `NonConvergent` when
+    /// there is at least one Delaunay violation requiring a flip.
+    #[test]
+    fn test_repair_max_flips_override_caps_repair() {
+        init_tracing();
+        let kernel = AdaptiveKernel::<f64>::new();
+        let d_candidates = [[0.0, 1.2], [0.1, 1.1], [0.2, 0.9], [-0.1, 1.3]];
+
+        let mut tds = None;
+        for d_coords in d_candidates {
+            let mut candidate: Tds<f64, (), (), 2> = Tds::empty();
+            let a = candidate
+                .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+                .unwrap();
+            let b = candidate
+                .insert_vertex_with_mapping(vertex!([1.0, 1.0]))
+                .unwrap();
+            let c = candidate
+                .insert_vertex_with_mapping(vertex!([1.0, 0.0]))
+                .unwrap();
+            let d = candidate
+                .insert_vertex_with_mapping(vertex!(d_coords))
+                .unwrap();
+
+            let _c1 = candidate
+                .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+                .unwrap();
+            let _c2 = candidate
+                .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
+                .unwrap();
+
+            repair_neighbor_pointers(&mut candidate).unwrap();
+
+            if verify_delaunay_via_flip_predicates(&candidate, &kernel).is_err() {
+                tds = Some(candidate);
+                break;
+            }
+        }
+
+        let mut tds = tds.expect("expected a non-Delaunay configuration from candidates");
+
+        // With max_flips=0 the repair must fail immediately.
+        let result = repair_delaunay_with_flips_k2_k3(
+            &mut tds,
+            &kernel,
+            None,
+            TopologyGuarantee::PLManifold,
+            Some(0),
+        );
+        assert!(
+            matches!(result, Err(DelaunayRepairError::NonConvergent { .. })),
+            "max_flips_override=Some(0) should cause NonConvergent, got: {result:?}"
+        );
     }
 
     #[test]
@@ -6519,6 +6576,7 @@ mod tests {
             &kernel,
             None,
             TopologyGuarantee::PLManifold,
+            None,
         );
 
         assert!(matches!(
@@ -6903,6 +6961,7 @@ mod tests {
             &kernel,
             Some(seed_cells.as_slice()),
             TopologyGuarantee::PLManifold,
+            None,
         )
         .unwrap();
         assert!(stats.facets_checked > 0);
@@ -6958,6 +7017,7 @@ mod tests {
             &kernel,
             Some(seed_cells.as_slice()),
             TopologyGuarantee::PLManifold,
+            None,
         );
 
         match result {
@@ -6993,6 +7053,7 @@ mod tests {
             &kernel,
             Some(&[seed_cell]),
             TopologyGuarantee::PLManifold,
+            None,
         )
         .unwrap();
         assert!(stats.facets_checked > 0);
