@@ -49,12 +49,12 @@ jobs:
           fi
 
       - name: Install just
-        uses: taiki-e/install-action@de6bbd1333b8f331563d54a051e542c7dfef81c3 # v2.68.34
+        uses: taiki-e/install-action@06203676c62f0d3c765be3f2fcfbebbcb02d09f5 # v2.69.6
         with:
           tool: just
 
       - name: Install nextest
-        uses: taiki-e/install-action@de6bbd1333b8f331563d54a051e542c7dfef81c3 # v2.68.34
+        uses: taiki-e/install-action@06203676c62f0d3c765be3f2fcfbebbcb02d09f5 # v2.69.6
         with:
           tool: nextest
 
