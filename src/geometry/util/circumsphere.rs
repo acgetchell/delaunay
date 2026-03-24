@@ -9,7 +9,7 @@ use super::conversions::{safe_coords_to_f64, safe_scalar_from_f64, safe_scalar_t
 use super::norms::{hypot, squared_norm};
 use crate::geometry::matrix::matrix_set;
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{Coordinate, ScalarSummable};
+use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
 use la_stack::{DEFAULT_PIVOT_TOL, LaError, Vector as LaVector};
 
 // Re-export error type
@@ -84,7 +84,7 @@ pub fn circumcenter<T, const D: usize>(
     points: &[Point<T, D>],
 ) -> Result<Point<T, D>, CircumcenterError>
 where
-    T: ScalarSummable,
+    T: CoordinateScalar,
 {
     #[cfg(debug_assertions)]
     if std::env::var_os("DELAUNAY_DEBUG_UNUSED_IMPORTS").is_some() {
@@ -218,7 +218,7 @@ where
 /// ```
 pub fn circumradius<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
 where
-    T: ScalarSummable,
+    T: CoordinateScalar,
 {
     let circumcenter = circumcenter(points)?;
     circumradius_with_center(points, &circumcenter)
@@ -267,7 +267,7 @@ pub fn circumradius_with_center<T, const D: usize>(
     circumcenter: &Point<T, D>,
 ) -> Result<T, CircumcenterError>
 where
-    T: ScalarSummable,
+    T: CoordinateScalar,
 {
     if points.is_empty() {
         return Err(CircumcenterError::EmptyPointSet);

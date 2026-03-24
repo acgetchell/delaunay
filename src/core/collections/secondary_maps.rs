@@ -37,7 +37,7 @@ use slotmap::SparseSecondaryMap;
 /// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
 /// let tds = dt.tds();
 ///
-/// use delaunay::core::collections::CellSecondaryMap;
+/// use delaunay::prelude::collections::CellSecondaryMap;
 /// let mut in_conflict: CellSecondaryMap<bool> = CellSecondaryMap::new();
 /// for (cell_key, _) in tds.cells() {
 ///     in_conflict.insert(cell_key, true);
@@ -77,7 +77,7 @@ pub type CellSecondaryMap<V> = SparseSecondaryMap<CellKey, V>;
 /// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
 /// let tds = dt.tds();
 ///
-/// use delaunay::core::collections::VertexSecondaryMap;
+/// use delaunay::prelude::collections::VertexSecondaryMap;
 /// let mut processing_order: VertexSecondaryMap<usize> = VertexSecondaryMap::new();
 /// for (idx, (vertex_key, _)) in tds.vertices().enumerate() {
 ///     processing_order.insert(vertex_key, idx);

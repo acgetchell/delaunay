@@ -850,8 +850,9 @@ pub mod prelude {
     // Re-export commonly used collection types from core::collections
     // These are frequently used in advanced examples and downstream code
     pub use crate::core::collections::{
-        CellNeighborsMap, FacetToCellsMap, FastHashMap, FastHashSet, SmallBuffer, VertexToCellsMap,
-        fast_hash_map_with_capacity, fast_hash_set_with_capacity,
+        CellNeighborsMap, CellSecondaryMap, FacetToCellsMap, FastHashMap, FastHashSet, SmallBuffer,
+        VertexSecondaryMap, VertexToCellsMap, fast_hash_map_with_capacity,
+        fast_hash_set_with_capacity,
     };
 
     // Re-export from geometry
@@ -896,8 +897,9 @@ pub mod prelude {
     /// Focused exports for collection types used throughout the crate.
     pub mod collections {
         pub use crate::core::collections::{
-            CellNeighborsMap, FacetToCellsMap, FastHashMap, FastHashSet, SmallBuffer,
-            VertexToCellsMap, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
+            CellNeighborsMap, CellSecondaryMap, FacetToCellsMap, FastHashMap, FastHashSet,
+            SmallBuffer, VertexSecondaryMap, VertexToCellsMap, fast_hash_map_with_capacity,
+            fast_hash_set_with_capacity,
         };
     }
 

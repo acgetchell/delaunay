@@ -28,7 +28,7 @@ use crate::geometry::predicates::{InSphere, Orientation, insphere_lifted, simple
 use crate::geometry::robust_predicates::{robust_insphere, robust_orientation};
 use crate::geometry::sos::exact_det_sign;
 use crate::geometry::traits::coordinate::{
-    Coordinate, CoordinateConversionError, CoordinateScalar, ScalarSummable,
+    Coordinate, CoordinateConversionError, CoordinateScalar,
 };
 use crate::geometry::util::{safe_coords_to_f64, safe_scalar_to_f64, squared_norm};
 use core::marker::PhantomData;
@@ -300,7 +300,7 @@ impl<T: CoordinateScalar> FastKernel<T> {
 
 impl<T, const D: usize> Kernel<D> for FastKernel<T>
 where
-    T: ScalarSummable,
+    T: CoordinateScalar,
 {
     type Scalar = T;
 
@@ -408,7 +408,7 @@ impl<T: CoordinateScalar> RobustKernel<T> {
 
 impl<T, const D: usize> Kernel<D> for RobustKernel<T>
 where
-    T: ScalarSummable,
+    T: CoordinateScalar,
 {
     type Scalar = T;
 
@@ -514,7 +514,7 @@ impl<T: CoordinateScalar> AdaptiveKernel<T> {
 
 impl<T, const D: usize> Kernel<D> for AdaptiveKernel<T>
 where
-    T: ScalarSummable,
+    T: CoordinateScalar,
 {
     type Scalar = T;
 

@@ -42,7 +42,7 @@ use crate::core::{
 use crate::geometry::{
     kernel::Kernel,
     point::Point,
-    traits::coordinate::{ScalarAccumulative, ScalarSummable},
+    traits::coordinate::{CoordinateScalar, ScalarAccumulative},
     util::{circumradius, hypot, inradius as simplex_inradius, simplex_volume},
 };
 use num_traits::{NumCast, One};
@@ -141,7 +141,7 @@ fn compute_scale_aware_epsilon<T, const D: usize>(
     points: &SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>,
 ) -> Result<(T, T), QualityError>
 where
-    T: ScalarSummable + AddAssign<T>,
+    T: CoordinateScalar + AddAssign<T>,
 {
     let mut total_edge_length = T::zero();
     let mut edge_count = 0;
