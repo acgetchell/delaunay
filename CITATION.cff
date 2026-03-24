@@ -2,9 +2,9 @@ cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 type: software
 title: "delaunay: A d-dimensional Delaunay triangulation library"
-version: 0.4.0
+version: 0.7.3
 doi: 10.5281/zenodo.16931097
-date-released: 2025-08-23
+date-released: 2026-03-24
 url: "https://github.com/acgetchell/delaunay"
 repository-code: "https://github.com/acgetchell/delaunay"
 authors:
@@ -20,11 +20,10 @@ keywords:
   - "mesh generation"
   - "Rust"
 abstract: >-
-  A Rust library for computing d-dimensional Delaunay triangulations
-  inspired by CGAL. The library provides lightweight alternatives for
-  computational geometry applications with support for arbitrary data
-  types associated with vertices and cells, d-dimensional triangulations,
-  convex hull extraction, and serialization/deserialization capabilities.
-  It implements the Bowyer-Watson algorithm with robust geometric predicates
-  for numerical stability.
+  A Rust library for d-dimensional Delaunay triangulations and convex hulls
+  inspired by CGAL. Features exact arithmetic predicates with Simulation of
+  Simplicity (SoS) for deterministic degeneracy resolution, a 4-level
+  validation hierarchy (element, structural, manifold, Delaunay), bistellar
+  flip editing and repair, and serialization support. Supports 2D through 5D
+  with safe Rust (no unsafe code).
 license: BSD-3-Clause

@@ -244,20 +244,20 @@ def _reflow_line(line: str, max_width: int = MAX_LINE_WIDTH) -> str:
 
 def _deindent_orphan(line: str, lines: list[str], idx: int) -> str:
     """
-    Adjust indentation for orphaned unordered list items produced by git-cliff's two-space prefix.
+    Normalize indentation for sub-bullet list items produced by git-cliff.
 
-    If the line is a list item prefixed by two spaces from cliff's indentation, this function either
-    strips exactly two leading spaces (preserving relative nesting) when an unordered-list ancestor
-    exists in the original lines, or strips all leading whitespace when no unordered context is found.
-    The scan inspects the provided original lines (not any already-processed result) to determine
-    context and avoid false parents.
+    Cliff's ``indent(prefix="  ")`` filter can compound with pre-existing
+    indentation in commit bodies, producing non-standard nesting depths.
+    This function scans backward through the original *lines* to find the
+    nearest list ancestor and normalizes the indent to ``parent + 2``
+    spaces (MD007).
     """
     stripped = line.lstrip()
     if not (line.startswith("  ") and stripped.startswith("- ")):
         return line
 
     our_indent = len(line) - len(stripped)
-    has_unordered_ancestor = False
+    nearest_parent_indent: int | None = None
 
     for j in range(idx - 1, -1, -1):
         prev = lines[j]
@@ -267,20 +267,18 @@ def _deindent_orphan(line: str, lines: list[str], idx: int) -> str:
             prev_stripped = prev.lstrip()
             if prev_stripped.startswith(("- ", "* ")):
                 parent_indent = len(prev) - len(prev_stripped)
-                if our_indent > parent_indent:
-                    has_unordered_ancestor = True
+                if our_indent > parent_indent and nearest_parent_indent is None:
+                    nearest_parent_indent = parent_indent
             continue  # skip cliff-indented content
-        # Column-0 non-blank line: real parent or prose.
-        if prev.startswith(("- ", "* ")):
-            return line  # column-0 list parent found
+        # Column-0 non-blank line — determines final result.
+        is_list_parent = prev.startswith(("- ", "* "))
+        if is_list_parent:
+            base = nearest_parent_indent + 2 if nearest_parent_indent is not None else 2
+            return " " * base + stripped
         # Column-0 non-list — orphan.
-        if has_unordered_ancestor:
-            return line[2:]  # strip cliff indent, keep relative nesting
-        return stripped  # strip all — no unordered context
+        return line[2:] if nearest_parent_indent is not None else stripped
     # Reached top of document — orphan.
-    if has_unordered_ancestor:
-        return line[2:]
-    return stripped
+    return line[2:] if nearest_parent_indent is not None else stripped
 
 
 def _needs_blank_before(stripped: str, result: list[str]) -> bool:

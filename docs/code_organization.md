@@ -161,6 +161,7 @@ delaunay/
 │   │   │   ├── facet_utils.rs
 │   │   │   ├── hashing.rs
 │   │   │   ├── hilbert.rs
+│   │   │   ├── canonical_points.rs
 │   │   │   ├── jaccard.rs
 │   │   │   ├── measurement.rs
 │   │   │   └── uuid.rs
@@ -192,7 +193,8 @@ delaunay/
 │   │   ├── point.rs
 │   │   ├── predicates.rs
 │   │   ├── quality.rs
-│   │   └── robust_predicates.rs
+│   │   ├── robust_predicates.rs
+│   │   └── sos.rs
 │   ├── topology/
 │   │   ├── characteristics/
 │   │   │   ├── euler.rs
@@ -215,6 +217,7 @@ delaunay/
 │   ├── check_perturbation_stats.rs
 │   ├── circumsphere_debug_tools.rs
 │   ├── coordinate_conversion_errors.rs
+│   ├── dedup_batch_construction.rs
 │   ├── delaunay_edge_cases.rs
 │   ├── delaunay_incremental_insertion.rs
 │   ├── delaunay_repair_fallback.rs
@@ -234,6 +237,7 @@ delaunay/
 │   ├── proptest_predicates.rs
 │   ├── proptest_safe_conversions.rs
 │   ├── proptest_serialization.rs
+│   ├── proptest_sos.rs
 │   ├── proptest_tds.rs
 │   ├── proptest_toroidal.rs
 │   ├── proptest_triangulation.rs
@@ -379,13 +383,15 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality, 
   - `jaccard.rs` - Set similarity utilities and diagnostics macro
   - `delaunay_validation.rs` - Delaunay property validation helpers (expensive; debug-oriented)
   - `hilbert.rs` - Hilbert ordering utilities (pure; triangulation-agnostic)
+  - `canonical_points.rs` - Canonical vertex-ordering helpers for geometric predicate call sites (SoS consistency)
 - `operations.rs` - Semantic classification and telemetry for topological operations
 
 **`src/geometry/`** - Geometric algorithms and predicates:
 
-- `kernel.rs` - Kernel abstraction for geometric operations
+- `kernel.rs` - Kernel abstraction (`AdaptiveKernel` default, `RobustKernel`, `FastKernel`) and `ExactPredicates` marker trait
 - `point.rs` - NaN-aware Point operations
 - `predicates.rs`, `robust_predicates.rs` - Geometric tests (see [Numerical Robustness Guide](numerical_robustness_guide.md))
+- `sos.rs` - Simulation of Simplicity (SoS) for deterministic degeneracy resolution (orientation and insphere)
 - `quality.rs` - Cell quality metrics (radius ratio, normalized volume) for d-dimensional simplices; provides mesh quality analysis to identify
   poorly-shaped cells (supports 2D-6D)
 - `matrix.rs` - Linear algebra support

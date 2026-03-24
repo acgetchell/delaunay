@@ -209,6 +209,24 @@ Property-based tests for geometric utilities and predicates.
 
 **Run with:** `cargo test --release --test proptest_geometry`
 
+#### [`proptest_sos.rs`](./proptest_sos.rs)
+
+Property-based tests for the Simulation of Simplicity (SoS) module verifying the mathematical invariants
+that a valid SoS implementation must satisfy.
+
+**Test Coverage:**
+
+- **Orientation Non-Degeneracy**: SoS orientation always returns ±1 for exactly degenerate (co-hyperplanar) inputs
+- **Orientation Determinism**: same degenerate input always produces the same sign
+- **Orientation Translation Invariance**: shifting all points by a constant integer offset preserves the sign
+- **Insphere Non-Degeneracy**: SoS insphere always returns ±1 for exactly co-spherical (hyper-rectangle vertex) inputs
+- **Insphere Determinism**: same co-spherical input always produces the same sign
+- **Random Robustness**: never panics on arbitrary finite inputs (orientation and insphere)
+
+**Dimensions Tested:** 2D–5D (via `gen_sos_tests!` macro)
+
+**Run with:** `cargo test --test proptest_sos` or included in `just test-integration`
+
 #### [`proptest_serialization.rs`](./proptest_serialization.rs)
 
 Property-based tests for serialization and deserialization verifying data preservation via randomized structures.
@@ -298,6 +316,7 @@ just test-debug
 
 Core integration coverage currently includes:
 
+- [`dedup_batch_construction.rs`](./dedup_batch_construction.rs)
 - [`delaunay_incremental_insertion.rs`](./delaunay_incremental_insertion.rs)
 - [`delaunay_repair_fallback.rs`](./delaunay_repair_fallback.rs)
 - [`delaunay_edge_cases.rs`](./delaunay_edge_cases.rs)

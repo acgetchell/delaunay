@@ -1,6 +1,6 @@
 # Known Issues: Dimensional and Large-Scale Limitations
 
-## Status (v0.7.2)
+## Status (v0.7.3)
 
 ### Current issues
 

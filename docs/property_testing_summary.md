@@ -21,6 +21,7 @@ Core modules (by layer):
 - `tests/proptest_orientation.rs`: coherent-orientation invariants (construction, tamper detection, incremental insertion coherence).
 - `tests/proptest_triangulation.rs`: triangulation-layer invariants and quality metrics.
 - `tests/proptest_delaunay_triangulation.rs`: Delaunay-layer properties (insertion, repair, validation).
+- `tests/proptest_sos.rs`: SoS (Simulation of Simplicity) invariants — non-degeneracy, determinism, translation invariance for orientation and insphere (2D–5D).
 
 There are also additional `tests/proptest_*.rs` modules covering specific types and
 algorithms (cell, facet, vertex, convex hull, serialization, etc.).
@@ -40,6 +41,7 @@ Target a single proptest module:
 cargo test --test proptest_predicates
 cargo test --test proptest_orientation
 cargo test --test proptest_tds
+cargo test --test proptest_sos
 ```
 
 For quick local iteration, you can skip proptests whose names are prefixed with `prop_`:

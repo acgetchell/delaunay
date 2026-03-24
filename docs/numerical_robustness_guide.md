@@ -61,7 +61,7 @@ Kernels control which predicate implementations are used by the triangulation al
   explicit public repair methods (`repair_delaunay_with_flips`,
   `repair_delaunay_with_flips_advanced`) are compile-time blocked.
 
-### `ExactPredicates` marker trait (v0.8.0+)
+### `ExactPredicates` marker trait (v0.7.3+)
 
 The `ExactPredicates` marker trait identifies kernels whose `orientation` and `in_sphere`
 predicates return the mathematically correct sign for all inputs, including near-degenerate
@@ -186,7 +186,7 @@ after insertion. The repair code uses the same kernel predicates as the insertio
 there is no separate "robust predicate override". This unified predicate pipeline ensures
 consistent sign decisions and eliminates flip cycles caused by predicate disagreements.
 
-Since v0.8.0, all repair entry points require `K: ExactPredicates` at compile time.
+Since v0.7.3, all repair entry points require `K: ExactPredicates` at compile time.
 This prevents accidental use of `FastKernel` for flip repair, which would produce
 incorrect results on near-degenerate inputs.
 
