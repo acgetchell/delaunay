@@ -110,7 +110,7 @@ echo "Performance results generated. Review benches/PERFORMANCE_RESULTS.md for a
 6. Stage and commit release artifacts
 
 ```bash
-git add Cargo.toml Cargo.lock CHANGELOG.md docs/ benches/PERFORMANCE_RESULTS.md docs/archive/changelog/
+git add Cargo.toml Cargo.lock CHANGELOG.md CITATION.cff docs/ tests/COVERAGE.md tests/README.md benches/PERFORMANCE_RESULTS.md docs/archive/changelog/
 
 git commit -m "chore(release): release $TAG
 

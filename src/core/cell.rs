@@ -2493,8 +2493,8 @@ mod tests {
             vertex!([0.0f32, 0.0f32, 1.0f32]),
         ];
 
-        // Note: DelaunayTriangulation::new() creates FastKernel<f64> by default
-        // We need to use with_kernel to get FastKernel<f32> for f32 vertices
+        // Note: DelaunayTriangulation::new() creates AdaptiveKernel<f64> by default;
+        // use with_kernel to get AdaptiveKernel<f32> for f32 vertices
         let dt: DelaunayTriangulation<AdaptiveKernel<f32>, (), (), 3> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;

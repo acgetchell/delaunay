@@ -11,8 +11,8 @@
 [![Audit dependencies](https://github.com/acgetchell/delaunay/actions/workflows/audit.yml/badge.svg)](https://github.com/acgetchell/delaunay/actions/workflows/audit.yml)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/3cad94f994f5434d877ae77f0daee692)](https://app.codacy.com/gh/acgetchell/delaunay/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 
-D-dimensional Delaunay triangulations and convex hulls in [Rust], with explicit invariants,
-multi-level validation, and theory-backed flip workflows inspired by [CGAL].
+D-dimensional Delaunay triangulations and convex hulls in [Rust], with exact predicates,
+multi-level validation, and bistellar flips inspired by [CGAL].
 
 ## 📐 Introduction
 
@@ -44,7 +44,8 @@ combinatorial and geometric checks.
 - [x]  Geometry quality metrics for simplices: radius ratio and normalized volume (dimension-agnostic)
 - [x]  Serialization/deserialization of all data structures to/from [JSON]
 - [x]  Tested for 2-, 3-, 4-, and 5-dimensional triangulations
-- [x]  Configurable predicate kernels: `FastKernel` (speed) vs `RobustKernel` (degenerate / near-degenerate robustness)
+- [x]  Configurable predicate kernels: `AdaptiveKernel` (default; exact arithmetic + SoS),
+  `RobustKernel` (exact, preserves degeneracy signals), `FastKernel` (raw f64, 2D only)
 - [x]  Bulk insertion ordering (`InsertionOrderStrategy`): [Hilbert curve] (default) or input order
 - [x]  Batch construction options (`ConstructionOptions`): optional deduplication and deterministic retries
 - [x]  Incremental construction APIs: insertion plus vertex removal (`remove_vertex`)
@@ -74,7 +75,7 @@ cargo add delaunay
 ```rust
 use delaunay::prelude::triangulation::*;
 
-// Create a 4D Delaunay triangulation from a set of vertices (with the default fast kernel).
+// Create a 4D Delaunay triangulation from a set of vertices (uses AdaptiveKernel by default).
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0, 0.0]),
     vertex!([1.0, 0.0, 0.0, 0.0]),
@@ -193,8 +194,9 @@ For reproducible checks in CI/local runs, use `just check`, `just test`, `just d
   exact arithmetic (`det_sign_exact`) for D ≤ 5. For D ≥ 6, insphere falls back to
   symbolic perturbation (the (D+2)×(D+2) matrix exceeds the stack-allocation limit).
 - **Flip convergence:** at larger scales (~130+ points in 3D, ~40+ in 4D), flip-based
-  Delaunay repair can encounter cycles on exactly degenerate (cospherical) configurations.
-  Simulation of Simplicity (SoS) is planned for v0.7.3 to break these ties.
+  Delaunay repair can encounter cycles. Since v0.7.3, Simulation of Simplicity (SoS) via
+  `AdaptiveKernel` breaks predicate-degeneracy ties deterministically; remaining convergence
+  issues at scale are typically cavity/topology interactions rather than predicate ambiguity.
 - **4D+ bulk construction:** see [Known Issues](docs/KNOWN_ISSUES_4D.md) for details.
 - **Validation/repair guarantees** assume the library-managed construction/editing pipeline.
 

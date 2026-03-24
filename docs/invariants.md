@@ -301,6 +301,13 @@ Important caveats:
 - Even under PL-manifold constraints, numerical predicates can be borderline for ill-conditioned
   inputs, which can lead to non-progressing local operations.
 
+Since v0.7.3, the default `AdaptiveKernel` applies **Simulation of Simplicity (SoS)** to both
+orientation and insphere predicates, breaking exact-degeneracy ties deterministically and eliminating
+the most common source of non-progressing flip cycles. The `ExactPredicates` marker trait ensures
+that flip repair entry points only accept kernels with provably correct sign decisions. Remaining
+convergence risks at large scale are primarily cavity/topology interactions rather than predicate
+ambiguity.
+
 The crate therefore treats flip/repair as a best-effort procedure with explicit validation hooks:
 
 - Prefer to validate Level 3 topology (`Triangulation::validate` / `TopologyGuarantee`) when running
@@ -320,9 +327,9 @@ Some limitations are inherent to incremental high-dimensional computational geom
 - **Iterative refinement constraints**: cavity-based insertion and flip-based repair are local
   procedures. In rare cases, local refinement can be blocked by topology or by non-progressing
   numerical predicates.
-- **Numerical precision**: floating-point robustness is a fundamental constraint. Robust predicates
-  substantially reduce failures, but extreme coordinate magnitudes or ill-conditioned point sets can
-  still trigger edge cases.[^shewchuk1997]
+- **Numerical precision**: floating-point robustness is a fundamental constraint. Exact predicates
+  with SoS (via `AdaptiveKernel`) substantially reduce failures, but extreme coordinate magnitudes
+  or ill-conditioned point sets can still trigger edge cases.[^shewchuk1997]
 
 Ordering and preprocessing can mitigate (but not eliminate) these issues:
 

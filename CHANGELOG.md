@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.3] - 2026-03-24
 
 ### ⚠️ Breaking Changes
 
@@ -14,20 +14,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Remove use_robust_on_ambiguous override from flip repair [#228](https://github.com/acgetchell/delaunay/pull/228)
   [#255](https://github.com/acgetchell/delaunay/pull/255)
 - Apply SoS to AdaptiveKernel::orientation() and tolerate degener… [#264](https://github.com/acgetchell/delaunay/pull/264)
+- Improve 4D debug harness diagnostics, add capped repair and regression test [#230](https://github.com/acgetchell/delaunay/pull/230)
+  [#277](https://github.com/acgetchell/delaunay/pull/277)
 - Remove RobustPredicateConfig and config_presets [#259](https://github.com/acgetchell/delaunay/pull/259)
   [#260](https://github.com/acgetchell/delaunay/pull/260)
-- Make TriangulationValidationError purely Level 3 [#262](https://github.com/acgetchell/delaunay/pull/262)
-- Preserve structured errors and use specific error variants [#262](https://github.com/acgetchell/delaunay/pull/262)
+- Rename TdsValidationError to TdsError [#262](https://github.com/acgetchell/delaunay/pull/262) [#265](https://github.com/acgetchell/delaunay/pull/265)
 - Replace custom changelog pipeline with git-cliff [#247](https://github.com/acgetchell/delaunay/pull/247)
 
 ### Merged Pull Requests
 
+- Simplify trait bounds and re-export secondary maps [#282](https://github.com/acgetchell/delaunay/pull/282)
+- Bump codecov/codecov-action from 5.5.2 to 5.5.3 [#280](https://github.com/acgetchell/delaunay/pull/280)
+- Bump taiki-e/install-action from 2.68.34 to 2.69.6 [#279](https://github.com/acgetchell/delaunay/pull/279)
+- Bump arc-swap from 1.8.2 to 1.9.0 in the dependencies group [#278](https://github.com/acgetchell/delaunay/pull/278)
+- Improve 4D debug harness diagnostics, add capped repair and regression test [#230](https://github.com/acgetchell/delaunay/pull/230)
+  [#277](https://github.com/acgetchell/delaunay/pull/277)
+- Add progressive scale-invariant perturbation [#209](https://github.com/acgetchell/delaunay/pull/209) [#274](https://github.com/acgetchell/delaunay/pull/274)
+- Add ExactPredicates marker trait for flip repair type safety (#… [#273](https://github.com/acgetchell/delaunay/pull/273)
+- Identity-based SoS perturbation via canonical vertex ordering (… [#272](https://github.com/acgetchell/delaunay/pull/272)
+- Bump astral-sh/setup-uv from 7.3.1 to 7.5.0 [#271](https://github.com/acgetchell/delaunay/pull/271)
+- Bump actions-rust-lang/setup-rust-toolchain [#270](https://github.com/acgetchell/delaunay/pull/270)
+- Bump taiki-e/install-action from 2.68.25 to 2.68.33 [#269](https://github.com/acgetchell/delaunay/pull/269)
+- Bump tracing-subscriber in the dependencies group [#268](https://github.com/acgetchell/delaunay/pull/268)
+- Bump actions/download-artifact from 8.0.0 to 8.0.1 [#267](https://github.com/acgetchell/delaunay/pull/267)
+- Rename TdsValidationError to TdsError [#262](https://github.com/acgetchell/delaunay/pull/262) [#265](https://github.com/acgetchell/delaunay/pull/265)
 - Apply SoS to AdaptiveKernel::orientation() and tolerate degener… [#264](https://github.com/acgetchell/delaunay/pull/264)
-- Rename TdsValidationError to TdsError [#262](https://github.com/acgetchell/delaunay/pull/262)
-- Make TriangulationValidationError purely Level 3 [#262](https://github.com/acgetchell/delaunay/pull/262)
-- Preserve structured errors and use specific error variants [#262](https://github.com/acgetchell/delaunay/pull/262)
-- Add error hierarchy coverage tests for patch coverage [#262](https://github.com/acgetchell/delaunay/pull/262)
-- Orthogonalize error mapping and add error hierarchy tests [#262](https://github.com/acgetchell/delaunay/pull/262)
 - Canonicalize positive orientation after bulk construction repair… [#261](https://github.com/acgetchell/delaunay/pull/261)
 - Remove RobustPredicateConfig and config_presets [#259](https://github.com/acgetchell/delaunay/pull/259)
   [#260](https://github.com/acgetchell/delaunay/pull/260)
@@ -237,6 +248,155 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Remove Morton/Lexicographic doc references from README, invariants.md,
     numerical_robustness_guide.md, and triangulation_generation.rs
 
+- Identity-based SoS perturbation via canonical vertex ordering (… [#272](https://github.com/acgetchell/delaunay/pull/272)
+  [`a125d98`](https://github.com/acgetchell/delaunay/commit/a125d988566bb7196c025212833f3e539665e7de)
+
+- feat: identity-based SoS perturbation via canonical vertex ordering [#266](https://github.com/acgetchell/delaunay/pull/266)
+
+  - Add canonical_points module with sorted_cell_points and
+       sorted_facet_points_with_extra helpers that sort vertices by
+       VertexKey identity before resolving to points
+
+  - Update all 5 kernel call sites (locate, flips, triangulation) to
+       use canonical ordering for consistent SoS tie-breaking
+
+  - Fix misleading error variant in find_conflict_region BFS traversal
+       (InvalidStartCell → CellDataAccessFailed)
+
+  - Add 6 unit tests including 2D/3D permutation-invariance tests
+
+  - feat: identity-based SoS perturbation via canonical vertex ordering [#266](https://github.com/acgetchell/delaunay/pull/266)
+
+  - Add canonical_points module with sorted_cell_points and
+    sorted_facet_points_with_extra helpers that sort vertices by
+    VertexKey identity before resolving to points
+
+  - Update all 5 kernel call sites (locate, flips, triangulation) to
+    use canonical ordering for consistent SoS tie-breaking
+
+  - Fix misleading error variant in find_conflict_region BFS traversal
+    (InvalidStartCell → CellDataAccessFailed)
+
+  - Document canonical ordering convention in numerical_robustness_guide
+  - Add canonical_points.rs to code_organization.md util listing
+  - Add 14 new tests: permutation invariance (2D all 6, 3D all 24),
+    canonical ordering helpers, and error-path coverage for
+    is_point_outside_facet and find_conflict_region
+
+  - Changed: reuse canonical cell ordering for query simplex construction
+
+  Optimize the construction of the query simplex by reusing the
+  canonical vertex ordering of the cell. This ensures consistent
+  identity-based SoS perturbation and includes a safety check to
+  prevent out-of-range facet index access.
+
+- Add ExactPredicates marker trait for flip repair type safety (#… [#273](https://github.com/acgetchell/delaunay/pull/273)
+  [`4877151`](https://github.com/acgetchell/delaunay/commit/48771518b2b5a8a6dd9b4036b0903f7c3158b7c9)
+
+- feat: add ExactPredicates marker trait for flip repair type safety [#257](https://github.com/acgetchell/delaunay/pull/257)
+
+  - Define `ExactPredicates` marker trait in `kernel.rs`, implemented for
+    `AdaptiveKernel` and `RobustKernel` but not `FastKernel`
+
+  - Add `K: ExactPredicates` bound to flip repair entry points in
+    `flips.rs` and propagate through `delaunay_triangulation.rs`,
+    `builder.rs`, and `triangulation_generation.rs`
+
+  - Add `compile_fail` doctest asserting `FastKernel` cannot satisfy the
+    bound, plus positive compile-time assertion tests for the other kernels
+
+  - Update test code to use `AdaptiveKernel` where `DelaunayTriangulation`
+    construction or flip repair is invoked
+
+  - Document the trait and its design rationale in
+    `numerical_robustness_guide.md`
+
+- Add progressive scale-invariant perturbation [#209](https://github.com/acgetchell/delaunay/pull/209) [#274](https://github.com/acgetchell/delaunay/pull/274)
+  [`4c35028`](https://github.com/acgetchell/delaunay/commit/4c35028537b9011d586be3b9b234925e3ca5bb5a)
+
+- feat: add progressive scale-invariant perturbation [#209](https://github.com/acgetchell/delaunay/pull/209)
+
+  - Replace hardcoded perturbation retry count with
+    DEFAULT_PERTURBATION_RETRIES = 3 (4 total attempts)
+
+  - Apply 10^(attempt-1) progressive scaling factor per retry,
+    spanning 4 orders of magnitude (e.g. 1e-8 → 1e-5 for f64)
+
+  - Update debug messages with computed max perturbation values
+  - Update numerical robustness guide documentation
+  - Add tests for scale invariance, f32 base epsilon, and constant value
+  - Remove 32 redundant `where K::Scalar: CoordinateScalar` clauses
+    (implied by impl-level bounds)
+
+  - fix: correct perturbation exponent off-by-one and improve test coverage [#209](https://github.com/acgetchell/delaunay/pull/209)
+
+  - Fix progressive scale factor: use 10^attempt instead of 10^(attempt-1)
+    so the retry ladder reaches 1e-5 × local_scale (was capped at 1e-6),
+    matching the documented "4 orders of magnitude" range
+
+  - Apply the same correction to the debug-message exponent computation
+  - Update perturbation ladder in numerical_robustness_guide.md to reflect
+    the corrected values (1e-7, 1e-6, 1e-5)
+
+  - Replace test_perturbation_f32_base_epsilon with
+    test_perturbation_epsilon_selection_and_retry: asserts mantissa_digits
+    for both f32 and f64, exercises insert_transactional with on-edge
+    near-degenerate points for both scalar types
+
+  - Add absolute expected counts to test_perturbation_scale_invariance_3d
+    to catch regressions that affect all scales equally
+
+  - Add test_perturbation_retry_and_exhaustion_4d: 4D random points
+    exercise the progressive retry loop body and exhaustion branch
+
+  - Add test_perturbation_retry_seeded_branch_4d: calls
+    insert_transactional directly with perturbation_seed != 0 to cover
+    the seeded sign-selection path
+
+- [**breaking**] Improve 4D debug harness diagnostics, add capped repair and regression test [#230](https://github.com/acgetchell/delaunay/pull/230)
+  [#277](https://github.com/acgetchell/delaunay/pull/277) [`0684ec0`](https://github.com/acgetchell/delaunay/commit/0684ec01108cc6a816d5aa5b41179726ee7a51a5)
+
+Add configurable flip-budget capping, structured debug-harness outcomes,
+  enriched orientation diagnostics, and a seeded 4D regression test.
+
+  Flip budget enforcement:
+
+- Move max_flips check before apply_bistellar_flip in all 5 repair
+    paths (k2, k3, dynamic, inverse) so Some(0) means truly zero flips
+
+- Change guard from `>` to `>=` to eliminate off-by-one
+- Thread max_flips_override through repair_delaunay_with_flips_k2_k3,
+    the robust fallback, heuristic rebuild, and per-insertion repair
+
+  Capped repair API:
+
+- Add max_flips: Option<usize> to DelaunayRepairHeuristicConfig
+- Mark DelaunayRepairHeuristicConfig #[non_exhaustive]
+- Add internal repair_delaunay_with_flips_capped() helper
+- Add DELAUNAY_LARGE_DEBUG_REPAIR_MAX_FLIPS env var to debug harness
+
+  Error taxonomy:
+
+- Add RepairFailed variant to DelaunayTriangulationValidationError for
+    mutating operations (remove_vertex); fix remove_vertex to use it
+    instead of VerificationFailed (which is for passive validation)
+
+  Orientation diagnostics:
+
+- Enrich NegativeOrientation error message with vertex keys
+- Add tracing::warn with cell key, UUID, vertex keys, neighbor keys,
+    and orientation sign for negative-orientation cells
+
+  Debug harness:
+
+- Return DebugOutcome enum instead of panicking (Success,
+    ConstructionFailure, SkippedVertices, RepairNonConvergence,
+    ValidationFailure)
+
+- Print seed replay command on every abort path
+- Add per-chunk insertion rate (pts/s) in progress output
+- Harness tests now assert on DebugOutcome::Success
+
 ### Changed
 
 - Replace panicking calls with error propagation [#242](https://github.com/acgetchell/delaunay/pull/242) [#250](https://github.com/acgetchell/delaunay/pull/250)
@@ -278,188 +438,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Update numerical_robustness_guide.md: document AdaptiveKernel as the
     default kernel, remove config_presets references
 
-- Rename TdsValidationError to TdsError [#262](https://github.com/acgetchell/delaunay/pull/262)
-  [`7e1442e`](https://github.com/acgetchell/delaunay/commit/7e1442ef5fdd6a2ea7451d0147013df4e800cb7c)
+- [**breaking**] Rename TdsValidationError to TdsError [#262](https://github.com/acgetchell/delaunay/pull/262)
+  [#265](https://github.com/acgetchell/delaunay/pull/265) [`99b9810`](https://github.com/acgetchell/delaunay/commit/99b9810c7aeeb91f84efba019bb199da8ee4f87a)
 
-- Rename TdsValidationError -> TdsError across all source files
+- refactor: rename TdsValidationError to TdsError [#262](https://github.com/acgetchell/delaunay/pull/262)
+
+  - Rename TdsValidationError -> TdsError across all source files
   - Remove the type alias that bridged the old name
   - Update all references in production code, tests, and examples
   - Part of error hierarchy orthogonalization (Phase 5)
-- [**breaking**] Make TriangulationValidationError purely Level 3 [#262](https://github.com/acgetchell/delaunay/pull/262)
-  [`f62280d`](https://github.com/acgetchell/delaunay/commit/f62280d98e82e51baec8e5e5803db0ab75d281e0)
 
-Remove the Tds variant from TriangulationValidationError so it contains
+  - refactor!: make TriangulationValidationError purely Level 3 [#262](https://github.com/acgetchell/delaunay/pull/262)
+
+  Remove the Tds variant from TriangulationValidationError so it contains
   only Level 3 (topology) errors.  TDS-level errors now flow through
   InvariantError, keeping Levels 1–2 orthogonal from Level 3.
 
   API changes:
 
-- is_valid, validate, validate_at_completion, validate_after_insertion
+  - is_valid, validate, validate_at_completion, validate_after_insertion
     now return InvariantError instead of TriangulationValidationError
 
-- validate_geometric_cell_orientation returns TdsError directly
-- remove_vertex returns InvariantError
-- Add Tds variant to DelaunayTriangulationValidationError
-- TdsMutationError inner field made private; add as_tds_error() and
+  - validate_geometric_cell_orientation returns TdsError directly
+  - remove_vertex returns InvariantError
+  - Add Tds variant to DelaunayTriangulationValidationError
+  - TdsMutationError inner field made private; add as_tds_error() and
     into_inner() accessors
 
-- Remove From<TdsMutationError> for TriangulationValidationError
-- Add From<ManifoldError> for InvariantError
-- [**breaking**] Preserve structured errors and use specific error variants [#262](https://github.com/acgetchell/delaunay/pull/262)
-  [`6907e55`](https://github.com/acgetchell/delaunay/commit/6907e55c5d43f62a7928945cd383dadbc312ef5c)
+  - Remove From<TdsMutationError> for TriangulationValidationError
+  - Add From<ManifoldError> for InvariantError
+- Simplify trait bounds and re-export secondary maps [#282](https://github.com/acgetchell/delaunay/pull/282)
+  [`04ea024`](https://github.com/acgetchell/delaunay/commit/04ea024f7091b7f1d9406c48d673e58a07a657d3)
 
-- Preserve original TdsError in remove_vertex instead of fabricating
-    InconsistentDataStructure (use TdsMutationError::into_inner)
+- Re-export VertexSecondaryMap and CellSecondaryMap in prelude and
+    prelude::collections; update doc examples to use prelude path
 
-  - Map NeighborWiring to InternalInconsistency (non-retryable) instead
-    of Tds(ValidationError(InvalidNeighbors))
+  - Replace ~50 vestigial ScalarSummable bounds with CoordinateScalar
+    across geometry and core modules (Sum is never called on T)
 
-  - Map InvariantError::Delaunay to DelaunayValidationFailed instead of
-    fabricating EulerCharacteristicMismatch with zeroed fields
+  - Remove ~34 redundant K::Scalar: CoordinateScalar where clauses
+    already implied by K: Kernel<D> (associated type bound)
 
-  - Return fallback_err directly in star-split Err arm instead of
-    discarding it and returning the original validation_err
+  - Remove 8 redundant [T; D]: Copy + Sized bounds already implied
+    by T: CoordinateScalar (Float → Copy; arrays are always Sized)
 
-  - Use IndexOutOfBounds for facet index checks and DimensionMismatch
-    for periodic offset count mismatches in orientation validation
-
-  - Update doc comments on normalize_coherent_orientation and
-    build_facet_to_cells_map to enumerate all returned TdsError variants
-
-- Add error hierarchy coverage tests for patch coverage [#262](https://github.com/acgetchell/delaunay/pull/262)
-  [`2908797`](https://github.com/acgetchell/delaunay/commit/290879779309139e4b6767b557a386de241a0f89)
-
-- Add Display/formatting tests for GeometricError, TdsError new variants
-    (CellNotFound, VertexNotFound, DimensionMismatch, IndexOutOfBounds)
-
-  - Add TdsMutationError::as_tds_error() and into_inner() accessor tests
-  - Add invariant_error_to_insertion_error tests for all three arms
-    (Tds, Triangulation, Delaunay)
-
-  - Add From<ManifoldError> for InvariantError non-Tds arm test
-  - Add TriangulationValidationError::IsolatedVertex Display test
-  - Add DelaunayTriangulationValidationError Tds and Triangulation
-    variant construction and Display tests
-
-  - Fix repair_delaunay_with_flips error mapping in remove_vertex to use
-    InvariantError::Delaunay(VerificationFailed) instead of
-    TdsError::FinalizationFailed
-
-  - Update DelaunayTriangulationValidationError doc to describe Levels 1-4
-  - Update validate_coherent_orientation doc to include InvalidNeighbors
-- Orthogonalize error mapping and add error hierarchy tests [#262](https://github.com/acgetchell/delaunay/pull/262)
-  [`f5c0950`](https://github.com/acgetchell/delaunay/commit/f5c09503eda5c7af969858e673f64e3d8be77006)
-
-- Map finalization failures to TdsError::FinalizationFailed instead of
-    re-wrapping the original error variant
-
-  - Handle TopologyValidationFailed in extract_tds_error by combining
-    context, message, and source into InconsistentDataStructure
-
-  - Add tests for DT validate error mapping to correct validation variants
-  - Add tests for invariant error conversions from Delaunay validation errors
-  - Add tests for manifold operations (simplex star, ridge star, closed
-    boundary validation) and ManifoldError display variants
-
-  - Add tests verifying error message propagation through the hierarchy
-- Clean up stale comments, deprecated API, and boost test coverage
-  [`1e994e5`](https://github.com/acgetchell/delaunay/commit/1e994e5236bc7038dab135c1a748ead1e0eb9f1b)
-
-- Remove deprecated TopologyGuarantee::requires_vertex_links(); callers
-    should use requires_vertex_links_during_insertion() or
-    requires_vertex_links_at_completion()
-
-  - Remove commented-out with_topology() stubs from Triangulation and
-    DelaunayTriangulation (future work tracked in issues, not dead code)
-
-  - Remove stale Phase 2 TODO comments (locate/geometric ops are implemented)
-  - Update doc comment on validate_at_completion to reference InvariantError
-  - Update CellNotFound context strings for periodic vertex identity
-  - Remove duplicate tests in topology::manifold
-  - Add 17 tests to triangulation_data_structure (serde round-trips,
-    orientation normalization, generation counter, remove_duplicate_cells,
-    validation error paths, facet-to-cells map, validation report)
-
-  - Add 11 tests to triangulation (topology queries, adjacency index,
-    local facet detection, ensure_non_empty_conflict_cells,
-    star_split_boundary_facets, validation_report, global connectedness)
-
-- Improve coverage for triangulation and TDS modules [`e8cec78`](https://github.com/acgetchell/delaunay/commit/e8cec7801585879b9c59c9073971d981a85c4d74)
-
-- Add 26 tests to triangulation.rs covering insertion pipeline
-    (bootstrap, initial simplex, beyond-simplex) for 2D/3D/4D,
-    insert_with_statistics, validation_report, remove_vertex,
-    validate_connectedness, find_conflict_region_global,
-    conflict_region_touches_boundary, fan_fill_cavity,
-    repair_local_facet_issues, duplicate_coordinates_error,
-    validate_after_insertion, invariant_error_to_insertion_error,
-    estimate_local_perturbation_scale, and validate_at_completion
-
-  - Add 16 tests to triangulation_data_structure.rs covering
-    insert_cell_with_mapping (UUID mapping, missing vertex, duplicate
-    UUID), get_cell_vertices error path, validate_vertex_incidence
-    (inconsistent incident cell, dangling cell key),
-    find_cells_containing_vertex fallback, remove_cells_by_keys batch
-    repair, assign_incident_cells dangling vertex, normalize_coherent
-    orientation (single and multi cell), validate_cell_coordinate
-    uniqueness, generation counter, remove_duplicate_cells,
-    remove_cell_by_key missing key, and validate_neighbor_topology
-
-  - Add Cell::set_uuid test helper (#[cfg(test)]) mirroring
-    Vertex::set_uuid for duplicate UUID detection testing
-
-  - Use TdsError::CellNotFound instead of InconsistentDataStructure
-    for cell-key lookups in neighbor validation and orientation
-    validation (4 sites)
-
-  - Remove unnecessary Vec allocation in
-    validate_neighbors_with_precomputed_vertex_sets by passing
-    SmallVec slice directly
-
-  - Update ORIENTATION_SPEC.md pseudocode to include all
-    OrientationViolation fields
-
-  - De-duplicate ridge_star_cells test to cover too-many-vertices
-    case instead of repeating too-few-vertices scenario
-
-  - Fix clippy lint in test_insert_pipeline macro (as f64 → From)
-- Orthogonalize error hierarchy for structure-preserving propagation
-  [`690aaa2`](https://github.com/acgetchell/delaunay/commit/690aaa2a1f35b859208ab5db6710ca6b44fc4f37)
-
-- Replace InsertionError::DelaunayValidationFailed { message: String } with
-    structured { source: Box<DelaunayTriangulationValidationError> } to preserve
-    Level 4 validation errors through the error chain
-
-  - Add InsertionError::DelaunayRepairFailed { source, context } variant that
-    preserves the structured DelaunayRepairError instead of misusing CavityFilling
-
-  - Remove TdsError::FinalizationFailed — it was a double-wrapping layer violation;
-    the single remaining call site now uses ? directly
-
-  - Simplify remove_vertex closure re-wrapping: replace 4 manual
-    InsertionError→TdsError→InvariantError chains with
-    insertion_error_to_invariant_error() calls
-
-  - Add HullExtensionReason::PredicateFailed(CoordinateConversionError) to preserve
-    structured orientation/predicate errors instead of format!("{e}") stringification
-
-  - Add HullExtensionReason::Tds(TdsError) for boundary-facet retrieval failures
-  - Add #[non_exhaustive] to HullExtensionReason for API stability (consistent with
-    all other error enums in the hierarchy)
-
-  - Derive Clone on FlipError and DelaunayRepairError (required by
-    InsertionError::DelaunayRepairFailed)
-
-  - Update insertion_error_to_invariant_error and invariant_error_to_insertion_error
-    converters for new variants
-
-  - Update exhaustive matches in is_retryable, map_orientation_canonicalization_error,
-    and map_insertion_error
-
-  - Remove 3 unfulfilled #[expect(clippy::too_many_lines)] attributes that became
-    stale after simplifications
-
-  - Add retryability tests for PredicateFailed, Tds, and DelaunayRepairFailed variants
+  - Keep ScalarSummable trait definition and blanket impl for future use
 
 ### Fixed
 
@@ -481,18 +504,6 @@ Remove the Tds variant from TriangulationValidationError so it contains
   to separate algorithmic bugs from input-related `GeometricDegeneracy`
   during post-repair orientation canonicalization. Added topology
   validation to the issue #228 regression test to ensure manifold parity.
-
-- Bump generation before early return in assign_incident_cells
-  [`d3ca4db`](https://github.com/acgetchell/delaunay/commit/d3ca4db8932b9e4b6cd1b81f192a2fde66bb45ee)
-
-- Remove stale `TriangulationValidationError` import from
-    `TriangulationValidationError` doc example (glob import already
-    covers it)
-
-  - In `assign_incident_cells`, replace `?`-based `ok_or_else` with
-    `let Some(...) else` so that `bump_generation()` is called before
-    returning `VertexNotFound`, ensuring the generation counter reflects
-    the incident-cell clearing mutation on the error path
 
 ### Maintenance
 
@@ -541,6 +552,151 @@ Remove the Tds variant from TriangulationValidationError so it contains
   - Remove #[derive(Builder)] and #[builder(...)] attributes from Vertex
   - Remove derive_builder dependency from Cargo.toml and lib.rs
   - All ~30 call sites unchanged — builder API is a drop-in replacement
+- Bump actions/download-artifact from 8.0.0 to 8.0.1 [#267](https://github.com/acgetchell/delaunay/pull/267)
+  [`3727781`](https://github.com/acgetchell/delaunay/commit/37277814a118d100bffed0e6fe48953094936280)
+
+Bumps [actions/download-artifact](https://github.com/actions/download-artifact) from 8.0.0 to 8.0.1.
+
+- [Release notes](https://github.com/actions/download-artifact/releases)
+- [Commits](https://github.com/actions/download-artifact/compare/70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3...3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c)
+
+  ---
+  updated-dependencies:
+
+- dependency-name: actions/download-artifact
+    dependency-version: 8.0.1
+    dependency-type: direct:production
+    update-type: version-update:semver-patch
+  ...
+
+- Bump tracing-subscriber in the dependencies group [#268](https://github.com/acgetchell/delaunay/pull/268)
+  [`7d355f4`](https://github.com/acgetchell/delaunay/commit/7d355f43418a3bad0da1badf5fde3a19d6306d37)
+
+Bumps the dependencies group with 1 update: [tracing-subscriber](https://github.com/tokio-rs/tracing).
+
+  Updates `tracing-subscriber` from 0.3.22 to 0.3.23
+
+- [Release notes](https://github.com/tokio-rs/tracing/releases)
+- [Commits](https://github.com/tokio-rs/tracing/compare/tracing-subscriber-0.3.22...tracing-subscriber-0.3.23)
+
+  ---
+  updated-dependencies:
+
+- dependency-name: tracing-subscriber
+    dependency-version: 0.3.23
+    dependency-type: direct:production
+    update-type: version-update:semver-patch
+    dependency-group: dependencies
+  ...
+
+- Bump taiki-e/install-action from 2.68.25 to 2.68.33 [#269](https://github.com/acgetchell/delaunay/pull/269)
+  [`f7fb663`](https://github.com/acgetchell/delaunay/commit/f7fb6638c744f76a92325117160a420eb85e3d0b)
+
+Bumps [taiki-e/install-action](https://github.com/taiki-e/install-action) from 2.68.25 to 2.68.33.
+
+- [Release notes](https://github.com/taiki-e/install-action/releases)
+- [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
+- [Commits](https://github.com/taiki-e/install-action/compare/a37010ded18ff788be4440302bd6830b1ae50d8b...cbb1dcaa26e1459e2876c39f61c1e22a1258aac5)
+
+  ---
+  updated-dependencies:
+
+- dependency-name: taiki-e/install-action
+    dependency-version: 2.68.33
+    dependency-type: direct:production
+    update-type: version-update:semver-patch
+  ...
+
+- Bump actions-rust-lang/setup-rust-toolchain [#270](https://github.com/acgetchell/delaunay/pull/270)
+  [`73b8d63`](https://github.com/acgetchell/delaunay/commit/73b8d63896386e1f17d14e1b10421059d17a79c3)
+
+Bumps [actions-rust-lang/setup-rust-toolchain](https://github.com/actions-rust-lang/setup-rust-toolchain) from 1.15.3 to 1.15.4.
+
+- [Release notes](https://github.com/actions-rust-lang/setup-rust-toolchain/releases)
+- [Changelog](https://github.com/actions-rust-lang/setup-rust-toolchain/blob/main/CHANGELOG.md)
+- [Commits](https://github.com/actions-rust-lang/setup-rust-toolchain/compare/a0b538fa0b742a6aa35d6e2c169b4bd06d225a98...150fca883cd4034361b621bd4e6a9d34e5143606)
+
+  ---
+  updated-dependencies:
+
+- dependency-name: actions-rust-lang/setup-rust-toolchain
+    dependency-version: 1.15.4
+    dependency-type: direct:production
+    update-type: version-update:semver-patch
+  ...
+
+- Bump astral-sh/setup-uv from 7.3.1 to 7.5.0 [#271](https://github.com/acgetchell/delaunay/pull/271)
+  [`3225d64`](https://github.com/acgetchell/delaunay/commit/3225d64974cb1d7772cf5cde4be6206578ef2da9)
+
+Bumps [astral-sh/setup-uv](https://github.com/astral-sh/setup-uv) from 7.3.1 to 7.5.0.
+
+- [Release notes](https://github.com/astral-sh/setup-uv/releases)
+- [Commits](https://github.com/astral-sh/setup-uv/compare/5a095e7a2014a4212f075830d4f7277575a9d098...e06108dd0aef18192324c70427afc47652e63a82)
+
+  ---
+  updated-dependencies:
+
+- dependency-name: astral-sh/setup-uv
+    dependency-version: 7.5.0
+    dependency-type: direct:production
+    update-type: version-update:semver-minor
+  ...
+
+- Bump arc-swap from 1.8.2 to 1.9.0 in the dependencies group [#278](https://github.com/acgetchell/delaunay/pull/278)
+  [`da93901`](https://github.com/acgetchell/delaunay/commit/da93901c78a40e8e484e3fb21b117156167ec2a0)
+
+Bumps the dependencies group with 1 update: [arc-swap](https://github.com/vorner/arc-swap).
+
+  Updates `arc-swap` from 1.8.2 to 1.9.0
+
+- [Changelog](https://github.com/vorner/arc-swap/blob/master/CHANGELOG.md)
+- [Commits](https://github.com/vorner/arc-swap/compare/v1.8.2...v1.9.0)
+
+  ---
+  updated-dependencies:
+
+- dependency-name: arc-swap
+    dependency-version: 1.9.0
+    dependency-type: direct:production
+    update-type: version-update:semver-minor
+    dependency-group: dependencies
+  ...
+
+- Bump taiki-e/install-action from 2.68.34 to 2.69.6 [#279](https://github.com/acgetchell/delaunay/pull/279)
+  [`6c7c8b1`](https://github.com/acgetchell/delaunay/commit/6c7c8b190e563f18555cbfee14e8608be1dadeed)
+
+Bumps [taiki-e/install-action](https://github.com/taiki-e/install-action) from 2.68.34 to 2.69.6.
+
+- [Release notes](https://github.com/taiki-e/install-action/releases)
+- [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
+- [Commits](https://github.com/taiki-e/install-action/compare/de6bbd1333b8f331563d54a051e542c7dfef81c3...06203676c62f0d3c765be3f2fcfbebbcb02d09f5)
+
+  ---
+  updated-dependencies:
+
+- dependency-name: taiki-e/install-action
+    dependency-version: 2.69.6
+    dependency-type: direct:production
+    update-type: version-update:semver-minor
+  ...
+
+- Bump codecov/codecov-action from 5.5.2 to 5.5.3 [#280](https://github.com/acgetchell/delaunay/pull/280)
+  [`47394f3`](https://github.com/acgetchell/delaunay/commit/47394f3543d4cbd2c69f45a6ce0c54814bd33875)
+
+Bumps [codecov/codecov-action](https://github.com/codecov/codecov-action) from 5.5.2 to 5.5.3.
+
+- [Release notes](https://github.com/codecov/codecov-action/releases)
+- [Changelog](https://github.com/codecov/codecov-action/blob/main/CHANGELOG.md)
+- [Commits](https://github.com/codecov/codecov-action/compare/671740ac38dd9b0130fbe1cec585b89eea48d3de...1af58845a975a7985b0beb0cbe6fbbb71a41dbad)
+
+  ---
+  updated-dependencies:
+
+- dependency-name: codecov/codecov-action
+    dependency-version: 5.5.3
+    dependency-type: direct:production
+    update-type: version-update:semver-patch
+  ...
 
 ## [0.7.2] - 2026-03-10
 
@@ -1858,7 +2014,7 @@ Older releases are archived by minor series:
 - [0.3.x](docs/archive/changelog/0.3.md)
 - [0.2.x](docs/archive/changelog/0.2.md)
 
-[unreleased]: https://github.com/acgetchell/delaunay/compare/v0.7.2..HEAD
+[0.7.3]: https://github.com/acgetchell/delaunay/compare/v0.7.2..v0.7.3
 [0.7.2]: https://github.com/acgetchell/delaunay/compare/v0.7.1..v0.7.2
 [0.7.1]: https://github.com/acgetchell/delaunay/compare/v0.7.0..v0.7.1
 [0.7.0]: https://github.com/acgetchell/delaunay/compare/v0.6.2..v0.7.0
