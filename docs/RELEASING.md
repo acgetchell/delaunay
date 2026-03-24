@@ -72,15 +72,17 @@ Update references in documentation (search, then manually edit as needed):
 rg -n "\bv?[0-9]+\.[0-9]+\.[0-9]+\b" README.md docs/ || true
 ```
 
-3. Verify CI passes
+3. Verify CI passes and validate publish metadata
 
 ```bash
 just fix
 just ci
+just publish-check
 ```
 
-This ensures all tests, lints, and examples pass with the new version before
-proceeding. Fix any issues before continuing.
+This ensures all tests, lints, and examples pass with the new version, and
+validates that Cargo.toml metadata (keywords, categories, description) complies
+with crates.io's server-side rules. Fix any issues before continuing.
 
 4. Generate changelog using a temporary local tag (DO NOT PUSH this tag)
 
@@ -234,10 +236,7 @@ gh release create "$TAG" --notes-from-tag
 7. Publish to crates.io
 
 ```bash
-# Sanity check before publishing
-cargo publish --locked --dry-run
-
-# Publish the crate (ensure docs are already updated on main via the PR)
+# Publish the crate (publish-check already ran in Step 1)
 cargo publish --locked
 ```
 

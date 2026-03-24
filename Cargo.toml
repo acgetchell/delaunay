@@ -9,7 +9,7 @@ documentation = "https://docs.rs/delaunay"
 repository = "https://github.com/acgetchell/delaunay"
 description = "D-dimensional Delaunay triangulations and convex hulls in Rust, with exact predicates, multi-level validation, and bistellar flips"
 license = "BSD-3-Clause"
-keywords = [ "delaunay", "triangulation", "computational-geometry", "convex-hull", "simplicial-complex" ]
+keywords = [ "delaunay", "triangulation", "geometry", "convex-hull", "simplicial-complex" ]
 categories = [ "algorithms", "mathematics", "science" ]
 readme = "README.md"
 
