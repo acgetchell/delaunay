@@ -13,7 +13,7 @@ use super::util::{safe_coords_to_f64, safe_scalar_to_f64, squared_norm};
 use crate::geometry::matrix::matrix_set;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
-    Coordinate, CoordinateConversionError, CoordinateScalar, ScalarSummable,
+    Coordinate, CoordinateConversionError, CoordinateScalar,
 };
 use std::sync::LazyLock;
 
@@ -155,8 +155,7 @@ pub fn robust_insphere<T, const D: usize>(
     test_point: &Point<T, D>,
 ) -> Result<InSphere, CoordinateConversionError>
 where
-    T: ScalarSummable,
-    [T; D]: Copy + Sized,
+    T: CoordinateScalar,
 {
     if simplex_points.len() != D + 1 {
         return Err(CoordinateConversionError::ConversionFailed {
@@ -249,7 +248,6 @@ fn fill_insphere_predicate_matrix<T, const D: usize, const K: usize>(
 ) -> Result<(), CoordinateConversionError>
 where
     T: CoordinateScalar,
-    [T; D]: Copy + Sized,
 {
     debug_assert_eq!(K, D + 2);
 
@@ -303,7 +301,6 @@ fn adaptive_tolerance_insphere<T, const D: usize>(
 ) -> Result<InSphere, CoordinateConversionError>
 where
     T: CoordinateScalar,
-    [T; D]: Copy + Sized,
 {
     // Get simplex orientation for correct interpretation.
     let orientation = robust_orientation(simplex_points)?;
@@ -358,7 +355,6 @@ pub fn robust_orientation<T, const D: usize>(
 ) -> Result<Orientation, CoordinateConversionError>
 where
     T: CoordinateScalar,
-    [T; D]: Copy + Sized,
 {
     if simplex_points.len() != D + 1 {
         return Err(CoordinateConversionError::ConversionFailed {
@@ -429,8 +425,7 @@ fn verify_insphere_consistency<T, const D: usize>(
     determinant_result: InSphere,
 ) -> ConsistencyResult
 where
-    T: ScalarSummable,
-    [T; D]: Copy + Sized,
+    T: CoordinateScalar,
 {
     // Use the existing distance-based insphere test for verification
     super::predicates::insphere_distance(simplex_points, *test_point).map_or(

@@ -27,9 +27,7 @@ use crate::core::triangulation_data_structure::{CellKey, Tds, VertexKey};
 use crate::core::util::canonical_points::{sorted_cell_points, sorted_facet_points_with_extra};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{
-    CoordinateConversionError, CoordinateScalar, ScalarSummable,
-};
+use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
 use std::hash::{Hash, Hasher};
 #[cfg(debug_assertions)]
 #[derive(Debug, Clone, Copy)]
@@ -407,7 +405,6 @@ pub fn locate<K, U, V, const D: usize>(
 ) -> Result<LocateResult, LocateError>
 where
     K: Kernel<D>,
-    K::Scalar: ScalarSummable,
     U: DataType,
     V: DataType,
 {
@@ -453,11 +450,10 @@ pub fn locate_with_stats<K, U, V, const D: usize>(
 ) -> Result<(LocateResult, LocateStats), LocateError>
 where
     K: Kernel<D>,
-    K::Scalar: ScalarSummable,
     U: DataType,
     V: DataType,
 {
-    const MAX_STEPS: usize = 10000; // Safety limit; cycles/step limits fall back to a scan
+    const MAX_STEPS: usize = 10000;
 
     if tds.number_of_cells() == 0 {
         return Err(LocateError::EmptyTriangulation);
@@ -537,7 +533,6 @@ pub(crate) fn locate_by_scan<K, U, V, const D: usize>(
 ) -> Result<LocateResult, LocateError>
 where
     K: Kernel<D>,
-    K::Scalar: ScalarSummable,
     U: DataType,
     V: DataType,
 {
@@ -595,7 +590,6 @@ fn is_point_outside_facet<K, U, V, const D: usize>(
 ) -> Result<Option<bool>, LocateError>
 where
     K: Kernel<D>,
-    K::Scalar: ScalarSummable,
     U: DataType,
     V: DataType,
 {
@@ -724,7 +718,6 @@ pub fn find_conflict_region<K, U, V, const D: usize>(
 ) -> Result<CellKeyBuffer, ConflictError>
 where
     K: Kernel<D>,
-    K::Scalar: ScalarSummable,
     U: DataType,
     V: DataType,
 {

@@ -804,7 +804,6 @@ where
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
     U: DataType,
     V: DataType,
 {

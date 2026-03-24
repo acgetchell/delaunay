@@ -4560,10 +4560,7 @@ where
     /// assert_eq!(cell_vertices.len(), 3); // D+1 for a 2D simplex
     /// ```
     #[must_use]
-    pub fn cell_vertices(&self, c: CellKey) -> Option<&[VertexKey]>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    pub fn cell_vertices(&self, c: CellKey) -> Option<&[VertexKey]> {
         self.as_triangulation().cell_vertices(c)
     }
 
@@ -4595,10 +4592,7 @@ where
     /// assert_eq!(dt.vertex_coords(v_key).unwrap(), [1.0, 0.0]);
     /// ```
     #[must_use]
-    pub fn vertex_coords(&self, v: VertexKey) -> Option<&[K::Scalar]>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    pub fn vertex_coords(&self, v: VertexKey) -> Option<&[K::Scalar]> {
         self.as_triangulation().vertex_coords(v)
     }
 
@@ -5245,10 +5239,7 @@ where
     /// // Levels 1–4: elements + structure + topology + Delaunay property
     /// assert!(dt.validate().is_ok());
     /// ```
-    pub fn validate(&self) -> Result<(), DelaunayTriangulationValidationError>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    pub fn validate(&self) -> Result<(), DelaunayTriangulationValidationError> {
         self.tri.validate().map_err(|e| match e {
             InvariantError::Tds(tds_err) => DelaunayTriangulationValidationError::Tds(tds_err),
             InvariantError::Triangulation(tri_err) => {
@@ -5379,10 +5370,7 @@ where
     /// let report = dt.validation_report();
     /// assert!(report.is_ok());
     /// ```
-    pub fn validation_report(&self) -> Result<(), TriangulationValidationReport>
-    where
-        K::Scalar: CoordinateScalar,
-    {
+    pub fn validation_report(&self) -> Result<(), TriangulationValidationReport> {
         // Levels 1–3: reuse the Triangulation layer report.
         match self.tri.validation_report() {
             Ok(()) => {

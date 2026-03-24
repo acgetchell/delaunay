@@ -11,7 +11,7 @@ use crate::core::facet::FacetView;
 use crate::core::traits::data_type::DataType;
 use crate::geometry::matrix::{Matrix, matrix_get, matrix_set};
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{Coordinate, ScalarAccumulative, ScalarSummable};
+use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar, ScalarAccumulative};
 use la_stack::{DEFAULT_SINGULAR_TOL, LaError};
 use num_traits::Float;
 use std::ops::AddAssign;
@@ -77,7 +77,7 @@ pub use super::{CircumcenterError, SurfaceMeasureError, ValueConversionError};
 /// ```
 pub fn simplex_volume<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
 where
-    T: ScalarSummable,
+    T: CoordinateScalar,
 {
     #[cfg(debug_assertions)]
     if std::env::var_os("DELAUNAY_DEBUG_UNUSED_IMPORTS").is_some() {
@@ -274,7 +274,7 @@ fn simplex_volume_gram_matrix<T, const D: usize>(
     points: &[Point<T, D>],
 ) -> Result<T, CircumcenterError>
 where
-    T: ScalarSummable,
+    T: CoordinateScalar,
 {
     // Convert points to f64 and create edge vectors from first point to all others
     let p0_coords = points[0].coords();
@@ -369,7 +369,7 @@ where
 /// ```
 pub fn inradius<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
 where
-    T: ScalarSummable + AddAssign<T>,
+    T: CoordinateScalar + AddAssign<T>,
 {
     if points.len() != D + 1 {
         return Err(CircumcenterError::InvalidSimplex {
@@ -496,7 +496,7 @@ where
 /// ```
 pub fn facet_measure<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
 where
-    T: ScalarSummable,
+    T: CoordinateScalar,
 {
     if points.len() != D {
         return Err(CircumcenterError::InvalidSimplex {
@@ -625,7 +625,7 @@ fn facet_measure_gram_matrix<T, const D: usize>(
     points: &[Point<T, D>],
 ) -> Result<T, CircumcenterError>
 where
-    T: ScalarSummable,
+    T: CoordinateScalar,
 {
     // Convert points to f64.
     let mut coords_f64 = [[0.0f64; D]; D];

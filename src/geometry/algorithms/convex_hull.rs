@@ -673,7 +673,6 @@ where
     K::Scalar: ScalarAccumulative + Sub<Output = K::Scalar> + DivAssign + Copy,
     U: DataType,
     V: DataType,
-    [K::Scalar; D]: Copy + Sized,
 {
     /// Creates a new convex hull from a d-dimensional triangulation
     ///
@@ -1577,10 +1576,8 @@ where
 impl<K, U, V, const D: usize> Default for ConvexHull<K, U, V, D>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
     U: DataType,
     V: DataType,
-    [K::Scalar; D]: Copy + Sized,
 {
     fn default() -> Self {
         Self {
@@ -1613,8 +1610,6 @@ mod tests {
     use crate::core::util::{checked_facet_key_from_vertex_keys, facet_view_to_vertices};
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::vertex;
-    use serde::Serialize;
-    use serde::de::DeserializeOwned;
     use std::error::Error;
     use std::sync::atomic::Ordering;
     use std::thread;
@@ -1644,10 +1639,8 @@ mod tests {
     ) -> Result<Vec<Vertex<K::Scalar, U, D>>, ConvexHullConstructionError>
     where
         K: Kernel<D>,
-        K::Scalar: CoordinateScalar,
         U: DataType,
         V: DataType,
-        [K::Scalar; D]: Copy + Sized + Serialize + DeserializeOwned,
     {
         let tds = &tri.tds;
         let facet_view =

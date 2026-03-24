@@ -25,8 +25,6 @@ use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
-use crate::geometry::traits::coordinate::CoordinateScalar;
-
 /// High-level triangulation editing operations via bistellar flips.
 ///
 /// # Example
@@ -56,7 +54,6 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 pub trait BistellarFlips<K, U, V, const D: usize>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -221,7 +218,6 @@ where
 impl<K, U, V, const D: usize> BistellarFlips<K, U, V, D> for Triangulation<K, U, V, D>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -275,7 +271,6 @@ where
 impl<K, U, V, const D: usize> BistellarFlips<K, U, V, D> for DelaunayTriangulation<K, U, V, D>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
