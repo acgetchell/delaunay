@@ -75,7 +75,7 @@ cargo add delaunay
 ```rust
 use delaunay::prelude::triangulation::*;
 
-// Create a 4D Delaunay triangulation from a set of vertices (with the default fast kernel).
+// Create a 4D Delaunay triangulation from a set of vertices (uses AdaptiveKernel by default).
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0, 0.0]),
     vertex!([1.0, 0.0, 0.0, 0.0]),
