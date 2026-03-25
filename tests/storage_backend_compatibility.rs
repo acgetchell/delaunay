@@ -216,7 +216,7 @@ macro_rules! test_vertex_data {
             let tds = dt.tds();
 
             for (_key, vertex) in tds.vertices() {
-                assert!(vertex.data.is_some());
+                assert!(vertex.data().is_some());
             }
         }
     };
@@ -240,13 +240,11 @@ macro_rules! test_cell_data {
             // Collect cell keys first to avoid borrow checker issues
             let cell_keys: Vec<_> = tds.cells().map(|(key, _)| key).collect();
             for key in cell_keys {
-                if let Some(cell) = tds.get_cell_by_key_mut(key) {
-                    cell.data = Some(42);
-                }
+                tds.set_cell_data(key, Some(42));
             }
 
             for (_key, cell) in tds.cells() {
-                assert_eq!(cell.data, Some(42));
+                assert_eq!(cell.data(), Some(&42));
             }
         }
     };
