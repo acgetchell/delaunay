@@ -978,6 +978,15 @@ mod tests {
         assert_eq!(result, Err(VertexBuilderError::MissingPoint));
     }
 
+    #[test]
+    fn test_vertex_data_accessor() {
+        let v_with: Vertex<f64, i32, 2> = vertex!([1.0, 2.0], 42);
+        assert_eq!(v_with.data(), Some(&42));
+
+        let v_without: Vertex<f64, (), 2> = vertex!([1.0, 2.0]);
+        assert_eq!(v_without.data(), None);
+    }
+
     // =============================================================================
     // CONVENIENCE MACRO AND HELPER TESTS
     // =============================================================================

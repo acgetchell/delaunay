@@ -3817,6 +3817,28 @@ mod tests {
     }
 
     #[test]
+    fn test_cell_data_accessor() {
+        use crate::core::builder::DelaunayTriangulationBuilder;
+
+        let vertices = [
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+            .build::<i32>()
+            .unwrap();
+        let key = dt.cells().next().unwrap().0;
+
+        // No data initially
+        assert_eq!(dt.tds().get_cell(key).unwrap().data(), None);
+
+        // Set data and verify via accessor
+        dt.set_cell_data(key, Some(99));
+        assert_eq!(dt.tds().get_cell(key).unwrap().data(), Some(&99));
+    }
+
+    #[test]
     fn test_clear_vertex_keys() {
         // Test the clear_vertex_keys method used in deserialization
         let vertices = vec![

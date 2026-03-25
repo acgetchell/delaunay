@@ -5,6 +5,80 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### ⚠️ Breaking Changes
+
+- Tighten Vertex::data and Cell::data to pub(crate)
+
+### Merged Pull Requests
+
+- Add set_vertex_data and set_cell_data methods [#284](https://github.com/acgetchell/delaunay/pull/284) [#285](https://github.com/acgetchell/delaunay/pull/285)
+
+### Added
+
+- Add set_vertex_data and set_cell_data methods [#284](https://github.com/acgetchell/delaunay/pull/284) [#285](https://github.com/acgetchell/delaunay/pull/285)
+  [`b398d54`](https://github.com/acgetchell/delaunay/commit/b398d5467114610053902a141980f3583eb71aec)
+
+- feat: add set_vertex_data and set_cell_data methods [#284](https://github.com/acgetchell/delaunay/pull/284)
+
+  - Add `set_vertex_data` and `set_cell_data` to `Tds` for O(1) mutation
+    of auxiliary vertex/cell data without affecting geometry or topology
+
+  - Add convenience wrappers on `Triangulation` and `DelaunayTriangulation`
+    that delegate to the TDS methods without invalidating caches
+
+  - All doctests use `prelude::triangulation::*` to demonstrate idiomatic
+    imports including `DelaunayTriangulationBuilder::from_vertices`
+
+  - 9 unit tests covering replacement, no-data vertices, invalid keys,
+    invariant preservation, multi-key mutation, and locate-hint stability
+
+  - feat: add set_vertex_data and set_cell_data methods [#284](https://github.com/acgetchell/delaunay/pull/284)
+
+  - Add `set_vertex_data` and `set_cell_data` to `Tds` accepting
+    `Option<U>` / `Option<V>` for setting or clearing auxiliary data
+    in O(1) without affecting geometry or topology
+
+  - Add convenience wrappers on `Triangulation` and `DelaunayTriangulation`
+    that delegate to the TDS methods without invalidating caches
+
+  - All doctests use `prelude::triangulation::*` and demonstrate both
+    setting and clearing data paths
+
+  - 11 unit tests covering Tds basics, Triangulation wrappers, invariant
+    preservation, multi-key mutation, clearing, and locate-hint stability
+
+### Changed
+
+- [**breaking**] Tighten Vertex::data and Cell::data to pub(crate)
+  [`4b9746a`](https://github.com/acgetchell/delaunay/commit/4b9746a6a567785ef572847dc2c8f11b16410f16)
+
+- Change `Vertex::data` and `Cell::data` from `pub` to `pub(crate)`
+  - Add `const fn data() -> Option<&U>` accessor on `Vertex` and
+    `const fn data() -> Option<&V>` accessor on `Cell`
+
+  - Update struct-level doc comments with `data()` / `set_vertex_data`
+    / `set_cell_data` cross-references
+
+  - Update all external-facing doctests and integration tests to use
+    the new accessor
+
+### Fixed
+
+- Fix keyword validation and add publish-check recipe [`676df6b`](https://github.com/acgetchell/delaunay/commit/676df6b36d1ba78a17388baea685f0b4b082a844)
+
+- Replace `computational-geometry` keyword with `geometry` (crates.io
+    enforces a 20-character limit)
+
+  - Add `just publish-check` recipe that validates crates.io metadata
+    (keywords, categories, description) and runs `cargo publish --dry-run`
+
+  - Add publish-check to RELEASING.md Step 1.3 so metadata issues are
+    caught in the release PR, not at publish time
+
+  - Remove redundant dry-run from RELEASING.md Step 2.7
+
 ## [0.7.3] - 2026-03-24
 
 ### ⚠️ Breaking Changes
@@ -23,6 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Merged Pull Requests
 
+- Release v0.7.3 [#283](https://github.com/acgetchell/delaunay/pull/283)
 - Simplify trait bounds and re-export secondary maps [#282](https://github.com/acgetchell/delaunay/pull/282)
 - Bump codecov/codecov-action from 5.5.2 to 5.5.3 [#280](https://github.com/acgetchell/delaunay/pull/280)
 - Bump taiki-e/install-action from 2.68.34 to 2.69.6 [#279](https://github.com/acgetchell/delaunay/pull/279)
@@ -697,6 +772,22 @@ Bumps [codecov/codecov-action](https://github.com/codecov/codecov-action) from 5
     dependency-type: direct:production
     update-type: version-update:semver-patch
   ...
+
+- Release v0.7.3 [#283](https://github.com/acgetchell/delaunay/pull/283)
+  [`db4ace7`](https://github.com/acgetchell/delaunay/commit/db4ace728a89041eb1054191a1d325d2cf0d7a3d)
+
+- chore(release): release v0.7.3
+
+  - Bump version to v0.7.3
+  - Update changelog with latest changes
+  - Update documentation for release
+  - Add performance results for v0.7.3
+
+  - Changed: Update documentation to reflect AdaptiveKernel as default
+
+  Correct outdated references to FastKernel in README examples and internal
+  test comments to match the current default implementation of
+  DelaunayTriangulation.
 
 ## [0.7.2] - 2026-03-10
 
@@ -2014,6 +2105,7 @@ Older releases are archived by minor series:
 - [0.3.x](docs/archive/changelog/0.3.md)
 - [0.2.x](docs/archive/changelog/0.2.md)
 
+[unreleased]: https://github.com/acgetchell/delaunay/compare/v0.7.3..HEAD
 [0.7.3]: https://github.com/acgetchell/delaunay/compare/v0.7.2..v0.7.3
 [0.7.2]: https://github.com/acgetchell/delaunay/compare/v0.7.1..v0.7.2
 [0.7.1]: https://github.com/acgetchell/delaunay/compare/v0.7.0..v0.7.1
