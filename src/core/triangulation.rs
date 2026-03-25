@@ -1114,11 +1114,16 @@ where
     ///     .build::<()>()
     ///     .unwrap();
     /// let key = dt.vertices().next().unwrap().0;
-    /// let prev = dt.as_triangulation_mut().set_vertex_data(key, 99);
+    /// let prev = dt.as_triangulation_mut().set_vertex_data(key, Some(99));
     /// assert!(prev.is_some());
+    ///
+    /// // Clear data
+    /// let prev = dt.as_triangulation_mut().set_vertex_data(key, None);
+    /// assert_eq!(prev, Some(Some(99)));
+    /// assert_eq!(dt.tds().get_vertex_by_key(key).unwrap().data, None);
     /// ```
     #[inline]
-    pub fn set_vertex_data(&mut self, key: VertexKey, data: U) -> Option<Option<U>> {
+    pub fn set_vertex_data(&mut self, key: VertexKey, data: Option<U>) -> Option<Option<U>> {
         self.tds.set_vertex_data(key, data)
     }
 
@@ -1146,11 +1151,16 @@ where
     ///     .build::<i32>()
     ///     .unwrap();
     /// let key = dt.cells().next().unwrap().0;
-    /// let prev = dt.as_triangulation_mut().set_cell_data(key, 42);
+    /// let prev = dt.as_triangulation_mut().set_cell_data(key, Some(42));
     /// assert_eq!(prev, Some(None));
+    ///
+    /// // Clear data
+    /// let prev = dt.as_triangulation_mut().set_cell_data(key, None);
+    /// assert_eq!(prev, Some(Some(42)));
+    /// assert_eq!(dt.tds().get_cell(key).unwrap().data, None);
     /// ```
     #[inline]
-    pub fn set_cell_data(&mut self, key: CellKey, data: V) -> Option<Option<V>> {
+    pub fn set_cell_data(&mut self, key: CellKey, data: Option<V>) -> Option<Option<V>> {
         self.tds.set_cell_data(key, data)
     }
 

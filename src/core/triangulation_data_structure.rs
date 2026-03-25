@@ -2331,7 +2331,7 @@ where
     /// # Arguments
     ///
     /// * `key` - The key of the vertex to modify
-    /// * `data` - The new data value to set
+    /// * `data` - The new data value to set, or `None` to clear
     ///
     /// # Returns
     ///
@@ -2355,18 +2355,23 @@ where
     /// let key = tds.vertex_keys().next().unwrap();
     ///
     /// // Replace existing data
-    /// let prev = tds.set_vertex_data(key, 99);
+    /// let prev = tds.set_vertex_data(key, Some(99));
     /// assert!(prev.is_some()); // key was found
     ///
     /// // Verify new value
     /// let vertex = tds.get_vertex_by_key(key).unwrap();
     /// assert_eq!(vertex.data, Some(99));
+    ///
+    /// // Clear data
+    /// let prev = tds.set_vertex_data(key, None);
+    /// assert_eq!(prev, Some(Some(99)));
+    /// assert_eq!(tds.get_vertex_by_key(key).unwrap().data, None);
     /// ```
     #[inline]
-    pub fn set_vertex_data(&mut self, key: VertexKey, data: U) -> Option<Option<U>> {
+    pub fn set_vertex_data(&mut self, key: VertexKey, data: Option<U>) -> Option<Option<U>> {
         let vertex = self.vertices.get_mut(key)?;
         let previous = vertex.data.take();
-        vertex.data = Some(data);
+        vertex.data = data;
         Some(previous)
     }
 
@@ -2378,7 +2383,7 @@ where
     /// # Arguments
     ///
     /// * `key` - The key of the cell to modify
-    /// * `data` - The new data value to set
+    /// * `data` - The new data value to set, or `None` to clear
     ///
     /// # Returns
     ///
@@ -2402,18 +2407,23 @@ where
     /// let key = tds.cell_keys().next().unwrap();
     ///
     /// // Set data on a cell that had no data
-    /// let prev = tds.set_cell_data(key, 42);
+    /// let prev = tds.set_cell_data(key, Some(42));
     /// assert_eq!(prev, Some(None)); // key found, previous was None
     ///
     /// // Verify new value
     /// let cell = tds.get_cell(key).unwrap();
     /// assert_eq!(cell.data, Some(42));
+    ///
+    /// // Clear data
+    /// let prev = tds.set_cell_data(key, None);
+    /// assert_eq!(prev, Some(Some(42)));
+    /// assert_eq!(tds.get_cell(key).unwrap().data, None);
     /// ```
     #[inline]
-    pub fn set_cell_data(&mut self, key: CellKey, data: V) -> Option<Option<V>> {
+    pub fn set_cell_data(&mut self, key: CellKey, data: Option<V>) -> Option<Option<V>> {
         let cell = self.cells.get_mut(key)?;
         let previous = cell.data.take();
-        cell.data = Some(data);
+        cell.data = data;
         Some(previous)
     }
 
@@ -8165,7 +8175,7 @@ mod tests {
         let mut tds = dt.tds().clone();
         let key = tds.vertex_keys().next().unwrap();
 
-        let prev = tds.set_vertex_data(key, 99);
+        let prev = tds.set_vertex_data(key, Some(99));
         assert!(prev.unwrap().is_some()); // had data before
         assert_eq!(tds.get_vertex_by_key(key).unwrap().data, Some(99));
     }
@@ -8182,7 +8192,7 @@ mod tests {
         let mut tds = dt.tds().clone();
         let key = tds.vertex_keys().next().unwrap();
 
-        let prev = tds.set_vertex_data(key, ());
+        let prev = tds.set_vertex_data(key, Some(()));
         // Vertices constructed without explicit data have data = None
         assert_eq!(prev, Some(None));
         assert_eq!(tds.get_vertex_by_key(key).unwrap().data, Some(()));
@@ -8192,7 +8202,7 @@ mod tests {
     fn test_set_vertex_data_invalid_key_returns_none() {
         let mut tds: Tds<f64, i32, (), 2> = Tds::empty();
         let stale = VertexKey::from(KeyData::from_ffi(0xDEAD));
-        assert!(tds.set_vertex_data(stale, 1).is_none());
+        assert!(tds.set_vertex_data(stale, Some(1)).is_none());
     }
 
     #[test]
@@ -8210,7 +8220,7 @@ mod tests {
         let mut tds = dt.tds().clone();
         let key = tds.cell_keys().next().unwrap();
 
-        let prev = tds.set_cell_data(key, 42);
+        let prev = tds.set_cell_data(key, Some(42));
         assert_eq!(prev, Some(None)); // key found, no previous data
         assert_eq!(tds.get_cell(key).unwrap().data, Some(42));
     }
@@ -8230,8 +8240,8 @@ mod tests {
         let mut tds = dt.tds().clone();
         let key = tds.cell_keys().next().unwrap();
 
-        tds.set_cell_data(key, 1);
-        let prev = tds.set_cell_data(key, 2);
+        tds.set_cell_data(key, Some(1));
+        let prev = tds.set_cell_data(key, Some(2));
         assert_eq!(prev, Some(Some(1)));
         assert_eq!(tds.get_cell(key).unwrap().data, Some(2));
     }
@@ -8240,7 +8250,7 @@ mod tests {
     fn test_set_cell_data_invalid_key_returns_none() {
         let mut tds: Tds<f64, (), i32, 2> = Tds::empty();
         let stale = CellKey::from(KeyData::from_ffi(0xDEAD));
-        assert!(tds.set_cell_data(stale, 1).is_none());
+        assert!(tds.set_cell_data(stale, Some(1)).is_none());
     }
 
     #[test]
@@ -8259,7 +8269,7 @@ mod tests {
         // Mutate every vertex's data through the DT wrapper.
         let keys: Vec<_> = dt.vertices().map(|(k, _)| k).collect();
         for (key, i) in keys.iter().zip(0i32..) {
-            dt.set_vertex_data(*key, i * 100);
+            dt.set_vertex_data(*key, Some(i * 100));
         }
 
         // Triangulation must remain fully valid.
@@ -8290,7 +8300,7 @@ mod tests {
         // Mutate every cell's data through the DT wrapper.
         let keys: Vec<_> = dt.cells().map(|(k, _)| k).collect();
         for (key, i) in keys.iter().zip(0i32..) {
-            dt.set_cell_data(*key, i);
+            dt.set_cell_data(*key, Some(i));
         }
 
         // Triangulation must remain fully valid.
@@ -8301,6 +8311,56 @@ mod tests {
             let c = dt.tds().get_cell(*key).unwrap();
             assert_eq!(c.data, Some(i));
         }
+    }
+
+    #[test]
+    fn test_set_vertex_data_via_triangulation_wrapper() {
+        use crate::core::builder::DelaunayTriangulationBuilder;
+
+        let vertices: [Vertex<f64, i32, 2>; 3] = [
+            vertex!([0.0, 0.0], 10i32),
+            vertex!([1.0, 0.0], 20),
+            vertex!([0.0, 1.0], 30),
+        ];
+        let mut dt = DelaunayTriangulationBuilder::from_vertices(&vertices)
+            .build::<()>()
+            .unwrap();
+        let key = dt.vertices().next().unwrap().0;
+
+        // Set via Triangulation wrapper
+        let prev = dt.as_triangulation_mut().set_vertex_data(key, Some(99));
+        assert!(prev.unwrap().is_some());
+        assert_eq!(dt.tds().get_vertex_by_key(key).unwrap().data, Some(99));
+
+        // Clear via Triangulation wrapper
+        let prev = dt.as_triangulation_mut().set_vertex_data(key, None);
+        assert_eq!(prev, Some(Some(99)));
+        assert_eq!(dt.tds().get_vertex_by_key(key).unwrap().data, None);
+    }
+
+    #[test]
+    fn test_set_cell_data_via_triangulation_wrapper() {
+        use crate::core::builder::DelaunayTriangulationBuilder;
+
+        let vertices = [
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+            .build::<i32>()
+            .unwrap();
+        let key = dt.cells().next().unwrap().0;
+
+        // Set via Triangulation wrapper
+        let prev = dt.as_triangulation_mut().set_cell_data(key, Some(42));
+        assert_eq!(prev, Some(None));
+        assert_eq!(dt.tds().get_cell(key).unwrap().data, Some(42));
+
+        // Clear via Triangulation wrapper
+        let prev = dt.as_triangulation_mut().set_cell_data(key, None);
+        assert_eq!(prev, Some(Some(42)));
+        assert_eq!(dt.tds().get_cell(key).unwrap().data, None);
     }
 
     #[test]
@@ -8322,7 +8382,13 @@ mod tests {
 
         // Data mutation should NOT clear the insertion hint.
         let key = dt.vertices().next().unwrap().0;
-        dt.set_vertex_data(key, 999);
+        let prev = dt.set_vertex_data(key, Some(999));
+        assert!(prev.is_some(), "set_vertex_data should find the key");
+        assert_eq!(
+            dt.tds().get_vertex_by_key(key).unwrap().data,
+            Some(999),
+            "stored value should reflect the mutation"
+        );
 
         // A subsequent insert should still succeed (hint not invalidated).
         let another = vertex!([0.75, 0.1], 0i32);
