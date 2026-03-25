@@ -280,7 +280,8 @@ pub use crate::vertex;
 /// - **`point`**: A `Point<T, D>` representing the geometric coordinates of the vertex
 /// - **`uuid`**: A universally unique identifier for the vertex (auto-generated)
 /// - **`incident_cell`**: Optional reference to a containing cell (managed by TDS)
-/// - **`data`**: Optional user-defined data associated with the vertex
+/// - **`data`**: Optional user-defined data associated with the vertex. Read via [`data()`](Self::data),
+///   mutate via [`Tds::set_vertex_data`](crate::core::triangulation_data_structure::Tds::set_vertex_data)
 ///
 /// # Constraints
 ///
@@ -314,7 +315,7 @@ where
     /// reconstructs `incident_cell` mappings via `assign_incident_cells()`.
     pub incident_cell: Option<CellKey>,
     /// Optional data associated with the vertex.
-    pub data: Option<U>,
+    pub(crate) data: Option<U>,
 }
 
 impl<T, U, const D: usize> Vertex<T, U, D>
@@ -353,6 +354,26 @@ where
     #[inline]
     pub const fn point(&self) -> &Point<T, D> {
         &self.point
+    }
+
+    /// Returns a reference to the optional user data associated with this vertex.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::vertex;
+    /// use delaunay::core::vertex::Vertex;
+    ///
+    /// let v: Vertex<f64, i32, 2> = vertex!([1.0, 2.0], 42);
+    /// assert_eq!(v.data(), Some(&42));
+    ///
+    /// let v_no_data: Vertex<f64, (), 2> = vertex!([1.0, 2.0]);
+    /// assert_eq!(v_no_data.data(), None);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn data(&self) -> Option<&U> {
+        self.data.as_ref()
     }
 }
 
@@ -530,7 +551,7 @@ where
     ///     epsilon = 1e-9
     /// );
     /// assert!(empty_vertex.uuid().is_nil());
-    /// assert!(empty_vertex.data.is_none());
+    /// assert!(empty_vertex.data().is_none());
     /// ```
     #[must_use]
     pub fn empty() -> Self
@@ -955,6 +976,15 @@ mod tests {
     fn test_vertex_builder_missing_point() {
         let result = VertexBuilder::<f64, (), 3>::default().build();
         assert_eq!(result, Err(VertexBuilderError::MissingPoint));
+    }
+
+    #[test]
+    fn test_vertex_data_accessor() {
+        let v_with: Vertex<f64, i32, 2> = vertex!([1.0, 2.0], 42);
+        assert_eq!(v_with.data(), Some(&42));
+
+        let v_without: Vertex<f64, (), 2> = vertex!([1.0, 2.0]);
+        assert_eq!(v_without.data(), None);
     }
 
     // =============================================================================

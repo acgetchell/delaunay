@@ -204,7 +204,7 @@ macro_rules! test_vertex_properties {
                 fn [<prop_vertex_data_preservation_ $dim d>](coords in prop::array::[<uniform $dim>](finite_coordinate()), data in prop::num::i32::ANY) {
                     let vertex: Vertex<f64, i32, $dim> = vertex!(coords, data);
                     prop_assert_eq!(
-                        vertex.data,
+                    vertex.data().copied(),
                         Some(data),
                         "{}D: Vertex data should be preserved",
                         $dim

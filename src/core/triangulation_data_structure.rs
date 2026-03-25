@@ -2360,12 +2360,12 @@ where
     ///
     /// // Verify new value
     /// let vertex = tds.get_vertex_by_key(key).unwrap();
-    /// assert_eq!(vertex.data, Some(99));
+    /// assert_eq!(vertex.data(), Some(&99));
     ///
     /// // Clear data
     /// let prev = tds.set_vertex_data(key, None);
     /// assert_eq!(prev, Some(Some(99)));
-    /// assert_eq!(tds.get_vertex_by_key(key).unwrap().data, None);
+    /// assert_eq!(tds.get_vertex_by_key(key).unwrap().data(), None);
     /// ```
     #[inline]
     pub fn set_vertex_data(&mut self, key: VertexKey, data: Option<U>) -> Option<Option<U>> {
@@ -2412,12 +2412,12 @@ where
     ///
     /// // Verify new value
     /// let cell = tds.get_cell(key).unwrap();
-    /// assert_eq!(cell.data, Some(42));
+    /// assert_eq!(cell.data(), Some(&42));
     ///
     /// // Clear data
     /// let prev = tds.set_cell_data(key, None);
     /// assert_eq!(prev, Some(Some(42)));
-    /// assert_eq!(tds.get_cell(key).unwrap().data, None);
+    /// assert_eq!(tds.get_cell(key).unwrap().data(), None);
     /// ```
     #[inline]
     pub fn set_cell_data(&mut self, key: CellKey, data: Option<V>) -> Option<Option<V>> {

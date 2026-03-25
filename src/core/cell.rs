@@ -172,7 +172,8 @@ impl From<crate::geometry::matrix::StackMatrixDispatchError> for CellValidationE
 /// - `vertices`: Keys referencing vertices in the TDS. Access via `vertices()` method.
 /// - `uuid`: Universally unique identifier for the cell.
 /// - `neighbors`: Optional keys to neighboring cells (opposite each vertex). Access via `neighbors()` method.
-/// - `data`: Optional user data associated with the cell.
+/// - `data`: Optional user data associated with the cell. Read via [`data()`](Self::data),
+///   mutate via [`Tds::set_cell_data`](crate::core::triangulation_data_structure::Tds::set_cell_data).
 ///
 /// # Accessing Vertices
 ///
@@ -233,7 +234,7 @@ where
     pub(crate) neighbors: Option<NeighborBuffer<Option<CellKey>>>,
 
     /// The optional data associated with the cell.
-    pub data: Option<V>,
+    pub(crate) data: Option<V>,
 
     /// Optional per-vertex periodic lattice offsets for quotient-cell reconstruction.
     ///
@@ -842,6 +843,30 @@ where
     #[inline]
     pub const fn uuid(&self) -> Uuid {
         self.uuid
+    }
+
+    /// Returns a reference to the optional user data associated with this cell.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::triangulation::*;
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .build::<i32>()
+    ///     .unwrap();
+    /// let (_, cell) = dt.cells().next().unwrap();
+    /// assert_eq!(cell.data(), None); // No data set yet
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn data(&self) -> Option<&V> {
+        self.data.as_ref()
     }
 
     /// Sets the cell UUID with validation.
@@ -3789,6 +3814,28 @@ mod tests {
         assert_eq!(unique_uuids.len(), 4);
 
         println!("  ✓ Current API validation passed");
+    }
+
+    #[test]
+    fn test_cell_data_accessor() {
+        use crate::core::builder::DelaunayTriangulationBuilder;
+
+        let vertices = [
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+            .build::<i32>()
+            .unwrap();
+        let key = dt.cells().next().unwrap().0;
+
+        // No data initially
+        assert_eq!(dt.tds().get_cell(key).unwrap().data(), None);
+
+        // Set data and verify via accessor
+        dt.set_cell_data(key, Some(99));
+        assert_eq!(dt.tds().get_cell(key).unwrap().data(), Some(&99));
     }
 
     #[test]

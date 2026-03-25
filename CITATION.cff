@@ -13,12 +13,11 @@ authors:
     email: "adam@adamgetchell.org"
     orcid: "https://orcid.org/0000-0002-0797-0021"
 keywords:
-  - "Delaunay triangulation"
-  - "computational geometry"
-  - "d-dimensional"
+  - "convex-hull"
+  - "delaunay"
+  - "geometry"
+  - "simplicial-complex"
   - "triangulation"
-  - "mesh generation"
-  - "Rust"
 abstract: >-
   A Rust library for d-dimensional Delaunay triangulations and convex hulls
   inspired by CGAL. Features exact arithmetic predicates with Simulation of
