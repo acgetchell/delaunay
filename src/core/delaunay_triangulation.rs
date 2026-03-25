@@ -3556,6 +3556,74 @@ where
         self.tri.vertices()
     }
 
+    /// Sets the auxiliary data on a vertex, returning the previous value.
+    ///
+    /// This is a safe O(1) operation that modifies only the user-data field.
+    /// It does not affect geometry, topology, or Delaunay invariants, so
+    /// no caches are invalidated.
+    ///
+    /// # Returns
+    ///
+    /// `None` if the key is not found. `Some(previous)` where `previous` is
+    /// the old `Option<U>` value if the key exists.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::triangulation::*;
+    ///
+    /// let vertices: [Vertex<f64, i32, 2>; 3] = [
+    ///     vertex!([0.0, 0.0], 10i32),
+    ///     vertex!([1.0, 0.0], 20),
+    ///     vertex!([0.0, 1.0], 30),
+    /// ];
+    /// let mut dt = DelaunayTriangulationBuilder::from_vertices(&vertices)
+    ///     .build::<()>()
+    ///     .unwrap();
+    /// let key = dt.vertices().next().unwrap().0;
+    ///
+    /// let prev = dt.set_vertex_data(key, 99);
+    /// assert!(prev.is_some());
+    /// ```
+    #[inline]
+    pub fn set_vertex_data(&mut self, key: VertexKey, data: U) -> Option<Option<U>> {
+        self.tri.tds.set_vertex_data(key, data)
+    }
+
+    /// Sets the auxiliary data on a cell, returning the previous value.
+    ///
+    /// This is a safe O(1) operation that modifies only the user-data field.
+    /// It does not affect geometry, topology, or Delaunay invariants, so
+    /// no caches are invalidated.
+    ///
+    /// # Returns
+    ///
+    /// `None` if the key is not found. `Some(previous)` where `previous` is
+    /// the old `Option<V>` value if the key exists.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::triangulation::*;
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .build::<i32>()
+    ///     .unwrap();
+    /// let key = dt.cells().next().unwrap().0;
+    ///
+    /// let prev = dt.set_cell_data(key, 42);
+    /// assert_eq!(prev, Some(None));
+    /// ```
+    #[inline]
+    pub fn set_cell_data(&mut self, key: CellKey, data: V) -> Option<Option<V>> {
+        self.tri.tds.set_cell_data(key, data)
+    }
+
     /// Returns a reference to the underlying triangulation data structure.
     ///
     /// This provides access to the purely combinatorial Tds layer for

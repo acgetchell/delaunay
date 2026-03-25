@@ -2323,6 +2323,100 @@ where
         self.vertices.get_mut(vertex_key)
     }
 
+    /// Sets the auxiliary data on a vertex, returning the previous value.
+    ///
+    /// This is a safe O(1) operation that modifies only the user-data field.
+    /// It does not affect geometry, topology, or Delaunay invariants.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key of the vertex to modify
+    /// * `data` - The new data value to set
+    ///
+    /// # Returns
+    ///
+    /// `None` if the key is not found. `Some(previous)` where `previous` is
+    /// the old `Option<U>` value if the key exists.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::triangulation::*;
+    ///
+    /// let vertices: [Vertex<f64, i32, 2>; 3] = [
+    ///     vertex!([0.0, 0.0], 10i32),
+    ///     vertex!([1.0, 0.0], 20),
+    ///     vertex!([0.0, 1.0], 30),
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::from_vertices(&vertices)
+    ///     .build::<()>()
+    ///     .unwrap();
+    /// let mut tds = dt.tds().clone();
+    /// let key = tds.vertex_keys().next().unwrap();
+    ///
+    /// // Replace existing data
+    /// let prev = tds.set_vertex_data(key, 99);
+    /// assert!(prev.is_some()); // key was found
+    ///
+    /// // Verify new value
+    /// let vertex = tds.get_vertex_by_key(key).unwrap();
+    /// assert_eq!(vertex.data, Some(99));
+    /// ```
+    #[inline]
+    pub fn set_vertex_data(&mut self, key: VertexKey, data: U) -> Option<Option<U>> {
+        let vertex = self.vertices.get_mut(key)?;
+        let previous = vertex.data.take();
+        vertex.data = Some(data);
+        Some(previous)
+    }
+
+    /// Sets the auxiliary data on a cell, returning the previous value.
+    ///
+    /// This is a safe O(1) operation that modifies only the user-data field.
+    /// It does not affect geometry, topology, or Delaunay invariants.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key of the cell to modify
+    /// * `data` - The new data value to set
+    ///
+    /// # Returns
+    ///
+    /// `None` if the key is not found. `Some(previous)` where `previous` is
+    /// the old `Option<V>` value if the key exists.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::triangulation::*;
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .build::<i32>()
+    ///     .unwrap();
+    /// let mut tds = dt.tds().clone();
+    /// let key = tds.cell_keys().next().unwrap();
+    ///
+    /// // Set data on a cell that had no data
+    /// let prev = tds.set_cell_data(key, 42);
+    /// assert_eq!(prev, Some(None)); // key found, previous was None
+    ///
+    /// // Verify new value
+    /// let cell = tds.get_cell(key).unwrap();
+    /// assert_eq!(cell.data, Some(42));
+    /// ```
+    #[inline]
+    pub fn set_cell_data(&mut self, key: CellKey, data: V) -> Option<Option<V>> {
+        let cell = self.cells.get_mut(key)?;
+        let previous = cell.data.take();
+        cell.data = Some(data);
+        Some(previous)
+    }
+
     /// Checks if a cell key exists in the triangulation.
     ///
     /// # Arguments
@@ -8050,5 +8144,189 @@ mod tests {
             .validate_neighbor_topology(ck, &[None, None])
             .unwrap_err();
         assert!(matches!(err, TdsError::InvalidNeighbors { .. }));
+    }
+
+    // =========================================================================
+    // SET VERTEX DATA / SET CELL DATA
+    // =========================================================================
+
+    #[test]
+    fn test_set_vertex_data_replaces_existing() {
+        use crate::core::builder::DelaunayTriangulationBuilder;
+
+        let vertices: [Vertex<f64, i32, 2>; 3] = [
+            vertex!([0.0, 0.0], 10i32),
+            vertex!([1.0, 0.0], 20),
+            vertex!([0.0, 1.0], 30),
+        ];
+        let dt = DelaunayTriangulationBuilder::from_vertices(&vertices)
+            .build::<()>()
+            .unwrap();
+        let mut tds = dt.tds().clone();
+        let key = tds.vertex_keys().next().unwrap();
+
+        let prev = tds.set_vertex_data(key, 99);
+        assert!(prev.unwrap().is_some()); // had data before
+        assert_eq!(tds.get_vertex_by_key(key).unwrap().data, Some(99));
+    }
+
+    #[test]
+    fn test_set_vertex_data_on_no_data_vertex() {
+        // Vertices without data have U = (), so set_vertex_data sets ().
+        let vertices = [
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let mut tds = dt.tds().clone();
+        let key = tds.vertex_keys().next().unwrap();
+
+        let prev = tds.set_vertex_data(key, ());
+        // Vertices constructed without explicit data have data = None
+        assert_eq!(prev, Some(None));
+        assert_eq!(tds.get_vertex_by_key(key).unwrap().data, Some(()));
+    }
+
+    #[test]
+    fn test_set_vertex_data_invalid_key_returns_none() {
+        let mut tds: Tds<f64, i32, (), 2> = Tds::empty();
+        let stale = VertexKey::from(KeyData::from_ffi(0xDEAD));
+        assert!(tds.set_vertex_data(stale, 1).is_none());
+    }
+
+    #[test]
+    fn test_set_cell_data_on_empty_cell() {
+        use crate::core::builder::DelaunayTriangulationBuilder;
+
+        let vertices = [
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulationBuilder::new(&vertices)
+            .build::<i32>()
+            .unwrap();
+        let mut tds = dt.tds().clone();
+        let key = tds.cell_keys().next().unwrap();
+
+        let prev = tds.set_cell_data(key, 42);
+        assert_eq!(prev, Some(None)); // key found, no previous data
+        assert_eq!(tds.get_cell(key).unwrap().data, Some(42));
+    }
+
+    #[test]
+    fn test_set_cell_data_replaces_existing() {
+        use crate::core::builder::DelaunayTriangulationBuilder;
+
+        let vertices = [
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulationBuilder::new(&vertices)
+            .build::<i32>()
+            .unwrap();
+        let mut tds = dt.tds().clone();
+        let key = tds.cell_keys().next().unwrap();
+
+        tds.set_cell_data(key, 1);
+        let prev = tds.set_cell_data(key, 2);
+        assert_eq!(prev, Some(Some(1)));
+        assert_eq!(tds.get_cell(key).unwrap().data, Some(2));
+    }
+
+    #[test]
+    fn test_set_cell_data_invalid_key_returns_none() {
+        let mut tds: Tds<f64, (), i32, 2> = Tds::empty();
+        let stale = CellKey::from(KeyData::from_ffi(0xDEAD));
+        assert!(tds.set_cell_data(stale, 1).is_none());
+    }
+
+    #[test]
+    fn test_set_vertex_data_preserves_triangulation_validity() {
+        use crate::core::builder::DelaunayTriangulationBuilder;
+
+        let vertices: [Vertex<f64, i32, 2>; 3] = [
+            vertex!([0.0, 0.0], 1i32),
+            vertex!([1.0, 0.0], 2),
+            vertex!([0.0, 1.0], 3),
+        ];
+        let mut dt = DelaunayTriangulationBuilder::from_vertices(&vertices)
+            .build::<()>()
+            .unwrap();
+
+        // Mutate every vertex's data through the DT wrapper.
+        let keys: Vec<_> = dt.vertices().map(|(k, _)| k).collect();
+        for (key, i) in keys.iter().zip(0i32..) {
+            dt.set_vertex_data(*key, i * 100);
+        }
+
+        // Triangulation must remain fully valid.
+        assert!(dt.validate().is_ok());
+
+        // Verify all data was updated.
+        for (key, i) in keys.iter().zip(0i32..) {
+            let v = dt.tds().get_vertex_by_key(*key).unwrap();
+            assert_eq!(v.data, Some(i * 100));
+        }
+    }
+
+    #[test]
+    fn test_set_cell_data_preserves_triangulation_validity() {
+        use crate::core::builder::DelaunayTriangulationBuilder;
+
+        let vertices = [
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.5, 1.0]),
+            vertex!([1.5, 0.5]),
+        ];
+        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+            .build::<i32>()
+            .unwrap();
+        assert!(dt.number_of_cells() > 1);
+
+        // Mutate every cell's data through the DT wrapper.
+        let keys: Vec<_> = dt.cells().map(|(k, _)| k).collect();
+        for (key, i) in keys.iter().zip(0i32..) {
+            dt.set_cell_data(*key, i);
+        }
+
+        // Triangulation must remain fully valid.
+        assert!(dt.validate().is_ok());
+
+        // Verify all data was updated.
+        for (key, i) in keys.iter().zip(0i32..) {
+            let c = dt.tds().get_cell(*key).unwrap();
+            assert_eq!(c.data, Some(i));
+        }
+    }
+
+    #[test]
+    fn test_set_data_via_dt_does_not_invalidate_locate_hint() {
+        use crate::core::builder::DelaunayTriangulationBuilder;
+
+        let vertices: [Vertex<f64, i32, 2>; 3] = [
+            vertex!([0.0, 0.0], 0i32),
+            vertex!([1.0, 0.0], 0),
+            vertex!([0.0, 1.0], 0),
+        ];
+        let mut dt = DelaunayTriangulationBuilder::from_vertices(&vertices)
+            .build::<()>()
+            .unwrap();
+
+        // Insert a new vertex so the locate hint is populated.
+        let extra = vertex!([0.25, 0.25], 0i32);
+        dt.insert(extra).unwrap();
+
+        // Data mutation should NOT clear the insertion hint.
+        let key = dt.vertices().next().unwrap().0;
+        dt.set_vertex_data(key, 999);
+
+        // A subsequent insert should still succeed (hint not invalidated).
+        let another = vertex!([0.75, 0.1], 0i32);
+        assert!(dt.insert(another).is_ok());
+        assert!(dt.validate().is_ok());
     }
 }
