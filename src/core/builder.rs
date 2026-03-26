@@ -416,12 +416,8 @@ where
     /// Creates a builder from a vertex slice of any scalar type `T` and user data type `U`.
     ///
     /// For `f64` coordinates, prefer [`new`](DelaunayTriangulationBuilder::new) which
-    /// infers all type parameters. Use `from_vertices` only when `T ≠ f64`.
-    ///
-    /// # Deprecation
-    ///
-    /// Since v0.7.4, `new()` accepts any `U`, so `from_vertices` is only needed
-    /// for non-`f64` scalar types. It may be removed in a future release.
+    /// infers all type parameters without explicit annotations. Use `from_vertices`
+    /// when `T ≠ f64` (e.g. `f32`).
     ///
     /// # Examples
     ///
@@ -438,17 +434,12 @@ where
     ///     VertexBuilder::default().point(Point::new([0.0, 1.0])).data(3_i32).build().unwrap(),
     /// ];
     ///
-    /// #[expect(deprecated)]
     /// let dt = DelaunayTriangulationBuilder::from_vertices(&vertices)
     ///     .build::<()>()
     ///     .unwrap();
     ///
     /// assert_eq!(dt.number_of_vertices(), 3);
     /// ```
-    #[deprecated(
-        since = "0.7.4",
-        note = "use `new()` for f64 vertices (now accepts any U)"
-    )]
     #[must_use]
     pub fn from_vertices(vertices: &'v [Vertex<T, U, D>]) -> Self {
         Self {
