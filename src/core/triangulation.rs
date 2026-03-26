@@ -1110,7 +1110,7 @@ where
     ///     vertex!([1.0, 0.0], 20),
     ///     vertex!([0.0, 1.0], 30),
     /// ];
-    /// let mut dt = DelaunayTriangulationBuilder::from_vertices(&vertices)
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .build::<()>()
     ///     .unwrap();
     /// let key = dt.vertices().next().unwrap().0;

@@ -2348,7 +2348,7 @@ where
     ///     vertex!([1.0, 0.0], 20),
     ///     vertex!([0.0, 1.0], 30),
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::from_vertices(&vertices)
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .build::<()>()
     ///     .unwrap();
     /// let mut tds = dt.tds().clone();
@@ -8169,7 +8169,7 @@ mod tests {
             vertex!([1.0, 0.0], 20),
             vertex!([0.0, 1.0], 30),
         ];
-        let dt = DelaunayTriangulationBuilder::from_vertices(&vertices)
+        let dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<()>()
             .unwrap();
         let mut tds = dt.tds().clone();
@@ -8262,7 +8262,7 @@ mod tests {
             vertex!([1.0, 0.0], 2),
             vertex!([0.0, 1.0], 3),
         ];
-        let mut dt = DelaunayTriangulationBuilder::from_vertices(&vertices)
+        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<()>()
             .unwrap();
 
@@ -8322,7 +8322,7 @@ mod tests {
             vertex!([1.0, 0.0], 20),
             vertex!([0.0, 1.0], 30),
         ];
-        let mut dt = DelaunayTriangulationBuilder::from_vertices(&vertices)
+        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<()>()
             .unwrap();
         let key = dt.vertices().next().unwrap().0;
@@ -8372,7 +8372,7 @@ mod tests {
             vertex!([1.0, 0.0], 0),
             vertex!([0.0, 1.0], 0),
         ];
-        let mut dt = DelaunayTriangulationBuilder::from_vertices(&vertices)
+        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<()>()
             .unwrap();
 

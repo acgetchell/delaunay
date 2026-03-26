@@ -350,35 +350,50 @@ where
 }
 
 // =============================================================================
-// SPECIALIZED IMPL — f64 coordinates, no vertex data (common case)
+// SPECIALIZED IMPL — f64 coordinates, any vertex data U
 //
-// Having `new` here (rather than in the generic impl below) pins T=f64 and
-// U=() so callers never need explicit type annotations:
+// Pins T=f64 so callers using the default AdaptiveKernel never need explicit
+// type annotations.  U is inferred from the vertex slice.
 //
 //   let vertices = vec![vertex!([0.0, 0.0]), ...];
 //   let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>();
 //
-// This mirrors the existing `DelaunayTriangulation::new` design.
+//   let typed: [Vertex<f64, i32, 2>; 3] = [vertex!([0.0, 0.0], 1), ...];
+//   let dt = DelaunayTriangulationBuilder::new(&typed).build::<()>();
+//
 // =============================================================================
 
-impl<'v, const D: usize> DelaunayTriangulationBuilder<'v, f64, (), D> {
-    /// Creates a builder for `f64` vertices with no user data — the most common case.
+impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, f64, U, D>
+where
+    U: DataType,
+{
+    /// Creates a builder for `f64` vertices with any user data type `U`.
     ///
-    /// Type parameters are fully inferred from the input; no explicit annotations are needed.
-    /// For non-`f64` scalars or vertices carrying user data, use
+    /// `U` is inferred from the vertex slice — no explicit type annotations needed
+    /// for either `U = ()` (the common case) or typed vertex data.
+    ///
+    /// For non-`f64` scalar types, use
     /// [`from_vertices`](Self::from_vertices) in the generic impl.
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::builder::DelaunayTriangulationBuilder;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::triangulation::*;
     ///
+    /// // No vertex data (U = () inferred)
     /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
-    /// let _builder = DelaunayTriangulationBuilder::new(&vertices);
+    /// let _dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
+    ///
+    /// // Typed vertex data (U = i32 inferred)
+    /// let typed: [Vertex<f64, i32, 2>; 3] = [
+    ///     vertex!([0.0, 0.0], 1i32),
+    ///     vertex!([1.0, 0.0], 2),
+    ///     vertex!([0.0, 1.0], 3),
+    /// ];
+    /// let _dt = DelaunayTriangulationBuilder::new(&typed).build::<()>().unwrap();
     /// ```
     #[must_use]
-    pub fn new(vertices: &'v [Vertex<f64, (), D>]) -> Self {
+    pub fn new(vertices: &'v [Vertex<f64, U, D>]) -> Self {
         Self {
             vertices,
             topology: None,
@@ -398,14 +413,15 @@ where
     T: CoordinateScalar,
     U: DataType,
 {
-    /// Creates a builder from a vertex slice of any scalar type `T` or user data type `U`.
+    /// Creates a builder from a vertex slice of any scalar type `T` and user data type `U`.
     ///
-    /// For the most common case — `f64` coordinates, `()` vertex data — prefer
-    /// [`new`](DelaunayTriangulationBuilder::new), which requires no type annotations.
-    /// Use `from_vertices` when `T ≠ f64` (e.g. `f32`) or `U ≠ ()` (vertices carry data).
+    /// For `f64` coordinates, prefer [`new`](DelaunayTriangulationBuilder::new) which
+    /// infers all type parameters. Use `from_vertices` only when `T ≠ f64`.
     ///
-    /// This mirrors the relationship between [`DelaunayTriangulation::new`] (specialized)
-    /// and [`DelaunayTriangulation::with_kernel`] (generic).
+    /// # Deprecation
+    ///
+    /// Since v0.7.4, `new()` accepts any `U`, so `from_vertices` is only needed
+    /// for non-`f64` scalar types. It may be removed in a future release.
     ///
     /// # Examples
     ///
@@ -415,19 +431,24 @@ where
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
-    /// // Vertices with attached user data — requires from_vertices.
+    /// // Vertices with attached user data — prefer new() for f64.
     /// let vertices: Vec<Vertex<f64, i32, 2>> = vec![
     ///     VertexBuilder::default().point(Point::new([0.0, 0.0])).data(1_i32).build().unwrap(),
     ///     VertexBuilder::default().point(Point::new([1.0, 0.0])).data(2_i32).build().unwrap(),
     ///     VertexBuilder::default().point(Point::new([0.0, 1.0])).data(3_i32).build().unwrap(),
     /// ];
     ///
+    /// #[expect(deprecated)]
     /// let dt = DelaunayTriangulationBuilder::from_vertices(&vertices)
     ///     .build::<()>()
     ///     .unwrap();
     ///
     /// assert_eq!(dt.number_of_vertices(), 3);
     /// ```
+    #[deprecated(
+        since = "0.7.4",
+        note = "use `new()` for f64 vertices (now accepts any U)"
+    )]
     #[must_use]
     pub fn from_vertices(vertices: &'v [Vertex<T, U, D>]) -> Self {
         Self {
@@ -2229,15 +2250,15 @@ mod tests {
     #[test]
     fn test_builder_toroidal_non_finite_coordinate_is_error() {
         let vertices = vec![
-            VertexBuilder::default()
+            VertexBuilder::<f64, (), 2>::default()
                 .point(Point::new([0.2_f64, 0.3]))
                 .build()
                 .unwrap(),
-            VertexBuilder::default()
+            VertexBuilder::<f64, (), 2>::default()
                 .point(Point::new([f64::NAN, 0.1]))
                 .build()
                 .unwrap(),
-            VertexBuilder::default()
+            VertexBuilder::<f64, (), 2>::default()
                 .point(Point::new([0.5_f64, 0.7]))
                 .build()
                 .unwrap(),
@@ -2362,7 +2383,7 @@ mod tests {
                 .build()
                 .unwrap(),
         ];
-        let dt = DelaunayTriangulationBuilder::from_vertices(&vertices)
+        let dt = DelaunayTriangulationBuilder::new(&vertices)
             .toroidal([1.0, 1.0])
             .build::<()>()
             .unwrap();
