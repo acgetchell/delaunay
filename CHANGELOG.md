@@ -5,14 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.4] - 2026-03-26
 
 ### ⚠️ Breaking Changes
 
-- Tighten Vertex::data and Cell::data to pub(crate)
+- Tighten Vertex::data and Cell::data to pub(crate) [#289](https://github.com/acgetchell/delaunay/pull/289)
+- Generalize DelaunayTriangulationBuilder::new() over U [#287](https://github.com/acgetchell/delaunay/pull/287)
+  [#290](https://github.com/acgetchell/delaunay/pull/290)
 
 ### Merged Pull Requests
 
+- Generalize DelaunayTriangulationBuilder::new() over U [#287](https://github.com/acgetchell/delaunay/pull/287)
+  [#290](https://github.com/acgetchell/delaunay/pull/290)
+- Tighten Vertex::data and Cell::data to pub(crate) [#289](https://github.com/acgetchell/delaunay/pull/289)
 - Add set_vertex_data and set_cell_data methods [#284](https://github.com/acgetchell/delaunay/pull/284) [#285](https://github.com/acgetchell/delaunay/pull/285)
 
 ### Added
@@ -51,10 +56,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- [**breaking**] Tighten Vertex::data and Cell::data to pub(crate)
-  [`4b9746a`](https://github.com/acgetchell/delaunay/commit/4b9746a6a567785ef572847dc2c8f11b16410f16)
+- [**breaking**] Tighten Vertex::data and Cell::data to pub(crate) [#289](https://github.com/acgetchell/delaunay/pull/289)
+  [`07f1565`](https://github.com/acgetchell/delaunay/commit/07f15658aac65e5cce3ecb3b7172502305173b95)
 
-- Change `Vertex::data` and `Cell::data` from `pub` to `pub(crate)`
+- refactor!: tighten Vertex::data and Cell::data to pub(crate)
+
+  - Change `Vertex::data` and `Cell::data` from `pub` to `pub(crate)`
   - Add `const fn data() -> Option<&U>` accessor on `Vertex` and
     `const fn data() -> Option<&V>` accessor on `Cell`
 
@@ -63,6 +70,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   - Update all external-facing doctests and integration tests to use
     the new accessor
+
+- [**breaking**] Generalize DelaunayTriangulationBuilder::new() over U [#287](https://github.com/acgetchell/delaunay/pull/287)
+  [#290](https://github.com/acgetchell/delaunay/pull/290) [`7694a3e`](https://github.com/acgetchell/delaunay/commit/7694a3effba4eefb53238d15323e76452eec56ea)
+
+- refactor!: generalize DelaunayTriangulationBuilder::new() over U [#287](https://github.com/acgetchell/delaunay/pull/287)
+
+  - Move `new()` from the `<f64, (), D>` impl to `<f64, U, D>` so it
+    accepts any vertex data type — U is inferred from the vertex slice
+
+  - Deprecate `from_vertices()` (now redundant for f64 vertices)
+  - Migrate all `from_vertices` call sites to `new`
+  - Fix type-inference regression in NaN test by annotating VertexBuilder
 
 ### Fixed
 
@@ -2105,7 +2124,7 @@ Older releases are archived by minor series:
 - [0.3.x](docs/archive/changelog/0.3.md)
 - [0.2.x](docs/archive/changelog/0.2.md)
 
-[unreleased]: https://github.com/acgetchell/delaunay/compare/v0.7.3..HEAD
+[0.7.4]: https://github.com/acgetchell/delaunay/compare/v0.7.3..v0.7.4
 [0.7.3]: https://github.com/acgetchell/delaunay/compare/v0.7.2..v0.7.3
 [0.7.2]: https://github.com/acgetchell/delaunay/compare/v0.7.1..v0.7.2
 [0.7.1]: https://github.com/acgetchell/delaunay/compare/v0.7.0..v0.7.1

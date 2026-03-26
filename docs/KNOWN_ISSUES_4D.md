@@ -1,6 +1,6 @@
 # Known Issues: Dimensional and Large-Scale Limitations
 
-## Status (v0.7.3)
+## Status (v0.7.4)
 
 ### Current issues
 
@@ -57,11 +57,23 @@ affected by cavity/topology interactions rather than predicate degeneracies.
   identical quantized points with zero extra allocation (reuses quantized coordinates
   from the sorting phase).
 
+#### Provable error bounds (v0.7.3)
+
+- Replaced heuristic `adaptive_tolerance()` with provable `det_errbound()` (Shewchuk-style
+  permanent-based bounds) in both `insphere_from_matrix` and `orientation_from_matrix`
+  (#228, PR #255).  For D ≤ 4, the f64 fast filter now has a mathematically guaranteed
+  error bound; ambiguous cases fall through to exact Bareiss.
+- For D ≥ 5, `det_errbound()` returns `None`, so every call goes directly to exact
+  arithmetic.  Extending bounds to higher dimensions is tracked in #256.
+- Trade-off: the provable bounds correctly reject more cases to the exact path, which
+  is slower.  ~47 proptests were disabled due to CI timeouts (#256).
+
 ### What remains
 
-- **Heuristic fast-filter tolerance:** the f64 fast filter in `insphere_from_matrix` /
-  `orientation_from_matrix` uses an adaptive tolerance that is a heuristic, not a
-  provable error bound.  la-stack #44 tracks adding Shewchuk-style bounds.
+- **Predicate performance (#256):** the provable error bounds in `det_errbound()` reject
+  more cases to exact Bareiss than the old heuristic, causing ~47 proptests to exceed CI
+  timeouts.  Re-enabling them requires Shewchuk-style multi-stage adaptive expansion or
+  faster exact arithmetic in la-stack.
 - **Stack-matrix dimension limit:** `MAX_STACK_MATRIX_DIM = 7` limits exact insphere
   to D ≤ 5 (the insphere matrix is (D+2)×(D+2)).  For D ≥ 6, `robust_insphere`
   falls back to symbolic perturbation and centroid-based tie-breaking.

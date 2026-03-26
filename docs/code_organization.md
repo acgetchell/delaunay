@@ -155,13 +155,13 @@ delaunay/
 │   │   │   ├── data_type.rs
 │   │   │   └── facet_cache.rs
 │   │   ├── util/
+│   │   │   ├── canonical_points.rs
 │   │   │   ├── deduplication.rs
 │   │   │   ├── delaunay_validation.rs
 │   │   │   ├── facet_keys.rs
 │   │   │   ├── facet_utils.rs
 │   │   │   ├── hashing.rs
 │   │   │   ├── hilbert.rs
-│   │   │   ├── canonical_points.rs
 │   │   │   ├── jaccard.rs
 │   │   │   ├── measurement.rs
 │   │   │   └── uuid.rs
