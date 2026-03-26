@@ -427,11 +427,11 @@ where
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
-    /// // Vertices with attached user data — prefer new() for f64.
-    /// let vertices: Vec<Vertex<f64, i32, 2>> = vec![
-    ///     VertexBuilder::default().point(Point::new([0.0, 0.0])).data(1_i32).build().unwrap(),
-    ///     VertexBuilder::default().point(Point::new([1.0, 0.0])).data(2_i32).build().unwrap(),
-    ///     VertexBuilder::default().point(Point::new([0.0, 1.0])).data(3_i32).build().unwrap(),
+    /// // f32 vertices — new() is f64-only, so from_vertices is required here.
+    /// let vertices: Vec<Vertex<f32, (), 2>> = vec![
+    ///     VertexBuilder::default().point(Point::new([0.0_f32, 0.0])).build().unwrap(),
+    ///     VertexBuilder::default().point(Point::new([1.0_f32, 0.0])).build().unwrap(),
+    ///     VertexBuilder::default().point(Point::new([0.0_f32, 1.0])).build().unwrap(),
     /// ];
     ///
     /// let dt = DelaunayTriangulationBuilder::from_vertices(&vertices)
