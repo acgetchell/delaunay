@@ -128,6 +128,9 @@ for topology guarantee and validation policy details.
 - **Automatic property preservation**: The Delaunay empty-circumsphere property is maintained automatically
 - **Cavity-based insertion**: New vertices are inserted by identifying conflicting cells, removing them, and filling the cavity
 - **Fan retriangulation**: Vertex removal uses fan-based retriangulation of the vertex star
+- **Auxiliary data**: Vertices and cells carry optional user data (`U` / `V`). Read via `vertex.data()` /
+  `cell.data()`, write via `dt.set_vertex_data(key, data)` / `dt.set_cell_data(key, data)` (O(1),
+  invariant-preserving). See [`workflows.md`](workflows.md) for examples.
 - **Error handling**: Operations fail gracefully if they would violate invariants (see
   [`invariants.md`](invariants.md)).
 - **Validation**: The active `ValidationPolicy` (set with

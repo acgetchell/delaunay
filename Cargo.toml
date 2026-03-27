@@ -1,6 +1,6 @@
 [package]
 name = "delaunay"
-version = "0.7.3"
+version = "0.7.4"
 edition = "2024"
 rust-version = "1.94"
 authors = [ "Adam Getchell <adam@adamgetchell.org>" ]

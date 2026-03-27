@@ -236,6 +236,44 @@ dt.insert(vertex!([-0.1, 0.7])).unwrap(); // wraps to [0.9, 0.7]
 
 For more details, see `docs/topology.md` and the toroidal section in the main `README.md`.
 
+## Builder API: auxiliary vertex and cell data
+
+Vertices and cells can carry user-defined auxiliary data (`U` for vertices, `V` for cells).
+Data is attached at construction time via `VertexBuilder::data()`, read via the `data()` accessor,
+and modified post-construction via `set_vertex_data` / `set_cell_data`.
+
+```rust
+use delaunay::prelude::triangulation::*;
+
+// Attach integer labels at construction time
+let vertices: [Vertex<f64, i32, 2>; 3] = [
+    vertex!([0.0, 0.0], 10i32),
+    vertex!([1.0, 0.0], 20),
+    vertex!([0.0, 1.0], 30),
+];
+let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+    .build::<()>()
+    .unwrap();
+
+// Read vertex data
+for (_key, vertex) in dt.vertices() {
+    println!("data = {:?}", vertex.data()); // Some(10), Some(20), or Some(30)
+}
+
+// Modify vertex data (O(1), does not affect geometry or topology)
+let key = dt.vertices().next().unwrap().0;
+let prev = dt.set_vertex_data(key, Some(99));
+assert!(prev.is_some()); // returns the old Option<U>
+
+// Cell data works the same way
+let cell_key = dt.cells().next().unwrap().0;
+dt.set_cell_data(cell_key, Some(42));
+assert_eq!(dt.tds().get_cell(cell_key).unwrap().data(), Some(&42));
+```
+
+`set_vertex_data` and `set_cell_data` are safe O(1) operations — they modify only the
+user-data field and do not invalidate geometry, topology, or Delaunay invariants.
+
 ## Builder API: insertion statistics
 
 If you need observability (or you want to handle skipped vertices explicitly), use
