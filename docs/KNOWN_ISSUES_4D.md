@@ -59,10 +59,12 @@ affected by cavity/topology interactions rather than predicate degeneracies.
 
 #### Provable error bounds (v0.7.3)
 
-- Replaced heuristic `adaptive_tolerance()` with provable `det_errbound()` (Shewchuk-style
-  permanent-based bounds) in both `insphere_from_matrix` and `orientation_from_matrix`
-  (#228, PR #255).  For D ≤ 4, the f64 fast filter now has a mathematically guaranteed
-  error bound; ambiguous cases fall through to exact Bareiss.
+- Replaced the heuristic adaptive-tolerance fast filter with provable `det_errbound()`
+  (Shewchuk-style permanent-based bounds) in both `insphere_from_matrix` and
+  `orientation_from_matrix` (#228, PR #255).  For D ≤ 4, the f64 fast filter now has a
+  mathematically guaranteed error bound; ambiguous cases fall through to exact Bareiss.
+  (The wrapper function `adaptive_tolerance_insphere()` retains its name but now delegates
+  entirely to the provable `insphere_from_matrix` path.)
 - For D ≥ 5, `det_errbound()` returns `None`, so every call goes directly to exact
   arithmetic.  Extending bounds to higher dimensions is tracked in #256.
 - Trade-off: the provable bounds correctly reject more cases to the exact path, which
