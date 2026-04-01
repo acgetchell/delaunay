@@ -321,9 +321,9 @@ let vertices = vec![
 ];
 
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-let vertex_to_remove = dt.vertices().next().unwrap().1.clone();
+let vertex_key = dt.vertices().next().unwrap().0;
 
-let _cells_removed = dt.remove_vertex(&vertex_to_remove).unwrap();
+let _cells_removed = dt.remove_vertex(vertex_key).unwrap();
 
 // Topology should still be valid:
 assert!(dt.as_triangulation().validate().is_ok());

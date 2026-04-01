@@ -5113,11 +5113,14 @@ where
     ///
     /// # Arguments
     ///
-    /// * `vertex` - Reference to the vertex to remove
+    /// * `vertex_key` - Key of the vertex to remove
     ///
     /// # Returns
     ///
-    /// The number of cells that were removed along with the vertex.
+    /// The number of cells that were removed along with the vertex. Returns `Ok(0)` if
+    /// `vertex_key` does not refer to a vertex in the triangulation (e.g. a stale key from
+    /// a previously removed vertex or a key that was never inserted). This is a successful
+    /// no-op, not an error.
     ///
     /// # Errors
     ///
@@ -5140,30 +5143,27 @@ where
     /// ];
     /// let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
     ///
-    /// // Remove a known interior vertex.
-    /// let vertex_to_remove = dt
+    /// // Find the key of a known interior vertex.
+    /// let vertex_key = dt
     ///     .vertices()
     ///     .find(|(_, v)| {
     ///         let coords = v.point().coords();
     ///         (coords[0] - 0.3).abs() < 1e-10 && (coords[1] - 0.3).abs() < 1e-10
     ///     })
-    ///     .map(|(_, v)| *v)
+    ///     .map(|(k, _)| k)
     ///     .unwrap();
     ///
     /// // Remove the vertex and all cells containing it
-    /// let cells_removed = dt.remove_vertex(&vertex_to_remove).unwrap();
+    /// let cells_removed = dt.remove_vertex(vertex_key).unwrap();
     /// println!("Removed {} cells along with the vertex", cells_removed);
     ///
     /// // Vertex removal preserves Levels 1–3 but may not preserve the Delaunay property.
     /// assert!(dt.as_triangulation().validate().is_ok());
     /// ```
-    pub fn remove_vertex(
-        &mut self,
-        vertex: &Vertex<K::Scalar, U, D>,
-    ) -> Result<usize, InvariantError> {
-        let Some(vertex_key) = self.tri.tds.vertex_key_from_uuid(&vertex.uuid()) else {
+    pub fn remove_vertex(&mut self, vertex_key: VertexKey) -> Result<usize, InvariantError> {
+        if self.tri.tds.get_vertex_by_key(vertex_key).is_none() {
             return Ok(0);
-        };
+        }
 
         // Fast path: inverse k=1 flip when the vertex star is a simplex.
         let mut seed_cells: Option<CellKeyBuffer> = None;
@@ -5178,7 +5178,7 @@ where
                 }
                 .into());
             }
-            Err(_) => self.tri.remove_vertex(vertex)?,
+            Err(_) => self.tri.remove_vertex(vertex_key)?,
         };
 
         let topology = self.tri.topology_guarantee();
@@ -6736,14 +6736,14 @@ mod tests {
         assert_eq!(dt.number_of_vertices(), original_vertex_count + 1);
         assert_eq!(dt.number_of_cells(), original_cell_count + 3);
 
-        let vertex_to_remove = dt
+        let vertex_key = dt
             .vertices()
             .find(|(_, v)| v.uuid() == inserted_uuid)
-            .map(|(_, v)| *v)
+            .map(|(k, _)| k)
             .expect("Inserted vertex not found");
 
         dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
-        let removed_cells = dt.remove_vertex(&vertex_to_remove).unwrap();
+        let removed_cells = dt.remove_vertex(vertex_key).unwrap();
 
         assert_eq!(removed_cells, 4);
         assert_eq!(dt.number_of_vertices(), original_vertex_count);

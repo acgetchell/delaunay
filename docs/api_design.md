@@ -77,7 +77,7 @@ let new_vertex = vertex!([0.5, 0.5, 0.5]);
 dt.insert(new_vertex).unwrap();
 
 // Vertex removal (maintains Delaunay property via fan retriangulation)
-let vertex_key = /* ... */;
+let vertex_key = dt.vertices().next().unwrap().0;
 dt.remove_vertex(vertex_key).unwrap();
 ```
 

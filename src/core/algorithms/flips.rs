@@ -2269,19 +2269,15 @@ where
         Ok(ctx) => ctx,
         Err(e) => {
             // Remove the just-inserted vertex to avoid leaving an orphan.
-            if let Some(inserted) = tds.get_vertex_by_key(vertex_key).copied() {
-                let _ = tds.remove_vertex(&inserted);
-            }
+            let _ = tds.remove_vertex(vertex_key);
             return Err(e);
         }
     };
 
     let result = apply_bistellar_flip::<T, U, V, D, 1>(tds, &context);
 
-    if result.is_err()
-        && let Some(inserted) = tds.get_vertex_by_key(vertex_key).copied()
-    {
-        let _ = tds.remove_vertex(&inserted);
+    if result.is_err() {
+        let _ = tds.remove_vertex(vertex_key);
     }
 
     result
@@ -2309,9 +2305,7 @@ where
     let context = build_k1_inverse_context(tds, vertex_key)?;
     let info = apply_bistellar_flip_dynamic(tds, D + 1, &context)?;
 
-    if let Some(vertex) = tds.get_vertex_by_key(vertex_key).copied() {
-        let _ = tds.remove_vertex(&vertex);
-    }
+    let _ = tds.remove_vertex(vertex_key);
 
     Ok(info)
 }

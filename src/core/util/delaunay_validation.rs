@@ -727,19 +727,15 @@ mod tests {
             .unwrap();
 
         let invalid_uuid = make_uuid();
-        tds.insert_vertex_with_mapping(Vertex::new_with_uuid(
-            Point::new([f64::NAN, 0.0]),
-            invalid_uuid,
-            None,
-        ))
-        .unwrap();
+        let invalid_vk = tds
+            .insert_vertex_with_mapping(Vertex::new_with_uuid(
+                Point::new([f64::NAN, 0.0]),
+                invalid_uuid,
+                None,
+            ))
+            .unwrap();
 
-        tds.remove_vertex(&Vertex::new_with_uuid(
-            Point::new([f64::NAN, 0.0]),
-            invalid_uuid,
-            None,
-        ))
-        .unwrap();
+        tds.remove_vertex(invalid_vk).unwrap();
 
         assert!(
             is_delaunay_property_only(&tds).is_ok(),
