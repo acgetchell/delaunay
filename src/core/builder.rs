@@ -1697,17 +1697,13 @@ where
         let all_cells: Vec<CellKey> = tds_mut.cell_keys().collect();
         tds_mut.remove_cells_by_keys(&all_cells);
 
-        // Remove all image vertices (collect keys first, then copies, then remove).
+        // Remove all image vertices.
         let image_vertex_keys: Vec<VertexKey> = tds_mut
             .vertex_keys()
             .filter(|vk| !central_key_set.contains(vk))
             .collect();
-        let image_vertex_copies: Vec<Vertex<T, U, D>> = image_vertex_keys
-            .iter()
-            .filter_map(|&vk| tds_mut.get_vertex_by_key(vk).copied())
-            .collect();
-        for iv in &image_vertex_copies {
-            tds_mut.remove_vertex(iv).map_err(|e| {
+        for &vk in &image_vertex_keys {
+            tds_mut.remove_vertex(vk).map_err(|e| {
                 TriangulationConstructionError::InternalInconsistency {
                     message: format!("Failed to remove image vertex: {e}"),
                 }

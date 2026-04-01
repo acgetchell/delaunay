@@ -2932,7 +2932,7 @@ where
     ///
     /// # Arguments
     ///
-    /// * `vertex` - Reference to the vertex to remove
+    /// * `vertex_key` - Key of the vertex to remove
     ///
     /// # Returns
     ///
@@ -2970,12 +2970,12 @@ where
     /// ];
     /// let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
     ///
-    /// // Get a vertex to remove
-    /// let vertex_to_remove = dt.vertices().next().unwrap().1.clone();
+    /// // Get a vertex key to remove
+    /// let vertex_key = dt.vertices().next().unwrap().0;
     /// let cells_before = dt.number_of_cells();
     ///
     /// // Remove the vertex and all cells containing it
-    /// let cells_removed = dt.remove_vertex(&vertex_to_remove).unwrap();
+    /// let cells_removed = dt.remove_vertex(vertex_key).unwrap();
     /// println!("Removed {} cells along with the vertex", cells_removed);
     ///
     /// assert!(dt.tds().validate().is_ok());
@@ -2986,12 +2986,13 @@ where
     )]
     pub(crate) fn remove_vertex(
         &mut self,
-        vertex: &Vertex<T, U, D>,
+        vertex_key: VertexKey,
     ) -> Result<usize, TdsMutationError> {
-        // Find the vertex key
-        let Some(vertex_key) = self.vertex_key_from_uuid(&vertex.uuid()) else {
+        // Look up the vertex to get its UUID before removal
+        let Some(vertex) = self.get_vertex_by_key(vertex_key) else {
             return Ok(0); // Vertex not found, nothing to remove
         };
+        let uuid = vertex.uuid();
 
         // Find all cells containing this vertex
         let cells_to_remove = self.find_cells_containing_vertex(vertex_key);
@@ -3002,9 +3003,9 @@ where
         // incrementally repairs `incident_cell` pointers for vertices that referenced removed cells.
         let cells_removed = self.remove_cells_by_keys(&cells_to_remove);
 
-        // Remove the vertex itself (inline instead of using deprecated method)
+        // Remove the vertex itself
         self.vertices.remove(vertex_key);
-        self.uuid_to_vertex_key.remove(&vertex.uuid());
+        self.uuid_to_vertex_key.remove(&uuid);
         // Topology changed; invalidate caches
         self.bump_generation();
 
@@ -5849,11 +5850,11 @@ mod tests {
         assert!(initial_cells > 0);
 
         // Get a vertex to remove (not a corner vertex, to ensure we have remaining cells)
-        let vertex_to_remove = *dt.vertices().next().unwrap().1;
-        let vertex_uuid = vertex_to_remove.uuid();
+        let (vertex_key, vertex_ref) = dt.vertices().next().unwrap();
+        let vertex_uuid = vertex_ref.uuid();
 
         // Remove the vertex and all cells containing it
-        let cells_removed = dt.remove_vertex(&vertex_to_remove).unwrap();
+        let cells_removed = dt.remove_vertex(vertex_key).unwrap();
 
         // Verify the vertex was removed
         assert!(
@@ -5911,14 +5912,14 @@ mod tests {
         ];
         let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-        // Create a vertex that was never added
-        let nonexistent_vertex = vertex!([5.0, 5.0]);
+        // Use a key that was never added
+        let nonexistent_key = VertexKey::from(KeyData::from_ffi(u64::MAX));
 
         let initial_vertices = dt.number_of_vertices();
         let initial_cells = dt.number_of_cells();
 
         // Remove should return 0 (no cells removed)
-        let cells_removed = dt.remove_vertex(&nonexistent_vertex).unwrap();
+        let cells_removed = dt.remove_vertex(nonexistent_key).unwrap();
 
         assert_eq!(cells_removed, 0, "No cells should be removed");
         assert_eq!(
@@ -5936,6 +5937,34 @@ mod tests {
     }
 
     #[test]
+    fn test_remove_vertex_stale_key_is_idempotent() {
+        // With the VertexKey API, callers can hold a key after removal and reuse it.
+        // Double-remove must be a no-op returning Ok(0).
+        let vertices = [
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let vertex_key = dt.vertices().next().unwrap().0;
+
+        // First removal succeeds.
+        let cells_removed = dt.remove_vertex(vertex_key).unwrap();
+        assert!(cells_removed > 0);
+        let vertices_after = dt.number_of_vertices();
+        let cells_after = dt.number_of_cells();
+
+        // Second removal with the same (now stale) key is a no-op.
+        let cells_removed_again = dt.remove_vertex(vertex_key).unwrap();
+        assert_eq!(cells_removed_again, 0, "Stale key should remove nothing");
+        assert_eq!(dt.number_of_vertices(), vertices_after);
+        assert_eq!(dt.number_of_cells(), cells_after);
+    }
+
+    #[test]
     fn test_remove_vertex_multiple_dimensions() {
         // Test remove_vertex in different dimensions
 
@@ -5949,8 +5978,8 @@ mod tests {
             ];
             let mut dt_2d: DelaunayTriangulation<_, (), (), 2> =
                 DelaunayTriangulation::new(&vertices_2d).unwrap();
-            let vertex = *dt_2d.vertices().next().unwrap().1;
-            let cells_removed = dt_2d.remove_vertex(&vertex).unwrap();
+            let vertex_key = dt_2d.vertices().next().unwrap().0;
+            let cells_removed = dt_2d.remove_vertex(vertex_key).unwrap();
             assert!(cells_removed > 0);
             assert!(dt_2d.as_triangulation().tds.is_valid().is_ok());
         }
@@ -5966,8 +5995,8 @@ mod tests {
             ];
             let mut dt_3d: DelaunayTriangulation<_, (), (), 3> =
                 DelaunayTriangulation::new(&vertices_3d).unwrap();
-            let vertex = *dt_3d.vertices().next().unwrap().1;
-            let cells_removed = dt_3d.remove_vertex(&vertex).unwrap();
+            let vertex_key = dt_3d.vertices().next().unwrap().0;
+            let cells_removed = dt_3d.remove_vertex(vertex_key).unwrap();
             assert!(cells_removed > 0);
             assert!(dt_3d.as_triangulation().tds.is_valid().is_ok());
         }
@@ -5984,8 +6013,8 @@ mod tests {
             ];
             let mut dt_4d: DelaunayTriangulation<_, (), (), 4> =
                 DelaunayTriangulation::new(&vertices_4d).unwrap();
-            let vertex = *dt_4d.vertices().next().unwrap().1;
-            let cells_removed = dt_4d.remove_vertex(&vertex).unwrap();
+            let vertex_key = dt_4d.vertices().next().unwrap().0;
+            let cells_removed = dt_4d.remove_vertex(vertex_key).unwrap();
             assert!(cells_removed > 0);
             assert!(dt_4d.as_triangulation().tds.is_valid().is_ok());
         }
@@ -6026,14 +6055,8 @@ mod tests {
             .map(|(k, v)| (k, v.uuid()))
             .expect("Interior vertex should exist");
 
-        let vertex_to_remove = *dt
-            .vertices()
-            .find(|(k, _)| *k == removed_vertex_key)
-            .unwrap()
-            .1;
-
         // Remove the vertex
-        let cells_removed = dt.remove_vertex(&vertex_to_remove).unwrap();
+        let cells_removed = dt.remove_vertex(removed_vertex_key).unwrap();
         assert!(cells_removed > 0, "Should have removed at least one cell");
 
         // CRITICAL CHECK 1: No cells should contain the deleted vertex
@@ -6311,8 +6334,8 @@ mod tests {
     #[test]
     fn test_tds_remove_vertex_returns_zero_when_vertex_not_in_mapping() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
-        let v = vertex!([0.0, 0.0]);
-        assert_eq!(tds.remove_vertex(&v).unwrap(), 0);
+        let missing_key = VertexKey::from(KeyData::from_ffi(u64::MAX));
+        assert_eq!(tds.remove_vertex(missing_key).unwrap(), 0);
     }
 
     #[test]
@@ -6352,12 +6375,12 @@ mod tests {
             .unwrap()
             .incident_cell = Some(cell2);
 
-        let vertex_to_remove = *tds.get_vertex_by_key(origin_key).unwrap();
-        let removed = tds.remove_vertex(&vertex_to_remove).unwrap();
+        let origin_uuid = tds.get_vertex_by_key(origin_key).unwrap().uuid();
+        let removed = tds.remove_vertex(origin_key).unwrap();
         assert_eq!(removed, 1);
 
         // The removed vertex should be gone.
-        assert!(tds.vertex_key_from_uuid(&vertex_to_remove.uuid()).is_none());
+        assert!(tds.vertex_key_from_uuid(&origin_uuid).is_none());
         assert!(tds.get_vertex_by_key(origin_key).is_none());
 
         // cell2 should remain and must not reference cell1 as a neighbor.

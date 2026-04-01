@@ -4880,7 +4880,7 @@ where
     ///
     /// # Arguments
     ///
-    /// * `vertex` - Reference to the vertex to remove
+    /// * `vertex_key` - Key of the vertex to remove
     ///
     /// # Returns
     ///
@@ -4891,14 +4891,11 @@ where
     /// Returns [`InvariantError`] if the removal cannot be completed while maintaining
     /// triangulation invariants. The error preserves structured information from whichever
     /// layer (TDS or Topology) detected the failure.
-    pub(crate) fn remove_vertex(
-        &mut self,
-        vertex: &Vertex<K::Scalar, U, D>,
-    ) -> Result<usize, InvariantError> {
-        // Find the vertex key
-        let Some(vertex_key) = self.tds.vertex_key_from_uuid(&vertex.uuid()) else {
+    pub(crate) fn remove_vertex(&mut self, vertex_key: VertexKey) -> Result<usize, InvariantError> {
+        // Verify the vertex exists
+        if self.tds.get_vertex_by_key(vertex_key).is_none() {
             return Ok(0); // Vertex not found, nothing to remove
-        };
+        }
 
         // Collect all cells containing this vertex by scanning all cells
         let cells_to_remove: CellKeyBuffer = self
@@ -4917,7 +4914,7 @@ where
             // Vertex exists but has no incident cells - use Tds removal
             return self
                 .tds
-                .remove_vertex(vertex)
+                .remove_vertex(vertex_key)
                 .map_err(|e| InvariantError::Tds(e.into_inner()));
         }
 
@@ -4934,7 +4931,7 @@ where
             // Use Tds removal for empty boundary case
             return self
                 .tds
-                .remove_vertex(vertex)
+                .remove_vertex(vertex_key)
                 .map_err(|e| InvariantError::Tds(e.into_inner()));
         }
 
@@ -5013,7 +5010,7 @@ where
 
             // Remove the vertex using Tds method (handles internal bookkeeping)
             self.tds
-                .remove_vertex(vertex)
+                .remove_vertex(vertex_key)
                 .map_err(|e| InvariantError::Tds(e.into_inner()))?;
 
             Ok(cells_removed)
@@ -7398,7 +7395,7 @@ mod tests {
                         .expect("Failed to create triangulation");
 
                     // Find and remove the interior vertex
-                    let interior_vertex = dt
+                    let interior_vertex_key = dt
                         .vertices()
                         .find(|(_, v)| {
                             let coords = v.point().coords();
@@ -7406,11 +7403,11 @@ mod tests {
                                 .zip($interior_point.iter())
                                 .all(|(a, b)| (a - b).abs() < 1e-10)
                         })
-                        .map(|(_, v)| *v)
+                        .map(|(k, _)| k)
                         .expect("Interior vertex not found");
 
                     let initial_cell_count = dt.tds().number_of_cells();
-                    dt.remove_vertex(&interior_vertex)
+                    dt.remove_vertex(interior_vertex_key)
                         .expect("Failed to remove vertex");
 
                     // After removal, should have fewer cells (or same if just 1 simplex left)
@@ -9238,16 +9235,16 @@ mod tests {
             DelaunayTriangulation::new(&vertices).unwrap();
 
         let initial_cells = dt.number_of_cells();
-        let vertex_to_remove = dt
+        let vertex_key = dt
             .vertices()
             .find(|(_, v)| {
                 let c = v.point().coords();
                 (c[0] - 0.5).abs() < 1e-10 && (c[1] - 0.5).abs() < 1e-10
             })
-            .map(|(_, v)| *v)
+            .map(|(k, _)| k)
             .unwrap();
 
-        let removed = dt.remove_vertex(&vertex_to_remove).unwrap();
+        let removed = dt.remove_vertex(vertex_key).unwrap();
         assert!(removed > 0, "Should have removed at least 1 cell");
         assert!(dt.number_of_cells() <= initial_cells);
         assert_eq!(dt.number_of_vertices(), 3);
@@ -9265,8 +9262,8 @@ mod tests {
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
-        let vertex_to_remove = *dt.vertices().next().unwrap().1;
-        let removed = dt.remove_vertex(&vertex_to_remove).unwrap();
+        let vertex_key = dt.vertices().next().unwrap().0;
+        let removed = dt.remove_vertex(vertex_key).unwrap();
         assert!(removed >= 1);
         assert_eq!(dt.number_of_vertices(), 2);
     }
