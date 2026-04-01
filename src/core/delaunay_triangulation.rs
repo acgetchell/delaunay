@@ -5117,7 +5117,10 @@ where
     ///
     /// # Returns
     ///
-    /// The number of cells that were removed along with the vertex.
+    /// The number of cells that were removed along with the vertex. Returns `Ok(0)` if
+    /// `vertex_key` does not refer to a vertex in the triangulation (e.g. a stale key from
+    /// a previously removed vertex or a key that was never inserted). This is a successful
+    /// no-op, not an error.
     ///
     /// # Errors
     ///
