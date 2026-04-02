@@ -317,9 +317,7 @@ pub enum ExplicitConstructionError {
         bound: usize,
     },
     /// A cell does not have exactly D+1 vertex indices.
-    #[error(
-        "Cell {cell_index}: has {actual} vertex indices, expected {expected} for a {expected}D simplex"
-    )]
+    #[error("Cell {cell_index}: has {actual} vertex indices, expected {expected} for a simplex")]
     InvalidCellArity {
         /// The index of the cell in the input slice.
         cell_index: usize,
@@ -340,6 +338,16 @@ pub enum ExplicitConstructionError {
     /// Toroidal topology is incompatible with explicit cell construction.
     #[error("Toroidal topology cannot be combined with explicit cell construction")]
     IncompatibleTopology,
+    /// The assembled TDS failed structural validation (Levels 1–3).
+    ///
+    /// The caller-provided cells passed input validation but the resulting
+    /// triangulation violates structural invariants (e.g., non-manifold facet
+    /// sharing, disconnected components, orientation contradictions).
+    #[error("Structural validation failed: {message}")]
+    ValidationFailed {
+        /// Description of the validation failure.
+        message: String,
+    },
 }
 
 // =============================================================================
@@ -1101,12 +1109,10 @@ where
 
         // Insert all vertices and build index → VertexKey map.
         let mut index_to_key = Vec::with_capacity(vertex_count);
-        for (idx, v) in vertices.iter().enumerate() {
-            let vk = tds.insert_vertex_with_mapping(*v).map_err(|e| {
-                TriangulationConstructionError::InternalInconsistency {
-                    message: format!("explicit: vertex {idx} insertion failed: {e}"),
-                }
-            })?;
+        for v in vertices {
+            let vk = tds
+                .insert_vertex_with_mapping(*v)
+                .map_err(TriangulationConstructionError::from)?;
             index_to_key.push(vk);
         }
 
@@ -1119,22 +1125,18 @@ where
                     message: format!("explicit: cell {cell_idx}: {e}"),
                 }
             })?;
-            tds.insert_cell_with_mapping(cell).map_err(|e| {
-                TriangulationConstructionError::InternalInconsistency {
-                    message: format!("explicit: cell {cell_idx} insertion failed: {e}"),
-                }
-            })?;
+            tds.insert_cell_with_mapping(cell)
+                .map_err(TriangulationConstructionError::from)?;
         }
 
         // Mark as constructed so validation doesn't reject incomplete state.
         tds.construction_state = TriangulationConstructionState::Constructed;
 
         // --- Compute adjacency ---
-        tds.assign_neighbors().map_err(|e| {
-            TriangulationConstructionError::InternalInconsistency {
-                message: format!("explicit: neighbor assignment failed: {e}"),
-            }
-        })?;
+        tds.assign_neighbors()
+            .map_err(|e| ExplicitConstructionError::ValidationFailed {
+                message: format!("neighbor assignment failed: {e}"),
+            })?;
 
         // --- Assign incident cells ---
         tds.assign_incident_cells().map_err(|e| {
@@ -1156,8 +1158,8 @@ where
 
         // --- Validate Levels 1–3 ---
         if let Err(e) = tds.is_valid() {
-            return Err(TriangulationConstructionError::InternalInconsistency {
-                message: format!("explicit: TDS validation failed: {e}"),
+            return Err(ExplicitConstructionError::ValidationFailed {
+                message: format!("TDS validation failed: {e}"),
             }
             .into());
         }

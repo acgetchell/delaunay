@@ -3,12 +3,19 @@
 //! These tests exercise the public API from the outside, using only items exposed
 //! through `delaunay::prelude::triangulation` and `delaunay::core::builder`.
 
+use std::collections::HashMap;
+
 use delaunay::core::builder::{DelaunayTriangulationBuilder, ExplicitConstructionError};
 use delaunay::core::delaunay_triangulation::{
     ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError,
     InsertionOrderStrategy,
 };
 use delaunay::core::triangulation::TopologyGuarantee;
+use delaunay::core::vertex::{Vertex, VertexBuilder};
+use delaunay::geometry::kernel::RobustKernel;
+use delaunay::geometry::point::Point;
+use delaunay::geometry::traits::coordinate::Coordinate;
+use delaunay::topology::characteristics::euler::{count_simplices, euler_characteristic};
 use delaunay::vertex;
 
 // =============================================================================
@@ -89,7 +96,7 @@ fn test_builder_custom_construction_options() {
 
 /// `DelaunayTriangulation::builder()` convenience method compiles and works.
 #[test]
-fn test_delaunay_triangulation_builder_convenience_method() {
+fn test_builder_convenience() {
     let vertices = vec![
         vertex!([0.0_f64, 0.0]),
         vertex!([1.0, 0.0]),
@@ -104,7 +111,7 @@ fn test_delaunay_triangulation_builder_convenience_method() {
 
 /// `DelaunayTriangulation::builder()` with toroidal wrapping.
 #[test]
-fn test_delaunay_triangulation_builder_toroidal_convenience() {
+fn test_builder_toroidal_convenience() {
     let vertices = vec![
         vertex!([0.2_f64, 0.3]),
         vertex!([1.8, 0.1]), // → (0.8, 0.1)
@@ -284,8 +291,6 @@ fn test_builder_toroidal_larger_point_set_2d() {
 /// `build_with_kernel` with `RobustKernel` works for a 3D toroidal case.
 #[test]
 fn test_builder_toroidal_robust_kernel_3d() {
-    use delaunay::geometry::kernel::RobustKernel;
-
     let vertices = vec![
         vertex!([0.2_f64, 0.3, 0.4]),
         vertex!([0.8, 0.1, 0.2]),
@@ -315,9 +320,6 @@ fn test_builder_toroidal_robust_kernel_3d() {
 /// validity and χ separately.
 #[test]
 fn test_builder_toroidal_periodic_chi_zero_2d() {
-    use delaunay::geometry::kernel::RobustKernel;
-    use delaunay::topology::characteristics::euler::{count_simplices, euler_characteristic};
-
     let vertices = vec![
         vertex!([0.1_f64, 0.2]),
         vertex!([0.4, 0.7]),
@@ -354,8 +356,7 @@ fn test_builder_toroidal_periodic_chi_zero_2d() {
 #[test]
 #[ignore = "Slow (>60s): periodic 3D expands to 3^D image points; run with --ignored"]
 fn test_builder_toroidal_periodic_3d_success() {
-    use delaunay::geometry::kernel::RobustKernel;
-    // Keep this as a smoke/regression test rather than a large stress case.
+    // Keep this
     // The periodic 3D pipeline expands to 3^D image points internally, so runtime grows quickly
     // with input size and can become flaky under CI load. We keep a compact, well-separated set
     // above the algorithm minimum (2*D + 1 = 7 points for D=3).
@@ -454,6 +455,53 @@ fn test_explicit_3d_two_tetrahedra() {
     );
 }
 
+/// Round-trip 3D: Build via Delaunay → extract → reconstruct via explicit → same structure.
+#[test]
+fn test_explicit_round_trip_3d() {
+    let vertices = vec![
+        vertex!([0.0_f64, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+        vertex!([1.0, 1.0, 1.0]),
+    ];
+
+    let dt_original = DelaunayTriangulation::new(&vertices).expect("Delaunay build should succeed");
+    let original_vertex_count = dt_original.number_of_vertices();
+    let original_cell_count = dt_original.number_of_cells();
+
+    let tds = dt_original.tds();
+    let vertex_keys: Vec<_> = tds.vertex_keys().collect();
+    let key_to_index: HashMap<_, _> = vertex_keys
+        .iter()
+        .enumerate()
+        .map(|(idx, &vk)| (vk, idx))
+        .collect();
+
+    let extracted_vertices: Vec<_> = vertex_keys
+        .iter()
+        .map(|&vk| *tds.get_vertex_by_key(vk).unwrap())
+        .collect();
+
+    let mut cell_specs: Vec<Vec<usize>> = Vec::new();
+    for (_, cell) in tds.cells() {
+        let spec: Vec<usize> = cell.vertices().iter().map(|vk| key_to_index[vk]).collect();
+        cell_specs.push(spec);
+    }
+
+    let dt_reconstructed =
+        DelaunayTriangulationBuilder::from_vertices_and_cells(&extracted_vertices, &cell_specs)
+            .build::<()>()
+            .expect("explicit 3D reconstruction should succeed");
+
+    assert_eq!(dt_reconstructed.number_of_vertices(), original_vertex_count);
+    assert_eq!(dt_reconstructed.number_of_cells(), original_cell_count);
+    assert!(
+        dt_reconstructed.tds().is_valid().is_ok(),
+        "Reconstructed 3D TDS should be structurally valid"
+    );
+}
+
 /// Round-trip: Build via Delaunay → extract → reconstruct via explicit → same structure.
 #[test]
 fn test_explicit_round_trip_2d() {
@@ -472,7 +520,7 @@ fn test_explicit_round_trip_2d() {
     // Extract vertex keys → index mapping and cell specifications.
     let tds = dt_original.tds();
     let vertex_keys: Vec<_> = tds.vertex_keys().collect();
-    let key_to_index: std::collections::HashMap<_, _> = vertex_keys
+    let key_to_index: HashMap<_, _> = vertex_keys
         .iter()
         .enumerate()
         .map(|(idx, &vk)| (vk, idx))
@@ -681,6 +729,65 @@ fn test_explicit_topology_guarantee_propagated() {
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
 }
 
+/// Explicit construction preserves vertex data (U ≠ ()).
+#[test]
+fn test_explicit_preserves_vertex_data() {
+    let vertices: Vec<Vertex<f64, i32, 2>> = vec![
+        VertexBuilder::default()
+            .point(Point::new([0.0, 0.0]))
+            .data(10_i32)
+            .build()
+            .unwrap(),
+        VertexBuilder::default()
+            .point(Point::new([1.0, 0.0]))
+            .data(20_i32)
+            .build()
+            .unwrap(),
+        VertexBuilder::default()
+            .point(Point::new([0.0, 1.0]))
+            .data(30_i32)
+            .build()
+            .unwrap(),
+    ];
+    let cells = vec![vec![0, 1, 2]];
+
+    let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+        .build::<()>()
+        .expect("explicit build with vertex data should succeed");
+
+    let mut data: Vec<i32> = dt
+        .vertices()
+        .filter_map(|(_, v)| v.data().copied())
+        .collect();
+    data.sort_unstable();
+    assert_eq!(
+        data,
+        vec![10, 20, 30],
+        "Vertex data must survive explicit construction"
+    );
+}
+
+/// Full `validate()` (Levels 1–4) on a Delaunay-compatible explicit mesh.
+#[test]
+fn test_explicit_validate_delaunay_mesh() {
+    // Use a known Delaunay configuration: the standard simplex.
+    let vertices = vec![
+        vertex!([0.0_f64, 0.0]),
+        vertex!([1.0, 0.0]),
+        vertex!([0.5, 0.866_025_403_784_438_6]),
+    ];
+    let cells = vec![vec![0, 1, 2]];
+
+    let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+        .build::<()>()
+        .expect("build should succeed");
+
+    assert!(
+        dt.validate().is_ok(),
+        "Full Levels 1-4 validation should pass for Delaunay-compatible explicit mesh"
+    );
+}
+
 /// Unreferenced vertices: vertices not used by any cell are still present.
 #[test]
 fn test_explicit_unreferenced_vertices() {
@@ -751,6 +858,86 @@ fn test_explicit_error_variant_wrong_arity() {
             )
         ),
         "Expected InvalidCellArity, got: {err}"
+    );
+}
+
+/// Error variant: non-manifold facet sharing returns ExplicitConstruction(ValidationFailed { .. }).
+#[test]
+fn test_explicit_error_variant_non_manifold_facet() {
+    // Three triangles sharing the same edge (0,1) — facet shared by 3 cells
+    // violates the 2-manifold property.
+    let vertices = vec![
+        vertex!([0.0_f64, 0.0]),
+        vertex!([1.0, 0.0]),
+        vertex!([0.0, 1.0]),
+        vertex!([1.0, 1.0]),
+        vertex!([0.5, -1.0]),
+    ];
+    let cells = vec![vec![0, 1, 2], vec![0, 1, 3], vec![0, 1, 4]];
+
+    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+        .build::<()>()
+        .unwrap_err();
+
+    assert!(
+        matches!(
+            err,
+            DelaunayTriangulationConstructionError::ExplicitConstruction(
+                ExplicitConstructionError::ValidationFailed { .. }
+            )
+        ),
+        "Expected ExplicitConstruction(ValidationFailed), got: {err}"
+    );
+}
+
+/// Error variant: duplicate vertex returns ExplicitConstruction(DuplicateVertexInCell { .. }).
+#[test]
+fn test_explicit_error_variant_duplicate_vertex_in_cell() {
+    let vertices = vec![
+        vertex!([0.0_f64, 0.0]),
+        vertex!([1.0, 0.0]),
+        vertex!([0.0, 1.0]),
+    ];
+    let cells = vec![vec![0, 1, 1]]; // Duplicate vertex 1
+
+    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+        .build::<()>()
+        .unwrap_err();
+
+    assert!(
+        matches!(
+            err,
+            DelaunayTriangulationConstructionError::ExplicitConstruction(
+                ExplicitConstructionError::DuplicateVertexInCell { cell_index: 0 }
+            )
+        ),
+        "Expected DuplicateVertexInCell, got: {err}"
+    );
+}
+
+/// Error variant: toroidal + explicit returns ExplicitConstruction(IncompatibleTopology).
+#[test]
+fn test_explicit_error_variant_incompatible_topology() {
+    let vertices = vec![
+        vertex!([0.0_f64, 0.0]),
+        vertex!([1.0, 0.0]),
+        vertex!([0.0, 1.0]),
+    ];
+    let cells = vec![vec![0, 1, 2]];
+
+    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+        .toroidal([1.0, 1.0])
+        .build::<()>()
+        .unwrap_err();
+
+    assert!(
+        matches!(
+            err,
+            DelaunayTriangulationConstructionError::ExplicitConstruction(
+                ExplicitConstructionError::IncompatibleTopology
+            )
+        ),
+        "Expected IncompatibleTopology, got: {err}"
     );
 }
 

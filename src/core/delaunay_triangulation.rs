@@ -5395,10 +5395,14 @@ where
                 }
 
                 // Level 4 (Delaunay property)
-                if let Err(e) = self.is_valid() {
+                if let Err(e) = self.is_delaunay_via_flips() {
                     report.violations.push(InvariantViolation {
                         kind: InvariantKind::DelaunayProperty,
-                        error: e.into(),
+                        error: InvariantError::Delaunay(
+                            DelaunayTriangulationValidationError::VerificationFailed {
+                                message: e.to_string(),
+                            },
+                        ),
                     });
                 }
 
