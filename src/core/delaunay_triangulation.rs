@@ -2651,7 +2651,7 @@ where
                 kernel,
                 tds,
                 global_topology: GlobalTopology::DEFAULT,
-                validation_policy: ValidationPolicy::default(),
+                validation_policy: topology_guarantee.default_validation_policy(),
                 topology_guarantee,
             },
             insertion_state: DelaunayInsertionState::new(),
@@ -2761,7 +2761,7 @@ where
                 kernel,
                 tds,
                 global_topology: GlobalTopology::DEFAULT,
-                validation_policy: ValidationPolicy::default(),
+                validation_policy: topology_guarantee.default_validation_policy(),
                 topology_guarantee,
             },
             insertion_state: DelaunayInsertionState::new(),
@@ -5511,10 +5511,7 @@ where
         kernel: K,
         topology_guarantee: TopologyGuarantee,
     ) -> Self {
-        let validation_policy = match topology_guarantee {
-            TopologyGuarantee::PLManifoldStrict => ValidationPolicy::Always,
-            _ => ValidationPolicy::OnSuspicion,
-        };
+        let validation_policy = topology_guarantee.default_validation_policy();
         Self {
             tri: Triangulation {
                 kernel,

@@ -680,6 +680,35 @@ impl TopologyGuarantee {
         matches!(self, Self::PLManifold | Self::PLManifoldStrict)
     }
 
+    /// Returns the [`ValidationPolicy`] that should be used by default for this guarantee.
+    ///
+    /// [`PLManifoldStrict`](Self::PLManifoldStrict) uses [`Always`](ValidationPolicy::Always)
+    /// so that vertex-link validation runs after every insertion; all others default to
+    /// [`OnSuspicion`](ValidationPolicy::OnSuspicion).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::triangulation::{TopologyGuarantee, ValidationPolicy};
+    ///
+    /// assert_eq!(
+    ///     TopologyGuarantee::PLManifoldStrict.default_validation_policy(),
+    ///     ValidationPolicy::Always,
+    /// );
+    /// assert_eq!(
+    ///     TopologyGuarantee::PLManifold.default_validation_policy(),
+    ///     ValidationPolicy::OnSuspicion,
+    /// );
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn default_validation_policy(self) -> ValidationPolicy {
+        match self {
+            Self::PLManifoldStrict => ValidationPolicy::Always,
+            _ => ValidationPolicy::OnSuspicion,
+        }
+    }
+
     /// Returns `true` if this guarantee is compatible with the given validation policy.
     ///
     /// `PLManifold` requires at least end-of-construction validation, so it's incompatible
@@ -2483,6 +2512,31 @@ where
     /// assert!(dt.as_triangulation().is_valid().is_ok());
     /// ```
     pub fn is_valid(&self) -> Result<(), InvariantError> {
+        self.validate_topology_core()?;
+        // Check geometric orientation after manifold/link checks so topology-specific
+        // diagnostics surface first when multiple invariants are violated.
+        self.validate_geometric_cell_orientation()?;
+        Ok(())
+    }
+
+    /// Validates topological invariants **without** geometric orientation checks.
+    ///
+    /// This is identical to [`is_valid`](Self::is_valid) but omits the
+    /// `validate_geometric_cell_orientation()` step. It is intended for
+    /// explicit combinatorial construction where the user-provided vertex
+    /// orderings may produce negative determinants that are nonetheless
+    /// topologically valid.
+    pub(crate) fn is_valid_topology_only(&self) -> Result<(), InvariantError> {
+        self.validate_topology_core()
+    }
+
+    /// Shared Level-3 topology validation sequence used by both [`is_valid`](Self::is_valid)
+    /// and [`is_valid_topology_only`](Self::is_valid_topology_only).
+    ///
+    /// Checks connectedness, manifold facet degree, closed boundary, ridge/vertex
+    /// links (when required by the topology guarantee), isolated vertices, and
+    /// Euler characteristic.
+    fn validate_topology_core(&self) -> Result<(), InvariantError> {
         // 1. Connectedness
         //
         // Checked first because it is cheaper than building the facet-to-cells map
@@ -2519,51 +2573,6 @@ where
         let topology_result =
             validate_triangulation_euler_with_facet_to_cells_map(&self.tds, &facet_to_cells);
 
-        if let Some(expected) = topology_result.expected
-            && topology_result.chi != expected
-        {
-            return Err(TriangulationValidationError::EulerCharacteristicMismatch {
-                computed: topology_result.chi,
-                expected,
-                classification: topology_result.classification,
-            }
-            .into());
-        }
-        // Check geometric orientation after manifold/link checks so topology-specific
-        // diagnostics surface first when multiple invariants are violated.
-        self.validate_geometric_cell_orientation()?;
-
-        Ok(())
-    }
-
-    /// Validates topological invariants **without** geometric orientation checks.
-    ///
-    /// This is identical to [`is_valid`](Self::is_valid) but omits the
-    /// `validate_geometric_cell_orientation()` step. It is intended for
-    /// explicit combinatorial construction where the user-provided vertex
-    /// orderings may produce negative determinants that are nonetheless
-    /// topologically valid.
-    pub(crate) fn is_valid_topology_only(&self) -> Result<(), InvariantError> {
-        self.validate_global_connectedness()?;
-
-        let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
-        validate_facet_degree(&facet_to_cells)?;
-        validate_closed_boundary(&self.tds, &facet_to_cells)?;
-
-        if self.topology_guarantee.requires_ridge_links() {
-            validate_ridge_links(&self.tds)?;
-        }
-        if self
-            .topology_guarantee
-            .requires_vertex_links_during_insertion()
-        {
-            validate_vertex_links(&self.tds, &facet_to_cells)?;
-        }
-
-        self.validate_no_isolated_vertices()?;
-
-        let topology_result =
-            validate_triangulation_euler_with_facet_to_cells_map(&self.tds, &facet_to_cells);
         if let Some(expected) = topology_result.expected
             && topology_result.chi != expected
         {
@@ -5595,6 +5604,20 @@ mod tests {
         assert!(!TopologyGuarantee::Pseudomanifold.requires_ridge_links());
         assert!(TopologyGuarantee::PLManifold.requires_ridge_links());
         assert!(TopologyGuarantee::PLManifoldStrict.requires_ridge_links());
+
+        // default_validation_policy
+        assert_eq!(
+            TopologyGuarantee::PLManifoldStrict.default_validation_policy(),
+            ValidationPolicy::Always
+        );
+        assert_eq!(
+            TopologyGuarantee::PLManifold.default_validation_policy(),
+            ValidationPolicy::OnSuspicion
+        );
+        assert_eq!(
+            TopologyGuarantee::Pseudomanifold.default_validation_policy(),
+            ValidationPolicy::OnSuspicion
+        );
 
         for policy in [
             ValidationPolicy::Never,

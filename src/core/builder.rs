@@ -301,6 +301,28 @@ fn search_closed_2d_selection(
 /// [`from_vertices_and_cells`](DelaunayTriangulationBuilder::from_vertices_and_cells).
 /// TDS assembly errors (vertex/cell insertion, neighbor wiring, validation) flow
 /// through the existing [`TriangulationConstructionError`] hierarchy.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::builder::{DelaunayTriangulationBuilder, ExplicitConstructionError};
+/// use delaunay::core::delaunay_triangulation::DelaunayTriangulationConstructionError;
+/// use delaunay::vertex;
+///
+/// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
+/// let cells = vec![vec![0, 1]]; // Wrong arity for 2D (needs 3 vertices)
+///
+/// let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+///     .build::<()>()
+///     .unwrap_err();
+///
+/// assert!(matches!(
+///     err,
+///     DelaunayTriangulationConstructionError::ExplicitConstruction(
+///         ExplicitConstructionError::InvalidCellArity { cell_index: 0, actual: 2, expected: 3 }
+///     )
+/// ));
+/// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ExplicitConstructionError {
@@ -338,14 +360,15 @@ pub enum ExplicitConstructionError {
     /// Toroidal topology is incompatible with explicit cell construction.
     #[error("Toroidal topology cannot be combined with explicit cell construction")]
     IncompatibleTopology,
-    /// The assembled TDS failed structural validation (Levels 1–3).
+    /// The assembled TDS failed post-assembly validation.
     ///
     /// The caller-provided cells passed input validation but the resulting
-    /// triangulation violates structural invariants (e.g., non-manifold facet
-    /// sharing, disconnected components, orientation contradictions).
-    #[error("Structural validation failed: {message}")]
+    /// triangulation violates structural or topological invariants (e.g.,
+    /// non-manifold facet sharing, disconnected components, orientation
+    /// contradictions, isolated vertices, Euler characteristic mismatch).
+    #[error("Validation failed: {message}")]
     ValidationFailed {
-        /// Description of the validation failure.
+        /// Human-readable description of the validation failure.
         message: String,
     },
 }
@@ -1135,13 +1158,11 @@ where
         })?;
 
         // --- Normalize orientation ---
-        if let Err(_err) = tds.normalize_coherent_orientation() {
-            #[cfg(debug_assertions)]
-            tracing::debug!(
-                ?_err,
-                "explicit construction: skipping coherent-orientation normalization failure"
-            );
-        }
+        tds.normalize_coherent_orientation().map_err(|e| {
+            ExplicitConstructionError::ValidationFailed {
+                message: format!("coherent orientation normalization failed: {e}"),
+            }
+        })?;
 
         // --- Validate Levels 1–3 (structural + topology) ---
         //
@@ -1169,8 +1190,9 @@ where
         // Level 3 (topology, excluding geometric orientation): connectedness,
         // manifold facets, isolated vertices, Euler characteristic, and
         // PL-manifold vertex/ridge links when the topology guarantee requires
-        // them.  We call `is_valid()` which covers all these; the only check
-        // we intentionally omit is `validate_geometric_cell_orientation`.
+        // them.  We call `is_valid_topology_only()` which covers all these;
+        // the only check we intentionally omit is
+        // `validate_geometric_cell_orientation`.
         if let Err(e) = dt.tri.is_valid_topology_only() {
             return Err(ExplicitConstructionError::ValidationFailed {
                 message: format!("topology validation failed: {e}"),
