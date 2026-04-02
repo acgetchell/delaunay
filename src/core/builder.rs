@@ -104,7 +104,7 @@
 #![forbid(unsafe_code)]
 
 use crate::core::cell::Cell;
-use crate::core::collections::{FastHashMap, Uuid, VertexKeySet};
+use crate::core::collections::{FastHashMap, FastHashSet, Uuid, VertexKeySet};
 use crate::core::delaunay_triangulation::{
     ConstructionOptions, DelaunayRepairPolicy, DelaunayTriangulation,
     DelaunayTriangulationConstructionError, InitialSimplexStrategy, RetryPolicy,
@@ -112,7 +112,9 @@ use crate::core::delaunay_triangulation::{
 use crate::core::operations::InsertionOutcome;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionError};
-use crate::core::triangulation_data_structure::{CellKey, VertexKey};
+use crate::core::triangulation_data_structure::{
+    CellKey, Tds, TriangulationConstructionState, VertexKey,
+};
 use crate::core::util::periodic_facet_key_from_lifted_vertices;
 use crate::core::vertex::{Vertex, VertexBuilder};
 use crate::geometry::kernel::{AdaptiveKernel, Kernel};
@@ -128,16 +130,14 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use std::num::NonZeroUsize;
+use thiserror::Error;
 const TWO_POW_52_I64: i64 = 4_503_599_627_370_496; // 2^52
 const TWO_POW_52_F64: f64 = 4_503_599_627_370_496.0; // 2^52
 const MAX_OFFSET_UNITS: i64 = 1_048_576;
 const IMAGE_JITTER_UNITS: i64 = 64;
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0100_0000_01b3;
-type LiftedVertex<const D: usize> = (
-    crate::core::triangulation_data_structure::VertexKey,
-    [i8; D],
-);
+type LiftedVertex<const D: usize> = (VertexKey, [i8; D]);
 type SymbolicSignature<const D: usize> = Vec<LiftedVertex<D>>;
 type PeriodicFacetKey = u64;
 type PeriodicCandidate<const D: usize> = (
@@ -292,6 +292,57 @@ fn search_closed_2d_selection(
 }
 
 // =============================================================================
+// ERROR TYPES
+// =============================================================================
+
+/// Input validation errors for explicit triangulation construction.
+///
+/// These errors represent invalid inputs to
+/// [`from_vertices_and_cells`](DelaunayTriangulationBuilder::from_vertices_and_cells).
+/// TDS assembly errors (vertex/cell insertion, neighbor wiring, validation) flow
+/// through the existing [`TriangulationConstructionError`] hierarchy.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ExplicitConstructionError {
+    /// A cell references a vertex index that is out of bounds.
+    #[error(
+        "Cell {cell_index}: vertex index {vertex_index} is out of bounds (vertex count: {bound})"
+    )]
+    IndexOutOfBounds {
+        /// The index of the cell in the input slice.
+        cell_index: usize,
+        /// The out-of-bounds vertex index.
+        vertex_index: usize,
+        /// The number of vertices provided.
+        bound: usize,
+    },
+    /// A cell does not have exactly D+1 vertex indices.
+    #[error(
+        "Cell {cell_index}: has {actual} vertex indices, expected {expected} for a {expected}D simplex"
+    )]
+    InvalidCellArity {
+        /// The index of the cell in the input slice.
+        cell_index: usize,
+        /// The actual number of vertex indices.
+        actual: usize,
+        /// The expected number (D+1).
+        expected: usize,
+    },
+    /// A cell contains duplicate vertex indices.
+    #[error("Cell {cell_index}: contains duplicate vertex indices")]
+    DuplicateVertexInCell {
+        /// The index of the cell in the input slice.
+        cell_index: usize,
+    },
+    /// No cells were provided.
+    #[error("No cells provided for explicit construction")]
+    EmptyCells,
+    /// Toroidal topology is incompatible with explicit cell construction.
+    #[error("Toroidal topology cannot be combined with explicit cell construction")]
+    IncompatibleTopology,
+}
+
+// =============================================================================
 // BUILDER STRUCT
 // =============================================================================
 
@@ -347,6 +398,12 @@ where
     /// When `true` (set by [`.toroidal_periodic()`](Self::toroidal_periodic)), the
     /// Phase 2 image-point algorithm is used instead of the Phase 1 canonicalization path.
     use_image_point_method: bool,
+    /// Optional explicit cell specifications for direct combinatorial construction.
+    ///
+    /// When set, the builder constructs a triangulation from the given vertices and
+    /// cells directly, bypassing point-insertion-based Delaunay construction.
+    /// Each inner slice must contain exactly D+1 vertex indices.
+    explicit_cells: Option<&'v [Vec<usize>]>,
 }
 
 // =============================================================================
@@ -400,6 +457,61 @@ where
             topology_guarantee: TopologyGuarantee::DEFAULT,
             construction_options: ConstructionOptions::default(),
             use_image_point_method: false,
+            explicit_cells: None,
+        }
+    }
+
+    /// Creates a builder for explicit combinatorial construction from `f64` vertices
+    /// and cell specifications.
+    ///
+    /// This constructs a triangulation directly from the given connectivity,
+    /// **without** Delaunay point insertion. The result is a valid triangulation
+    /// (Levels 1–3: elements, structure, topology) but the Delaunay property
+    /// (Level 4) is **not** guaranteed.
+    ///
+    /// Each cell specification must contain exactly `D+1` vertex indices into
+    /// the `vertices` slice.
+    ///
+    /// To optionally repair to Delaunay after construction, call
+    /// [`repair_delaunay_with_flips`](DelaunayTriangulation::repair_delaunay_with_flips)
+    /// on the result.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::builder::DelaunayTriangulationBuilder;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([1.0, 1.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let cells = vec![
+    ///     vec![0, 1, 2],
+    ///     vec![0, 2, 3],
+    /// ];
+    ///
+    /// let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    ///     .build::<()>()
+    ///     .unwrap();
+    ///
+    /// assert_eq!(dt.number_of_vertices(), 4);
+    /// assert_eq!(dt.number_of_cells(), 2);
+    /// ```
+    #[must_use]
+    pub fn from_vertices_and_cells(
+        vertices: &'v [Vertex<f64, U, D>],
+        cells: &'v [Vec<usize>],
+    ) -> Self {
+        Self {
+            vertices,
+            topology: None,
+            topology_guarantee: TopologyGuarantee::DEFAULT,
+            construction_options: ConstructionOptions::default(),
+            use_image_point_method: false,
+            explicit_cells: Some(cells),
         }
     }
 }
@@ -448,6 +560,7 @@ where
             topology_guarantee: TopologyGuarantee::DEFAULT,
             construction_options: ConstructionOptions::default(),
             use_image_point_method: false,
+            explicit_cells: None,
         }
     }
 
@@ -843,6 +956,14 @@ where
         K::Scalar: ScalarAccumulative,
         V: DataType,
     {
+        // Explicit-cells path: bypass Delaunay insertion entirely.
+        if let Some(cells) = self.explicit_cells {
+            if self.topology.is_some() {
+                return Err(ExplicitConstructionError::IncompatibleTopology.into());
+            }
+            return Self::build_explicit(kernel, self.vertices, cells, self.topology_guarantee);
+        }
+
         match (self.topology, self.use_image_point_method) {
             (None, _) => {
                 // Euclidean path: delegate directly.
@@ -914,6 +1035,138 @@ where
                 Ok(dt)
             }
         }
+    }
+
+    /// Builds a triangulation from explicit vertex and cell specifications.
+    ///
+    /// This is a purely combinatorial construction that assembles a valid TDS from
+    /// the given connectivity without Delaunay point insertion. The result is validated
+    /// at Levels 1–3 (elements, structure, topology) but the Delaunay property
+    /// (Level 4) is **not** checked or guaranteed.
+    ///
+    /// # Algorithm
+    ///
+    /// 1. Validate input: each cell has D+1 in-bounds, unique vertex indices.
+    /// 2. Build a `Tds`: insert all vertices, then insert cells from the specifications.
+    /// 3. Compute adjacency via `assign_neighbors()`.
+    /// 4. Assign incident cells and normalize orientation.
+    /// 5. Validate structural integrity (`tds.is_valid()`).
+    /// 6. Wrap in `DelaunayTriangulation` via `from_tds_with_topology_guarantee`.
+    fn build_explicit<K, V>(
+        kernel: &K,
+        vertices: &[Vertex<T, U, D>],
+        cells: &[Vec<usize>],
+        topology_guarantee: TopologyGuarantee,
+    ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
+    where
+        K: Kernel<D, Scalar = T>,
+        V: DataType,
+    {
+        // --- Input validation ---
+        if cells.is_empty() {
+            return Err(ExplicitConstructionError::EmptyCells.into());
+        }
+
+        let vertex_count = vertices.len();
+        for (cell_idx, cell_spec) in cells.iter().enumerate() {
+            if cell_spec.len() != D + 1 {
+                return Err(ExplicitConstructionError::InvalidCellArity {
+                    cell_index: cell_idx,
+                    actual: cell_spec.len(),
+                    expected: D + 1,
+                }
+                .into());
+            }
+            let mut seen = FastHashSet::default();
+            for &vi in cell_spec {
+                if vi >= vertex_count {
+                    return Err(ExplicitConstructionError::IndexOutOfBounds {
+                        cell_index: cell_idx,
+                        vertex_index: vi,
+                        bound: vertex_count,
+                    }
+                    .into());
+                }
+                if !seen.insert(vi) {
+                    return Err(ExplicitConstructionError::DuplicateVertexInCell {
+                        cell_index: cell_idx,
+                    }
+                    .into());
+                }
+            }
+        }
+
+        // --- Build TDS ---
+        let mut tds: Tds<T, U, V, D> = Tds::empty();
+
+        // Insert all vertices and build index → VertexKey map.
+        let mut index_to_key = Vec::with_capacity(vertex_count);
+        for (idx, v) in vertices.iter().enumerate() {
+            let vk = tds.insert_vertex_with_mapping(*v).map_err(|e| {
+                TriangulationConstructionError::InternalInconsistency {
+                    message: format!("explicit: vertex {idx} insertion failed: {e}"),
+                }
+            })?;
+            index_to_key.push(vk);
+        }
+
+        // Insert cells.
+        for (cell_idx, cell_spec) in cells.iter().enumerate() {
+            let vertex_keys: Vec<VertexKey> =
+                cell_spec.iter().map(|&vi| index_to_key[vi]).collect();
+            let cell = Cell::new(vertex_keys, None).map_err(|e| {
+                TriangulationConstructionError::FailedToCreateCell {
+                    message: format!("explicit: cell {cell_idx}: {e}"),
+                }
+            })?;
+            tds.insert_cell_with_mapping(cell).map_err(|e| {
+                TriangulationConstructionError::InternalInconsistency {
+                    message: format!("explicit: cell {cell_idx} insertion failed: {e}"),
+                }
+            })?;
+        }
+
+        // Mark as constructed so validation doesn't reject incomplete state.
+        tds.construction_state = TriangulationConstructionState::Constructed;
+
+        // --- Compute adjacency ---
+        tds.assign_neighbors().map_err(|e| {
+            TriangulationConstructionError::InternalInconsistency {
+                message: format!("explicit: neighbor assignment failed: {e}"),
+            }
+        })?;
+
+        // --- Assign incident cells ---
+        tds.assign_incident_cells().map_err(|e| {
+            TriangulationConstructionError::InternalInconsistency {
+                message: format!("explicit: incident cell assignment failed: {e}"),
+            }
+        })?;
+
+        // --- Normalize orientation ---
+        if let Err(_err) = tds.normalize_coherent_orientation() {
+            // Best-effort: some configurations may not normalize cleanly.
+            // Defer hard failure to the subsequent is_valid() check.
+            #[cfg(debug_assertions)]
+            tracing::debug!(
+                ?_err,
+                "explicit construction: skipping coherent-orientation normalization failure"
+            );
+        }
+
+        // --- Validate Levels 1–3 ---
+        if let Err(e) = tds.is_valid() {
+            return Err(TriangulationConstructionError::InternalInconsistency {
+                message: format!("explicit: TDS validation failed: {e}"),
+            }
+            .into());
+        }
+
+        Ok(DelaunayTriangulation::from_tds_with_topology_guarantee(
+            tds,
+            kernel.clone(),
+            topology_guarantee,
+        ))
     }
 
     /// Builds a true periodic (toroidal) Delaunay triangulation using the 3^D image-point method.

@@ -116,6 +116,15 @@ pub enum DelaunayTriangulationConstructionError {
     /// Lower-layer construction error (Triangulation / TDS).
     #[error(transparent)]
     Triangulation(#[from] TriangulationConstructionError),
+
+    /// Input validation error from explicit combinatorial construction.
+    ///
+    /// Returned by [`DelaunayTriangulationBuilder::from_vertices_and_cells`](crate::core::builder::DelaunayTriangulationBuilder::from_vertices_and_cells)
+    /// when the caller-provided vertices/cells fail validation (wrong arity,
+    /// out-of-bounds indices, etc.). TDS assembly errors flow through the
+    /// [`Triangulation`](Self::Triangulation) variant instead.
+    #[error(transparent)]
+    ExplicitConstruction(#[from] crate::core::builder::ExplicitConstructionError),
 }
 
 /// Errors that can occur during Delaunay triangulation validation and repair.
@@ -5328,95 +5337,6 @@ where
         self.is_valid()
     }
 
-    /// Create a `DelaunayTriangulation` from a deserialized `Tds` with a default kernel.
-    ///
-    /// This is useful when you've serialized just the `Tds` and want to reconstruct
-    /// the `DelaunayTriangulation` with default kernel settings.
-    ///
-    /// # Notes
-    ///
-    /// - The internal `insertion_state.last_inserted_cell` "locate hint" is intentionally **not** persisted
-    ///   across serialization boundaries. Constructing via `from_tds` (including the serde
-    ///   `Deserialize` impl below) always resets it to `None`. This can make the first few
-    ///   insertions after loading slightly slower, but is otherwise behaviorally irrelevant.
-    /// - The internal spatial hash-grid index used to accelerate incremental insertion is also a
-    ///   performance-only cache and is not serialized. Constructing via `from_tds` leaves it unset
-    ///   so it can be rebuilt lazily on demand.
-    /// - The topology guarantee ([`TopologyGuarantee`]) is also not serialized (this type serializes
-    ///   only the `Tds`). Constructing via `from_tds` resets it to `TopologyGuarantee::DEFAULT`
-    ///   (currently `PLManifold`). Call [`set_topology_guarantee`](Self::set_topology_guarantee)
-    ///   after loading if you want to relax to `Pseudomanifold` for performance, or use
-    ///   [`from_tds_with_topology_guarantee`](Self::from_tds_with_topology_guarantee) to set it
-    ///   at construction time.
-    /// - Runtime global topology metadata ([`GlobalTopology`]) is also not serialized. Constructing
-    ///   via `from_tds` resets it to [`GlobalTopology::Euclidean`]. Use
-    ///   [`set_global_topology`](Self::set_global_topology) after loading if you need to restore
-    ///   toroidal metadata.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::geometry::kernel::FastKernel;
-    /// use delaunay::vertex;
-    ///
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 0.0, 1.0]),
-    /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 4> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
-    ///
-    /// // Serialize just the Tds
-    /// let json = serde_json::to_string(dt.tds()).unwrap();
-    ///
-    /// // Deserialize Tds and reconstruct DelaunayTriangulation
-    /// let tds: Tds<f64, (), (), 4> = serde_json::from_str(&json).unwrap();
-    /// let reconstructed = DelaunayTriangulation::from_tds(tds, FastKernel::new());
-    /// assert_eq!(reconstructed.number_of_vertices(), 5);
-    /// ```
-    #[must_use]
-    pub const fn from_tds(tds: Tds<K::Scalar, U, V, D>, kernel: K) -> Self {
-        Self {
-            tri: Triangulation {
-                kernel,
-                tds,
-                global_topology: GlobalTopology::DEFAULT,
-                validation_policy: ValidationPolicy::OnSuspicion,
-                topology_guarantee: TopologyGuarantee::DEFAULT,
-            },
-            insertion_state: DelaunayInsertionState::new(),
-            spatial_index: None,
-        }
-    }
-
-    /// Create a `DelaunayTriangulation` from a deserialized `Tds` with an explicit topology guarantee.
-    ///
-    /// This is identical to [`from_tds`](Self::from_tds), but allows callers to set the desired
-    /// [`TopologyGuarantee`] at construction time.
-    #[must_use]
-    pub const fn from_tds_with_topology_guarantee(
-        tds: Tds<K::Scalar, U, V, D>,
-        kernel: K,
-        topology_guarantee: TopologyGuarantee,
-    ) -> Self {
-        Self {
-            tri: Triangulation {
-                kernel,
-                tds,
-                global_topology: GlobalTopology::DEFAULT,
-                validation_policy: ValidationPolicy::OnSuspicion,
-                topology_guarantee,
-            },
-            insertion_state: DelaunayInsertionState::new(),
-            spatial_index: None,
-        }
-    }
-
     /// Generate a comprehensive validation report for the full validation hierarchy.
     ///
     /// This is intended for debugging/telemetry (e.g. `insert_with_statistics`) where
@@ -5488,6 +5408,111 @@ where
                     Err(report)
                 }
             }
+        }
+    }
+}
+
+// =============================================================================
+// PURE STRUCT ASSEMBLY (Minimal Bounds)
+// =============================================================================
+//
+// These methods only assemble the `DelaunayTriangulation` struct from its parts
+// and do not perform any geometric operations. They live in a minimally-bounded
+// impl block so callers (e.g. explicit combinatorial construction) are not
+// forced to satisfy `ScalarAccumulative + NumCast`.
+
+impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
+where
+    K: Kernel<D>,
+    U: DataType,
+    V: DataType,
+{
+    /// Create a `DelaunayTriangulation` from a `Tds` with a default kernel.
+    ///
+    /// This is useful when you've serialized just the `Tds` and want to reconstruct
+    /// the `DelaunayTriangulation` with default kernel settings.
+    ///
+    /// # Notes
+    ///
+    /// - The internal `insertion_state.last_inserted_cell` "locate hint" is intentionally **not** persisted
+    ///   across serialization boundaries. Constructing via `from_tds` (including the serde
+    ///   `Deserialize` impl below) always resets it to `None`. This can make the first few
+    ///   insertions after loading slightly slower, but is otherwise behaviorally irrelevant.
+    /// - The internal spatial hash-grid index used to accelerate incremental insertion is also a
+    ///   performance-only cache and is not serialized. Constructing via `from_tds` leaves it unset
+    ///   so it can be rebuilt lazily on demand.
+    /// - The topology guarantee ([`TopologyGuarantee`]) is also not serialized (this type serializes
+    ///   only the `Tds`). Constructing via `from_tds` resets it to `TopologyGuarantee::DEFAULT`
+    ///   (currently `PLManifold`). Call [`set_topology_guarantee`](Self::set_topology_guarantee)
+    ///   after loading if you want to relax to `Pseudomanifold` for performance, or use
+    ///   [`from_tds_with_topology_guarantee`](Self::from_tds_with_topology_guarantee) to set it
+    ///   at construction time.
+    /// - Runtime global topology metadata ([`GlobalTopology`]) is also not serialized. Constructing
+    ///   via `from_tds` resets it to [`GlobalTopology::Euclidean`]. Use
+    ///   [`set_global_topology`](Self::set_global_topology) after loading if you need to restore
+    ///   toroidal metadata.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::geometry::kernel::FastKernel;
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 4> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// // Serialize just the Tds
+    /// let json = serde_json::to_string(dt.tds()).unwrap();
+    ///
+    /// // Deserialize Tds and reconstruct DelaunayTriangulation
+    /// let tds: Tds<f64, (), (), 4> = serde_json::from_str(&json).unwrap();
+    /// let reconstructed = DelaunayTriangulation::from_tds(tds, FastKernel::new());
+    /// assert_eq!(reconstructed.number_of_vertices(), 5);
+    /// ```
+    #[must_use]
+    pub const fn from_tds(tds: Tds<K::Scalar, U, V, D>, kernel: K) -> Self {
+        Self {
+            tri: Triangulation {
+                kernel,
+                tds,
+                global_topology: GlobalTopology::DEFAULT,
+                validation_policy: ValidationPolicy::OnSuspicion,
+                topology_guarantee: TopologyGuarantee::DEFAULT,
+            },
+            insertion_state: DelaunayInsertionState::new(),
+            spatial_index: None,
+        }
+    }
+
+    /// Create a `DelaunayTriangulation` from a `Tds` with an explicit topology guarantee.
+    ///
+    /// This is identical to [`from_tds`](Self::from_tds), but allows callers to set the desired
+    /// [`TopologyGuarantee`] at construction time.
+    #[must_use]
+    pub const fn from_tds_with_topology_guarantee(
+        tds: Tds<K::Scalar, U, V, D>,
+        kernel: K,
+        topology_guarantee: TopologyGuarantee,
+    ) -> Self {
+        Self {
+            tri: Triangulation {
+                kernel,
+                tds,
+                global_topology: GlobalTopology::DEFAULT,
+                validation_policy: ValidationPolicy::OnSuspicion,
+                topology_guarantee,
+            },
+            insertion_state: DelaunayInsertionState::new(),
+            spatial_index: None,
         }
     }
 }

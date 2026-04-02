@@ -1094,7 +1094,7 @@ where
     ///
     /// Returns `TdsError` if neighbor assignment fails due to inconsistent
     /// data structures or invalid facet sharing patterns.
-    fn assign_neighbors(&mut self) -> Result<(), TdsError> {
+    pub(crate) fn assign_neighbors(&mut self) -> Result<(), TdsError> {
         // Build facet mapping with vertex index information using optimized collections
         // facet_key -> [(cell_key, vertex_index_opposite_to_facet)]
         type FacetInfo = (CellKey, usize);
