@@ -2536,6 +2536,48 @@ where
         Ok(())
     }
 
+    /// Validates topological invariants **without** geometric orientation checks.
+    ///
+    /// This is identical to [`is_valid`](Self::is_valid) but omits the
+    /// `validate_geometric_cell_orientation()` step. It is intended for
+    /// explicit combinatorial construction where the user-provided vertex
+    /// orderings may produce negative determinants that are nonetheless
+    /// topologically valid.
+    pub(crate) fn is_valid_topology_only(&self) -> Result<(), InvariantError> {
+        self.validate_global_connectedness()?;
+
+        let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
+        validate_facet_degree(&facet_to_cells)?;
+        validate_closed_boundary(&self.tds, &facet_to_cells)?;
+
+        if self.topology_guarantee.requires_ridge_links() {
+            validate_ridge_links(&self.tds)?;
+        }
+        if self
+            .topology_guarantee
+            .requires_vertex_links_during_insertion()
+        {
+            validate_vertex_links(&self.tds, &facet_to_cells)?;
+        }
+
+        self.validate_no_isolated_vertices()?;
+
+        let topology_result =
+            validate_triangulation_euler_with_facet_to_cells_map(&self.tds, &facet_to_cells);
+        if let Some(expected) = topology_result.expected
+            && topology_result.chi != expected
+        {
+            return Err(TriangulationValidationError::EulerCharacteristicMismatch {
+                computed: topology_result.chi,
+                expected,
+                classification: topology_result.classification,
+            }
+            .into());
+        }
+
+        Ok(())
+    }
+
     /// Validates vertex-link condition at construction completion.
     ///
     /// This should be called once after batch construction is complete to certify

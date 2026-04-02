@@ -5500,19 +5500,27 @@ where
     /// Create a `DelaunayTriangulation` from a `Tds` with an explicit topology guarantee.
     ///
     /// This is identical to [`from_tds`](Self::from_tds), but allows callers to set the desired
-    /// [`TopologyGuarantee`] at construction time.
+    /// [`TopologyGuarantee`] at construction time. The initial
+    /// [`ValidationPolicy`] is derived from the guarantee:
+    /// [`PLManifoldStrict`](TopologyGuarantee::PLManifoldStrict) uses
+    /// [`Always`](ValidationPolicy::Always); all others default to
+    /// [`OnSuspicion`](ValidationPolicy::OnSuspicion).
     #[must_use]
     pub const fn from_tds_with_topology_guarantee(
         tds: Tds<K::Scalar, U, V, D>,
         kernel: K,
         topology_guarantee: TopologyGuarantee,
     ) -> Self {
+        let validation_policy = match topology_guarantee {
+            TopologyGuarantee::PLManifoldStrict => ValidationPolicy::Always,
+            _ => ValidationPolicy::OnSuspicion,
+        };
         Self {
             tri: Triangulation {
                 kernel,
                 tds,
                 global_topology: GlobalTopology::DEFAULT,
-                validation_policy: ValidationPolicy::OnSuspicion,
+                validation_policy,
                 topology_guarantee,
             },
             insertion_state: DelaunayInsertionState::new(),

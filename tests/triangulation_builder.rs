@@ -430,6 +430,32 @@ fn test_explicit_2d_two_triangle_quad() {
     );
 }
 
+/// Explicit construction normalizes incoherent local cell orderings.
+///
+/// Swapping two vertices in one cell flips its local orientation relative to an
+/// otherwise valid two-triangle mesh. The builder should repair that internal
+/// ordering detail and still produce a structurally valid TDS.
+#[test]
+fn test_explicit_normalizes_incoherent_cell_order() {
+    let vertices = vec![
+        vertex!([0.0_f64, 0.0]),
+        vertex!([1.0, 0.0]),
+        vertex!([1.0, 1.0]),
+        vertex!([0.0, 1.0]),
+    ];
+    let mut cells = vec![vec![0, 1, 2], vec![0, 2, 3]];
+    cells[1].swap(0, 1);
+
+    let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+        .build::<()>()
+        .expect("explicit build should normalize incoherent cell ordering");
+
+    assert!(
+        dt.tds().is_valid().is_ok(),
+        "builder should canonicalize incoherent cell orderings into a valid TDS"
+    );
+}
+
 /// 3D: Build two tetrahedra sharing a face.
 #[test]
 fn test_explicit_3d_two_tetrahedra() {
@@ -788,9 +814,9 @@ fn test_explicit_validate_delaunay_mesh() {
     );
 }
 
-/// Unreferenced vertices: vertices not used by any cell are still present.
+/// Unreferenced vertices fail Level 3 topology validation (isolated vertex).
 #[test]
-fn test_explicit_unreferenced_vertices() {
+fn test_explicit_unreferenced_vertices_rejected() {
     let vertices = vec![
         vertex!([0.0_f64, 0.0]),
         vertex!([1.0, 0.0]),
@@ -799,16 +825,19 @@ fn test_explicit_unreferenced_vertices() {
     ];
     let cells = vec![vec![0, 1, 2]];
 
-    let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
         .build::<()>()
-        .expect("build with unreferenced vertices should succeed");
+        .unwrap_err();
 
-    assert_eq!(
-        dt.number_of_vertices(),
-        4,
-        "All vertices should be inserted"
+    assert!(
+        matches!(
+            err,
+            DelaunayTriangulationConstructionError::ExplicitConstruction(
+                ExplicitConstructionError::ValidationFailed { .. }
+            )
+        ),
+        "Unreferenced vertices should produce ValidationFailed, got: {err}"
     );
-    assert_eq!(dt.number_of_cells(), 1);
 }
 
 /// Error variant: empty cells returns ExplicitConstruction(EmptyCells).

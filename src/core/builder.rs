@@ -469,20 +469,12 @@ where
         }
     }
 
-    /// Creates a builder for explicit combinatorial construction from `f64` vertices
-    /// and cell specifications.
+    /// `f64` convenience wrapper for
+    /// [`from_vertices_and_cells`](Self::from_vertices_and_cells).
     ///
-    /// This constructs a triangulation directly from the given connectivity,
-    /// **without** Delaunay point insertion. The result is a valid triangulation
-    /// (Levels 1–3: elements, structure, topology) but the Delaunay property
-    /// (Level 4) is **not** guaranteed.
-    ///
-    /// Each cell specification must contain exactly `D+1` vertex indices into
-    /// the `vertices` slice.
-    ///
-    /// To optionally repair to Delaunay after construction, call
-    /// [`repair_delaunay_with_flips`](DelaunayTriangulation::repair_delaunay_with_flips)
-    /// on the result.
+    /// Pins `T = f64` so that callers using the default `AdaptiveKernel` never
+    /// need explicit type annotations. For non-`f64` scalars, use the generic
+    /// version on the `T: CoordinateScalar` impl block.
     ///
     /// # Examples
     ///
@@ -496,10 +488,7 @@ where
     ///     vertex!([1.0, 1.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let cells = vec![
-    ///     vec![0, 1, 2],
-    ///     vec![0, 2, 3],
-    /// ];
+    /// let cells = vec![vec![0, 1, 2], vec![0, 2, 3]];
     ///
     /// let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
     ///     .build::<()>()
@@ -1147,8 +1136,6 @@ where
 
         // --- Normalize orientation ---
         if let Err(_err) = tds.normalize_coherent_orientation() {
-            // Best-effort: some configurations may not normalize cleanly.
-            // Defer hard failure to the subsequent is_valid() check.
             #[cfg(debug_assertions)]
             tracing::debug!(
                 ?_err,
@@ -1156,19 +1143,50 @@ where
             );
         }
 
-        // --- Validate Levels 1–3 ---
-        if let Err(e) = tds.is_valid() {
+        // --- Validate Levels 1–3 (structural + topology) ---
+        //
+        // We construct the DT first so that the Triangulation-layer topology
+        // checks (connectedness, isolated vertices, Euler characteristic,
+        // manifold facets, vertex/ridge links) run against the assembled
+        // complex.  Geometric orientation is NOT checked: the user-provided
+        // vertex orderings may produce negative determinants that are valid
+        // for non-Delaunay meshes.
+        let dt = DelaunayTriangulation::from_tds_with_topology_guarantee(
+            tds,
+            kernel.clone(),
+            topology_guarantee,
+        );
+
+        // Level 1–2: TDS structural validation (mappings, neighbors, facet
+        // sharing, coherent orientation, etc.).
+        if let Err(e) = dt.tri.tds.validate() {
             return Err(ExplicitConstructionError::ValidationFailed {
-                message: format!("TDS validation failed: {e}"),
+                message: format!("structural validation failed: {e}"),
             }
             .into());
         }
 
-        Ok(DelaunayTriangulation::from_tds_with_topology_guarantee(
-            tds,
-            kernel.clone(),
-            topology_guarantee,
-        ))
+        // Level 3 (topology, excluding geometric orientation): connectedness,
+        // manifold facets, isolated vertices, Euler characteristic, and
+        // PL-manifold vertex/ridge links when the topology guarantee requires
+        // them.  We call `is_valid()` which covers all these; the only check
+        // we intentionally omit is `validate_geometric_cell_orientation`.
+        if let Err(e) = dt.tri.is_valid_topology_only() {
+            return Err(ExplicitConstructionError::ValidationFailed {
+                message: format!("topology validation failed: {e}"),
+            }
+            .into());
+        }
+
+        // Completion-time PL-manifold check (vertex links) if required.
+        if let Err(e) = dt.tri.validate_at_completion() {
+            return Err(ExplicitConstructionError::ValidationFailed {
+                message: format!("PL-manifold completion validation failed: {e}"),
+            }
+            .into());
+        }
+
+        Ok(dt)
     }
 
     /// Builds a true periodic (toroidal) Delaunay triangulation using the 3^D image-point method.
