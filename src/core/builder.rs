@@ -295,12 +295,19 @@ fn search_closed_2d_selection(
 // ERROR TYPES
 // =============================================================================
 
-/// Input validation errors for explicit triangulation construction.
+/// Errors from explicit triangulation construction.
 ///
-/// These errors represent invalid inputs to
-/// [`from_vertices_and_cells`](DelaunayTriangulationBuilder::from_vertices_and_cells).
-/// TDS assembly errors (vertex/cell insertion, neighbor wiring, validation) flow
-/// through the existing [`TriangulationConstructionError`] hierarchy.
+/// Input validation errors (wrong arity, out-of-bounds indices, duplicate vertices,
+/// empty cells) and post-assembly failures (neighbor wiring, orientation
+/// normalization, structural/topology/nondegeneracy validation) are returned as
+/// variants of this enum — callers should match on
+/// [`ExplicitConstructionError`] (wrapped in
+/// [`DelaunayTriangulationConstructionError::ExplicitConstruction`]).
+///
+/// Only low-level TDS insertion failures (vertex/cell creation) flow through
+/// [`TriangulationConstructionError`].
+///
+/// [`DelaunayTriangulationConstructionError::ExplicitConstruction`]: crate::core::delaunay_triangulation::DelaunayTriangulationConstructionError::ExplicitConstruction
 ///
 /// # Examples
 ///
@@ -1124,8 +1131,9 @@ where
     /// 2. Build a `Tds`: insert all vertices, then insert cells from the specifications.
     /// 3. Compute adjacency via `assign_neighbors()`.
     /// 4. Assign incident cells via `assign_incident_cells()`.
-    /// 5. Normalize coherent orientation via `normalize_coherent_orientation()`.
-    /// 6. Wrap in `DelaunayTriangulation` via `from_tds_with_topology_guarantee`.
+    /// 5. Wrap in `DelaunayTriangulation` via `from_tds_with_topology_guarantee`.
+    /// 6. Normalize coherent orientation and promote to positive canonical sign
+    ///    via `normalize_and_promote_positive_orientation()`.
     /// 7. Validate Levels 1–2 (TDS structural: `tds.validate()`).
     /// 8. Validate Level 3 topology (excluding geometric orientation).
     /// 9. Validate PL-manifold completion (vertex links, if required).
@@ -1216,26 +1224,30 @@ where
             }
         })?;
 
-        // --- Normalize orientation ---
-        tds.normalize_coherent_orientation().map_err(|e| {
-            ExplicitConstructionError::ValidationFailed {
-                message: format!("coherent orientation normalization failed: {e}"),
-            }
-        })?;
-
-        // --- Validate Levels 1–3 (structural + topology) ---
+        // --- Wrap in DelaunayTriangulation ---
         //
-        // We construct the DT first so that the Triangulation-layer topology
-        // checks (connectedness, isolated vertices, Euler characteristic,
-        // manifold facets, vertex/ridge links) run against the assembled
-        // complex.  Geometric orientation is NOT checked: the user-provided
-        // vertex orderings may produce negative determinants that are valid
-        // for non-Delaunay meshes.
-        let dt = DelaunayTriangulation::from_tds_with_topology_guarantee(
+        // Construct the DT first so the Triangulation-layer helpers
+        // (orientation promotion, topology checks) operate on the assembled
+        // complex.
+        let mut dt = DelaunayTriangulation::from_tds_with_topology_guarantee(
             tds,
             kernel.clone(),
             topology_guarantee,
         );
+
+        // --- Normalize orientation and promote to positive ---
+        //
+        // normalize_and_promote_positive_orientation() combines:
+        //   1. BFS coherent-orientation normalization (adjacent cells agree)
+        //   2. Global sign canonicalization (flip all if representative is negative)
+        //   3. Bounded per-cell promotion passes for FP-precision edge cases
+        // This ensures the returned DT has positive geometric orientation,
+        // matching the invariant expected by validate_geometric_cell_orientation.
+        dt.tri
+            .normalize_and_promote_positive_orientation()
+            .map_err(|e| ExplicitConstructionError::ValidationFailed {
+                message: format!("orientation normalization/promotion failed: {e}"),
+            })?;
 
         // Level 1–2: TDS structural validation (mappings, neighbors, facet
         // sharing, coherent orientation, etc.).
