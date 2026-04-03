@@ -856,7 +856,7 @@ where
             kernel,
             tds: Tds::empty(),
             global_topology: GlobalTopology::DEFAULT,
-            validation_policy: ValidationPolicy::default(),
+            validation_policy: TopologyGuarantee::DEFAULT.default_validation_policy(),
             topology_guarantee: TopologyGuarantee::DEFAULT,
         }
     }
@@ -1055,12 +1055,12 @@ where
 
     #[cfg(test)]
     #[inline]
-    pub(crate) fn new_with_tds(kernel: K, tds: Tds<K::Scalar, U, V, D>) -> Self {
+    pub(crate) const fn new_with_tds(kernel: K, tds: Tds<K::Scalar, U, V, D>) -> Self {
         Self {
             kernel,
             tds,
             global_topology: GlobalTopology::DEFAULT,
-            validation_policy: ValidationPolicy::default(),
+            validation_policy: TopologyGuarantee::DEFAULT.default_validation_policy(),
             topology_guarantee: TopologyGuarantee::DEFAULT,
         }
     }
@@ -2528,6 +2528,36 @@ where
     /// topologically valid.
     pub(crate) fn is_valid_topology_only(&self) -> Result<(), InvariantError> {
         self.validate_topology_core()
+    }
+
+    /// Verifies that no cell is geometrically degenerate (zero-volume simplex).
+    ///
+    /// This is a sign-agnostic check: it flags cells whose exact orientation
+    /// determinant is zero (collinear in 2D, coplanar in 3D, etc.) regardless
+    /// of the sign.  Intended for explicit construction where the user-supplied
+    /// vertex set must form non-degenerate simplices.
+    ///
+    /// Unlike [`validate_geometric_cell_orientation`](Self::validate_geometric_cell_orientation),
+    /// this does **not** reject negative-orientation cells.
+    pub(crate) fn validate_geometric_nondegeneracy(&self) -> Result<(), TdsError> {
+        for (cell_key, cell) in self.tds.cells() {
+            let orientation = self.evaluate_cell_orientation_for_context(
+                cell_key,
+                cell,
+                "geometric nondegeneracy check",
+                "Orientation predicate failed for cell",
+            )?;
+            if orientation == 0 {
+                return Err(TdsError::InconsistentDataStructure {
+                    message: format!(
+                        "Cell {:?} (key {cell_key:?}) is geometrically degenerate \
+                         (zero-volume simplex from collinear/coplanar vertices)",
+                        cell.uuid(),
+                    ),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Shared Level-3 topology validation sequence used by both [`is_valid`](Self::is_valid)
@@ -5619,6 +5649,13 @@ mod tests {
             ValidationPolicy::OnSuspicion
         );
 
+        // Verify constructors use the centralized mapping.
+        let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_empty(FastKernel::new());
+        assert_eq!(
+            tri.validation_policy(),
+            TopologyGuarantee::DEFAULT.default_validation_policy()
+        );
+
         for policy in [
             ValidationPolicy::Never,
             ValidationPolicy::OnSuspicion,
@@ -5712,6 +5749,47 @@ mod tests {
         tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
         assert!(tri.validate_at_completion().is_ok());
     }
+    /// Regression test: a negatively oriented but topologically valid simplex
+    /// passes `is_valid_topology_only()` while failing `is_valid()` (which
+    /// includes the geometric orientation check).
+    #[test]
+    fn test_negative_oriented_simplex_topology_only() {
+        // Build a single positively oriented triangle, then swap vertices 0↔1
+        // to make it negatively oriented.
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+
+        // Confirm it starts valid.
+        assert!(tri.is_valid().is_ok());
+        assert!(tri.is_valid_topology_only().is_ok());
+
+        // Flip the single cell's vertex order to make it negatively oriented.
+        let cell_key = tri.tds.cell_keys().next().expect("single cell exists");
+        tri.tds
+            .get_cell_by_key_mut(cell_key)
+            .expect("cell exists")
+            .swap_vertex_slots(0, 1);
+
+        // Topology-only validation should still pass (orientation sign is irrelevant).
+        assert!(
+            tri.is_valid_topology_only().is_ok(),
+            "Negatively oriented simplex should pass topology-only validation"
+        );
+
+        // Full validation (which includes geometric orientation) should fail.
+        assert!(
+            tri.is_valid().is_err(),
+            "Negatively oriented simplex should fail full is_valid()"
+        );
+    }
+
     fn build_invalid_vertex_link_tds_2d() -> (Tds<f64, (), (), 2>, VertexKey) {
         // Two triangles sharing only a single vertex produce a disconnected vertex link.
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();

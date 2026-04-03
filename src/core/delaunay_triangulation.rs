@@ -5484,17 +5484,7 @@ where
     /// ```
     #[must_use]
     pub const fn from_tds(tds: Tds<K::Scalar, U, V, D>, kernel: K) -> Self {
-        Self {
-            tri: Triangulation {
-                kernel,
-                tds,
-                global_topology: GlobalTopology::DEFAULT,
-                validation_policy: ValidationPolicy::OnSuspicion,
-                topology_guarantee: TopologyGuarantee::DEFAULT,
-            },
-            insertion_state: DelaunayInsertionState::new(),
-            spatial_index: None,
-        }
+        Self::from_tds_with_topology_guarantee(tds, kernel, TopologyGuarantee::DEFAULT)
     }
 
     /// Create a `DelaunayTriangulation` from a `Tds` with an explicit topology guarantee.

@@ -104,7 +104,7 @@
 #![forbid(unsafe_code)]
 
 use crate::core::cell::Cell;
-use crate::core::collections::{FastHashMap, FastHashSet, Uuid, VertexKeySet};
+use crate::core::collections::{FastHashMap, Uuid, VertexKeySet};
 use crate::core::delaunay_triangulation::{
     ConstructionOptions, DelaunayRepairPolicy, DelaunayTriangulation,
     DelaunayTriangulationConstructionError, InitialSimplexStrategy, RetryPolicy,
@@ -525,14 +525,7 @@ where
         vertices: &'v [Vertex<f64, U, D>],
         cells: &'v [Vec<usize>],
     ) -> Self {
-        Self {
-            vertices,
-            topology: None,
-            topology_guarantee: TopologyGuarantee::DEFAULT,
-            construction_options: ConstructionOptions::default(),
-            use_image_point_method: false,
-            explicit_cells: Some(cells),
-        }
+        Self::from_vertices_and_cells_generic(vertices, cells)
     }
 }
 
@@ -545,6 +538,51 @@ where
     T: CoordinateScalar,
     U: DataType,
 {
+    /// Creates a builder from explicit vertex and cell specifications.
+    ///
+    /// This constructs a triangulation from the given connectivity without
+    /// Delaunay point insertion. Works with any scalar type `T`.
+    ///
+    /// For `f64` coordinates, prefer the convenience wrapper on the
+    /// `f64`-specialised impl which avoids explicit type annotations.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::builder::DelaunayTriangulationBuilder;
+    /// use delaunay::core::vertex::{Vertex, VertexBuilder};
+    /// use delaunay::geometry::point::Point;
+    /// use delaunay::geometry::traits::coordinate::Coordinate;
+    ///
+    /// let vertices: Vec<Vertex<f32, (), 2>> = vec![
+    ///     VertexBuilder::default().point(Point::new([0.0_f32, 0.0])).build().unwrap(),
+    ///     VertexBuilder::default().point(Point::new([1.0_f32, 0.0])).build().unwrap(),
+    ///     VertexBuilder::default().point(Point::new([0.0_f32, 1.0])).build().unwrap(),
+    /// ];
+    /// let cells = vec![vec![0, 1, 2]];
+    ///
+    /// let dt = DelaunayTriangulationBuilder::from_vertices_and_cells_generic(&vertices, &cells)
+    ///     .build::<()>()
+    ///     .unwrap();
+    ///
+    /// assert_eq!(dt.number_of_vertices(), 3);
+    /// assert_eq!(dt.number_of_cells(), 1);
+    /// ```
+    #[must_use]
+    pub fn from_vertices_and_cells_generic(
+        vertices: &'v [Vertex<T, U, D>],
+        cells: &'v [Vec<usize>],
+    ) -> Self {
+        Self {
+            vertices,
+            topology: None,
+            topology_guarantee: TopologyGuarantee::DEFAULT,
+            construction_options: ConstructionOptions::default(),
+            use_image_point_method: false,
+            explicit_cells: Some(cells),
+        }
+    }
+
     /// Creates a builder from a vertex slice of any scalar type `T` and user data type `U`.
     ///
     /// For `f64` coordinates, prefer [`new`](DelaunayTriangulationBuilder::new) which
@@ -981,6 +1019,14 @@ where
             if self.topology.is_some() {
                 return Err(ExplicitConstructionError::IncompatibleTopology.into());
             }
+            if self.construction_options != ConstructionOptions::default() {
+                return Err(ExplicitConstructionError::ValidationFailed {
+                    message: "ConstructionOptions are not applicable to explicit cell \
+                              construction and must be left at their default values"
+                        .to_string(),
+                }
+                .into());
+            }
             return Self::build_explicit(kernel, self.vertices, cells, self.topology_guarantee);
         }
 
@@ -1097,8 +1143,7 @@ where
                 }
                 .into());
             }
-            let mut seen = FastHashSet::default();
-            for &vi in cell_spec {
+            for (i, &vi) in cell_spec.iter().enumerate() {
                 if vi >= vertex_count {
                     return Err(ExplicitConstructionError::IndexOutOfBounds {
                         cell_index: cell_idx,
@@ -1107,11 +1152,13 @@ where
                     }
                     .into());
                 }
-                if !seen.insert(vi) {
-                    return Err(ExplicitConstructionError::DuplicateVertexInCell {
-                        cell_index: cell_idx,
+                for &vj in &cell_spec[i + 1..] {
+                    if vi == vj {
+                        return Err(ExplicitConstructionError::DuplicateVertexInCell {
+                            cell_index: cell_idx,
+                        }
+                        .into());
                     }
-                    .into());
                 }
             }
         }
@@ -1204,6 +1251,20 @@ where
         if let Err(e) = dt.tri.validate_at_completion() {
             return Err(ExplicitConstructionError::ValidationFailed {
                 message: format!("PL-manifold completion validation failed: {e}"),
+            }
+            .into());
+        }
+
+        // --- Geometric nondegeneracy ---
+        //
+        // Reject degenerate simplices (zero-volume cells from collinear /
+        // coplanar vertices).  Unlike the Delaunay construction paths, which
+        // may tolerate near-degenerate cells from flip-based repair,
+        // explicit construction should not silently accept geometrically
+        // collapsed cells supplied by the user.
+        if let Err(e) = dt.tri.validate_geometric_nondegeneracy() {
+            return Err(ExplicitConstructionError::ValidationFailed {
+                message: format!("geometric nondegeneracy check failed: {e}"),
             }
             .into());
         }
