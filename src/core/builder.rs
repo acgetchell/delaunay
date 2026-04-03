@@ -360,6 +360,18 @@ pub enum ExplicitConstructionError {
     /// Toroidal topology is incompatible with explicit cell construction.
     #[error("Toroidal topology cannot be combined with explicit cell construction")]
     IncompatibleTopology,
+    /// Non-default [`ConstructionOptions`] were set on an explicit-cell builder.
+    ///
+    /// [`ConstructionOptions`] (insertion order, deduplication, retry policy) apply
+    /// only to the Delaunay point-insertion path and are not meaningful for
+    /// explicit cell construction.
+    ///
+    /// [`ConstructionOptions`]: crate::core::delaunay_triangulation::ConstructionOptions
+    #[error(
+        "ConstructionOptions are not applicable to explicit cell construction \
+         and must be left at their default values"
+    )]
+    UnsupportedConstructionOptions,
     /// The assembled TDS failed post-assembly validation.
     ///
     /// The caller-provided cells passed input validation but the resulting
@@ -493,11 +505,12 @@ where
     }
 
     /// `f64` convenience wrapper for
-    /// [`from_vertices_and_cells`](Self::from_vertices_and_cells).
+    /// [`from_vertices_and_cells_generic`](Self::from_vertices_and_cells_generic).
     ///
     /// Pins `T = f64` so that callers using the default `AdaptiveKernel` never
     /// need explicit type annotations. For non-`f64` scalars, use the generic
-    /// version on the `T: CoordinateScalar` impl block.
+    /// [`from_vertices_and_cells_generic`](Self::from_vertices_and_cells_generic)
+    /// on the `T: CoordinateScalar` impl block.
     ///
     /// # Examples
     ///
@@ -1020,12 +1033,7 @@ where
                 return Err(ExplicitConstructionError::IncompatibleTopology.into());
             }
             if self.construction_options != ConstructionOptions::default() {
-                return Err(ExplicitConstructionError::ValidationFailed {
-                    message: "ConstructionOptions are not applicable to explicit cell \
-                              construction and must be left at their default values"
-                        .to_string(),
-                }
-                .into());
+                return Err(ExplicitConstructionError::UnsupportedConstructionOptions.into());
             }
             return Self::build_explicit(kernel, self.vertices, cells, self.topology_guarantee);
         }
@@ -1115,9 +1123,13 @@ where
     /// 1. Validate input: each cell has D+1 in-bounds, unique vertex indices.
     /// 2. Build a `Tds`: insert all vertices, then insert cells from the specifications.
     /// 3. Compute adjacency via `assign_neighbors()`.
-    /// 4. Assign incident cells and normalize orientation.
-    /// 5. Validate structural integrity (`tds.is_valid()`).
+    /// 4. Assign incident cells via `assign_incident_cells()`.
+    /// 5. Normalize coherent orientation via `normalize_coherent_orientation()`.
     /// 6. Wrap in `DelaunayTriangulation` via `from_tds_with_topology_guarantee`.
+    /// 7. Validate Levels 1–2 (TDS structural: `tds.validate()`).
+    /// 8. Validate Level 3 topology (excluding geometric orientation).
+    /// 9. Validate PL-manifold completion (vertex links, if required).
+    /// 10. Validate geometric nondegeneracy (reject zero-volume cells).
     fn build_explicit<K, V>(
         kernel: &K,
         vertices: &[Vertex<T, U, D>],

@@ -683,7 +683,9 @@ impl TopologyGuarantee {
     /// Returns the [`ValidationPolicy`] that should be used by default for this guarantee.
     ///
     /// [`PLManifoldStrict`](Self::PLManifoldStrict) uses [`Always`](ValidationPolicy::Always)
-    /// so that vertex-link validation runs after every insertion; all others default to
+    /// so that full Level-3 global validation (including vertex-link checks) runs
+    /// after every insertion — this is the strongest and slowest setting.
+    /// All other guarantees default to
     /// [`OnSuspicion`](ValidationPolicy::OnSuspicion).
     ///
     /// # Examples
@@ -2548,13 +2550,13 @@ where
                 "Orientation predicate failed for cell",
             )?;
             if orientation == 0 {
-                return Err(TdsError::InconsistentDataStructure {
+                return Err(TdsError::Geometric(GeometricError::DegenerateOrientation {
                     message: format!(
                         "Cell {:?} (key {cell_key:?}) is geometrically degenerate \
                          (zero-volume simplex from collinear/coplanar vertices)",
                         cell.uuid(),
                     ),
-                });
+                }));
             }
         }
         Ok(())
