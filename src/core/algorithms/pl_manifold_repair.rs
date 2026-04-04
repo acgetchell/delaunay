@@ -98,6 +98,20 @@ pub struct PlManifoldRepairStats {
 // =============================================================================
 
 /// Errors that can occur during PL-manifold repair.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::triangulation::delaunayize::PlManifoldRepairError;
+///
+/// let err = PlManifoldRepairError::BudgetExhausted {
+///     iterations: 64,
+///     cells_removed: 100,
+///     max_iterations: 64,
+///     max_cells_removed: 10_000,
+/// };
+/// assert!(err.to_string().contains("budget exhausted"));
+/// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum PlManifoldRepairError {
@@ -164,8 +178,13 @@ where
 {
     let mut stats = PlManifoldRepairStats::default();
 
-    // Structural precheck (Levels 1–2).
-    tds.validate()?;
+    // Structural precheck: validate everything EXCEPT facet sharing, since
+    // facet over-sharing is exactly what we are trying to repair. A full
+    // `tds.validate()` would reject over-shared facets and return before the
+    // repair loop could run.
+    tds.validate_vertex_mappings()?;
+    tds.validate_cell_mappings()?;
+    tds.validate_cell_vertex_keys()?;
 
     // Fast path: if the facet-degree invariant already holds, nothing to do.
     let facet_map = tds.build_facet_to_cells_map()?;
@@ -494,6 +513,149 @@ mod tests {
     // =============================================================================
     // DETERMINISM TESTS
     // =============================================================================
+
+    // =============================================================================
+    // FACET OVER-SHARING REPAIR TESTS
+    // =============================================================================
+
+    /// Helper: create a TDS with over-shared facets by duplicating a cell in a
+    /// multi-cell triangulation. Interior facets go from degree 2 to degree 3.
+    fn make_overshared_tds() -> Tds<f64, (), (), 3> {
+        use crate::core::cell::Cell;
+
+        // 5 points → multiple cells with interior facets at degree 2.
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.5, 0.5, 0.5]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let mut tds = dt.tds().clone();
+        assert!(
+            tds.number_of_cells() > 1,
+            "Need multiple cells for interior facets"
+        );
+
+        // Duplicate the first cell → its facets go from degree 2 to degree 3.
+        let cell_key = tds.cell_keys().next().unwrap();
+        let vkeys = tds.get_cell_vertices(cell_key).unwrap();
+        let dup_cell = Cell::new(vkeys.to_vec(), None).unwrap();
+        tds.insert_cell_with_mapping(dup_cell).unwrap();
+
+        // Sanity: at least one facet should now be over-shared.
+        let facet_map = tds.build_facet_to_cells_map().unwrap();
+        assert!(
+            validate_facet_degree(&facet_map).is_err(),
+            "Expected over-shared facets after duplicating a cell"
+        );
+
+        tds
+    }
+
+    /// Create a TDS with over-shared facets and verify that repair removes
+    /// cells until the facet-degree invariant is satisfied.
+    #[test]
+    fn test_repair_removes_overshared_cells() {
+        init_tracing();
+        let mut tds = make_overshared_tds();
+        let cells_before = tds.number_of_cells();
+
+        let stats = repair_facet_oversharing(&mut tds, &PlManifoldRepairConfig::default()).unwrap();
+
+        assert!(stats.succeeded);
+        assert!(stats.cells_removed > 0);
+        assert!(stats.iterations > 0);
+        assert!(tds.number_of_cells() < cells_before);
+
+        let facet_map = tds.build_facet_to_cells_map().unwrap();
+        assert!(validate_facet_degree(&facet_map).is_ok());
+    }
+
+    /// Verify that a tight cell-removal budget triggers `BudgetExhausted`.
+    #[test]
+    fn test_repair_budget_exhausted_on_overshared_tds() {
+        init_tracing();
+        let mut tds = make_overshared_tds();
+
+        let config = PlManifoldRepairConfig {
+            max_iterations: 64,
+            max_cells_removed: 0,
+        };
+        let result = repair_facet_oversharing(&mut tds, &config);
+        assert!(
+            matches!(result, Err(PlManifoldRepairError::BudgetExhausted { .. })),
+            "Expected BudgetExhausted, got: {result:?}"
+        );
+    }
+
+    /// Verify that `max_iterations: 0` on an over-shared TDS triggers
+    /// `BudgetExhausted` (iteration budget, not cell budget).
+    #[test]
+    fn test_repair_iteration_budget_exhausted_on_overshared_tds() {
+        init_tracing();
+        let mut tds = make_overshared_tds();
+
+        let config = PlManifoldRepairConfig {
+            max_iterations: 0,
+            max_cells_removed: 10_000,
+        };
+        let result = repair_facet_oversharing(&mut tds, &config);
+        assert!(
+            matches!(result, Err(PlManifoldRepairError::BudgetExhausted { .. })),
+            "Expected BudgetExhausted from iteration limit, got: {result:?}"
+        );
+    }
+
+    // =============================================================================
+    // QUALITY SCORE TESTS
+    // =============================================================================
+
+    /// Verify that `cell_quality_score` returns a finite, positive value for a
+    /// valid cell and is deterministic across calls.
+    #[test]
+    fn test_cell_quality_score_finite_and_deterministic() {
+        init_tracing();
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let tds = dt.tds();
+        let cell_key = tds.cell_keys().next().unwrap();
+
+        let score1 = cell_quality_score(tds, cell_key);
+        let score2 = cell_quality_score(tds, cell_key);
+
+        assert!(score1.is_finite(), "Score should be finite, got {score1}");
+        assert!(score1 > 0.0, "Score should be positive, got {score1}");
+        assert_eq!(score1, score2, "Score should be deterministic");
+    }
+
+    // =============================================================================
+    // DETERMINISM TESTS
+    // =============================================================================
+
+    /// Verify that repair of an over-shared TDS produces identical stats
+    /// across repeated runs on identical input.
+    #[test]
+    fn test_deterministic_repair_on_overshared_tds() {
+        init_tracing();
+
+        let mut tds1 = make_overshared_tds();
+        let mut tds2 = make_overshared_tds();
+
+        let config = PlManifoldRepairConfig::default();
+        let stats1 = repair_facet_oversharing(&mut tds1, &config).unwrap();
+        let stats2 = repair_facet_oversharing(&mut tds2, &config).unwrap();
+
+        assert_eq!(stats1, stats2, "Repair should be deterministic");
+    }
 
     #[test]
     fn test_deterministic_repeated_runs() {

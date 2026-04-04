@@ -3799,7 +3799,7 @@ where
     /// - A vertex exists without a corresponding key-to-UUID mapping
     /// - The bidirectional mappings are inconsistent (UUID maps to key A, but key A maps to different UUID)
     ///
-    fn validate_vertex_mappings(&self) -> Result<(), TdsError> {
+    pub(crate) fn validate_vertex_mappings(&self) -> Result<(), TdsError> {
         if self.uuid_to_vertex_key.len() != self.vertices.len() {
             return Err(TdsError::MappingInconsistency {
                 entity: EntityKind::Vertex,
@@ -3867,7 +3867,7 @@ where
     /// - A cell exists without a corresponding key-to-UUID mapping
     /// - The bidirectional mappings are inconsistent (UUID maps to key A, but key A maps to different UUID)
     ///
-    fn validate_cell_mappings(&self) -> Result<(), TdsError> {
+    pub(crate) fn validate_cell_mappings(&self) -> Result<(), TdsError> {
         if self.uuid_to_cell_key.len() != self.cells.len() {
             return Err(TdsError::MappingInconsistency {
                 entity: EntityKind::Cell,
@@ -3924,7 +3924,7 @@ where
     ///
     /// Returns `TdsError::VertexNotFound` if any cell
     /// references a vertex key that doesn't exist in the vertices `storage map`.
-    fn validate_cell_vertex_keys(&self) -> Result<(), TdsError> {
+    pub(crate) fn validate_cell_vertex_keys(&self) -> Result<(), TdsError> {
         for (cell_key, cell) in &self.cells {
             let cell_uuid = cell.uuid();
             for (vertex_idx, &vertex_key) in cell.vertices().iter().enumerate() {
