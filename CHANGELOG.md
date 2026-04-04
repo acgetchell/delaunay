@@ -5,7 +5,234 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.4] - 2026-03-26
+## [Unreleased]
+
+### ⚠️ Breaking Changes
+
+- Change remove_vertex to accept VertexKey instead of &Vertex [#300](https://github.com/acgetchell/delaunay/pull/300)
+
+### Merged Pull Requests
+
+- Add MVP delaunayize-by-flips workflow [#227](https://github.com/acgetchell/delaunay/pull/227) [#303](https://github.com/acgetchell/delaunay/pull/303)
+- Add explicit construction from vertices and cells [#293](https://github.com/acgetchell/delaunay/pull/293)
+  [#301](https://github.com/acgetchell/delaunay/pull/301)
+- Change remove_vertex to accept VertexKey instead of &Vertex [#300](https://github.com/acgetchell/delaunay/pull/300)
+- Bump pygments from 2.19.2 to 2.20.0 [#298](https://github.com/acgetchell/delaunay/pull/298)
+- Bump astral-sh/setup-uv from 7.6.0 to 8.0.0 [#297](https://github.com/acgetchell/delaunay/pull/297)
+- Bump taiki-e/install-action from 2.69.6 to 2.70.2 [#296](https://github.com/acgetchell/delaunay/pull/296)
+- Bump codecov/codecov-action from 5.5.3 to 6.0.0 [#295](https://github.com/acgetchell/delaunay/pull/295)
+- Bump the dependencies group with 3 updates [#294](https://github.com/acgetchell/delaunay/pull/294)
+
+### Added
+
+- Add explicit construction from vertices and cells [#293](https://github.com/acgetchell/delaunay/pull/293)
+  [#301](https://github.com/acgetchell/delaunay/pull/301) [`458ebae`](https://github.com/acgetchell/delaunay/commit/458ebae0fbbd6c5142f88d24c4ff254f058f9285)
+
+- feat: add explicit construction from vertices and cells [#293](https://github.com/acgetchell/delaunay/pull/293)
+
+  - Introduce `DelaunayTriangulationBuilder::from_vertices_and_cells` for
+    combinatorial construction bypassing Delaunay insertion
+
+  - Add `build_explicit` path that constructs a TDS directly from given
+    vertices and cell index lists, with adjacency and orientation repair
+
+  - Define `ExplicitConstructionError` enum with `IndexOutOfBounds`,
+    `InvalidCellArity`, `DuplicateVertexInCell`, `EmptyCells`, and
+    `IncompatibleTopology` variants
+
+  - Wire `ExplicitConstruction` variant into
+    `DelaunayTriangulationConstructionError`
+
+  - Expose `assign_neighbors` as `pub(crate)` in the TDS
+  - Add comprehensive integration tests for explicit construction across
+    2D/3D, round-trip fidelity, error cases, and topology guarantees
+
+  - Changed: refine explicit construction validation and error reporting
+
+  Update the triangulation builder to return specific ValidationFailed
+  errors when structural invariants are violated. Refine the Delaunay
+  property check in the validation suite to use flip-based verification
+  for more precise error reporting. Expand the test suite to cover 3D
+  round-trip fidelity, non-manifold topology errors, and vertex data
+  consistency during explicit construction.
+
+- Add MVP delaunayize-by-flips workflow [#227](https://github.com/acgetchell/delaunay/pull/227) [#303](https://github.com/acgetchell/delaunay/pull/303)
+  [`0370070`](https://github.com/acgetchell/delaunay/commit/037007076e20728f0b23e528c89c783a1f5d2a70)
+
+- feat: add MVP delaunayize-by-flips workflow [#227](https://github.com/acgetchell/delaunay/pull/227)
+
+  Add a public `delaunayize_by_flips` entrypoint that performs bounded
+  deterministic topology repair followed by flip-based Delaunay repair,
+  with an optional fallback rebuild from the vertex set.
+
+  New files:
+
+  - src/core/algorithms/pl_manifold_repair.rs: pub(crate) bounded
+    facet over-sharing repair (iterative worst-quality cell removal)
+
+  - src/triangulation/delaunayize.rs: public API with DelaunayizeConfig,
+    DelaunayizeOutcome, DelaunayizeError, and delaunayize_by_flips()
+
+  - tests/delaunayize_workflow.rs: 13 integration tests covering
+    success paths, fallback behavior, determinism, error variants,
+    and flip-then-repair round-trip
+
+  Other changes:
+
+  - Box DelaunayRepairDiagnostics in NonConvergent variant to keep
+    DelaunayRepairError small (eliminates downstream boxing)
+
+  - Wire modules in src/lib.rs with self-contained prelude at
+    prelude::triangulation::delaunayize
+
+  - Re-export PlManifoldRepairStats, PlManifoldRepairError, and
+    DelaunayRepairStats from the delaunayize module
+
+  - Update docs/api_design.md and docs/code_organization.md
+
+  - Changed: allow manifold repair to proceed on over-shared facets
+
+  Refactor `repair_facet_oversharing` to use partial structural pre-checks
+  rather than full validation, as the latter rejects over-shared facets
+  before repair can occur. Expand test coverage for budget exhaustion,
+  cell removal logic, and repair determinism.
+
+### Changed
+
+- [**breaking**] Change remove_vertex to accept VertexKey instead of &Vertex [#300](https://github.com/acgetchell/delaunay/pull/300)
+  [`71cca10`](https://github.com/acgetchell/delaunay/commit/71cca109607c66fb8af62b3e427078458bcef66d)
+
+- refactor!: change remove_vertex to accept VertexKey instead of &Vertex
+
+  - More ergonomic: callers pass a key directly instead of looking up and
+    borrowing the full Vertex struct
+
+  - More efficient: O(1) key dereference replaces UUID-based lookup
+  - Consistent with set_vertex_data, set_cell_data, and the Edit API which
+    all use keys
+
+  - Aligned with the stated API design in docs/api_design.md
+  - Simplifies internal callers in flips.rs (remove get+copy+remove
+    pattern) and builder.rs (eliminate intermediate vertex copies)
+
+  - Add stale-key idempotency test for the new VertexKey API
+
+### Maintenance
+
+- Bump pygments from 2.19.2 to 2.20.0 [#298](https://github.com/acgetchell/delaunay/pull/298)
+  [`6228a59`](https://github.com/acgetchell/delaunay/commit/6228a5990cfe38e711cafd2ce851bc3c9494ddc3)
+
+Bumps [pygments](https://github.com/pygments/pygments) from 2.19.2 to 2.20.0.
+
+- [Release notes](https://github.com/pygments/pygments/releases)
+- [Changelog](https://github.com/pygments/pygments/blob/master/CHANGES)
+- [Commits](https://github.com/pygments/pygments/compare/2.19.2...2.20.0)
+
+  ---
+  updated-dependencies:
+
+- dependency-name: pygments
+    dependency-version: 2.20.0
+    dependency-type: indirect
+  ...
+
+- Bump the dependencies group with 3 updates [#294](https://github.com/acgetchell/delaunay/pull/294)
+  [`4b3ccb3`](https://github.com/acgetchell/delaunay/commit/4b3ccb3da6827bd63b3c76219ea32a1cb5029b64)
+
+Bumps the dependencies group with 3 updates: [rustc-hash](https://github.com/rust-lang/rustc-hash) , [ordered-float](https://github.com/reem/rust-ordered-float)
+and [uuid](https://github.com/uuid-rs/uuid) .
+
+  Updates `rustc-hash` from 2.1.1 to 2.1.2
+
+- [Changelog](https://github.com/rust-lang/rustc-hash/blob/master/CHANGELOG.md)
+- [Commits](https://github.com/rust-lang/rustc-hash/compare/v2.1.1...v2.1.2)
+
+  Updates `ordered-float` from 5.2.0 to 5.3.0
+
+- [Release notes](https://github.com/reem/rust-ordered-float/releases)
+- [Commits](https://github.com/reem/rust-ordered-float/compare/v5.2.0...v5.3.0)
+
+  Updates `uuid` from 1.22.0 to 1.23.0
+
+- [Release notes](https://github.com/uuid-rs/uuid/releases)
+- [Commits](https://github.com/uuid-rs/uuid/compare/v1.22.0...v1.23.0)
+
+  ---
+  updated-dependencies:
+
+- dependency-name: rustc-hash
+    dependency-version: 2.1.2
+    dependency-type: direct:production
+    update-type: version-update:semver-patch
+    dependency-group: dependencies
+
+- dependency-name: ordered-float
+    dependency-version: 5.3.0
+    dependency-type: direct:production
+    update-type: version-update:semver-minor
+    dependency-group: dependencies
+
+- dependency-name: uuid
+    dependency-version: 1.23.0
+    dependency-type: direct:production
+    update-type: version-update:semver-minor
+    dependency-group: dependencies
+  ...
+
+- Bump codecov/codecov-action from 5.5.3 to 6.0.0 [#295](https://github.com/acgetchell/delaunay/pull/295)
+  [`420a1c5`](https://github.com/acgetchell/delaunay/commit/420a1c50a8e34b6b02ba4b64e460a6d9c6ae30c5)
+
+Bumps [codecov/codecov-action](https://github.com/codecov/codecov-action) from 5.5.3 to 6.0.0.
+
+- [Release notes](https://github.com/codecov/codecov-action/releases)
+- [Changelog](https://github.com/codecov/codecov-action/blob/main/CHANGELOG.md)
+- [Commits](https://github.com/codecov/codecov-action/compare/1af58845a975a7985b0beb0cbe6fbbb71a41dbad...57e3a136b779b570ffcdbf80b3bdc90e7fab3de2)
+
+  ---
+  updated-dependencies:
+
+- dependency-name: codecov/codecov-action
+    dependency-version: 6.0.0
+    dependency-type: direct:production
+    update-type: version-update:semver-major
+  ...
+
+- Bump astral-sh/setup-uv from 7.6.0 to 8.0.0 [#297](https://github.com/acgetchell/delaunay/pull/297)
+  [`0a0c539`](https://github.com/acgetchell/delaunay/commit/0a0c539c743afc5919b3ab6af55f4cec5d780280)
+
+Bumps [astral-sh/setup-uv](https://github.com/astral-sh/setup-uv) from 7.6.0 to 8.0.0.
+
+- [Release notes](https://github.com/astral-sh/setup-uv/releases)
+- [Commits](https://github.com/astral-sh/setup-uv/compare/37802adc94f370d6bfd71619e3f0bf239e1f3b78...cec208311dfd045dd5311c1add060b2062131d57)
+
+  ---
+  updated-dependencies:
+
+- dependency-name: astral-sh/setup-uv
+    dependency-version: 8.0.0
+    dependency-type: direct:production
+    update-type: version-update:semver-major
+  ...
+
+- Bump taiki-e/install-action from 2.69.6 to 2.70.2 [#296](https://github.com/acgetchell/delaunay/pull/296)
+  [`0ab08a7`](https://github.com/acgetchell/delaunay/commit/0ab08a76c46117e633741653bf3e0ab6449671f6)
+
+Bumps [taiki-e/install-action](https://github.com/taiki-e/install-action) from 2.69.6 to 2.70.2.
+
+- [Release notes](https://github.com/taiki-e/install-action/releases)
+- [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
+- [Commits](https://github.com/taiki-e/install-action/compare/06203676c62f0d3c765be3f2fcfbebbcb02d09f5...e9e8e031bcd90cdbe8ac6bb1d376f8596e587fbf)
+
+  ---
+  updated-dependencies:
+
+- dependency-name: taiki-e/install-action
+    dependency-version: 2.70.2
+    dependency-type: direct:production
+    update-type: version-update:semver-minor
+  ...
+
+## [0.7.4] - 2026-03-27
 
 ### ⚠️ Breaking Changes
 
@@ -15,6 +242,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Merged Pull Requests
 
+- Release v0.7.4 [#291](https://github.com/acgetchell/delaunay/pull/291)
 - Generalize DelaunayTriangulationBuilder::new() over U [#287](https://github.com/acgetchell/delaunay/pull/287)
   [#290](https://github.com/acgetchell/delaunay/pull/290)
 - Tighten Vertex::data and Cell::data to pub(crate) [#289](https://github.com/acgetchell/delaunay/pull/289)
@@ -82,6 +310,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Deprecate `from_vertices()` (now redundant for f64 vertices)
   - Migrate all `from_vertices` call sites to `new`
   - Fix type-inference regression in NaN test by annotating VertexBuilder
+- Release v0.7.4 [#291](https://github.com/acgetchell/delaunay/pull/291)
+  [`bee1b04`](https://github.com/acgetchell/delaunay/commit/bee1b0409f19631775cbe5bfd1b0618e54380c46)
+
+- chose(release): release v0.7.4
+
+  - Bump version to v0.7.4
+  - Update changelog with latest changes
+  - Update documentation for release
+  - Add performance results for v0.7.4
+
+  - Changed: clarify adaptive_tolerance_insphere delegation in 4D docs
+
+  Update the documentation for provable error bounds to clarify that the
+  `adaptive_tolerance_insphere` wrapper function remains available but now
+  delegates entirely to the provable `insphere_from_matrix` path.
 
 ### Fixed
 
@@ -2124,6 +2367,7 @@ Older releases are archived by minor series:
 - [0.3.x](docs/archive/changelog/0.3.md)
 - [0.2.x](docs/archive/changelog/0.2.md)
 
+[unreleased]: https://github.com/acgetchell/delaunay/compare/v0.7.4..HEAD
 [0.7.4]: https://github.com/acgetchell/delaunay/compare/v0.7.3..v0.7.4
 [0.7.3]: https://github.com/acgetchell/delaunay/compare/v0.7.2..v0.7.3
 [0.7.2]: https://github.com/acgetchell/delaunay/compare/v0.7.1..v0.7.2

@@ -13,19 +13,38 @@ adversarial/degenerate point sets, even when local repair steps appear to succee
 **Affects:** primarily large 4D bulk runs (typically 100+ vertices)
 **Recommended workaround:** prefer incremental insertion for production 4D workloads
 
+**#204 findings (v0.7.4):** 4D 100-point batch construction (release mode,
+seed `0x9B7786C999C56A16`, ball radius=100) inserts only **12 of 100 vertices**;
+88 are skipped as degeneracies.  All 88 skips hit the same cell
+(`CellKey(29v7)`, vertices `[6v1, 2v1, 9v1, 11v1, 7v1]`) which has negative
+geometric orientation.  In debug mode, per-insertion PLManifoldStrict validation
+of this cell produces repeated warnings that cause extreme slowness (appears as
+a hang but is not an algorithmic deadlock).  The resulting 12-vertex
+triangulation passes L1–L4 validation.
+
 #### 3D large-scale flip convergence
 
-At ~130+ points in 3D, flip-based Delaunay repair can enter cycles (oscillating
-flip sequences that never converge). The triangulation is topologically valid but
-may have local Delaunay violations that flips cannot resolve.
+Flip-based Delaunay repair can enter cycles (oscillating flip sequences that
+never converge).  The triangulation is topologically valid but may have local
+Delaunay violations that flips cannot resolve.
 
-**Severity:** Medium (correctness)
-**Affects:** 3D bulk construction at moderate-to-large scale
-**Root cause:** exact degeneracies (cospherical configurations) where the insphere
-predicate returns BOUNDARY, leaving the flip heuristic unable to choose a direction.
-With `AdaptiveKernel` (default), SoS now breaks these ties for both insphere and
-orientation predicates (#233, #263). Flip convergence at large scale may still be
-affected by cavity/topology interactions rather than predicate degeneracies.
+**Severity:** High (correctness)
+**Affects:** 3D bulk construction at moderate scale (35+ vertices with default seed)
+**Root cause (updated):** predicate degeneracies have been ruled out — the #204
+debug runs show `ambiguous=0, predicate_failures=0` in every cycle report.  SoS
+is working correctly.  The remaining cycles are caused by **cavity/topology
+interactions** where a sequence of locally legal flips forms a cycle.
+
+**#204 findings (v0.7.4):** the incremental-prefix bisect found a **minimal
+failing prefix of 35 vertices** (seed `0xE30C78582376677C`, ball radius=100).
+Failure occurs at insertion index 22:
+
+- Local repair: 64 flips, 53 cycles detected, ambiguous=0
+- Global fallback: 192 flips, 187 cycles detected, ambiguous=0
+- Replay: see "3D minimal reproducer" in the reproduction section below
+
+Previously documented threshold was ~130+ points; the bisect shows the actual
+threshold is much lower with this seed/distribution.
 
 ### What has been fixed
 
@@ -80,34 +99,45 @@ affected by cavity/topology interactions rather than predicate degeneracies.
   to D ≤ 5 (the insphere matrix is (D+2)×(D+2)).  For D ≥ 6, `robust_insphere`
   falls back to symbolic perturbation and centroid-based tie-breaking.
 
-### Reproduction / verification command
+### Reproduction / verification commands
 
 Use the debug large-scale test to verify current behavior on a given branch.
-The examples below cover both the historical `N=100` case and a larger `N=200`
-case aligned with the "100+ vertices" scope:
+**Important:** use `--release` for runs above ~30 vertices; debug-mode overhead
+makes larger runs appear to hang.
 
 ```bash
-# Permissive debug run (allows intentional skips) — N=100
+# 3D minimal reproducer (35 vertices, fails at insertion 22)
+DELAUNAY_LARGE_DEBUG_CONSTRUCTION_MODE=new \
+  DELAUNAY_LARGE_DEBUG_N_3D=35 \
+  DELAUNAY_LARGE_DEBUG_CASE_SEED_3D=0xE30C78582376677C \
+  cargo test --release --test large_scale_debug debug_large_scale_3d \
+  -- --ignored --nocapture
+
+# 3D incremental-prefix bisect (finds minimal failing prefix)
+DELAUNAY_LARGE_DEBUG_PREFIX_TOTAL=1000 \
+  cargo test --release --test large_scale_debug \
+  debug_large_scale_3d_incremental_prefix_bisect -- --ignored --nocapture
+
+# 4D 100-point — permissive (allows skips)
 DELAUNAY_LARGE_DEBUG_N_4D=100 DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 \
-  cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
-# Strict debug run (no skips allowed) — N=100
+  cargo test --release --test large_scale_debug debug_large_scale_4d \
+  -- --ignored --nocapture
+
+# 4D 100-point — strict (no skips)
 DELAUNAY_LARGE_DEBUG_N_4D=100 DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=0 \
-  cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
-
-# Permissive debug run (allows intentional skips) — N=200
-DELAUNAY_LARGE_DEBUG_N_4D=200 DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 \
-  cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
-
-# Strict debug run (no skips allowed) — N=200
-DELAUNAY_LARGE_DEBUG_N_4D=200 DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=0 \
-  cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
+  cargo test --release --test large_scale_debug debug_large_scale_4d \
+  -- --ignored --nocapture
 ```
 
 ### Recommendations
 
-- **2D–3D:** generally robust for moderate sizes. SoS (now applied to both orientation
-  and insphere) eliminates most predicate-degeneracy flip cycles.
-- **4D:** use incremental insertion for critical correctness paths.
+- **2D:** robust at all tested sizes.
+- **3D:** flip-cycle failures start at 35+ vertices with the default seed.
+  SoS eliminates predicate degeneracies but cavity/topology flip cycles persist.
+  This is the primary open correctness issue.
+- **4D:** batch construction produces a negative-orientation cell early, causing
+  most subsequent insertions to be skipped.  Use incremental insertion for
+  critical correctness paths.
 - **5D:** experimental; incremental insertion strongly recommended. Exact insphere
   predicates are available (5D uses a 7×7 matrix, within the stack limit).
 - **6D+:** exact insphere is not available (matrix exceeds stack limit); falls back
