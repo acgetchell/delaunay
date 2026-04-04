@@ -141,7 +141,8 @@ delaunay/
 │   │   ├── algorithms/
 │   │   │   ├── flips.rs
 │   │   │   ├── incremental_insertion.rs
-│   │   │   └── locate.rs
+│   │   │   ├── locate.rs
+│   │   │   └── pl_manifold_repair.rs
 │   │   ├── collections/
 │   │   │   ├── aliases.rs
 │   │   │   ├── buffers.rs
@@ -208,6 +209,7 @@ delaunay/
 │   │   │   └── topological_space.rs
 │   │   └── manifold.rs
 │   ├── triangulation/
+│   │   ├── delaunayize.rs
 │   │   └── flips.rs
 │   └── lib.rs
 ├── tests/
@@ -221,6 +223,7 @@ delaunay/
 │   ├── delaunay_edge_cases.rs
 │   ├── delaunay_incremental_insertion.rs
 │   ├── delaunay_repair_fallback.rs
+│   ├── delaunayize_workflow.rs
 │   ├── euler_characteristic.rs
 │   ├── insert_with_statistics.rs
 │   ├── k3_cycle_predicate.rs
@@ -371,7 +374,7 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality, 
 - `collections/` - Optimized collection types and spatial acceleration structures
   - `spatial_hash_grid.rs` - Hash-grid spatial index for duplicate detection and locate-hint selection
 - `boundary.rs` - Boundary detection and analysis
-- `algorithms/` - Core algorithms (incremental insertion, flips, point location)
+- `algorithms/` - Core algorithms (incremental insertion, flips, point location, PL-manifold repair)
 - `traits/` - Core trait definitions including FacetCacheProvider for performance optimization
 - `util/` - General utility functions organized by functionality (replaced single `util.rs` file)
   - `uuid.rs` - UUID generation and validation
@@ -407,6 +410,8 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality, 
 
 **`src/triangulation/`** - Triangulation-facing public APIs:
 
+- `delaunayize.rs` - End-to-end "repair then delaunayize" workflow (`delaunayize_by_flips`);
+  bounded topology repair + flip-based Delaunay repair + optional fallback rebuild
 - `flips.rs` - High-level bistellar flip (Pachner move) trait and supporting public types; delegates to `core::algorithms::flips`
 
 **`src/topology/`** - Topology analysis and validation:

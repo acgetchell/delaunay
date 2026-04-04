@@ -301,6 +301,8 @@ pub mod core {
         pub mod incremental_insertion;
         /// Point location algorithms (facet walking).
         pub mod locate;
+        /// Bounded deterministic PL-manifold topology repair.
+        pub(crate) mod pl_manifold_repair;
     }
 
     pub mod adjacency;
@@ -722,6 +724,8 @@ pub mod geometry {
 /// This module groups public APIs that operate on triangulations, such as explicit
 /// bistellar (Pachner) flip operations.
 pub mod triangulation {
+    /// End-to-end "repair then delaunayize" workflow.
+    pub mod delaunayize;
     /// Triangulation editing operations (bistellar flips).
     pub mod flips;
 
@@ -885,6 +889,19 @@ pub mod prelude {
             pub use crate::core::delaunay_triangulation::DelaunayTriangulation;
             pub use crate::core::triangulation::{TopologyGuarantee, Triangulation};
             pub use crate::triangulation::flips::*;
+
+            // Convenience macro (commonly used in docs/examples).
+            pub use crate::vertex;
+        }
+
+        /// End-to-end "repair then delaunayize" workflow.
+        ///
+        /// Self-contained: a single `use delaunay::prelude::triangulation::delaunayize::*`
+        /// import brings in [`DelaunayTriangulation`], [`vertex!`], and all
+        /// delaunayize-specific types.
+        pub mod delaunayize {
+            pub use crate::core::delaunay_triangulation::DelaunayTriangulation;
+            pub use crate::triangulation::delaunayize::*;
 
             // Convenience macro (commonly used in docs/examples).
             pub use crate::vertex;

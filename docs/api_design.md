@@ -339,6 +339,51 @@ See the following examples for practical demonstrations:
 - `examples/pachner_roundtrip_4d.rs` - Advanced 4D example with all flip types
 - `examples/triangulation_3d_100_points.rs` - Builder API usage for construction
 
+## Delaunayize Workflow
+
+The `triangulation::delaunayize` module provides a single entrypoint for the
+common "repair topology then restore Delaunay" workflow:
+
+```rust
+use delaunay::prelude::triangulation::delaunayize::*;
+
+let vertices = vec![
+    vertex!([0.0, 0.0, 0.0]),
+    vertex!([1.0, 0.0, 0.0]),
+    vertex!([0.0, 1.0, 0.0]),
+    vertex!([0.0, 0.0, 1.0]),
+];
+let mut dt: DelaunayTriangulation<_, (), (), 3> =
+    DelaunayTriangulation::new(&vertices).unwrap();
+
+let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap();
+assert!(outcome.topology_repair.succeeded);
+```
+
+### Steps
+
+1. **PL-manifold topology repair** — bounded deterministic removal of cells
+   that cause facet over-sharing (codimension-1 facet degree > 2).
+2. **Delaunay flip repair** — k=2/k=3 bistellar flips to restore the
+   empty-circumsphere property.
+3. **Optional fallback rebuild** — rebuilds from the vertex set when both
+   repair passes fail (`DelaunayizeConfig { fallback_rebuild: true, .. }`).
+
+### Configuration
+
+`DelaunayizeConfig` controls:
+
+- `topology_max_iterations` (default 64): max repair iterations.
+- `topology_max_cells_removed` (default 10,000): max cells removed.
+- `fallback_rebuild` (default false): rebuild from vertices on failure.
+
+### Explicitly Deferred
+
+- Dedicated targeted repair stages for boundary-ridge multiplicity,
+  ridge-link manifoldness, and vertex-link manifoldness.
+- Advanced flip-repair mode passthrough in public config.
+- Stronger cell-payload preservation guarantees in the fallback path.
+
 ## Further Reading
 
 - **Bistellar flip theory**: See `REFERENCES.md` for academic citations
