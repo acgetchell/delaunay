@@ -3012,6 +3012,24 @@ where
         Ok(cells_removed)
     }
 
+    /// Remove an isolated vertex (one with no incident cells) from the TDS.
+    ///
+    /// This removes only the vertex and its UUID mapping. It does **not** touch
+    /// any cells. If the vertex has an incident cell, this is a no-op.
+    pub(crate) fn remove_isolated_vertex(&mut self, vertex_key: VertexKey) {
+        let Some(vertex) = self.get_vertex_by_key(vertex_key) else {
+            return;
+        };
+        // Only remove if truly isolated.
+        if vertex.incident_cell.is_some() {
+            return;
+        }
+        let uuid = vertex.uuid();
+        self.vertices.remove(vertex_key);
+        self.uuid_to_vertex_key.remove(&uuid);
+        self.bump_generation();
+    }
+
     // =========================================================================
     // KEY-BASED NEIGHBOR OPERATIONS (Phase 2 Optimization)
     // =========================================================================
@@ -3799,7 +3817,7 @@ where
     /// - A vertex exists without a corresponding key-to-UUID mapping
     /// - The bidirectional mappings are inconsistent (UUID maps to key A, but key A maps to different UUID)
     ///
-    fn validate_vertex_mappings(&self) -> Result<(), TdsError> {
+    pub(crate) fn validate_vertex_mappings(&self) -> Result<(), TdsError> {
         if self.uuid_to_vertex_key.len() != self.vertices.len() {
             return Err(TdsError::MappingInconsistency {
                 entity: EntityKind::Vertex,
@@ -3867,7 +3885,7 @@ where
     /// - A cell exists without a corresponding key-to-UUID mapping
     /// - The bidirectional mappings are inconsistent (UUID maps to key A, but key A maps to different UUID)
     ///
-    fn validate_cell_mappings(&self) -> Result<(), TdsError> {
+    pub(crate) fn validate_cell_mappings(&self) -> Result<(), TdsError> {
         if self.uuid_to_cell_key.len() != self.cells.len() {
             return Err(TdsError::MappingInconsistency {
                 entity: EntityKind::Cell,
@@ -3924,7 +3942,7 @@ where
     ///
     /// Returns `TdsError::VertexNotFound` if any cell
     /// references a vertex key that doesn't exist in the vertices `storage map`.
-    fn validate_cell_vertex_keys(&self) -> Result<(), TdsError> {
+    pub(crate) fn validate_cell_vertex_keys(&self) -> Result<(), TdsError> {
         for (cell_key, cell) in &self.cells {
             let cell_uuid = cell.uuid();
             for (vertex_idx, &vertex_key) in cell.vertices().iter().enumerate() {
@@ -6336,6 +6354,56 @@ mod tests {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let missing_key = VertexKey::from(KeyData::from_ffi(u64::MAX));
         assert_eq!(tds.remove_vertex(missing_key).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_remove_isolated_vertex_noop_on_missing_key() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let missing = VertexKey::from(KeyData::from_ffi(u64::MAX));
+        let gen_before = tds.generation();
+        tds.remove_isolated_vertex(missing);
+        assert_eq!(tds.generation(), gen_before, "No mutation expected");
+    }
+
+    #[test]
+    fn test_remove_isolated_vertex_noop_when_incident_cell_set() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let vk = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+
+        // Manually set an incident cell so the vertex appears non-isolated.
+        let fake_cell_key = CellKey::from(KeyData::from_ffi(1));
+        tds.get_vertex_by_key_mut(vk).unwrap().incident_cell = Some(fake_cell_key);
+
+        let gen_before = tds.generation();
+        tds.remove_isolated_vertex(vk);
+        assert_eq!(
+            tds.generation(),
+            gen_before,
+            "Non-isolated vertex should not be removed"
+        );
+        assert!(tds.get_vertex_by_key(vk).is_some());
+    }
+
+    #[test]
+    fn test_remove_isolated_vertex_removes_truly_isolated() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let vk = tds.insert_vertex_with_mapping(vertex!([1.0, 2.0])).unwrap();
+        let uuid = tds.get_vertex_by_key(vk).unwrap().uuid();
+
+        // No incident cell set → truly isolated.
+        assert!(tds.get_vertex_by_key(vk).unwrap().incident_cell.is_none());
+
+        let gen_before = tds.generation();
+        tds.remove_isolated_vertex(vk);
+        assert!(tds.generation() > gen_before);
+        assert!(
+            tds.get_vertex_by_key(vk).is_none(),
+            "Vertex should be removed"
+        );
+        assert!(
+            tds.vertex_key_from_uuid(&uuid).is_none(),
+            "UUID mapping should be removed"
+        );
     }
 
     #[test]

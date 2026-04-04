@@ -1365,8 +1365,9 @@ pub enum DelaunayRepairError {
     NonConvergent {
         /// Maximum flips allowed.
         max_flips: usize,
-        /// Diagnostics captured during the failed attempt.
-        diagnostics: DelaunayRepairDiagnostics,
+        /// Diagnostics captured during the failed attempt (boxed to keep the
+        /// error enum small on the stack).
+        diagnostics: Box<DelaunayRepairDiagnostics>,
     },
     /// Repair completed but left a Delaunay violation or otherwise could not be verified.
     #[error("Delaunay repair postcondition failed: {message}")]
@@ -3297,7 +3298,7 @@ fn non_convergent_error(
     emit_repair_debug_summary("non_convergent", stats, diagnostics, config, max_flips);
     DelaunayRepairError::NonConvergent {
         max_flips,
-        diagnostics: DelaunayRepairDiagnostics {
+        diagnostics: Box::new(DelaunayRepairDiagnostics {
             facets_checked: stats.facets_checked,
             flips_performed: stats.flips_performed,
             max_queue_len: stats.max_queue_len,
@@ -3308,7 +3309,7 @@ fn non_convergent_error(
             cycle_signature_samples: diagnostics.cycle_samples.clone(),
             attempt: config.attempt,
             queue_order: config.queue_order,
-        },
+        }),
     }
 }
 

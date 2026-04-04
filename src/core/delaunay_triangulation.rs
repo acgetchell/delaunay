@@ -5808,7 +5808,7 @@ mod tests {
     pub(super) fn synthetic_nonconvergent_error() -> DelaunayRepairError {
         DelaunayRepairError::NonConvergent {
             max_flips: 0,
-            diagnostics: DelaunayRepairDiagnostics {
+            diagnostics: Box::new(DelaunayRepairDiagnostics {
                 facets_checked: 0,
                 flips_performed: 0,
                 max_queue_len: 0,
@@ -5819,7 +5819,7 @@ mod tests {
                 cycle_signature_samples: Vec::new(),
                 attempt: 0,
                 queue_order: RepairQueueOrder::Fifo,
-            },
+            }),
         }
     }
     use rand::{RngExt, SeedableRng};
@@ -8061,7 +8061,7 @@ mod tests {
 
         let repair_err = DelaunayRepairError::NonConvergent {
             max_flips: 16,
-            diagnostics: DelaunayRepairDiagnostics {
+            diagnostics: Box::new(DelaunayRepairDiagnostics {
                 facets_checked: 0,
                 flips_performed: 0,
                 max_queue_len: 0,
@@ -8072,7 +8072,7 @@ mod tests {
                 cycle_signature_samples: Vec::new(),
                 attempt: 1,
                 queue_order: RepairQueueOrder::Fifo,
-            },
+            }),
         };
 
         let result =
@@ -8112,7 +8112,7 @@ mod tests {
 
         let repair_err = DelaunayRepairError::NonConvergent {
             max_flips: 16,
-            diagnostics: DelaunayRepairDiagnostics {
+            diagnostics: Box::new(DelaunayRepairDiagnostics {
                 facets_checked: 0,
                 flips_performed: 0,
                 max_queue_len: 0,
@@ -8123,7 +8123,7 @@ mod tests {
                 cycle_signature_samples: Vec::new(),
                 attempt: 1,
                 queue_order: RepairQueueOrder::Fifo,
-            },
+            }),
         };
 
         // TDS is valid, so global repair should succeed (nothing to fix).
@@ -8811,7 +8811,7 @@ mod tests {
         // builds it when all three stages fail.
         let primary_err = DelaunayRepairError::NonConvergent {
             max_flips: 1000,
-            diagnostics: crate::core::algorithms::flips::DelaunayRepairDiagnostics {
+            diagnostics: Box::new(crate::core::algorithms::flips::DelaunayRepairDiagnostics {
                 facets_checked: 50,
                 flips_performed: 1000,
                 max_queue_len: 42,
@@ -8822,7 +8822,7 @@ mod tests {
                 cycle_signature_samples: Vec::new(),
                 attempt: 1,
                 queue_order: crate::core::algorithms::flips::RepairQueueOrder::Fifo,
-            },
+            }),
         };
         let robust_err = DelaunayRepairError::PostconditionFailed {
             message: "robust postcondition failure".to_string(),

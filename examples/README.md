@@ -31,6 +31,15 @@ DELAUNAY_EXAMPLE_SEED=666 cargo run --release --example triangulation_3d_100_poi
 
 ## Example index (lexicographic)
 
+### `delaunayize_repair`
+
+Demonstrates the `delaunayize_by_flips` workflow: bounded topology repair followed by
+flip-based Delaunay repair, with a 4D no-op demo, a 2D flip-then-repair round-trip, and
+custom configuration with fallback.
+
+- Run: `cargo run --release --example delaunayize_repair`
+- Source: [`delaunayize_repair.rs`](./delaunayize_repair.rs)
+
 ### `convex_hull_3d_100_points`
 
 Extracts a 3D convex hull from a Delaunay triangulation built from a stable 100-point random
