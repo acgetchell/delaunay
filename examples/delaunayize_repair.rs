@@ -123,7 +123,7 @@ fn flip_then_repair_2d() {
     assert!(dt.validate().is_ok());
     println!("  ✓ Initially Delaunay");
 
-    // Collect interior facets, then flip one.
+    // Collect interior facets and find one whose k=2 flip actually breaks Delaunay.
     let mut facets: Vec<_> = Vec::new();
     for (ck, cell) in dt.cells() {
         if let Some(neighbors) = cell.neighbors() {
@@ -135,18 +135,31 @@ fn flip_then_repair_2d() {
         }
     }
 
-    let mut flipped = false;
+    let mut violating_facet = None;
     for facet in facets {
-        if dt.flip_k2(facet).is_ok() {
-            flipped = true;
-            println!("  Applied k=2 flip to break Delaunay property");
+        let mut trial = dt.clone();
+        if trial.flip_k2(facet).is_ok() && trial.is_valid().is_err() {
+            violating_facet = Some(facet);
             break;
         }
     }
 
-    if !flipped {
-        println!("  (No flippable interior facet found — skipping)");
+    let Some(facet) = violating_facet else {
+        println!("  (No k=2 flip produced a non-Delaunay state — skipping repair demonstration)");
         return;
+    };
+
+    dt.flip_k2(facet).unwrap();
+    match dt.is_valid() {
+        Ok(()) => {
+            println!(
+                "  Applied selected k=2 flip, but Delaunay property remained satisfied (unexpected)"
+            );
+            return;
+        }
+        Err(err) => {
+            println!("  Applied k=2 flip; post-flip check confirms Delaunay violation: {err}");
+        }
     }
 
     // Repair.
