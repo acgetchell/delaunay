@@ -306,7 +306,7 @@ where
         return f64::MAX;
     }
 
-    let Some(n) = NumCast::from(edge_lengths.len()).map(|v: f64| v) else {
+    let Some(n): Option<f64> = NumCast::from(edge_lengths.len()) else {
         return f64::MAX;
     };
     let mean = edge_lengths.iter().sum::<f64>() / n;
@@ -634,7 +634,7 @@ mod tests {
 
         assert!(score1.is_finite(), "Score should be finite, got {score1}");
         assert!(score1 > 0.0, "Score should be positive, got {score1}");
-        assert_eq!(score1, score2, "Score should be deterministic");
+        approx::assert_relative_eq!(score1, score2, epsilon = 0.0);
     }
 
     // =============================================================================
