@@ -21,6 +21,10 @@
 use delaunay::prelude::triangulation::delaunayize::*;
 use delaunay::prelude::triangulation::flips::*;
 
+// For the generic print_outcome helper.
+use delaunay::geometry::traits::coordinate::CoordinateScalar;
+use delaunay::prelude::DataType;
+
 fn main() {
     println!("============================================================");
     println!("Delaunayize-by-Flips Repair Workflow");
@@ -189,6 +193,7 @@ fn custom_config_2d() {
         topology_max_iterations: 10,
         topology_max_cells_removed: 100,
         fallback_rebuild: true,
+        delaunay_max_flips: None,
     };
 
     println!(
@@ -207,7 +212,9 @@ fn custom_config_2d() {
     );
 }
 
-fn print_outcome(outcome: &DelaunayizeOutcome) {
+fn print_outcome<T: CoordinateScalar, U: DataType, V: DataType, const D: usize>(
+    outcome: &DelaunayizeOutcome<T, U, V, D>,
+) {
     println!(
         "  Topology repair: succeeded={}, iterations={}, cells_removed={}",
         outcome.topology_repair.succeeded,

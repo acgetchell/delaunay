@@ -26,10 +26,12 @@
 
 #![forbid(unsafe_code)]
 
+use crate::core::cell::Cell;
 use crate::core::collections::{CellKeySet, SmallBuffer, fast_hash_set_with_capacity};
 use crate::core::facet::FacetHandle;
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation_data_structure::{CellKey, Tds, TdsError};
+use crate::core::triangulation_data_structure::{CellKey, Tds, TdsError, VertexKey};
+use crate::core::vertex::Vertex;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::geometry::util::norms::hypot;
 use crate::topology::manifold::validate_facet_degree;
@@ -71,26 +73,56 @@ impl Default for PlManifoldRepairConfig {
 // STATISTICS
 // =============================================================================
 
-/// Statistics collected during PL-manifold repair.
+/// Statistics and artifacts collected during PL-manifold repair.
 ///
 /// # Examples
 ///
 /// ```rust
 /// use delaunay::triangulation::delaunayize::PlManifoldRepairStats;
 ///
-/// let stats = PlManifoldRepairStats::default();
+/// let stats = PlManifoldRepairStats::<f64, (), (), 3>::default();
 /// assert_eq!(stats.iterations, 0);
 /// assert_eq!(stats.cells_removed, 0);
+/// assert!(stats.removed_cells.is_empty());
+/// assert!(stats.removed_vertices.is_empty());
 /// assert!(!stats.succeeded);
 /// ```
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct PlManifoldRepairStats {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlManifoldRepairStats<T, U, V, const D: usize>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
     /// Number of repair iterations executed.
     pub iterations: usize,
     /// Total number of cells removed.
     pub cells_removed: usize,
+    /// Cells that were removed, preserving user data for callers that need to
+    /// migrate or inspect it. Identifiable by [`Cell::uuid()`].
+    pub removed_cells: Vec<Cell<T, U, V, D>>,
+    /// Vertices that became isolated after cell removal and were removed from
+    /// the TDS. Identifiable by [`Vertex::uuid()`].
+    pub removed_vertices: Vec<Vertex<T, U, D>>,
     /// Whether the facet-degree invariant was satisfied at termination.
     pub succeeded: bool,
+}
+
+impl<T, U, V, const D: usize> Default for PlManifoldRepairStats<T, U, V, D>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    fn default() -> Self {
+        Self {
+            iterations: 0,
+            cells_removed: 0,
+            removed_cells: Vec::new(),
+            removed_vertices: Vec::new(),
+            succeeded: false,
+        }
+    }
 }
 
 // =============================================================================
@@ -170,7 +202,7 @@ pub enum PlManifoldRepairError {
 pub fn repair_facet_oversharing<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
     config: &PlManifoldRepairConfig,
-) -> Result<PlManifoldRepairStats, PlManifoldRepairError>
+) -> Result<PlManifoldRepairStats<T, U, V, D>, PlManifoldRepairError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -239,8 +271,15 @@ where
             });
         }
 
-        // Remove the batch.
+        // Snapshot cells before removal so callers can recover user data.
         let keys: Vec<CellKey> = removal_candidates.into_iter().collect();
+        for &ck in &keys {
+            if let Some(cell) = tds.get_cell(ck) {
+                stats.removed_cells.push(cell.clone());
+            }
+        }
+
+        // Remove the batch.
         let removed = tds.remove_cells_by_keys(&keys);
         stats.cells_removed += removed;
 
@@ -251,6 +290,9 @@ where
         tds.assign_neighbors().map_err(PlManifoldRepairError::Tds)?;
         tds.assign_incident_cells()
             .map_err(|e| PlManifoldRepairError::Tds(e.into()))?;
+
+        // Remove orphaned vertices (required for PL-manifold validity).
+        remove_orphaned_vertices(tds, &mut stats);
 
         // Check if the invariant now holds.
         let facet_map = tds.build_facet_to_cells_map()?;
@@ -379,6 +421,30 @@ where
     });
 
     candidates.first().map(|c| c.cell_key)
+}
+
+/// Remove vertices with no incident cell from the TDS, collecting them into
+/// `stats.removed_vertices` so callers can recover their data.
+fn remove_orphaned_vertices<T, U, V, const D: usize>(
+    tds: &mut Tds<T, U, V, D>,
+    stats: &mut PlManifoldRepairStats<T, U, V, D>,
+) where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let orphaned_keys: Vec<VertexKey> = tds
+        .vertices()
+        .filter(|(_, v)| v.incident_cell.is_none())
+        .map(|(k, _)| k)
+        .collect();
+
+    for vk in orphaned_keys {
+        if let Some(vertex) = tds.get_vertex_by_key(vk) {
+            stats.removed_vertices.push(*vertex);
+        }
+        tds.remove_isolated_vertex(vk);
+    }
 }
 
 // =============================================================================
@@ -521,9 +587,7 @@ mod tests {
     /// Helper: create a TDS with over-shared facets by duplicating a cell in a
     /// multi-cell triangulation. Interior facets go from degree 2 to degree 3.
     fn make_overshared_tds() -> Tds<f64, (), (), 3> {
-        use crate::core::cell::Cell;
-
-        // 5 points → multiple cells with interior facets at degree 2.
+        // 5 points
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -569,6 +633,9 @@ mod tests {
         assert!(stats.cells_removed > 0);
         assert!(stats.iterations > 0);
         assert!(tds.number_of_cells() < cells_before);
+
+        // removed_cells should contain exactly cells_removed entries.
+        assert_eq!(stats.removed_cells.len(), stats.cells_removed);
 
         let facet_map = tds.build_facet_to_cells_map().unwrap();
         assert!(validate_facet_degree(&facet_map).is_ok());

@@ -55,11 +55,11 @@ use crate::core::algorithms::flips::DelaunayRepairError;
 use crate::core::algorithms::pl_manifold_repair::{
     PlManifoldRepairConfig, repair_facet_oversharing,
 };
-use crate::core::delaunay_triangulation::DelaunayTriangulation;
+use crate::core::delaunay_triangulation::{DelaunayRepairHeuristicConfig, DelaunayTriangulation};
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{ExactPredicates, Kernel};
-use crate::geometry::traits::coordinate::ScalarAccumulative;
+use crate::geometry::traits::coordinate::{CoordinateScalar, ScalarAccumulative};
 use thiserror::Error;
 
 // =============================================================================
@@ -83,6 +83,7 @@ use thiserror::Error;
 /// assert_eq!(config.topology_max_iterations, 64);
 /// assert_eq!(config.topology_max_cells_removed, 10_000);
 /// assert!(!config.fallback_rebuild);
+/// assert!(config.delaunay_max_flips.is_none());
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DelaunayizeConfig {
@@ -95,6 +96,11 @@ pub struct DelaunayizeConfig {
     ///
     /// **Warning:** the fallback rebuild discards cell-level user data (`V`).
     pub fallback_rebuild: bool,
+    /// Optional per-attempt flip budget cap for Delaunay repair.
+    ///
+    /// `None` (default) uses the internal dimension-dependent budget.
+    /// Set to `Some(n)` to limit each repair attempt to at most `n` flips.
+    pub delaunay_max_flips: Option<usize>,
 }
 
 impl Default for DelaunayizeConfig {
@@ -103,6 +109,7 @@ impl Default for DelaunayizeConfig {
             topology_max_iterations: 64,
             topology_max_cells_removed: 10_000,
             fallback_rebuild: false,
+            delaunay_max_flips: None,
         }
     }
 }
@@ -133,9 +140,14 @@ impl Default for DelaunayizeConfig {
 /// ```
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub struct DelaunayizeOutcome {
+pub struct DelaunayizeOutcome<T, U, V, const D: usize>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
     /// Statistics from the PL-manifold topology repair pass.
-    pub topology_repair: PlManifoldRepairStats,
+    pub topology_repair: PlManifoldRepairStats<T, U, V, D>,
     /// Statistics from the flip-based Delaunay repair pass.
     pub delaunay_repair: DelaunayRepairStats,
     /// Whether the fallback vertex-set rebuild was used.
@@ -242,7 +254,7 @@ impl From<DelaunayRepairError> for DelaunayizeError {
 pub fn delaunayize_by_flips<K, U, V, const D: usize>(
     dt: &mut DelaunayTriangulation<K, U, V, D>,
     config: DelaunayizeConfig,
-) -> Result<DelaunayizeOutcome, DelaunayizeError>
+) -> Result<DelaunayizeOutcome<K::Scalar, U, V, D>, DelaunayizeError>
 where
     K: Kernel<D> + ExactPredicates,
     K::Scalar: ScalarAccumulative,
@@ -257,7 +269,15 @@ where
     let topology_stats = repair_facet_oversharing(&mut dt.as_triangulation_mut().tds, &pl_config)?;
 
     // Step 2: Flip-based Delaunay repair.
-    let delaunay_result = dt.repair_delaunay_with_flips();
+    let delaunay_result = if let Some(max_flips) = config.delaunay_max_flips {
+        dt.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig {
+            max_flips: Some(max_flips),
+            ..DelaunayRepairHeuristicConfig::default()
+        })
+        .map(|outcome| outcome.stats)
+    } else {
+        dt.repair_delaunay_with_flips()
+    };
 
     match delaunay_result {
         Ok(delaunay_stats) => Ok(DelaunayizeOutcome {
