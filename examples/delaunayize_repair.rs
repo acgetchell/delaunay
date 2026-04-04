@@ -129,7 +129,7 @@ fn flip_then_repair_2d() {
         if let Some(neighbors) = cell.neighbors() {
             for (i, n) in neighbors.iter().enumerate() {
                 if let (Some(_), Ok(idx)) = (n, u8::try_from(i)) {
-                    facets.push(delaunay::triangulation::flips::FacetHandle::new(ck, idx));
+                    facets.push(FacetHandle::new(ck, idx));
                 }
             }
         }
