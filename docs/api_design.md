@@ -338,6 +338,7 @@ See the following examples for practical demonstrations:
 - `examples/topology_editing_2d_3d.rs` - 2D+3D example showing both APIs
 - `examples/pachner_roundtrip_4d.rs` - Advanced 4D example with all flip types
 - `examples/triangulation_3d_100_points.rs` - Builder API usage for construction
+- `examples/delaunayize_repair.rs` - Delaunayize workflow (2D/3D/4D, flip-then-repair, custom config)
 
 ## Delaunayize Workflow
 
@@ -376,13 +377,19 @@ assert!(outcome.topology_repair.succeeded);
 - `topology_max_iterations` (default 64): max repair iterations.
 - `topology_max_cells_removed` (default 10,000): max cells removed.
 - `fallback_rebuild` (default false): rebuild from vertices on failure.
+- `delaunay_max_flips` (default `None`): optional per-attempt flip budget.
+
+### Data Preservation
+
+`PlManifoldRepairStats` carries `removed_cells` and `removed_vertices`
+(identified by UUID) so callers can recover user data from entities removed
+during topology repair.
 
 ### Explicitly Deferred
 
 - Dedicated targeted repair stages for boundary-ridge multiplicity,
-  ridge-link manifoldness, and vertex-link manifoldness.
-- Advanced flip-repair mode passthrough in public config.
-- Stronger cell-payload preservation guarantees in the fallback path.
+  ridge-link manifoldness, and vertex-link manifoldness (#304).
+- Stronger cell-payload preservation in the fallback rebuild path (#305).
 
 ## Further Reading
 

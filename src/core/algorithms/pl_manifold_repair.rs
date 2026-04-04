@@ -271,25 +271,24 @@ where
             });
         }
 
-        // Snapshot cells before removal so callers can recover user data.
-        let keys: Vec<CellKey> = removal_candidates.into_iter().collect();
+        // Snapshot cells before removal (sorted by UUID for determinism).
+        let mut keys: Vec<CellKey> = removal_candidates.into_iter().collect();
+        keys.sort_by(|a, b| {
+            let uuid_a = tds.get_cell(*a).map(Cell::uuid);
+            let uuid_b = tds.get_cell(*b).map(Cell::uuid);
+            uuid_a.cmp(&uuid_b)
+        });
         for &ck in &keys {
             if let Some(cell) = tds.get_cell(ck) {
                 stats.removed_cells.push(cell.clone());
             }
         }
 
-        // Remove the batch.
+        // Remove the batch. `remove_cells_by_keys` handles local neighbor
+        // back-reference clearing and incident-cell repair. Full neighbor
+        // rebuild is deferred to after the loop to avoid O(cells²) work.
         let removed = tds.remove_cells_by_keys(&keys);
         stats.cells_removed += removed;
-
-        // Rebuild neighbors and incidence after the batch.
-        // `remove_cells_by_keys` already handles local neighbor cleanup and
-        // incident-cell repair, but we run a full `assign_neighbors` to ensure
-        // global consistency after potentially removing many cells.
-        tds.assign_neighbors().map_err(PlManifoldRepairError::Tds)?;
-        tds.assign_incident_cells()
-            .map_err(|e| PlManifoldRepairError::Tds(e.into()))?;
 
         // Remove orphaned vertices (required for PL-manifold validity).
         remove_orphaned_vertices(tds, &mut stats);
@@ -298,6 +297,10 @@ where
         let facet_map = tds.build_facet_to_cells_map()?;
         if validate_facet_degree(&facet_map).is_ok() {
             stats.succeeded = true;
+            // Rebuild full neighbor/incidence pointers before returning.
+            tds.assign_neighbors().map_err(PlManifoldRepairError::Tds)?;
+            tds.assign_incident_cells()
+                .map_err(|e| PlManifoldRepairError::Tds(e.into()))?;
             return Ok(stats);
         }
     }
@@ -425,6 +428,8 @@ where
 
 /// Remove vertices with no incident cell from the TDS, collecting them into
 /// `stats.removed_vertices` so callers can recover their data.
+///
+/// Vertices are sorted by UUID before removal for deterministic ordering.
 fn remove_orphaned_vertices<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
     stats: &mut PlManifoldRepairStats<T, U, V, D>,
@@ -433,13 +438,14 @@ fn remove_orphaned_vertices<T, U, V, const D: usize>(
     U: DataType,
     V: DataType,
 {
-    let orphaned_keys: Vec<VertexKey> = tds
+    let mut orphaned: Vec<(VertexKey, Uuid)> = tds
         .vertices()
         .filter(|(_, v)| v.incident_cell.is_none())
-        .map(|(k, _)| k)
+        .map(|(k, v)| (k, v.uuid()))
         .collect();
+    orphaned.sort_by_key(|(_, uuid)| *uuid);
 
-    for vk in orphaned_keys {
+    for (vk, _) in orphaned {
         if let Some(vertex) = tds.get_vertex_by_key(vk) {
             stats.removed_vertices.push(*vertex);
         }

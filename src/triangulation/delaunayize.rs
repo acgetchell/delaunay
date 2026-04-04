@@ -38,9 +38,8 @@
 //! # Explicitly Deferred
 //!
 //! - Dedicated targeted repair stages for boundary-ridge multiplicity,
-//!   ridge-link manifoldness, and vertex-link manifoldness.
-//! - Advanced flip-repair mode passthrough in public config.
-//! - Stronger cell-payload preservation guarantees in the fallback path.
+//!   ridge-link manifoldness, and vertex-link manifoldness (#304).
+//! - Stronger cell-payload preservation in the fallback rebuild path (#305).
 
 #![forbid(unsafe_code)]
 
@@ -261,12 +260,57 @@ where
     U: DataType,
     V: DataType,
 {
+    // Snapshot vertex set before repair so fallback rebuild can use it.
+    let fallback_vertices: Option<Vec<Vertex<K::Scalar, U, D>>> = if config.fallback_rebuild {
+        Some(
+            dt.as_triangulation()
+                .tds
+                .vertices()
+                .map(|(_, v)| Vertex::new_with_uuid(*v.point(), v.uuid(), v.data))
+                .collect(),
+        )
+    } else {
+        None
+    };
+
     // Step 1: PL-manifold topology repair (facet over-sharing).
     let pl_config = PlManifoldRepairConfig {
         max_iterations: config.topology_max_iterations,
         max_cells_removed: config.topology_max_cells_removed,
     };
-    let topology_stats = repair_facet_oversharing(&mut dt.as_triangulation_mut().tds, &pl_config)?;
+    let topology_stats = match repair_facet_oversharing(
+        &mut dt.as_triangulation_mut().tds,
+        &pl_config,
+    ) {
+        Ok(stats) => stats,
+        Err(topo_err) => {
+            if let Some(ref verts) = fallback_vertices {
+                // Topology repair failed but fallback is enabled — try rebuilding.
+                match DelaunayTriangulation::with_kernel(&dt.as_triangulation().kernel, verts) {
+                    Ok(rebuilt) => {
+                        *dt = rebuilt;
+                        return Ok(DelaunayizeOutcome {
+                            topology_repair: PlManifoldRepairStats::default(),
+                            delaunay_repair: DelaunayRepairStats::default(),
+                            used_fallback_rebuild: true,
+                        });
+                    }
+                    Err(rebuild_err) => {
+                        return Err(DelaunayizeError::TopologyRepairFailed(
+                            PlManifoldRepairError::Tds(
+                                crate::core::triangulation_data_structure::TdsError::InconsistentDataStructure {
+                                    message: format!(
+                                        "topology repair failed ({topo_err}); fallback rebuild also failed: {rebuild_err}"
+                                    ),
+                                },
+                            ),
+                        ));
+                    }
+                }
+            }
+            return Err(topo_err.into());
+        }
+    };
 
     // Step 2: Flip-based Delaunay repair.
     let delaunay_result = if let Some(max_flips) = config.delaunay_max_flips {
