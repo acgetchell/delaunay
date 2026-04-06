@@ -851,6 +851,11 @@ pub mod prelude {
     pub use crate::core::algorithms::incremental_insertion::InsertionError;
     pub use crate::core::operations::{InsertionOutcome, InsertionStatistics, SuspicionFlags};
 
+    // Re-export diagnostic types for scientific analysis of construction and repair
+    pub use crate::core::algorithms::flips::{
+        DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairStats, RepairQueueOrder,
+    };
+
     // Re-export commonly used collection types from core::collections
     // These are frequently used in advanced examples and downstream code
     pub use crate::core::collections::{
@@ -882,6 +887,11 @@ pub mod prelude {
 
         pub use crate::core::algorithms::incremental_insertion::InsertionError;
         pub use crate::core::operations::{InsertionOutcome, InsertionStatistics, SuspicionFlags};
+
+        // Diagnostic types for scientific analysis of construction and repair
+        pub use crate::core::algorithms::flips::{
+            DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairStats, RepairQueueOrder,
+        };
         pub use crate::topology::traits::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
 
         /// Bistellar (Pachner) flips for explicit triangulation editing.

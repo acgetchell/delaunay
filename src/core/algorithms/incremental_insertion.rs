@@ -607,6 +607,39 @@ where
                     message: format!("Failed to insert cell: {e}"),
                 })?;
 
+        // Cell creation provenance: log each newly created cell with its
+        // vertex ordering, geometric orientation, and source boundary facet.
+        // Helps trace which insertion step produces negative-orientation cells.
+        #[cfg(debug_assertions)]
+        if std::env::var_os("DELAUNAY_DEBUG_CAVITY").is_some()
+            && let Some(created_cell) = tds.get_cell(cell_key)
+        {
+            let cell_points: SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE> = created_cell
+                .vertices()
+                .iter()
+                .filter_map(|&vk| tds.get_vertex_by_key(vk).map(|v| *v.point()))
+                .collect();
+            let orientation = if cell_points.len() == D + 1 {
+                robust_orientation(&cell_points)
+                    .map(|o| match o {
+                        Orientation::POSITIVE => 1,
+                        Orientation::NEGATIVE => -1,
+                        Orientation::DEGENERATE => 0,
+                    })
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+            tracing::debug!(
+                cell_key = ?cell_key,
+                vertex_keys = ?created_cell.vertices(),
+                orientation,
+                source_boundary_cell = ?facet_handle.cell_key(),
+                source_facet_index = usize::from(facet_handle.facet_index()),
+                "fill_cavity: created cell provenance"
+            );
+        }
+
         new_cells.push(cell_key);
     }
 

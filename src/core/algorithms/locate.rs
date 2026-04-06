@@ -858,8 +858,25 @@ where
                     }
                 }
             }
+        } else {
+            // Cell is NOT in conflict (sign < 0): BFS boundary.
+            // Log boundary cells so investigators can see exactly where
+            // and why the BFS stopped expanding.
+            #[cfg(debug_assertions)]
+            if debug_config.log_conflict {
+                let neighbor_keys: SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE> =
+                    cell.neighbors()
+                        .map(|ns| ns.iter().copied().collect())
+                        .unwrap_or_default();
+                tracing::debug!(
+                    cell_key = ?cell_key,
+                    vertex_keys = ?cell.vertices(),
+                    sign,
+                    neighbors = ?neighbor_keys,
+                    "find_conflict_region: BFS boundary (non-conflict)"
+                );
+            }
         }
-        // If sign < 0, cell is not in conflict, don't explore further in this direction
     }
 
     #[cfg(debug_assertions)]
@@ -874,6 +891,111 @@ where
     }
 
     Ok(conflict_cells)
+}
+
+/// Verify that a BFS-found conflict region is complete by brute-force scanning all cells.
+///
+/// This debug-only function compares the conflict region found by BFS traversal against
+/// a full scan of every cell in the TDS using insphere tests. Any cell that the BFS missed
+/// (i.e., the point is inside its circumsphere but the cell was not found by BFS) is logged
+/// as a "missed" cell.
+///
+/// Activated by setting `DELAUNAY_DEBUG_CONFLICT_VERIFY=1`.
+///
+/// Returns the number of missed cells (0 means the BFS result is complete).
+#[cfg(debug_assertions)]
+pub fn verify_conflict_region_completeness<K, U, V, const D: usize>(
+    tds: &Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    point: &Point<K::Scalar, D>,
+    bfs_conflict_cells: &CellKeyBuffer,
+) -> usize
+where
+    K: Kernel<D>,
+    U: DataType,
+    V: DataType,
+{
+    use crate::core::util::canonical_points::sorted_cell_points;
+
+    let bfs_set: FastHashSet<CellKey> = bfs_conflict_cells.iter().copied().collect();
+    let mut missed_count = 0usize;
+    let mut brute_force_count = 0usize;
+
+    for (cell_key, cell) in tds.cells() {
+        let Some(simplex_points) = sorted_cell_points(tds, cell) else {
+            continue;
+        };
+        if simplex_points.len() != D + 1 {
+            continue;
+        }
+
+        let Ok(sign) = kernel.in_sphere(&simplex_points, point) else {
+            continue;
+        };
+
+        if sign >= 0 {
+            brute_force_count += 1;
+            if !bfs_set.contains(&cell_key) {
+                missed_count += 1;
+
+                // Reachability analysis: determine WHY BFS missed this cell.
+                // Check if any TDS neighbor of the missed cell is in the BFS
+                // conflict set.  This distinguishes two root causes:
+                //   - Reachable: a neighbor IS in bfs_set, so BFS reached a
+                //     neighbor but an intermediate insphere test rejected it
+                //   - Unreachable: NO neighbors are in bfs_set, indicating
+                //     broken neighbor pointers or a disconnected pocket
+                let (neighbor_in_bfs, neighbor_total, neighbor_none) =
+                    cell.neighbors().map_or((0, 0, 0), |neighbors| {
+                        let total = neighbors.len();
+                        let none_count = neighbors.iter().filter(|n| n.is_none()).count();
+                        let in_bfs = neighbors
+                            .iter()
+                            .filter_map(|n| *n)
+                            .filter(|nk| bfs_set.contains(nk))
+                            .count();
+                        (in_bfs, total, none_count)
+                    });
+
+                let reachability = if neighbor_in_bfs > 0 {
+                    "REACHABLE_BUT_REJECTED"
+                } else {
+                    "UNREACHABLE"
+                };
+
+                tracing::warn!(
+                    cell_key = ?cell_key,
+                    vertex_keys = ?cell.vertices(),
+                    sign,
+                    reachability,
+                    neighbor_in_bfs,
+                    neighbor_total,
+                    neighbor_none,
+                    bfs_conflict_len = bfs_conflict_cells.len(),
+                    brute_force_conflict_so_far = brute_force_count,
+                    "verify_conflict_region: BFS MISSED conflicting cell"
+                );
+            }
+        }
+    }
+
+    if missed_count > 0 {
+        tracing::warn!(
+            bfs_conflict = bfs_conflict_cells.len(),
+            brute_force_conflict = brute_force_count,
+            missed = missed_count,
+            query_point = ?point,
+            "verify_conflict_region: INCOMPLETE conflict region detected"
+        );
+    } else {
+        tracing::debug!(
+            bfs_conflict = bfs_conflict_cells.len(),
+            brute_force_conflict = brute_force_count,
+            "verify_conflict_region: conflict region is COMPLETE"
+        );
+    }
+
+    missed_count
 }
 
 /// Extract boundary facets of a conflict region (cavity).
