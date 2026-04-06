@@ -2444,8 +2444,15 @@ where
             }
 
             if orientation < 0 {
+                // Capture pre-swap vertices only when the debug env var is set,
+                // so release and non-debug runs avoid the allocation entirely.
                 #[cfg(debug_assertions)]
-                let pre_swap_vertices = self.tds.get_cell(cell_key).map(|c| c.vertices().to_vec());
+                let pre_swap_vertices = if std::env::var_os("DELAUNAY_DEBUG_ORIENTATION").is_some()
+                {
+                    self.tds.get_cell(cell_key).map(|c| c.vertices().to_vec())
+                } else {
+                    None
+                };
 
                 let cell = self.tds.get_cell_by_key_mut(cell_key).ok_or_else(|| {
                     TdsError::CellNotFound {
@@ -2467,27 +2474,46 @@ where
 
                 #[cfg(debug_assertions)]
                 if std::env::var_os("DELAUNAY_DEBUG_ORIENTATION").is_some() {
-                    // Re-evaluate orientation after swap to confirm it worked
-                    let post_orientation = self
-                        .tds
-                        .get_cell(cell_key)
-                        .map(|c| {
-                            self.evaluate_cell_orientation_for_context(
-                                cell_key,
-                                c,
-                                "orientation swap verification",
-                                "orientation predicate failed during swap verification",
-                            )
-                        })
-                        .transpose()?;
-                    tracing::warn!(
-                        cell_key = ?cell_key,
-                        pre_swap_vertices = ?pre_swap_vertices,
-                        pre_swap_orientation = orientation,
-                        post_swap_orientation = ?post_orientation,
-                        swap_fixed = post_orientation.is_some_and(|o| o > 0),
-                        "canonicalize_positive_orientation: negative-orientation cell swapped"
-                    );
+                    // Re-evaluate orientation after swap to confirm it worked.
+                    // Handle the Result locally so verification failures are
+                    // observational only and never promote to insertion errors.
+                    let post_orientation = self.tds.get_cell(cell_key).map(|c| {
+                        self.evaluate_cell_orientation_for_context(
+                            cell_key,
+                            c,
+                            "orientation swap verification",
+                            "orientation predicate failed during swap verification",
+                        )
+                    });
+                    match post_orientation {
+                        Some(Ok(post_o)) => {
+                            tracing::warn!(
+                                cell_key = ?cell_key,
+                                pre_swap_vertices = ?pre_swap_vertices,
+                                pre_swap_orientation = orientation,
+                                post_swap_orientation = post_o,
+                                swap_fixed = post_o > 0,
+                                "canonicalize_positive_orientation: negative-orientation cell swapped"
+                            );
+                        }
+                        Some(Err(ref e)) => {
+                            tracing::warn!(
+                                cell_key = ?cell_key,
+                                pre_swap_vertices = ?pre_swap_vertices,
+                                pre_swap_orientation = orientation,
+                                error = %e,
+                                "canonicalize_positive_orientation: post-swap verification failed"
+                            );
+                        }
+                        None => {
+                            tracing::warn!(
+                                cell_key = ?cell_key,
+                                pre_swap_vertices = ?pre_swap_vertices,
+                                pre_swap_orientation = orientation,
+                                "canonicalize_positive_orientation: cell not found after swap"
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -4211,6 +4237,7 @@ where
             let mut pos = 0_usize;
             let mut neg = 0_usize;
             let mut deg = 0_usize;
+            let mut fail = 0_usize;
             for &ck in &new_cells {
                 if let Some(c) = self.tds.get_cell(ck) {
                     match self.evaluate_cell_orientation_for_context(
@@ -4221,17 +4248,26 @@ where
                     ) {
                         Ok(o) if o > 0 => pos += 1,
                         Ok(o) if o < 0 => neg += 1,
-                        Ok(_) | Err(_) => deg += 1,
+                        Ok(_) => deg += 1,
+                        Err(ref e) => {
+                            fail += 1;
+                            tracing::warn!(
+                                cell_key = ?ck,
+                                error = %e,
+                                "post-insertion orientation audit: evaluation failed"
+                            );
+                        }
                     }
                 }
             }
-            if neg > 0 {
+            if neg > 0 || fail > 0 {
                 tracing::warn!(
                     new_cells = new_cells.len(),
                     positive = pos,
                     negative = neg,
                     degenerate = deg,
-                    "post-insertion orientation audit: NEGATIVE cells remain after canonicalization"
+                    eval_errors = fail,
+                    "post-insertion orientation audit: NEGATIVE cells or evaluation errors after canonicalization"
                 );
             } else {
                 tracing::debug!(
