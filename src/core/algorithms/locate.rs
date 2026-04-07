@@ -2672,6 +2672,50 @@ mod tests {
         assert_eq!(missed, 0, "Outside point should produce zero missed cells");
     }
 
+    /// Truncated multi-cell BFS result detects missed conflict cells.
+    ///
+    /// Builds a 2D triangulation with 4 vertices (2 triangles sharing an edge),
+    /// finds a multi-cell conflict region, then drops one cell from the BFS
+    /// result and verifies that `verify_conflict_region_completeness` catches
+    /// the omission.  Because the two triangles are adjacent, the dropped cell
+    /// has a neighbor still in the truncated BFS set, so the internal
+    /// classification logs `REACHABLE_BUT_REJECTED` (observable via tracing).
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_verify_conflict_region_completeness_truncated_multi_cell_detects_missed() {
+        // Four corners of a rectangle — DT produces 2 triangles sharing a diagonal.
+        // All 4 points are co-circular, so a center-ish query point is strictly
+        // inside both circumcircles → conflict region has 2 cells.
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([4.0, 0.0]),
+            vertex!([4.0, 3.0]),
+            vertex!([0.0, 3.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let kernel = FastKernel::<f64>::new();
+
+        let start_cell = dt.tds().cell_keys().next().unwrap();
+        let point = Point::new([2.0, 1.5]);
+
+        let full_conflict = find_conflict_region(dt.tds(), &kernel, &point, start_cell).unwrap();
+        assert!(
+            full_conflict.len() >= 2,
+            "Expected ≥2 conflict cells for center query in 2-triangle mesh, got {}",
+            full_conflict.len()
+        );
+
+        // Truncate: keep only the first cell, drop the rest.
+        let mut truncated = CellKeyBuffer::new();
+        truncated.push(full_conflict[0]);
+
+        let missed = verify_conflict_region_completeness(dt.tds(), &kernel, &point, &truncated);
+        assert!(
+            missed >= 1,
+            "Truncated BFS should detect at least 1 missed conflict cell, got {missed}"
+        );
+    }
+
     #[test]
     fn test_extract_cavity_boundary_rejects_ridge_fan_2d() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
