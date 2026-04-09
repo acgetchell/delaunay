@@ -1639,7 +1639,13 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     }
 }
 
-// Generic implementation for all kernels
+// =============================================================================
+// CONSTRUCTION (Requires Numeric Scalar Bounds)
+// =============================================================================
+//
+// Batch and incremental constructors, preprocessing, Hilbert ordering, spatial
+// hashing, and deduplication — all require `ScalarAccumulative + NumCast`.
+
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
 where
     K: Kernel<D>,
@@ -3421,6 +3427,27 @@ where
             }
         }
     }
+}
+
+// =============================================================================
+// QUERY, CONFIGURATION, TRAVERSAL, REPAIR & VALIDATION (Minimal Bounds)
+// =============================================================================
+//
+// Methods that only need `K: Kernel<D>` — no scalar arithmetic.  Downstream
+// generic code (e.g. `delaunayize_by_flips`) does not need to carry
+// `ScalarAccumulative + NumCast` bounds when calling these methods.
+//
+// Follows the precedent of the existing PURE STRUCT ASSEMBLY impl block.
+
+impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
+where
+    K: Kernel<D>,
+    U: DataType,
+    V: DataType,
+{
+    // -------------------------------------------------------------------------
+    // QUERY / ACCESSORS
+    // -------------------------------------------------------------------------
 
     /// Returns the number of vertices in the triangulation.
     ///
@@ -3993,7 +4020,22 @@ where
             false
         }
     }
+}
 
+// =============================================================================
+// ADVANCED REPAIR & HEURISTIC REBUILD (Requires Numeric Scalar Bounds)
+// =============================================================================
+//
+// `repair_delaunay_with_flips_advanced` can fall back to `rebuild_with_heuristic`,
+// which constructs a new triangulation and therefore requires `ScalarAccumulative`.
+
+impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
+where
+    K: Kernel<D>,
+    K::Scalar: ScalarAccumulative + NumCast,
+    U: DataType,
+    V: DataType,
+{
     /// Runs flip-based Delaunay repair
     ///
     /// This first attempts the standard two-pass flip repair. If it fails to converge (or if
@@ -4297,6 +4339,21 @@ where
         vertex_hashes.sort_unstable();
         stable_hash_u64_slice(&vertex_hashes)
     }
+}
+
+// =============================================================================
+// CONFIGURATION & TRAVERSAL (Minimal Bounds, continued)
+// =============================================================================
+
+impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
+where
+    K: Kernel<D>,
+    U: DataType,
+    V: DataType,
+{
+    // -------------------------------------------------------------------------
+    // CONFIGURATION
+    // -------------------------------------------------------------------------
 
     /// Returns the topology guarantee used for Level 3 topology validation.
     #[inline]
@@ -4682,7 +4739,23 @@ where
     pub fn vertex_coords(&self, v: VertexKey) -> Option<&[K::Scalar]> {
         self.as_triangulation().vertex_coords(v)
     }
+}
 
+// =============================================================================
+// MUTATION (Requires Numeric Scalar Bounds)
+// =============================================================================
+//
+// Incremental insertion, removal, and post-insertion repair/check helpers.
+// These require `ScalarAccumulative + NumCast` for spatial-index construction,
+// Triangulation-layer insertion, and Triangulation-layer removal.
+
+impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
+where
+    K: Kernel<D>,
+    K::Scalar: ScalarAccumulative + NumCast,
+    U: DataType,
+    V: DataType,
+{
     fn ensure_spatial_index_seeded(&mut self) {
         if self.spatial_index.is_some() {
             return;
@@ -5216,6 +5289,21 @@ where
 
         Ok(cells_removed)
     }
+}
+
+// =============================================================================
+// VALIDATION (Minimal Bounds)
+// =============================================================================
+
+impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
+where
+    K: Kernel<D>,
+    U: DataType,
+    V: DataType,
+{
+    // -------------------------------------------------------------------------
+    // VALIDATION
+    // -------------------------------------------------------------------------
 
     /// Validates the Delaunay empty-circumsphere property (Level 4).
     ///
@@ -5414,23 +5502,9 @@ where
             }
         }
     }
-}
-
-// =============================================================================
-// PURE STRUCT ASSEMBLY (Minimal Bounds)
-// =============================================================================
-//
-// These methods only assemble the `DelaunayTriangulation` struct from its parts
-// and do not perform any geometric operations. They live in a minimally-bounded
-// impl block so callers (e.g. explicit combinatorial construction) are not
-// forced to satisfy `ScalarAccumulative + NumCast`.
-
-impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
-where
-    K: Kernel<D>,
-    U: DataType,
-    V: DataType,
-{
+    // -------------------------------------------------------------------------
+    // PURE STRUCT ASSEMBLY
+    // -------------------------------------------------------------------------
     /// Create a `DelaunayTriangulation` from a `Tds` with a default kernel.
     ///
     /// This is useful when you've serialized just the `Tds` and want to reconstruct

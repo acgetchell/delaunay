@@ -37,6 +37,22 @@
 //!   (PL-manifold conditions, ridge/vertex links, ordering heuristics, and
 //!   convergence assumptions), plus algorithmic background and limitations.
 //!
+//! ## Which import do I need?
+//!
+//! The crate provides several focused prelude modules.  Pick the one that
+//! matches your task:
+//!
+//! | Task | Import |
+//! |---|---|
+//! | Build a triangulation, insert/remove vertices | `use delaunay::prelude::triangulation::*` |
+//! | Read-only queries, traversal, convex hull | `use delaunay::prelude::query::*` |
+//! | Geometry helpers, predicates, points | `use delaunay::prelude::geometry::*` |
+//! | Bistellar flips (Pachner moves) | `use delaunay::prelude::triangulation::flips::*` |
+//! | Delaunayize workflow (repair + flip) | `use delaunay::prelude::triangulation::delaunayize::*` |
+//! | Topology validation, Euler characteristic | `use delaunay::prelude::topology::validation::*` |
+//! | Collection types (`FastHashMap`, etc.) | `use delaunay::prelude::collections::*` |
+//! | Everything (kitchen sink) | `use delaunay::prelude::*` |
+//!
 //! ## Examples (contract-oriented)
 //!
 //! ### Validation hierarchy (Levels 1–4)

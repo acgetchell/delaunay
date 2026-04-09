@@ -146,32 +146,14 @@ type PeriodicCandidate<const D: usize> = (
     Vec<PeriodicFacetKey>,
     bool,
 );
-/// Finds a bounded-size 2D face subset whose edge incidences can close a quotient boundary.
-///
-/// Returns a boolean mask aligned with `candidate_edges` when a selection of exactly
-/// `target_faces` candidates is found such that no edge is used more than twice. The search
-/// uses a DFS with pruning and a heuristic ordering that prefers in-domain candidates first.
-#[expect(
-    clippy::too_many_lines,
-    reason = "Depth-first bounded subset search includes pruning logic and is kept self-contained"
-)]
-#[expect(
-    clippy::items_after_statements,
-    reason = "Local DFS helper is intentionally colocated with selection setup"
-)]
-fn search_closed_2d_selection(
+/// Sort candidates by heuristic priority: prefer in-domain candidates first,
+/// then by cumulative edge rarity (rarer edges first), then by index.
+fn sort_candidates_by_rarity_and_domain(
+    order: &mut [usize],
     candidate_edges: &[[usize; 3]],
     candidate_in_domain: &[bool],
-    target_faces: usize,
     edge_count: usize,
-    node_limit: usize,
-) -> Option<Vec<bool>> {
-    let m = candidate_edges.len();
-    if m < target_faces {
-        return None;
-    }
-
-    // Frequency of each edge in the candidate pool (rarer edges first).
+) {
     let mut edge_frequency = vec![0usize; edge_count];
     for edges in candidate_edges {
         for &edge in edges {
@@ -179,7 +161,6 @@ fn search_closed_2d_selection(
         }
     }
 
-    let mut order: Vec<usize> = (0..m).collect();
     order.sort_by(|a, b| {
         let a_edges = candidate_edges[*a];
         let b_edges = candidate_edges[*b];
@@ -192,103 +173,110 @@ fn search_closed_2d_selection(
             .then_with(|| a_score.cmp(&b_score))
             .then_with(|| a.cmp(b))
     });
+}
 
-    let mut edge_counts = vec![0u8; edge_count];
-    let mut selected = vec![false; m];
-    let mut nodes = 0usize;
+/// DFS state for bounded face-subset search in [`search_closed_2d_selection`].
+///
+/// Encapsulates the immutable search parameters and mutable traversal state so
+/// the recursive [`search`](Self::search) method takes only `pos` and `chosen`.
+struct ClosedSelectionDfs<'a> {
+    target_faces: usize,
+    order: &'a [usize],
+    candidate_edges: &'a [[usize; 3]],
+    edge_counts: Vec<u8>,
+    selected: Vec<bool>,
+    nodes: usize,
+    node_limit: usize,
+}
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Recursive DFS state requires explicit parameterization for pruning"
-    )]
-    fn dfs(
-        pos: usize,
-        chosen: usize,
-        target_faces: usize,
-        order: &[usize],
-        candidate_edges: &[[usize; 3]],
-        edge_counts: &mut [u8],
-        selected: &mut [bool],
-        nodes: &mut usize,
-        node_limit: usize,
-    ) -> bool {
-        if chosen == target_faces {
+impl ClosedSelectionDfs<'_> {
+    fn search(&mut self, pos: usize, chosen: usize) -> bool {
+        if chosen == self.target_faces {
             return true;
         }
-        if pos == order.len() {
+        if pos == self.order.len() {
             return false;
         }
-        if chosen + (order.len() - pos) < target_faces {
+        if chosen + (self.order.len() - pos) < self.target_faces {
             return false;
         }
-        if *nodes >= node_limit {
+        if self.nodes >= self.node_limit {
             return false;
         }
-        *nodes = nodes.saturating_add(1);
+        self.nodes = self.nodes.saturating_add(1);
 
         // Capacity-based prune: each additional face consumes 3 remaining edge incidences.
-        let remaining_capacity: usize = edge_counts
+        let remaining_capacity: usize = self
+            .edge_counts
             .iter()
             .map(|&count| usize::from(2_u8.saturating_sub(count)))
             .sum();
-        if chosen + (remaining_capacity / 3) < target_faces {
+        if chosen + (remaining_capacity / 3) < self.target_faces {
             return false;
         }
 
-        let idx = order[pos];
-        let edges = candidate_edges[idx];
+        let idx = self.order[pos];
+        let edges = self.candidate_edges[idx];
 
-        if edge_counts[edges[0]] < 2 && edge_counts[edges[1]] < 2 && edge_counts[edges[2]] < 2 {
-            selected[idx] = true;
-            edge_counts[edges[0]] += 1;
-            edge_counts[edges[1]] += 1;
-            edge_counts[edges[2]] += 1;
+        if self.edge_counts[edges[0]] < 2
+            && self.edge_counts[edges[1]] < 2
+            && self.edge_counts[edges[2]] < 2
+        {
+            self.selected[idx] = true;
+            self.edge_counts[edges[0]] += 1;
+            self.edge_counts[edges[1]] += 1;
+            self.edge_counts[edges[2]] += 1;
 
-            if dfs(
-                pos + 1,
-                chosen + 1,
-                target_faces,
-                order,
-                candidate_edges,
-                edge_counts,
-                selected,
-                nodes,
-                node_limit,
-            ) {
+            if self.search(pos + 1, chosen + 1) {
                 return true;
             }
 
-            edge_counts[edges[0]] -= 1;
-            edge_counts[edges[1]] -= 1;
-            edge_counts[edges[2]] -= 1;
-            selected[idx] = false;
+            self.edge_counts[edges[0]] -= 1;
+            self.edge_counts[edges[1]] -= 1;
+            self.edge_counts[edges[2]] -= 1;
+            self.selected[idx] = false;
         }
 
-        dfs(
-            pos + 1,
-            chosen,
-            target_faces,
-            order,
-            candidate_edges,
-            edge_counts,
-            selected,
-            nodes,
-            node_limit,
-        )
+        self.search(pos + 1, chosen)
+    }
+}
+
+/// Finds a bounded-size 2D face subset whose edge incidences can close a quotient boundary.
+///
+/// Returns a boolean mask aligned with `candidate_edges` when a selection of exactly
+/// `target_faces` candidates is found such that no edge is used more than twice. The search
+/// uses a DFS with pruning and a heuristic ordering that prefers in-domain candidates first.
+fn search_closed_2d_selection(
+    candidate_edges: &[[usize; 3]],
+    candidate_in_domain: &[bool],
+    target_faces: usize,
+    edge_count: usize,
+    node_limit: usize,
+) -> Option<Vec<bool>> {
+    let m = candidate_edges.len();
+    if m < target_faces {
+        return None;
     }
 
-    dfs(
-        0,
-        0,
-        target_faces,
-        &order,
+    let mut order: Vec<usize> = (0..m).collect();
+    sort_candidates_by_rarity_and_domain(
+        &mut order,
         candidate_edges,
-        &mut edge_counts,
-        &mut selected,
-        &mut nodes,
+        candidate_in_domain,
+        edge_count,
+    );
+
+    let mut dfs = ClosedSelectionDfs {
+        target_faces,
+        order: &order,
+        candidate_edges,
+        edge_counts: vec![0u8; edge_count],
+        selected: vec![false; m],
+        nodes: 0,
         node_limit,
-    )
-    .then_some(selected)
+    };
+
+    dfs.search(0, 0).then_some(dfs.selected)
 }
 
 // =============================================================================

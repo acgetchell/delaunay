@@ -71,7 +71,11 @@ jobs:
           echo "::group::Running tests with nextest"
           # Generate JUnit XML for Codecov Test Analytics
           # JUnit path is configured in .config/nextest.toml [profile.ci.junit]
-          cargo nextest run --all-features --profile ci
+          # Release mode is required: exact-predicate arithmetic makes 3D+ proptests
+          # exceed timeout limits in debug mode (>60s debug vs <1s release).
+          # Avoid --all-features: it enables slow-tests and count-allocations which
+          # are special-purpose features not suitable for general test runs.
+          cargo nextest run --release --profile ci
           echo "::endgroup::"
 
           # Verify JUnit XML was generated at the expected location

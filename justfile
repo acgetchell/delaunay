@@ -118,6 +118,13 @@ bench-compare: _ensure-uv
 bench-compile:
     RUSTFLAGS='-D warnings' cargo bench --workspace --no-run
 
+# Compile benchmarks and integration tests without running, treating warnings as errors.
+# Catches release-profile-only warnings (e.g. cfg-gated unused-mut) that debug-mode
+# clippy/test won't see. Mirrors the -D warnings environment set by CI's Rust toolchain action.
+bench-test-compile:
+    RUSTFLAGS='-D warnings' cargo bench --workspace --no-run
+    RUSTFLAGS='-D warnings' cargo test --tests --release --no-run
+
 # Development mode benchmarks: fast iteration with reduced sample sizes
 bench-dev: _ensure-uv
     CRIT_SAMPLE_SIZE=10 CRIT_MEASUREMENT_MS=1000 CRIT_WARMUP_MS=500 uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt --dev
@@ -163,7 +170,7 @@ check-fast:
 
 # CI simulation: comprehensive validation (matches .github/workflows/ci.yml)
 # Runs: checks + all tests (Rust + Python) + examples + bench compile
-ci: check bench-compile test-all examples
+ci: check bench-test-compile test-all examples
     @echo "🎯 CI checks complete!"
 
 # CI with performance baseline
@@ -723,9 +730,11 @@ test-allocation:
 test-debug:
     cargo test --test circumsphere_debug_tools -- --nocapture
 
-# test-integration: runs all integration tests (includes proptests)
+# test-integration: runs all integration tests (includes proptests) in release mode.
+# Release mode is required because exact-predicate arithmetic in debug mode makes
+# 3D+ proptests exceed CI timeout limits (>60s debug vs <1s release).
 test-integration:
-    cargo test --tests --verbose
+    cargo test --tests --release --verbose
 
 # test-integration-fast: runs integration tests but skips proptests (tests prefixed with `prop_`)
 #
@@ -734,7 +743,7 @@ test-integration:
 #
 # Note: `--skip prop_` is a substring filter applied by the Rust test harness.
 test-integration-fast:
-    cargo test --tests --verbose -- --skip prop_
+    cargo test --tests --release --verbose -- --skip prop_
 
 test-python: _ensure-uv
     uv run pytest
