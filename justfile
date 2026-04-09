@@ -723,9 +723,11 @@ test-allocation:
 test-debug:
     cargo test --test circumsphere_debug_tools -- --nocapture
 
-# test-integration: runs all integration tests (includes proptests)
+# test-integration: runs all integration tests (includes proptests) in release mode.
+# Release mode is required because exact-predicate arithmetic in debug mode makes
+# 3D+ proptests exceed CI timeout limits (>60s debug vs <1s release).
 test-integration:
-    cargo test --tests --verbose
+    cargo test --tests --release --verbose
 
 # test-integration-fast: runs integration tests but skips proptests (tests prefixed with `prop_`)
 #
@@ -734,7 +736,7 @@ test-integration:
 #
 # Note: `--skip prop_` is a substring filter applied by the Rust test harness.
 test-integration-fast:
-    cargo test --tests --verbose -- --skip prop_
+    cargo test --tests --release --verbose -- --skip prop_
 
 test-python: _ensure-uv
     uv run pytest

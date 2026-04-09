@@ -2,6 +2,7 @@
 //!
 //! This module tests circumsphere and flip repair behavior in minimal 2D configurations.
 
+#[cfg(debug_assertions)]
 use delaunay::core::util::debug_print_first_delaunay_violation;
 use delaunay::prelude::triangulation::*;
 
@@ -24,6 +25,7 @@ fn regression_empty_circumsphere_2d_minimal_case() {
         .unwrap();
 
     if dt.is_valid().is_err() {
+        #[cfg(debug_assertions)]
         debug_print_first_delaunay_violation(dt.tds(), None);
     }
 
@@ -54,6 +56,7 @@ fn regression_issue_120_minimal_failing_input_2d() {
         .unwrap();
 
     if let Err(err) = dt.validate() {
+        #[cfg(debug_assertions)]
         debug_print_first_delaunay_violation(dt.tds(), None);
         panic!("Issue #120 2D regression must validate Levels 1-4: {err}");
     }
