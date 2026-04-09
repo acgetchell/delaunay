@@ -635,7 +635,14 @@ where
                     }
                 }
             } else {
-                Some(0)
+                tracing::warn!(
+                    cell_key = ?cell_key,
+                    vertex_keys = ?created_cell.vertices(),
+                    actual_len = cell_points.len(),
+                    expected_len = D + 1,
+                    "fill_cavity: incomplete vertex data for orientation (missing vertices)"
+                );
+                None
             };
             tracing::debug!(
                 cell_key = ?cell_key,

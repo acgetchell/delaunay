@@ -41,7 +41,7 @@ in release builds.
 
 | Variable | Activation | Module | Description |
 |---|---|---|---|
-| `DELAUNAY_DEBUG_CAVITY` | presence | `incremental_insertion.rs` | Cavity boundary analysis, cell creation provenance with orientation |
+| `DELAUNAY_DEBUG_CAVITY` | presence | `incremental_insertion.rs`, `locate.rs` | Cavity boundary diagnostics, cell creation provenance with orientation |
 | `DELAUNAY_DEBUG_HULL` | presence | `incremental_insertion.rs` | Hull extension visibility, locate stats, neighbor summary |
 | `DELAUNAY_DEBUG_HULL_DETAIL` | presence | `incremental_insertion.rs` | Per-facet orientation details during visibility computation |
 

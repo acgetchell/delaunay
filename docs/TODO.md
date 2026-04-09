@@ -1,8 +1,11 @@
 # TODO — Weaknesses & Risks
 
-Identified during a full codebase evaluation (v0.7.4, branch
-`feat/diagnostic-infrastructure-v076`). Items are grouped by category and
-prioritized by severity.
+**As of:** 2026-04-09 · v0.7.4 (main) · diagnostic infrastructure targeting v0.7.6
+
+Identified during a full codebase evaluation. Items are grouped by category
+and prioritized by severity. Scoping notes reference the *next patch release
+after the current diagnostic work* — version numbers will be updated when
+the release target is finalized.
 
 Legend: **🔴 High** · **🟡 Medium** · **🟢 Low**
 
@@ -148,9 +151,10 @@ The dual Voronoi diagram is a natural extension but not yet implemented.
 
 ---
 
-## v0.7.5 Release Candidates
+## Next Patch Release Candidates
 
-Items feasible for the v0.7.5 release, ordered by impact:
+Items feasible for the next patch release (tentatively v0.7.5), ordered by
+impact:
 
 1. **Diagnostic infrastructure for #306/#307** — already in progress on
    this branch. Ship improved conflict-region verification and orientation

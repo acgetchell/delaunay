@@ -2425,6 +2425,8 @@ where
         cells: &CellKeyBuffer,
     ) -> Result<(), InsertionError> {
         #[cfg(debug_assertions)]
+        let debug_orientation = std::env::var_os("DELAUNAY_DEBUG_ORIENTATION").is_some();
+        #[cfg(debug_assertions)]
         let mut orientation_warn_count = 0_usize;
 
         for &cell_key in cells {
@@ -2454,8 +2456,7 @@ where
                 // Capture pre-swap vertices only when the debug env var is set,
                 // so release and non-debug runs avoid the allocation entirely.
                 #[cfg(debug_assertions)]
-                let pre_swap_vertices = if std::env::var_os("DELAUNAY_DEBUG_ORIENTATION").is_some()
-                {
+                let pre_swap_vertices = if debug_orientation {
                     self.tds.get_cell(cell_key).map(|c| c.vertices().to_vec())
                 } else {
                     None
@@ -2480,7 +2481,7 @@ where
                 cell.swap_vertex_slots(0, 1);
 
                 #[cfg(debug_assertions)]
-                if std::env::var_os("DELAUNAY_DEBUG_ORIENTATION").is_some() {
+                if debug_orientation {
                     orientation_warn_count += 1;
                     // Log full detail for the first 3 occurrences; suppress the rest.
                     if orientation_warn_count <= 3 {
@@ -2530,7 +2531,7 @@ where
         }
 
         #[cfg(debug_assertions)]
-        if orientation_warn_count > 3 && std::env::var_os("DELAUNAY_DEBUG_ORIENTATION").is_some() {
+        if orientation_warn_count > 3 && debug_orientation {
             let suppressed = orientation_warn_count - 3;
             tracing::warn!(
                 total_negative = orientation_warn_count,
