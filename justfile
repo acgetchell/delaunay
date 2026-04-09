@@ -118,6 +118,13 @@ bench-compare: _ensure-uv
 bench-compile:
     RUSTFLAGS='-D warnings' cargo bench --workspace --no-run
 
+# Compile benchmarks and integration tests without running, treating warnings as errors.
+# Catches release-profile-only warnings (e.g. cfg-gated unused-mut) that debug-mode
+# clippy/test won't see. Mirrors the -D warnings environment set by CI's Rust toolchain action.
+bench-test-compile:
+    RUSTFLAGS='-D warnings' cargo bench --workspace --no-run
+    RUSTFLAGS='-D warnings' cargo test --tests --release --no-run
+
 # Development mode benchmarks: fast iteration with reduced sample sizes
 bench-dev: _ensure-uv
     CRIT_SAMPLE_SIZE=10 CRIT_MEASUREMENT_MS=1000 CRIT_WARMUP_MS=500 uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt --dev
@@ -163,7 +170,7 @@ check-fast:
 
 # CI simulation: comprehensive validation (matches .github/workflows/ci.yml)
 # Runs: checks + all tests (Rust + Python) + examples + bench compile
-ci: check bench-compile test-all examples
+ci: check bench-test-compile test-all examples
     @echo "🎯 CI checks complete!"
 
 # CI with performance baseline

@@ -44,6 +44,7 @@ fn verify_conflict_region_diagnostic_3d_35v() {
         DelaunayTriangulation::new(initial).expect("initial simplex should succeed");
 
     let kernel = AdaptiveKernel::<f64>::new();
+    #[allow(unused_mut)] // only mutated under debug_assertions
     let mut total_missed = 0_usize;
     let mut insertions_checked = 0_usize;
     let mut insert_errors: Vec<String> = Vec::new();
