@@ -592,7 +592,6 @@ macro_rules! gen_incremental_insertion_validity {
 
 gen_incremental_insertion_validity!(2, 3, 5);
 proptest! {
-    #[ignore = "Slow (>60s) in test-integration"]
     #[test]
     fn prop_incremental_insertion_maintains_validity_3d(
         initial_points in prop::collection::vec(vertex_3d(), 4..=6),
@@ -701,7 +700,7 @@ macro_rules! gen_duplicate_coords_test {
 }
 
 gen_duplicate_coords_test!(2, 3, 10);
-gen_duplicate_coords_test!(3, 4, 12, #[ignore = "Slow (>60s) in test-integration"]);
+gen_duplicate_coords_test!(3, 4, 12);
 gen_duplicate_coords_test!(4, 5, 14, #[ignore = "Slow (>60s) in test-integration"]);
 gen_duplicate_coords_test!(5, 6, 16, #[ignore = "Slow (>60s) in test-integration"]);
 
@@ -848,7 +847,7 @@ proptest! {
 
 // 2D–5D coverage (keep ranges small to bound runtime)
 test_empty_circumsphere!(2, 6, 10);
-test_empty_circumsphere!(3, 6, 10, #[ignore = "Slow (>60s) in test-integration"]);
+test_empty_circumsphere!(3, 6, 10);
 test_empty_circumsphere!(4, 6, 12, #[ignore = "Slow (>60s) in test-integration"]);
 test_empty_circumsphere!(5, 7, 12, #[ignore = "Slow (>60s) in test-integration"]);
 
@@ -980,7 +979,6 @@ gen_insertion_order_robustness_test!(2, 6, 10);
 //   to improve the generator or to strengthen the underlying 3D robustness (rather than to
 //   further weaken the property).
 #[test]
-#[ignore = "Slow (>60s) in test-integration"]
 #[expect(
     clippy::too_many_lines,
     reason = "Large property-based test with extensive rejection tracking and diagnostics"
@@ -1753,6 +1751,6 @@ macro_rules! gen_duplicate_cloud_test {
 }
 
 gen_duplicate_cloud_test!(2, 2);
-gen_duplicate_cloud_test!(3, 3, #[ignore = "Slow (>60s) in test-integration"]);
+gen_duplicate_cloud_test!(3, 3);
 gen_duplicate_cloud_test!(4, 4, #[ignore = "Slow (>60s) in test-integration"]);
 gen_duplicate_cloud_test!(5, 5, #[ignore = "Slow (>60s) in test-integration"]);
