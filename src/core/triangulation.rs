@@ -2206,7 +2206,7 @@ where
                     cell.neighbors()
                         .map(|n| n.iter().copied().collect())
                         .unwrap_or_default();
-                tracing::warn!(
+                tracing::debug!(
                     cell_uuid = %cell.uuid(),
                     ?cell_key,
                     ?vertex_keys,
@@ -2416,10 +2416,17 @@ where
     ///
     /// This preserves cell-local slot alignment (vertices/neighbors/periodic offsets) by using
     /// `swap_vertex_slots(0, 1)` for negatively oriented cells.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "debug-only orientation diagnostics with dedup add conditional branches"
+    )]
     fn canonicalize_positive_orientation_for_cells(
         &mut self,
         cells: &CellKeyBuffer,
     ) -> Result<(), InsertionError> {
+        #[cfg(debug_assertions)]
+        let mut orientation_warn_count = 0_usize;
+
         for &cell_key in cells {
             let orientation = {
                 let cell = self
@@ -2474,48 +2481,62 @@ where
 
                 #[cfg(debug_assertions)]
                 if std::env::var_os("DELAUNAY_DEBUG_ORIENTATION").is_some() {
-                    // Re-evaluate orientation after swap to confirm it worked.
-                    // Handle the Result locally so verification failures are
-                    // observational only and never promote to insertion errors.
-                    let post_orientation = self.tds.get_cell(cell_key).map(|c| {
-                        self.evaluate_cell_orientation_for_context(
-                            cell_key,
-                            c,
-                            "orientation swap verification",
-                            "orientation predicate failed during swap verification",
-                        )
-                    });
-                    match post_orientation {
-                        Some(Ok(post_o)) => {
-                            tracing::warn!(
-                                cell_key = ?cell_key,
-                                pre_swap_vertices = ?pre_swap_vertices,
-                                pre_swap_orientation = orientation,
-                                post_swap_orientation = post_o,
-                                swap_fixed = post_o > 0,
-                                "canonicalize_positive_orientation: negative-orientation cell swapped"
-                            );
-                        }
-                        Some(Err(ref e)) => {
-                            tracing::warn!(
-                                cell_key = ?cell_key,
-                                pre_swap_vertices = ?pre_swap_vertices,
-                                pre_swap_orientation = orientation,
-                                error = %e,
-                                "canonicalize_positive_orientation: post-swap verification failed"
-                            );
-                        }
-                        None => {
-                            tracing::warn!(
-                                cell_key = ?cell_key,
-                                pre_swap_vertices = ?pre_swap_vertices,
-                                pre_swap_orientation = orientation,
-                                "canonicalize_positive_orientation: cell not found after swap"
-                            );
+                    orientation_warn_count += 1;
+                    // Log full detail for the first 3 occurrences; suppress the rest.
+                    if orientation_warn_count <= 3 {
+                        // Re-evaluate orientation after swap to confirm it worked.
+                        // Handle the Result locally so verification failures are
+                        // observational only and never promote to insertion errors.
+                        let post_orientation = self.tds.get_cell(cell_key).map(|c| {
+                            self.evaluate_cell_orientation_for_context(
+                                cell_key,
+                                c,
+                                "orientation swap verification",
+                                "orientation predicate failed during swap verification",
+                            )
+                        });
+                        match post_orientation {
+                            Some(Ok(post_o)) => {
+                                tracing::warn!(
+                                    cell_key = ?cell_key,
+                                    pre_swap_vertices = ?pre_swap_vertices,
+                                    pre_swap_orientation = orientation,
+                                    post_swap_orientation = post_o,
+                                    swap_fixed = post_o > 0,
+                                    "canonicalize_positive_orientation: negative-orientation cell swapped"
+                                );
+                            }
+                            Some(Err(ref e)) => {
+                                tracing::warn!(
+                                    cell_key = ?cell_key,
+                                    pre_swap_vertices = ?pre_swap_vertices,
+                                    pre_swap_orientation = orientation,
+                                    error = %e,
+                                    "canonicalize_positive_orientation: post-swap verification failed"
+                                );
+                            }
+                            None => {
+                                tracing::warn!(
+                                    cell_key = ?cell_key,
+                                    pre_swap_vertices = ?pre_swap_vertices,
+                                    pre_swap_orientation = orientation,
+                                    "canonicalize_positive_orientation: cell not found after swap"
+                                );
+                            }
                         }
                     }
                 }
             }
+        }
+
+        #[cfg(debug_assertions)]
+        if orientation_warn_count > 3 && std::env::var_os("DELAUNAY_DEBUG_ORIENTATION").is_some() {
+            let suppressed = orientation_warn_count - 3;
+            tracing::warn!(
+                total_negative = orientation_warn_count,
+                suppressed,
+                "canonicalize_positive_orientation: suppressed {suppressed} additional negative-orientation warnings (see first 3 above)"
+            );
         }
 
         Ok(())

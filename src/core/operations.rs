@@ -412,4 +412,42 @@ mod tests {
             }
         ));
     }
+
+    #[test]
+    fn test_repair_policy_decide_inadmissible_under_pseudomanifold() {
+        // CavityFlip requires PLManifold; under Pseudomanifold it should be inadmissible.
+        let op = TopologicalOperation::CavityFlip;
+        let decision =
+            DelaunayRepairPolicy::EveryInsertion.decide(1, TopologyGuarantee::Pseudomanifold, op);
+        assert!(matches!(
+            decision,
+            RepairDecision::Skip {
+                reason: RepairSkipReason::Inadmissible {
+                    operation: TopologicalOperation::CavityFlip,
+                    required: TopologyGuarantee::PLManifold,
+                    found: TopologyGuarantee::Pseudomanifold,
+                }
+            }
+        ));
+    }
+
+    #[test]
+    fn test_required_topology_returns_correct_guarantee() {
+        assert_eq!(
+            TopologicalOperation::CavityFlip.required_topology(),
+            TopologyGuarantee::PLManifold
+        );
+        assert_eq!(
+            TopologicalOperation::FacetFlip.required_topology(),
+            TopologyGuarantee::Pseudomanifold
+        );
+        assert_eq!(
+            TopologicalOperation::InsertVertex.required_topology(),
+            TopologyGuarantee::Pseudomanifold
+        );
+        assert_eq!(
+            TopologicalOperation::DeleteVertex.required_topology(),
+            TopologyGuarantee::Pseudomanifold
+        );
+    }
 }
