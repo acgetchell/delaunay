@@ -112,12 +112,12 @@ use crate::core::algorithms::incremental_insertion::{
     HullExtensionReason, InsertionError, extend_hull, external_facets_for_boundary, fill_cavity,
     repair_neighbor_pointers, wire_cavity_neighbors,
 };
-#[cfg(debug_assertions)]
-use crate::core::algorithms::locate::locate_with_stats;
 use crate::core::algorithms::locate::{
     ConflictError, LocateResult, extract_cavity_boundary, find_conflict_region, locate,
     locate_by_scan,
 };
+#[cfg(debug_assertions)]
+use crate::core::algorithms::locate::{locate_with_stats, verify_conflict_region_completeness};
 use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::collections::{
@@ -2206,7 +2206,7 @@ where
                     cell.neighbors()
                         .map(|n| n.iter().copied().collect())
                         .unwrap_or_default();
-                tracing::warn!(
+                tracing::debug!(
                     cell_uuid = %cell.uuid(),
                     ?cell_key,
                     ?vertex_keys,
@@ -2416,10 +2416,19 @@ where
     ///
     /// This preserves cell-local slot alignment (vertices/neighbors/periodic offsets) by using
     /// `swap_vertex_slots(0, 1)` for negatively oriented cells.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "debug-only orientation diagnostics with dedup add conditional branches"
+    )]
     fn canonicalize_positive_orientation_for_cells(
         &mut self,
         cells: &CellKeyBuffer,
     ) -> Result<(), InsertionError> {
+        #[cfg(debug_assertions)]
+        let debug_orientation = std::env::var_os("DELAUNAY_DEBUG_ORIENTATION").is_some();
+        #[cfg(debug_assertions)]
+        let mut orientation_warn_count = 0_usize;
+
         for &cell_key in cells {
             let orientation = {
                 let cell = self
@@ -2444,6 +2453,15 @@ where
             }
 
             if orientation < 0 {
+                // Capture pre-swap vertices only when the debug env var is set,
+                // so release and non-debug runs avoid the allocation entirely.
+                #[cfg(debug_assertions)]
+                let pre_swap_vertices = if debug_orientation {
+                    self.tds.get_cell(cell_key).map(|c| c.vertices().to_vec())
+                } else {
+                    None
+                };
+
                 let cell = self.tds.get_cell_by_key_mut(cell_key).ok_or_else(|| {
                     TdsError::CellNotFound {
                         cell_key,
@@ -2461,7 +2479,65 @@ where
                     .into());
                 }
                 cell.swap_vertex_slots(0, 1);
+
+                #[cfg(debug_assertions)]
+                if debug_orientation {
+                    orientation_warn_count += 1;
+                    // Log full detail for the first 3 occurrences; suppress the rest.
+                    if orientation_warn_count <= 3 {
+                        // Re-evaluate orientation after swap to confirm it worked.
+                        // Handle the Result locally so verification failures are
+                        // observational only and never promote to insertion errors.
+                        let post_orientation = self.tds.get_cell(cell_key).map(|c| {
+                            self.evaluate_cell_orientation_for_context(
+                                cell_key,
+                                c,
+                                "orientation swap verification",
+                                "orientation predicate failed during swap verification",
+                            )
+                        });
+                        match post_orientation {
+                            Some(Ok(post_o)) => {
+                                tracing::warn!(
+                                    cell_key = ?cell_key,
+                                    pre_swap_vertices = ?pre_swap_vertices,
+                                    pre_swap_orientation = orientation,
+                                    post_swap_orientation = post_o,
+                                    swap_fixed = post_o > 0,
+                                    "canonicalize_positive_orientation: negative-orientation cell swapped"
+                                );
+                            }
+                            Some(Err(ref e)) => {
+                                tracing::warn!(
+                                    cell_key = ?cell_key,
+                                    pre_swap_vertices = ?pre_swap_vertices,
+                                    pre_swap_orientation = orientation,
+                                    error = %e,
+                                    "canonicalize_positive_orientation: post-swap verification failed"
+                                );
+                            }
+                            None => {
+                                tracing::warn!(
+                                    cell_key = ?cell_key,
+                                    pre_swap_vertices = ?pre_swap_vertices,
+                                    pre_swap_orientation = orientation,
+                                    "canonicalize_positive_orientation: cell not found after swap"
+                                );
+                            }
+                        }
+                    }
+                }
             }
+        }
+
+        #[cfg(debug_assertions)]
+        if orientation_warn_count > 3 && debug_orientation {
+            let suppressed = orientation_warn_count - 3;
+            tracing::warn!(
+                total_negative = orientation_warn_count,
+                suppressed,
+                "canonicalize_positive_orientation: suppressed {suppressed} additional negative-orientation warnings (see first 3 above)"
+            );
         }
 
         Ok(())
@@ -4176,6 +4252,55 @@ where
         let new_cells = fill_cavity(&mut self.tds, v_key, &boundary_facets)?;
         self.canonicalize_positive_orientation_for_cells(&new_cells)?;
 
+        // Post-insertion orientation audit: verify that canonicalization
+        // actually produced all-positive orientations among the new cells.
+        #[cfg(debug_assertions)]
+        if std::env::var_os("DELAUNAY_DEBUG_ORIENTATION").is_some() {
+            let mut pos = 0_usize;
+            let mut neg = 0_usize;
+            let mut deg = 0_usize;
+            let mut fail = 0_usize;
+            for &ck in &new_cells {
+                if let Some(c) = self.tds.get_cell(ck) {
+                    match self.evaluate_cell_orientation_for_context(
+                        ck,
+                        c,
+                        "post-insertion orientation audit",
+                        "orientation predicate failed during post-insertion audit",
+                    ) {
+                        Ok(o) if o > 0 => pos += 1,
+                        Ok(o) if o < 0 => neg += 1,
+                        Ok(_) => deg += 1,
+                        Err(ref e) => {
+                            fail += 1;
+                            tracing::warn!(
+                                cell_key = ?ck,
+                                error = %e,
+                                "post-insertion orientation audit: evaluation failed"
+                            );
+                        }
+                    }
+                }
+            }
+            if neg > 0 || fail > 0 {
+                tracing::warn!(
+                    new_cells = new_cells.len(),
+                    positive = pos,
+                    negative = neg,
+                    degenerate = deg,
+                    eval_errors = fail,
+                    "post-insertion orientation audit: NEGATIVE cells or evaluation errors after canonicalization"
+                );
+            } else {
+                tracing::debug!(
+                    new_cells = new_cells.len(),
+                    positive = pos,
+                    degenerate = deg,
+                    "post-insertion orientation audit: all cells positive"
+                );
+            }
+        }
+
         // Wire neighbors (while both old and new cells exist)
         let external_facets =
             external_facets_for_boundary(&self.tds, &conflict_cells, &boundary_facets)?;
@@ -4521,6 +4646,28 @@ where
                 // Fallback: treat the containing cell as the conflict region, effectively performing
                 // a star-split of that cell to keep the simplicial complex connected.
                 let computed = find_conflict_region(&self.tds, &self.kernel, &point, start_cell)?;
+
+                #[cfg(debug_assertions)]
+                if std::env::var_os("DELAUNAY_DEBUG_CONFLICT_VERIFY").is_some() {
+                    let missed = verify_conflict_region_completeness(
+                        &self.tds,
+                        &self.kernel,
+                        &point,
+                        &computed,
+                    );
+                    if missed > 0 {
+                        tracing::warn!(
+                            missed,
+                            bfs_conflict = computed.len(),
+                            start_cell = ?start_cell,
+                            point = ?point,
+                            num_vertices = self.tds.number_of_vertices(),
+                            num_cells = self.tds.number_of_cells(),
+                            "try_insert_impl: INCOMPLETE conflict region at insertion"
+                        );
+                    }
+                }
+
                 if computed.is_empty() {
                     suspicion.empty_conflict_region = true;
                     suspicion.fallback_star_split = true;

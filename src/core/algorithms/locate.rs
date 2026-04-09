@@ -858,8 +858,25 @@ where
                     }
                 }
             }
+        } else {
+            // Cell is NOT in conflict (sign < 0): BFS boundary.
+            // Log boundary cells so investigators can see exactly where
+            // and why the BFS stopped expanding.
+            #[cfg(debug_assertions)]
+            if debug_config.log_conflict {
+                let neighbor_keys: SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE> =
+                    cell.neighbors()
+                        .map(|ns| ns.iter().copied().collect())
+                        .unwrap_or_default();
+                tracing::debug!(
+                    cell_key = ?cell_key,
+                    vertex_keys = ?cell.vertices(),
+                    sign,
+                    neighbors = ?neighbor_keys,
+                    "find_conflict_region: BFS boundary (non-conflict)"
+                );
+            }
         }
-        // If sign < 0, cell is not in conflict, don't explore further in this direction
     }
 
     #[cfg(debug_assertions)]
@@ -874,6 +891,126 @@ where
     }
 
     Ok(conflict_cells)
+}
+
+/// Verify that a BFS-found conflict region is complete by brute-force scanning all cells.
+///
+/// This debug-only function compares the conflict region found by BFS traversal against
+/// a full scan of every cell in the TDS using insphere tests. Any cell that the BFS missed
+/// (i.e., the point is inside its circumsphere but the cell was not found by BFS) is logged
+/// as a "missed" cell.
+///
+/// Activated by setting `DELAUNAY_DEBUG_CONFLICT_VERIFY=1`.
+///
+/// Returns the number of missed cells (0 means the BFS result is complete).
+#[cfg(debug_assertions)]
+pub fn verify_conflict_region_completeness<K, U, V, const D: usize>(
+    tds: &Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    point: &Point<K::Scalar, D>,
+    bfs_conflict_cells: &CellKeyBuffer,
+) -> usize
+where
+    K: Kernel<D>,
+    U: DataType,
+    V: DataType,
+{
+    let bfs_set: FastHashSet<CellKey> = bfs_conflict_cells.iter().copied().collect();
+    let mut missed_count = 0usize;
+    let mut brute_force_count = 0usize;
+    let mut malformed_cells = 0usize;
+    let mut predicate_errors = 0usize;
+
+    for (cell_key, cell) in tds.cells() {
+        let Some(simplex_points) = sorted_cell_points(tds, cell) else {
+            malformed_cells += 1;
+            tracing::debug!(
+                cell_key = ?cell_key,
+                vertex_keys = ?cell.vertices(),
+                "verify_conflict_region: skipping malformed cell (sorted_cell_points returned None)"
+            );
+            continue;
+        };
+        if simplex_points.len() != D + 1 {
+            malformed_cells += 1;
+            continue;
+        }
+
+        let Ok(sign) = kernel.in_sphere(&simplex_points, point) else {
+            predicate_errors += 1;
+            tracing::debug!(
+                cell_key = ?cell_key,
+                vertex_keys = ?cell.vertices(),
+                "verify_conflict_region: in_sphere predicate failed"
+            );
+            continue;
+        };
+
+        if sign >= 0 {
+            brute_force_count += 1;
+            if !bfs_set.contains(&cell_key) {
+                missed_count += 1;
+
+                // Reachability analysis: determine WHY BFS missed this cell.
+                // Check if any TDS neighbor of the missed cell is in the BFS
+                // conflict set.  This distinguishes two root causes:
+                //   - Reachable: a neighbor IS in bfs_set, so BFS reached a
+                //     neighbor but an intermediate insphere test rejected it
+                //   - Unreachable: NO neighbors are in bfs_set, indicating
+                //     broken neighbor pointers or a disconnected pocket
+                let (neighbor_in_bfs, neighbor_total, neighbor_none) =
+                    cell.neighbors().map_or((0, 0, 0), |neighbors| {
+                        let total = neighbors.len();
+                        let none_count = neighbors.iter().filter(|n| n.is_none()).count();
+                        let in_bfs = neighbors
+                            .iter()
+                            .filter_map(|n| *n)
+                            .filter(|nk| bfs_set.contains(nk))
+                            .count();
+                        (in_bfs, total, none_count)
+                    });
+
+                let reachability = if neighbor_in_bfs > 0 {
+                    "REACHABLE_BUT_REJECTED"
+                } else {
+                    "UNREACHABLE"
+                };
+
+                tracing::warn!(
+                    cell_key = ?cell_key,
+                    vertex_keys = ?cell.vertices(),
+                    sign,
+                    reachability,
+                    neighbor_in_bfs,
+                    neighbor_total,
+                    neighbor_none,
+                    bfs_conflict_len = bfs_conflict_cells.len(),
+                    brute_force_conflict_so_far = brute_force_count,
+                    "verify_conflict_region: BFS MISSED conflicting cell"
+                );
+            }
+        }
+    }
+
+    if missed_count > 0 || malformed_cells > 0 || predicate_errors > 0 {
+        tracing::warn!(
+            bfs_conflict = bfs_conflict_cells.len(),
+            brute_force_conflict = brute_force_count,
+            missed = missed_count,
+            malformed_cells,
+            predicate_errors,
+            query_point = ?point,
+            "verify_conflict_region: INCOMPLETE — missed cells or evaluation failures"
+        );
+    } else {
+        tracing::debug!(
+            bfs_conflict = bfs_conflict_cells.len(),
+            brute_force_conflict = brute_force_count,
+            "verify_conflict_region: conflict region is COMPLETE"
+        );
+    }
+
+    missed_count
 }
 
 /// Extract boundary facets of a conflict region (cavity).
@@ -2390,6 +2527,193 @@ mod tests {
         assert!(matches!(result, LocateResult::InsideCell(_)));
         assert!(!stats.used_hint, "None hint should set used_hint = false");
         assert!(!stats.fell_back_to_scan());
+    }
+
+    // =============================================================================
+    // VERIFY CONFLICT REGION COMPLETENESS TESTS
+    // =============================================================================
+    // The function under test is #[cfg(debug_assertions)], so these tests are
+    // also gated to avoid compilation errors in release/bench builds.
+
+    #[cfg(debug_assertions)]
+    /// Macro to test `verify_conflict_region_completeness` across dimensions.
+    /// Builds a single-simplex Delaunay triangulation, finds the conflict region
+    /// for an interior point via BFS, then verifies the brute-force check agrees.
+    macro_rules! test_verify_conflict_region_complete_dimension {
+        ($dim:literal, $inside_point:expr, $($coords:expr),+ $(,)?) => {{
+            let vertices: Vec<_> = vec![
+                $(vertex!($coords)),+
+            ];
+            let dt = DelaunayTriangulation::new(&vertices).unwrap();
+            let kernel = FastKernel::<f64>::new();
+
+            let start_cell = dt.tds().cell_keys().next().unwrap();
+            let point = Point::new($inside_point);
+
+            let conflict_cells = find_conflict_region(dt.tds(), &kernel, &point, start_cell).unwrap();
+            assert!(
+                !conflict_cells.is_empty(),
+                "BFS should find at least 1 conflict cell for interior point in {}D",
+                $dim
+            );
+
+            let missed = verify_conflict_region_completeness(
+                dt.tds(),
+                &kernel,
+                &point,
+                &conflict_cells,
+            );
+            assert_eq!(
+                missed, 0,
+                "BFS conflict region should be complete for interior point in {}D",
+                $dim
+            );
+        }};
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_verify_conflict_region_completeness_2d() {
+        test_verify_conflict_region_complete_dimension!(
+            2,
+            [0.3, 0.3],
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [0.0, 1.0],
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_verify_conflict_region_completeness_3d() {
+        test_verify_conflict_region_complete_dimension!(
+            3,
+            [0.25, 0.25, 0.25],
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_verify_conflict_region_completeness_4d() {
+        test_verify_conflict_region_complete_dimension!(
+            4,
+            [0.2, 0.2, 0.2, 0.2],
+            [0.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_verify_conflict_region_completeness_5d() {
+        test_verify_conflict_region_complete_dimension!(
+            5,
+            [0.15, 0.15, 0.15, 0.15, 0.15],
+            [0.0, 0.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        );
+    }
+
+    /// An empty BFS result should detect all conflict cells as missed.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_verify_conflict_region_completeness_empty_bfs_detects_missed() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let kernel = FastKernel::<f64>::new();
+
+        // Point inside the circumcircle — the single cell should be in conflict.
+        let point = Point::new([0.3, 0.3]);
+        let empty_bfs = CellKeyBuffer::new();
+
+        let missed = verify_conflict_region_completeness(dt.tds(), &kernel, &point, &empty_bfs);
+        assert!(
+            missed > 0,
+            "Empty BFS result should detect missed conflict cells"
+        );
+    }
+
+    /// Point far outside produces no conflict cells; verify returns 0 missed.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_verify_conflict_region_completeness_outside_point_zero_missed() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let kernel = FastKernel::<f64>::new();
+
+        let start_cell = dt.tds().cell_keys().next().unwrap();
+        let point = Point::new([10.0, 10.0, 10.0]);
+
+        let conflict_cells = find_conflict_region(dt.tds(), &kernel, &point, start_cell).unwrap();
+        assert!(conflict_cells.is_empty());
+
+        let missed =
+            verify_conflict_region_completeness(dt.tds(), &kernel, &point, &conflict_cells);
+        assert_eq!(missed, 0, "Outside point should produce zero missed cells");
+    }
+
+    /// Truncated multi-cell BFS result detects missed conflict cells.
+    ///
+    /// Builds a 2D triangulation with 4 vertices (2 triangles sharing an edge),
+    /// finds a multi-cell conflict region, then drops one cell from the BFS
+    /// result and verifies that `verify_conflict_region_completeness` catches
+    /// the omission.  Because the two triangles are adjacent, the dropped cell
+    /// has a neighbor still in the truncated BFS set, so the internal
+    /// classification logs `REACHABLE_BUT_REJECTED` (observable via tracing).
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_verify_conflict_region_completeness_truncated_multi_cell_detects_missed() {
+        // Four corners of a rectangle — DT produces 2 triangles sharing a diagonal.
+        // All 4 points are co-circular, so a center-ish query point is strictly
+        // inside both circumcircles → conflict region has 2 cells.
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([4.0, 0.0]),
+            vertex!([4.0, 3.0]),
+            vertex!([0.0, 3.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let kernel = FastKernel::<f64>::new();
+
+        let start_cell = dt.tds().cell_keys().next().unwrap();
+        let point = Point::new([2.0, 1.5]);
+
+        let full_conflict = find_conflict_region(dt.tds(), &kernel, &point, start_cell).unwrap();
+        assert!(
+            full_conflict.len() >= 2,
+            "Expected ≥2 conflict cells for center query in 2-triangle mesh, got {}",
+            full_conflict.len()
+        );
+
+        // Truncate: keep only the first cell, drop the rest.
+        let mut truncated = CellKeyBuffer::new();
+        truncated.push(full_conflict[0]);
+
+        let missed = verify_conflict_region_completeness(dt.tds(), &kernel, &point, &truncated);
+        assert!(
+            missed >= 1,
+            "Truncated BFS should detect at least 1 missed conflict cell, got {missed}"
+        );
     }
 
     #[test]
