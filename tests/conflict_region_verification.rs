@@ -46,6 +46,7 @@ fn verify_conflict_region_diagnostic_3d_35v() {
     let kernel = AdaptiveKernel::<f64>::new();
     let mut total_missed = 0_usize;
     let mut insertions_checked = 0_usize;
+    let mut insert_errors: Vec<String> = Vec::new();
 
     for (i, v) in vertices[4..].iter().enumerate() {
         let point = *v.point();
@@ -53,7 +54,9 @@ fn verify_conflict_region_diagnostic_3d_35v() {
         // Locate the point in the current triangulation.
         let Ok(location) = locate(dt.tds(), &kernel, &point, None) else {
             println!("[{i}] locate failed — skipping verification for this vertex");
-            let _ = dt.insert(*v);
+            if let Err(e) = dt.insert(*v) {
+                insert_errors.push(format!("[{i}] insert after locate failure: {e}"));
+            }
             continue;
         };
 
@@ -92,21 +95,30 @@ fn verify_conflict_region_diagnostic_3d_35v() {
             }
         }
 
-        // Perform the actual insertion (may succeed or fail).
-        let _ = dt.insert(*v);
+        // Perform the actual insertion; record failures for the summary.
+        if let Err(e) = dt.insert(*v) {
+            insert_errors.push(format!("[{i}] insert: {e}"));
+        }
     }
 
     println!(
         "=== conflict-region verification summary ===\n\
          insertions checked: {insertions_checked}\n\
          total missed cells: {total_missed}\n\
+         insertion errors:   {}\n\
          final vertices:     {}\n\
          final cells:        {}",
+        insert_errors.len(),
         dt.number_of_vertices(),
         dt.number_of_cells(),
     );
+    for err in &insert_errors {
+        println!("  {err}");
+    }
 
-    // Structural sanity: the test should not panic.
-    // The missed count is informational — it tells investigators whether
-    // the BFS conflict region is incomplete for this seed.
+    // The verification path must have been exercised at least once.
+    assert!(
+        insertions_checked > 0,
+        "no insertions checked — verification path not exercised"
+    );
 }
