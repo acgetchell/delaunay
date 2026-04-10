@@ -1096,12 +1096,14 @@ where
         match (self.topology, self.use_image_point_method) {
             (None, _) => {
                 // Euclidean path: delegate directly.
-                DelaunayTriangulation::with_topology_guarantee_and_options(
+                let mut dt = DelaunayTriangulation::with_topology_guarantee_and_options(
                     kernel,
                     self.vertices,
                     self.topology_guarantee,
                     self.construction_options,
-                )
+                )?;
+                dt.set_global_topology(self.global_topology);
+                Ok(dt)
             }
             (Some(space), false) => {
                 let topology = GlobalTopology::Toroidal {

@@ -94,12 +94,74 @@ use crate::core::{
     facet::facet_key_from_vertices,
     traits::DataType,
     triangulation_data_structure::{CellKey, Tds, TdsError, VertexKey},
+    util::hashing::stable_hash_u64_slice,
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::topology::characteristics::euler::{
     triangulated_surface_boundary_component_count, triangulated_surface_euler_characteristic,
 };
+use slotmap::{Key, KeyData};
 use thiserror::Error;
+
+// =============================================================================
+// Periodic-aware vertex identity
+// =============================================================================
+
+/// Creates a deterministic synthetic `VertexKey` that encodes both the vertex
+/// key and its periodic lattice offset.
+///
+/// For an all-zero (or empty) offset the original key is returned, preserving
+/// compatibility with non-periodic triangulations.  For non-zero offsets a
+/// hash-based synthetic key is produced so that the same `VertexKey` at
+/// different periodic positions is treated as a distinct vertex in link/ridge
+/// graph computations.
+///
+/// # Safety contract
+///
+/// The returned key is **not** backed by a real slot in the TDS.  It must only
+/// be used for graph-topology checks (equality, hashing, adjacency) — never
+/// for vertex-data lookups.
+fn lifted_vertex_id(vk: VertexKey, offset: &[i8]) -> VertexKey {
+    if offset.is_empty() || offset.iter().all(|&o| o == 0) {
+        return vk;
+    }
+    let base = vk.data().as_ffi();
+    // Mix each offset component into the hash.  We use a different prime per
+    // position to avoid collisions between permuted offsets.
+    let mut h: u64 = base;
+    for (i, &o) in offset.iter().enumerate() {
+        // Shift the byte into a unique lane, then fold.
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "Dimension index always fits in u32"
+        )]
+        let lane = (i as u32).wrapping_mul(8);
+        #[expect(
+            clippy::cast_sign_loss,
+            reason = "Intentional: offset byte reinterpreted as bit pattern for hashing"
+        )]
+        let shifted = (o as u64).rotate_left(lane);
+        h = h.wrapping_mul(0x517c_c1b7_2722_0a95).wrapping_add(shifted);
+    }
+    // Avalanche – ensure all bits depend on all inputs.
+    h ^= base;
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    h ^= h >> 33;
+    // Slotmap treats ffi value 0 as null; ensure we never produce it.
+    VertexKey::from(KeyData::from_ffi(h | 1))
+}
+
+/// Computes a periodic-aware ridge key from lifted vertex IDs.
+///
+/// The caller passes already-lifted `VertexKey`s; this function sorts them
+/// and hashes via the same stable hash used by `facet_key_from_vertices`,
+/// producing a key that correctly distinguishes periodic images.
+fn periodic_ridge_key(lifted_vertices: &[VertexKey]) -> u64 {
+    let mut keys: SmallBuffer<u64, 8> = lifted_vertices.iter().map(|k| k.data().as_ffi()).collect();
+    keys.sort_unstable();
+    stable_hash_u64_slice(&keys)
+}
 
 /// Errors that can occur during manifold (topology) validation.
 ///
@@ -459,12 +521,40 @@ where
 
     for &cell_key in star_cells {
         let cell_vertices = tds.get_cell_vertices(cell_key)?;
+        let offsets = tds
+            .get_cell(cell_key)
+            .and_then(|c| c.periodic_vertex_offsets());
+
+        // Find the reference offset: the first simplex vertex's offset in
+        // this cell.  All link vertex offsets are computed relative to this
+        // so that shared vertices across TDS-adjacent cells get the same
+        // lifted ID (adjacent cells may store different absolute offsets
+        // for the same quotient-space vertex).
+        let ref_slot = offsets.and_then(|_| {
+            cell_vertices
+                .iter()
+                .position(|cv| simplex_vertices.contains(cv))
+        });
 
         let mut link_vertices: VertexKeyBuffer =
             VertexKeyBuffer::with_capacity(expected_link_vertices);
-        for &vk in &cell_vertices {
+        for (i, &vk) in cell_vertices.iter().enumerate() {
+            // Membership test on bare key: the input simplex (e.g. a single
+            // vertex) IS the same vertex regardless of periodic offset.
             if !simplex_vertices.contains(&vk) {
-                link_vertices.push(vk);
+                // Lift with *relative* offset so adjacent cells agree.
+                let lifted = match (offsets, ref_slot) {
+                    (Some(offs), Some(r)) => {
+                        let rel: SmallBuffer<i8, 8> = offs[i]
+                            .iter()
+                            .zip(offs[r].iter())
+                            .map(|(&a, &b)| a - b)
+                            .collect();
+                        lifted_vertex_id(vk, &rel)
+                    }
+                    _ => vk,
+                };
+                link_vertices.push(lifted);
             }
         }
 
@@ -556,11 +646,44 @@ where
 
     for &cell_key in star_cells {
         let cell_vertices = tds.get_cell_vertices(cell_key)?;
+        let offsets = tds
+            .get_cell(cell_key)
+            .and_then(|c| c.periodic_vertex_offsets());
+
+        // Find the reference offset from the first ridge vertex's slot.
+        let ref_slot = offsets.and_then(|offs| {
+            cell_vertices
+                .iter()
+                .enumerate()
+                .find(|(idx, cv)| {
+                    // Match cell vertex against lifted ridge vertices.
+                    let lv = lifted_vertex_id(**cv, &offs[*idx]);
+                    ridge_vertices.contains(&lv)
+                })
+                .map(|(idx, _)| idx)
+        });
 
         link_vertices.clear();
-        for &vk in &cell_vertices {
-            if !ridge_vertices.contains(&vk) {
-                link_vertices.push(vk);
+        for (i, &vk) in cell_vertices.iter().enumerate() {
+            // Lift with absolute offsets for ridge membership test (ridge
+            // vertices in `ridge_vertices` use absolute lifted IDs).
+            let abs_lifted = offsets.map_or(vk, |offs| lifted_vertex_id(vk, &offs[i]));
+            if !ridge_vertices.contains(&abs_lifted) {
+                // Lift link vertices with *relative* offsets so adjacent
+                // cells agree on shared vertex identity.
+                let rel_lifted = match (offsets, ref_slot) {
+                    (Some(offs), Some(r)) => {
+                        let cell_offs: &[[i8; D]] = offs;
+                        let rel: SmallBuffer<i8, 8> = cell_offs[i]
+                            .iter()
+                            .zip(cell_offs[r].iter())
+                            .map(|(&a, &b)| a - b)
+                            .collect();
+                        lifted_vertex_id(vk, &rel)
+                    }
+                    _ => vk,
+                };
+                link_vertices.push(rel_lifted);
             }
         }
 
@@ -633,8 +756,9 @@ where
 
     let mut ridge_vertices: VertexKeyBuffer = VertexKeyBuffer::with_capacity(D.saturating_sub(1));
 
-    for (cell_key, _cell) in tds.cells() {
+    for (cell_key, cell) in tds.cells() {
         let cell_vertices = tds.get_cell_vertices(cell_key)?;
+        let offsets = cell.periodic_vertex_offsets();
 
         if cell_vertices.len() != D + 1 {
             return Err(TdsError::DimensionMismatch {
@@ -653,7 +777,9 @@ where
                     if i == omit_a || i == omit_b {
                         continue;
                     }
-                    ridge_vertices.push(vk);
+                    // Use lifted vertex ID when periodic offsets are present.
+                    let lifted = offsets.map_or(vk, |offs| lifted_vertex_id(vk, &offs[i]));
+                    ridge_vertices.push(lifted);
                 }
 
                 if ridge_vertices.len() != D.saturating_sub(1) {
@@ -665,7 +791,13 @@ where
                     .into());
                 }
 
-                let ridge_key = facet_key_from_vertices(&ridge_vertices);
+                // Periodic-aware key: lifted vertex IDs produce distinct
+                // ridge keys for different offset images.
+                let ridge_key = if offsets.is_some() {
+                    periodic_ridge_key(&ridge_vertices)
+                } else {
+                    facet_key_from_vertices(&ridge_vertices)
+                };
                 let star = ridge_to_star.entry(ridge_key).or_insert_with(|| RidgeStar {
                     ridge_vertices: ridge_vertices.clone(),
                     star_cells: SmallBuffer::new(),

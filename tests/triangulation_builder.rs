@@ -16,6 +16,7 @@ use delaunay::geometry::kernel::RobustKernel;
 use delaunay::geometry::point::Point;
 use delaunay::geometry::traits::coordinate::Coordinate;
 use delaunay::topology::characteristics::euler::{count_simplices, euler_characteristic};
+use delaunay::topology::traits::topological_space::GlobalTopology;
 use delaunay::vertex;
 
 // =============================================================================
@@ -314,10 +315,9 @@ fn test_builder_toroidal_robust_kernel_3d() {
 
 /// `toroidal_periodic` builds a valid 2D periodic triangulation with χ = 0.
 ///
-/// Periodic triangulations tile the torus, so the Euler characteristic of the
-/// resulting combinatorial map must be 0 (torus), not 2 (sphere). Full
-/// `dt.validate()` would fail because it checks χ = 2, so we check TDS
-/// validity and χ separately.
+/// Verifies TDS structural validity and χ = 0 directly.
+/// See `test_builder_toroidal_periodic_full_validate_2d` for the full
+/// `PLManifold` `validate()` path.
 #[test]
 fn test_builder_toroidal_periodic_chi_zero_2d() {
     let vertices = vec![
@@ -345,6 +345,139 @@ fn test_builder_toroidal_periodic_chi_zero_2d() {
     assert_eq!(
         chi, 0,
         "Euler characteristic of periodic 2D triangulation must be 0 (torus)"
+    );
+}
+
+/// `toroidal_periodic` 2D with full `PLManifold` Levels 1–3 validation.
+///
+/// Periodic-aware ridge and vertex link validation correctly handles reused
+/// vertex keys via lifted vertex identity.  This exercises the
+/// `GlobalTopology::Toroidal` Euler override AND the lifted-vertex-identity
+/// logic in `validate_ridge_links` / `validate_vertex_links`.
+///
+/// Level 4 (Delaunay property) is not checked because the quotient mesh
+/// may contain local violations that are valid under periodic identification.
+#[test]
+fn test_builder_toroidal_periodic_full_validate_2d() {
+    let vertices = vec![
+        vertex!([0.1_f64, 0.2]),
+        vertex!([0.4, 0.7]),
+        vertex!([0.7, 0.3]),
+        vertex!([0.2, 0.9]),
+        vertex!([0.8, 0.6]),
+        vertex!([0.5, 0.1]),
+        vertex!([0.3, 0.5]),
+    ];
+    let kernel = RobustKernel::new();
+    let dt = DelaunayTriangulationBuilder::new(&vertices)
+        .toroidal_periodic([1.0_f64, 1.0])
+        .build_with_kernel::<_, ()>(&kernel)
+        .expect("periodic 2D build should succeed");
+
+    assert_eq!(dt.number_of_vertices(), 7);
+    assert!(
+        dt.global_topology().is_toroidal(),
+        "global_topology should be Toroidal"
+    );
+    // Levels 1–3 (TDS structure + topology including PLManifold ridge/vertex links).
+    let result = dt.as_triangulation().validate();
+    assert!(
+        result.is_ok(),
+        "PLManifold Levels 1-3 validate() should pass for toroidal_periodic: {:?}",
+        result.err()
+    );
+}
+
+/// Explicit 7-vertex torus (Heawood triangulation) with `GlobalTopology::Toroidal`
+/// builds successfully under `PLManifold` guarantee.
+///
+/// The 14-triangle closed mesh has χ = 0 (torus). Without the Toroidal override
+/// in `validate_topology_core()`, the heuristic would classify it as
+/// `ClosedSphere(2)` and expect χ = 2, failing at build time. Setting
+/// `global_topology = Toroidal` overrides to `ClosedToroid(2)` (χ = 0).
+///
+/// Uses explicit construction with unique vertex keys, so ridge and vertex link
+/// checks are correctly evaluated under `PLManifold` guarantee.
+///
+/// Note: `validate_geometric_cell_orientation()` fails for this planar embedding
+/// of a torus (self-intersection makes some cells negative-oriented), so we
+/// verify TDS structural validity (Level 1–2) rather than full `validate()`.
+#[test]
+fn test_explicit_toroidal_heawood_torus_validates() {
+    use std::f64::consts::TAU;
+
+    // Regular heptagon: 7 well-separated points, no 3 collinear.
+    let vertices: Vec<_> = (0..7)
+        .map(|i| {
+            let angle = TAU * f64::from(i) / 7.0;
+            vertex!([angle.cos(), angle.sin()])
+        })
+        .collect();
+
+    // Heawood triangulation: two families of 7 triangles each, 14 total.
+    // Family 1: {i, i+1, i+3} mod 7
+    // Family 2: {i, i+2, i+3} mod 7
+    let mut cells: Vec<Vec<usize>> = Vec::with_capacity(14);
+    for i in 0..7 {
+        cells.push(vec![i, (i + 1) % 7, (i + 3) % 7]);
+        cells.push(vec![i, (i + 2) % 7, (i + 3) % 7]);
+    }
+
+    // Build succeeds: the Toroidal override in validate_topology_core() accepts
+    // χ = 0 for the ClosedToroid classification. Without global_topology = Toroidal,
+    // this build would fail (see test_explicit_toroidal_torus_euler_mismatch_without_override).
+    let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+        .global_topology(GlobalTopology::Toroidal {
+            domain: [2.0, 2.0],
+            mode: delaunay::topology::traits::topological_space::ToroidalConstructionMode::Explicit,
+        })
+        .build::<()>()
+        .expect("explicit toroidal torus build should succeed");
+
+    assert_eq!(dt.number_of_vertices(), 7);
+    assert_eq!(dt.number_of_cells(), 14);
+    assert!(
+        dt.global_topology().is_toroidal(),
+        "global_topology should be Toroidal"
+    );
+    assert!(
+        dt.tds().is_valid().is_ok(),
+        "TDS structural validity (Level 1-2) should pass"
+    );
+    let counts = count_simplices(dt.tds()).unwrap();
+    let chi = euler_characteristic(&counts);
+    assert_eq!(chi, 0, "Euler characteristic of explicit torus must be 0");
+}
+
+/// Explicit 7-vertex torus with Euclidean `global_topology` fails Euler validation.
+///
+/// Same mesh as above but without the Toroidal override. The heuristic classifies
+/// the closed mesh as `ClosedSphere(2)` (expected χ = 2), but actual χ = 0.
+#[test]
+fn test_explicit_toroidal_torus_euler_mismatch_without_override() {
+    use std::f64::consts::TAU;
+
+    let vertices: Vec<_> = (0..7)
+        .map(|i| {
+            let angle = TAU * f64::from(i) / 7.0;
+            vertex!([angle.cos(), angle.sin()])
+        })
+        .collect();
+
+    let mut cells: Vec<Vec<usize>> = Vec::with_capacity(14);
+    for i in 0..7 {
+        cells.push(vec![i, (i + 1) % 7, (i + 3) % 7]);
+        cells.push(vec![i, (i + 2) % 7, (i + 3) % 7]);
+    }
+
+    // Build with default Euclidean topology — should fail at Euler validation.
+    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+        .build::<()>()
+        .expect_err("explicit torus without Toroidal metadata should fail Euler validation");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Euler characteristic") || msg.contains("topology validation failed"),
+        "Error should mention topology/Euler failure: {msg}"
     );
 }
 
@@ -383,6 +516,36 @@ fn test_builder_toroidal_periodic_3d_success() {
         dt.tds().is_valid().is_ok(),
         "TDS structural validity should pass for 3D periodic triangulation"
     );
+}
+
+// =============================================================================
+// Non-f64 scalar: from_vertices()
+// =============================================================================
+
+/// `from_vertices()` with f32 scalars constructs a valid triangulation.
+#[test]
+fn test_builder_from_vertices_f32() {
+    let vertices: Vec<Vertex<f32, (), 2>> = vec![
+        VertexBuilder::default()
+            .point(Point::new([0.0_f32, 0.0]))
+            .build()
+            .unwrap(),
+        VertexBuilder::default()
+            .point(Point::new([1.0_f32, 0.0]))
+            .build()
+            .unwrap(),
+        VertexBuilder::default()
+            .point(Point::new([0.0_f32, 1.0]))
+            .build()
+            .unwrap(),
+    ];
+
+    let dt = DelaunayTriangulationBuilder::from_vertices(&vertices)
+        .build::<()>()
+        .expect("f32 from_vertices build should succeed");
+
+    assert_eq!(dt.number_of_vertices(), 3);
+    assert_eq!(dt.number_of_cells(), 1);
 }
 
 // =============================================================================
