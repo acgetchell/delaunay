@@ -442,6 +442,13 @@ where
     /// cells directly, bypassing point-insertion-based Delaunay construction.
     /// Each inner slice must contain exactly D+1 vertex indices.
     explicit_cells: Option<&'v [Vec<usize>]>,
+    /// Runtime global topology metadata.
+    ///
+    /// When set to a non-Euclidean topology (e.g. `Toroidal`), Euler characteristic
+    /// validation uses the appropriate expectation (e.g. χ = 0 for a torus).
+    /// This is **metadata only** and does not trigger any construction-time
+    /// coordinate transformation.
+    global_topology: GlobalTopology<D>,
 }
 
 // =============================================================================
@@ -496,6 +503,7 @@ where
             construction_options: ConstructionOptions::default(),
             use_image_point_method: false,
             explicit_cells: None,
+            global_topology: GlobalTopology::DEFAULT,
         }
     }
 
@@ -588,6 +596,7 @@ where
             construction_options: ConstructionOptions::default(),
             use_image_point_method: false,
             explicit_cells: Some(cells),
+            global_topology: GlobalTopology::DEFAULT,
         }
     }
 
@@ -627,6 +636,7 @@ where
             construction_options: ConstructionOptions::default(),
             use_image_point_method: false,
             explicit_cells: None,
+            global_topology: GlobalTopology::DEFAULT,
         }
     }
 
@@ -749,6 +759,50 @@ where
     #[must_use]
     pub const fn topology_guarantee(mut self, topology_guarantee: TopologyGuarantee) -> Self {
         self.topology_guarantee = topology_guarantee;
+        self
+    }
+
+    /// Sets the [`GlobalTopology`] metadata for the triangulation.
+    ///
+    /// This declares the intended global topology so that Euler characteristic
+    /// validation uses the correct expectation. For example, setting
+    /// [`GlobalTopology::Toroidal`] tells the validator to expect χ = 0 for a closed
+    /// mesh instead of χ = 2 (the sphere default).
+    ///
+    /// This is **metadata only** and does not trigger any coordinate
+    /// canonicalization or image-point construction. For construction-time
+    /// toroidal processing, use [`.toroidal()`](Self::toroidal) or
+    /// [`.toroidal_periodic()`](Self::toroidal_periodic) instead.
+    ///
+    /// Defaults to [`GlobalTopology::Euclidean`].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::core::builder::DelaunayTriangulationBuilder;
+    /// use delaunay::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let cells = vec![vec![0, 1, 2]];
+    ///
+    /// let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    ///     .global_topology(GlobalTopology::Toroidal {
+    ///         domain: [1.0, 1.0],
+    ///         mode: ToroidalConstructionMode::Explicit,
+    ///     })
+    ///     .build::<()>()
+    ///     .unwrap();
+    ///
+    /// assert!(dt.global_topology().is_toroidal());
+    /// ```
+    #[must_use]
+    pub const fn global_topology(mut self, global_topology: GlobalTopology<D>) -> Self {
+        self.global_topology = global_topology;
         self
     }
 
@@ -1030,18 +1084,26 @@ where
             if self.construction_options != ConstructionOptions::default() {
                 return Err(ExplicitConstructionError::UnsupportedConstructionOptions.into());
             }
-            return Self::build_explicit(kernel, self.vertices, cells, self.topology_guarantee);
+            return Self::build_explicit(
+                kernel,
+                self.vertices,
+                cells,
+                self.topology_guarantee,
+                self.global_topology,
+            );
         }
 
         match (self.topology, self.use_image_point_method) {
             (None, _) => {
                 // Euclidean path: delegate directly.
-                DelaunayTriangulation::with_topology_guarantee_and_options(
+                let mut dt = DelaunayTriangulation::with_topology_guarantee_and_options(
                     kernel,
                     self.vertices,
                     self.topology_guarantee,
                     self.construction_options,
-                )
+                )?;
+                dt.set_global_topology(self.global_topology);
+                Ok(dt)
             }
             (Some(space), false) => {
                 let topology = GlobalTopology::Toroidal {
@@ -1131,6 +1193,7 @@ where
         vertices: &[Vertex<T, U, D>],
         cells: &[Vec<usize>],
         topology_guarantee: TopologyGuarantee,
+        global_topology: GlobalTopology<D>,
     ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
         K: Kernel<D, Scalar = T>,
@@ -1222,6 +1285,11 @@ where
             kernel.clone(),
             topology_guarantee,
         );
+
+        // Set global topology metadata before validation so that
+        // validate_topology_core() uses the correct Euler characteristic
+        // expectation (e.g. χ = 0 for toroidal instead of χ = 2 for sphere).
+        dt.set_global_topology(global_topology);
 
         // --- Normalize orientation and promote to positive ---
         //

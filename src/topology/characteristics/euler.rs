@@ -162,6 +162,13 @@ pub enum TopologyClassification {
     /// The value represents the dimension D.
     ClosedSphere(usize),
 
+    /// Closed D-torus (no boundary).
+    ///
+    /// A toroidal mesh constructed with periodic boundary identification.
+    /// The Euler characteristic of the D-torus T^D is always 0.
+    /// The value represents the dimension D.
+    ClosedToroid(usize),
+
     /// Cannot determine or doesn't fit known categories.
     Unknown,
 }
@@ -737,6 +744,10 @@ pub fn expected_chi_for(classification: &TopologyClassification) -> Option<isize
             // χ(S^d) = 1 + (-1)^d
             Some(1 + if d % 2 == 0 { 1 } else { -1 })
         }
+        TopologyClassification::ClosedToroid(_) => {
+            // χ(T^d) = 0 for all d ≥ 1
+            Some(0)
+        }
         TopologyClassification::Unknown => None,
     }
 }
@@ -974,6 +985,14 @@ mod tests {
             Some(0)
         );
         assert_eq!(expected_chi_for(&TopologyClassification::Unknown), None);
+        assert_eq!(
+            expected_chi_for(&TopologyClassification::ClosedToroid(2)),
+            Some(0)
+        );
+        assert_eq!(
+            expected_chi_for(&TopologyClassification::ClosedToroid(3)),
+            Some(0)
+        );
     }
 
     fn build_closed_2d_surface_tds() -> Tds<f64, (), (), 2> {
