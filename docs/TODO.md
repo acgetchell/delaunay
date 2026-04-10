@@ -1,6 +1,6 @@
 # TODO — Weaknesses & Risks
 
-**As of:** 2026-04-09 · v0.7.4 (main) · diagnostic infrastructure targeting v0.7.6
+**As of:** 2026-04-09 · v0.7.5 (main) · diagnostic infrastructure targeting v0.7.6
 
 Identified during a full codebase evaluation. Items are grouped by category
 and prioritized by severity. Scoping notes reference the *next patch release

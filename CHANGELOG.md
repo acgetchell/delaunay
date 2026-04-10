@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.5] - 2026-04-09
 
 ### ⚠️ Breaking Changes
 
@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Merged Pull Requests
 
+- V0.7.5 cleanup — impl-block split, builder decomposition, p… [#311](https://github.com/acgetchell/delaunay/pull/311)
+- Add diagnostic infrastructure for v0.7.6 investigation (#306, #… [#309](https://github.com/acgetchell/delaunay/pull/309)
+- Bump taiki-e/install-action from 2.70.2 to 2.73.0 [#308](https://github.com/acgetchell/delaunay/pull/308)
 - Add MVP delaunayize-by-flips workflow [#227](https://github.com/acgetchell/delaunay/pull/227) [#303](https://github.com/acgetchell/delaunay/pull/303)
 - Add explicit construction from vertices and cells [#293](https://github.com/acgetchell/delaunay/pull/293)
   [#301](https://github.com/acgetchell/delaunay/pull/301)
@@ -97,6 +100,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before repair can occur. Expand test coverage for budget exhaustion,
   cell removal logic, and repair determinism.
 
+- Add diagnostic infrastructure for v0.7.6 investigation (#306, #… [#309](https://github.com/acgetchell/delaunay/pull/309)
+  [`b25dff3`](https://github.com/acgetchell/delaunay/commit/b25dff390f27bc8b34ec99fa0c45a6163b6fd723)
+
+- feat: add diagnostic infrastructure for v0.7.6 investigation (#306, #307)
+
+  - Enhance conflict-region verifier with neighbor-reachability analysis
+  - Add BFS boundary logging to find_conflict_region
+  - Add orientation tracing and post-insertion audit (DELAUNAY_DEBUG_ORIENTATION)
+  - Add cell creation provenance logging to fill_cavity
+  - Re-export diagnostic types (DelaunayRepairDiagnostics, etc.) in prelude
+  - Create comprehensive debug env var reference (docs/dev/debug_env_vars.md)
+
 ### Changed
 
 - [**breaking**] Change remove_vertex to accept VertexKey instead of &Vertex [#300](https://github.com/acgetchell/delaunay/pull/300)
@@ -116,6 +131,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     pattern) and builder.rs (eliminate intermediate vertex copies)
 
   - Add stale-key idempotency test for the new VertexKey API
+- V0.7.5 cleanup — impl-block split, builder decomposition, p… [#311](https://github.com/acgetchell/delaunay/pull/311)
+  [`5bf5c81`](https://github.com/acgetchell/delaunay/commit/5bf5c8192b378d320d35f0a074a57f5b7e8170ff)
+
+- refactor: v0.7.5 cleanup — impl-block split, builder decomposition, prelude guidance, re-enable 3D proptests
+
+  - Split monolithic DelaunayTriangulation impl block into 6 trait-minimal
+    blocks per #302 (ScalarAccumulative only where needed)
+
+  - Decompose search_closed_2d_selection: extract ClosedSelectionDfs struct
+    and sort_candidates_by_rarity_and_domain helper, remove clippy suppressions
+
+  - Add "Which import do I need?" prelude guidance table to lib.rs
+  - Re-enable 43 previously-ignored 3D proptests (all <1s in release mode)
+  - Audit doctests for builder migration (no changes needed; deferred to #214)
+
+### Documentation
+
+- Update KNOWN_ISSUES_4D.md with #204 debug run findings [`87d3054`](https://github.com/acgetchell/delaunay/commit/87d3054a3d722029aeedf881f00caeec1bd7e639)
+
+- 3D: minimal failing prefix is 35 vertices (previously ~130+)
+  - 3D: flip cycles confirmed NOT predicate-related (ambiguous=0)
+  - 4D: negative-orientation cell causes 88% vertex skip rate
+  - Add release-mode reproduction commands
+  - Update recommendations section
+  - Filed follow-up issues #306 and #307
 
 ### Maintenance
 
@@ -228,6 +268,24 @@ Bumps [taiki-e/install-action](https://github.com/taiki-e/install-action) from 2
 
 - dependency-name: taiki-e/install-action
     dependency-version: 2.70.2
+    dependency-type: direct:production
+    update-type: version-update:semver-minor
+  ...
+
+- Bump taiki-e/install-action from 2.70.2 to 2.73.0 [#308](https://github.com/acgetchell/delaunay/pull/308)
+  [`839877f`](https://github.com/acgetchell/delaunay/commit/839877f6db184e766fc9f4e3515b5fee3e70918f)
+
+Bumps [taiki-e/install-action](https://github.com/taiki-e/install-action) from 2.70.2 to 2.73.0.
+
+- [Release notes](https://github.com/taiki-e/install-action/releases)
+- [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
+- [Commits](https://github.com/taiki-e/install-action/compare/e9e8e031bcd90cdbe8ac6bb1d376f8596e587fbf...7a562dfa955aa2e4d5b0fd6ebd57ff9715c07b0b)
+
+  ---
+  updated-dependencies:
+
+- dependency-name: taiki-e/install-action
+    dependency-version: 2.73.0
     dependency-type: direct:production
     update-type: version-update:semver-minor
   ...
@@ -2367,7 +2425,7 @@ Older releases are archived by minor series:
 - [0.3.x](docs/archive/changelog/0.3.md)
 - [0.2.x](docs/archive/changelog/0.2.md)
 
-[unreleased]: https://github.com/acgetchell/delaunay/compare/v0.7.4..HEAD
+[0.7.5]: https://github.com/acgetchell/delaunay/compare/v0.7.4..v0.7.5
 [0.7.4]: https://github.com/acgetchell/delaunay/compare/v0.7.3..v0.7.4
 [0.7.3]: https://github.com/acgetchell/delaunay/compare/v0.7.2..v0.7.3
 [0.7.2]: https://github.com/acgetchell/delaunay/compare/v0.7.1..v0.7.2
