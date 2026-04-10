@@ -109,6 +109,11 @@ pub enum ToroidalConstructionMode {
     /// Phase 2 toroidal mode: 3^D image-point construction with periodic quotient
     /// neighbor rewiring.
     PeriodicImagePoint,
+    /// Explicit cell construction: the caller provided combinatorial connectivity
+    /// directly and declared toroidal topology metadata for validation purposes.
+    ///
+    /// No coordinate canonicalization or image-point expansion is performed.
+    Explicit,
 }
 
 /// Runtime metadata describing the global topological space associated with a triangulation.

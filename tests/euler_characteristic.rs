@@ -214,6 +214,155 @@ fn test_5d_single_simplex() {
 }
 
 // =============================================================================
+// TOROIDAL EXPLICIT CONSTRUCTION TESTS
+// =============================================================================
+
+#[test]
+fn test_2d_toroidal_explicit_construction_chi_zero() {
+    use delaunay::core::builder::DelaunayTriangulationBuilder;
+    use delaunay::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
+
+    // 3×3 periodic grid torus (T²): 9 vertices, 18 triangles.
+    // Each quad (i,j) is split into two triangles with periodic wrapping.
+    // Vertex layout: v(row, col) = row * 3 + col.
+    //
+    // Row 0: (0.0, 0.0)  (0.333, 0.0)  (0.667, 0.0)
+    // Row 1: (0.0, 0.333) (0.333, 0.333) (0.667, 0.333)
+    // Row 2: (0.0, 0.667) (0.333, 0.667) (0.667, 0.667)
+    const N: usize = 3;
+    let coords: &[[f64; 2]] = &[
+        [0.0, 0.0],
+        [0.333, 0.0],
+        [0.667, 0.0],
+        [0.0, 0.333],
+        [0.333, 0.333],
+        [0.667, 0.333],
+        [0.0, 0.667],
+        [0.333, 0.667],
+        [0.667, 0.667],
+    ];
+    let vertices: Vec<_> = coords.iter().map(|c| vertex!([c[0], c[1]])).collect();
+    let v = |i: usize, j: usize| -> usize { (i % N) * N + (j % N) };
+    let mut cells = Vec::with_capacity(2 * N * N);
+    for i in 0..N {
+        for j in 0..N {
+            // Up triangle: [v(i,j), v(i+1,j), v(i,j+1)]
+            cells.push(vec![v(i, j), v(i + 1, j), v(i, j + 1)]);
+            // Down triangle: [v(i+1,j), v(i+1,j+1), v(i,j+1)]
+            cells.push(vec![v(i + 1, j), v(i + 1, j + 1), v(i, j + 1)]);
+        }
+    }
+
+    // Without global_topology, this would fail with:
+    //   "Euler characteristic mismatch: computed χ=0, expected χ=2 for ClosedSphere(2)"
+    let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+        .global_topology(GlobalTopology::Toroidal {
+            domain: [1.0, 1.0],
+            mode: ToroidalConstructionMode::Explicit,
+        })
+        .topology_guarantee(TopologyGuarantee::Pseudomanifold)
+        .build::<()>()
+        .expect("toroidal explicit construction should succeed with χ=0");
+
+    assert_eq!(dt.number_of_vertices(), 9);
+    assert_eq!(dt.number_of_cells(), 18);
+    assert!(dt.global_topology().is_toroidal());
+
+    // Verify χ = 0 via the topology module.
+    let result = validation::validate_triangulation_euler(dt.tds()).unwrap();
+    assert_eq!(result.chi, 0, "T² should have χ = 0");
+}
+
+#[test]
+fn test_3d_toroidal_explicit_construction_chi_zero() {
+    use delaunay::core::builder::DelaunayTriangulationBuilder;
+    use delaunay::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
+
+    // 3×3×3 periodic Freudenthal triangulation of T³.
+    //
+    // The Freudenthal (Kuhn) triangulation decomposes each unit cube into D! = 6
+    // tetrahedra, one per permutation σ of the coordinate axes. For permutation σ,
+    // the tetrahedron walks from the cube corner along the permuted axes:
+    //   v₀ = corner, v₁ = v₀+e_{σ(1)}, v₂ = v₁+e_{σ(2)}, v₃ = v₂+e_{σ(3)}
+    //
+    // References:
+    //   Freudenthal, H. "Simplizialzerlegungen von beschränkter Flachheit."
+    //     Annals of Mathematics 43(3), 1942, pp. 580–582.
+    //   Munkres, J. R. Elements of Algebraic Topology. Addison–Wesley, 1984.
+    //   See also REFERENCES.md § "Cube Triangulation (Freudenthal / Kuhn)".
+    //
+    // Expected f-vector for N=3:
+    //   V = 27, E = 189, F = 324, C = 162
+    //   χ = 27 − 189 + 324 − 162 = 0  ✓
+    const N: usize = 3;
+
+    // Build 27 vertices on [0,1)³.
+    let grid: [f64; N] = [0.0, 1.0 / 3.0, 2.0 / 3.0];
+    let mut vertices = Vec::with_capacity(N * N * N);
+    for &x in &grid {
+        for &y in &grid {
+            for &z in &grid {
+                vertices.push(vertex!([x, y, z]));
+            }
+        }
+    }
+
+    let v = |i: usize, j: usize, k: usize| -> usize { ((i % N) * N + (j % N)) * N + (k % N) };
+
+    // The 6 permutations of (0,1,2) give the 6 Freudenthal tetrahedra per cube.
+    let permutations: &[[usize; 3]] = &[
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+
+    let mut cells = Vec::with_capacity(6 * N * N * N);
+    for i in 0..N {
+        for j in 0..N {
+            for k in 0..N {
+                let corner = [i, j, k];
+                for perm in permutations {
+                    // Build the 4 vertices of this tetrahedron by walking
+                    // along the permuted axes from the cube corner.
+                    let mut cur = corner;
+                    let v0 = v(cur[0], cur[1], cur[2]);
+                    cur[perm[0]] += 1;
+                    let v1 = v(cur[0], cur[1], cur[2]);
+                    cur[perm[1]] += 1;
+                    let v2 = v(cur[0], cur[1], cur[2]);
+                    cur[perm[2]] += 1;
+                    let v3 = v(cur[0], cur[1], cur[2]);
+                    cells.push(vec![v0, v1, v2, v3]);
+                }
+            }
+        }
+    }
+
+    let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+        .global_topology(GlobalTopology::Toroidal {
+            domain: [1.0, 1.0, 1.0],
+            mode: ToroidalConstructionMode::Explicit,
+        })
+        .topology_guarantee(TopologyGuarantee::Pseudomanifold)
+        .build::<()>()
+        .expect("T³ explicit construction should succeed with χ=0");
+
+    assert_eq!(dt.number_of_vertices(), 27);
+    assert_eq!(dt.number_of_cells(), 162);
+    assert!(dt.global_topology().is_toroidal());
+
+    let result = validation::validate_triangulation_euler(dt.tds()).unwrap();
+    assert_eq!(result.counts.count(0), 27, "V = 27");
+    assert_eq!(result.counts.count(1), 189, "E = 189");
+    assert_eq!(result.counts.count(2), 324, "F = 324");
+    assert_eq!(result.counts.count(3), 162, "C = 162");
+    assert_eq!(result.chi, 0, "T³ should have χ = 0");
+}
+
+// =============================================================================
 // FULL COMPLEX VS BOUNDARY TESTS
 // =============================================================================
 // These tests verify that:

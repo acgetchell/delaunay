@@ -144,7 +144,7 @@ use crate::geometry::quality::radius_ratio;
 use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar, ScalarAccumulative};
 use crate::geometry::util::safe_scalar_to_f64;
-use crate::topology::characteristics::euler::TopologyClassification;
+use crate::topology::characteristics::euler::{TopologyClassification, expected_chi_for};
 use crate::topology::characteristics::validation::validate_triangulation_euler_with_facet_to_cells_map;
 use crate::topology::manifold::{
     ManifoldError, validate_closed_boundary, validate_facet_degree, validate_ridge_links,
@@ -2681,13 +2681,30 @@ where
         let topology_result =
             validate_triangulation_euler_with_facet_to_cells_map(&self.tds, &facet_to_cells);
 
-        if let Some(expected) = topology_result.expected
-            && topology_result.chi != expected
+        // Override the heuristic classification when the caller has declared a
+        // non-Euclidean global topology.  The heuristic classifies any closed
+        // mesh (no boundary facets) as `ClosedSphere(D)`, but a toroidal mesh
+        // also has no boundary — its expected χ is 0, not 1+(-1)^D.
+        let (classification, expected) = match self.global_topology {
+            GlobalTopology::Toroidal { .. }
+                if matches!(
+                    topology_result.classification,
+                    TopologyClassification::ClosedSphere(_)
+                ) =>
+            {
+                let cls = TopologyClassification::ClosedToroid(D);
+                (cls, expected_chi_for(&cls))
+            }
+            _ => (topology_result.classification, topology_result.expected),
+        };
+
+        if let Some(exp) = expected
+            && topology_result.chi != exp
         {
             return Err(TriangulationValidationError::EulerCharacteristicMismatch {
                 computed: topology_result.chi,
-                expected,
-                classification: topology_result.classification,
+                expected: exp,
+                classification,
             }
             .into());
         }

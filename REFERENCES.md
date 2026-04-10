@@ -71,6 +71,19 @@ These references provide algorithmic foundations for systematic enumeration and 
 - Nijenhuis, A., and Wilf, H. S. "Combinatorial Algorithms for Computers and Calculators." 2nd ed. New York: Academic Press, 1978.
   ISBN: 978-0-12-519260-6
 
+### Cube Triangulation (Freudenthal / Kuhn)
+
+These references describe the canonical triangulation of the n-cube into n! simplices via coordinate orderings,
+commonly known as the Freudenthal or Kuhn triangulation. This construction underlies grid-to-simplex
+decompositions used in topology, numerical methods, and periodic triangulations (e.g., T³).
+
+- Freudenthal, H. "Simplizialzerlegungen von beschränkter Flachheit."
+  *Annals of Mathematics* 43, no. 3 (1942): 580–582.
+- Hatcher, A. *Algebraic Topology*. Cambridge University Press, 2002.
+  (See discussions of simplicial decompositions and product spaces.)
+- Munkres, J. R. *Elements of Algebraic Topology*. Addison–Wesley, 1984.
+  (Simplicial complexes and triangulations of product spaces.)
+
 ## Convex Hull Algorithms
 
 The library includes d-dimensional convex hull functionality, based on these algorithmic foundations.
