@@ -832,10 +832,16 @@ where
     let estimated_unique_ridges = cells.len().saturating_mul(ridges_per_cell).max(1);
 
     // Build a set of ridges touched by the specified cells.
-    let mut ridge_to_vertices: FastHashMap<u64, VertexKeyBuffer> =
+    // For periodic cells we store both lifted vertices (for ridge identity and
+    // downstream link computation) and bare vertices (for `simplex_star_cells`
+    // which looks up real TDS vertex keys).
+    let mut ridge_to_vertices: FastHashMap<u64, (VertexKeyBuffer, VertexKeyBuffer)> =
         fast_hash_map_with_capacity(estimated_unique_ridges);
 
-    let mut ridge_vertices: VertexKeyBuffer = VertexKeyBuffer::with_capacity(D.saturating_sub(1));
+    let mut ridge_vertices_bare: VertexKeyBuffer =
+        VertexKeyBuffer::with_capacity(D.saturating_sub(1));
+    let mut ridge_vertices_lifted: VertexKeyBuffer =
+        VertexKeyBuffer::with_capacity(D.saturating_sub(1));
 
     for &cell_key in cells {
         if !tds.contains_cell(cell_key) {
@@ -843,6 +849,10 @@ where
         }
 
         let cell_vertices = tds.get_cell_vertices(cell_key)?;
+        let offsets = tds
+            .get_cell(cell_key)
+            .and_then(|c| c.periodic_vertex_offsets());
+
         if cell_vertices.len() != D + 1 {
             return Err(TdsError::DimensionMismatch {
                 expected: D + 1,
@@ -855,47 +865,130 @@ where
         // Enumerate ridges in this cell by omitting two vertices.
         for omit_a in 0..cell_vertices.len() {
             for omit_b in (omit_a + 1)..cell_vertices.len() {
-                ridge_vertices.clear();
+                ridge_vertices_bare.clear();
+                ridge_vertices_lifted.clear();
                 for (i, &vk) in cell_vertices.iter().enumerate() {
                     if i == omit_a || i == omit_b {
                         continue;
                     }
-                    ridge_vertices.push(vk);
+                    ridge_vertices_bare.push(vk);
+                    // Use lifted vertex ID when periodic offsets are present.
+                    let lifted = offsets.map_or(vk, |offs| lifted_vertex_id(vk, &offs[i]));
+                    ridge_vertices_lifted.push(lifted);
                 }
 
-                if ridge_vertices.len() != D.saturating_sub(1) {
+                if ridge_vertices_bare.len() != D.saturating_sub(1) {
                     return Err(TdsError::DimensionMismatch {
                         expected: D.saturating_sub(1),
-                        actual: ridge_vertices.len(),
+                        actual: ridge_vertices_bare.len(),
                         context: format!("ridge vertex count for {D}D (cell_key={cell_key:?}, omit_a={omit_a}, omit_b={omit_b})"),
                     }
                     .into());
                 }
 
-                let ridge_key = facet_key_from_vertices(&ridge_vertices);
-                ridge_to_vertices
-                    .entry(ridge_key)
-                    .or_insert_with(|| ridge_vertices.clone());
+                // Periodic-aware key: lifted vertex IDs produce distinct
+                // ridge keys for different offset images.
+                let ridge_key = if offsets.is_some() {
+                    periodic_ridge_key(&ridge_vertices_lifted)
+                } else {
+                    facet_key_from_vertices(&ridge_vertices_bare)
+                };
+                ridge_to_vertices.entry(ridge_key).or_insert_with(|| {
+                    (ridge_vertices_lifted.clone(), ridge_vertices_bare.clone())
+                });
             }
         }
     }
 
     // For each ridge touched by the local cell set, compute its full star.
+    // Use bare ridge vertices for `simplex_star_cells` (which looks up real TDS
+    // keys), then filter to cells sharing the same periodic image, and store
+    // lifted ridge vertices in the `RidgeStar` for downstream link computation.
     let mut ridge_to_star: FastHashMap<u64, RidgeStar> =
         fast_hash_map_with_capacity(ridge_to_vertices.len().max(1));
 
-    for (ridge_key, ridge_vertices) in ridge_to_vertices {
-        let star_cells = simplex_star_cells(tds, &ridge_vertices)?;
+    for (ridge_key, (lifted_vertices, bare_vertices)) in ridge_to_vertices {
+        let star_cells =
+            periodic_aware_ridge_star(tds, ridge_key, &lifted_vertices, &bare_vertices)?;
+
         ridge_to_star.insert(
             ridge_key,
             RidgeStar {
-                ridge_vertices,
+                ridge_vertices: lifted_vertices,
                 star_cells,
             },
         );
     }
 
     Ok(ridge_to_star)
+}
+
+/// Computes the periodic-aware star of a ridge from its lifted and bare vertex
+/// representations.
+///
+/// Uses bare keys to find candidate cells via [`simplex_star_cells`], then
+/// filters to cells whose lifted ridge vertices match `lifted_vertices`.
+/// For non-periodic cells (no offsets) all candidates pass.
+///
+/// # Errors
+///
+/// Returns [`ManifoldError::Tds`] if:
+/// - `simplex_star_cells` fails (vertex not found, etc.).
+/// - `get_cell_vertices` fails for any candidate cell.
+/// - Periodic offset filtering produces an empty star, indicating inconsistent
+///   offsets in the TDS.
+fn periodic_aware_ridge_star<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    ridge_key: u64,
+    lifted_vertices: &VertexKeyBuffer,
+    bare_vertices: &VertexKeyBuffer,
+) -> Result<SmallBuffer<CellKey, 8>, ManifoldError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let all_star_cells = simplex_star_cells(tds, bare_vertices)?;
+
+    // For periodic cells, keep only cells whose lifted ridge vertices agree
+    // with this ridge's lifted vertices.  For non-periodic cells the check is
+    // a no-op (offsets are `None`).  We use an explicit loop instead of
+    // `.filter()` so that `get_cell_vertices` errors propagate.
+    let mut star_cells: SmallBuffer<CellKey, 8> = SmallBuffer::with_capacity(all_star_cells.len());
+    for &ck in &all_star_cells {
+        let cell_offsets = tds.get_cell(ck).and_then(|c| c.periodic_vertex_offsets());
+        let matches = match cell_offsets {
+            None => true,
+            Some(offs) => {
+                let cv = tds.get_cell_vertices(ck)?;
+                lifted_vertices.iter().all(|lv| {
+                    cv.iter()
+                        .enumerate()
+                        .any(|(i, &vk)| lifted_vertex_id(vk, &offs[i]) == *lv)
+                })
+            }
+        };
+        if matches {
+            star_cells.push(ck);
+        }
+    }
+
+    // A ridge enumerated from a cell must be incident to at least that cell.
+    // An empty star after periodic filtering indicates inconsistent offsets.
+    if star_cells.is_empty() {
+        return Err(TdsError::InconsistentDataStructure {
+            message: format!(
+                "periodic offset filtering produced empty star for ridge \
+                 {ridge_key:016x}: {count} candidate cells were all excluded \
+                 (lifted ridge vertices: {lifted:?})",
+                count = all_star_cells.len(),
+                lifted = lifted_vertices,
+            ),
+        }
+        .into());
+    }
+
+    Ok(star_cells)
 }
 
 /// Validates the ridge-link condition for a PL-manifold (with boundary).
@@ -3228,6 +3321,112 @@ mod tests {
 
         // Vertex-link validation should ACCEPT this complex
         validate_vertex_links(&tds, &facet_to_cells).unwrap();
+    }
+
+    #[test]
+    fn test_build_ridge_star_map_for_cells_separates_periodic_images() {
+        // Two 2D cells share bare vertex keys but differ in periodic offsets.
+        // The ridge map must produce distinct ridges for different offset images.
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.5, 1.0])).unwrap();
+
+        // c1: all vertices at base image [0,0].
+        let c1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        tds.get_cell_by_key_mut(c1)
+            .unwrap()
+            .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]]);
+
+        // c2: v0 at periodic image [1,0]; v1 and v2 at base image.
+        let c2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        tds.get_cell_by_key_mut(c2)
+            .unwrap()
+            .set_periodic_vertex_offsets(vec![[1, 0], [0, 0], [0, 0]]);
+
+        let map = build_ridge_star_map_for_cells(&tds, &[c1, c2]).unwrap();
+
+        // In 2D, ridges have D-1 = 1 vertex.  Each triangle contributes 3 ridges.
+        // c1 produces: {v0}, {v1}, {v2}    (all at base image)
+        // c2 produces: {lifted_v0'}, {v1}, {v2}  (v0 at [1,0] image)
+        //
+        // Shared ridges: {v1} and {v2} (same lifted ID in both cells).
+        // Distinct ridges: {v0} from c1, {lifted_v0'} from c2.
+        assert_eq!(map.len(), 4, "expected 4 distinct periodic-aware ridges");
+
+        // Ridges {v1} and {v2} should have a 2-cell star (both c1 and c2).
+        let shared_count = map.values().filter(|s| s.star_cells.len() == 2).count();
+        assert_eq!(shared_count, 2, "two ridges should be shared");
+
+        // Ridges {v0@base} and {v0@[1,0]} should each have a 1-cell star.
+        let unique_count = map.values().filter(|s| s.star_cells.len() == 1).count();
+        assert_eq!(unique_count, 2, "two ridges should be unique per image");
+    }
+
+    #[test]
+    fn test_periodic_aware_ridge_star_empty_star_returns_error() {
+        // Call periodic_aware_ridge_star with lifted vertices that don't match
+        // any cell's offsets, forcing an empty star after filtering.
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.5, 1.0])).unwrap();
+
+        let c1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        tds.get_cell_by_key_mut(c1)
+            .unwrap()
+            .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]]);
+
+        // Bare [v0] finds c1, but lifted_vertex_id(v0, [99,99]) won't match
+        // c1's lifted v0 (which is bare v0 since offset is [0,0]).
+        let synthetic = lifted_vertex_id(v0, &[99, 99]);
+        let bare = simplex(&[v0]);
+        let lifted = simplex(&[synthetic]);
+
+        match periodic_aware_ridge_star(&tds, 0x42, &lifted, &bare) {
+            Err(ManifoldError::Tds(TdsError::InconsistentDataStructure { ref message })) => {
+                assert!(
+                    message.contains("empty star"),
+                    "error should mention empty star: {message}"
+                );
+            }
+            other => panic!("Expected InconsistentDataStructure (empty star), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_ridge_links_for_cells_ok_with_periodic_offsets() {
+        // Two 2D cells with periodic offsets form valid ridge link paths.
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.5, 1.0])).unwrap();
+
+        let c1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        tds.get_cell_by_key_mut(c1)
+            .unwrap()
+            .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]]);
+
+        let c2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        tds.get_cell_by_key_mut(c2)
+            .unwrap()
+            .set_periodic_vertex_offsets(vec![[1, 0], [0, 0], [0, 0]]);
+
+        // All ridge links should be valid paths (boundary ridges with 2 degree-1 vertices).
+        validate_ridge_links_for_cells(&tds, &[c1, c2]).unwrap();
     }
 
     #[test]

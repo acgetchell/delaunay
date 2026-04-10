@@ -4,6 +4,7 @@
 //! through `delaunay::prelude::triangulation` and `delaunay::core::builder`.
 
 use std::collections::HashMap;
+use std::f64::consts::TAU;
 
 use delaunay::core::builder::{DelaunayTriangulationBuilder, ExplicitConstructionError};
 use delaunay::core::delaunay_triangulation::{
@@ -16,7 +17,7 @@ use delaunay::geometry::kernel::RobustKernel;
 use delaunay::geometry::point::Point;
 use delaunay::geometry::traits::coordinate::Coordinate;
 use delaunay::topology::characteristics::euler::{count_simplices, euler_characteristic};
-use delaunay::topology::traits::topological_space::GlobalTopology;
+use delaunay::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
 use delaunay::vertex;
 
 // =============================================================================
@@ -404,8 +405,6 @@ fn test_builder_toroidal_periodic_full_validate_2d() {
 /// verify TDS structural validity (Level 1–2) rather than full `validate()`.
 #[test]
 fn test_explicit_toroidal_heawood_torus_validates() {
-    use std::f64::consts::TAU;
-
     // Regular heptagon: 7 well-separated points, no 3 collinear.
     let vertices: Vec<_> = (0..7)
         .map(|i| {
@@ -429,7 +428,7 @@ fn test_explicit_toroidal_heawood_torus_validates() {
     let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
         .global_topology(GlobalTopology::Toroidal {
             domain: [2.0, 2.0],
-            mode: delaunay::topology::traits::topological_space::ToroidalConstructionMode::Explicit,
+            mode: ToroidalConstructionMode::Explicit,
         })
         .build::<()>()
         .expect("explicit toroidal torus build should succeed");
@@ -455,8 +454,6 @@ fn test_explicit_toroidal_heawood_torus_validates() {
 /// the closed mesh as `ClosedSphere(2)` (expected χ = 2), but actual χ = 0.
 #[test]
 fn test_explicit_toroidal_torus_euler_mismatch_without_override() {
-    use std::f64::consts::TAU;
-
     let vertices: Vec<_> = (0..7)
         .map(|i| {
             let angle = TAU * f64::from(i) / 7.0;
