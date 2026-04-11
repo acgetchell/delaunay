@@ -321,8 +321,10 @@ pub enum InitialSimplexStrategy {
 /// Policy controlling deterministic "retry with alternative insertion orders" during batch
 /// construction.
 ///
-/// If enabled, the constructor deterministically retries construction with alternative insertion
-/// orders (shuffles) when the final Delaunay property check fails.
+/// When enabled, the constructor deterministically retries construction with alternative insertion
+/// orders (shuffles) when the initial attempt fails (e.g. flip-repair cycling on co-spherical
+/// configurations).  The default is [`Shuffled`](Self::Shuffled) with 6 attempts, which is
+/// essential for robust 3D+ construction.  Use [`Disabled`](Self::Disabled) to opt out.
 ///
 /// # Examples
 ///
@@ -354,11 +356,14 @@ pub enum RetryPolicy {
         /// Optional base seed. If `None`, a deterministic seed is derived from the vertex set.
         base_seed: Option<u64>,
     },
-    /// In debug/test builds, retry construction with a small number of deterministic shuffles if the
-    /// final Delaunay property check fails.
+    /// Retry construction with a small number of deterministic shuffles if the
+    /// final Delaunay property check fails, but only in debug/test builds.
     ///
-    /// In release builds, this is treated as [`RetryPolicy::Disabled`]. Prefer
-    /// [`RetryPolicy::Shuffled`] if you want retries in all build modes.
+    /// In release builds, this is treated as [`RetryPolicy::Disabled`].
+    ///
+    /// Note: [`RetryPolicy::default()`] now returns [`Shuffled`](Self::Shuffled)
+    /// in all build modes, so this variant is only useful when you explicitly
+    /// want retries restricted to debug/test builds.
     DebugOnlyShuffled {
         /// Number of shuffled reconstruction attempts (excluding the original-order attempt).
         attempts: NonZeroUsize,
@@ -8835,6 +8840,32 @@ mod tests {
             ),
             "ConflictRegion should map to GeometricDegeneracy, got: {mapped:?}"
         );
+    }
+
+    // ---- RetryPolicy default regression test (#306) ----
+
+    /// Verify that `RetryPolicy::default()` returns `Shuffled` with the expected
+    /// attempt count in all build profiles.  Previously the default was `Disabled`
+    /// in release builds, causing #306.
+    #[test]
+    fn test_retry_policy_default_is_shuffled_in_all_profiles() {
+        let policy = RetryPolicy::default();
+        match policy {
+            RetryPolicy::Shuffled {
+                attempts,
+                base_seed,
+            } => {
+                assert_eq!(
+                    attempts.get(),
+                    DELAUNAY_SHUFFLE_ATTEMPTS,
+                    "default retry attempts should equal DELAUNAY_SHUFFLE_ATTEMPTS"
+                );
+                assert_eq!(base_seed, None, "default base_seed should be None");
+            }
+            other => panic!(
+                "RetryPolicy::default() should be Shuffled, got {other:?}"
+            ),
+        }
     }
 
     // ---- is_non_retryable_construction_error tests ----
