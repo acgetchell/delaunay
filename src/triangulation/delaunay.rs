@@ -1772,10 +1772,11 @@ where
     /// construction and validates vertex-links at completion. Use
     /// [`TopologyGuarantee::PLManifoldStrict`] for per-insertion vertex-link checks.
     ///
-    /// # Debug/Test Behavior
-    /// In debug/test builds (for `D >= 3` with more than `D + 1` vertices), the constructor may
-    /// retry construction with a handful of shuffled insertion orders if the Delaunay property
-    /// check fails. Release builds skip these shuffled reconstruction attempts.
+    /// # Shuffled Retries
+    /// For `D >= 3` with more than `D + 1` vertices, the constructor retries
+    /// construction with up to 6 shuffled insertion orders if the Delaunay
+    /// property check fails (see [`RetryPolicy::default()`]).  To disable
+    /// retries, pass [`ConstructionOptions::default().with_retry_policy(RetryPolicy::Disabled)`](Self::with_topology_guarantee_and_options).
     ///
     /// # Errors
     /// Returns error if construction fails or if the requested topology guarantee

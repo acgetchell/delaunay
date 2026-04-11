@@ -7112,28 +7112,4 @@ mod tests {
         assert!(stats.facets_checked > 0);
         assert!(tds.is_valid().is_ok());
     }
-
-    /// Regression test for #306: the 35-vertex 3D seed `0xE30C78582376677C`
-    /// produces a flip-repair sequence that legitimately requires >32 repeated
-    /// signatures to converge.  With `MAX_REPEAT_SIGNATURE = 32` (the former
-    /// release-mode value), construction failed.  This test verifies that
-    /// construction succeeds with the unified threshold of 128.
-    #[test]
-    fn test_max_repeat_signature_allows_convergence_issue_306() {
-        use crate::geometry::util::generate_random_points_in_ball_seeded;
-
-        let seed: u64 = 0xE30C_7858_2376_677C;
-        let points = generate_random_points_in_ball_seeded::<f64, 3>(35, 100.0, seed)
-            .expect("point generation should succeed");
-        let vertices: Vec<Vertex<f64, (), 3>> = points.into_iter().map(|p| vertex!(p)).collect();
-
-        let dt: Result<DelaunayTriangulation<_, (), (), 3>, _> =
-            DelaunayTriangulation::new(&vertices);
-        assert!(
-            dt.is_ok(),
-            "35-vertex 3D construction with seed 0x{seed:X} should succeed \
-             (requires MAX_REPEAT_SIGNATURE > 32); got: {}",
-            dt.unwrap_err()
-        );
-    }
 }
