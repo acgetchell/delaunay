@@ -51,14 +51,12 @@ use std::time::Instant;
 use thiserror::Error;
 use uuid::Uuid;
 
-#[cfg(any(test, debug_assertions))]
 const DELAUNAY_SHUFFLE_ATTEMPTS: usize = 6;
 const DELAUNAY_SHUFFLE_SEED_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
 
-#[cfg(any(test, debug_assertions))]
+// Heuristic rebuild attempts must be consistent across build profiles to avoid
+// release-only construction failures (see #306).
 const HEURISTIC_REBUILD_ATTEMPTS: usize = 6;
-#[cfg(not(any(test, debug_assertions)))]
-const HEURISTIC_REBUILD_ATTEMPTS: usize = 2;
 
 thread_local! {
     static HEURISTIC_REBUILD_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -323,8 +321,10 @@ pub enum InitialSimplexStrategy {
 /// Policy controlling deterministic "retry with alternative insertion orders" during batch
 /// construction.
 ///
-/// If enabled, the constructor deterministically retries construction with alternative insertion
-/// orders (shuffles) when the final Delaunay property check fails.
+/// When enabled, the constructor deterministically retries construction with alternative insertion
+/// orders (shuffles) when the initial attempt fails (e.g. flip-repair cycling on co-spherical
+/// configurations).  The default is [`Shuffled`](Self::Shuffled) with 6 attempts, which is
+/// essential for robust 3D+ construction.  Use [`Disabled`](Self::Disabled) to opt out.
 ///
 /// # Examples
 ///
@@ -356,11 +356,14 @@ pub enum RetryPolicy {
         /// Optional base seed. If `None`, a deterministic seed is derived from the vertex set.
         base_seed: Option<u64>,
     },
-    /// In debug/test builds, retry construction with a small number of deterministic shuffles if the
-    /// final Delaunay property check fails.
+    /// Retry construction with a small number of deterministic shuffles if the
+    /// final Delaunay property check fails, but only in debug/test builds.
     ///
-    /// In release builds, this is treated as [`RetryPolicy::Disabled`]. Prefer
-    /// [`RetryPolicy::Shuffled`] if you want retries in all build modes.
+    /// In release builds, this is treated as [`RetryPolicy::Disabled`].
+    ///
+    /// Note: [`RetryPolicy::default()`] now returns [`Shuffled`](Self::Shuffled)
+    /// in all build modes, so this variant is only useful when you explicitly
+    /// want retries restricted to debug/test builds.
     DebugOnlyShuffled {
         /// Number of shuffled reconstruction attempts (excluding the original-order attempt).
         attempts: NonZeroUsize,
@@ -369,21 +372,17 @@ pub enum RetryPolicy {
     },
 }
 
-#[cfg(any(test, debug_assertions))]
 impl Default for RetryPolicy {
     fn default() -> Self {
-        Self::DebugOnlyShuffled {
+        // Shuffled retries are essential for correctness: certain Hilbert-sorted
+        // insertion orders produce co-spherical configurations that cause flip-repair
+        // cycling.  Retrying with a different order avoids the problematic sequence.
+        // Previously disabled in release builds, which caused #306.
+        Self::Shuffled {
             attempts: NonZeroUsize::new(DELAUNAY_SHUFFLE_ATTEMPTS)
                 .expect("DELAUNAY_SHUFFLE_ATTEMPTS must be non-zero"),
             base_seed: None,
         }
-    }
-}
-
-#[cfg(not(any(test, debug_assertions)))]
-impl Default for RetryPolicy {
-    fn default() -> Self {
-        Self::Disabled
     }
 }
 
@@ -1773,10 +1772,11 @@ where
     /// construction and validates vertex-links at completion. Use
     /// [`TopologyGuarantee::PLManifoldStrict`] for per-insertion vertex-link checks.
     ///
-    /// # Debug/Test Behavior
-    /// In debug/test builds (for `D >= 3` with more than `D + 1` vertices), the constructor may
-    /// retry construction with a handful of shuffled insertion orders if the Delaunay property
-    /// check fails. Release builds skip these shuffled reconstruction attempts.
+    /// # Shuffled Retries
+    /// For `D >= 2` with more than `D + 1` vertices, the constructor retries
+    /// construction with up to 6 shuffled insertion orders if the Delaunay
+    /// property check fails (see [`RetryPolicy::default()`]).  To disable
+    /// retries, pass [`ConstructionOptions::default().with_retry_policy(RetryPolicy::Disabled)`](Self::with_topology_guarantee_and_options).
     ///
     /// # Errors
     /// Returns error if construction fails or if the requested topology guarantee
@@ -8841,6 +8841,30 @@ mod tests {
             ),
             "ConflictRegion should map to GeometricDegeneracy, got: {mapped:?}"
         );
+    }
+
+    // ---- RetryPolicy default regression test (#306) ----
+
+    /// Verify that `RetryPolicy::default()` returns `Shuffled` with the expected
+    /// attempt count in all build profiles.  Previously the default was `Disabled`
+    /// in release builds, causing #306.
+    #[test]
+    fn test_retry_policy_default_is_shuffled_in_all_profiles() {
+        let policy = RetryPolicy::default();
+        match policy {
+            RetryPolicy::Shuffled {
+                attempts,
+                base_seed,
+            } => {
+                assert_eq!(
+                    attempts.get(),
+                    DELAUNAY_SHUFFLE_ATTEMPTS,
+                    "default retry attempts should equal DELAUNAY_SHUFFLE_ATTEMPTS"
+                );
+                assert_eq!(base_seed, None, "default base_seed should be None");
+            }
+            other => panic!("RetryPolicy::default() should be Shuffled, got {other:?}"),
+        }
     }
 
     // ---- is_non_retryable_construction_error tests ----

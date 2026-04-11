@@ -2842,7 +2842,6 @@ where
     // pointers (which subsequent flips re-establish); checking here — after the
     // complete repair pass — catches any genuine disconnection that the flip sequence
     // failed to reconnect.
-    #[cfg(debug_assertions)]
     if !tds.is_connected() {
         return Err(DelaunayRepairError::PostconditionFailed {
             message: format!(
@@ -3183,13 +3182,10 @@ where
 const AMBIGUOUS_SAMPLE_LIMIT: usize = 16;
 const CYCLE_SAMPLE_LIMIT: usize = 16;
 const FLIP_SIGNATURE_WINDOW: usize = 4096;
-// Allow extended repeats under test/debug to capture diagnostics in long-running repairs.
-#[cfg(any(test, debug_assertions))]
+// Allow extended repeats to capture diagnostics in long-running repairs.  A threshold of
+// 32 caused false non-convergence on valid 3D inputs (see #306); 128 still bounds
+// pathological cases while giving legitimate repair sequences room to converge.
 const MAX_REPEAT_SIGNATURE: usize = 128;
-// Release builds use a lower threshold to cap repeated signatures while still avoiding
-// false positives in higher-dimensional near-degenerate repair cases.
-#[cfg(not(any(test, debug_assertions)))]
-const MAX_REPEAT_SIGNATURE: usize = 32;
 
 #[derive(Debug, Default)]
 struct RepairDiagnostics {
@@ -3489,20 +3485,16 @@ fn default_max_flips<const D: usize>(cell_count: usize) -> usize {
     //   flip repair; correctness is ensured by the robust conflict-region detection in
     //   find_conflict_region and the is_delaunay_property_only() check in
     //   build_with_shuffled_retries.
-    #[cfg(any(test, debug_assertions))]
     if D >= 4 {
         return cell_count
             .saturating_mul(D.saturating_add(1))
             .saturating_mul(4)
             .max(4096);
     }
-    #[cfg(any(test, debug_assertions))]
     let multiplier = match D {
         3 => 8,
         _ => 4, // D<=2
     };
-    #[cfg(not(any(test, debug_assertions)))]
-    let multiplier = 4;
     let base = cell_count
         .saturating_mul(D.saturating_add(1))
         .saturating_mul(multiplier);

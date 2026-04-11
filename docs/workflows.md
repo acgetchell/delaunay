@@ -125,10 +125,7 @@ robustness settings. **Currently, this is up to three attempts**:
 3. Attempt 3: FIFO queue order again (alternate ordering), still with robust predicates enabled
    for ambiguous boundary classifications.
 
-Note: in debug/test builds for D ≥ 3, attempt 1 may also enable robust predicates for ambiguous
-boundary classifications.
-
-After an attempt completes, the algorithm verifies the Delaunay postcondition via local flip
+After an attempt completes
 predicates. A postcondition failure is treated similarly to non-convergence and triggers retries.
 
 If repair fails to converge within the flip budget, you get
