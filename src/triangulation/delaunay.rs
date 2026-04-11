@@ -51,14 +51,12 @@ use std::time::Instant;
 use thiserror::Error;
 use uuid::Uuid;
 
-#[cfg(any(test, debug_assertions))]
 const DELAUNAY_SHUFFLE_ATTEMPTS: usize = 6;
 const DELAUNAY_SHUFFLE_SEED_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
 
-#[cfg(any(test, debug_assertions))]
+// Heuristic rebuild attempts must be consistent across build profiles to avoid
+// release-only construction failures (see #306).
 const HEURISTIC_REBUILD_ATTEMPTS: usize = 6;
-#[cfg(not(any(test, debug_assertions)))]
-const HEURISTIC_REBUILD_ATTEMPTS: usize = 2;
 
 thread_local! {
     static HEURISTIC_REBUILD_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -369,21 +367,17 @@ pub enum RetryPolicy {
     },
 }
 
-#[cfg(any(test, debug_assertions))]
 impl Default for RetryPolicy {
     fn default() -> Self {
-        Self::DebugOnlyShuffled {
+        // Shuffled retries are essential for correctness: certain Hilbert-sorted
+        // insertion orders produce co-spherical configurations that cause flip-repair
+        // cycling.  Retrying with a different order avoids the problematic sequence.
+        // Previously disabled in release builds, which caused #306.
+        Self::Shuffled {
             attempts: NonZeroUsize::new(DELAUNAY_SHUFFLE_ATTEMPTS)
                 .expect("DELAUNAY_SHUFFLE_ATTEMPTS must be non-zero"),
             base_seed: None,
         }
-    }
-}
-
-#[cfg(not(any(test, debug_assertions)))]
-impl Default for RetryPolicy {
-    fn default() -> Self {
-        Self::Disabled
     }
 }
 
