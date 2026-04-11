@@ -1,16 +1,11 @@
 //! Integration tests for [`DelaunayTriangulationBuilder`].
 //!
 //! These tests exercise the public API from the outside, using only items exposed
-//! through `delaunay::prelude::triangulation` and `delaunay::core::builder`.
+//! through `delaunay::prelude::triangulation` and `delaunay::triangulation::builder`.
 
 use std::collections::HashMap;
 use std::f64::consts::TAU;
 
-use delaunay::core::builder::{DelaunayTriangulationBuilder, ExplicitConstructionError};
-use delaunay::core::delaunay_triangulation::{
-    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError,
-    InsertionOrderStrategy,
-};
 use delaunay::core::triangulation::TopologyGuarantee;
 use delaunay::core::vertex::{Vertex, VertexBuilder};
 use delaunay::geometry::kernel::RobustKernel;
@@ -18,6 +13,11 @@ use delaunay::geometry::point::Point;
 use delaunay::geometry::traits::coordinate::Coordinate;
 use delaunay::topology::characteristics::euler::{count_simplices, euler_characteristic};
 use delaunay::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
+use delaunay::triangulation::builder::{DelaunayTriangulationBuilder, ExplicitConstructionError};
+use delaunay::triangulation::delaunay::{
+    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError,
+    InsertionOrderStrategy,
+};
 use delaunay::vertex;
 
 // =============================================================================

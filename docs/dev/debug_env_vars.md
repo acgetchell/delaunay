@@ -19,7 +19,7 @@ in release builds.
 |---|---|---|---|
 | `DELAUNAY_INSERT_TRACE` | presence | `triangulation.rs` | Per-insertion summary (vertex index, location, conflict size, suspicion flags) |
 | `DELAUNAY_DEBUG_SHUFFLE` | presence | `triangulation.rs` | Logs vertex shuffle order during batch construction |
-| `DELAUNAY_DUPLICATE_METRICS` | presence | `delaunay_triangulation.rs` | Duplicate-detection metrics (spatial hash grid stats) |
+| `DELAUNAY_DUPLICATE_METRICS` | presence | `triangulation/delaunay.rs` | Duplicate-detection metrics (spatial hash grid stats) |
 
 ## Point Location
 
@@ -73,7 +73,7 @@ in release builds.
 
 | Variable | Activation | Module | Description |
 |---|---|---|---|
-| `DELAUNAY_STRICT_INSPHERE_CONSISTENCY` | presence | `delaunay_triangulation.rs` | Cross-validates insphere results between fast and exact predicates |
+| `DELAUNAY_STRICT_INSPHERE_CONSISTENCY` | presence | `triangulation/delaunay.rs` | Cross-validates insphere results between fast and exact predicates |
 | `DELAUNAY_DEBUG_LU_FALLBACK` | presence | `circumsphere.rs` | Logs when circumsphere computation falls back to LU decomposition |
 
 ## Point Generation

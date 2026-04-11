@@ -142,9 +142,9 @@
 //!
 //!   These checks are surfaced via [`Vertex::is_valid`](crate::core::vertex::Vertex::is_valid) and
 //!   [`Cell::is_valid`](crate::core::cell::Cell::is_valid), and are automatically run by
-//!   [`Tds::validate`](crate::core::triangulation_data_structure::Tds::validate) (Levels 1–2).
+//!   [`Tds::validate`](crate::core::tds::Tds::validate) (Levels 1–2).
 //!
-//! - [`Tds`](crate::core::triangulation_data_structure::Tds) (Triangulation Data Structure)
+//! - [`Tds`](crate::core::tds::Tds) (Triangulation Data Structure)
 //!   stores the **combinatorial / structural** representation.
 //!   Level 2 (structural) validation checks invariants such as:
 //!   - **Vertex mappings** – every vertex UUID has a corresponding key and vice versa.
@@ -153,10 +153,10 @@
 //!   - **Facet sharing** – each facet is shared by at most 2 cells (1 on the boundary, 2 in the interior).
 //!   - **Neighbor consistency** – neighbor relationships are mutual and reference a shared facet.
 //!
-//!   These checks are surfaced via [`Tds::is_valid`](crate::core::triangulation_data_structure::Tds::is_valid)
-//!   (structural only) and [`Tds::validate`](crate::core::triangulation_data_structure::Tds::validate)
+//!   These checks are surfaced via [`Tds::is_valid`](crate::core::tds::Tds::is_valid)
+//!   (structural only) and [`Tds::validate`](crate::core::tds::Tds::validate)
 //!   (Levels 1–2, elements + structural). For cumulative diagnostics across the full stack,
-//!   use [`DelaunayTriangulation::validation_report`](core::delaunay_triangulation::DelaunayTriangulation::validation_report).
+//!   use [`DelaunayTriangulation::validation_report`](triangulation::delaunay::DelaunayTriangulation::validation_report).
 //!
 //! - [`Triangulation`](crate::core::triangulation::Triangulation) builds on the TDS and validates
 //!   **manifold topology**.
@@ -167,11 +167,11 @@
 //!     exactly 1 cell (boundary) or exactly 2 cells (interior).
 //!   - Checks the **Euler characteristic** of the triangulation (using the topology module).
 //!
-//! - [`DelaunayTriangulation`](crate::core::delaunay_triangulation::DelaunayTriangulation) builds on
+//! - [`DelaunayTriangulation`](crate::triangulation::delaunay::DelaunayTriangulation) builds on
 //!   `Triangulation` and validates the **geometric** Delaunay condition.
 //!   Level 4 (Delaunay property) validation is performed by
-//!   [`DelaunayTriangulation::is_valid`](core::delaunay_triangulation::DelaunayTriangulation::is_valid) (Level 4 only) and
-//!   [`DelaunayTriangulation::validate`](core::delaunay_triangulation::DelaunayTriangulation::validate) (Levels 1–4).
+//!   [`DelaunayTriangulation::is_valid`](triangulation::delaunay::DelaunayTriangulation::is_valid) (Level 4 only) and
+//!   [`DelaunayTriangulation::validate`](triangulation::delaunay::DelaunayTriangulation::validate) (Levels 1–4).
 //!   Construction is designed to satisfy the Delaunay property, but in rare cases it may be violated for
 //!   near-degenerate inputs (see [Issue #120](https://github.com/acgetchell/delaunay/issues/120)).
 //!
@@ -323,8 +323,6 @@ pub mod core {
 
     pub mod adjacency;
     pub mod boundary;
-    /// Fluent builder for [`DelaunayTriangulation`] with optional toroidal topology.
-    pub mod builder;
     pub mod cell;
     /// High-performance collection types optimized for computational geometry operations.
     ///
@@ -440,15 +438,13 @@ pub mod core {
         pub use secondary_maps::*;
         pub use triangulation_maps::*;
     }
-    /// Delaunay triangulation layer with incremental insertion.
-    pub mod delaunay_triangulation;
     pub mod edge;
     pub mod facet;
     /// Semantic classification and telemetry for topological operations
     pub mod operations;
+    pub mod tds;
     /// Generic triangulation combining kernel + Tds.
     pub mod triangulation;
-    pub mod triangulation_data_structure;
 
     /// General utility functions organized by functionality.
     pub mod util {
@@ -488,14 +484,14 @@ pub mod core {
     }
 
     // Re-export the `core` modules.
+    pub use crate::triangulation::builder::DelaunayTriangulationBuilder;
+    pub use crate::triangulation::delaunay::*;
     pub use adjacency::*;
-    pub use builder::DelaunayTriangulationBuilder;
     pub use cell::*;
-    pub use delaunay_triangulation::*;
     pub use edge::*;
     pub use facet::*;
+    pub use tds::*;
     pub use traits::*;
-    pub use triangulation_data_structure::*;
     pub use util::*;
     pub use vertex::*;
 
@@ -740,14 +736,19 @@ pub mod geometry {
 /// This module groups public APIs that operate on triangulations, such as explicit
 /// bistellar (Pachner) flip operations.
 pub mod triangulation {
+    /// Fluent builder for [`DelaunayTriangulation`] with optional toroidal topology.
+    pub mod builder;
+    /// Delaunay triangulation layer with incremental insertion.
+    pub mod delaunay;
     /// End-to-end "repair then delaunayize" workflow.
     pub mod delaunayize;
     /// Triangulation editing operations (bistellar flips).
     pub mod flips;
 
     // Re-export commonly used triangulation types for discoverability.
-    pub use crate::core::delaunay_triangulation::DelaunayTriangulation;
     pub use crate::core::triangulation::Triangulation;
+    pub use crate::triangulation::builder::DelaunayTriangulationBuilder;
+    pub use crate::triangulation::delaunay::DelaunayTriangulation;
 }
 
 /// Topology analysis and validation for triangulated spaces.
@@ -839,14 +840,14 @@ pub mod prelude {
     pub use crate::core::{
         adjacency::*,
         cell::*,
-        delaunay_triangulation::*,
         edge::*,
         facet::*,
+        tds::*,
         traits::{boundary_analysis::*, data_type::*},
         triangulation::*,
-        triangulation_data_structure::*,
         vertex::*,
     };
+    pub use crate::triangulation::delaunay::*;
 
     // Re-export utility items, but avoid exporting the util module names themselves.
     //
@@ -888,18 +889,18 @@ pub mod prelude {
 
     /// Focused exports for triangulation construction and inspection.
     pub mod triangulation {
-        pub use crate::core::builder::DelaunayTriangulationBuilder;
         pub use crate::core::{
             adjacency::*,
             cell::*,
-            delaunay_triangulation::*,
             edge::*,
             facet::*,
+            tds::*,
             traits::{boundary_analysis::*, data_type::*},
             triangulation::*,
-            triangulation_data_structure::*,
             vertex::*,
         };
+        pub use crate::triangulation::builder::DelaunayTriangulationBuilder;
+        pub use crate::triangulation::delaunay::*;
 
         pub use crate::core::algorithms::incremental_insertion::InsertionError;
         pub use crate::core::operations::{InsertionOutcome, InsertionStatistics, SuspicionFlags};
@@ -912,8 +913,8 @@ pub mod prelude {
 
         /// Bistellar (Pachner) flips for explicit triangulation editing.
         pub mod flips {
-            pub use crate::core::delaunay_triangulation::DelaunayTriangulation;
             pub use crate::core::triangulation::{TopologyGuarantee, Triangulation};
+            pub use crate::triangulation::delaunay::DelaunayTriangulation;
             pub use crate::triangulation::flips::*;
 
             // Convenience macro (commonly used in docs/examples).
@@ -926,7 +927,7 @@ pub mod prelude {
         /// import brings in [`DelaunayTriangulation`], [`vertex!`], and all
         /// delaunayize-specific types.
         pub mod delaunayize {
-            pub use crate::core::delaunay_triangulation::DelaunayTriangulation;
+            pub use crate::triangulation::delaunay::DelaunayTriangulation;
             pub use crate::triangulation::delaunayize::*;
 
             // Convenience macro (commonly used in docs/examples).
@@ -983,10 +984,10 @@ pub mod prelude {
     pub mod query {
         // Core read-only traversal / adjacency
         pub use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
-        pub use crate::core::delaunay_triangulation::DelaunayTriangulation;
         pub use crate::core::edge::EdgeKey;
+        pub use crate::core::tds::{CellKey, VertexKey};
         pub use crate::core::triangulation::Triangulation;
-        pub use crate::core::triangulation_data_structure::{CellKey, VertexKey};
+        pub use crate::triangulation::delaunay::DelaunayTriangulation;
 
         // Common input/output types (kept intentionally small)
         pub use crate::core::facet::FacetView;
@@ -1050,12 +1051,12 @@ pub const fn is_normal<T: Sized + Send + Sync + Unpin>() -> bool {
 mod tests {
     use crate::{
         core::{
-            adjacency::AdjacencyIndex, cell::Cell, delaunay_triangulation::DelaunayTriangulation,
-            edge::EdgeKey, triangulation::Triangulation, triangulation_data_structure::Tds,
-            vertex::Vertex,
+            adjacency::AdjacencyIndex, cell::Cell, edge::EdgeKey, tds::Tds,
+            triangulation::Triangulation, vertex::Vertex,
         },
         geometry::{Point, algorithms::convex_hull::ConvexHull, kernel::FastKernel},
         is_normal,
+        triangulation::delaunay::DelaunayTriangulation,
     };
 
     // =============================================================================

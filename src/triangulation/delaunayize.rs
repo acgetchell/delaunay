@@ -54,11 +54,11 @@ use crate::core::algorithms::flips::DelaunayRepairError;
 use crate::core::algorithms::pl_manifold_repair::{
     PlManifoldRepairConfig, repair_facet_oversharing,
 };
-use crate::core::delaunay_triangulation::{DelaunayRepairHeuristicConfig, DelaunayTriangulation};
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{ExactPredicates, Kernel};
 use crate::geometry::traits::coordinate::{CoordinateScalar, ScalarAccumulative};
+use crate::triangulation::delaunay::{DelaunayRepairHeuristicConfig, DelaunayTriangulation};
 use thiserror::Error;
 
 // =============================================================================
@@ -298,7 +298,7 @@ where
                     Err(rebuild_err) => {
                         return Err(DelaunayizeError::TopologyRepairFailed(
                             PlManifoldRepairError::Tds(
-                                crate::core::triangulation_data_structure::TdsError::InconsistentDataStructure {
+                                crate::core::tds::TdsError::InconsistentDataStructure {
                                     message: format!(
                                         "topology repair failed ({topo_err}); fallback rebuild also failed: {rebuild_err}"
                                     ),

@@ -1,5 +1,5 @@
 use super::{FastHashMap, FastHashSet, Uuid};
-use crate::core::triangulation_data_structure::{CellKey, VertexKey};
+use crate::core::tds::{CellKey, VertexKey};
 
 // =============================================================================
 // GEOMETRIC ALGORITHM TYPES
@@ -214,7 +214,7 @@ pub type KeyBasedVertexMap<V> = FastHashMap<VertexKey, V>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::triangulation_data_structure::{CellKey, VertexKey};
+    use crate::core::tds::{CellKey, VertexKey};
     use slotmap::SlotMap;
 
     #[test]

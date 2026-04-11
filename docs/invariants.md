@@ -69,7 +69,7 @@ Key combinatorial objects:
   vertex.
 - **Adjacency / neighbors**: two cells are neighbors if they share a facet. The triangulation data
   structure (TDS) stores neighbor pointers across facets (see
-  [`src/core/triangulation_data_structure.rs`](../src/core/triangulation_data_structure.rs) and CGAL’s
+  [`src/core/tds.rs`](../src/core/tds.rs) and CGAL’s
   [TDS_3](https://doc.cgal.org/latest/TDS_3/index.html)).[^cgal-tds3][^impl-tds]
 - **Boundary vs interior facets**:
   - An **interior facet** is incident to exactly two cells.
@@ -347,7 +347,7 @@ For the project-wide bibliography (including references not cited here), see [`R
 
 [^edelsbrunner2001]: Herbert Edelsbrunner. *Geometry and Topology for Mesh Generation*. Cambridge University Press, 2001. DOI: <https://doi.org/10.1017/CBO9780511530067>.
 [^cgal-tds3]: CGAL Project. *Triangulation Data Structure* (TDS_3) documentation. <https://doc.cgal.org/latest/TDS_3/index.html>.
-[^impl-tds]: Implementation: [src/core/triangulation_data_structure.rs](../src/core/triangulation_data_structure.rs).
+[^impl-tds]: Implementation: [src/core/tds.rs](../src/core/tds.rs).
 [^deberg2008]: Mark de Berg, Otfried Cheong, Marc van Kreveld, Mark Overmars. *Computational Geometry: Algorithms and Applications*, 3rd ed. Springer, 2008. DOI: <https://doi.org/10.1007/978-3-540-77974-2>.
 [^shewchuk1997]: Jonathan Richard Shewchuk. “Adaptive Precision Floating-Point Arithmetic and Fast Robust Geometric Predicates.” *Discrete & Computational Geometry* 18(3), 1997. DOI: <https://doi.org/10.1007/PL00009321>.
 [^edelshah1996]: Herbert Edelsbrunner and Nimish R. Shah. “Incremental Topological Flipping Works for Regular Triangulations.” *Algorithmica* 15(3), 1996. DOI: <https://doi.org/10.1007/BF01975867>.

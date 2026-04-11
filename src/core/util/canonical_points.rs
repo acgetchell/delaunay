@@ -21,8 +21,8 @@
 
 use crate::core::cell::Cell;
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
+use crate::core::tds::{Tds, VertexKey};
 use crate::core::traits::DataType;
-use crate::core::triangulation_data_structure::{Tds, VertexKey};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use slotmap::Key;

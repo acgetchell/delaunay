@@ -31,8 +31,8 @@
 #![forbid(unsafe_code)]
 
 use super::{
+    tds::CellKey,
     traits::DataType,
-    triangulation_data_structure::CellKey,
     util::{UuidValidationError, make_uuid, validate_uuid},
 };
 use crate::geometry::{
@@ -281,7 +281,7 @@ pub use crate::vertex;
 /// - **`uuid`**: A universally unique identifier for the vertex (auto-generated)
 /// - **`incident_cell`**: Optional reference to a containing cell (managed by TDS)
 /// - **`data`**: Optional user-defined data associated with the vertex. Read via [`data()`](Self::data),
-///   mutate via [`Tds::set_vertex_data`](crate::core::triangulation_data_structure::Tds::set_vertex_data)
+///   mutate via [`Tds::set_vertex_data`](crate::core::tds::Tds::set_vertex_data)
 ///
 /// # Constraints
 ///
@@ -866,7 +866,7 @@ where
 mod tests {
     use super::*;
     use crate::core::collections::{FastHashMap, FastHashSet};
-    use crate::core::triangulation_data_structure::CellKey;
+    use crate::core::tds::CellKey;
     use crate::core::util::{UuidValidationError, make_uuid, usize_to_u8};
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;

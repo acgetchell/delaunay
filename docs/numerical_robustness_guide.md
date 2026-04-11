@@ -238,7 +238,7 @@ computed during Hilbert index generation).  It removes the vast majority of exac
 near-duplicate vertices before any insertion occurs, regardless of `DedupPolicy`.
 
 See `order_vertices_hilbert` (called from `order_vertices_by_strategy`) in
-[`src/core/delaunay_triangulation.rs`](../src/core/delaunay_triangulation.rs).
+[`src/triangulation/delaunay.rs`](../src/triangulation/delaunay.rs).
 
 ### Layer 2: Per-insertion duplicate coordinate check
 
@@ -273,7 +273,7 @@ If violated, the error is
 `TdsError::DuplicateCoordinatesInCell { cell_id, message }`.
 
 See `validate_cell_coordinate_uniqueness` in
-[`src/core/triangulation_data_structure.rs`](../src/core/triangulation_data_structure.rs).
+[`src/core/tds.rs`](../src/core/tds.rs).
 
 ### User-facing dedup utilities
 

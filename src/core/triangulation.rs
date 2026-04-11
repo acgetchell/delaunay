@@ -39,11 +39,11 @@
 //! Use [`Triangulation::validate()`](crate::core::triangulation::Triangulation::validate) for cumulative Levels 1–3.
 //!
 //! ## Level 4: Delaunay Property
-//! - **Method**: [`DelaunayTriangulation::is_valid()`](crate::core::delaunay_triangulation::DelaunayTriangulation::is_valid)
+//! - **Method**: [`DelaunayTriangulation::is_valid()`](crate::triangulation::delaunay::DelaunayTriangulation::is_valid)
 //! - **Checks**: Empty circumsphere property (no vertex inside any cell's circumsphere)
 //! - **Cost**: O(N×V) where N = cells, V = vertices
 //!
-//! Use [`DelaunayTriangulation::validate()`](crate::core::delaunay_triangulation::DelaunayTriangulation::validate) for cumulative Levels 1–4.
+//! Use [`DelaunayTriangulation::validate()`](crate::triangulation::delaunay::DelaunayTriangulation::validate) for cumulative Levels 1–4.
 //!
 //! ## Usage Guidelines
 //!
@@ -76,8 +76,8 @@
 //!
 //! [`Cell::is_valid()`]: crate::core::cell::Cell::is_valid
 //! [`Vertex::is_valid()`]: crate::core::vertex::Vertex::is_valid
-//! [`Tds::is_valid()`]: crate::core::triangulation_data_structure::Tds::is_valid
-//! [`Tds::validate()`]: crate::core::triangulation_data_structure::Tds::validate
+//! [`Tds::is_valid()`]: crate::core::tds::Tds::is_valid
+//! [`Tds::validate()`]: crate::core::tds::Tds::validate
 //!
 //! ## Topology guarantees
 //!
@@ -130,11 +130,11 @@ use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter, FacetHandle, facet_k
 use crate::core::operations::{
     InsertionOutcome, InsertionResult, InsertionStatistics, SuspicionFlags,
 };
-use crate::core::traits::data_type::DataType;
-use crate::core::triangulation_data_structure::{
+use crate::core::tds::{
     CellKey, GeometricError, InvariantError, InvariantKind, InvariantViolation, Tds,
     TdsConstructionError, TdsError, TriangulationValidationReport, VertexKey,
 };
+use crate::core::traits::data_type::DataType;
 use crate::core::util::canonical_points::sorted_cell_points;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
@@ -243,7 +243,7 @@ pub(crate) fn record_duplicate_detection_metrics(
 /// - `TopologyValidation(source)` → `InvariantError::Tds(source)` (Level 1–2 preserved)
 /// - `TopologyValidationFailed { source }` → `InvariantError::Triangulation(*source)` (Level 3 preserved)
 /// - All other variants → `InvariantError::Tds(InconsistentDataStructure { .. })` with `context`
-pub(in crate::core) fn insertion_error_to_invariant_error(
+pub(crate) fn insertion_error_to_invariant_error(
     error: InsertionError,
     context: &str,
 ) -> InvariantError {
@@ -335,7 +335,7 @@ pub enum TriangulationConstructionError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::triangulation_data_structure::InvariantError;
+/// use delaunay::core::tds::InvariantError;
 /// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
@@ -2186,7 +2186,7 @@ where
     ///
     /// Periodic-lifted cells are validated in lifted coordinates using per-vertex periodic
     /// offsets and toroidal domain periods.
-    pub(in crate::core) fn validate_geometric_cell_orientation(&self) -> Result<(), TdsError> {
+    pub(crate) fn validate_geometric_cell_orientation(&self) -> Result<(), TdsError> {
         for (cell_key, cell) in self.tds.cells() {
             let orientation = self.evaluate_cell_orientation_for_context(
                 cell_key,
@@ -2361,7 +2361,7 @@ where
     /// 2. Canonicalize the global sign — for a connected orientable manifold all cells
     ///    share the same sign after normalization, so a single global flip resolves it.
     /// 3. Fall back to bounded per-cell promotion passes for FP-precision edge cases.
-    pub(in crate::core) fn normalize_and_promote_positive_orientation(
+    pub(crate) fn normalize_and_promote_positive_orientation(
         &mut self,
     ) -> Result<(), InsertionError> {
         // Phase 1: make all adjacencies coherent
@@ -2755,7 +2755,7 @@ where
     /// Performs cumulative validation for Levels 1–3.
     ///
     /// This validates:
-    /// - **Level 1–2** via [`Tds::validate`](crate::core::triangulation_data_structure::Tds::validate)
+    /// - **Level 1–2** via [`Tds::validate`](crate::core::tds::Tds::validate)
     /// - **Level 3** via [`Triangulation::is_valid`](Self::is_valid)
     /// - **Completion-time PL-manifold check** via [`Triangulation::validate_at_completion`](Self::validate_at_completion)
     ///
@@ -3174,7 +3174,7 @@ where
     ///
     /// This is intended for bulk-construction paths that maintain a local index to
     /// accelerate duplicate detection and locate-hint selection.
-    pub(in crate::core) fn insert_with_statistics_seeded_indexed(
+    pub(crate) fn insert_with_statistics_seeded_indexed(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
         conflict_cells: Option<&CellKeyBuffer>,
@@ -5591,13 +5591,13 @@ mod tests {
     use super::*;
     use crate::core::collections::NeighborBuffer;
     use crate::core::collections::spatial_hash_grid::HashGridIndex;
-    use crate::core::delaunay_triangulation::DelaunayTriangulation;
     use crate::core::vertex::VertexBuilder;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
     use crate::topology::characteristics::validation::validate_triangulation_euler;
     use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
+    use crate::triangulation::delaunay::DelaunayTriangulation;
     use crate::vertex;
 
     use slotmap::KeyData;
@@ -6308,9 +6308,7 @@ mod tests {
             DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
         dt.set_validation_policy(ValidationPolicy::Never);
-        dt.set_delaunay_repair_policy(
-            crate::core::delaunay_triangulation::DelaunayRepairPolicy::Never,
-        );
+        dt.set_delaunay_repair_policy(crate::triangulation::delaunay::DelaunayRepairPolicy::Never);
 
         for (i, point) in points.into_iter().enumerate() {
             let vertex = VertexBuilder::default().point(point).build().unwrap();
@@ -8925,7 +8923,7 @@ mod tests {
 
     #[test]
     fn test_invariant_error_to_insertion_error_delaunay_arm() {
-        use crate::core::delaunay_triangulation::DelaunayTriangulationValidationError;
+        use crate::triangulation::delaunay::DelaunayTriangulationValidationError;
         let inv =
             InvariantError::Delaunay(DelaunayTriangulationValidationError::VerificationFailed {
                 message: "test".to_string(),
@@ -9852,7 +9850,7 @@ mod tests {
 
         // Delaunay arm
         let dt_err = InvariantError::Delaunay(
-            crate::core::delaunay_triangulation::DelaunayTriangulationValidationError::VerificationFailed {
+            crate::triangulation::delaunay::DelaunayTriangulationValidationError::VerificationFailed {
                 message: "test violation".to_string(),
             },
         );

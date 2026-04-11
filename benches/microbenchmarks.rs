@@ -12,10 +12,10 @@
 //! completed as part of the Pure Incremental Delaunay Triangulation refactoring project.
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
 use delaunay::geometry::kernel::RobustKernel;
 use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::prelude::query::*;
+use delaunay::triangulation::delaunay::DelaunayTriangulation;
 use delaunay::vertex;
 use std::hint::black_box;
 use std::sync::OnceLock;

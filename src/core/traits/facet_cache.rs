@@ -7,7 +7,7 @@
 use super::data_type::DataType;
 use crate::core::{
     collections::FacetToCellsMap,
-    triangulation_data_structure::{Tds, TdsError},
+    tds::{Tds, TdsError},
 };
 use crate::geometry::traits::coordinate::ScalarAccumulative;
 use arc_swap::ArcSwapOption;
@@ -34,7 +34,7 @@ use std::sync::{
 ///
 /// ```
 /// use delaunay::core::traits::facet_cache::FacetCacheProvider;
-/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::core::tds::Tds;
 /// use delaunay::geometry::traits::coordinate::ScalarAccumulative;
 /// use delaunay::core::traits::data_type::DataType;
 /// use std::sync::Arc;
@@ -327,10 +327,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::delaunay_triangulation::DelaunayTriangulation;
-    use crate::core::triangulation_data_structure::Tds;
+    use crate::core::tds::Tds;
     use crate::core::vertex;
     use crate::geometry::kernel::AdaptiveKernel;
+    use crate::triangulation::delaunay::DelaunayTriangulation;
     use std::sync::Arc;
     use std::sync::Barrier;
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};

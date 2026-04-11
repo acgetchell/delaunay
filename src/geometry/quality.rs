@@ -35,9 +35,9 @@
 
 use crate::core::{
     collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer},
+    tds::CellKey,
     traits::data_type::DataType,
     triangulation::Triangulation,
-    triangulation_data_structure::CellKey,
 };
 use crate::geometry::{
     kernel::Kernel,
@@ -397,12 +397,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::delaunay_triangulation::{
-        DelaunayTriangulation, DelaunayTriangulationConstructionError,
-    };
     use crate::core::triangulation::TriangulationConstructionError;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::geometry::traits::coordinate::Coordinate;
+    use crate::triangulation::delaunay::{
+        DelaunayTriangulation, DelaunayTriangulationConstructionError,
+    };
     use crate::vertex;
     use approx::assert_relative_eq;
 

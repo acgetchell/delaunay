@@ -46,8 +46,8 @@
 use super::vertex::Vertex;
 use super::{
     facet::FacetError,
+    tds::{CellKey, Tds, VertexKey},
     traits::DataType,
-    triangulation_data_structure::{CellKey, Tds, VertexKey},
     util::{UuidValidationError, make_uuid, validate_uuid},
     vertex::VertexValidationError,
 };
@@ -173,7 +173,7 @@ impl From<crate::geometry::matrix::StackMatrixDispatchError> for CellValidationE
 /// - `uuid`: Universally unique identifier for the cell.
 /// - `neighbors`: Optional keys to neighboring cells (opposite each vertex). Access via `neighbors()` method.
 /// - `data`: Optional user data associated with the cell. Read via [`data()`](Self::data),
-///   mutate via [`Tds::set_cell_data`](crate::core::triangulation_data_structure::Tds::set_cell_data).
+///   mutate via [`Tds::set_cell_data`](crate::core::tds::Tds::set_cell_data).
 ///
 /// # Accessing Vertices
 ///
@@ -898,7 +898,7 @@ where
     ///
     /// **Internal API**: This method is `pub(crate)` to enforce that all neighbor
     /// modifications go through validated TDS methods. External code should use
-    /// [`Tds::clear_all_neighbors()`](crate::core::triangulation_data_structure::Tds::clear_all_neighbors)
+    /// [`Tds::clear_all_neighbors()`](crate::core::tds::Tds::clear_all_neighbors)
     /// which properly invalidates caches and maintains triangulation consistency.
     ///
     /// This method sets the `neighbors` field to `None`, effectively removing all
@@ -1675,6 +1675,7 @@ mod tests {
 
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::prelude::DelaunayTriangulation;
+    use crate::triangulation::builder::DelaunayTriangulationBuilder;
 
     // =============================================================================
     // DIMENSION-PARAMETERIZED TEST MACRO
@@ -2744,8 +2745,7 @@ mod tests {
         assert!(serialized.contains("cells"));
 
         // Deserialize back to DT via from_tds (AdaptiveKernel has no auto-Deserialize).
-        let tds: crate::core::triangulation_data_structure::Tds<f64, (), (), 3> =
-            serde_json::from_str(&serialized).unwrap();
+        let tds: crate::core::tds::Tds<f64, (), (), 3> = serde_json::from_str(&serialized).unwrap();
         let deserialized = DelaunayTriangulation::from_tds(tds, AdaptiveKernel::new());
 
         // Verify DT properties match
@@ -3818,8 +3818,6 @@ mod tests {
 
     #[test]
     fn test_cell_data_accessor() {
-        use crate::core::builder::DelaunayTriangulationBuilder;
-
         let vertices = [
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),

@@ -7,8 +7,8 @@
 
 use super::{
     facet::{BoundaryFacetsIter, FacetView},
+    tds::{Tds, TdsError},
     traits::{boundary_analysis::BoundaryAnalysis, data_type::DataType},
-    triangulation_data_structure::{Tds, TdsError},
 };
 use crate::prelude::CoordinateScalar;
 
@@ -35,7 +35,7 @@ where
     /// Any facet shared by 0, 3, or more cells indicates a topological error in the triangulation.
     ///
     /// For a comprehensive discussion of all topological invariants in Delaunay triangulations,
-    /// see the [Topological Invariants](crate::core::triangulation_data_structure#topological-invariants)
+    /// see the [Topological Invariants](crate::core::tds#topological-invariants)
     /// section in the triangulation data structure documentation.
     ///
     /// # Returns
@@ -71,7 +71,7 @@ where
     /// // TDS-level API (fallible): returns `TdsError` on corruption.
     /// let count = dt.tds().boundary_facets()?.count();
     /// assert_eq!(count, 4);
-    /// # Ok::<(), delaunay::core::triangulation_data_structure::TdsError>(())
+    /// # Ok::<(), delaunay::core::tds::TdsError>(())
     /// ```
     fn boundary_facets(&self) -> Result<BoundaryFacetsIter<'_, T, U, V, D>, TdsError> {
         // Build a map from facet keys to the cells that contain them
@@ -207,7 +207,7 @@ where
     ///
     /// // A single tetrahedron has 4 boundary facets
     /// assert_eq!(dt.tds().number_of_boundary_facets()?, 4);
-    /// # Ok::<(), delaunay::core::triangulation_data_structure::TdsError>(())
+    /// # Ok::<(), delaunay::core::tds::TdsError>(())
     /// ```
     fn number_of_boundary_facets(&self) -> Result<usize, TdsError> {
         self.build_facet_to_cells_map()
@@ -218,11 +218,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::BoundaryAnalysis;
-    use crate::core::delaunay_triangulation::DelaunayTriangulation;
     use crate::core::facet::FacetError;
-    use crate::core::triangulation_data_structure::TdsError;
+    use crate::core::tds::TdsError;
     use crate::core::vertex::Vertex;
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};
+    use crate::triangulation::delaunay::DelaunayTriangulation;
 
     #[cfg(feature = "bench")]
     use num_traits::cast::cast;

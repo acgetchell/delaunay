@@ -30,8 +30,8 @@ use crate::core::{
         VertexKeyBuffer, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
     },
     edge::EdgeKey,
+    tds::{Tds, VertexKey},
     traits::{BoundaryAnalysis, DataType},
-    triangulation_data_structure::{Tds, VertexKey},
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::topology::traits::topological_space::TopologyError;

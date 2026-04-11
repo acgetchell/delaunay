@@ -28,7 +28,7 @@
 //! construction and validation phases.
 //!
 //! For a comprehensive discussion of all topological invariants in Delaunay triangulations,
-//! see the [Topological Invariants](crate::core::triangulation_data_structure#topological-invariants)
+//! see the [Topological Invariants](crate::core::tds#topological-invariants)
 //! section in the triangulation data structure documentation.
 //!
 //! # Examples
@@ -60,7 +60,7 @@ use super::traits::data_type::DataType;
 use super::util::{stable_hash_u64_slice, usize_to_u8};
 use super::{
     cell::Cell,
-    triangulation_data_structure::{CellKey, Tds, TdsError, VertexKey},
+    tds::{CellKey, Tds, TdsError, VertexKey},
     vertex::Vertex,
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
@@ -353,7 +353,7 @@ impl FacetHandle {
 ///
 /// ```rust,no_run
 /// use delaunay::core::facet::FacetView;
-/// use delaunay::core::triangulation_data_structure::{Tds, CellKey};
+/// use delaunay::core::tds::{Tds, CellKey};
 ///
 /// // This is a conceptual example showing FacetView usage
 /// // In practice, tds and cell_key would come from your triangulation
@@ -1058,7 +1058,7 @@ where
 ///
 /// ```
 /// use delaunay::core::facet::facet_key_from_vertices;
-/// use delaunay::core::triangulation_data_structure::VertexKey;
+/// use delaunay::core::tds::VertexKey;
 /// use slotmap::Key;
 ///
 /// // Create some vertex keys (normally these would come from a TDS)
@@ -1112,8 +1112,8 @@ pub fn facet_key_from_vertices(vertices: &[VertexKey]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::delaunay_triangulation::DelaunayTriangulation;
-    use crate::core::triangulation_data_structure::VertexKey;
+    use crate::core::tds::VertexKey;
+    use crate::triangulation::delaunay::DelaunayTriangulation;
     use crate::vertex;
 
     // =============================================================================

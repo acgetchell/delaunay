@@ -33,11 +33,11 @@ use crate::core::collections::{
     VertexKeyBuffer,
 };
 use crate::core::facet::FacetHandle;
+use crate::core::tds::{CellKey, EntityKind, Tds, TdsError, VertexKey};
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::TriangulationConstructionError;
 use crate::core::triangulation::TriangulationValidationError;
-use crate::core::triangulation_data_structure::{CellKey, EntityKind, Tds, TdsError, VertexKey};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
@@ -173,7 +173,7 @@ pub enum InsertionError {
     DelaunayValidationFailed {
         /// The structured Level 4 validation error.
         #[source]
-        source: Box<crate::core::delaunay_triangulation::DelaunayTriangulationValidationError>,
+        source: Box<crate::triangulation::delaunay::DelaunayTriangulationValidationError>,
     },
 
     /// Flip-based Delaunay repair failed.
@@ -703,7 +703,7 @@ where
 /// ```rust
 /// use delaunay::core::algorithms::incremental_insertion::wire_cavity_neighbors;
 /// use delaunay::core::collections::CellKeyBuffer;
-/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::core::tds::Tds;
 ///
 /// let mut tds: Tds<f64, (), (), 3> = Tds::empty();
 /// let new_cells = CellKeyBuffer::new();
@@ -1503,8 +1503,8 @@ where
 ///
 /// ```rust
 /// use delaunay::core::algorithms::incremental_insertion::extend_hull;
-/// use delaunay::core::triangulation_data_structure::Tds;
-/// use delaunay::core::triangulation_data_structure::VertexKey;
+/// use delaunay::core::tds::Tds;
+/// use delaunay::core::tds::VertexKey;
 /// use delaunay::geometry::kernel::FastKernel;
 /// use delaunay::geometry::point::Point;
 /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -2350,11 +2350,11 @@ where
 mod tests {
     use super::*;
     use crate::core::collections::CellKeyBuffer;
-    use crate::core::delaunay_triangulation::DelaunayTriangulation;
-    use crate::core::triangulation_data_structure::GeometricError;
+    use crate::core::tds::GeometricError;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::traits::coordinate::{Coordinate, CoordinateConversionError};
     use crate::topology::characteristics::euler::TopologyClassification;
+    use crate::triangulation::delaunay::DelaunayTriangulation;
     use crate::vertex;
     use slotmap::KeyData;
 

@@ -15,7 +15,7 @@ use crate::core::collections::{
     FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, VertexToCellsMap,
 };
 use crate::core::edge::EdgeKey;
-use crate::core::triangulation_data_structure::{CellKey, VertexKey};
+use crate::core::tds::{CellKey, VertexKey};
 use thiserror::Error;
 
 /// Errors that can occur while building an [`AdjacencyIndex`].
@@ -24,7 +24,7 @@ use thiserror::Error;
 ///
 /// ```rust
 /// use delaunay::core::adjacency::AdjacencyIndexBuildError;
-/// use delaunay::core::triangulation_data_structure::{CellKey, VertexKey};
+/// use delaunay::core::tds::{CellKey, VertexKey};
 /// use slotmap::KeyData;
 ///
 /// let cell_key = CellKey::from(KeyData::from_ffi(1));
@@ -381,7 +381,7 @@ mod tests {
 
     #[test]
     fn adjacency_index_query_helpers_are_consistent() {
-        use crate::core::delaunay_triangulation::DelaunayTriangulation;
+        use crate::triangulation::delaunay::DelaunayTriangulation;
         use crate::vertex;
 
         // Two tetrahedra sharing a triangular facet.

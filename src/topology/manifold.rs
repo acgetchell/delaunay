@@ -92,8 +92,8 @@ use crate::core::{
     },
     edge::EdgeKey,
     facet::facet_key_from_vertices,
+    tds::{CellKey, Tds, TdsError, VertexKey},
     traits::DataType,
-    triangulation_data_structure::{CellKey, Tds, TdsError, VertexKey},
     util::hashing::stable_hash_u64_slice,
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;

@@ -22,8 +22,8 @@ use crate::core::collections::{
     FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
 };
 use crate::core::facet::FacetHandle;
+use crate::core::tds::{CellKey, Tds, VertexKey};
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation_data_structure::{CellKey, Tds, VertexKey};
 use crate::core::util::canonical_points::{sorted_cell_points, sorted_facet_points_with_extra};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
@@ -58,7 +58,7 @@ fn conflict_debug_config() -> &'static ConflictDebugConfig {
 ///
 /// ```rust
 /// use delaunay::core::algorithms::locate::LocateResult;
-/// use delaunay::core::triangulation_data_structure::VertexKey;
+/// use delaunay::core::tds::VertexKey;
 /// use slotmap::KeyData;
 ///
 /// let vertex = VertexKey::from(KeyData::from_ffi(2));
@@ -117,7 +117,7 @@ pub enum LocateError {
 ///
 /// ```rust
 /// use delaunay::core::algorithms::locate::ConflictError;
-/// use delaunay::core::triangulation_data_structure::CellKey;
+/// use delaunay::core::tds::CellKey;
 /// use slotmap::KeyData;
 ///
 /// let cell_key = CellKey::from(KeyData::from_ffi(5));
@@ -276,7 +276,7 @@ pub struct LocateFallback {
 ///
 /// ```rust
 /// use delaunay::core::algorithms::locate::LocateStats;
-/// use delaunay::core::triangulation_data_structure::CellKey;
+/// use delaunay::core::tds::CellKey;
 /// use slotmap::KeyData;
 ///
 /// let stats = LocateStats {
@@ -568,11 +568,11 @@ where
 /// - `cell.vertices()[facet_idx]` is the vertex opposite the facet
 /// - The facet consists of all vertices EXCEPT `vertices[facet_idx]`
 /// - This invariant is documented in [`Cell`](crate::core::cell::Cell) and enforced by
-///   [`Tds::assign_neighbors`](crate::core::triangulation_data_structure::Tds::assign_neighbors).
+///   [`Tds::assign_neighbors`](crate::core::tds::Tds::assign_neighbors).
 ///
 /// It is validated as part of Level 2 structural validation via
-/// [`Tds::is_valid`](crate::core::triangulation_data_structure::Tds::is_valid)
-/// (or cumulatively via [`Tds::validate`](crate::core::triangulation_data_structure::Tds::validate)).
+/// [`Tds::is_valid`](crate::core::tds::Tds::is_valid)
+/// (or cumulatively via [`Tds::validate`](crate::core::tds::Tds::validate)).
 ///
 /// This correspondence is essential for the canonical ordering used in orientation tests.
 /// If this invariant is violated, point location will produce incorrect results.
@@ -1048,7 +1048,7 @@ where
 /// ```rust
 /// use delaunay::core::algorithms::locate::extract_cavity_boundary;
 /// use delaunay::core::collections::CellKeyBuffer;
-/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::core::tds::Tds;
 ///
 /// let tds: Tds<f64, (), (), 3> = Tds::empty();
 /// let boundary = extract_cavity_boundary(&tds, &CellKeyBuffer::new()).unwrap();

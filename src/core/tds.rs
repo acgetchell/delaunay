@@ -148,8 +148,8 @@
 //! [`Cell::is_valid()`]: crate::core::cell::Cell::is_valid
 //! [`Vertex::is_valid()`]: crate::core::vertex::Vertex::is_valid
 //! [`Triangulation::is_valid()`]: crate::core::triangulation::Triangulation::is_valid
-//! [`DelaunayTriangulation::is_valid()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::is_valid
-//! [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
+//! [`DelaunayTriangulation::is_valid()`]: crate::triangulation::delaunay::DelaunayTriangulation::is_valid
+//! [`DelaunayTriangulation::validation_report()`]: crate::triangulation::delaunay::DelaunayTriangulation::validation_report
 //!
 //! # Examples
 //!
@@ -725,7 +725,7 @@ pub enum InvariantError {
 
     /// Level 4 (Delaunay property).
     #[error(transparent)]
-    Delaunay(#[from] crate::core::delaunay_triangulation::DelaunayTriangulationValidationError),
+    Delaunay(#[from] crate::triangulation::delaunay::DelaunayTriangulationValidationError),
 }
 
 /// A single invariant violation recorded during validation diagnostics.
@@ -757,12 +757,12 @@ pub struct InvariantViolation {
 /// [`DelaunayTriangulation::validation_report()`]
 /// to surface all failed invariants at once for debugging and test diagnostics.
 ///
-/// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
+/// [`DelaunayTriangulation::validation_report()`]: crate::triangulation::delaunay::DelaunayTriangulation::validation_report
 ///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::triangulation_data_structure::TriangulationValidationReport;
+/// use delaunay::core::tds::TriangulationValidationReport;
 ///
 /// let report = TriangulationValidationReport { violations: Vec::new() };
 /// assert!(report.is_empty());
@@ -872,7 +872,7 @@ new_key_type! {
 ///
 /// `Tds` is the low-level topology container used by
 /// [`Triangulation`](crate::core::triangulation::Triangulation) and
-/// [`DelaunayTriangulation`](crate::core::delaunay_triangulation::DelaunayTriangulation).
+/// [`DelaunayTriangulation`](crate::triangulation::delaunay::DelaunayTriangulation).
 ///
 /// Most users should construct triangulations via `DelaunayTriangulation` and access the
 /// underlying `Tds` via `dt.tds()`. Use [`Tds::empty`](Self::empty) for low-level or test
@@ -1412,7 +1412,7 @@ where
     /// Count vertices in an empty triangulation:
     ///
     /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::tds::Tds;
     ///
     /// let tds = Tds::<f64, (), (), 3>::empty();
     /// assert_eq!(tds.number_of_vertices(), 0);
@@ -1467,7 +1467,7 @@ where
     /// Dimension of an empty triangulation:
     ///
     /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::tds::Tds;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
     ///
@@ -1585,7 +1585,7 @@ where
     /// Empty triangulation has no cells:
     ///
     /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::tds::Tds;
     ///
     /// let tds = Tds::<f64, (), (), 3>::empty();
     /// assert_eq!(tds.number_of_cells(), 0); // No cells for empty input
@@ -1693,7 +1693,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::tds::Tds;
     ///
     /// let tds: Tds<f64, (), (), 2> = Tds::empty();
     /// assert_eq!(tds.generation(), 0);
@@ -1993,7 +1993,7 @@ where
     /// Returns `None` for non-existent UUID:
     ///
     /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::tds::Tds;
     /// use uuid::Uuid;
     ///
     /// let tds: Tds<f64, (), (), 3> = Tds::empty();
@@ -2053,7 +2053,7 @@ where
     /// Returns `None` for non-existent UUID:
     ///
     /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::tds::Tds;
     /// use uuid::Uuid;
     ///
     /// let tds: Tds<f64, (), (), 3> = Tds::empty();
@@ -3431,7 +3431,7 @@ where
     ///
     ///
     /// This function creates an empty triangulation with no vertices and no cells.
-    /// Use [`DelaunayTriangulation::empty()`](crate::core::delaunay_triangulation::DelaunayTriangulation::empty)
+    /// Use [`DelaunayTriangulation::empty()`](crate::triangulation::delaunay::DelaunayTriangulation::empty)
     /// for the high-level API, or this method for low-level Tds construction.
     ///
     /// # Returns
@@ -3445,8 +3445,8 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
-    /// use delaunay::core::triangulation_data_structure::TriangulationConstructionState;
+    /// use delaunay::core::tds::Tds;
+    /// use delaunay::core::tds::TriangulationConstructionState;
     ///
     /// let tds: Tds<f64, (), (), 3> = Tds::empty();
     /// assert_eq!(tds.number_of_vertices(), 0);
@@ -3732,7 +3732,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::core::tds::Tds;
     ///
     /// let mut tds: Tds<f64, (), (), 2> = Tds::empty();
     /// let removed = tds.remove_duplicate_cells().unwrap();
@@ -3806,7 +3806,7 @@ where
     ///
     /// This corresponds to [`InvariantKind::VertexMappings`], which is included in
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
-    /// [`DelaunayTriangulation::validation_report()`](crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report).
+    /// [`DelaunayTriangulation::validation_report()`](crate::triangulation::delaunay::DelaunayTriangulation::validation_report).
     ///
     /// # Errors
     ///
@@ -3874,7 +3874,7 @@ where
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
     /// [`DelaunayTriangulation::validation_report()`].
     ///
-    /// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
+    /// [`DelaunayTriangulation::validation_report()`]: crate::triangulation::delaunay::DelaunayTriangulation::validation_report
     ///
     /// # Errors
     ///
@@ -4011,7 +4011,7 @@ where
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
     /// [`DelaunayTriangulation::validation_report()`].
     ///
-    /// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
+    /// [`DelaunayTriangulation::validation_report()`]: crate::triangulation::delaunay::DelaunayTriangulation::validation_report
     fn validate_no_duplicate_cells(&self) -> Result<(), TdsError> {
         // Include periodic per-vertex offsets in the duplicate key so periodic quotient cells
         // with identical vertex sets but distinct lattice offsets are not collapsed.
@@ -4122,7 +4122,7 @@ where
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
     /// [`DelaunayTriangulation::validation_report()`].
     ///
-    /// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
+    /// [`DelaunayTriangulation::validation_report()`]: crate::triangulation::delaunay::DelaunayTriangulation::validation_report
     pub(crate) fn validate_facet_sharing(&self) -> Result<(), TdsError> {
         // Build a map from facet keys to the cells that contain them.
         // Use the strict version to ensure we catch any missing vertex keys.
@@ -4775,7 +4775,7 @@ where
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
     /// [`DelaunayTriangulation::validation_report()`].
     ///
-    /// [`DelaunayTriangulation::validation_report()`]: crate::core::delaunay_triangulation::DelaunayTriangulation::validation_report
+    /// [`DelaunayTriangulation::validation_report()`]: crate::triangulation::delaunay::DelaunayTriangulation::validation_report
     ///
     /// Note: callers provide `facet_to_cells` so `is_valid()` and `validation_report()` can share
     /// the precomputed facet map between validators.
@@ -5474,9 +5474,16 @@ where
 mod tests {
     use super::*;
     use crate::core::algorithms::incremental_insertion::InsertionError;
-    use crate::core::{delaunay_triangulation::DelaunayTriangulation, vertex::VertexBuilder};
+    use crate::core::cell::Cell;
+    use crate::core::triangulation::TriangulationValidationError;
+    use crate::core::vertex::VertexBuilder;
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
+    use crate::topology::characteristics::euler::TopologyClassification;
+    use crate::triangulation::builder::DelaunayTriangulationBuilder;
+    use crate::triangulation::delaunay::{
+        DelaunayTriangulation, DelaunayTriangulationValidationError,
+    };
     use crate::vertex;
     use slotmap::KeyData;
 
@@ -5675,7 +5682,6 @@ mod tests {
     fn test_repair_degenerate_cells() {
         // Exercise the repair primitive by creating a cell with a neighbor pointer
         // to a missing cell key.
-        use crate::core::cell::Cell;
 
         let vertices = [
             vertex!([0.0, 0.0]),
@@ -7403,9 +7409,6 @@ mod tests {
 
     #[test]
     fn test_invariant_error_from_tds_and_triangulation() {
-        use crate::core::triangulation::TriangulationValidationError;
-        use crate::topology::characteristics::euler::TopologyClassification;
-
         let tds_err = TdsError::InconsistentDataStructure {
             message: "test".to_string(),
         };
@@ -7423,8 +7426,6 @@ mod tests {
 
     #[test]
     fn test_invariant_error_from_delaunay_validation_error() {
-        use crate::core::delaunay_triangulation::DelaunayTriangulationValidationError;
-
         let dt_err = DelaunayTriangulationValidationError::VerificationFailed {
             message: "test".to_string(),
         };
@@ -7507,8 +7508,6 @@ mod tests {
 
     #[test]
     fn test_is_connected_returns_false_for_isolated_cells() {
-        use crate::core::cell::Cell;
-
         // Build a TDS with two triangles that have no neighbor wiring between them.
         // Since neither cell's `neighbors` field is populated, BFS from either cell
         // cannot reach the other → is_connected() must return false.
@@ -7615,8 +7614,6 @@ mod tests {
 
     #[test]
     fn test_normalize_coherent_orientation_produces_coherent_result() {
-        use crate::core::cell::Cell;
-
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
@@ -7658,8 +7655,6 @@ mod tests {
 
     #[test]
     fn test_remove_duplicate_cells_removes_exact_duplicates() {
-        use crate::core::cell::Cell;
-
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
@@ -7693,8 +7688,6 @@ mod tests {
 
     #[test]
     fn test_validate_vertex_incidence_detects_dangling_incident_cell() {
-        use crate::core::cell::Cell;
-
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
@@ -7714,8 +7707,6 @@ mod tests {
 
     #[test]
     fn test_validate_cell_coordinate_uniqueness_rejects_duplicate_coords() {
-        use crate::core::cell::Cell;
-
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         // Two distinct vertex keys with identical coordinates
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
@@ -7734,8 +7725,6 @@ mod tests {
 
     #[test]
     fn test_validate_facet_sharing_rejects_triple_shared_facet() {
-        use crate::core::cell::Cell;
-
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
@@ -7764,8 +7753,6 @@ mod tests {
 
     #[test]
     fn test_validate_no_duplicate_cells_detects_dupes() {
-        use crate::core::cell::Cell;
-
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
@@ -7881,8 +7868,6 @@ mod tests {
 
     #[test]
     fn test_validation_report_accumulates_violations() {
-        use crate::core::cell::Cell;
-
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
@@ -7912,8 +7897,6 @@ mod tests {
 
     #[test]
     fn test_insert_cell_with_mapping_registers_uuid_mapping() {
-        use crate::core::cell::Cell;
-
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
@@ -7930,8 +7913,6 @@ mod tests {
 
     #[test]
     fn test_insert_cell_with_mapping_rejects_missing_vertex() {
-        use crate::core::cell::Cell;
-
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
@@ -7948,8 +7929,6 @@ mod tests {
 
     #[test]
     fn test_insert_cell_with_mapping_rejects_duplicate_uuid() {
-        use crate::core::cell::Cell;
-
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
@@ -7972,8 +7951,6 @@ mod tests {
 
     #[test]
     fn test_get_cell_vertices_errors_on_missing_vertex_key() {
-        use crate::core::cell::Cell;
-
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
@@ -7997,8 +7974,6 @@ mod tests {
 
     #[test]
     fn test_validate_vertex_incidence_detects_inconsistent_incident_cell() {
-        use crate::core::cell::Cell;
-
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
@@ -8022,8 +7997,6 @@ mod tests {
 
     #[test]
     fn test_validate_vertex_incidence_detects_dangling_cell_key() {
-        use crate::core::cell::Cell;
-
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
@@ -8047,8 +8020,6 @@ mod tests {
 
     #[test]
     fn test_find_cells_containing_vertex_fallback_when_no_incident_cell() {
-        use crate::core::cell::Cell;
-
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
@@ -8109,8 +8080,6 @@ mod tests {
 
     #[test]
     fn test_assign_incident_cells_errors_on_dangling_vertex_key() {
-        use crate::core::cell::Cell;
-
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
@@ -8193,8 +8162,6 @@ mod tests {
 
     #[test]
     fn test_remove_duplicate_cells_removes_actual_duplicates() {
-        use crate::core::cell::Cell;
-
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
@@ -8229,8 +8196,6 @@ mod tests {
 
     #[test]
     fn test_validate_neighbor_topology_rejects_wrong_length() {
-        use crate::core::cell::Cell;
-
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
@@ -8253,8 +8218,6 @@ mod tests {
 
     #[test]
     fn test_set_vertex_data_replaces_existing() {
-        use crate::core::builder::DelaunayTriangulationBuilder;
-
         let vertices: [Vertex<f64, i32, 2>; 3] = [
             vertex!([0.0, 0.0], 10i32),
             vertex!([1.0, 0.0], 20),
@@ -8298,8 +8261,6 @@ mod tests {
 
     #[test]
     fn test_set_cell_data_on_empty_cell() {
-        use crate::core::builder::DelaunayTriangulationBuilder;
-
         let vertices = [
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -8318,8 +8279,6 @@ mod tests {
 
     #[test]
     fn test_set_cell_data_replaces_existing() {
-        use crate::core::builder::DelaunayTriangulationBuilder;
-
         let vertices = [
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -8346,8 +8305,6 @@ mod tests {
 
     #[test]
     fn test_set_vertex_data_preserves_triangulation_validity() {
-        use crate::core::builder::DelaunayTriangulationBuilder;
-
         let vertices: [Vertex<f64, i32, 2>; 3] = [
             vertex!([0.0, 0.0], 1i32),
             vertex!([1.0, 0.0], 2),
@@ -8375,8 +8332,6 @@ mod tests {
 
     #[test]
     fn test_set_cell_data_preserves_triangulation_validity() {
-        use crate::core::builder::DelaunayTriangulationBuilder;
-
         let vertices = [
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -8406,8 +8361,6 @@ mod tests {
 
     #[test]
     fn test_set_vertex_data_via_triangulation_wrapper() {
-        use crate::core::builder::DelaunayTriangulationBuilder;
-
         let vertices: [Vertex<f64, i32, 2>; 3] = [
             vertex!([0.0, 0.0], 10i32),
             vertex!([1.0, 0.0], 20),
@@ -8431,8 +8384,6 @@ mod tests {
 
     #[test]
     fn test_set_cell_data_via_triangulation_wrapper() {
-        use crate::core::builder::DelaunayTriangulationBuilder;
-
         let vertices = [
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -8456,8 +8407,6 @@ mod tests {
 
     #[test]
     fn test_set_data_via_dt_does_not_invalidate_locate_hint() {
-        use crate::core::builder::DelaunayTriangulationBuilder;
-
         let vertices: [Vertex<f64, i32, 2>; 3] = [
             vertex!([0.0, 0.0], 0i32),
             vertex!([1.0, 0.0], 0),

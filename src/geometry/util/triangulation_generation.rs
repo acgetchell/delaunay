@@ -6,16 +6,16 @@
 #![forbid(unsafe_code)]
 
 use super::point_generation::{generate_random_points, generate_random_points_seeded};
-use crate::core::delaunay_triangulation::{
-    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError,
-    InsertionOrderStrategy, RetryPolicy,
-};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionError};
 use crate::core::vertex::{Vertex, VertexBuilder};
 use crate::geometry::kernel::AdaptiveKernel;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{CoordinateScalar, ScalarAccumulative};
+use crate::triangulation::delaunay::{
+    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError,
+    InsertionOrderStrategy, RetryPolicy,
+};
 use rand::SeedableRng;
 use rand::distr::uniform::SampleUniform;
 use rand::rngs::StdRng;

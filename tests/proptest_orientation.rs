@@ -10,10 +10,10 @@
 
 #![forbid(unsafe_code)]
 
-use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
-use delaunay::core::triangulation_data_structure::{Tds, TdsError};
+use delaunay::core::tds::{Tds, TdsError};
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::triangulation::*;
+use delaunay::triangulation::delaunay::DelaunayTriangulation;
 use proptest::prelude::*;
 
 /// Strategy for generating finite `f64` coordinates in a reasonable range.

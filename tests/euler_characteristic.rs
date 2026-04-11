@@ -219,8 +219,8 @@ fn test_5d_single_simplex() {
 
 #[test]
 fn test_2d_toroidal_explicit_construction_chi_zero() {
-    use delaunay::core::builder::DelaunayTriangulationBuilder;
     use delaunay::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
+    use delaunay::triangulation::builder::DelaunayTriangulationBuilder;
 
     // 3×3 periodic grid torus (T²): 9 vertices, 18 triangles.
     // Each quad (i,j) is split into two triangles with periodic wrapping.
@@ -275,8 +275,8 @@ fn test_2d_toroidal_explicit_construction_chi_zero() {
 
 #[test]
 fn test_3d_toroidal_explicit_construction_chi_zero() {
-    use delaunay::core::builder::DelaunayTriangulationBuilder;
     use delaunay::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
+    use delaunay::triangulation::builder::DelaunayTriangulationBuilder;
 
     // 3×3×3 periodic Freudenthal triangulation of T³.
     //

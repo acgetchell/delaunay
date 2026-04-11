@@ -21,7 +21,7 @@
 //!
 //! All tests use `dt.tds().is_valid()` (Level 2 structural validation).
 
-use delaunay::core::triangulation_data_structure::Tds;
+use delaunay::core::tds::Tds;
 use delaunay::core::util::jaccard::jaccard_index;
 use delaunay::prelude::query::*;
 use proptest::prelude::*;

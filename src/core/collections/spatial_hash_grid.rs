@@ -17,7 +17,7 @@
 //! by updating the index only after the full higher-level operation commits).
 
 use super::{FastHashMap, SmallBuffer};
-use crate::core::triangulation_data_structure::VertexKey;
+use crate::core::tds::VertexKey;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use std::hash::{Hash, Hasher};
 
@@ -68,7 +68,7 @@ where
 /// The grid uses a fixed `cell_size` and indexes vertices by the floored cell
 /// coordinates `floor(coord / cell_size)`.
 #[derive(Clone, Debug)]
-pub(in crate::core) struct HashGridIndex<T, const D: usize, K = VertexKey>
+pub struct HashGridIndex<T, const D: usize, K = VertexKey>
 where
     T: CoordinateScalar,
 {
@@ -83,7 +83,7 @@ where
     K: Copy,
 {
     /// Create a new grid index with the given cell size.
-    pub(in crate::core) fn new(cell_size: T) -> Self {
+    pub fn new(cell_size: T) -> Self {
         let usable = D <= MAX_HASH_GRID_DIMENSION && cell_size.is_finite() && cell_size > T::zero();
         Self {
             cell_size,
@@ -91,24 +91,24 @@ where
             cells: FastHashMap::default(),
         }
     }
-    pub(in crate::core) const fn is_usable(&self) -> bool {
+    pub const fn is_usable(&self) -> bool {
         self.usable
     }
-    pub(in crate::core) const fn cell_size(&self) -> T
+    pub const fn cell_size(&self) -> T
     where
         T: Copy,
     {
         self.cell_size
     }
 
-    pub(in crate::core) fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.cells.clear();
     }
 
     const fn disable(&mut self) {
         self.usable = false;
     }
-    pub(in crate::core) fn can_key_coords(&self, coords: &[T; D]) -> bool {
+    pub fn can_key_coords(&self, coords: &[T; D]) -> bool {
         self.key_for_coords(coords).is_some()
     }
 
@@ -116,7 +116,7 @@ where
     ///
     /// If the index is not usable, or the point cannot be keyed robustly, the
     /// index is disabled (so callers can fall back to linear scans).
-    pub(in crate::core) fn insert_vertex(&mut self, vertex_key: K, coords: &[T; D]) {
+    pub fn insert_vertex(&mut self, vertex_key: K, coords: &[T; D]) {
         if !self.usable {
             return;
         }
@@ -133,11 +133,7 @@ where
     ///
     /// Returns `true` if the index was used for the query (even if it yielded zero
     /// candidates). Returns `false` if the index was unusable for this query.
-    pub(in crate::core) fn for_each_candidate_vertex_key<F>(
-        &self,
-        coords: &[T; D],
-        mut f: F,
-    ) -> bool
+    pub fn for_each_candidate_vertex_key<F>(&self, coords: &[T; D], mut f: F) -> bool
     where
         F: FnMut(K) -> bool,
     {
@@ -227,7 +223,7 @@ where
 mod tests {
     use super::*;
     use crate::core::collections::FastHashSet;
-    use crate::core::triangulation_data_structure::VertexKey;
+    use crate::core::tds::VertexKey;
     use slotmap::SlotMap;
 
     #[test]

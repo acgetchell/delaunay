@@ -38,9 +38,9 @@ use crate::core::collections::{
 use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, FacetHandle, facet_key_from_vertices};
 use crate::core::operations::TopologicalOperation;
+use crate::core::tds::{CellKey, Tds, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::TopologyGuarantee;
-use crate::core::triangulation_data_structure::{CellKey, Tds, VertexKey};
 use crate::core::util::stable_hash_u64_slice;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
@@ -1057,7 +1057,7 @@ pub enum FlipError {
 /// ```rust
 /// use delaunay::core::algorithms::flips::{BistellarFlipKind, FlipDirection, FlipInfo};
 /// use delaunay::core::collections::{CellKeyBuffer, SmallBuffer, MAX_PRACTICAL_DIMENSION_SIZE};
-/// use delaunay::core::triangulation_data_structure::{CellKey, VertexKey};
+/// use delaunay::core::tds::{CellKey, VertexKey};
 /// use slotmap::KeyData;
 ///
 /// let mut removed_cells = CellKeyBuffer::new();
@@ -1130,7 +1130,7 @@ pub(crate) struct FlipContextDyn<const D: usize> {
 ///
 /// ```rust
 /// use delaunay::core::algorithms::flips::TriangleHandle;
-/// use delaunay::core::triangulation_data_structure::VertexKey;
+/// use delaunay::core::tds::VertexKey;
 /// use slotmap::KeyData;
 ///
 /// let a = VertexKey::from(KeyData::from_ffi(1));
@@ -1155,7 +1155,7 @@ impl TriangleHandle {
     ///
     /// ```rust
     /// use delaunay::core::algorithms::flips::TriangleHandle;
-    /// use delaunay::core::triangulation_data_structure::VertexKey;
+    /// use delaunay::core::tds::VertexKey;
     /// use slotmap::KeyData;
     ///
     /// let a = VertexKey::from(KeyData::from_ffi(10));
@@ -1188,7 +1188,7 @@ impl TriangleHandle {
 ///
 /// ```rust
 /// use delaunay::core::algorithms::flips::RidgeHandle;
-/// use delaunay::core::triangulation_data_structure::CellKey;
+/// use delaunay::core::tds::CellKey;
 /// use slotmap::KeyData;
 ///
 /// let cell_key = CellKey::from(KeyData::from_ffi(7));
@@ -5077,8 +5077,8 @@ mod tests {
     use super::*;
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
     use crate::core::collections::Uuid;
-    use crate::core::delaunay_triangulation::DelaunayTriangulation;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
+    use crate::triangulation::delaunay::DelaunayTriangulation;
     use crate::vertex;
     use rand::{RngExt, SeedableRng, rngs::StdRng};
 

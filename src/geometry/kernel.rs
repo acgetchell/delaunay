@@ -241,7 +241,7 @@ impl<T: CoordinateScalar> ExactPredicates for AdaptiveKernel<T> {}
 ///
 /// Use [`AdaptiveKernel`] (the default) for all 3D+ work. `FastKernel` remains
 /// suitable for 2D triangulations with well-conditioned input, or when explicitly
-/// opted into via [`DelaunayTriangulation::with_kernel`](crate::core::delaunay_triangulation::DelaunayTriangulation::with_kernel) for advanced use cases
+/// opted into via [`DelaunayTriangulation::with_kernel`](crate::triangulation::delaunay::DelaunayTriangulation::with_kernel) for advanced use cases
 /// where the caller has verified the input is non-degenerate.
 ///
 /// # Performance
@@ -443,7 +443,7 @@ where
 /// This is the **default kernel** for [`DelaunayTriangulation`] convenience
 /// constructors (`new`, `empty`, `new_with_options`, etc.).
 ///
-/// [`DelaunayTriangulation`]: crate::core::delaunay_triangulation::DelaunayTriangulation
+/// [`DelaunayTriangulation`]: crate::triangulation::delaunay::DelaunayTriangulation
 ///
 /// # When to use `AdaptiveKernel`
 ///

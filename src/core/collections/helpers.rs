@@ -50,7 +50,7 @@ pub fn fast_hash_map_with_capacity<K, V>(capacity: usize) -> FastHashMap<K, V> {
 /// **Phase 1**: Internal operations (key-based for better performance):
 /// ```rust
 /// use delaunay::core::collections::fast_hash_set_with_capacity;
-/// use delaunay::core::triangulation_data_structure::CellKey;
+/// use delaunay::core::tds::CellKey;
 ///
 /// let set = fast_hash_set_with_capacity::<CellKey>(500);
 /// // Can insert up to ~375 CellKeys without rehashing, avoids UUID→Key lookups
