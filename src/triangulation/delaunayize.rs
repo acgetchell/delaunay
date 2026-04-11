@@ -57,7 +57,7 @@ use crate::core::algorithms::pl_manifold_repair::{
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{ExactPredicates, Kernel};
-use crate::geometry::traits::coordinate::{CoordinateScalar, ScalarAccumulative};
+use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::triangulation::delaunay::{DelaunayRepairHeuristicConfig, DelaunayTriangulation};
 use thiserror::Error;
 
@@ -256,7 +256,7 @@ pub fn delaunayize_by_flips<K, U, V, const D: usize>(
 ) -> Result<DelaunayizeOutcome<K::Scalar, U, V, D>, DelaunayizeError>
 where
     K: Kernel<D> + ExactPredicates,
-    K::Scalar: ScalarAccumulative,
+    K::Scalar: CoordinateScalar,
     U: DataType,
     V: DataType,
 {

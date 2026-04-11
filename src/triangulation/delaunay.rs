@@ -35,7 +35,7 @@ use crate::core::util::{
 };
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates, Kernel, RobustKernel};
-use crate::geometry::traits::coordinate::{CoordinateScalar, ScalarAccumulative};
+use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::topology::manifold::validate_ridge_links_for_cells;
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
 use crate::triangulation::builder::DelaunayTriangulationBuilder;
@@ -619,11 +619,7 @@ impl ConstructionStatistics {
 // =============================================================================
 
 type VertexBuffer<T, U, const D: usize> = Vec<Vertex<T, U, D>>;
-struct PreprocessVertices<T, U, const D: usize>
-where
-    T: CoordinateScalar,
-    U: DataType,
-{
+struct PreprocessVertices<T, U, const D: usize> {
     primary: Option<VertexBuffer<T, U, D>>,
     fallback: Option<VertexBuffer<T, U, D>>,
     grid_cell_size: Option<T>,
@@ -642,10 +638,7 @@ where
         self.fallback.as_deref()
     }
 
-    const fn grid_cell_size(&self) -> Option<T>
-    where
-        T: Copy,
-    {
+    const fn grid_cell_size(&self) -> Option<T> {
         self.grid_cell_size
     }
 }
@@ -958,7 +951,7 @@ where
             let mut dist_sq = T::zero();
             for i in 0..D {
                 let diff = coords[i] - existing_coords[i];
-                dist_sq = dist_sq + diff * diff;
+                dist_sq += diff * diff;
             }
             if dist_sq < epsilon_sq {
                 duplicate = true;
@@ -1301,12 +1294,7 @@ where
 /// assert_eq!(dt.number_of_cells(), 1);
 /// ```
 #[derive(Clone, Debug)]
-pub struct DelaunayTriangulation<K, U, V, const D: usize>
-where
-    K: Kernel<D>,
-    U: DataType,
-    V: DataType,
-{
+pub struct DelaunayTriangulation<K: Kernel<D>, U, V, const D: usize> {
     /// The underlying generic triangulation.
     pub(crate) tri: Triangulation<K, U, V, D>,
     /// Ephemeral insertion/repair state (hint caching + repair scheduling).
@@ -1644,12 +1632,12 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
 // =============================================================================
 //
 // Batch and incremental constructors, preprocessing, Hilbert ordering, spatial
-// hashing, and deduplication — all require `ScalarAccumulative + NumCast`.
+// hashing, and deduplication — all require `CoordinateScalar + NumCast`.
 
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
 where
     K: Kernel<D>,
-    K::Scalar: ScalarAccumulative + NumCast,
+    K::Scalar: CoordinateScalar + NumCast,
     U: DataType,
     V: DataType,
 {
@@ -3435,7 +3423,7 @@ where
 //
 // Methods that only need `K: Kernel<D>` — no scalar arithmetic.  Downstream
 // generic code (e.g. `delaunayize_by_flips`) does not need to carry
-// `ScalarAccumulative + NumCast` bounds when calling these methods.
+// `CoordinateScalar + NumCast` bounds when calling these methods.
 //
 // Follows the precedent of the existing PURE STRUCT ASSEMBLY impl block.
 
@@ -4027,12 +4015,12 @@ where
 // =============================================================================
 //
 // `repair_delaunay_with_flips_advanced` can fall back to `rebuild_with_heuristic`,
-// which constructs a new triangulation and therefore requires `ScalarAccumulative`.
+// which constructs a new triangulation and therefore requires `CoordinateScalar`.
 
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
 where
     K: Kernel<D>,
-    K::Scalar: ScalarAccumulative + NumCast,
+    K::Scalar: CoordinateScalar + NumCast,
     U: DataType,
     V: DataType,
 {
@@ -4785,13 +4773,13 @@ where
 // =============================================================================
 //
 // Incremental insertion, removal, and post-insertion repair/check helpers.
-// These require `ScalarAccumulative + NumCast` for spatial-index construction,
+// These require `CoordinateScalar + NumCast` for spatial-index construction,
 // Triangulation-layer insertion, and Triangulation-layer removal.
 
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
 where
     K: Kernel<D>,
-    K::Scalar: ScalarAccumulative + NumCast,
+    K::Scalar: CoordinateScalar + NumCast,
     U: DataType,
     V: DataType,
 {

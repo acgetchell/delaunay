@@ -68,10 +68,7 @@ where
 /// The grid uses a fixed `cell_size` and indexes vertices by the floored cell
 /// coordinates `floor(coord / cell_size)`.
 #[derive(Clone, Debug)]
-pub struct HashGridIndex<T, const D: usize, K = VertexKey>
-where
-    T: CoordinateScalar,
-{
+pub struct HashGridIndex<T: CoordinateScalar, const D: usize, K = VertexKey> {
     cell_size: T,
     usable: bool,
     cells: FastHashMap<GridKey<T, D>, SmallBuffer<K, BUCKET_INLINE_CAPACITY>>,

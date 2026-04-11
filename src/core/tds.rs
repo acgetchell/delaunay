@@ -895,11 +895,7 @@ new_key_type! {
 /// assert_eq!(dt.number_of_cells(), 1);
 /// assert_eq!(dt.number_of_vertices(), 3);
 /// ```
-pub struct Tds<T, U, V, const D: usize>
-where
-    U: DataType,
-    V: DataType,
-{
+pub struct Tds<T, U, V, const D: usize> {
     /// Storage map for vertices, allowing stable keys and efficient access.
     vertices: StorageMap<VertexKey, Vertex<T, U, D>>,
 

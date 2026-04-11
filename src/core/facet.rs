@@ -374,12 +374,7 @@ impl FacetHandle {
 ///     Ok(())
 /// }
 /// ```
-pub struct FacetView<'tds, T, U, V, const D: usize>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+pub struct FacetView<'tds, T, U, V, const D: usize> {
     /// Reference to the triangulation data structure.
     tds: &'tds Tds<T, U, V, D>,
     /// Key of the cell containing this facet.
@@ -819,12 +814,7 @@ where
 /// assert_eq!(count, 4);
 /// ```
 #[derive(Clone)]
-pub struct AllFacetsIter<'tds, T, U, V, const D: usize>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+pub struct AllFacetsIter<'tds, T, U, V, const D: usize> {
     tds: &'tds Tds<T, U, V, D>,
     cell_keys: std::vec::IntoIter<CellKey>,
     current_cell_key: Option<CellKey>,
@@ -953,12 +943,7 @@ where
 /// assert_eq!(count, 4);
 /// ```
 #[derive(Clone)]
-pub struct BoundaryFacetsIter<'tds, T, U, V, const D: usize>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+pub struct BoundaryFacetsIter<'tds, T, U, V, const D: usize> {
     all_facets: AllFacetsIter<'tds, T, U, V, D>,
     facet_to_cells_map: crate::core::collections::FacetToCellsMap,
 }

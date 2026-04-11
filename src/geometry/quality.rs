@@ -42,7 +42,7 @@ use crate::core::{
 use crate::geometry::{
     kernel::Kernel,
     point::Point,
-    traits::coordinate::{CoordinateScalar, ScalarAccumulative},
+    traits::coordinate::CoordinateScalar,
     util::{circumradius, hypot, inradius as simplex_inradius, simplex_volume},
 };
 use num_traits::{NumCast, One};
@@ -93,7 +93,7 @@ fn cell_points<K, U, V, const D: usize>(
 ) -> Result<SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>, QualityError>
 where
     K: Kernel<D>,
-    K::Scalar: ScalarAccumulative,
+    K::Scalar: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -236,7 +236,7 @@ pub fn radius_ratio<K, U, V, const D: usize>(
 ) -> Result<K::Scalar, QualityError>
 where
     K: Kernel<D>,
-    K::Scalar: ScalarAccumulative + Div<Output = K::Scalar>,
+    K::Scalar: CoordinateScalar + Div<Output = K::Scalar>,
     U: DataType,
     V: DataType,
 {
@@ -332,7 +332,7 @@ pub fn normalized_volume<K, U, V, const D: usize>(
 ) -> Result<K::Scalar, QualityError>
 where
     K: Kernel<D>,
-    K::Scalar: ScalarAccumulative + Div<Output = K::Scalar>,
+    K::Scalar: CoordinateScalar + Div<Output = K::Scalar>,
     U: DataType,
     V: DataType,
 {

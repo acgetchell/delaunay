@@ -142,7 +142,7 @@ use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
 use crate::geometry::quality::radius_ratio;
 use crate::geometry::robust_predicates::robust_orientation;
-use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar, ScalarAccumulative};
+use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
 use crate::geometry::util::safe_scalar_to_f64;
 use crate::topology::characteristics::euler::{TopologyClassification, expected_chi_for};
 use crate::topology::characteristics::validation::validate_triangulation_euler_with_facet_to_cells_map;
@@ -744,12 +744,7 @@ impl TopologyGuarantee {
 /// assert_eq!(tri.number_of_vertices(), 0);
 /// ```
 #[derive(Clone, Debug)]
-pub struct Triangulation<K, U, V, const D: usize>
-where
-    K: Kernel<D>,
-    U: DataType,
-    V: DataType,
-{
+pub struct Triangulation<K: Kernel<D>, U, V, const D: usize> {
     /// The geometric kernel for predicates.
     pub(crate) kernel: K,
     /// The combinatorial triangulation data structure.
@@ -2913,7 +2908,7 @@ where
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
 where
     K: Kernel<D>,
-    K::Scalar: ScalarAccumulative + NumCast,
+    K::Scalar: CoordinateScalar + NumCast,
     U: DataType,
     V: DataType,
 {

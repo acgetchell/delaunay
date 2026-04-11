@@ -11,7 +11,7 @@ use crate::core::facet::FacetView;
 use crate::core::traits::data_type::DataType;
 use crate::geometry::matrix::{Matrix, matrix_get, matrix_set};
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar, ScalarAccumulative};
+use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
 use la_stack::{DEFAULT_SINGULAR_TOL, LaError};
 use num_traits::Float;
 use std::ops::AddAssign;
@@ -724,7 +724,7 @@ pub fn surface_measure<T, U, V, const D: usize>(
     facets: &[FacetView<'_, T, U, V, D>],
 ) -> Result<T, SurfaceMeasureError>
 where
-    T: ScalarAccumulative,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {

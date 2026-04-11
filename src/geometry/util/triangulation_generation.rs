@@ -11,7 +11,7 @@ use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionErr
 use crate::core::vertex::{Vertex, VertexBuilder};
 use crate::geometry::kernel::AdaptiveKernel;
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{CoordinateScalar, ScalarAccumulative};
+use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::triangulation::delaunay::{
     ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError,
     InsertionOrderStrategy, RetryPolicy,
@@ -30,7 +30,7 @@ fn validate_random_triangulation<K, U, V, const D: usize>(
 ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
 where
     K: crate::geometry::kernel::Kernel<D>,
-    K::Scalar: ScalarAccumulative,
+    K::Scalar: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -48,7 +48,7 @@ fn random_triangulation_is_acceptable<K, U, V, const D: usize>(
 ) -> bool
 where
     K: crate::geometry::kernel::Kernel<D>,
-    K::Scalar: ScalarAccumulative,
+    K::Scalar: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -63,7 +63,7 @@ fn random_triangulation_try_build<K, T, U, V, const D: usize>(
 ) -> Option<DelaunayTriangulation<K, U, V, D>>
 where
     K: crate::geometry::kernel::Kernel<D, Scalar = T>,
-    T: ScalarAccumulative,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -119,7 +119,7 @@ where
 ///
 /// All code paths that build a non-empty triangulation should use this factory
 /// so they share the same kernel type.
-const fn make_adaptive_kernel<T: ScalarAccumulative>() -> AdaptiveKernel<T> {
+const fn make_adaptive_kernel<T: CoordinateScalar>() -> AdaptiveKernel<T> {
     AdaptiveKernel::new()
 }
 
@@ -130,7 +130,7 @@ fn random_triangulation_try_with_vertices<T, U, V, const D: usize>(
     topology_guarantee: TopologyGuarantee,
 ) -> Option<DelaunayTriangulation<AdaptiveKernel<T>, U, V, D>>
 where
-    T: ScalarAccumulative,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -177,7 +177,7 @@ where
 ///
 /// # Type Parameters
 ///
-/// * `T` - Coordinate scalar type (must implement `ScalarAccumulative + SampleUniform`)
+/// * `T` - Coordinate scalar type (must implement `CoordinateScalar + SampleUniform`)
 /// * `U` - Vertex data type (must implement `DataType`)
 /// * `V` - Cell data type (must implement `DataType`)
 /// * `D` - Dimensionality (const generic parameter)
@@ -300,7 +300,7 @@ pub fn generate_random_triangulation<T, U, V, const D: usize>(
     seed: Option<u64>,
 ) -> Result<DelaunayTriangulation<AdaptiveKernel<T>, U, V, D>, DelaunayTriangulationConstructionError>
 where
-    T: ScalarAccumulative + SampleUniform,
+    T: CoordinateScalar + SampleUniform,
     U: DataType,
     V: DataType,
 {
@@ -363,7 +363,7 @@ pub fn generate_random_triangulation_with_topology_guarantee<T, U, V, const D: u
     topology_guarantee: TopologyGuarantee,
 ) -> Result<DelaunayTriangulation<AdaptiveKernel<T>, U, V, D>, DelaunayTriangulationConstructionError>
 where
-    T: ScalarAccumulative + SampleUniform,
+    T: CoordinateScalar + SampleUniform,
     U: DataType,
     V: DataType,
 {
@@ -503,7 +503,7 @@ pub struct RandomTriangulationBuilder<T> {
 
 impl<T> RandomTriangulationBuilder<T>
 where
-    T: ScalarAccumulative + SampleUniform,
+    T: CoordinateScalar + SampleUniform,
 {
     /// Creates a new builder with the specified number of points and coordinate bounds.
     ///

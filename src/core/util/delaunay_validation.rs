@@ -9,7 +9,7 @@ use crate::core::traits::data_type::DataType;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::InSphere;
 use crate::geometry::robust_predicates::robust_insphere;
-use crate::geometry::traits::coordinate::{CoordinateConversionError, ScalarAccumulative};
+use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
 use smallvec::SmallVec;
 use thiserror::Error;
 
@@ -80,7 +80,7 @@ fn validate_cell_delaunay<T, U, V, const D: usize>(
     cell_vertex_points: &mut SmallVec<[Point<T, D>; 8]>,
 ) -> Result<Option<CellKey>, DelaunayValidationError>
 where
-    T: ScalarAccumulative,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -226,7 +226,7 @@ pub(crate) fn is_delaunay_property_only<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
 ) -> Result<(), DelaunayValidationError>
 where
-    T: ScalarAccumulative,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -298,7 +298,7 @@ pub fn find_delaunay_violations<T, U, V, const D: usize>(
     cells_to_check: Option<&[CellKey]>,
 ) -> Result<ViolationBuffer, DelaunayValidationError>
 where
-    T: ScalarAccumulative,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -388,7 +388,7 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cells_subset: Option<&[CellKey]>,
 ) where
-    T: ScalarAccumulative,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {

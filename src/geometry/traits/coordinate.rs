@@ -548,6 +548,9 @@ pub trait CoordinateScalar:
     + Debug
     + Serialize
     + DeserializeOwned
+    + AddAssign
+    + SubAssign
+    + Sum
 {
     /// Returns the appropriate default tolerance for this coordinate scalar type.
     ///
@@ -615,21 +618,6 @@ pub trait CoordinateScalar:
     /// ```
     fn mantissa_digits() -> u32;
 }
-
-/// Trait for coordinate scalars that support summation operations.
-///
-/// This supertrait is a semantic alias for the common bound `CoordinateScalar + Sum`.
-pub trait ScalarSummable: CoordinateScalar + Sum {}
-
-/// Trait for coordinate scalars that support in-place accumulation.
-///
-/// This supertrait is a semantic alias for the common bound
-/// `CoordinateScalar + AddAssign + SubAssign + Sum`.
-pub trait ScalarAccumulative: CoordinateScalar + AddAssign + SubAssign + Sum {}
-
-// Blanket implementations so any suitable scalar automatically implements these supertraits.
-impl<T> ScalarSummable for T where T: CoordinateScalar + Sum {}
-impl<T> ScalarAccumulative for T where T: CoordinateScalar + AddAssign + SubAssign + Sum {}
 
 // Specific implementations for f32 and f64
 impl CoordinateScalar for f32 {
