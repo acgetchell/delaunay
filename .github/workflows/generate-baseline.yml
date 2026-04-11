@@ -25,6 +25,12 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Seed search limit for both old (pre-v0.8) and current env var names.
+  # Old tags read DELAUNAY_BENCH_SEED_SEARCH_LIMIT; current code reads
+  # DELAUNAY_BENCH_DISCOVER_SEEDS_LIMIT. Setting both ensures backward
+  # compatibility when generating baselines for older releases.
+  DELAUNAY_BENCH_SEED_SEARCH_LIMIT: 256
+  DELAUNAY_BENCH_DISCOVER_SEEDS_LIMIT: 256
 
 jobs:
   generate-baseline:
@@ -114,9 +120,11 @@ jobs:
           echo "🚀 Generating performance baseline for tag ${TAG_NAME}"
 
           # Generate baseline using fixed tooling (this checkout) against the tag checkout.
+          # Use --dev mode to match the comparison workflow (benchmarks.yml) settings.
           uv run benchmark-utils generate-baseline \
             --project-root bench-target \
-            --tag "${TAG_NAME}"
+            --tag "${TAG_NAME}" \
+            --dev
 
           echo "✅ Baseline generated successfully"
 
