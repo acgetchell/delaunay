@@ -42,7 +42,7 @@ type SeedSearchResult<const D: usize> = Option<(u64, Vec<Point<f64, D>>, Vec<Ver
 
 /// Pre-computed seeds for each (dimension, count) pair.
 ///
-/// These were discovered using `DELAUNAY_BENCH_SEED_SEARCH=1` and eliminate
+/// These were discovered using `DELAUNAY_BENCH_DISCOVER_SEEDS=1` and eliminate
 /// the expensive runtime seed search from the benchmark hot path.
 ///
 /// To refresh seeds (e.g. after algorithm changes that invalidate them), run:

@@ -126,6 +126,17 @@ These variables configure property tests in `tests/proptest_*.rs`.
 | `DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT_{D}D` | **value** | Per-dimension acceptance override |
 | `DELAUNAY_ALLOW_SLOW_COSPHERICAL_FILTER` | presence | Allow slow cospherical point filtering |
 
+## Benchmarks
+
+These variables configure `benches/ci_performance_suite.rs` and run in
+release builds only.
+
+| Variable | Activation | Description |
+|---|---|---|
+| `DELAUNAY_BENCH_LOG` | presence | Enable error logging inside Criterion measurement loops |
+| `DELAUNAY_BENCH_DISCOVER_SEEDS` | presence | Seed-discovery mode: find and print stable seeds instead of running benchmarks |
+| `DELAUNAY_BENCH_DISCOVER_SEEDS_LIMIT` | **value** (integer) | Maximum seeds to try per (dim, count) pair during discovery or fallback (default: 2000) |
+
 ## Miscellaneous
 
 | Variable | Activation | Module | Description |
