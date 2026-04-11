@@ -1773,7 +1773,7 @@ where
     /// [`TopologyGuarantee::PLManifoldStrict`] for per-insertion vertex-link checks.
     ///
     /// # Shuffled Retries
-    /// For `D >= 3` with more than `D + 1` vertices, the constructor retries
+    /// For `D >= 2` with more than `D + 1` vertices, the constructor retries
     /// construction with up to 6 shuffled insertion orders if the Delaunay
     /// property check fails (see [`RetryPolicy::default()`]).  To disable
     /// retries, pass [`ConstructionOptions::default().with_retry_policy(RetryPolicy::Disabled)`](Self::with_topology_guarantee_and_options).
