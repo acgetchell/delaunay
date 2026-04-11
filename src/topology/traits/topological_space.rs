@@ -432,3 +432,202 @@ pub trait TopologicalSpace {
     /// to match the triangulation's scalar type instead of hardcoding `f64`.
     fn fundamental_domain(&self) -> Option<&[f64]>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_topology_error_display() {
+        let counting = TopologyError::Counting("test message".to_string());
+        assert_eq!(
+            counting.to_string(),
+            "Failed to count simplices: test message"
+        );
+
+        let classification = TopologyError::Classification("another test".to_string());
+        assert_eq!(
+            classification.to_string(),
+            "Failed to classify triangulation: another test"
+        );
+
+        let euler = TopologyError::EulerMismatch {
+            computed: 2,
+            expected: 1,
+            topology_type: "sphere".to_string(),
+        };
+        assert_eq!(
+            euler.to_string(),
+            "Euler characteristic mismatch: computed χ=2, expected χ=1 for sphere"
+        );
+    }
+
+    #[test]
+    fn test_topology_error_equality() {
+        let err1 = TopologyError::Counting("msg".to_string());
+        let err2 = TopologyError::Counting("msg".to_string());
+        let err3 = TopologyError::Counting("different".to_string());
+
+        assert_eq!(err1, err2);
+        assert_ne!(err1, err3);
+        assert_ne!(err1, TopologyError::Classification("msg".to_string()));
+    }
+
+    #[test]
+    fn test_topology_kind_debug() {
+        assert_eq!(format!("{:?}", TopologyKind::Euclidean), "Euclidean");
+        assert_eq!(format!("{:?}", TopologyKind::Toroidal), "Toroidal");
+        assert_eq!(format!("{:?}", TopologyKind::Spherical), "Spherical");
+        assert_eq!(format!("{:?}", TopologyKind::Hyperbolic), "Hyperbolic");
+    }
+
+    #[test]
+    fn test_toroidal_construction_mode_debug() {
+        assert_eq!(
+            format!("{:?}", ToroidalConstructionMode::Canonicalized),
+            "Canonicalized"
+        );
+        assert_eq!(
+            format!("{:?}", ToroidalConstructionMode::PeriodicImagePoint),
+            "PeriodicImagePoint"
+        );
+        assert_eq!(
+            format!("{:?}", ToroidalConstructionMode::Explicit),
+            "Explicit"
+        );
+    }
+
+    #[test]
+    fn test_global_topology_default() {
+        let default_topo: GlobalTopology<3> = GlobalTopology::default();
+        assert_eq!(default_topo, GlobalTopology::Euclidean);
+        assert_eq!(GlobalTopology::<3>::DEFAULT, GlobalTopology::Euclidean);
+    }
+
+    #[test]
+    fn test_global_topology_kind() {
+        assert_eq!(
+            GlobalTopology::<2>::Euclidean.kind(),
+            TopologyKind::Euclidean
+        );
+        assert_eq!(
+            GlobalTopology::<3>::Spherical.kind(),
+            TopologyKind::Spherical
+        );
+        assert_eq!(
+            GlobalTopology::<4>::Hyperbolic.kind(),
+            TopologyKind::Hyperbolic
+        );
+
+        let toroidal = GlobalTopology::<2>::Toroidal {
+            domain: [1.0, 2.0],
+            mode: ToroidalConstructionMode::Canonicalized,
+        };
+        assert_eq!(toroidal.kind(), TopologyKind::Toroidal);
+    }
+
+    #[test]
+    fn test_global_topology_allows_boundary() {
+        assert!(GlobalTopology::<3>::Euclidean.allows_boundary());
+        assert!(!GlobalTopology::<3>::Spherical.allows_boundary());
+        assert!(!GlobalTopology::<3>::Hyperbolic.allows_boundary());
+
+        let toroidal = GlobalTopology::<2>::Toroidal {
+            domain: [1.0, 1.0],
+            mode: ToroidalConstructionMode::Canonicalized,
+        };
+        assert!(!toroidal.allows_boundary());
+    }
+
+    #[test]
+    fn test_global_topology_is_euclidean() {
+        assert!(GlobalTopology::<3>::Euclidean.is_euclidean());
+        assert!(!GlobalTopology::<3>::Spherical.is_euclidean());
+        assert!(!GlobalTopology::<3>::Hyperbolic.is_euclidean());
+
+        let toroidal = GlobalTopology::<2>::Toroidal {
+            domain: [1.0, 1.0],
+            mode: ToroidalConstructionMode::Canonicalized,
+        };
+        assert!(!toroidal.is_euclidean());
+    }
+
+    #[test]
+    fn test_global_topology_is_toroidal() {
+        assert!(!GlobalTopology::<3>::Euclidean.is_toroidal());
+        assert!(!GlobalTopology::<3>::Spherical.is_toroidal());
+        assert!(!GlobalTopology::<3>::Hyperbolic.is_toroidal());
+
+        let toroidal = GlobalTopology::<2>::Toroidal {
+            domain: [1.0, 1.0],
+            mode: ToroidalConstructionMode::Canonicalized,
+        };
+        assert!(toroidal.is_toroidal());
+    }
+
+    #[test]
+    fn test_global_topology_is_periodic() {
+        assert!(!GlobalTopology::<3>::Euclidean.is_periodic());
+        assert!(!GlobalTopology::<3>::Spherical.is_periodic());
+        assert!(!GlobalTopology::<3>::Hyperbolic.is_periodic());
+
+        // Test different toroidal modes
+        let canonicalized = GlobalTopology::<2>::Toroidal {
+            domain: [1.0, 1.0],
+            mode: ToroidalConstructionMode::Canonicalized,
+        };
+        assert!(!canonicalized.is_periodic());
+
+        let periodic = GlobalTopology::<2>::Toroidal {
+            domain: [1.0, 1.0],
+            mode: ToroidalConstructionMode::PeriodicImagePoint,
+        };
+        assert!(periodic.is_periodic());
+
+        let explicit = GlobalTopology::<2>::Toroidal {
+            domain: [1.0, 1.0],
+            mode: ToroidalConstructionMode::Explicit,
+        };
+        assert!(!explicit.is_periodic());
+    }
+
+    #[test]
+    fn test_global_topology_equality() {
+        let topo1 = GlobalTopology::<3>::Euclidean;
+        let topo2 = GlobalTopology::<3>::Euclidean;
+        let topo3 = GlobalTopology::<3>::Spherical;
+
+        assert_eq!(topo1, topo2);
+        assert_ne!(topo1, topo3);
+
+        let toroidal1 = GlobalTopology::<2>::Toroidal {
+            domain: [1.0, 2.0],
+            mode: ToroidalConstructionMode::Canonicalized,
+        };
+        let toroidal2 = GlobalTopology::<2>::Toroidal {
+            domain: [1.0, 2.0],
+            mode: ToroidalConstructionMode::Canonicalized,
+        };
+        let toroidal3 = GlobalTopology::<2>::Toroidal {
+            domain: [1.0, 2.0],
+            mode: ToroidalConstructionMode::PeriodicImagePoint,
+        };
+
+        assert_eq!(toroidal1, toroidal2);
+        assert_ne!(toroidal1, toroidal3);
+    }
+
+    #[test]
+    fn test_global_topology_debug() {
+        assert_eq!(format!("{:?}", GlobalTopology::<3>::Euclidean), "Euclidean");
+
+        let toroidal = GlobalTopology::<2>::Toroidal {
+            domain: [1.5, 2.5],
+            mode: ToroidalConstructionMode::Canonicalized,
+        };
+        let debug_str = format!("{toroidal:?}");
+        assert!(debug_str.contains("Toroidal"));
+        assert!(debug_str.contains("domain"));
+        assert!(debug_str.contains("mode"));
+    }
+}
