@@ -8862,9 +8862,7 @@ mod tests {
                 );
                 assert_eq!(base_seed, None, "default base_seed should be None");
             }
-            other => panic!(
-                "RetryPolicy::default() should be Shuffled, got {other:?}"
-            ),
+            other => panic!("RetryPolicy::default() should be Shuffled, got {other:?}"),
         }
     }
 

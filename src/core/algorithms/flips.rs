@@ -7123,11 +7123,9 @@ mod tests {
         use crate::geometry::util::generate_random_points_in_ball_seeded;
 
         let seed: u64 = 0xE30C_7858_2376_677C;
-        let points =
-            generate_random_points_in_ball_seeded::<f64, 3>(35, 100.0, seed)
-                .expect("point generation should succeed");
-        let vertices: Vec<Vertex<f64, (), 3>> =
-            points.into_iter().map(|p| vertex!(p)).collect();
+        let points = generate_random_points_in_ball_seeded::<f64, 3>(35, 100.0, seed)
+            .expect("point generation should succeed");
+        let vertices: Vec<Vertex<f64, (), 3>> = points.into_iter().map(|p| vertex!(p)).collect();
 
         let dt: Result<DelaunayTriangulation<_, (), (), 3>, _> =
             DelaunayTriangulation::new(&vertices);
