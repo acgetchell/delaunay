@@ -4,8 +4,8 @@
 
 use crate::core::cell::CellValidationError;
 use crate::core::collections::ViolationBuffer;
+use crate::core::tds::{CellKey, Tds, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation_data_structure::{CellKey, Tds, TdsError, VertexKey};
 use crate::geometry::point::Point;
 use crate::geometry::predicates::InSphere;
 use crate::geometry::robust_predicates::robust_insphere;
@@ -18,7 +18,7 @@ use thiserror::Error;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::triangulation_data_structure::CellKey;
+/// use delaunay::core::tds::CellKey;
 /// use delaunay::core::util::DelaunayValidationError;
 /// use slotmap::KeyData;
 ///
@@ -373,7 +373,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::core::tds::Tds;
 /// use delaunay::core::util::debug_print_first_delaunay_violation;
 ///
 /// let tds: Tds<f64, (), (), 3> = Tds::empty();
@@ -583,8 +583,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let dt =
-            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices).unwrap();
         let tds = &dt.as_triangulation().tds;
 
         // Basic Delaunay helpers should report no violations.

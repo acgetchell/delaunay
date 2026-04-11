@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // NOTE: The (n_points, bounds, seed) triple matches the 4D configuration used in
     // `test_generate_random_triangulation_dimensions` so that this example exercises
     // a realistic 4D triangulation without triggering extreme Delaunay repair in CI.
-    let dt: delaunay::core::delaunay_triangulation::DelaunayTriangulation<_, (), (), 4> =
+    let dt: delaunay::triangulation::delaunay::DelaunayTriangulation<_, (), (), 4> =
         generate_random_triangulation(
             12,          // Number of points (fewer for faster demo)
             (-1.0, 1.0), // Coordinate bounds

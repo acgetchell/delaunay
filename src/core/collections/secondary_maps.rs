@@ -1,4 +1,4 @@
-use crate::core::triangulation_data_structure::{CellKey, VertexKey};
+use crate::core::tds::{CellKey, VertexKey};
 use slotmap::SparseSecondaryMap;
 
 // =============================================================================

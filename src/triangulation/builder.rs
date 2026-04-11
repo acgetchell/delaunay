@@ -32,7 +32,7 @@
 //! ## Standard Euclidean construction
 //!
 //! ```rust
-//! use delaunay::core::builder::DelaunayTriangulationBuilder;
+//! use delaunay::triangulation::builder::DelaunayTriangulationBuilder;
 //! use delaunay::vertex;
 //!
 //! let vertices = vec![
@@ -51,7 +51,7 @@
 //! ## Toroidal construction (Phase 1: canonicalization only)
 //!
 //! ```rust
-//! use delaunay::core::builder::DelaunayTriangulationBuilder;
+//! use delaunay::triangulation::builder::DelaunayTriangulationBuilder;
 //! use delaunay::vertex;
 //!
 //! // Vertices that fall outside [0, 1)² are wrapped before triangulation.
@@ -76,7 +76,7 @@
 //! where boundary facets are identified and neighbor pointers are rewired periodically.
 //!
 //! ```rust,no_run
-//! use delaunay::core::builder::DelaunayTriangulationBuilder;
+//! use delaunay::triangulation::builder::DelaunayTriangulationBuilder;
 //! use delaunay::geometry::kernel::RobustKernel;
 //! use delaunay::vertex;
 //!
@@ -105,16 +105,10 @@
 
 use crate::core::cell::Cell;
 use crate::core::collections::{FastHashMap, Uuid, VertexKeySet};
-use crate::core::delaunay_triangulation::{
-    ConstructionOptions, DelaunayRepairPolicy, DelaunayTriangulation,
-    DelaunayTriangulationConstructionError, InitialSimplexStrategy, RetryPolicy,
-};
 use crate::core::operations::InsertionOutcome;
+use crate::core::tds::{CellKey, Tds, TriangulationConstructionState, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionError};
-use crate::core::triangulation_data_structure::{
-    CellKey, Tds, TriangulationConstructionState, VertexKey,
-};
 use crate::core::util::periodic_facet_key_from_lifted_vertices;
 use crate::core::vertex::{Vertex, VertexBuilder};
 use crate::geometry::kernel::{AdaptiveKernel, Kernel};
@@ -125,6 +119,10 @@ use crate::topology::traits::global_topology_model::{
     GlobalTopologyModel, GlobalTopologyModelError,
 };
 use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
+use crate::triangulation::delaunay::{
+    ConstructionOptions, DelaunayRepairPolicy, DelaunayTriangulation,
+    DelaunayTriangulationConstructionError, InitialSimplexStrategy, RetryPolicy,
+};
 use num_traits::ToPrimitive;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -295,13 +293,13 @@ fn search_closed_2d_selection(
 /// Only low-level TDS insertion failures (vertex/cell creation) flow through
 /// [`TriangulationConstructionError`].
 ///
-/// [`DelaunayTriangulationConstructionError::ExplicitConstruction`]: crate::core::delaunay_triangulation::DelaunayTriangulationConstructionError::ExplicitConstruction
+/// [`DelaunayTriangulationConstructionError::ExplicitConstruction`]: crate::triangulation::delaunay::DelaunayTriangulationConstructionError::ExplicitConstruction
 ///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::builder::{DelaunayTriangulationBuilder, ExplicitConstructionError};
-/// use delaunay::core::delaunay_triangulation::DelaunayTriangulationConstructionError;
+/// use delaunay::triangulation::builder::{DelaunayTriangulationBuilder, ExplicitConstructionError};
+/// use delaunay::triangulation::delaunay::DelaunayTriangulationConstructionError;
 /// use delaunay::vertex;
 ///
 /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
@@ -361,7 +359,7 @@ pub enum ExplicitConstructionError {
     /// only to the Delaunay point-insertion path and are not meaningful for
     /// explicit cell construction.
     ///
-    /// [`ConstructionOptions`]: crate::core::delaunay_triangulation::ConstructionOptions
+    /// [`ConstructionOptions`]: crate::triangulation::delaunay::ConstructionOptions
     #[error(
         "ConstructionOptions are not applicable to explicit cell construction \
          and must be left at their default values"
@@ -400,8 +398,8 @@ pub enum ExplicitConstructionError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::builder::DelaunayTriangulationBuilder;
-/// use delaunay::core::delaunay_triangulation::ConstructionOptions;
+/// use delaunay::triangulation::builder::DelaunayTriangulationBuilder;
+/// use delaunay::triangulation::delaunay::ConstructionOptions;
 /// use delaunay::core::triangulation::TopologyGuarantee;
 /// use delaunay::vertex;
 ///
@@ -518,7 +516,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::builder::DelaunayTriangulationBuilder;
+    /// use delaunay::triangulation::builder::DelaunayTriangulationBuilder;
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
@@ -565,7 +563,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::builder::DelaunayTriangulationBuilder;
+    /// use delaunay::triangulation::builder::DelaunayTriangulationBuilder;
     /// use delaunay::core::vertex::{Vertex, VertexBuilder};
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -609,7 +607,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::builder::DelaunayTriangulationBuilder;
+    /// use delaunay::triangulation::builder::DelaunayTriangulationBuilder;
     /// use delaunay::core::vertex::{Vertex, VertexBuilder};
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -655,7 +653,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::builder::DelaunayTriangulationBuilder;
+    /// use delaunay::triangulation::builder::DelaunayTriangulationBuilder;
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
@@ -702,7 +700,7 @@ where
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use delaunay::core::builder::DelaunayTriangulationBuilder;
+    /// use delaunay::triangulation::builder::DelaunayTriangulationBuilder;
     /// use delaunay::geometry::kernel::RobustKernel;
     /// use delaunay::vertex;
     ///
@@ -739,7 +737,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::builder::DelaunayTriangulationBuilder;
+    /// use delaunay::triangulation::builder::DelaunayTriangulationBuilder;
     /// use delaunay::core::triangulation::TopologyGuarantee;
     /// use delaunay::vertex;
     ///
@@ -779,7 +777,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::builder::DelaunayTriangulationBuilder;
+    /// use delaunay::triangulation::builder::DelaunayTriangulationBuilder;
     /// use delaunay::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
     /// use delaunay::vertex;
     ///
@@ -813,8 +811,8 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::builder::DelaunayTriangulationBuilder;
-    /// use delaunay::core::delaunay_triangulation::{ConstructionOptions, InsertionOrderStrategy};
+    /// use delaunay::triangulation::builder::DelaunayTriangulationBuilder;
+    /// use delaunay::triangulation::delaunay::{ConstructionOptions, InsertionOrderStrategy};
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
@@ -998,7 +996,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::builder::DelaunayTriangulationBuilder;
+    /// use delaunay::triangulation::builder::DelaunayTriangulationBuilder;
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
@@ -1049,7 +1047,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::builder::DelaunayTriangulationBuilder;
+    /// use delaunay::triangulation::builder::DelaunayTriangulationBuilder;
     /// use delaunay::geometry::kernel::RobustKernel;
     /// use delaunay::vertex;
     ///
@@ -2365,11 +2363,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geometry::kernel::RobustKernel;
     use crate::topology::traits::global_topology_model::{
-        GlobalTopologyModel, GlobalTopologyModelError,
+        EuclideanModel, GlobalTopologyModel, GlobalTopologyModelError, ToroidalModel,
     };
-    use crate::topology::traits::topological_space::TopologyKind;
+    use crate::topology::traits::topological_space::{
+        GlobalTopology, TopologyKind, ToroidalConstructionMode,
+    };
+    use crate::triangulation::delaunay::InsertionOrderStrategy;
     use crate::vertex;
+    use approx::assert_relative_eq;
     use slotmap::Key;
 
     #[derive(Clone, Copy, Debug)]
@@ -2560,7 +2563,6 @@ mod tests {
 
     #[test]
     fn test_builder_custom_options_propagated() {
-        use crate::core::delaunay_triangulation::InsertionOrderStrategy;
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -2625,9 +2627,6 @@ mod tests {
 
     #[test]
     fn test_builder_toroidal_build_succeeds_2d() {
-        use crate::topology::traits::topological_space::{
-            GlobalTopology, ToroidalConstructionMode,
-        };
         let vertices = vec![
             vertex!([0.2, 0.3]),
             vertex!([0.8, 0.1]),
@@ -2726,11 +2725,6 @@ mod tests {
 
     #[test]
     fn test_builder_toroidal_periodic_2d_smoke() {
-        use crate::geometry::kernel::RobustKernel;
-        use crate::topology::traits::topological_space::{
-            GlobalTopology, ToroidalConstructionMode,
-        };
-
         let vertices = vec![
             vertex!([0.1_f64, 0.2]),
             vertex!([0.4, 0.7]),
@@ -2828,7 +2822,6 @@ mod tests {
 
     #[test]
     fn test_builder_with_robust_kernel() {
-        use crate::geometry::kernel::RobustKernel;
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -2849,7 +2842,6 @@ mod tests {
 
     #[test]
     fn test_validate_topology_model_accepts_valid_toroidal() {
-        use crate::topology::traits::global_topology_model::ToroidalModel;
         let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
         assert!(result.is_ok());
@@ -2904,7 +2896,6 @@ mod tests {
 
     #[test]
     fn test_validate_topology_model_rejects_zero_period() {
-        use crate::topology::traits::global_topology_model::ToroidalModel;
         let model = ToroidalModel::<2>::new([0.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
         assert!(result.is_err());
@@ -2921,7 +2912,6 @@ mod tests {
 
     #[test]
     fn test_validate_topology_model_rejects_negative_period() {
-        use crate::topology::traits::global_topology_model::ToroidalModel;
         let model =
             ToroidalModel::<3>::new([2.0, -1.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let result = DelaunayTriangulationBuilder::<f64, (), 3>::validate_topology_model(&model);
@@ -2933,7 +2923,6 @@ mod tests {
 
     #[test]
     fn test_validate_topology_model_rejects_infinite_period() {
-        use crate::topology::traits::global_topology_model::ToroidalModel;
         let model = ToroidalModel::<2>::new(
             [f64::INFINITY, 3.0],
             ToroidalConstructionMode::Canonicalized,
@@ -2946,7 +2935,6 @@ mod tests {
 
     #[test]
     fn test_validate_topology_model_rejects_nan_period() {
-        use crate::topology::traits::global_topology_model::ToroidalModel;
         let model =
             ToroidalModel::<2>::new([f64::NAN, 3.0], ToroidalConstructionMode::Canonicalized);
         let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
@@ -2957,7 +2945,6 @@ mod tests {
 
     #[test]
     fn test_validate_topology_model_accepts_euclidean() {
-        use crate::topology::traits::global_topology_model::EuclideanModel;
         let model = EuclideanModel;
         let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
         assert!(result.is_ok());
@@ -2975,7 +2962,6 @@ mod tests {
 
     #[test]
     fn test_canonicalize_vertices_preserves_uuids() {
-        use crate::topology::traits::global_topology_model::ToroidalModel;
         let vertices = vec![
             vertex!([2.5, 3.7]),
             vertex!([1.8, -0.5]),
@@ -2994,7 +2980,6 @@ mod tests {
 
     #[test]
     fn test_canonicalize_vertices_preserves_data() {
-        use crate::topology::traits::global_topology_model::ToroidalModel;
         let vertices: Vec<Vertex<f64, i32, 2>> = vec![
             VertexBuilder::default()
                 .point(Point::new([2.5_f64, 3.7]))
@@ -3025,8 +3010,6 @@ mod tests {
 
     #[test]
     fn test_canonicalize_vertices_transforms_coordinates() {
-        use crate::topology::traits::global_topology_model::ToroidalModel;
-        use approx::assert_relative_eq;
         let vertices = vec![
             vertex!([2.5, 3.7]),  // → (0.5, 0.7)
             vertex!([1.8, -0.5]), // → (1.8, 2.5)
@@ -3084,8 +3067,6 @@ mod tests {
 
     #[test]
     fn test_canonicalize_vertices_euclidean_identity() {
-        use crate::topology::traits::global_topology_model::EuclideanModel;
-        use approx::assert_relative_eq;
         let vertices = vec![
             vertex!([1.5, 2.5]),
             vertex!([3.7, 4.2]),
@@ -3105,7 +3086,6 @@ mod tests {
 
     #[test]
     fn test_canonicalize_vertices_propagates_nan_error() {
-        use crate::topology::traits::global_topology_model::ToroidalModel;
         let vertices = vec![
             VertexBuilder::default()
                 .point(Point::new([0.5_f64, 0.5]))
@@ -3138,7 +3118,6 @@ mod tests {
 
     #[test]
     fn test_canonicalize_vertices_propagates_infinity_error() {
-        use crate::topology::traits::global_topology_model::ToroidalModel;
         let vertices = vec![
             VertexBuilder::default()
                 .point(Point::new([0.5_f64, 0.5]))
@@ -3165,7 +3144,6 @@ mod tests {
 
     #[test]
     fn test_canonicalize_vertices_includes_original_coords_in_error() {
-        use crate::topology::traits::global_topology_model::ToroidalModel;
         let vertices = vec![
             VertexBuilder::default()
                 .point(Point::new([f64::NAN, 1.5_f64]))

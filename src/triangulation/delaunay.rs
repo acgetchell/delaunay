@@ -11,8 +11,7 @@ use crate::core::algorithms::flips::{
     repair_delaunay_local_single_pass, repair_delaunay_with_flips_k2_k3,
 };
 use crate::core::algorithms::incremental_insertion::InsertionError;
-use crate::core::builder::DelaunayTriangulationBuilder;
-use crate::core::cell::Cell;
+use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::collections::{CellKeyBuffer, FastHashMap, FastHasher, SmallBuffer};
 use crate::core::edge::EdgeKey;
@@ -21,14 +20,14 @@ use crate::core::operations::{
     DelaunayInsertionState, InsertionOutcome, InsertionStatistics, RepairDecision,
     TopologicalOperation,
 };
+use crate::core::tds::{
+    CellKey, InvariantError, InvariantKind, InvariantViolation, Tds, TdsConstructionError,
+    TdsError, TriangulationValidationReport, VertexKey,
+};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{
     TopologyGuarantee, Triangulation, TriangulationConstructionError, TriangulationValidationError,
     ValidationPolicy, insertion_error_to_invariant_error, record_duplicate_detection_metrics,
-};
-use crate::core::triangulation_data_structure::{
-    CellKey, InvariantError, InvariantKind, InvariantViolation, Tds, TdsConstructionError,
-    TdsError, TriangulationValidationReport, VertexKey,
 };
 use crate::core::util::{
     coords_equal_exact, coords_within_epsilon, hilbert_indices_prequantized, hilbert_quantize,
@@ -39,6 +38,7 @@ use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates, Kernel, RobustKer
 use crate::geometry::traits::coordinate::{CoordinateScalar, ScalarAccumulative};
 use crate::topology::manifold::validate_ridge_links_for_cells;
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
+use crate::triangulation::builder::DelaunayTriangulationBuilder;
 use core::cmp::Ordering;
 use num_traits::{NumCast, ToPrimitive, Zero};
 use rand::SeedableRng;
@@ -96,7 +96,7 @@ impl Drop for HeuristicRebuildRecursionGuard {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::delaunay_triangulation::DelaunayTriangulationConstructionError;
+/// use delaunay::triangulation::delaunay::DelaunayTriangulationConstructionError;
 /// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
@@ -119,12 +119,12 @@ pub enum DelaunayTriangulationConstructionError {
 
     /// Input validation error from explicit combinatorial construction.
     ///
-    /// Returned by [`DelaunayTriangulationBuilder::from_vertices_and_cells`](crate::core::builder::DelaunayTriangulationBuilder::from_vertices_and_cells)
+    /// Returned by [`DelaunayTriangulationBuilder::from_vertices_and_cells`](crate::triangulation::builder::DelaunayTriangulationBuilder::from_vertices_and_cells)
     /// when the caller-provided vertices/cells fail validation (wrong arity,
     /// out-of-bounds indices, etc.). TDS assembly errors flow through the
     /// [`Triangulation`](Self::Triangulation) variant instead.
     #[error(transparent)]
-    ExplicitConstruction(#[from] crate::core::builder::ExplicitConstructionError),
+    ExplicitConstruction(#[from] crate::triangulation::builder::ExplicitConstructionError),
 }
 
 /// Errors that can occur during Delaunay triangulation validation and repair.
@@ -146,7 +146,7 @@ pub enum DelaunayTriangulationConstructionError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::delaunay_triangulation::DelaunayTriangulationValidationError;
+/// use delaunay::triangulation::delaunay::DelaunayTriangulationValidationError;
 /// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
@@ -213,7 +213,7 @@ pub enum DelaunayTriangulationValidationError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::delaunay_triangulation::{ConstructionOptions, InsertionOrderStrategy};
+/// use delaunay::triangulation::delaunay::{ConstructionOptions, InsertionOrderStrategy};
 /// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
@@ -269,7 +269,7 @@ pub enum InsertionOrderStrategy {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::delaunay_triangulation::{ConstructionOptions, DedupPolicy};
+/// use delaunay::triangulation::delaunay::{ConstructionOptions, DedupPolicy};
 /// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
@@ -329,7 +329,7 @@ pub enum InitialSimplexStrategy {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::delaunay_triangulation::{ConstructionOptions, RetryPolicy};
+/// use delaunay::triangulation::delaunay::{ConstructionOptions, RetryPolicy};
 /// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
@@ -395,7 +395,7 @@ impl Default for RetryPolicy {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::delaunay_triangulation::{
+/// use delaunay::triangulation::delaunay::{
 ///     ConstructionOptions, DedupPolicy, InsertionOrderStrategy, RetryPolicy,
 /// };
 ///
@@ -1458,7 +1458,7 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::{
+    /// use delaunay::triangulation::delaunay::{
     ///     ConstructionOptions, DedupPolicy, InsertionOrderStrategy,
     /// };
     /// use delaunay::prelude::triangulation::*;
@@ -1754,7 +1754,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
     /// use delaunay::geometry::kernel::RobustKernel;
     /// use delaunay::vertex;
     ///
@@ -1844,7 +1844,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::{
+    /// use delaunay::triangulation::delaunay::{
     ///     ConstructionOptions, DedupPolicy, InsertionOrderStrategy,
     /// };
     /// use delaunay::core::triangulation::TopologyGuarantee;
@@ -2632,7 +2632,7 @@ where
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                 error: TriangulationConstructionError::InsufficientVertices {
                     dimension: D,
-                    source: crate::core::cell::CellValidationError::InsufficientVertices {
+                    source: CellValidationError::InsufficientVertices {
                         actual: vertices.len(),
                         expected: D + 1,
                         dimension: D,
@@ -3454,7 +3454,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
@@ -3480,7 +3480,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
@@ -3508,7 +3508,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
@@ -3678,7 +3678,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
@@ -3724,7 +3724,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
     /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
     /// use delaunay::vertex;
     ///
@@ -4056,7 +4056,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayRepairHeuristicConfig;
+    /// use delaunay::triangulation::delaunay::DelaunayRepairHeuristicConfig;
     /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
@@ -4149,8 +4149,6 @@ where
     where
         K: ExactPredicates,
     {
-        use rand::{SeedableRng, seq::SliceRandom};
-
         let base_vertices = self.collect_vertices_for_rebuild();
 
         let mut last_error: Option<String> = None;
@@ -4356,6 +4354,16 @@ where
     // -------------------------------------------------------------------------
 
     /// Returns the topology guarantee used for Level 3 topology validation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::triangulation::*;
+    ///
+    /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
+    /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
+    /// ```
     #[inline]
     #[must_use]
     pub const fn topology_guarantee(&self) -> TopologyGuarantee {
@@ -4363,6 +4371,16 @@ where
     }
 
     /// Returns runtime global topology metadata associated with this triangulation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::triangulation::*;
+    ///
+    /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
+    /// assert!(dt.global_topology().is_euclidean());
+    /// ```
     #[inline]
     #[must_use]
     pub const fn global_topology(&self) -> GlobalTopology<D> {
@@ -4370,6 +4388,16 @@ where
     }
 
     /// Returns the high-level topology kind (`Euclidean`, `Toroidal`, etc.).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::triangulation::*;
+    ///
+    /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
+    /// assert_eq!(dt.topology_kind(), TopologyKind::Euclidean);
+    /// ```
     #[inline]
     #[must_use]
     pub const fn topology_kind(&self) -> TopologyKind {
@@ -4377,6 +4405,17 @@ where
     }
 
     /// Sets runtime global topology metadata on this triangulation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::triangulation::*;
+    ///
+    /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
+    /// dt.set_global_topology(GlobalTopology::Euclidean);
+    /// assert!(dt.global_topology().is_euclidean());
+    /// ```
     #[inline]
     pub const fn set_global_topology(&mut self, global_topology: GlobalTopology<D>) {
         self.tri.set_global_topology(global_topology);
@@ -4412,7 +4451,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
@@ -4442,7 +4481,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
@@ -4837,7 +4876,7 @@ where
     /// Using batch construction (traditional approach):
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
     /// use delaunay::vertex;
     ///
     /// // Create initial triangulation with 5 vertices (4-simplex)
@@ -5533,8 +5572,8 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
-    /// use delaunay::core::triangulation_data_structure::Tds;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
+    /// use delaunay::core::tds::Tds;
     /// use delaunay::geometry::kernel::FastKernel;
     /// use delaunay::vertex;
     ///
@@ -5667,7 +5706,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::delaunay_triangulation::DelaunayRepairPolicy;
+/// use delaunay::triangulation::delaunay::DelaunayRepairPolicy;
 /// use std::num::NonZeroUsize;
 ///
 /// let policy = DelaunayRepairPolicy::EveryN(NonZeroUsize::new(4).unwrap());
@@ -5708,7 +5747,7 @@ impl DelaunayRepairPolicy {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::delaunay_triangulation::DelaunayRepairHeuristicConfig;
+/// use delaunay::triangulation::delaunay::DelaunayRepairHeuristicConfig;
 ///
 /// let mut config = DelaunayRepairHeuristicConfig::default();
 /// config.shuffle_seed = Some(7);
@@ -5769,7 +5808,7 @@ impl DelaunayRepairHeuristicConfig {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::delaunay_triangulation::DelaunayRepairHeuristicSeeds;
+/// use delaunay::triangulation::delaunay::DelaunayRepairHeuristicSeeds;
 ///
 /// let seeds = DelaunayRepairHeuristicSeeds {
 ///     shuffle_seed: 1,
@@ -5791,7 +5830,7 @@ pub struct DelaunayRepairHeuristicSeeds {
 ///
 /// ```rust
 /// use delaunay::core::algorithms::flips::DelaunayRepairStats;
-/// use delaunay::core::delaunay_triangulation::DelaunayRepairOutcome;
+/// use delaunay::triangulation::delaunay::DelaunayRepairOutcome;
 ///
 /// let outcome = DelaunayRepairOutcome {
 ///     stats: DelaunayRepairStats::default(),
@@ -5828,7 +5867,7 @@ impl DelaunayRepairOutcome {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::delaunay_triangulation::DelaunayCheckPolicy;
+/// use delaunay::triangulation::delaunay::DelaunayCheckPolicy;
 /// use std::num::NonZeroUsize;
 ///
 /// let policy = DelaunayCheckPolicy::EveryN(NonZeroUsize::new(3).unwrap());
@@ -5867,13 +5906,17 @@ mod tests {
         DelaunayRepairDiagnostics, DelaunayRepairError, FlipError, RepairQueueOrder,
         verify_delaunay_via_flip_predicates,
     };
-    use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
-    use crate::core::triangulation_data_structure::{EntityKind, GeometricError};
+    use crate::core::algorithms::incremental_insertion::{
+        HullExtensionReason, repair_neighbor_pointers,
+    };
+    use crate::core::algorithms::locate::{ConflictError, LocateError};
+    use crate::core::tds::{EntityKind, GeometricError};
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel, RobustKernel};
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::topology::characteristics::euler::TopologyClassification;
     use crate::triangulation::flips::BistellarFlips;
     use crate::vertex;
+    use rand::{RngExt, SeedableRng};
 
     pub(super) fn force_repair_nonconvergent_enabled() -> bool {
         FORCE_REPAIR_NONCONVERGENT.with(std::cell::Cell::get)
@@ -5896,7 +5939,6 @@ mod tests {
             }),
         }
     }
-    use rand::{RngExt, SeedableRng};
     fn init_tracing() {
         static INIT: std::sync::Once = std::sync::Once::new();
         INIT.call_once(|| {
@@ -8121,7 +8163,6 @@ mod tests {
     /// immediately without attempting global repair.
     #[test]
     fn test_try_d_lt4_global_repair_fallback_disabled_returns_error() {
-        use crate::core::algorithms::flips::{DelaunayRepairDiagnostics, RepairQueueOrder};
         init_tracing();
 
         let vertices = vec![
@@ -8171,7 +8212,6 @@ mod tests {
     /// global repair succeeds and the helper returns `Ok(())`.
     #[test]
     fn test_try_d_lt4_global_repair_fallback_enabled_succeeds_on_valid_tds() {
-        use crate::core::algorithms::flips::{DelaunayRepairDiagnostics, RepairQueueOrder};
         init_tracing();
 
         let vertices = vec![
@@ -8427,9 +8467,6 @@ mod tests {
 
     #[test]
     fn test_map_orientation_canonicalization_error_geometry_variants_are_degeneracy() {
-        use crate::core::algorithms::incremental_insertion::HullExtensionReason;
-        use crate::core::algorithms::locate::LocateError;
-
         let geometry_errors: Vec<InsertionError> = vec![
             InsertionError::Location(LocateError::EmptyTriangulation),
             InsertionError::NonManifoldTopology {
@@ -8564,17 +8601,12 @@ mod tests {
 
     #[test]
     fn test_map_insertion_error_geometry_variants_are_degeneracy() {
-        use crate::core::algorithms::incremental_insertion::HullExtensionReason;
-        use crate::core::algorithms::locate::LocateError;
-
         let geometry_errors: Vec<InsertionError> = vec![
-            InsertionError::ConflictRegion(
-                crate::core::algorithms::locate::ConflictError::OpenBoundary {
-                    facet_count: 2,
-                    ridge_vertex_count: 1,
-                    open_cell: CellKey::from(slotmap::KeyData::from_ffi(1)),
-                },
-            ),
+            InsertionError::ConflictRegion(ConflictError::OpenBoundary {
+                facet_count: 2,
+                ridge_vertex_count: 1,
+                open_cell: CellKey::from(slotmap::KeyData::from_ffi(1)),
+            }),
             InsertionError::Location(LocateError::EmptyTriangulation),
             InsertionError::NonManifoldTopology {
                 facet_hash: 0,
@@ -8808,8 +8840,6 @@ mod tests {
 
     #[test]
     fn test_map_orientation_canonicalization_error_conflict_region_is_degeneracy() {
-        use crate::core::algorithms::locate::ConflictError;
-
         let error = InsertionError::ConflictRegion(ConflictError::NonManifoldFacet {
             facet_hash: 0x123,
             cell_count: 3,

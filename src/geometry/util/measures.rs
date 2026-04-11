@@ -1260,8 +1260,8 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]), // v4
         ];
 
-        let dt: crate::core::delaunay_triangulation::DelaunayTriangulation<_, (), (), 3> =
-            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt: crate::triangulation::delaunay::DelaunayTriangulation<_, (), (), 3> =
+            crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt.tds().boundary_facets().unwrap().collect();
 
         // Find the facet opposite to v4 (contains vertices v1, v2, v3)
@@ -1304,8 +1304,8 @@ mod tests {
             vertex!([1.0, 1.0, 1.0]), // v5
         ];
 
-        let dt: crate::core::delaunay_triangulation::DelaunayTriangulation<_, (), (), 3> =
-            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt: crate::triangulation::delaunay::DelaunayTriangulation<_, (), (), 3> =
+            crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt.tds().boundary_facets().unwrap().collect();
 
         // Take first two boundary facets for testing
@@ -1641,8 +1641,8 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]), // v3
             vertex!([0.0, 0.0, 1.0]), // v4
         ];
-        let dt1: crate::core::delaunay_triangulation::DelaunayTriangulation<_, (), (), 3> =
-            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices1).unwrap();
+        let dt1: crate::triangulation::delaunay::DelaunayTriangulation<_, (), (), 3> =
+            crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices1).unwrap();
         let boundary_facets1: Vec<_> = dt1.tds().boundary_facets().unwrap().collect();
 
         // Find the facet opposite to v4 (triangle with v1, v2, v3) - area = 0.5
@@ -1673,8 +1673,8 @@ mod tests {
             vertex!([0.0, 8.0, 0.0]), // v7
             vertex!([0.0, 0.0, 1.0]), // v8
         ];
-        let dt2: crate::core::delaunay_triangulation::DelaunayTriangulation<_, (), (), 3> =
-            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices2).unwrap();
+        let dt2: crate::triangulation::delaunay::DelaunayTriangulation<_, (), (), 3> =
+            crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices2).unwrap();
         let boundary_facets2: Vec<_> = dt2.tds().boundary_facets().unwrap().collect();
 
         // Find the facet opposite to v8 (triangle with v5, v6, v7) - area = 24.0
@@ -1719,8 +1719,8 @@ mod tests {
             vertex!([0.0, 4.0]), // v3
         ];
 
-        let dt: crate::core::delaunay_triangulation::DelaunayTriangulation<_, (), (), 2> =
-            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt: crate::triangulation::delaunay::DelaunayTriangulation<_, (), (), 2> =
+            crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt.tds().boundary_facets().unwrap().collect();
 
         // In 2D, boundary facets are edges
@@ -1743,8 +1743,8 @@ mod tests {
             vertex!([0.0, 0.0, 0.0, 1.0]), // v5
         ];
 
-        let dt: crate::core::delaunay_triangulation::DelaunayTriangulation<_, (), (), 4> =
-            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt: crate::triangulation::delaunay::DelaunayTriangulation<_, (), (), 4> =
+            crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt.tds().boundary_facets().unwrap().collect();
 
         let total_surface = surface_measure(&boundary_facets).unwrap();
@@ -1774,8 +1774,8 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]), // v4
         ];
 
-        let dt: crate::core::delaunay_triangulation::DelaunayTriangulation<_, (), (), 3> =
-            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt: crate::triangulation::delaunay::DelaunayTriangulation<_, (), (), 3> =
+            crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt.tds().boundary_facets().unwrap().collect();
 
         // Test with valid facets - should work
@@ -1835,8 +1835,8 @@ mod tests {
             vertex!([0.0, 0.0, 2.0]),
         ];
 
-        let dt: crate::core::delaunay_triangulation::DelaunayTriangulation<_, (), (), 3> =
-            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt: crate::triangulation::delaunay::DelaunayTriangulation<_, (), (), 3> =
+            crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt.tds().boundary_facets().unwrap().collect();
 
         // Tetrahedron has exactly 4 boundary facets

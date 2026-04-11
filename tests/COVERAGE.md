@@ -41,7 +41,7 @@ Generated on 2026-03-24 using `cargo tarpaulin --lib` (v0.7.3, lib unit tests on
 | `src/core/collections/spatial_hash_grid.rs` | 85.29% | 58/68 | 68 |
 | `src/topology/characteristics/validation.rs` | 84.62% | 22/26 | 26 |
 | `src/geometry/util/point_generation.rs` | 83.33% | 145/174 | 174 |
-| `src/core/triangulation_data_structure.rs` | 81.34% | 1,077/1,324 | 1,324 |
+| `src/core/tds.rs` | 81.34% | 1,077/1,324 | 1,324 |
 | `src/geometry/algorithms/convex_hull.rs` | 80.29% | 224/279 | 279 |
 | `src/geometry/util/circumsphere.rs` | 79.69% | 51/64 | 64 |
 | `src/core/operations.rs` | 76.32% | 29/38 | 38 |
@@ -54,7 +54,7 @@ Generated on 2026-03-24 using `cargo tarpaulin --lib` (v0.7.3, lib unit tests on
 
 | File | Coverage | Lines Covered | Total Lines |
 |------|----------|---------------|-------------|
-| `src/core/delaunay_triangulation.rs` | 66.56% | 1,192/1,791 | 1,791 |
+| `src/triangulation/delaunay.rs` | 66.56% | 1,192/1,791 | 1,791 |
 | `src/geometry/robust_predicates.rs` | 66.36% | 73/110 | 110 |
 | `src/core/algorithms/flips.rs` | 66.33% | 1,440/2,171 | 2,171 |
 | `src/geometry/quality.rs` | 65.88% | 56/85 | 85 |
@@ -62,7 +62,7 @@ Generated on 2026-03-24 using `cargo tarpaulin --lib` (v0.7.3, lib unit tests on
 | `src/core/traits/facet_cache.rs` | 62.50% | 35/56 | 56 |
 | `src/geometry/matrix.rs` | 61.54% | 8/13 | 13 |
 | `src/core/algorithms/locate.rs` | 60.43% | 252/417 | 417 |
-| `src/core/builder.rs` | 55.89% | 441/789 | 789 |
+| `src/triangulation/builder.rs` | 55.89% | 441/789 | 789 |
 | `src/geometry/kernel.rs` | 55.45% | 61/110 | 110 |
 | `src/geometry/predicates.rs` | 54.84% | 102/186 | 186 |
 | `src/core/algorithms/incremental_insertion.rs` | 54.19% | 569/1,050 | 1,050 |
@@ -83,7 +83,7 @@ Generated on 2026-03-24 using `cargo tarpaulin --lib` (v0.7.3, lib unit tests on
 ### Core Module: 69.09% (6,960/10,072 lines)
 
 - **Data structures** (`cell`, `vertex`, `facet`, `edge`, `boundary`): 91–100%
-- **TDS** (`triangulation_data_structure`): 81%
+- **TDS** (`tds`): 81%
 - **Triangulation layer** (`triangulation`): 70%
 - **Delaunay layer** (`delaunay_triangulation`): 67%
 - **Algorithms** (`flips`, `incremental_insertion`, `locate`): 54–66%

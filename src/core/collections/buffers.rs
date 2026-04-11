@@ -1,6 +1,6 @@
 use super::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, Uuid};
 use crate::core::facet::FacetHandle;
-use crate::core::triangulation_data_structure::{CellKey, VertexKey};
+use crate::core::tds::{CellKey, VertexKey};
 
 // =============================================================================
 // ALGORITHM-SPECIFIC BUFFER TYPES
@@ -181,7 +181,7 @@ pub type VertexKeyBuffer = SimplexVertexBuffer<VertexKey>;
 ///
 /// ```rust
 /// use delaunay::core::collections::NeighborBuffer;
-/// use delaunay::core::triangulation_data_structure::CellKey;
+/// use delaunay::core::tds::CellKey;
 ///
 /// let mut neighbors: NeighborBuffer<Option<CellKey>> = NeighborBuffer::new();
 /// assert!(neighbors.is_empty());

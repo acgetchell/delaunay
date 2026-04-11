@@ -167,6 +167,22 @@ impl<const D: usize> GlobalTopology<D> {
         }
     }
 
+    /// Returns `true` for Euclidean global topology metadata.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::topology::traits::topological_space::GlobalTopology;
+    ///
+    /// let topo = GlobalTopology::<3>::Euclidean;
+    /// assert!(topo.is_euclidean());
+    /// assert!(!topo.is_toroidal());
+    /// ```
+    #[must_use]
+    pub const fn is_euclidean(self) -> bool {
+        matches!(self, Self::Euclidean)
+    }
+
     /// Returns `true` for toroidal global topology metadata.
     #[must_use]
     pub const fn is_toroidal(self) -> bool {

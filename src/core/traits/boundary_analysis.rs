@@ -2,8 +2,8 @@
 
 use crate::core::{
     facet::{BoundaryFacetsIter, FacetView},
+    tds::TdsError,
     traits::data_type::DataType,
-    triangulation_data_structure::TdsError,
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
 
@@ -167,7 +167,7 @@ where
     /// }
     /// ```
     ///
-    /// [`build_facet_to_cells_map`]: crate::core::triangulation_data_structure::Tds::build_facet_to_cells_map
+    /// [`build_facet_to_cells_map`]: crate::core::tds::Tds::build_facet_to_cells_map
     fn is_boundary_facet_with_map(
         &self,
         facet: &FacetView<'_, T, U, V, D>,

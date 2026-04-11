@@ -29,8 +29,8 @@
 use crate::core::cell::Cell;
 use crate::core::collections::{CellKeySet, SmallBuffer, fast_hash_set_with_capacity};
 use crate::core::facet::FacetHandle;
+use crate::core::tds::{CellKey, Tds, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation_data_structure::{CellKey, Tds, TdsError, VertexKey};
 use crate::core::vertex::Vertex;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::geometry::util::norms::hypot;
@@ -460,7 +460,7 @@ fn remove_orphaned_vertices<T, U, V, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::delaunay_triangulation::DelaunayTriangulation;
+    use crate::triangulation::delaunay::DelaunayTriangulation;
     use crate::vertex;
 
     // =============================================================================

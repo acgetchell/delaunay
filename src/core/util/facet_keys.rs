@@ -3,8 +3,8 @@
 #![forbid(unsafe_code)]
 
 use crate::core::facet::FacetError;
+use crate::core::tds::{CellKey, Tds, VertexKey};
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation_data_structure::{CellKey, Tds, VertexKey};
 use crate::core::util::hashing::stable_hash_u64_slice;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use slotmap::Key;
@@ -206,7 +206,7 @@ pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
 ///
 /// ```rust,no_run
 /// use delaunay::core::util::verify_facet_index_consistency;
-/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::core::tds::Tds;
 ///
 /// fn validate_neighbor_consistency(
 ///     tds: &Tds<f64, (), (), 3>,
@@ -422,8 +422,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let dt =
-            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices).unwrap();
         let tds = &dt.as_triangulation().tds;
 
         // Test 1: Basic functionality - successful key derivation
@@ -563,8 +562,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let dt =
-            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices).unwrap();
         let tds = &dt.as_triangulation().tds;
         let cell_key = tds.cell_keys().next().unwrap();
         assert!(verify_facet_index_consistency(tds, cell_key, cell_key, 0).unwrap());

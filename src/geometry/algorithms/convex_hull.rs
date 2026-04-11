@@ -33,11 +33,11 @@ use crate::core::collections::{
     FacetToCellsMap, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
 };
 use crate::core::facet::{FacetError, FacetHandle, FacetView};
+use crate::core::tds::TdsError;
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
 use crate::core::traits::facet_cache::FacetCacheProvider;
 use crate::core::triangulation::Triangulation;
-use crate::core::triangulation_data_structure::TdsError;
 use crate::core::util::checked_facet_key_from_vertex_keys;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
@@ -237,7 +237,7 @@ pub enum ConvexHullConstructionError {
 /// Use `is_valid_for_triangulation()` to check if a hull is still valid for a given TDS:
 ///
 /// ```rust
-/// # use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+/// # use delaunay::triangulation::delaunay::DelaunayTriangulation;
 /// # use delaunay::geometry::algorithms::convex_hull::ConvexHull;
 /// # use delaunay::vertex;
 /// # let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vec![
@@ -264,7 +264,7 @@ pub enum ConvexHullConstructionError {
 /// ## Example: Correct Usage Pattern
 ///
 /// ```rust
-/// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+/// use delaunay::triangulation::delaunay::DelaunayTriangulation;
 /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
 /// use delaunay::vertex;
 ///
@@ -370,7 +370,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
     /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
     /// use delaunay::vertex;
     ///
@@ -405,7 +405,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
     /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
     /// use delaunay::vertex;
     ///
@@ -435,7 +435,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
     /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
     /// use delaunay::vertex;
     ///
@@ -472,7 +472,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
     /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
     /// use delaunay::vertex;
     ///
@@ -504,7 +504,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
     /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
     /// use delaunay::vertex;
     ///
@@ -555,7 +555,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
     /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
     /// use delaunay::vertex;
     ///
@@ -634,7 +634,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
     /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
     /// use delaunay::vertex;
     ///
@@ -696,7 +696,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
     /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
     /// use delaunay::vertex;
     ///
@@ -822,7 +822,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
     /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -1207,7 +1207,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
     /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -1283,7 +1283,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
     /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -1405,7 +1405,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
     /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
     /// use delaunay::geometry::point::Point;
     /// use delaunay::geometry::traits::coordinate::Coordinate;
@@ -1451,7 +1451,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
     /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
     /// use delaunay::vertex;
     ///
@@ -1601,14 +1601,14 @@ pub type ConvexHull4D<K, U, V> = ConvexHull<K, U, V, 4>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::delaunay_triangulation::{
-        DelaunayTriangulation, DelaunayTriangulationConstructionError,
-    };
+    use crate::core::tds::TdsError;
     use crate::core::traits::facet_cache::FacetCacheProvider;
     use crate::core::triangulation::TriangulationConstructionError;
-    use crate::core::triangulation_data_structure::TdsError;
     use crate::core::util::{checked_facet_key_from_vertex_keys, facet_view_to_vertices};
     use crate::geometry::kernel::AdaptiveKernel;
+    use crate::triangulation::delaunay::{
+        DelaunayTriangulation, DelaunayTriangulationConstructionError,
+    };
     use crate::vertex;
     use std::error::Error;
     use std::sync::atomic::Ordering;
@@ -3231,7 +3231,7 @@ mod tests {
     fn test_from_triangulation_no_cells_error() {
         // Create a manually constructed TDS with vertices but no cells
         // Note: We need to use the underlying TDS directly for this edge case test
-        let mut tds = crate::core::triangulation_data_structure::Tds::<f64, (), (), 3>::empty();
+        let mut tds = crate::core::tds::Tds::<f64, (), (), 3>::empty();
         let vertex = vertex!([0.0, 0.0, 0.0]);
         tds.insert_vertex_with_mapping(vertex).unwrap();
 

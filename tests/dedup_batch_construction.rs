@@ -9,12 +9,12 @@
 //!
 //! Dimension coverage: 2D–5D via `gen_dedup_batch_tests!`.
 
-use delaunay::core::delaunay_triangulation::{
+use delaunay::core::triangulation::TriangulationConstructionError;
+use delaunay::prelude::triangulation::*;
+use delaunay::triangulation::delaunay::{
     ConstructionOptions, DedupPolicy, DelaunayTriangulationConstructionError,
     InsertionOrderStrategy,
 };
-use delaunay::core::triangulation::TriangulationConstructionError;
-use delaunay::prelude::triangulation::*;
 
 // =============================================================================
 // HELPERS

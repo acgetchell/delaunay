@@ -158,10 +158,6 @@ The construction pipeline exposes deterministic controls for experiments and reg
 - Explicit topology/validation configuration via `TopologyGuarantee` and `ValidationPolicy`
 
 ```rust
-use delaunay::core::delaunay_triangulation::{
-    ConstructionOptions, DedupPolicy, InsertionOrderStrategy, RetryPolicy,
-};
-use delaunay::core::triangulation::{TopologyGuarantee, ValidationPolicy};
 use delaunay::prelude::triangulation::*;
 
 let vertices = vec![
@@ -343,4 +339,4 @@ Portions of this library were developed with the assistance of these AI tools:
 [PL-manifold]: https://en.wikipedia.org/wiki/Piecewise_linear_manifold
 [Delaunay repair]: https://link.springer.com/article/10.1007/BF01975867
 [Pachner moves]: https://grokipedia.com/page/pachner_moves
-[`DelaunayTriangulationBuilder`]: https://docs.rs/delaunay/latest/delaunay/core/builder/struct.DelaunayTriangulationBuilder.html
+[`DelaunayTriangulationBuilder`]: https://docs.rs/delaunay/latest/delaunay/triangulation/builder/struct.DelaunayTriangulationBuilder.html

@@ -3,8 +3,8 @@
 #![forbid(unsafe_code)]
 
 use crate::core::facet::{FacetError, FacetView};
+use crate::core::tds::Tds;
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation_data_structure::Tds;
 use crate::geometry::algorithms::convex_hull::ConvexHull;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{CoordinateScalar, ScalarAccumulative};
@@ -388,7 +388,7 @@ where
 ///
 /// ```
 /// use delaunay::core::util::extract_hull_facet_set;
-/// use delaunay::core::delaunay_triangulation::DelaunayTriangulation;
+/// use delaunay::triangulation::delaunay::DelaunayTriangulation;
 /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
 /// use delaunay::vertex;
 ///
@@ -601,7 +601,7 @@ macro_rules! assert_jaccard_gte {
 mod tests {
     use super::*;
 
-    use crate::core::triangulation_data_structure::{Tds, VertexKey};
+    use crate::core::tds::{Tds, VertexKey};
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::vertex;
     use approx::assert_relative_eq;
@@ -665,8 +665,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let dt =
-            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices).unwrap();
         let tds = &dt.as_triangulation().tds;
 
         // Sub-test: Vertex coordinate extraction
@@ -687,7 +686,7 @@ mod tests {
 
         // Sub-test: Hull facet extraction
         let dt_hull =
-            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+            crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices).unwrap();
         let tri = dt_hull.as_triangulation();
         let hull = ConvexHull::from_triangulation(tri).unwrap();
         let hull_facet_set = extract_hull_facet_set(&hull, tri).unwrap();
@@ -704,8 +703,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut dt =
-            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let mut dt = crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices).unwrap();
 
         let cell_key = dt.as_triangulation().tds.cell_keys().next().unwrap();
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
@@ -732,8 +730,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut dt =
-            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let mut dt = crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices).unwrap();
 
         let cell_key = dt.as_triangulation().tds.cell_keys().next().unwrap();
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
@@ -777,8 +774,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let dt =
-            crate::core::delaunay_triangulation::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices).unwrap();
         let tri = dt.as_triangulation();
         let hull = ConvexHull::from_triangulation(tri).unwrap();
 

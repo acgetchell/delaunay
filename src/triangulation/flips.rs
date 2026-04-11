@@ -3,8 +3,8 @@
 //! This module exposes **high-level** flip methods for explicit triangulation editing.
 //! These operations do **not** automatically restore the Delaunay property.
 //! For Delaunay construction/removal, use
-//! [`crate::core::delaunay_triangulation::DelaunayTriangulation::insert`] and
-//! [`crate::core::delaunay_triangulation::DelaunayTriangulation::remove_vertex`].
+//! [`crate::triangulation::delaunay::DelaunayTriangulation::insert`] and
+//! [`crate::triangulation::delaunay::DelaunayTriangulation::remove_vertex`].
 
 #![forbid(unsafe_code)]
 
@@ -13,18 +13,18 @@ pub use crate::core::algorithms::flips::{
 };
 pub use crate::core::edge::EdgeKey;
 pub use crate::core::facet::FacetHandle;
-pub use crate::core::triangulation_data_structure::{CellKey, VertexKey};
+pub use crate::core::tds::{CellKey, VertexKey};
 
 use crate::core::algorithms::flips::{
     apply_bistellar_flip_dynamic, apply_bistellar_flip_k1, apply_bistellar_flip_k1_inverse,
     apply_bistellar_flip_k2, apply_bistellar_flip_k3, build_k2_flip_context,
     build_k2_flip_context_from_edge, build_k3_flip_context, build_k3_flip_context_from_triangle,
 };
-use crate::core::delaunay_triangulation::DelaunayTriangulation;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
+use crate::triangulation::delaunay::DelaunayTriangulation;
 /// High-level triangulation editing operations via bistellar flips.
 ///
 /// # Example

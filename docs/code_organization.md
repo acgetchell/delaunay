@@ -169,14 +169,12 @@ delaunay/
 │   │   │   └── uuid.rs
 │   │   ├── adjacency.rs
 │   │   ├── boundary.rs
-│   │   ├── builder.rs
 │   │   ├── cell.rs
-│   │   ├── delaunay_triangulation.rs
 │   │   ├── edge.rs
 │   │   ├── facet.rs
 │   │   ├── operations.rs
+│   │   ├── tds.rs
 │   │   ├── triangulation.rs
-│   │   ├── triangulation_data_structure.rs
 │   │   └── vertex.rs
 │   ├── geometry/
 │   │   ├── algorithms/
@@ -210,6 +208,8 @@ delaunay/
 │   │   │   └── topological_space.rs
 │   │   └── manifold.rs
 │   ├── triangulation/
+│   │   ├── builder.rs
+│   │   ├── delaunay.rs
 │   │   ├── delaunayize.rs
 │   │   └── flips.rs
 │   └── lib.rs
@@ -365,9 +365,7 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality, 
 
 **`src/core/`** - Triangulation data structures and algorithms:
 
-- `triangulation_data_structure.rs` - Main `Tds` struct
-- `delaunay_triangulation.rs` - DelaunayTriangulation implementation (top layer)
-- `builder.rs` - Fluent builder API for Euclidean and toroidal/periodic construction
+- `tds.rs` - Main `Tds` struct
 - `triangulation.rs` - Generic Triangulation layer with kernel
 - `vertex.rs`, `cell.rs`, `facet.rs` - Core geometric primitives
 - `edge.rs` - Canonical `EdgeKey` for topology traversal
@@ -411,6 +409,8 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality, 
 
 **`src/triangulation/`** - Triangulation-facing public APIs:
 
+- `builder.rs` - Fluent builder API for Euclidean and toroidal/periodic construction
+- `delaunay.rs` - `DelaunayTriangulation` implementation (top layer) with incremental insertion
 - `delaunayize.rs` - End-to-end "repair then delaunayize" workflow (`delaunayize_by_flips`);
   bounded topology repair + flip-based Delaunay repair + optional fallback rebuild
 - `flips.rs` - High-level bistellar flip (Pachner move) trait and supporting public types; delegates to `core::algorithms::flips`

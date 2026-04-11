@@ -80,7 +80,7 @@ We already have `simplex_orientation()` in `src/geometry/predicates.rs` that com
 **Strategy**: When creating a cell, ensure vertices are ordered to produce **positive orientation**.
 
 ```rust
-// In src/core/triangulation_data_structure.rs
+// In src/core/tds.rs
 
 /// Ensure vertices are ordered to produce positive orientation.
 /// Returns vertices in canonical (positive orientation) order.

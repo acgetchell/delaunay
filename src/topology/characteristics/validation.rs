@@ -5,9 +5,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::{
-    collections::FacetToCellsMap, traits::DataType, triangulation_data_structure::Tds,
-};
+use crate::core::{collections::FacetToCellsMap, tds::Tds, traits::DataType};
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::topology::{
     characteristics::euler::{

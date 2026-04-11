@@ -77,12 +77,10 @@
 //! **Query performance:** Directly measures `SlotMap` iteration efficiency
 
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
-use delaunay::core::delaunay_triangulation::{
-    ConstructionOptions, DelaunayTriangulation, RetryPolicy,
-};
 use delaunay::core::vertex::Vertex;
 use delaunay::geometry::kernel::AdaptiveKernel;
 use delaunay::geometry::util::generate_random_points_seeded;
+use delaunay::triangulation::delaunay::{ConstructionOptions, DelaunayTriangulation, RetryPolicy};
 use delaunay::vertex;
 use std::hint::black_box;
 use std::num::NonZeroUsize;

@@ -52,15 +52,15 @@
 
 #![forbid(unsafe_code)]
 
-use delaunay::core::delaunay_triangulation::{
-    ConstructionOptions, ConstructionStatistics, DelaunayRepairHeuristicConfig,
-    DelaunayTriangulationConstructionErrorWithStatistics,
-};
 use delaunay::geometry::kernel::RobustKernel;
 use delaunay::geometry::util::{
     generate_random_points_in_ball_seeded, generate_random_points_seeded,
 };
 use delaunay::prelude::triangulation::*;
+use delaunay::triangulation::delaunay::{
+    ConstructionOptions, ConstructionStatistics, DelaunayRepairHeuristicConfig,
+    DelaunayTriangulationConstructionErrorWithStatistics,
+};
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};

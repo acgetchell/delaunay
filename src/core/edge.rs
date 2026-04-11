@@ -16,7 +16,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::triangulation_data_structure::VertexKey;
+use crate::core::tds::VertexKey;
 use slotmap::Key;
 
 /// Canonical identifier for an (undirected) edge.
@@ -25,7 +25,7 @@ use slotmap::Key;
 ///
 /// ```rust
 /// use delaunay::core::edge::EdgeKey;
-/// use delaunay::core::triangulation_data_structure::VertexKey;
+/// use delaunay::core::tds::VertexKey;
 /// use slotmap::KeyData;
 ///
 /// let a = VertexKey::from(KeyData::from_ffi(1));

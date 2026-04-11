@@ -10,9 +10,9 @@
 #![forbid(unsafe_code)]
 
 use crate::core::algorithms::incremental_insertion::InsertionError;
-use crate::core::delaunay_triangulation::{DelaunayCheckPolicy, DelaunayRepairPolicy};
+use crate::core::tds::CellKey;
 use crate::core::triangulation::TopologyGuarantee;
-use crate::core::triangulation_data_structure::CellKey;
+use crate::triangulation::delaunay::{DelaunayCheckPolicy, DelaunayRepairPolicy};
 
 /// Semantic classification of topological modifications to a triangulation.
 ///
@@ -292,9 +292,9 @@ pub enum InsertionOutcome {
     /// The vertex was inserted successfully.
     Inserted {
         /// Key of the inserted vertex.
-        vertex_key: crate::core::triangulation_data_structure::VertexKey,
+        vertex_key: crate::core::tds::VertexKey,
         /// Optional cell key that can be used as a hint for subsequent insertions.
-        hint: Option<crate::core::triangulation_data_structure::CellKey>,
+        hint: Option<crate::core::tds::CellKey>,
     },
     /// The vertex was intentionally not inserted.
     ///

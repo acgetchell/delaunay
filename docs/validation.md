@@ -548,8 +548,8 @@ converge, consider the opt-in heuristic rebuild fallback via
 |-------|--------|--------|------------|
 | 1 | `Cell::is_valid()` | `core::cell` | O(1) |
 | 1 | `Vertex::is_valid()` | `core::vertex` | O(1) |
-| 2 | `Tds::is_valid()` | `core::triangulation_data_structure` | O(N×D²) |
-| 2 | `Tds::validate()` | `core::triangulation_data_structure` | O(N×D²) |
+| 2 | `Tds::is_valid()` | `core::tds` | O(N×D²) |
+| 2 | `Tds::validate()` | `core::tds` | O(N×D²) |
 | 3 | `Triangulation::is_valid()` | `core::triangulation` | O(N×D²) |
 | 3 | `Triangulation::validate()` | `core::triangulation` | O(N×D²) |
 | 4 | `DelaunayTriangulation::is_valid()` | `core::delaunay_triangulation` | O(cells) |

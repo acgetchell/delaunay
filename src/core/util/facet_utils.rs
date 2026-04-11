@@ -37,7 +37,7 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 /// ```rust,no_run
 /// use delaunay::core::facet::{FacetView, FacetError};
 /// use delaunay::core::util::facet_views_are_adjacent;
-/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::core::tds::Tds;
 ///
 /// // This is a conceptual example - in practice you would get these from a real TDS
 /// fn example(tds: &Tds<f64, (), (), 3>) -> Result<bool, FacetError> {
@@ -107,7 +107,7 @@ where
 /// ```rust,no_run
 /// use delaunay::core::facet::FacetView;
 /// use delaunay::core::util::facet_view_to_vertices;
-/// use delaunay::core::triangulation_data_structure::Tds;
+/// use delaunay::core::tds::Tds;
 ///
 /// fn extract_vertices_example(
 ///     tds: &Tds<f64, (), (), 3>,
@@ -232,7 +232,7 @@ mod tests {
     use super::*;
 
     use crate::core::collections::FastHashSet;
-    use crate::core::delaunay_triangulation::DelaunayTriangulation;
+    use crate::triangulation::delaunay::DelaunayTriangulation;
     use crate::vertex;
     use std::time::Instant;
 

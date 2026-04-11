@@ -160,7 +160,7 @@ pub use std::collections::hash_map::Entry;
 /// **Phase 1**: Internal operations (key-based for performance):
 /// ```rust
 /// use delaunay::core::collections::{CellKeySet, FastHashSet};
-/// use delaunay::core::triangulation_data_structure::CellKey;
+/// use delaunay::core::tds::CellKey;
 ///
 /// // For internal algorithms, prefer direct key-based collections
 /// let mut internal_set: CellKeySet = CellKeySet::default();

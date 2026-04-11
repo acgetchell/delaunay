@@ -3,7 +3,7 @@ use super::{
     MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, SmallBuffer, Uuid, VertexUuidSet,
 };
 use crate::core::facet::FacetHandle;
-use crate::core::triangulation_data_structure::{CellKey, VertexKey};
+use crate::core::tds::{CellKey, VertexKey};
 
 // =============================================================================
 // TRIANGULATION-SPECIFIC OPTIMIZED TYPES
@@ -178,7 +178,7 @@ pub type CellToVertexUuidsMap = FastHashMap<Uuid, CellVertexUuidBuffer>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::triangulation_data_structure::{CellKey, VertexKey};
+    use crate::core::tds::{CellKey, VertexKey};
     use slotmap::SlotMap;
 
     #[test]
