@@ -139,12 +139,7 @@ impl Default for DelaunayizeConfig {
 /// ```
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub struct DelaunayizeOutcome<T, U, V, const D: usize>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+pub struct DelaunayizeOutcome<T, U, V, const D: usize> {
     /// Statistics from the PL-manifold topology repair pass.
     pub topology_repair: PlManifoldRepairStats<T, U, V, D>,
     /// Statistics from the flip-based Delaunay repair pass.

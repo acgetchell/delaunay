@@ -326,7 +326,7 @@ pub enum ConvexHullConstructionError {
 /// - Seidel, R. "The Upper Bound Theorem for Polytopes: An Easy Proof of Its Asymptotic Version."
 ///   *Computational Geometry* 5, no. 2 (1995): 115-116. DOI: [10.1016/0925-7721(95)00013-Y](https://doi.org/10.1016/0925-7721(95)00013-Y)
 #[derive(Debug)]
-pub struct ConvexHull<K: Kernel<D>, U, V, const D: usize> {
+pub struct ConvexHull<K, U, V, const D: usize> {
     /// The boundary facets that form the convex hull
     /// Stored as `FacetHandle` tuples (`CellKey`, `facet_index`) to enable reconstruction of `FacetView`
     ///

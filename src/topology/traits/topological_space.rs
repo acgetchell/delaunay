@@ -369,10 +369,6 @@ pub trait TopologicalSpace {
     /// space.canonicalize_point(&mut point);
     /// assert_eq!(point, [0.5, 0.7]); // Wrapped into [0, 1)
     /// ```
-    ///
-    /// TODO: When implementing full topology support, consider making this generic:
-    /// `fn canonicalize_point<T: CoordinateScalar>(&self, coords: &mut [T])`
-    /// to match the triangulation's scalar type instead of hardcoding `f64`.
     fn canonicalize_point(&self, coords: &mut [f64]);
 
     /// Returns the fundamental domain for periodic topologies.
@@ -426,10 +422,6 @@ pub trait TopologicalSpace {
     /// let euclidean = DummySpace { domain: None };
     /// assert_eq!(euclidean.fundamental_domain(), None);
     /// ```
-    ///
-    /// TODO: When implementing full topology support, consider making this generic:
-    /// `fn fundamental_domain<T: CoordinateScalar>(&self) -> Option<&[T]>`
-    /// to match the triangulation's scalar type instead of hardcoding `f64`.
     fn fundamental_domain(&self) -> Option<&[f64]>;
 }
 

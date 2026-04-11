@@ -34,9 +34,7 @@ const BUCKET_INLINE_CAPACITY: usize = 8;
 /// type used for points. We avoid casting to an integer type to keep the index
 /// generic over coordinate scalar types.
 #[derive(Clone, Copy, Debug)]
-struct GridKey<T, const D: usize>([T; D])
-where
-    T: CoordinateScalar;
+struct GridKey<T, const D: usize>([T; D]);
 
 impl<T, const D: usize> PartialEq for GridKey<T, D>
 where
@@ -68,7 +66,7 @@ where
 /// The grid uses a fixed `cell_size` and indexes vertices by the floored cell
 /// coordinates `floor(coord / cell_size)`.
 #[derive(Clone, Debug)]
-pub struct HashGridIndex<T: CoordinateScalar, const D: usize, K = VertexKey> {
+pub struct HashGridIndex<T, const D: usize, K = VertexKey> {
     cell_size: T,
     usable: bool,
     cells: FastHashMap<GridKey<T, D>, SmallBuffer<K, BUCKET_INLINE_CAPACITY>>,
@@ -91,10 +89,7 @@ where
     pub const fn is_usable(&self) -> bool {
         self.usable
     }
-    pub const fn cell_size(&self) -> T
-    where
-        T: Copy,
-    {
+    pub const fn cell_size(&self) -> T {
         self.cell_size
     }
 
