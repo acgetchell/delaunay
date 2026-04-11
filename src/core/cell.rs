@@ -1675,6 +1675,7 @@ mod tests {
 
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::prelude::DelaunayTriangulation;
+    use crate::triangulation::builder::DelaunayTriangulationBuilder;
 
     // =============================================================================
     // DIMENSION-PARAMETERIZED TEST MACRO
@@ -3817,8 +3818,6 @@ mod tests {
 
     #[test]
     fn test_cell_data_accessor() {
-        use crate::triangulation::builder::DelaunayTriangulationBuilder;
-
         let vertices = [
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),

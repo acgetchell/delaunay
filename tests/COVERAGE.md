@@ -85,7 +85,7 @@ Generated on 2026-03-24 using `cargo tarpaulin --lib` (v0.7.3, lib unit tests on
 - **Data structures** (`cell`, `vertex`, `facet`, `edge`, `boundary`): 91–100%
 - **TDS** (`tds`): 81%
 - **Triangulation layer** (`triangulation`): 70%
-- **Delaunay layer** (`delaunay_triangulation`): 67%
+- **Delaunay layer** (`triangulation::delaunay`): 67%
 - **Algorithms** (`flips`, `incremental_insertion`, `locate`): 54–66%
 - **Builder**: 56%
 - **Utilities** (`canonical_points`, `facet_keys`, `hashing`, `uuid`): 95–100%
