@@ -44,7 +44,7 @@ use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::simplex_orientation;
 use crate::geometry::traits::coordinate::{
-    Coordinate, CoordinateConversionError, CoordinateScalar, ScalarAccumulative,
+    Coordinate, CoordinateConversionError, CoordinateScalar,
 };
 use crate::geometry::util::{safe_usize_to_scalar, squared_norm};
 use arc_swap::ArcSwapOption;
@@ -326,12 +326,7 @@ pub enum ConvexHullConstructionError {
 /// - Seidel, R. "The Upper Bound Theorem for Polytopes: An Easy Proof of Its Asymptotic Version."
 ///   *Computational Geometry* 5, no. 2 (1995): 115-116. DOI: [10.1016/0925-7721(95)00013-Y](https://doi.org/10.1016/0925-7721(95)00013-Y)
 #[derive(Debug)]
-pub struct ConvexHull<K, U, V, const D: usize>
-where
-    K: Kernel<D>,
-    U: DataType,
-    V: DataType,
-{
+pub struct ConvexHull<K, U, V, const D: usize> {
     /// The boundary facets that form the convex hull
     /// Stored as `FacetHandle` tuples (`CellKey`, `facet_index`) to enable reconstruction of `FacetView`
     ///
@@ -670,7 +665,7 @@ where
 impl<K, U, V, const D: usize> ConvexHull<K, U, V, D>
 where
     K: Kernel<D>,
-    K::Scalar: ScalarAccumulative + Sub<Output = K::Scalar> + DivAssign + Copy,
+    K::Scalar: CoordinateScalar + Sub<Output = K::Scalar> + DivAssign + Copy,
     U: DataType,
     V: DataType,
 {
@@ -1560,7 +1555,7 @@ where
 impl<K, U, V, const D: usize> FacetCacheProvider<K::Scalar, U, V, D> for ConvexHull<K, U, V, D>
 where
     K: Kernel<D>,
-    K::Scalar: ScalarAccumulative,
+    K::Scalar: CoordinateScalar,
     U: DataType,
     V: DataType,
 {

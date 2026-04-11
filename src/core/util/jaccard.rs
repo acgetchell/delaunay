@@ -7,7 +7,7 @@ use crate::core::tds::Tds;
 use crate::core::traits::data_type::DataType;
 use crate::geometry::algorithms::convex_hull::ConvexHull;
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{CoordinateScalar, ScalarAccumulative};
+use crate::geometry::traits::coordinate::CoordinateScalar;
 use std::collections::HashSet;
 use thiserror::Error;
 
@@ -341,7 +341,7 @@ pub fn extract_facet_identifier_set<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
 ) -> Result<HashSet<u64>, FacetError>
 where
-    T: ScalarAccumulative,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -411,7 +411,7 @@ pub fn extract_hull_facet_set<K, U, V, const D: usize>(
 ) -> Result<HashSet<u64>, FacetError>
 where
     K: crate::geometry::kernel::Kernel<D>,
-    K::Scalar: ScalarAccumulative,
+    K::Scalar: CoordinateScalar,
     U: DataType,
     V: DataType,
 {

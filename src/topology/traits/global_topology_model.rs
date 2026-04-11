@@ -318,7 +318,7 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
                     value: offset_value,
                 },
             )?;
-            coords[axis] = coords[axis] + offset_scalar * period_scalar;
+            coords[axis] += offset_scalar * period_scalar;
         }
         Ok(coords)
     }

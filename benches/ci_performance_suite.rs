@@ -32,11 +32,85 @@ use delaunay::prelude::{ConstructionOptions, DelaunayTriangulation, RetryPolicy}
 use delaunay::vertex;
 use std::hint::black_box;
 use std::num::NonZeroUsize;
-use tracing::error;
+use tracing::{error, warn};
 
-/// Common sample sizes used across all CI performance benchmarks
+/// Default point counts for 2D–4D benchmarks.
 const COUNTS: &[usize] = &[10, 25, 50];
+/// Reduced point counts for 5D (50-point construction is prohibitively slow).
+const COUNTS_5D: &[usize] = &[10, 25];
 type SeedSearchResult<const D: usize> = Option<(u64, Vec<Point<f64, D>>, Vec<Vertex<f64, (), D>>)>;
+
+/// Pre-computed seeds for each (dimension, count) pair.
+///
+/// These were discovered using `DELAUNAY_BENCH_DISCOVER_SEEDS=1` and eliminate
+/// the expensive runtime seed search from the benchmark hot path.
+///
+/// To refresh seeds (e.g. after algorithm changes that invalidate them), run:
+///
+/// ```bash
+/// DELAUNAY_BENCH_DISCOVER_SEEDS=1 cargo bench --bench ci_performance_suite
+/// ```
+///
+/// (Use a Criterion filter for individual cases, e.g.
+///  `-- "tds_new_5d/tds_new/25"`)
+const KNOWN_SEEDS: &[(usize, usize, u64)] = &[
+    // 2D
+    (2, 10, 52),
+    (2, 25, 67),
+    (2, 50, 92),
+    // 3D
+    (3, 10, 133),
+    (3, 25, 148),
+    (3, 50, 173),
+    // 4D
+    (4, 10, 466),
+    (4, 25, 481),
+    (4, 50, 506),
+    // 5D (50-point case excluded — too slow for CI)
+    (5, 10, 799),
+    (5, 25, 816),
+];
+
+fn known_seed(dim: usize, count: usize) -> Option<u64> {
+    KNOWN_SEEDS
+        .iter()
+        .find(|&&(d, c, _)| d == dim && c == count)
+        .map(|&(_, _, seed)| seed)
+}
+
+/// Prepare benchmark inputs by looking up a pre-computed seed, falling back
+/// to a runtime search only if the known seed is missing or invalid.
+fn prepare_benchmark_data<const D: usize>(
+    dim_seed: u64,
+    count: usize,
+    bounds: (f64, f64),
+    attempts: NonZeroUsize,
+) -> (u64, Vec<Point<f64, D>>, Vec<Vertex<f64, (), D>>) {
+    // Fast path: use the pre-computed seed (single verification construction)
+    if let Some(seed) = known_seed(D, count) {
+        if let Some(result) = find_seed_and_vertices::<D>(seed, count, bounds, 1, attempts) {
+            return result;
+        }
+        warn!(
+            known_seed = seed,
+            dim = D,
+            count,
+            "known seed failed, falling back to runtime search"
+        );
+    }
+
+    // Slow fallback: runtime search from the base seed
+    let base_seed = dim_seed.wrapping_add(count as u64);
+    let search_limit = bench_seed_search_limit();
+    find_seed_and_vertices::<D>(base_seed, count, bounds, search_limit, attempts).unwrap_or_else(
+        || {
+            panic!(
+                "No stable benchmark seed found for {D}D/{count}: \
+                 start_seed={base_seed}; search_limit={search_limit}; bounds={bounds:?}"
+            )
+        },
+    )
+}
 
 fn find_seed_and_vertices<const D: usize>(
     start_seed: u64,
@@ -72,14 +146,14 @@ fn bench_logging_enabled() -> bool {
         .unwrap_or(false)
 }
 
-fn bench_seed_search_enabled() -> bool {
-    std::env::var("DELAUNAY_BENCH_SEED_SEARCH")
+fn bench_discover_seeds_enabled() -> bool {
+    std::env::var("DELAUNAY_BENCH_DISCOVER_SEEDS")
         .map(|value| value != "0")
         .unwrap_or(false)
 }
 
 fn bench_seed_search_limit() -> usize {
-    std::env::var("DELAUNAY_BENCH_SEED_SEARCH_LIMIT")
+    std::env::var("DELAUNAY_BENCH_DISCOVER_SEEDS_LIMIT")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(2000)
@@ -92,14 +166,10 @@ fn bench_seed_search_limit() -> usize {
 ///
 /// Macro to reduce duplication in dimensional benchmark functions
 macro_rules! benchmark_tds_new_dimension {
-    ($dim:literal, $func_name:ident, $seed:literal) => {
+    ($dim:literal, $func_name:ident, $seed:literal, $counts:expr) => {
         /// Benchmark triangulation creation for D-dimensional triangulations
-        #[expect(
-            clippy::too_many_lines,
-            reason = "Keep benchmark configuration, seed search, and error reporting together"
-        )]
         fn $func_name(c: &mut Criterion) {
-            let counts = COUNTS;
+            let counts = $counts;
 
             // Opt-in helper for discovering stable seeds without paying Criterion warmup/
             // measurement cost per seed.
@@ -116,7 +186,7 @@ macro_rules! benchmark_tds_new_dimension {
             //
             // We avoid `std::process::exit` here so that destructors run and Criterion
             // can clean up state on both success and failure.
-            if bench_seed_search_enabled() {
+            if bench_discover_seeds_enabled() {
                 let bounds = (-100.0, 100.0);
                 let filters: Vec<String> = std::env::args()
                     .skip(1)
@@ -174,33 +244,11 @@ macro_rules! benchmark_tds_new_dimension {
                 group.bench_with_input(BenchmarkId::new("tds_new", count), &count, |b, &count| {
                     // Reduce variance: pre-generate deterministic inputs outside the measured loop,
                     // then benchmark only triangulation construction.
-                    //
-                    // Note: Use per-count seeds so that each benchmark case has its own deterministic
-                    // point set. This avoids a single pathological input (e.g. 3D/50) aborting the
-                    // entire suite.
                     let bounds = (-100.0, 100.0);
-                    let base_seed = ($seed as u64).wrapping_add(count as u64);
-                    let search_limit = bench_seed_search_limit();
                     let attempts =
                         NonZeroUsize::new(6).expect("retry attempts must be non-zero");
-                    let selected = find_seed_and_vertices::<$dim>(
-                        base_seed,
-                        count,
-                        bounds,
-                        search_limit,
-                        attempts,
-                    );
-
-                    let (seed, points, vertices) = selected.unwrap_or_else(|| {
-                        panic!(
-                            "No stable benchmark seed found for {}D case: dim={}; count={}; start_seed={}; search_limit={}; bounds={bounds:?}",
-                            $dim,
-                            $dim,
-                            count,
-                            base_seed,
-                            search_limit
-                        )
-                    });
+                    let (seed, points, vertices) =
+                        prepare_benchmark_data::<$dim>($seed, count, bounds, attempts);
                     let sample_points = points.iter().take(5).collect::<Vec<_>>();
 
                     // In benchmarks we compile in release mode, where the default retry policy is
@@ -253,10 +301,10 @@ macro_rules! benchmark_tds_new_dimension {
 }
 
 // Generate benchmark functions using the macro
-benchmark_tds_new_dimension!(2, benchmark_tds_new_2d, 42);
-benchmark_tds_new_dimension!(3, benchmark_tds_new_3d, 123);
-benchmark_tds_new_dimension!(4, benchmark_tds_new_4d, 456);
-benchmark_tds_new_dimension!(5, benchmark_tds_new_5d, 789);
+benchmark_tds_new_dimension!(2, benchmark_tds_new_2d, 42, COUNTS);
+benchmark_tds_new_dimension!(3, benchmark_tds_new_3d, 123, COUNTS);
+benchmark_tds_new_dimension!(4, benchmark_tds_new_4d, 456, COUNTS);
+benchmark_tds_new_dimension!(5, benchmark_tds_new_5d, 789, COUNTS_5D);
 
 criterion_group!(
     name = benches;

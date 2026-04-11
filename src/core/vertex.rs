@@ -141,10 +141,7 @@ pub enum VertexBuilderError {
 ///     .build()
 ///     .unwrap();
 /// ```
-pub struct VertexBuilder<T, U, const D: usize>
-where
-    U: DataType,
-{
+pub struct VertexBuilder<T, U, const D: usize> {
     point: Option<Point<T, D>>,
     data: Option<U>,
 }
@@ -299,10 +296,7 @@ pub use crate::vertex;
 ///
 /// let vertex: Vertex<f64, i32, 3> = vertex!([1.0, 2.0, 3.0], 42);
 /// ```
-pub struct Vertex<T, U, const D: usize>
-where
-    U: DataType,
-{
+pub struct Vertex<T, U, const D: usize> {
     /// The coordinates of the vertex as a D-dimensional Point.
     point: Point<T, D>,
     /// A universally unique identifier for the vertex.

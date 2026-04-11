@@ -87,13 +87,8 @@ impl Default for PlManifoldRepairConfig {
 /// assert!(stats.removed_vertices.is_empty());
 /// assert!(!stats.succeeded);
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PlManifoldRepairStats<T, U, V, const D: usize>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+#[derive(Debug, Clone)]
+pub struct PlManifoldRepairStats<T, U, V, const D: usize> {
     /// Number of repair iterations executed.
     pub iterations: usize,
     /// Total number of cells removed.
@@ -106,6 +101,29 @@ where
     pub removed_vertices: Vec<Vertex<T, U, D>>,
     /// Whether the facet-degree invariant was satisfied at termination.
     pub succeeded: bool,
+}
+
+impl<T, U, V, const D: usize> PartialEq for PlManifoldRepairStats<T, U, V, D>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.iterations == other.iterations
+            && self.cells_removed == other.cells_removed
+            && self.removed_cells == other.removed_cells
+            && self.removed_vertices == other.removed_vertices
+            && self.succeeded == other.succeeded
+    }
+}
+
+impl<T, U, V, const D: usize> Eq for PlManifoldRepairStats<T, U, V, D>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
 }
 
 impl<T, U, V, const D: usize> Default for PlManifoldRepairStats<T, U, V, D>

@@ -512,21 +512,24 @@ impl_hash_coordinate!(float: f32, f64);
 /// Consolidated trait for the scalar type requirements in coordinate systems.
 ///
 /// This trait captures all the trait bounds required for a scalar type `T` to be used
-/// in coordinate systems. It consolidates the requirements from line 116 of the
-/// `Coordinate` trait definition to reduce code duplication.
+/// in coordinate systems. It consolidates the requirements from the `Coordinate` trait
+/// definition to reduce code duplication.
 ///
 /// # Required Traits
 ///
-/// - `Float`: Floating-point arithmetic operations
+/// - `Float`: Floating-point arithmetic operations (includes `Copy`, `PartialOrd`, etc.)
 /// - `Zero`: Zero value construction
 /// - `OrderedEq`: NaN-aware equality comparison
+/// - `OrderedCmp`: NaN-aware ordering comparison
 /// - `HashCoordinate`: Consistent hashing of floating-point values
 /// - `FiniteCheck`: Validation of coordinate values
 /// - `Default`: Default value construction
-/// - `Copy`: Copy semantics for efficient operations
 /// - `Debug`: Debug formatting
 /// - `Serialize`: Serialization support
 /// - `DeserializeOwned`: Deserialization support
+/// - `AddAssign`: In-place addition (`+=`) for accumulation loops
+/// - `SubAssign`: In-place subtraction (`-=`) for accumulation loops
+/// - `Sum`: Iterator summation via `iter.sum()`
 ///
 /// # Usage
 ///
@@ -534,7 +537,8 @@ impl_hash_coordinate!(float: f32, f64);
 /// use delaunay::geometry::traits::coordinate::CoordinateScalar;
 ///
 /// fn process_coordinate<T: CoordinateScalar>(value: T) {
-///     // T has all the necessary bounds for coordinate operations
+///     // T has all the necessary bounds for coordinate operations,
+///     // including accumulation via AddAssign, SubAssign, and Sum.
 /// }
 /// ```
 pub trait CoordinateScalar:
@@ -548,6 +552,9 @@ pub trait CoordinateScalar:
     + Debug
     + Serialize
     + DeserializeOwned
+    + AddAssign
+    + SubAssign
+    + Sum
 {
     /// Returns the appropriate default tolerance for this coordinate scalar type.
     ///
@@ -615,21 +622,6 @@ pub trait CoordinateScalar:
     /// ```
     fn mantissa_digits() -> u32;
 }
-
-/// Trait for coordinate scalars that support summation operations.
-///
-/// This supertrait is a semantic alias for the common bound `CoordinateScalar + Sum`.
-pub trait ScalarSummable: CoordinateScalar + Sum {}
-
-/// Trait for coordinate scalars that support in-place accumulation.
-///
-/// This supertrait is a semantic alias for the common bound
-/// `CoordinateScalar + AddAssign + SubAssign + Sum`.
-pub trait ScalarAccumulative: CoordinateScalar + AddAssign + SubAssign + Sum {}
-
-// Blanket implementations so any suitable scalar automatically implements these supertraits.
-impl<T> ScalarSummable for T where T: CoordinateScalar + Sum {}
-impl<T> ScalarAccumulative for T where T: CoordinateScalar + AddAssign + SubAssign + Sum {}
 
 // Specific implementations for f32 and f64
 impl CoordinateScalar for f32 {

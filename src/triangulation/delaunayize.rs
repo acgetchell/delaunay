@@ -57,7 +57,7 @@ use crate::core::algorithms::pl_manifold_repair::{
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{ExactPredicates, Kernel};
-use crate::geometry::traits::coordinate::{CoordinateScalar, ScalarAccumulative};
+use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::triangulation::delaunay::{DelaunayRepairHeuristicConfig, DelaunayTriangulation};
 use thiserror::Error;
 
@@ -139,12 +139,7 @@ impl Default for DelaunayizeConfig {
 /// ```
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub struct DelaunayizeOutcome<T, U, V, const D: usize>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+pub struct DelaunayizeOutcome<T, U, V, const D: usize> {
     /// Statistics from the PL-manifold topology repair pass.
     pub topology_repair: PlManifoldRepairStats<T, U, V, D>,
     /// Statistics from the flip-based Delaunay repair pass.
@@ -256,7 +251,7 @@ pub fn delaunayize_by_flips<K, U, V, const D: usize>(
 ) -> Result<DelaunayizeOutcome<K::Scalar, U, V, D>, DelaunayizeError>
 where
     K: Kernel<D> + ExactPredicates,
-    K::Scalar: ScalarAccumulative,
+    K::Scalar: CoordinateScalar,
     U: DataType,
     V: DataType,
 {

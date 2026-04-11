@@ -113,7 +113,7 @@ use crate::core::util::periodic_facet_key_from_lifted_vertices;
 use crate::core::vertex::{Vertex, VertexBuilder};
 use crate::geometry::kernel::{AdaptiveKernel, Kernel};
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar, ScalarAccumulative};
+use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
 use crate::topology::spaces::toroidal::ToroidalSpace;
 use crate::topology::traits::global_topology_model::{
     GlobalTopologyModel, GlobalTopologyModelError,
@@ -418,11 +418,7 @@ pub enum ExplicitConstructionError {
 ///
 /// assert_eq!(dt.number_of_vertices(), 4);
 /// ```
-pub struct DelaunayTriangulationBuilder<'v, T, U, const D: usize>
-where
-    T: CoordinateScalar,
-    U: DataType,
-{
+pub struct DelaunayTriangulationBuilder<'v, T, U, const D: usize> {
     vertices: &'v [Vertex<T, U, D>],
     /// Optional toroidal (periodic) topology for the construction.
     ///
@@ -1020,7 +1016,7 @@ where
         DelaunayTriangulationConstructionError,
     >
     where
-        T: ScalarAccumulative,
+        T: CoordinateScalar,
         V: DataType,
     {
         self.build_with_kernel(&AdaptiveKernel::new())
@@ -1071,7 +1067,7 @@ where
     ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
         K: Kernel<D, Scalar = T>,
-        K::Scalar: ScalarAccumulative,
+        K::Scalar: CoordinateScalar,
         V: DataType,
     {
         // Explicit-cells path: bypass Delaunay insertion entirely.
@@ -1384,7 +1380,7 @@ where
     ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
         K: Kernel<D, Scalar = T>,
-        K::Scalar: ScalarAccumulative,
+        K::Scalar: CoordinateScalar,
         V: DataType,
         M: GlobalTopologyModel<D>,
     {

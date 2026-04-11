@@ -9,7 +9,7 @@ use crate::core::{
     collections::FacetToCellsMap,
     tds::{Tds, TdsError},
 };
-use crate::geometry::traits::coordinate::ScalarAccumulative;
+use crate::geometry::traits::coordinate::CoordinateScalar;
 use arc_swap::ArcSwapOption;
 use std::sync::{
     Arc,
@@ -35,7 +35,7 @@ use std::sync::{
 /// ```
 /// use delaunay::core::traits::facet_cache::FacetCacheProvider;
 /// use delaunay::core::tds::Tds;
-/// use delaunay::geometry::traits::coordinate::ScalarAccumulative;
+/// use delaunay::geometry::traits::coordinate::CoordinateScalar;
 /// use delaunay::core::traits::data_type::DataType;
 /// use std::sync::Arc;
 /// use std::sync::atomic::{AtomicU64, Ordering};
@@ -58,7 +58,7 @@ use std::sync::{
 ///
 /// impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for MyAlgorithm
 /// where
-///     T: ScalarAccumulative,
+///     T: CoordinateScalar,
 ///     U: DataType,
 ///     V: DataType,
 /// {
@@ -73,7 +73,7 @@ use std::sync::{
 /// ```
 pub trait FacetCacheProvider<T, U, V, const D: usize>
 where
-    T: ScalarAccumulative,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {

@@ -199,11 +199,7 @@ impl From<crate::geometry::matrix::StackMatrixDispatchError> for CellValidationE
 ///     assert!(vertex.uuid() != Uuid::nil());
 /// }
 /// ```
-pub struct Cell<T, U, V, const D: usize>
-where
-    U: DataType,
-    V: DataType,
-{
+pub struct Cell<T, U, V, const D: usize> {
     /// Keys to the vertices forming this cell.
     /// Phase 3A: Changed from `Vec<Vertex>` to `CellVertexBuffer` for:
     /// - Zero heap allocation for D ≤ 7 (stack-allocated)
