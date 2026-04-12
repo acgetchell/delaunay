@@ -5,7 +5,131 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.5] - 2026-04-09
+## [Unreleased]
+
+### ⚠️ Breaking Changes
+
+- Remove ScalarAccumulative and ScalarSummable traits [#316](https://github.com/acgetchell/delaunay/pull/316)
+  [#318](https://github.com/acgetchell/delaunay/pull/318)
+
+### Merged Pull Requests
+
+- Unify flip-repair and retry constants across build profiles [#306](https://github.com/acgetchell/delaunay/pull/306)
+  [#319](https://github.com/acgetchell/delaunay/pull/319)
+- Remove ScalarAccumulative and ScalarSummable traits [#316](https://github.com/acgetchell/delaunay/pull/316)
+  [#318](https://github.com/acgetchell/delaunay/pull/318)
+- Rename tds file and move delaunay/builder into triangulation/ [#317](https://github.com/acgetchell/delaunay/pull/317)
+- Allow explicit cell construction with non-sphere Euler characteristic [#314](https://github.com/acgetchell/delaunay/pull/314)
+
+### Added
+
+- Allow explicit cell construction with non-sphere Euler characteristic [#314](https://github.com/acgetchell/delaunay/pull/314)
+  [`c81bb1a`](https://github.com/acgetchell/delaunay/commit/c81bb1a69f50a8c777890c0ac95b07cb99033d83)
+
+- feat: allow explicit cell construction with non-sphere Euler characteristic [#313](https://github.com/acgetchell/delaunay/pull/313)
+
+  Add `.global_topology()` builder setter so callers can declare the
+  intended topology (e.g. Toroidal) for explicit cell construction.
+  `validate_topology_core()` uses this metadata to override the heuristic
+  classification: closed toroidal meshes expect χ = 0 instead of the
+  sphere default χ = 1+(-1)^D.
+
+  - Add `ToroidalConstructionMode::Explicit` variant for explicit builds
+  - Add `TopologyClassification::ClosedToroid(D)` with χ(T^d) = 0
+  - Add `global_topology` field and setter to `DelaunayTriangulationBuilder`
+  - Thread `GlobalTopology` through `build_explicit()`, set before validation
+  - Override Euler classification in `validate_topology_core()` when
+    `global_topology` is `Toroidal` and heuristic yields `ClosedSphere`
+
+  - Add T² (3×3 grid) and T³ (3×3×3 Freudenthal) integration tests
+    validating χ = 0 via explicit construction
+
+### Changed
+
+- Rename tds file and move delaunay/builder into triangulation/ [#317](https://github.com/acgetchell/delaunay/pull/317)
+  [`25faa5b`](https://github.com/acgetchell/delaunay/commit/25faa5b4b2fe54b20e609cd390fe3edb221da29b)
+
+- refactor: rename tds file and move delaunay/builder into triangulation/
+
+  - Rename src/core/triangulation_data_structure.rs → src/core/tds.rs
+  - Move src/core/delaunay_triangulation.rs → src/triangulation/delaunay.rs
+  - Move src/core/builder.rs → src/triangulation/builder.rs
+  - Widen pub(in crate::core) → pub(crate) for cross-module access
+  - Preserve public API via re-exports in core {}
+  - Add GlobalTopology::is_euclidean() for API symmetry with is_toroidal()
+  - Add doctests for topology_guarantee, global_topology, topology_kind,
+    set_global_topology accessors
+
+  - Hoist in-function test imports to module-level per project convention
+  - Shorten fully-qualified paths (CellValidationError, ConflictError, etc.)
+  - Bump la-stack 0.3.0 → 0.4.0 (integer-only Bareiss, stack-backed exact
+    arithmetic, custom f64→BigRational via IEEE 754 bit decomposition)
+
+  - Update README, code_organization.md, debug_env_vars.md, rust.md,
+    numerical_robustness_guide.md, COVERAGE.md, and other active docs
+
+  - Archive docs left unchanged (historical state)
+- [**breaking**] Remove ScalarAccumulative and ScalarSummable traits [#316](https://github.com/acgetchell/delaunay/pull/316)
+  [#318](https://github.com/acgetchell/delaunay/pull/318) [`c612188`](https://github.com/acgetchell/delaunay/commit/c61218858a169108da51067e9b65f6a26baede16)
+
+- refactor!: remove ScalarAccumulative and ScalarSummable traits [#316](https://github.com/acgetchell/delaunay/pull/316)
+
+  - Absorb AddAssign, SubAssign, and Sum bounds into CoordinateScalar
+  - Remove ScalarAccumulative and ScalarSummable traits and their blanket impls
+  - Replace all ScalarAccumulative bounds with CoordinateScalar across 20 files
+  - Simplify operator usage (e.g. coords[axis] += … instead of manual add-assign)
+
+### Fixed
+
+- Handle geometric degeneracy gracefully in profiling benchmarks
+  [`3532624`](https://github.com/acgetchell/delaunay/commit/3532624ed1d669d215b2df2bbcea49236b720d10)
+
+- Replace .unwrap() on triangulation build with graceful error handling
+    across all benchmark functions in profiling_suite.rs
+
+  - Scaling and memory benchmarks skip iterations that hit degeneracy
+  - Query latency and algorithmic bottleneck benchmarks skip entries when
+    setup construction fails
+
+  - Fixes CI panic: GeometricDegeneracy during 3D memory profiling with
+    10,000 random points (seed 42)
+
+- Unify flip-repair and retry constants across build profiles [#306](https://github.com/acgetchell/delaunay/pull/306)
+  [#319](https://github.com/acgetchell/delaunay/pull/319) [`14f0d16`](https://github.com/acgetchell/delaunay/commit/14f0d16b7de52d25d64e7d1fb810b82817e5d7b6)
+
+- fix: unify flip-repair and retry constants across build profiles [#306](https://github.com/acgetchell/delaunay/pull/306)
+
+  Several flip-repair and construction-retry constants were split by
+  cfg(any(test, debug_assertions)), causing release builds to fail on
+  valid 3D inputs that debug/test builds handled correctly.
+
+  Primary fix: RetryPolicy::default() was Disabled in release but
+  DebugOnlyShuffled { attempts: 6 } in debug/test.  When the initial
+  Hilbert-ordered insertion hits a co-spherical flip cycle, shuffled
+  retries find a working vertex ordering.  Without retries, the first
+  failure was fatal.  Changed to Shuffled { attempts: 6 } unconditionally.
+
+  Secondary fixes in flips.rs:
+
+  - Unify MAX_REPEAT_SIGNATURE to 128 (was 32 in release)
+  - Unify default_max_flips 3D multiplier to 8x (was 4x in release)
+  - Make is_connected() postcondition check unconditional
+
+  Also in delaunay.rs:
+
+  - Unify HEURISTIC_REBUILD_ATTEMPTS to 6 (was 2 in release)
+  - Remove cfg-gated DELAUNAY_SHUFFLE_ATTEMPTS constant
+
+  - Fixed: enable construction retries in release builds by default
+
+  Update RetryPolicy::default() to return Shuffled retries in all build
+  profiles. Previously, retries were disabled in release mode, causing
+  fatal construction failures on 3D configurations that required
+  alternative vertex insertion orders to converge. This change ensures
+  consistent behavior between debug and release builds and includes a
+  regression test for the reported failure case.
+
+## [0.7.5] - 2026-04-10
 
 ### ⚠️ Breaking Changes
 
@@ -13,6 +137,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Merged Pull Requests
 
+- Release v0.7.5 [#312](https://github.com/acgetchell/delaunay/pull/312)
 - V0.7.5 cleanup — impl-block split, builder decomposition, p… [#311](https://github.com/acgetchell/delaunay/pull/311)
 - Add diagnostic infrastructure for v0.7.6 investigation (#306, #… [#309](https://github.com/acgetchell/delaunay/pull/309)
 - Bump taiki-e/install-action from 2.70.2 to 2.73.0 [#308](https://github.com/acgetchell/delaunay/pull/308)
@@ -145,6 +270,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Add "Which import do I need?" prelude guidance table to lib.rs
   - Re-enable 43 previously-ignored 3D proptests (all <1s in release mode)
   - Audit doctests for builder migration (no changes needed; deferred to #214)
+- Update internal performance results for v0.7.5 [`76b2ff7`](https://github.com/acgetchell/delaunay/commit/76b2ff7c4409a8bfa8aa6b9f5362a3dfb8b67999)
+
+Refresh the performance documentation with updated benchmark metrics,
+  timestamps, and commit references to align with the v0.7.5 release.
 
 ### Documentation
 
@@ -289,6 +418,14 @@ Bumps [taiki-e/install-action](https://github.com/taiki-e/install-action) from 2
     dependency-type: direct:production
     update-type: version-update:semver-minor
   ...
+
+- Release v0.7.5 [#312](https://github.com/acgetchell/delaunay/pull/312)
+  [`b7f330e`](https://github.com/acgetchell/delaunay/commit/b7f330e824a6ba8f0835b18113ae60cb87faf050)
+
+- Bump version to v0.7.5
+  - Update changelog with latest changes
+  - Update documentation for release
+  - Add performance results for v0.7.5
 
 ## [0.7.4] - 2026-03-27
 
@@ -2425,6 +2562,7 @@ Older releases are archived by minor series:
 - [0.3.x](docs/archive/changelog/0.3.md)
 - [0.2.x](docs/archive/changelog/0.2.md)
 
+[unreleased]: https://github.com/acgetchell/delaunay/compare/v0.7.5..HEAD
 [0.7.5]: https://github.com/acgetchell/delaunay/compare/v0.7.4..v0.7.5
 [0.7.4]: https://github.com/acgetchell/delaunay/compare/v0.7.3..v0.7.4
 [0.7.3]: https://github.com/acgetchell/delaunay/compare/v0.7.2..v0.7.3

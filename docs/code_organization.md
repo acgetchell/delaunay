@@ -87,6 +87,7 @@ delaunay/
 │   │   └── topology_integration_design_historical.md
 │   ├── dev/
 │   │   ├── commands.md
+│   │   ├── debug_env_vars.md
 │   │   ├── rust.md
 │   │   └── testing.md
 │   ├── templates/
@@ -95,6 +96,7 @@ delaunay/
 │   ├── ORIENTATION_SPEC.md
 │   ├── README.md
 │   ├── RELEASING.md
+│   ├── TODO.md
 │   ├── api_design.md
 │   ├── code_organization.md
 │   ├── invariants.md
@@ -219,6 +221,7 @@ delaunay/
 │   ├── allocation_api.rs
 │   ├── check_perturbation_stats.rs
 │   ├── circumsphere_debug_tools.rs
+│   ├── conflict_region_verification.rs
 │   ├── coordinate_conversion_errors.rs
 │   ├── dedup_batch_construction.rs
 │   ├── delaunay_edge_cases.rs
@@ -248,6 +251,7 @@ delaunay/
 │   ├── proptest_vertex.rs
 │   ├── public_topology_api.rs
 │   ├── regression_delaunay_2d.rs
+│   ├── regression_issue_306.rs
 │   ├── serialization_vertex_preservation.rs
 │   ├── storage_backend_compatibility.rs
 │   ├── tds_orientation.rs

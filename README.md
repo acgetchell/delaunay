@@ -243,6 +243,7 @@ cargo run --release --example convex_hull_3d_100_points
 The `examples/` directory contains several demonstrations:
 
 - **`convex_hull_3d_100_points`**: 3D convex hull extraction and analysis on the same 100-point configuration
+- **`delaunayize_repair`**: Demonstrates the `delaunayize_by_flips` workflow (bounded topology repair + flip-based Delaunay repair + optional fallback)
 - **`into_from_conversions`**: Demonstrates Into/From trait conversions and utilities
 - **`memory_analysis`**: Memory usage analysis for triangulations across dimensions with allocation tracking
 - **`pachner_roundtrip_4d`**: 4D Pachner move (k=1,2,3) roundtrip checks (flip + inverse preserves the triangulation)

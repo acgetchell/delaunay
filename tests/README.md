@@ -320,6 +320,7 @@ Core integration coverage currently includes:
 - [`delaunay_incremental_insertion.rs`](./delaunay_incremental_insertion.rs)
 - [`delaunay_repair_fallback.rs`](./delaunay_repair_fallback.rs)
 - [`delaunay_edge_cases.rs`](./delaunay_edge_cases.rs)
+- [`delaunayize_workflow.rs`](./delaunayize_workflow.rs)
 - [`triangulation_builder.rs`](./triangulation_builder.rs)
 - [`public_topology_api.rs`](./public_topology_api.rs)
 - [`tds_orientation.rs`](./tds_orientation.rs)
@@ -360,6 +361,20 @@ Integration tests verifying equivalence of triangulation behavior across differe
 cargo test --release --features <backend_feature> --test storage_backend_compatibility
 ```
 
+#### [`delaunayize_workflow.rs`](./delaunayize_workflow.rs)
+
+Integration tests for the `delaunayize_by_flips` workflow validating the public API in `delaunay::triangulation::delaunayize`.
+
+**Test Coverage:**
+
+- **Config Defaults**: `DelaunayizeConfig` default values
+- **Non-Delaunay PL-Manifold Repair**: 2D and 3D success cases
+- **Fallback Behavior**: fallback off/on does not trigger on valid triangulations
+- **Outcome Stats**: stats populated correctly after repair
+- **Determinism**: repeat runs produce identical outcome stats
+
+**Run with:** `cargo test --test delaunayize_workflow`
+
 ### 🐛 Regression and Error Reproduction
 
 #### [`large_scale_debug.rs`](./large_scale_debug.rs)
@@ -367,6 +382,28 @@ cargo test --release --features <backend_feature> --test storage_backend_compati
 Reproduction-oriented debug harnesses for larger 3D/4D datasets, including ignored tests and bisect-style workflows.
 
 **Run with:** `cargo test --test large_scale_debug -- --ignored --nocapture` (or the `just debug-large-scale-*` helpers)
+
+#### [`conflict_region_verification.rs`](./conflict_region_verification.rs)
+
+Diagnostic smoke test for conflict-region completeness verification.
+Exercises `verify_conflict_region_completeness` using the known-failing
+3D seed from #306 to confirm the diagnostic tooling works end-to-end.
+
+**Run with:** `cargo test --test conflict_region_verification -- --ignored --nocapture`
+
+**Note:** Tests are `#[ignore]` by default — they are diagnostic rather than correctness assertions.
+
+#### [`regression_issue_306.rs`](./regression_issue_306.rs)
+
+Regression test for issue #306: 3D flip-repair cycling in release builds.
+Verifies that the 35-vertex 3D seed `0xE30C78582376677C` constructs
+successfully after unifying repair constants across build profiles.
+
+**Run with:** `cargo test --release --test regression_issue_306`
+
+**Note:** Must be run as an integration test (not unit test) because the
+original bug used `cfg(any(test, debug_assertions))` to gate constants —
+unit tests would always see the permissive values.
 
 #### [`check_perturbation_stats.rs`](./check_perturbation_stats.rs)
 
