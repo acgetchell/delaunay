@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Merged Pull Requests
 
+- Bump pytest in the uv group across 1 directory [#322](https://github.com/acgetchell/delaunay/pull/322)
+- Bump taiki-e/install-action from 2.73.0 to 2.75.9 [#321](https://github.com/acgetchell/delaunay/pull/321)
+- Bump actions/github-script from 8.0.0 to 9.0.0 [#320](https://github.com/acgetchell/delaunay/pull/320)
 - Unify flip-repair and retry constants across build profiles [#306](https://github.com/acgetchell/delaunay/pull/306)
   [#319](https://github.com/acgetchell/delaunay/pull/319)
 - Remove ScalarAccumulative and ScalarSummable traits [#316](https://github.com/acgetchell/delaunay/pull/316)
@@ -79,6 +82,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Replace all ScalarAccumulative bounds with CoordinateScalar across 20 files
   - Simplify operator usage (e.g. coords[axis] += … instead of manual add-assign)
 
+### Documentation
+
+- Sync documentation with post-v0.7.5 changes [skip ci] [`5fa36aa`](https://github.com/acgetchell/delaunay/commit/5fa36aa67cb99bb3a5781e4c2733c2acec3adea8)
+
+- Add missing files to code_organization.md directory tree
+    (debug_env_vars.md, TODO.md, conflict_region_verification.rs,
+    regression_issue_306.rs)
+
+  - Add delaunayize_repair example to README.md examples list
+  - Document new test files in tests/README.md (delaunayize_workflow,
+    conflict_region_verification, regression_issue_306)
+
+  - Update docs/TODO.md: mark completed items (#288, #302, #306/#307),
+    refresh next-release candidates
+
 ### Fixed
 
 - Handle geometric degeneracy gracefully in profiling benchmarks
@@ -128,6 +146,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   alternative vertex insertion orders to converge. This change ensures
   consistent behavior between debug and release builds and includes a
   regression test for the reported failure case.
+
+### Maintenance
+
+- Bump pytest in the uv group across 1 directory [#322](https://github.com/acgetchell/delaunay/pull/322)
+  [`c5e3c3b`](https://github.com/acgetchell/delaunay/commit/c5e3c3bb35c94add75dc1550860b77a0a7e01f32)
+
+Bumps the uv group with 1 update in the / directory: [pytest](https://github.com/pytest-dev/pytest).
+
+  Updates `pytest` from 8.4.2 to 9.0.3
+
+- [Release notes](https://github.com/pytest-dev/pytest/releases)
+- [Changelog](https://github.com/pytest-dev/pytest/blob/main/CHANGELOG.rst)
+- [Commits](https://github.com/pytest-dev/pytest/compare/8.4.2...9.0.3)
+
+  ---
+  updated-dependencies:
+
+- dependency-name: pytest
+    dependency-version: 9.0.3
+    dependency-type: direct:development
+    dependency-group: uv
+  ...
+
+- Bump actions/github-script from 8.0.0 to 9.0.0 [#320](https://github.com/acgetchell/delaunay/pull/320)
+  [`80f5984`](https://github.com/acgetchell/delaunay/commit/80f5984dbe45535226a26a47b2f3eb509b0b9f88)
+
+Bumps [actions/github-script](https://github.com/actions/github-script) from 8.0.0 to 9.0.0.
+
+- [Release notes](https://github.com/actions/github-script/releases)
+- [Commits](https://github.com/actions/github-script/compare/ed597411d8f924073f98dfc5c65a23a2325f34cd...3a2844b7e9c422d3c10d287c895573f7108da1b3)
+
+  ---
+  updated-dependencies:
+
+- dependency-name: actions/github-script
+    dependency-version: 9.0.0
+    dependency-type: direct:production
+    update-type: version-update:semver-major
+  ...
+
+- Bump taiki-e/install-action from 2.73.0 to 2.75.9 [#321](https://github.com/acgetchell/delaunay/pull/321)
+  [`d9fa322`](https://github.com/acgetchell/delaunay/commit/d9fa322eda20cbb4f9b35f3db954618072905613)
+
+Bumps [taiki-e/install-action](https://github.com/taiki-e/install-action) from 2.73.0 to 2.75.9.
+
+- [Release notes](https://github.com/taiki-e/install-action/releases)
+- [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
+- [Commits](https://github.com/taiki-e/install-action/compare/7a562dfa955aa2e4d5b0fd6ebd57ff9715c07b0b...d0f23220b09a75c6db730f13bb37c4f8144b4382)
+
+  ---
+  updated-dependencies:
+
+- dependency-name: taiki-e/install-action
+    dependency-version: 2.75.9
+    dependency-type: direct:production
+    update-type: version-update:semver-minor
+  ...
 
 ## [0.7.5] - 2026-04-10
 

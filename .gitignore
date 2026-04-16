@@ -37,6 +37,9 @@
 # Claude AI configuration (user-specific settings)
 .claude/
 
+# Kilocode configuration (user-specific settings)
+.kilo/
+
 # macOS Instruments trace directories and files
 *.trace/
 Trace*.run/
