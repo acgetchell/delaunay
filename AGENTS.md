@@ -354,7 +354,7 @@ degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
   correctness.  Dimension‑generic tests **must cover D=2 through D=5**
   whenever feasible; use `pastey` macros to generate per‑dimension tests
   (see `src/core/cell.rs`, `src/core/tds.rs` for patterns).
-- Proptests under `tests/proptest_*.rs` (17 files) cover algebraic and
+- Proptests under `tests/proptest_*.rs` cover algebraic and
   topological invariants — round‑trips, Euler characteristic, orientation
   sign agreement, SoS consistency — not just "does it not panic".
 - Adversarial inputs (near‑boundary points, cospherical sets, degenerate

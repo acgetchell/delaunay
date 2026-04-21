@@ -171,8 +171,8 @@ pub struct DelaunayizeOutcome<T, U, V, const D: usize> {
 ///
 /// The `*WithRebuild` variants preserve **both** the primary repair error and
 /// the secondary construction error as typed values (no stringification),
-/// so consumers can traverse the full diagnostic chain via pattern
-/// matching or [`Error::source`](std::error::Error::source).
+/// so consumers can inspect both errors via pattern matching; the primary
+/// repair error is exposed via [`Error::source`](std::error::Error::source).
 ///
 /// # Examples
 ///
@@ -266,7 +266,8 @@ pub enum DelaunayizeError {
 ///   ([`DelaunayRepairFailedWithRebuild`](DelaunayizeError::DelaunayRepairFailedWithRebuild)).
 ///
 /// The `*WithRebuild` variants preserve both errors as typed fields so
-/// consumers can walk the full diagnostic chain.
+/// consumers can inspect both typed errors;
+/// [`Error::source`](std::error::Error::source) exposes the primary repair error.
 ///
 /// # Examples
 ///
@@ -287,7 +288,7 @@ pub enum DelaunayizeError {
 /// ```
 #[expect(
     clippy::result_large_err,
-    reason = "DelaunayizeError deliberately preserves typed source and rebuild_error values on the *WithRebuild variants (no boxing) so consumers get the full diagnostic chain via pattern matching or Error::source; this is a cold error path."
+    reason = "DelaunayizeError preserves typed source and rebuild_error values on the *WithRebuild variants (no boxing) so callers can pattern-match both errors while Error::source exposes the primary repair error; this is a cold error path."
 )]
 pub fn delaunayize_by_flips<K, U, V, const D: usize>(
     dt: &mut DelaunayTriangulation<K, U, V, D>,

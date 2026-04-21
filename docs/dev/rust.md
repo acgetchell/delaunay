@@ -337,7 +337,8 @@ InvalidFacetIndex(u8, usize),
 Source and "secondary" errors must be stored **by value as typed enums**,
 not as `Box<dyn Error>`, not as `anyhow::Error`, and not stringified into a
 `message: String` field. The whole point of the taxonomy is that consumers
-can pattern‑match or walk the chain via [`Error::source`].
+can pattern-match the full structured error, while [`Error::source`]
+exposes whichever field is annotated as the primary source.
 
 - Use `#[source]` (and `#[from]` where the conversion is unambiguous) on
   the typed field so `thiserror` wires up the source chain.
@@ -348,7 +349,7 @@ can pattern‑match or walk the chain via [`Error::source`].
   in a different crate — that erases variant and source information.
 
 ```rust
-// Good: typed rebuild error preserved by value, source chain intact.
+// Good: typed rebuild error preserved by value; primary source chain intact.
 TopologyRepairFailedWithRebuild {
     #[source]
     source: PlManifoldRepairError,
@@ -414,8 +415,8 @@ pub enum FooError { ... }
 - `Debug` — required for `Error`.
 - `thiserror::Error` — wires up `Display` and `source()`.
 - `PartialEq, Eq` — deriveable whenever all payload types are `Eq`
-  (integers, strings, UUIDs, keys, other `PartialEq` enums, `Arc<T>` /
-  `Box<T>` where `T: PartialEq`). All error enums in this crate satisfy
+  (integers, strings, UUIDs, keys, other `Eq` enums, `Arc<T>` /
+  `Box<T>` where `T: Eq`). All error enums in this crate satisfy
   this today. Skip these only when a payload genuinely cannot be `Eq`
   (e.g. `f64`, `io::Error`, `Box<dyn Error>`) — none of which belong in
   error values anyway.
