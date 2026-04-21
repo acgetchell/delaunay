@@ -15,6 +15,7 @@ use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar,
 };
+use core::hint::cold_path;
 use std::sync::LazyLock;
 
 static STRICT_INSPHERE_CONSISTENCY: LazyLock<bool> =
@@ -192,11 +193,14 @@ where
 
     // Strategy 3: Geometric + SoS fallback — only reached when exact-sign
     // computation itself failed (e.g. unsupported matrix size for D ≥ 6).
+    // `cold_path()` nudges the optimizer to keep Strategies 1–2 lean; the
+    // vast majority of calls return before reaching this point.
     //
     // First try insphere_distance (circumcenter/radius based — no matrix
     // determinant needed, works at any dimension).  This handles the
     // non-degenerate cases correctly.  Only if the result is BOUNDARY
     // (truly degenerate) do we apply SoS tie-breaking.
+    cold_path();
     if let Ok(geometric_result) = super::predicates::insphere_distance(simplex_points, *test_point)
         && geometric_result != InSphere::BOUNDARY
     {
@@ -305,6 +309,9 @@ where
     // Get simplex orientation for correct interpretation.
     let orientation = robust_orientation(simplex_points)?;
     if matches!(orientation, Orientation::DEGENERATE) {
+        // DEGENERATE simplices are rare in well-conditioned inputs; the
+        // BOUNDARY early-return is a cold path.
+        cold_path();
         return Ok(InSphere::BOUNDARY);
     }
     let orient_sign: i8 = if matches!(orientation, Orientation::POSITIVE) {

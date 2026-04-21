@@ -278,33 +278,31 @@ where
         &pl_config,
     ) {
         Ok(stats) => stats,
-        Err(topo_err) => {
-            if let Some(ref verts) = fallback_vertices {
-                // Topology repair failed but fallback is enabled — try rebuilding.
-                match DelaunayTriangulation::with_kernel(&dt.as_triangulation().kernel, verts) {
-                    Ok(rebuilt) => {
-                        *dt = rebuilt;
-                        return Ok(DelaunayizeOutcome {
-                            topology_repair: PlManifoldRepairStats::default(),
-                            delaunay_repair: DelaunayRepairStats::default(),
-                            used_fallback_rebuild: true,
-                        });
-                    }
-                    Err(rebuild_err) => {
-                        return Err(DelaunayizeError::TopologyRepairFailed(
-                            PlManifoldRepairError::Tds(
-                                crate::core::tds::TdsError::InconsistentDataStructure {
-                                    message: format!(
-                                        "topology repair failed ({topo_err}); fallback rebuild also failed: {rebuild_err}"
-                                    ),
-                                },
-                            ),
-                        ));
-                    }
+        // Topology repair failed but fallback is enabled — try rebuilding.
+        Err(topo_err) if let Some(ref verts) = fallback_vertices => {
+            match DelaunayTriangulation::with_kernel(&dt.as_triangulation().kernel, verts) {
+                Ok(rebuilt) => {
+                    *dt = rebuilt;
+                    return Ok(DelaunayizeOutcome {
+                        topology_repair: PlManifoldRepairStats::default(),
+                        delaunay_repair: DelaunayRepairStats::default(),
+                        used_fallback_rebuild: true,
+                    });
+                }
+                Err(rebuild_err) => {
+                    return Err(DelaunayizeError::TopologyRepairFailed(
+                        PlManifoldRepairError::Tds(
+                            crate::core::tds::TdsError::InconsistentDataStructure {
+                                message: format!(
+                                    "topology repair failed ({topo_err}); fallback rebuild also failed: {rebuild_err}"
+                                ),
+                            },
+                        ),
+                    ));
                 }
             }
-            return Err(topo_err.into());
         }
+        Err(topo_err) => return Err(topo_err.into()),
     };
 
     // Step 2: Flip-based Delaunay repair.

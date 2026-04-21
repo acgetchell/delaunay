@@ -3763,10 +3763,8 @@ where
                         debug_ridge_context(tds, ridge, Some(*found));
                     }
                 }
-                FlipError::InvalidRidgeAdjacency { .. } => {
-                    if repair_ridge_debug_enabled() {
-                        debug_ridge_context(tds, ridge, None);
-                    }
+                FlipError::InvalidRidgeAdjacency { .. } if repair_ridge_debug_enabled() => {
+                    debug_ridge_context(tds, ridge, None);
                 }
                 FlipError::MissingCell { cell_key } => {
                     diagnostics.record_missing_cell_skip(format!(
@@ -3835,30 +3833,35 @@ where
         return Err(non_convergent_error(max_flips, stats, diagnostics, config));
     }
 
+    // Shared trace tail for apply-k=3 skip arms below.
+    let log_apply_skip = |err: &FlipError| {
+        if repair_trace_enabled() {
+            tracing::debug!("[repair] skip k=3 flip (ridge={ridge:?}) reason={err}");
+            tracing::debug!(
+                "[repair] skip k=3 flip context removed_face={:?} inserted_face={:?} removed_cells={:?}",
+                context.removed_face_vertices,
+                context.inserted_face_vertices,
+                context.removed_cells,
+            );
+        }
+    };
     let info = match apply_bistellar_flip_k3(tds, &context) {
         Ok(info) => info,
+        Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
+            diagnostics.record_inserted_simplex_skip(format!(
+                "ridge={ridge:?} removed_face={:?} inserted_face={:?}",
+                context.removed_face_vertices, context.inserted_face_vertices
+            ));
+            log_apply_skip(&err);
+            return Ok(true);
+        }
         Err(
             err @ (FlipError::DegenerateCell
             | FlipError::DuplicateCell
             | FlipError::NonManifoldFacet
-            | FlipError::InsertedSimplexAlreadyExists { .. }
             | FlipError::CellCreation(_)),
         ) => {
-            if let FlipError::InsertedSimplexAlreadyExists { .. } = &err {
-                diagnostics.record_inserted_simplex_skip(format!(
-                    "ridge={ridge:?} removed_face={:?} inserted_face={:?}",
-                    context.removed_face_vertices, context.inserted_face_vertices
-                ));
-            }
-            if repair_trace_enabled() {
-                tracing::debug!("[repair] skip k=3 flip (ridge={ridge:?}) reason={err}");
-                tracing::debug!(
-                    "[repair] skip k=3 flip context removed_face={:?} inserted_face={:?} removed_cells={:?}",
-                    context.removed_face_vertices,
-                    context.inserted_face_vertices,
-                    context.removed_cells,
-                );
-            }
+            log_apply_skip(&err);
             return Ok(true);
         }
         Err(e) => return Err(e.into()),
@@ -3916,21 +3919,26 @@ where
     queues.edge_queued.remove(&key);
     stats.facets_checked += 1;
 
+    // Shared trace tail for build-k=2-edge skip arms below.
+    let log_build_skip = |err: &FlipError| {
+        if repair_trace_enabled() {
+            tracing::debug!("[repair] skip inverse k=2 edge (edge={edge:?}) reason={err}");
+        }
+    };
     let context = match build_k2_flip_context_from_edge(tds, edge) {
         Ok(ctx) => ctx,
+        Err(ref err) if let FlipError::MissingCell { cell_key } = err => {
+            diagnostics
+                .record_missing_cell_skip(format!("edge={edge:?} missing_cell={cell_key:?}"));
+            log_build_skip(err);
+            return Ok(true);
+        }
         Err(
-            err @ (FlipError::InvalidEdgeMultiplicity { .. }
+            ref err @ (FlipError::InvalidEdgeMultiplicity { .. }
             | FlipError::InvalidEdgeAdjacency { .. }
-            | FlipError::MissingCell { .. }
             | FlipError::MissingVertex { .. }),
         ) => {
-            if let FlipError::MissingCell { cell_key } = &err {
-                diagnostics
-                    .record_missing_cell_skip(format!("edge={edge:?} missing_cell={cell_key:?}"));
-            }
-            if repair_trace_enabled() {
-                tracing::debug!("[repair] skip inverse k=2 edge (edge={edge:?}) reason={err}");
-            }
+            log_build_skip(err);
             return Ok(true);
         }
         Err(e) => return Err(e.into()),
@@ -4006,30 +4014,35 @@ where
         return Err(non_convergent_error(max_flips, stats, diagnostics, config));
     }
 
+    // Shared trace tail for apply-inverse-k=2 skip arms below.
+    let log_apply_skip = |err: &FlipError| {
+        if repair_trace_enabled() {
+            tracing::debug!("[repair] skip inverse k=2 flip (edge={edge:?}) reason={err}");
+            tracing::debug!(
+                "[repair] skip inverse k=2 flip context removed_face={:?} inserted_face={:?} removed_cells={:?}",
+                context.removed_face_vertices,
+                context.inserted_face_vertices,
+                context.removed_cells,
+            );
+        }
+    };
     let info = match apply_bistellar_flip_dynamic(tds, D, &context) {
         Ok(info) => info,
+        Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
+            diagnostics.record_inserted_simplex_skip(format!(
+                "edge={edge:?} removed_face={:?} inserted_face={:?}",
+                context.removed_face_vertices, context.inserted_face_vertices
+            ));
+            log_apply_skip(&err);
+            return Ok(true);
+        }
         Err(
             err @ (FlipError::DegenerateCell
             | FlipError::DuplicateCell
             | FlipError::NonManifoldFacet
-            | FlipError::InsertedSimplexAlreadyExists { .. }
             | FlipError::CellCreation(_)),
         ) => {
-            if let FlipError::InsertedSimplexAlreadyExists { .. } = &err {
-                diagnostics.record_inserted_simplex_skip(format!(
-                    "edge={edge:?} removed_face={:?} inserted_face={:?}",
-                    context.removed_face_vertices, context.inserted_face_vertices
-                ));
-            }
-            if repair_trace_enabled() {
-                tracing::debug!("[repair] skip inverse k=2 flip (edge={edge:?}) reason={err}");
-                tracing::debug!(
-                    "[repair] skip inverse k=2 flip context removed_face={:?} inserted_face={:?} removed_cells={:?}",
-                    context.removed_face_vertices,
-                    context.inserted_face_vertices,
-                    context.removed_cells,
-                );
-            }
+            log_apply_skip(&err);
             return Ok(true);
         }
         Err(e) => return Err(e.into()),
@@ -4087,24 +4100,29 @@ where
     queues.triangle_queued.remove(&key);
     stats.facets_checked += 1;
 
+    // Shared trace tail for build-k=3-triangle skip arms below.
+    let log_build_skip = |err: &FlipError| {
+        if repair_trace_enabled() {
+            tracing::debug!(
+                "[repair] skip inverse k=3 triangle (triangle={triangle:?}) reason={err}"
+            );
+        }
+    };
     let context = match build_k3_flip_context_from_triangle(tds, triangle) {
         Ok(ctx) => ctx,
+        Err(ref err) if let FlipError::MissingCell { cell_key } = err => {
+            diagnostics.record_missing_cell_skip(format!(
+                "triangle={triangle:?} missing_cell={cell_key:?}"
+            ));
+            log_build_skip(err);
+            return Ok(true);
+        }
         Err(
-            err @ (FlipError::InvalidTriangleMultiplicity { .. }
+            ref err @ (FlipError::InvalidTriangleMultiplicity { .. }
             | FlipError::InvalidTriangleAdjacency { .. }
-            | FlipError::MissingCell { .. }
             | FlipError::MissingVertex { .. }),
         ) => {
-            if let FlipError::MissingCell { cell_key } = &err {
-                diagnostics.record_missing_cell_skip(format!(
-                    "triangle={triangle:?} missing_cell={cell_key:?}"
-                ));
-            }
-            if repair_trace_enabled() {
-                tracing::debug!(
-                    "[repair] skip inverse k=3 triangle (triangle={triangle:?}) reason={err}"
-                );
-            }
+            log_build_skip(err);
             return Ok(true);
         }
         Err(e) => return Err(e.into()),
@@ -4169,32 +4187,35 @@ where
         return Err(non_convergent_error(max_flips, stats, diagnostics, config));
     }
 
+    // Shared trace tail for apply-inverse-k=3 skip arms below.
+    let log_apply_skip = |err: &FlipError| {
+        if repair_trace_enabled() {
+            tracing::debug!("[repair] skip inverse k=3 flip (triangle={triangle:?}) reason={err}");
+            tracing::debug!(
+                "[repair] skip inverse k=3 flip context removed_face={:?} inserted_face={:?} removed_cells={:?}",
+                context.removed_face_vertices,
+                context.inserted_face_vertices,
+                context.removed_cells,
+            );
+        }
+    };
     let info = match apply_bistellar_flip_dynamic(tds, D - 1, &context) {
         Ok(info) => info,
+        Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
+            diagnostics.record_inserted_simplex_skip(format!(
+                "triangle={triangle:?} removed_face={:?} inserted_face={:?}",
+                context.removed_face_vertices, context.inserted_face_vertices
+            ));
+            log_apply_skip(&err);
+            return Ok(true);
+        }
         Err(
             err @ (FlipError::DegenerateCell
             | FlipError::DuplicateCell
             | FlipError::NonManifoldFacet
-            | FlipError::InsertedSimplexAlreadyExists { .. }
             | FlipError::CellCreation(_)),
         ) => {
-            if let FlipError::InsertedSimplexAlreadyExists { .. } = &err {
-                diagnostics.record_inserted_simplex_skip(format!(
-                    "triangle={triangle:?} removed_face={:?} inserted_face={:?}",
-                    context.removed_face_vertices, context.inserted_face_vertices
-                ));
-            }
-            if repair_trace_enabled() {
-                tracing::debug!(
-                    "[repair] skip inverse k=3 flip (triangle={triangle:?}) reason={err}"
-                );
-                tracing::debug!(
-                    "[repair] skip inverse k=3 flip context removed_face={:?} inserted_face={:?} removed_cells={:?}",
-                    context.removed_face_vertices,
-                    context.inserted_face_vertices,
-                    context.removed_cells,
-                );
-            }
+            log_apply_skip(&err);
             return Ok(true);
         }
         Err(e) => return Err(e.into()),
@@ -4256,22 +4277,27 @@ where
     };
     stats.facets_checked += 1;
 
+    // Shared trace tail for build-k=2-facet skip arms below.
+    let log_build_skip = |err: &FlipError| {
+        if repair_trace_enabled() {
+            tracing::debug!("[repair] skip k=2 facet (facet={facet:?}) reason={err}");
+        }
+    };
     let context = match build_k2_flip_context(tds, facet) {
         Ok(ctx) => ctx,
+        Err(ref err) if let FlipError::MissingCell { cell_key } = err => {
+            diagnostics
+                .record_missing_cell_skip(format!("facet={facet:?} missing_cell={cell_key:?}"));
+            log_build_skip(err);
+            return Ok(true);
+        }
         Err(
-            err @ (FlipError::BoundaryFacet { .. }
-            | FlipError::MissingCell { .. }
+            ref err @ (FlipError::BoundaryFacet { .. }
             | FlipError::MissingNeighbor { .. }
             | FlipError::InvalidFacetAdjacency { .. }
             | FlipError::InvalidFacetIndex { .. }),
         ) => {
-            if let FlipError::MissingCell { cell_key } = &err {
-                diagnostics
-                    .record_missing_cell_skip(format!("facet={facet:?} missing_cell={cell_key:?}"));
-            }
-            if repair_trace_enabled() {
-                tracing::debug!("[repair] skip k=2 facet (facet={facet:?}) reason={err}");
-            }
+            log_build_skip(err);
             return Ok(true);
         }
         Err(e) => return Err(e.into()),
@@ -4329,40 +4355,45 @@ where
         return Err(non_convergent_error(max_flips, stats, diagnostics, config));
     }
 
+    // Shared trace tail for apply-k=2-facet skip arms below.
+    let log_apply_skip = |err: &FlipError| {
+        if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+            tracing::debug!(
+                facet = ?facet,
+                reason = %err,
+                removed_face = ?context.removed_face_vertices,
+                inserted_face = ?context.inserted_face_vertices,
+                removed_cells = ?context.removed_cells,
+                "[repair] skip k=2 flip"
+            );
+        }
+        if repair_trace_enabled() {
+            tracing::debug!("[repair] skip k=2 flip (facet={facet:?}) reason={err}");
+            tracing::debug!(
+                "[repair] skip k=2 flip context removed_face={:?} inserted_face={:?} removed_cells={:?}",
+                context.removed_face_vertices,
+                context.inserted_face_vertices,
+                context.removed_cells,
+            );
+        }
+    };
     let info = match apply_bistellar_flip_k2(tds, &context) {
         Ok(info) => info,
+        Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
+            diagnostics.record_inserted_simplex_skip(format!(
+                "facet={facet:?} removed_face={:?} inserted_face={:?}",
+                context.removed_face_vertices, context.inserted_face_vertices
+            ));
+            log_apply_skip(&err);
+            return Ok(true);
+        }
         Err(
             err @ (FlipError::DegenerateCell
             | FlipError::DuplicateCell
             | FlipError::NonManifoldFacet
-            | FlipError::InsertedSimplexAlreadyExists { .. }
             | FlipError::CellCreation(_)),
         ) => {
-            if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
-                tracing::debug!(
-                    facet = ?facet,
-                    reason = %err,
-                    removed_face = ?context.removed_face_vertices,
-                    inserted_face = ?context.inserted_face_vertices,
-                    removed_cells = ?context.removed_cells,
-                    "[repair] skip k=2 flip"
-                );
-            }
-            if let FlipError::InsertedSimplexAlreadyExists { .. } = &err {
-                diagnostics.record_inserted_simplex_skip(format!(
-                    "facet={facet:?} removed_face={:?} inserted_face={:?}",
-                    context.removed_face_vertices, context.inserted_face_vertices
-                ));
-            }
-            if repair_trace_enabled() {
-                tracing::debug!("[repair] skip k=2 flip (facet={facet:?}) reason={err}");
-                tracing::debug!(
-                    "[repair] skip k=2 flip context removed_face={:?} inserted_face={:?} removed_cells={:?}",
-                    context.removed_face_vertices,
-                    context.inserted_face_vertices,
-                    context.removed_cells,
-                );
-            }
+            log_apply_skip(&err);
             return Ok(true);
         }
         Err(e) => return Err(e.into()),

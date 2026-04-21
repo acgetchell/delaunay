@@ -243,7 +243,7 @@ fn bench_construction<const D: usize>(c: &mut Criterion, dimension_name: &str, n
     // Adjust sample size for heavy cases to bound execution time
     if (D == 4 && n_points >= 5000) || D == 5 {
         group.sample_size(10);
-        group.measurement_time(Duration::from_secs(120));
+        group.measurement_time(Duration::from_mins(2));
     }
 
     group.bench_function("construct", |b| {
@@ -312,7 +312,7 @@ fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_p
     // Adjust sample size for large cases and 5D
     if n_points >= 5000 || D == 5 {
         group.sample_size(10);
-        group.measurement_time(Duration::from_secs(120));
+        group.measurement_time(Duration::from_mins(2));
     }
 
     // Pre-generate triangulation for validation benchmarks
@@ -352,7 +352,7 @@ fn bench_neighbor_queries<const D: usize>(
     // Adjust sample size for very heavy cases (5D or large 4D)
     if D == 5 || (D == 4 && n_points >= 5000) {
         group.sample_size(10);
-        group.measurement_time(Duration::from_secs(120));
+        group.measurement_time(Duration::from_mins(2));
     }
 
     let seed = seed_for_case::<D>(n_points);
@@ -396,7 +396,7 @@ fn bench_vertex_iteration<const D: usize>(
     // Adjust sample size for very heavy cases (5D or large 4D)
     if D == 5 || (D == 4 && n_points >= 5000) {
         group.sample_size(10);
-        group.measurement_time(Duration::from_secs(120));
+        group.measurement_time(Duration::from_mins(2));
     }
 
     let seed = seed_for_case::<D>(n_points);
@@ -431,7 +431,7 @@ fn bench_cell_iteration<const D: usize>(c: &mut Criterion, dimension_name: &str,
     // Adjust sample size for very heavy cases (5D or large 4D)
     if D == 5 || (D == 4 && n_points >= 5000) {
         group.sample_size(10);
-        group.measurement_time(Duration::from_secs(120));
+        group.measurement_time(Duration::from_mins(2));
     }
 
     let seed = seed_for_case::<D>(n_points);

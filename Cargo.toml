@@ -2,7 +2,7 @@
 name = "delaunay"
 version = "0.7.5"
 edition = "2024"
-rust-version = "1.94"
+rust-version = "1.95"
 authors = [ "Adam Getchell <adam@adamgetchell.org>" ]
 homepage = "https://github.com/acgetchell/delaunay"
 documentation = "https://docs.rs/delaunay"
@@ -18,7 +18,7 @@ readme = "README.md"
 [dependencies]
 allocation-counter = { version = "0.8.1", optional = true } # for memory profiling
 arc-swap = "1.9.1"
-la-stack = { version = "0.4.0", features = [ "exact" ] }
+la-stack = { version = "0.4.1", features = [ "exact" ] }
 tracing = "0.1.44"
 rustc-hash = "2.1.2" # Fast non-cryptographic hashing for performance
 smallvec = { version = "1.15.1", features = [ "serde" ] } # Stack allocation for small collections
@@ -84,6 +84,11 @@ harness = false
 [[bench]]
 name = "large_scale_performance"
 path = "benches/large_scale_performance.rs"
+harness = false
+
+[[bench]]
+name = "cold_path_predicates"
+path = "benches/cold_path_predicates.rs"
 harness = false
 
 [lints.rust]

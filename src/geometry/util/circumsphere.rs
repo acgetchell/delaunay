@@ -10,6 +10,7 @@ use super::norms::{hypot, squared_norm};
 use crate::geometry::matrix::matrix_set;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
+use core::hint::cold_path;
 use la_stack::{DEFAULT_PIVOT_TOL, LaError, Vector as LaVector};
 
 // Re-export error type
@@ -157,6 +158,10 @@ where
             })?
             .into_array(),
         Err(LaError::Singular { .. }) => {
+            // Exact-arithmetic fallback: LU rejected the system as
+            // near-singular, so we pay for BigRational Gaussian elimination.
+            // This path is cold — well-conditioned simplices return above.
+            cold_path();
             #[cfg(debug_assertions)]
             if std::env::var_os("DELAUNAY_DEBUG_LU_FALLBACK").is_some() {
                 tracing::debug!("circumcenter<{D}>: LU near-singular, using solve_exact_f64");
@@ -169,6 +174,7 @@ where
                 .into_array()
         }
         Err(e) => {
+            cold_path();
             return Err(CircumcenterError::MatrixInversionFailed {
                 details: format!("LU factorization failed: {e}"),
             });
