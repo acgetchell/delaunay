@@ -6,6 +6,35 @@ Agents must follow these rules when modifying or adding Rust code.
 
 ---
 
+## Contents
+
+- [Core Principles](#core-principles)
+- [Safety](#safety)
+- [Dimension Generic Architecture](#dimension-generic-architecture)
+- [Borrowing and Ownership](#borrowing-and-ownership)
+- [Error Handling](#error-handling)
+- [Panic Policy](#panic-policy)
+- [Error Types](#error-types)
+  - [Orthogonal variants](#orthogonal-variants)
+  - [Struct‑with‑named‑fields throughout](#structwithnamedfields-throughout)
+  - [Preserve typed sources — no boxing, no `dyn Error`](#preserve-typed-sources--no-boxing-no-dyn-error)
+  - [Do not stringify; carry typed context instead](#do-not-stringify-carry-typed-context-instead)
+  - [Derive `Clone, Debug, Error, PartialEq, Eq`](#derive-clone-debug-error-partialeq-eq)
+- [Imports](#imports)
+- [Module Layout](#module-layout)
+- [Prelude Design](#prelude-design)
+- [Documentation](#documentation)
+- [Integration Tests](#integration-tests)
+- [Testing Expectations](#testing-expectations)
+- [Performance](#performance)
+- [External Dependencies](#external-dependencies)
+- [Formatting and Lints](#formatting-and-lints)
+- [API Stability](#api-stability)
+- [Logging and Diagnostics](#logging-and-diagnostics)
+- [Preferred Patch Style](#preferred-patch-style)
+
+---
+
 ## Core Principles
 
 This project is a **scientific computational geometry library**.
@@ -226,12 +255,176 @@ Avoid large centralized error enums.
 Example:
 
 ```rust
-#[derive(Debug, thiserror::Error)]
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum InsertError {
     #[error("duplicate vertex")]
     DuplicateVertex,
 }
 ```
+
+The sub‑sections below spell out the conventions that keep error values
+**debuggable, composable, and stable**. They apply to every new error enum
+and to edits of existing ones.
+
+### Orthogonal variants
+
+Every variant represents a **distinct failure mode**. Two variants must not
+overlap in meaning: if a caller can't decide which one to match on, the
+taxonomy is wrong.
+
+When the same underlying condition occurs in two different contexts
+(e.g. primary failure vs. failure during fallback), model it with
+**separate variants that each carry the full typed context**, not with a
+single variant and a free‑form `context: String` field.
+
+Good:
+
+```rust
+pub enum DelaunayizeError {
+    TopologyRepairFailed {
+        source: PlManifoldRepairError,
+    },
+    TopologyRepairFailedWithRebuild {
+        source: PlManifoldRepairError,
+        rebuild_error: DelaunayTriangulationConstructionError,
+    },
+    DelaunayRepairFailed {
+        source: DelaunayRepairError,
+    },
+    DelaunayRepairFailedWithRebuild {
+        source: DelaunayRepairError,
+        rebuild_error: DelaunayTriangulationConstructionError,
+    },
+}
+```
+
+Each pair `Failed` / `FailedWithRebuild` is **orthogonal**: the caller
+always knows whether a fallback was attempted, and if so which specific
+rebuild error was produced.
+
+### Struct‑with‑named‑fields throughout
+
+Prefer **struct variants with named fields** over positional (tuple) variants,
+even for single‑field carriers. Named fields:
+
+- document the semantics of each payload at the declaration site,
+- keep `Display` format strings readable (`{source}`, `{rebuild_error}`),
+- let downstream code pattern‑match by field name without caring about
+  positional order,
+- remain additive: adding a new field is a compile‑error surface that
+  forces callers to consider it.
+
+Prefer:
+
+```rust
+#[error("Invalid facet index {index} for cell with {facet_count} facets")]
+InvalidFacetIndex {
+    index: u8,
+    facet_count: usize,
+},
+```
+
+Avoid:
+
+```rust
+#[error("Invalid facet index {0} for cell with {1} facets")]
+InvalidFacetIndex(u8, usize),
+```
+
+### Preserve typed sources — no boxing, no `dyn Error`
+
+Source and "secondary" errors must be stored **by value as typed enums**,
+not as `Box<dyn Error>`, not as `anyhow::Error`, and not stringified into a
+`message: String` field. The whole point of the taxonomy is that consumers
+can pattern‑match or walk the chain via [`Error::source`].
+
+- Use `#[source]` (and `#[from]` where the conversion is unambiguous) on
+  the typed field so `thiserror` wires up the source chain.
+- Use `Box<T>` only when the **typed** payload would make the enum
+  unbalanced in size (e.g. `NonConvergent` carries a fat diagnostics
+  struct); the inner type is still fully typed.
+- Never replace a typed error with a `String` just because the enum lived
+  in a different crate — that erases variant and source information.
+
+```rust
+// Good: typed rebuild error preserved by value, source chain intact.
+TopologyRepairFailedWithRebuild {
+    #[source]
+    source: PlManifoldRepairError,
+    rebuild_error: DelaunayTriangulationConstructionError,
+},
+```
+
+```rust
+// Bad: stringification erases the typed variant.
+TopologyRepairFailedWithRebuild {
+    source: PlManifoldRepairError,
+    rebuild_message: String,
+},
+```
+
+### Do not stringify; carry typed context instead
+
+Free‑form `message: String` fields are only acceptable when the context is
+genuinely unstructured prose (rare). In practice, **most** "context" is
+structured — indices, counts, keys, UUIDs, other enums — and belongs in
+named fields of a struct variant.
+
+Prefer:
+
+```rust
+#[error("Ridge indices ({omit_a}, {omit_b}) out of bounds for cell {cell_key:?} with {vertex_count} vertices")]
+InvalidRidgeIndex {
+    cell_key: CellKey,
+    omit_a: u8,
+    omit_b: u8,
+    vertex_count: usize,
+},
+```
+
+Avoid:
+
+```rust
+#[error("Ridge indices out of bounds: {message}")]
+InvalidRidgeIndex {
+    message: String,
+},
+```
+
+Structured payloads support:
+
+- test assertions via `assert_eq!` / `matches!` without string parsing,
+- diagnostic tools that filter or aggregate by field,
+- localization and richer `Display` implementations without rewriting
+  call‑sites.
+
+### Derive `Clone, Debug, Error, PartialEq, Eq`
+
+All error enums should derive the standard set:
+
+```rust
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FooError { ... }
+```
+
+- `Clone` — lets callers attach the error to multiple diagnostics paths
+  and lets tests construct expected values once and compare them.
+- `Debug` — required for `Error`.
+- `thiserror::Error` — wires up `Display` and `source()`.
+- `PartialEq, Eq` — deriveable whenever all payload types are `Eq`
+  (integers, strings, UUIDs, keys, other `PartialEq` enums, `Arc<T>` /
+  `Box<T>` where `T: PartialEq`). All error enums in this crate satisfy
+  this today. Skip these only when a payload genuinely cannot be `Eq`
+  (e.g. `f64`, `io::Error`, `Box<dyn Error>`) — none of which belong in
+  error values anyway.
+- `#[non_exhaustive]` — new variants must remain additive; downstream
+  matches need a `_` arm.
+
+Use `assert_eq!` for fixed‑shape variants in tests; prefer `matches!` for
+"just check the variant" when the payload contains long free‑form strings
+or nondeterministic samples.
 
 ---
 

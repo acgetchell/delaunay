@@ -351,6 +351,19 @@ mod tests {
     }
 
     #[test]
+    fn test_circumradius_with_center_empty_point_set() {
+        // Hits the `points.is_empty()` early-return branch in
+        // `circumradius_with_center` (previously only exercised by
+        // `circumcenter`).
+        let points: Vec<Point<f64, 3>> = Vec::new();
+        let center = Point::new([0.0, 0.0, 0.0]);
+        match circumradius_with_center(&points, &center) {
+            Err(CircumcenterError::EmptyPointSet) => {}
+            other => panic!("expected EmptyPointSet, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn predicates_circumradius_2d() {
         let points = vec![
             Point::new([0.0, 0.0]),

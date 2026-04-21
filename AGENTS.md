@@ -8,6 +8,33 @@ referenced files before making changes.
 
 ---
 
+## Contents
+
+- [Required Reading](#required-reading)
+- [Core Rules](#core-rules)
+  - [Git Operations](#git-operations)
+  - [GitHub CLI (`gh`)](#github-cli-gh)
+  - [Code Editing](#code-editing)
+  - [Commit Message Generation](#commit-message-generation)
+- [Validation Workflow](#validation-workflow)
+- [Project Context](#project-context)
+- [Design Principles](#design-principles)
+  - [Numerical correctness as an invariant](#numerical-correctness-as-an-invariant)
+  - [Topological correctness as an invariant](#topological-correctness-as-an-invariant)
+  - [Validation layering](#validation-layering)
+  - [Symbolic perturbation (SoS)](#symbolic-perturbation-sos)
+  - [Public‑API stability](#publicapi-stability)
+  - [Composability](#composability)
+  - [Idiomatic Rust as a proxy for mathematical clarity](#idiomatic-rust-as-a-proxy-for-mathematical-clarity)
+  - [Scientific notation in docs](#scientific-notation-in-docs)
+  - [Performance within scope](#performance-within-scope)
+  - [Testing mirrors the principles](#testing-mirrors-the-principles)
+- [Testing](#testing)
+- [Documentation Maintenance](#documentation-maintenance)
+- [Agent Behavior Expectations](#agent-behavior-expectations)
+
+---
+
 ## Required Reading
 
 Before modifying code, agents MUST read:

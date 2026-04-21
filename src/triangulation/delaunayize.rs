@@ -58,7 +58,9 @@ use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{ExactPredicates, Kernel};
 use crate::geometry::traits::coordinate::CoordinateScalar;
-use crate::triangulation::delaunay::{DelaunayRepairHeuristicConfig, DelaunayTriangulation};
+use crate::triangulation::delaunay::{
+    DelaunayRepairHeuristicConfig, DelaunayTriangulation, DelaunayTriangulationConstructionError,
+};
 use thiserror::Error;
 
 // =============================================================================
@@ -159,6 +161,19 @@ pub struct DelaunayizeOutcome<T, U, V, const D: usize> {
 /// - **Delaunay repair** failed (step 2), with optional context about a
 ///   fallback rebuild attempt.
 ///
+/// # Orthogonality
+///
+/// The four variants are mutually exclusive by failure mode:
+/// - Topology repair, fallback not attempted -> [`TopologyRepairFailed`](Self::TopologyRepairFailed).
+/// - Topology repair, fallback also failed   -> [`TopologyRepairFailedWithRebuild`](Self::TopologyRepairFailedWithRebuild).
+/// - Delaunay repair, fallback not attempted -> [`DelaunayRepairFailed`](Self::DelaunayRepairFailed).
+/// - Delaunay repair, fallback also failed   -> [`DelaunayRepairFailedWithRebuild`](Self::DelaunayRepairFailedWithRebuild).
+///
+/// The `*WithRebuild` variants preserve **both** the primary repair error and
+/// the secondary construction error as typed values (no stringification),
+/// so consumers can traverse the full diagnostic chain via pattern
+/// matching or [`Error::source`](std::error::Error::source).
+///
 /// # Examples
 ///
 /// ```rust
@@ -172,36 +187,53 @@ pub struct DelaunayizeOutcome<T, U, V, const D: usize> {
 ///         found: TopologyGuarantee::Pseudomanifold,
 ///         message: "requires manifold",
 ///     },
-///     context: "fallback not enabled".to_string(),
 /// };
 /// assert!(err.to_string().contains("Delaunay repair failed"));
 /// ```
-#[derive(Clone, Debug, Error)]
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DelaunayizeError {
-    /// PL-manifold topology repair failed.
-    #[error("Topology repair failed: {0}")]
-    TopologyRepairFailed(#[from] PlManifoldRepairError),
+    /// PL-manifold topology repair failed; no fallback rebuild was attempted
+    /// (fallback disabled, or the caller's config did not request one).
+    #[error("Topology repair failed: {source}")]
+    TopologyRepairFailed {
+        /// The underlying topology-repair error.
+        #[from]
+        #[source]
+        source: PlManifoldRepairError,
+    },
 
-    /// Delaunay flip repair failed (and fallback was not enabled or also failed).
-    #[error("Delaunay repair failed ({context}): {source}")]
+    /// PL-manifold topology repair failed **and** the fallback vertex-set
+    /// rebuild also failed.  Both errors are preserved as typed values.
+    #[error("Topology repair failed ({source}); fallback rebuild also failed: {rebuild_error}")]
+    TopologyRepairFailedWithRebuild {
+        /// The underlying topology-repair error that triggered the fallback.
+        #[source]
+        source: PlManifoldRepairError,
+        /// The construction error from the subsequent vertex-set rebuild attempt.
+        rebuild_error: DelaunayTriangulationConstructionError,
+    },
+
+    /// Delaunay flip repair failed; no fallback rebuild was attempted
+    /// (fallback disabled, or the caller's config did not request one).
+    #[error("Delaunay repair failed: {source}")]
     DelaunayRepairFailed {
         /// The underlying flip-repair error.
+        #[from]
         #[source]
         source: DelaunayRepairError,
-        /// Operational context (e.g. "fallback not enabled" or
-        /// "fallback rebuild also failed: ...").
-        context: String,
     },
-}
 
-impl From<DelaunayRepairError> for DelaunayizeError {
-    fn from(err: DelaunayRepairError) -> Self {
-        Self::DelaunayRepairFailed {
-            source: err,
-            context: "fallback not enabled".to_string(),
-        }
-    }
+    /// Delaunay flip repair failed **and** the fallback vertex-set rebuild
+    /// also failed.  Both errors are preserved as typed values.
+    #[error("Delaunay repair failed ({source}); fallback rebuild also failed: {rebuild_error}")]
+    DelaunayRepairFailedWithRebuild {
+        /// The underlying flip-repair error that triggered the fallback.
+        #[source]
+        source: DelaunayRepairError,
+        /// The construction error from the subsequent vertex-set rebuild attempt.
+        rebuild_error: DelaunayTriangulationConstructionError,
+    },
 }
 
 // =============================================================================
@@ -222,11 +254,19 @@ impl From<DelaunayRepairError> for DelaunayizeError {
 /// # Errors
 ///
 /// Returns [`DelaunayizeError`] if:
-/// - Topology repair fails ([`TopologyRepairFailed`](DelaunayizeError::TopologyRepairFailed)).
-/// - Delaunay flip repair fails and fallback is disabled
+/// - Topology repair fails and no fallback rebuild was attempted
+///   ([`TopologyRepairFailed`](DelaunayizeError::TopologyRepairFailed)).
+/// - Topology repair fails **and** the fallback vertex-set rebuild also
+///   fails
+///   ([`TopologyRepairFailedWithRebuild`](DelaunayizeError::TopologyRepairFailedWithRebuild)).
+/// - Delaunay flip repair fails and no fallback rebuild was attempted
 ///   ([`DelaunayRepairFailed`](DelaunayizeError::DelaunayRepairFailed)).
-/// - Fallback rebuild also fails (reported via
-///   [`DelaunayRepairFailed`](DelaunayizeError::DelaunayRepairFailed) with context).
+/// - Delaunay flip repair fails **and** the fallback vertex-set rebuild also
+///   fails
+///   ([`DelaunayRepairFailedWithRebuild`](DelaunayizeError::DelaunayRepairFailedWithRebuild)).
+///
+/// The `*WithRebuild` variants preserve both errors as typed fields so
+/// consumers can walk the full diagnostic chain.
 ///
 /// # Examples
 ///
@@ -245,6 +285,10 @@ impl From<DelaunayRepairError> for DelaunayizeError {
 /// let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap();
 /// assert!(outcome.topology_repair.succeeded);
 /// ```
+#[expect(
+    clippy::result_large_err,
+    reason = "DelaunayizeError deliberately preserves typed source and rebuild_error values on the *WithRebuild variants (no boxing) so consumers get the full diagnostic chain via pattern matching or Error::source; this is a cold error path."
+)]
 pub fn delaunayize_by_flips<K, U, V, const D: usize>(
     dt: &mut DelaunayTriangulation<K, U, V, D>,
     config: DelaunayizeConfig,
@@ -273,37 +317,30 @@ where
         max_iterations: config.topology_max_iterations,
         max_cells_removed: config.topology_max_cells_removed,
     };
-    let topology_stats = match repair_facet_oversharing(
-        &mut dt.as_triangulation_mut().tds,
-        &pl_config,
-    ) {
-        Ok(stats) => stats,
-        // Topology repair failed but fallback is enabled — try rebuilding.
-        Err(topo_err) if let Some(ref verts) = fallback_vertices => {
-            match DelaunayTriangulation::with_kernel(&dt.as_triangulation().kernel, verts) {
-                Ok(rebuilt) => {
-                    *dt = rebuilt;
-                    return Ok(DelaunayizeOutcome {
-                        topology_repair: PlManifoldRepairStats::default(),
-                        delaunay_repair: DelaunayRepairStats::default(),
-                        used_fallback_rebuild: true,
-                    });
-                }
-                Err(rebuild_err) => {
-                    return Err(DelaunayizeError::TopologyRepairFailed(
-                        PlManifoldRepairError::Tds(
-                            crate::core::tds::TdsError::InconsistentDataStructure {
-                                message: format!(
-                                    "topology repair failed ({topo_err}); fallback rebuild also failed: {rebuild_err}"
-                                ),
-                            },
-                        ),
-                    ));
+    let topology_stats =
+        match repair_facet_oversharing(&mut dt.as_triangulation_mut().tds, &pl_config) {
+            Ok(stats) => stats,
+            // Topology repair failed but fallback is enabled — try rebuilding.
+            Err(topo_err) if let Some(ref verts) = fallback_vertices => {
+                match DelaunayTriangulation::with_kernel(&dt.as_triangulation().kernel, verts) {
+                    Ok(rebuilt) => {
+                        *dt = rebuilt;
+                        return Ok(DelaunayizeOutcome {
+                            topology_repair: PlManifoldRepairStats::default(),
+                            delaunay_repair: DelaunayRepairStats::default(),
+                            used_fallback_rebuild: true,
+                        });
+                    }
+                    Err(rebuild_err) => {
+                        return Err(DelaunayizeError::TopologyRepairFailedWithRebuild {
+                            source: topo_err,
+                            rebuild_error: rebuild_err,
+                        });
+                    }
                 }
             }
-        }
-        Err(topo_err) => return Err(topo_err.into()),
-    };
+            Err(topo_err) => return Err(topo_err.into()),
+        };
 
     // Step 2: Flip-based Delaunay repair.
     let delaunay_result = if let Some(max_flips) = config.delaunay_max_flips {
@@ -342,9 +379,9 @@ where
                             used_fallback_rebuild: true,
                         })
                     }
-                    Err(rebuild_err) => Err(DelaunayizeError::DelaunayRepairFailed {
+                    Err(rebuild_err) => Err(DelaunayizeError::DelaunayRepairFailedWithRebuild {
                         source: repair_err,
-                        context: format!("fallback rebuild also failed: {rebuild_err}"),
+                        rebuild_error: rebuild_err,
                     }),
                 }
             } else {

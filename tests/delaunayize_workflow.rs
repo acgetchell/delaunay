@@ -8,9 +8,13 @@
 //! - Repeat-run determinism for outcome stats
 //! - Multi-dimensional coverage (2D–3D)
 
+use delaunay::core::algorithms::flips::DelaunayRepairError;
+use delaunay::core::triangulation::TriangulationConstructionError;
 use delaunay::prelude::triangulation::delaunayize::*;
 use delaunay::prelude::triangulation::flips::BistellarFlips;
+use delaunay::triangulation::delaunay::DelaunayTriangulationConstructionError;
 use delaunay::triangulation::flips::FacetHandle;
+use std::error::Error;
 
 // =============================================================================
 // HELPER FUNCTIONS
@@ -311,39 +315,138 @@ fn test_flip_breaks_delaunay_then_delaunayize_restores() {
 // ERROR VARIANT TESTS
 // =============================================================================
 
-/// Verify that `DelaunayizeError::TopologyRepairFailed` is constructible and
-/// displays correctly (via the `From` impl).
+/// Verify that `DelaunayizeError::TopologyRepairFailed` is constructible via
+/// the `From<PlManifoldRepairError>` impl and displays correctly.
 #[test]
 fn test_error_display_topology_repair_failed() {
-    use delaunay::triangulation::delaunayize::{DelaunayizeError, PlManifoldRepairError};
-
     let inner = PlManifoldRepairError::NoProgress {
         over_shared_facets: 3,
         iterations: 5,
         cells_removed: 10,
     };
-    let err: DelaunayizeError = inner.into();
+    let err: DelaunayizeError = inner.clone().into();
     let msg = err.to_string();
     assert!(msg.contains("Topology repair failed"), "{msg}");
     assert!(msg.contains("3 over-shared facets"), "{msg}");
+
+    // Typed source is preserved end-to-end — no stringification.
+    assert_eq!(
+        err,
+        DelaunayizeError::TopologyRepairFailed { source: inner }
+    );
 }
 
-/// Verify that `DelaunayizeError::DelaunayRepairFailed` preserves the source error.
+/// Verify that `DelaunayizeError::DelaunayRepairFailed` preserves the typed
+/// source error via the `From<DelaunayRepairError>` impl.
 #[test]
 fn test_error_display_delaunay_repair_failed() {
-    use delaunay::core::algorithms::flips::DelaunayRepairError;
-    use delaunay::triangulation::delaunayize::DelaunayizeError;
-    #[allow(unused_imports)]
-    use std::error::Error;
-
     let inner = DelaunayRepairError::PostconditionFailed {
         message: "test postcondition".to_string(),
     };
-    let err: DelaunayizeError = inner.into();
+    let err: DelaunayizeError = inner.clone().into();
     let msg = err.to_string();
     assert!(msg.contains("Delaunay repair failed"), "{msg}");
     assert!(msg.contains("test postcondition"), "{msg}");
-    assert!(msg.contains("fallback not enabled"), "{msg}");
+
+    // Typed source is preserved end-to-end — no stringification.
+    assert_eq!(
+        err,
+        DelaunayizeError::DelaunayRepairFailed { source: inner }
+    );
+}
+
+/// Verify that `DelaunayizeError::TopologyRepairFailedWithRebuild` preserves
+/// **both** the typed [`PlManifoldRepairError`] source and the typed
+/// [`DelaunayTriangulationConstructionError`] rebuild error, and exposes
+/// the primary source via [`Error::source`].
+///
+/// Regression guard: an earlier version of the fallback-rebuild-failure arm
+/// stringified the topology error into a `TdsError::InconsistentDataStructure`,
+/// which erased the typed variant and the source chain.
+#[test]
+fn test_error_display_topology_repair_with_rebuild() {
+    let topo_err = PlManifoldRepairError::NoProgress {
+        over_shared_facets: 3,
+        iterations: 5,
+        cells_removed: 10,
+    };
+    let rebuild_err: DelaunayTriangulationConstructionError =
+        TriangulationConstructionError::GeometricDegeneracy {
+            message: "synthetic rebuild degeneracy".to_string(),
+        }
+        .into();
+    let err = DelaunayizeError::TopologyRepairFailedWithRebuild {
+        source: topo_err.clone(),
+        rebuild_error: rebuild_err.clone(),
+    };
+
+    // Display carries both the primary topology failure and the rebuild error.
+    let msg = err.to_string();
+    assert!(msg.contains("Topology repair failed"), "{msg}");
+    assert!(msg.contains("3 over-shared facets"), "{msg}");
+    assert!(msg.contains("fallback rebuild also failed"), "{msg}");
+    assert!(msg.contains("synthetic rebuild degeneracy"), "{msg}");
+
+    // Both the typed source and rebuild error are preserved — no stringification.
+    assert_eq!(
+        err,
+        DelaunayizeError::TopologyRepairFailedWithRebuild {
+            source: topo_err,
+            rebuild_error: rebuild_err,
+        }
+    );
+
+    // Error::source() exposes the primary topology error so consumers can walk
+    // the source chain instead of pattern-matching.
+    let source = err
+        .source()
+        .expect("source() must be Some for the with-rebuild variant");
+    assert!(
+        source.to_string().contains("3 over-shared facets"),
+        "source display should match the underlying PlManifoldRepairError: {source}"
+    );
+}
+
+/// Verify that `DelaunayizeError::DelaunayRepairFailedWithRebuild` preserves
+/// **both** the typed [`DelaunayRepairError`] source and the typed
+/// [`DelaunayTriangulationConstructionError`] rebuild error.
+#[test]
+fn test_error_display_delaunay_repair_with_rebuild() {
+    let rebuild_err: DelaunayTriangulationConstructionError =
+        TriangulationConstructionError::GeometricDegeneracy {
+            message: "synthetic rebuild degeneracy".to_string(),
+        }
+        .into();
+    let source = DelaunayRepairError::PostconditionFailed {
+        message: "synthetic postcondition".to_string(),
+    };
+    let err = DelaunayizeError::DelaunayRepairFailedWithRebuild {
+        source: source.clone(),
+        rebuild_error: rebuild_err.clone(),
+    };
+
+    let msg = err.to_string();
+    assert!(msg.contains("Delaunay repair failed"), "{msg}");
+    assert!(msg.contains("synthetic postcondition"), "{msg}");
+    assert!(msg.contains("fallback rebuild also failed"), "{msg}");
+    assert!(msg.contains("synthetic rebuild degeneracy"), "{msg}");
+
+    // Both the typed source and rebuild error are preserved — no stringification.
+    assert_eq!(
+        err,
+        DelaunayizeError::DelaunayRepairFailedWithRebuild {
+            source,
+            rebuild_error: rebuild_err,
+        }
+    );
+
+    let source = err
+        .source()
+        .expect("source() must be Some for the with-rebuild variant");
+    assert!(
+        source.to_string().contains("synthetic postcondition"),
+        "source display should match the underlying DelaunayRepairError: {source}"
+    );
 }
 
 // =============================================================================

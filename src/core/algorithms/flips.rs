@@ -874,7 +874,7 @@ impl<const D: usize, const K: usize> BistellarMove<D> for ConstK<K> {
 /// let err = FlipError::UnsupportedDimension { dimension: 1 };
 /// assert!(matches!(err, FlipError::UnsupportedDimension { .. }));
 /// ```
-#[derive(Clone, Debug, Error)]
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FlipError {
     /// Flips are not supported for this dimension.
@@ -1357,7 +1357,7 @@ impl fmt::Display for DelaunayRepairDiagnostics {
 /// };
 /// assert!(matches!(err, DelaunayRepairError::InvalidTopology { .. }));
 /// ```
-#[derive(Clone, Debug, Error)]
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DelaunayRepairError {
     /// Repair did not converge within the flip budget.

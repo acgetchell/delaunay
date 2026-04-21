@@ -6,6 +6,26 @@ Agents must run appropriate checks after modifying code.
 
 ---
 
+## Contents
+
+- [Core Workflow](#core-workflow)
+- [Justfile Usage](#justfile-usage)
+- [Formatting](#formatting)
+- [Linting](#linting)
+- [Documentation Validation](#documentation-validation)
+- [Full CI Validation](#full-ci-validation)
+- [Examples](#examples)
+- [Spell Checking](#spell-checking)
+- [TOML Formatting](#toml-formatting)
+- [Shell Script Validation](#shell-script-validation)
+- [JSON Validation](#json-validation)
+- [GitHub Actions Validation](#github-actions-validation)
+- [Recommended Command Matrix](#recommended-command-matrix)
+- [CI Expectations](#ci-expectations)
+- [Changelog](#changelog)
+
+---
+
 ## Core Workflow
 
 Typical development loop:

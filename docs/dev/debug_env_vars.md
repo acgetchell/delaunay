@@ -13,6 +13,24 @@ in release builds.
 
 ---
 
+## Contents
+
+- [Construction & Insertion](#construction--insertion)
+- [Point Location](#point-location)
+- [Conflict Region](#conflict-region)
+- [Cavity & Hull](#cavity--hull)
+- [Orientation](#orientation)
+- [Neighbor Wiring](#neighbor-wiring)
+- [Flip Repair](#flip-repair)
+- [Predicates & Validation](#predicates--validation)
+- [Point Generation](#point-generation)
+- [Large-Scale Debug Test Harness](#large-scale-debug-test-harness)
+- [Proptest Configuration](#proptest-configuration)
+- [Benchmarks](#benchmarks)
+- [Miscellaneous](#miscellaneous)
+
+---
+
 ## Construction & Insertion
 
 | Variable | Activation | Module | Description |
