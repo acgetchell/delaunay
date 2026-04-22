@@ -628,6 +628,33 @@ Time: [1.0, 1.0, 1.0] µs
             # File should not exist due to write failure
             assert not output_file.exists()
 
+    def test_sampling_warning_reports_dev_full_mismatch(self):
+        """Test that comparison warns when baseline and current sampling modes differ."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            comparator = PerformanceComparator(Path(temp_dir))
+            baseline_content = f"""Date: 2023-12-15 10:30:00 UTC
+Git commit: abc123
+Sampling mode: dev
+Cargo profile: {TRUSTED_BENCH_PROFILE}
+Criterion sample size: 10
+Criterion measurement time: 2
+Criterion warm-up time: 1
+"""
+
+            warning = comparator._sampling_warning(baseline_content, dev_mode=False)
+
+            assert "Sampling configuration differs from baseline" in warning
+            assert "sampling mode: baseline=dev, current=full" in warning
+            assert "Criterion sample size: baseline=10, current=criterion-default" in warning
+
+    def test_sampling_warning_reports_missing_baseline_metadata(self, comparator, sample_baseline_content):
+        """Test that legacy baselines without sampling metadata produce a warning."""
+        warning = comparator._sampling_warning(sample_baseline_content, dev_mode=False)
+
+        assert "Sampling configuration differs from baseline" in warning
+        assert "sampling mode: baseline=Unknown, current=full" in warning
+        assert f"Cargo profile: baseline=Unknown, current={TRUSTED_BENCH_PROFILE}" in warning
+
 
 class TestBaselineGenerator:
     """Test cases for BaselineGenerator benchmark execution."""
@@ -691,25 +718,6 @@ class TestBaselineGenerator:
             assert "Sampling mode: dev" in content
             assert f"Cargo profile: {TRUSTED_BENCH_PROFILE}" in content
             assert "Criterion sample size: 10" in content
-
-    def test_sampling_warning_reports_dev_full_mismatch(self):
-        """Test that comparison warns when baseline and current sampling modes differ."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            comparator = PerformanceComparator(Path(temp_dir))
-            baseline_content = f"""Date: 2023-12-15 10:30:00 UTC
-Git commit: abc123
-Sampling mode: dev
-Cargo profile: {TRUSTED_BENCH_PROFILE}
-Criterion sample size: 10
-Criterion measurement time: 2
-Criterion warm-up time: 1
-"""
-
-            warning = comparator._sampling_warning(baseline_content, dev_mode=False)
-
-            assert "Sampling configuration differs from baseline" in warning
-            assert "sampling mode: baseline=dev, current=full" in warning
-            assert "Criterion sample size: baseline=10, current=criterion-default" in warning
 
 
 class TestIntegrationScenarios:
@@ -1888,13 +1896,6 @@ class TestTimeoutHandling:
                 assert hasattr(args, "validate_bench_timeout")
                 assert args.validate_bench_timeout
 
-    def test_generate_summary_parser_defaults_to_trusted_profile(self):
-        """Test that fresh summary benchmarks default to the trusted Cargo profile."""
-        parser = create_argument_parser()
-        args = parser.parse_args(["generate-summary", "--run-benchmarks"])
-
-        assert args.profile == TRUSTED_BENCH_PROFILE
-
 
 class TestPerformanceSummaryGenerator:
     """Test cases for PerformanceSummaryGenerator class."""
@@ -1912,6 +1913,13 @@ class TestPerformanceSummaryGenerator:
             assert generator.circumsphere_results_dir == project_root / "target" / "criterion"
             assert isinstance(generator.current_version, str)
             assert isinstance(generator.current_date, str)
+
+    def test_generate_summary_parser_defaults_to_trusted_profile(self):
+        """Test that fresh summary benchmarks default to the trusted Cargo profile."""
+        parser = create_argument_parser()
+        args = parser.parse_args(["generate-summary", "--run-benchmarks"])
+
+        assert args.profile == TRUSTED_BENCH_PROFILE
 
     @patch("benchmark_utils.run_git_command")
     def test_get_current_version_with_tag(self, mock_git_command):

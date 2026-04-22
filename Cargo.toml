@@ -60,6 +60,7 @@ slow-tests = [
 inherits = "release"
 lto = "thin"
 codegen-units = 1
+debug = "line-tables-only"
 
 [[bench]]
 name = "circumsphere_containment"

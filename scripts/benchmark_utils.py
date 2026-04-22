@@ -1855,7 +1855,7 @@ class PerformanceComparator:
         mismatches = []
         for label, field in checks:
             baseline_value = baseline[field]
-            if baseline_value != "Unknown" and baseline_value != current[field]:
+            if baseline_value == "Unknown" or baseline_value != current[field]:
                 mismatches.append(f"{label}: baseline={baseline_value}, current={current[field]}")
 
         if not mismatches:
