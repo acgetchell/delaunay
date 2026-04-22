@@ -7183,6 +7183,56 @@ mod tests {
     }
 
     #[test]
+    fn test_flip_error_partial_eq() {
+        let unsupported_1 = FlipError::UnsupportedDimension { dimension: 1 };
+        let unsupported_1_copy = FlipError::UnsupportedDimension { dimension: 1 };
+        let unsupported_2 = FlipError::UnsupportedDimension { dimension: 2 };
+        assert_eq!(unsupported_1, unsupported_1_copy);
+        assert_ne!(unsupported_1, unsupported_2);
+
+        assert_ne!(FlipError::DegenerateCell, FlipError::DuplicateCell);
+        assert_eq!(FlipError::NonManifoldFacet, FlipError::NonManifoldFacet);
+
+        let ridge_4 = FlipError::InvalidRidgeMultiplicity { found: 4 };
+        let ridge_4_copy = FlipError::InvalidRidgeMultiplicity { found: 4 };
+        let ridge_5 = FlipError::InvalidRidgeMultiplicity { found: 5 };
+        assert_eq!(ridge_4, ridge_4_copy);
+        assert_ne!(ridge_4, ridge_5);
+    }
+
+    #[test]
+    fn test_delaunay_repair_error_partial_eq() {
+        use crate::core::triangulation::TopologyGuarantee;
+
+        let post_test = DelaunayRepairError::PostconditionFailed {
+            message: "test".to_string(),
+        };
+        let post_test_copy = DelaunayRepairError::PostconditionFailed {
+            message: "test".to_string(),
+        };
+        let post_other = DelaunayRepairError::PostconditionFailed {
+            message: "other".to_string(),
+        };
+        assert_eq!(post_test, post_test_copy);
+        assert_ne!(post_test, post_other);
+
+        let topo_err = DelaunayRepairError::InvalidTopology {
+            required: TopologyGuarantee::PLManifold,
+            found: TopologyGuarantee::Pseudomanifold,
+            message: "test",
+        };
+        let topo_err_copy = DelaunayRepairError::InvalidTopology {
+            required: TopologyGuarantee::PLManifold,
+            found: TopologyGuarantee::Pseudomanifold,
+            message: "test",
+        };
+        assert_eq!(topo_err, topo_err_copy);
+
+        // Different variants are never equal.
+        assert_ne!(post_test, topo_err);
+    }
+
+    #[test]
     fn test_repair_queue_k2_local_seed() {
         init_tracing();
         let vertices = vec![

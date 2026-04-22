@@ -420,6 +420,7 @@ mod tests {
         assert_eq!(config.topology_max_iterations, 64);
         assert_eq!(config.topology_max_cells_removed, 10_000);
         assert!(!config.fallback_rebuild);
+        assert!(config.delaunay_max_flips.is_none());
     }
 
     // =============================================================================

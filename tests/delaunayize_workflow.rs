@@ -450,6 +450,112 @@ fn test_error_display_delaunay_repair_with_rebuild() {
 }
 
 // =============================================================================
+// EXPLICIT FLIP BUDGET TESTS
+// =============================================================================
+
+/// Verify that `delaunayize_by_flips` works with an explicit `delaunay_max_flips`
+/// budget, which routes through `repair_delaunay_with_flips_advanced` instead
+/// of `repair_delaunay_with_flips`.
+#[test]
+fn test_delaunayize_with_explicit_flip_budget_3d() {
+    init_tracing();
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+        vertex!([0.5, 0.5, 0.5]),
+    ];
+    let mut dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::new(&vertices).unwrap();
+
+    let config = DelaunayizeConfig {
+        delaunay_max_flips: Some(1000),
+        ..DelaunayizeConfig::default()
+    };
+    let outcome = delaunayize_by_flips(&mut dt, config).unwrap();
+    assert!(outcome.topology_repair.succeeded);
+    assert!(!outcome.used_fallback_rebuild);
+    assert!(dt.validate().is_ok());
+}
+
+/// Verify that `delaunayize_by_flips` handles both `delaunay_max_flips` and
+/// `fallback_rebuild` together on valid input.
+#[test]
+fn test_delaunayize_with_flip_budget_and_fallback_2d() {
+    init_tracing();
+    let vertices = vec![
+        vertex!([0.0, 0.0]),
+        vertex!([1.0, 0.0]),
+        vertex!([0.0, 1.0]),
+        vertex!([1.0, 1.0]),
+        vertex!([0.5, 0.5]),
+    ];
+    let mut dt: DelaunayTriangulation<_, (), (), 2> =
+        DelaunayTriangulation::new(&vertices).unwrap();
+
+    let config = DelaunayizeConfig {
+        delaunay_max_flips: Some(500),
+        fallback_rebuild: true,
+        ..DelaunayizeConfig::default()
+    };
+    let outcome = delaunayize_by_flips(&mut dt, config).unwrap();
+    assert!(outcome.topology_repair.succeeded);
+    // Already valid — fallback should not be triggered.
+    assert!(!outcome.used_fallback_rebuild);
+    assert!(dt.validate().is_ok());
+}
+
+/// Apply a k=2 flip to break the Delaunay property, then verify
+/// `delaunayize_by_flips` with an explicit flip budget restores it.
+#[test]
+fn test_flip_breaks_then_delaunayize_with_budget_restores_3d() {
+    init_tracing();
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+        vertex!([0.5, 0.5, 0.5]),
+    ];
+    let mut dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::new(&vertices).unwrap();
+    assert!(dt.validate().is_ok());
+
+    // Collect candidate interior facets.
+    let mut candidate_facets = Vec::new();
+    for (ck, cell) in dt.cells() {
+        if let Some(neighbors) = cell.neighbors() {
+            for (i, n) in neighbors.iter().enumerate() {
+                if let (Some(_), Ok(idx)) = (n, u8::try_from(i)) {
+                    candidate_facets.push(FacetHandle::new(ck, idx));
+                }
+            }
+        }
+    }
+
+    let mut flipped = false;
+    for facet in candidate_facets {
+        if dt.flip_k2(facet).is_ok() {
+            flipped = true;
+            break;
+        }
+    }
+
+    if !flipped {
+        return;
+    }
+
+    let config = DelaunayizeConfig {
+        delaunay_max_flips: Some(1000),
+        ..DelaunayizeConfig::default()
+    };
+    let outcome = delaunayize_by_flips(&mut dt, config).unwrap();
+    assert!(outcome.topology_repair.succeeded);
+    assert!(dt.validate().is_ok());
+}
+
+// =============================================================================
 // VALIDATION AFTER DELAUNAYIZE TEST
 // =============================================================================
 
