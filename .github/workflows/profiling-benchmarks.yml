@@ -134,7 +134,7 @@ jobs:
           fi
 
           # shellcheck disable=SC2086
-          cargo bench --bench profiling_suite $MEMORY_FEATURES "${BENCH_FILTER:-}" \
+          cargo bench --profile perf --bench profiling_suite $MEMORY_FEATURES "${BENCH_FILTER:-}" \
             2>&1 | tee profiling-results/profiling_output.log
 
       # Run dedicated memory profiling if not already executed above
@@ -144,7 +144,7 @@ jobs:
         if: env.MEMORY_BENCHMARKS_RUN != 'true'
         run: |
           echo "Running memory-specific profiling with allocation tracking..."
-          cargo bench --bench profiling_suite --features count-allocations -- memory_profiling \
+          cargo bench --profile perf --bench profiling_suite --features count-allocations -- memory_profiling \
             2>&1 | tee profiling-results/memory_profiling_detailed.log
 
       - name: Generate profiling summary
@@ -275,7 +275,7 @@ jobs:
           echo "BENCH_SAMPLE_SIZE=$BENCH_SAMPLE_SIZE"
           echo "BENCH_WARMUP_SECS=$BENCH_WARMUP_SECS"
           echo "BENCH_MEASUREMENT_TIME=$BENCH_MEASUREMENT_TIME"
-          cargo bench --bench profiling_suite --features count-allocations -- memory_profiling
+          cargo bench --profile perf --bench profiling_suite --features count-allocations -- memory_profiling
       - name: Upload memory test results
         uses: actions/upload-artifact@v7
         with:

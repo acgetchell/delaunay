@@ -138,12 +138,12 @@ class StorageBackendComparator:
             shutil.rmtree(self.criterion_dir, ignore_errors=True)
 
             # Build cargo bench command
-            args = ["bench", "--bench", benchmark_name]
+            args = ["bench", "--profile", "perf", "--bench", benchmark_name]
 
             # Keep the feature set explicit so we always compare the intended backends,
             # even if crate defaults change in the future.
             # SlotMap is the baseline when `dense-slotmap` is not enabled.
-            args.insert(1, "--no-default-features")
+            args.insert(3, "--no-default-features")
 
             if use_dense_slotmap:
                 args.extend(["--features", "dense-slotmap"])
@@ -426,10 +426,10 @@ class StorageBackendComparator:
                 "",
                 "```bash",
                 "# DenseSlotMap",
-                f"cargo bench --no-default-features --features dense-slotmap --bench {benchmark_name}",
+                f"cargo bench --profile perf --no-default-features --features dense-slotmap --bench {benchmark_name}",
                 "",
                 "# SlotMap",
-                f"cargo bench --no-default-features --bench {benchmark_name}",
+                f"cargo bench --profile perf --no-default-features --bench {benchmark_name}",
                 "```",
                 "",
                 "---",

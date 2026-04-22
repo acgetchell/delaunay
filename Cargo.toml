@@ -52,7 +52,12 @@ dense-slotmap = [  ] # Use DenseSlotMap-backed internal storage (default)
 slow-tests = [
 ] # Enable slow-running integration tests (100+ vertices, multiple dimensions)
 
-[profile.release]
+# Performance profile for benchmark baselines, comparisons, summaries, and
+# profiling. Comprehensive CI validation intentionally uses Cargo's default
+# release profile for compile checks because it is catching errors, not
+# producing benchmark measurements.
+[profile.perf]
+inherits = "release"
 lto = "thin"
 codegen-units = 1
 
@@ -92,6 +97,7 @@ path = "benches/cold_path_predicates.rs"
 harness = false
 
 [lints.rust]
+warnings = "deny"
 unsafe_code = "forbid"
 dead_code = "warn"
 missing_docs = "warn"

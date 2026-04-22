@@ -31,6 +31,7 @@ from benchmark_models import (
 from benchmark_utils import (
     DEFAULT_REGRESSION_THRESHOLD,
     DEV_MODE_BENCH_ARGS,
+    TRUSTED_BENCH_PROFILE,
     BaselineGenerator,
     BenchmarkRegressionHelper,
     CriterionParser,
@@ -389,6 +390,7 @@ Time: [1.0, 1.0, 1.0] µs
             assert mock_cargo.call_count >= 1
             args = mock_cargo.call_args[0][0]
             assert "--quiet" not in args  # Changed: --quiet flag should NOT be present
+            assert args[:5] == ["bench", "--profile", TRUSTED_BENCH_PROFILE, "--bench", "ci_performance_suite"]
             if dev_mode:
                 for arg in DEV_MODE_BENCH_ARGS:
                     assert arg in args
@@ -625,6 +627,62 @@ Time: [1.0, 1.0, 1.0] µs
 
             # File should not exist due to write failure
             assert not output_file.exists()
+
+
+class TestBaselineGenerator:
+    """Test cases for BaselineGenerator benchmark execution."""
+
+    @staticmethod
+    def _sample_benchmark_results() -> list[BenchmarkData]:
+        """Return a minimal parsed benchmark result set."""
+        return [BenchmarkData(10, "2D").with_timing(1.0, 2.0, 3.0, "µs")]
+
+    @patch("benchmark_utils.get_git_commit_hash", return_value="abc123")
+    @patch("benchmark_utils.CriterionParser.find_criterion_results")
+    @patch("benchmark_utils.run_cargo_command")
+    def test_generate_baseline_uses_perf_profile(self, mock_cargo, mock_find_results, mock_git):
+        """Test that full baseline generation benchmarks with the trusted Cargo profile."""
+        mock_cargo.return_value = Mock(stdout="")
+        mock_find_results.return_value = self._sample_benchmark_results()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            output_file = project_root / "baseline.txt"
+            generator = BaselineGenerator(project_root)
+
+            with patch.object(generator.hardware, "format_hardware_info", return_value="Hardware Information:\n"):
+                success = generator.generate_baseline(output_file=output_file)
+
+            assert success is True
+            calls = [call.args[0] for call in mock_cargo.call_args_list]
+            assert calls[0] == ["clean"]
+            assert calls[1] == ["bench", "--profile", TRUSTED_BENCH_PROFILE, "--bench", "ci_performance_suite"]
+            mock_git.assert_called_once()
+
+    @patch("benchmark_utils.get_git_commit_hash", return_value="abc123")
+    @patch("benchmark_utils.CriterionParser.find_criterion_results")
+    @patch("benchmark_utils.run_cargo_command")
+    def test_generate_baseline_dev_mode_keeps_perf_profile(self, mock_cargo, mock_find_results, mock_git):
+        """Test that dev baseline mode reduces Criterion settings without changing Cargo profile."""
+        mock_cargo.return_value = Mock(stdout="")
+        mock_find_results.return_value = self._sample_benchmark_results()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            output_file = project_root / "baseline.txt"
+            generator = BaselineGenerator(project_root)
+
+            with patch.object(generator.hardware, "format_hardware_info", return_value="Hardware Information:\n"):
+                success = generator.generate_baseline(dev_mode=True, output_file=output_file)
+
+            assert success is True
+            mock_cargo.assert_called_once()
+            args = mock_cargo.call_args.args[0]
+            assert args[:5] == ["bench", "--profile", TRUSTED_BENCH_PROFILE, "--bench", "ci_performance_suite"]
+            assert "--" in args
+            for arg in DEV_MODE_BENCH_ARGS:
+                assert arg in args
+            mock_git.assert_called_once()
 
 
 class TestIntegrationScenarios:
@@ -1803,6 +1861,13 @@ class TestTimeoutHandling:
                 assert hasattr(args, "validate_bench_timeout")
                 assert args.validate_bench_timeout
 
+    def test_generate_summary_parser_defaults_to_trusted_profile(self):
+        """Test that fresh summary benchmarks default to the trusted Cargo profile."""
+        parser = create_argument_parser()
+        args = parser.parse_args(["generate-summary", "--run-benchmarks"])
+
+        assert args.profile == TRUSTED_BENCH_PROFILE
+
 
 class TestPerformanceSummaryGenerator:
     """Test cases for PerformanceSummaryGenerator class."""
@@ -2124,6 +2189,25 @@ Benchmark completed."""
             # numerical_data should be a dict or None when successful
             assert numerical_data is None or isinstance(numerical_data, dict)
             mock_cargo.assert_called_once()
+            args = mock_cargo.call_args.args[0]
+            assert args[:3] == ["bench", "--bench", "circumsphere_containment"]
+
+    @patch("benchmark_utils.run_cargo_command")
+    def test_run_circumsphere_benchmarks_uses_requested_cargo_profile(self, mock_cargo):
+        """Test running circumsphere benchmarks with an explicit Cargo profile."""
+        mock_cargo.return_value = Mock(stdout="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            success, numerical_data = generator._run_circumsphere_benchmarks(cargo_profile="perf")
+
+            assert success is True
+            assert numerical_data is None or isinstance(numerical_data, dict)
+            mock_cargo.assert_called_once()
+            args = mock_cargo.call_args.args[0]
+            assert args[:5] == ["bench", "--profile", "perf", "--bench", "circumsphere_containment"]
 
     @patch("benchmark_utils.run_cargo_command")
     def test_run_circumsphere_benchmarks_with_numerical_data(self, mock_cargo):
@@ -2211,7 +2295,24 @@ Benchmark completed."""
             success = generator.generate_summary(output_path=output_file, run_benchmarks=True)
 
             assert success is True
-            mock_run_benchmarks.assert_called_once()
+            mock_run_benchmarks.assert_called_once_with(cargo_profile=None)
+            assert output_file.exists()
+
+    @patch("benchmark_utils.PerformanceSummaryGenerator._run_circumsphere_benchmarks")
+    def test_generate_summary_passes_cargo_profile_to_benchmarks(self, mock_run_benchmarks):
+        """Test generating a summary with fresh benchmarks under a specific Cargo profile."""
+        mock_run_benchmarks.return_value = (True, None)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            output_file = Path(temp_dir) / "test_summary.md"
+
+            success = generator.generate_summary(output_path=output_file, run_benchmarks=True, cargo_profile="perf")
+
+            assert success is True
+            mock_run_benchmarks.assert_called_once_with(cargo_profile="perf")
             assert output_file.exists()
 
     @patch("benchmark_utils.PerformanceSummaryGenerator._run_circumsphere_benchmarks")

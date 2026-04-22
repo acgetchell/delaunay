@@ -21,15 +21,15 @@
 //! ## Usage
 //!
 //! ```bash
-//! cargo bench --bench cold_path_predicates
+//! cargo bench --profile perf --bench cold_path_predicates
 //! ```
 //!
 //! To save a baseline before applying `cold_path()` and compare afterwards:
 //!
 //! ```bash
-//! cargo bench --bench cold_path_predicates -- --save-baseline pre
+//! cargo bench --profile perf --bench cold_path_predicates -- --save-baseline pre
 //! # (edit src/geometry/predicates.rs)
-//! cargo bench --bench cold_path_predicates -- --baseline pre
+//! cargo bench --profile perf --bench cold_path_predicates -- --baseline pre
 //! ```
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};

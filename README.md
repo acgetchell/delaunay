@@ -222,12 +222,17 @@ just setup            # Installs all development tools and dependencies
 
 # Development workflow
 just fix              # Apply formatters/auto-fixes (mutating)
-just check            # Lint/validators (non-mutating)
-just ci               # Full CI run (checks + all tests + examples + bench compile)
-just ci-slow          # CI + slow tests (100+ vertices)
+just check            # All non-mutating lints/validators
+just test             # Tests + benchmark/release compile smoke
+just ci               # Comprehensive checks + tests + examples
 just --list           # See all available commands
 just help-workflows   # Show common workflow patterns
 ```
+
+Benchmark commands that produce performance data use the `perf` Cargo profile
+for consistent ThinLTO settings. `just ci` remains the comprehensive validation
+path: it runs checks, the test workflow, and examples, but it does not pay the
+`perf` profile cost unless measuring performance.
 
 **Try the examples:**
 

@@ -98,44 +98,43 @@ action-lint: _ensure-actionlint
         echo "No workflow files found to lint."
     fi
 
-# Benchmarks
+# Benchmark recipes that produce performance numbers use Cargo's perf profile.
 bench:
-    cargo bench --workspace
+    cargo bench --workspace --profile perf
 
 bench-baseline: _ensure-uv
     uv run benchmark-utils generate-baseline
 
-# CI regression benchmarks (fast, suitable for CI)
+# CI regression benchmarks with the perf profile.
 bench-ci:
-    cargo bench --bench ci_performance_suite
+    cargo bench --profile perf --bench ci_performance_suite
 
 bench-compare: _ensure-uv
     uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
 
-# Compile benchmarks without running them, treating warnings as errors.
-# This catches bench/release-profile-only warnings (e.g. debug_assertions-gated unused vars)
-# that won't show up in normal debug-profile `cargo test` / `cargo clippy` runs.
+# Compile benchmarks without running them. Manifest lints enforce the warning
+# policy without using RUSTFLAGS that fragment Cargo artifact caches.
 bench-compile:
-    RUSTFLAGS='-D warnings' cargo bench --workspace --no-run
+    cargo bench --workspace --no-run
 
-# Compile benchmarks and integration tests without running, treating warnings as errors.
-# Catches release-profile-only warnings (e.g. cfg-gated unused-mut) that debug-mode
-# clippy/test won't see. Mirrors the -D warnings environment set by CI's Rust toolchain action.
+# Compile benchmarks and integration tests without running. This catches
+# release-profile-only warnings (e.g. cfg-gated unused-mut) that debug-mode
+# clippy/test won't see.
 bench-test-compile:
-    RUSTFLAGS='-D warnings' cargo bench --workspace --no-run
-    RUSTFLAGS='-D warnings' cargo test --tests --release --no-run
+    cargo bench --workspace --no-run
+    cargo test --tests --release --no-run
 
-# Development mode benchmarks: fast iteration with reduced sample sizes
+# Development benchmark comparison: perf profile with reduced sample sizes.
 bench-dev: _ensure-uv
     CRIT_SAMPLE_SIZE=10 CRIT_MEASUREMENT_MS=1000 CRIT_WARMUP_MS=500 uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt --dev
 
-# Generate performance summary with fresh benchmark runs (for releases)
+# Generate performance summary with fresh perf-profile benchmark runs (for releases)
 bench-perf-summary: _ensure-uv
-    uv run benchmark-utils generate-summary --run-benchmarks
+    uv run benchmark-utils generate-summary --run-benchmarks --profile perf
 
-# Quick benchmark validation: minimal samples for sanity checking
-bench-quick:
-    CRIT_SAMPLE_SIZE=5 CRIT_MEASUREMENT_MS=500 CRIT_WARMUP_MS=200 cargo bench --workspace
+# Smoke-test benchmark harnesses with minimal samples; not for performance data.
+bench-smoke:
+    CRIT_SAMPLE_SIZE=5 CRIT_MEASUREMENT_MS=500 CRIT_WARMUP_MS=200 cargo bench --workspace --profile perf
 
 # Build commands
 build:
@@ -164,13 +163,9 @@ changelog-update: changelog
 check: lint
     @echo "✅ Checks complete!"
 
-# Fast compile check (no binary produced)
-check-fast:
-    cargo check
-
 # CI simulation: comprehensive validation (matches .github/workflows/ci.yml)
-# Runs: checks + all tests (Rust + Python) + examples + bench compile
-ci: check bench-test-compile test-all examples
+# Runs: checks + test workflow + examples
+ci: check test examples
     @echo "🎯 CI checks complete!"
 
 # CI with performance baseline
@@ -255,59 +250,45 @@ fmt-check:
     cargo fmt --all -- --check
 
 help-workflows:
-    @echo "Common Just workflows:"
+    @echo "Recommended Just workflow:"
     @echo "  just fix               # Apply formatters/auto-fixes (mutating)"
-    @echo "  just check             # Run lint/validators (non-mutating)"
-    @echo "  just check-fast        # Fast compile check (cargo check)"
-    @echo "  just ci                # Full CI run (checks + all tests + examples + bench compile)"
-    @echo "  just ci-slow           # CI + slow tests (100+ vertices)"
-    @echo "  just ci-baseline       # CI + save performance baseline"
+    @echo "  just check             # Run all non-mutating lints/validators"
+    @echo "  just test              # Run tests + default-profile benchmark/release compile smoke"
+    @echo "  just ci                # Comprehensive checks + tests + examples"
     @echo ""
-    @echo "Testing:"
-    @echo "  just test              # Lib and doc tests only (fast, used by CI)"
+    @echo "Focused testing:"
+    @echo "  just test-unit         # Lib and doc tests only"
     @echo "  just test-integration  # All integration tests (includes proptests)"
     @echo "  just test-integration-fast # Integration tests (skips proptests)"
-    @echo "  just test-all          # All tests (lib + doc + integration + Python)"
     @echo "  just test-python       # Python tests only (pytest)"
-    @echo "  just test-release      # All tests in release mode"
     @echo "  just test-slow         # Run slow/stress tests with --features slow-tests"
-    @echo "  just test-slow-release # Slow tests in release mode (faster)"
-    @echo "  just test-debug            # Run debug tools with output"
-    @echo "  just debug-large-scale-3d-100   # Run large-scale 3D debug harness at 100 points (ball)"
-    @echo "  just debug-large-scale-3d-1000  # Run large-scale 3D debug harness at 1000 points (ball)"
-    @echo "  just debug-large-scale-3d-incremental-bisect [total] # Bisect minimal failing 3D incremental prefix (default total=1000)"
-    @echo "  just debug-large-scale-4d-100   # Run large-scale 4D debug harness at 100 points (ball)"
-    @echo "  just debug-large-scale-4d       # Run large-scale 4D debug harness with default point count"
-    @echo "  just test-allocation   # Memory allocation profiling"
     @echo "  just examples          # Run all examples"
-    @echo "  just coverage          # Generate coverage report (HTML)"
-    @echo "  just coverage-ci       # Generate coverage for CI (XML)"
     @echo ""
-    @echo "Quality Check Groups:"
-    @echo "  just lint          # All linting (code + docs + config)"
-    @echo "  just lint-code     # Code linting (Rust, Python, Shell)"
-    @echo "  just lint-docs     # Documentation linting (Markdown, Spelling)"
-    @echo "  just lint-config   # Configuration validation (JSON, TOML, Actions)"
+    @echo "Active large-scale debugging (keep until #307/#204 are resolved):"
+    @echo "  just test-debug            # Run debug tools with output"
+    @echo "  just debug-large-scale-3d-100   # Run large-scale 3D debug harness at 100 points"
+    @echo "  just debug-large-scale-3d-1000  # Run large-scale 3D debug harness at 1000 points"
+    @echo "  just debug-large-scale-3d-incremental-bisect [total] # Bisect failing 3D incremental prefix"
+    @echo "  just debug-large-scale-4d-100   # Run large-scale 4D debug harness at 100 points"
+    @echo "  just debug-large-scale-4d       # Run large-scale 4D debug harness"
     @echo ""
-    @echo "Benchmark System:"
-    @echo "  just bench              # Run all benchmarks"
-    @echo "  just bench-baseline     # Generate performance baseline"
-    @echo "  just bench-ci           # CI regression benchmarks (fast, ~5-10 min)"
-    @echo "  just bench-compare      # Compare against baseline"
-    @echo "  just bench-dev          # Development mode (10x faster, ~1-2 min)"
-    @echo "  just bench-perf-summary # Generate performance summary for releases (~30-45 min)"
-    @echo "  just bench-quick        # Quick validation (minimal samples, ~30 sec)"
+    @echo "Benchmark workflows (explicit perf-profile runs):"
+    @echo "  just bench-smoke        # Smoke-test benchmark harnesses (minimal samples)"
+    @echo "  just bench              # Run all benchmarks with perf profile (ThinLTO)"
+    @echo "  just bench-baseline     # Generate perf-profile performance baseline"
+    @echo "  just bench-ci           # CI regression benchmarks with perf profile (~5-10 min)"
+    @echo "  just bench-compare      # Compare against baseline with perf profile"
+    @echo "  just bench-dev          # Reduced-sample perf-profile comparison (~1-2 min)"
+    @echo "  just bench-perf-summary # Generate perf-profile release summary (~30-45 min)"
     @echo ""
-    @echo "Storage Backend Comparison:"
+    @echo "Larger/optional workflows:"
+    @echo "  just ci-slow             # CI + slow tests (100+ vertices)"
+    @echo "  just ci-baseline         # CI + save performance baseline"
+    @echo "  just coverage            # Generate coverage report (HTML)"
     @echo "  just compare-storage       # Compare SlotMap vs DenseSlotMap (~4-6 hours)"
     @echo "  just compare-storage-large # Large scale comparison (~8-12 hours, compute cluster)"
     @echo ""
-    @echo "Performance Analysis:"
-    @echo "  just perf-help     # Show performance analysis commands"
-    @echo "  just perf-check    # Check for performance regressions"
-    @echo "  just perf-baseline # Save current performance as baseline"
-    @echo ""
-    @echo "Note: Some recipes require external tools. Run 'just setup-tools' (tooling) or 'just setup' (full env) first."
+    @echo "Use 'just --list' for every granular recipe."
 
 # All linting: code + documentation + configuration
 lint: lint-code lint-docs lint-config
@@ -380,8 +361,8 @@ perf-help:
     @echo "  just perf-baseline [tag]    # Save current performance as baseline (optionally tagged)"
     @echo "  just perf-check [threshold] # Check for regressions (default: 5% threshold)"
     @echo "  just perf-compare <file>    # Compare with specific baseline file"
-    @echo "  just bench-dev             # Development mode benchmarks (10x faster)"
-    @echo "  just bench-quick           # Quick validation benchmarks (minimal samples)"
+    @echo "  just bench-dev             # Reduced-sample perf-profile comparison"
+    @echo "  just bench-smoke           # Smoke-test benchmark harnesses"
     @echo ""
     @echo "Profiling Commands:"
     @echo "  just profile               # Profile full triangulation_scaling benchmark"
@@ -391,8 +372,10 @@ perf-help:
     @echo "Benchmark System (Delaunay-specific):"
     @echo "  just bench-baseline        # Generate baseline via benchmark-utils"
     @echo "  just bench-compare         # Compare against stored baseline"
-    @echo "  just bench-dev             # Fast development comparison"
-    @echo "  just bench-quick           # Quick validation (minimal samples)"
+    @echo "  just bench                 # Full benchmark suite with perf profile"
+    @echo "  just bench-ci              # CI benchmark suite with perf profile"
+    @echo "  just bench-dev             # Reduced-sample perf-profile comparison"
+    @echo "  just bench-smoke           # Smoke-test benchmark harnesses"
     @echo ""
     @echo "Environment Variables (Benchmark Configuration):"
     @echo "  CRIT_SAMPLE_SIZE=N         # Number of samples per benchmark"
@@ -403,18 +386,19 @@ perf-help:
     @echo "Examples:"
     @echo "  just perf-baseline v1.0.0  # Save tagged baseline"
     @echo "  just perf-check 10.0       # Check with 10% threshold"
-    @echo "  just bench-dev             # Quick benchmark iteration"
+    @echo "  just bench-dev             # Reduced-sample benchmark iteration"
     @echo "  CRIT_SAMPLE_SIZE=100 just bench  # Custom sample size"
+    @echo "  just bench-ci              # Final optimized CI-suite benchmark run"
 
 # Profiling
 profile:
-    samply record cargo bench --bench profiling_suite -- triangulation_scaling
+    samply record cargo bench --profile perf --bench profiling_suite -- triangulation_scaling
 
 profile-dev:
-    PROFILING_DEV_MODE=1 samply record cargo bench --bench profiling_suite -- "triangulation_scaling_3d/tds_new/random_3d"
+    PROFILING_DEV_MODE=1 samply record cargo bench --profile perf --bench profiling_suite -- "triangulation_scaling_3d/tds_new/random_3d"
 
 profile-mem:
-    samply record cargo bench --bench profiling_suite --features count-allocations -- memory_profiling
+    samply record cargo bench --profile perf --bench profiling_suite --features count-allocations -- memory_profiling
 
 # Pre-publish validation: checks crates.io metadata rules that cargo publish --dry-run does NOT catch
 publish-check: _ensure-jq
@@ -715,13 +699,17 @@ tag-force version: python-sync
     uv run tag-release {{version}} --force
 
 # Testing
-# test: runs only lib and doc tests (fast, used by CI and dev)
-test:
+# test: runs test coverage plus default-profile benchmark/release compile smoke.
+test: bench-test-compile test-all
+    @echo "✅ Test workflow passed!"
+
+# test-unit: runs lib and doc tests.
+test-unit:
     cargo test --lib --verbose
     cargo test --doc --verbose
 
 # test-all: runs lib, doc, integration, and Python tests (comprehensive)
-test-all: test test-integration test-python
+test-all: test-unit test-integration test-python
     @echo "✅ All tests passed!"
 
 test-allocation:

@@ -84,8 +84,8 @@ Before you begin, ensure you have:
    uv run pytest             # Python utility tests
    
    # Or use just for comprehensive testing:
-   just test                 # Library and doc tests
-   just test-all             # All tests (Rust + Python)
+   just test                 # Tests + benchmark/release compile smoke
+   just test-all             # Rust + Python tests
    just test-release         # All tests in release mode (faster performance)
    ```
 
@@ -124,12 +124,11 @@ Before you begin, ensure you have:
    just --list
    just help-workflows   # Show common workflow patterns
    
-   # Common workflows (from quick to comprehensive)
+   # Recommended workflow
    just fix             # Apply formatters/auto-fixes (mutating)
-   just check           # Lint/validators (non-mutating)
-   just ci              # Full CI run (checks + all tests + examples + bench compile)
-   just ci-slow         # CI + slow tests (100+ vertices)
-   just ci-baseline     # CI + save performance baseline
+   just check           # All non-mutating lints/validators
+   just test            # Tests + benchmark/release compile smoke
+   just ci              # Comprehensive checks + tests + examples
    
    # Granular quality checks
    just lint            # All linting (code + docs + config)
@@ -348,17 +347,19 @@ just --version
 just --list
 just help-workflows   # Show common workflow patterns
 
-# Quick iteration cycle
+# Recommended workflow
 just fix              # Apply formatters/auto-fixes (mutating)
-just check            # Lint/validators (non-mutating)
+just check            # All non-mutating lints/validators
+just test             # Tests + benchmark/release compile smoke
 
 # Full CI / pre-push validation
-just ci               # Full CI run (checks + all tests + examples + bench compile)
+just ci               # Comprehensive checks + tests + examples
 just ci-slow          # CI + slow tests (100+ vertices)
 just ci-baseline      # CI + save performance baseline
 
 # Testing workflows
-just test             # Lib and doc tests only (fast, used by CI)
+just test             # Tests + benchmark/release compile smoke
+just test-unit        # Lib and doc tests only
 just test-integration # All integration tests (includes proptests)
 just test-all         # All tests (lib + doc + integration + Python)
 just test-python      # Python tests only (pytest)
@@ -369,12 +370,12 @@ just coverage         # Generate HTML coverage report (5-min timeout per test)
 just coverage-ci      # Generate XML coverage for CI (5-min timeout per test)
 
 # Benchmark workflows
-just bench            # Run all benchmarks
-just bench-baseline   # Generate performance baseline
-just bench-ci         # CI regression benchmarks (fast, ~5-10 min)
-just bench-compare    # Compare against baseline
-just bench-dev        # Development mode (10x faster, ~1-2 min)
-just bench-quick      # Quick validation (minimal samples, ~30 sec)
+just bench-smoke      # Smoke-test benchmark harnesses (minimal samples)
+just bench            # Run all benchmarks with perf profile
+just bench-baseline   # Generate perf-profile performance baseline
+just bench-ci         # CI regression benchmarks with perf profile (~5-10 min)
+just bench-compare    # Compare against baseline with perf profile
+just bench-dev        # Reduced-sample perf-profile comparison (~1-2 min)
 ```
 
 ### Individual Task Recipes
@@ -399,7 +400,8 @@ just bench-quick      # Quick validation (minimal samples, ~30 sec)
 
 #### Testing
 
-- `just test` - Lib and doc tests only (fast, used by CI)
+- `just test` - Tests plus benchmark/release compile smoke
+- `just test-unit` - Lib and doc tests only
 - `just test-integration` - All integration tests (includes proptests)
 - `just test-all` - All tests (lib + doc + integration + Python)
 - `just test-python` - Python tests only (pytest)
@@ -407,6 +409,8 @@ just bench-quick      # Quick validation (minimal samples, ~30 sec)
 - `just test-slow` - Run slow/stress tests with --features slow-tests
 - `just test-slow-release` - Slow tests in release mode (faster)
 - `just test-debug` - Debug tools with output
+- `just debug-large-scale-*` - Active large-scale debug harnesses retained
+  while issues #307 and #204 are being fixed
 - `just test-allocation` - Memory allocation profiling
 - `just examples` - Run all examples to verify functionality
 
@@ -435,13 +439,14 @@ just bench-quick      # Quick validation (minimal samples, ~30 sec)
 
 ```bash
 just fix              # Apply formatters/auto-fixes (mutating)
-just check            # Lint/validators (non-mutating)
+just check            # All non-mutating lints/validators
+just test             # Tests + benchmark/release compile smoke
 ```
 
 **Before committing/pushing:**
 
 ```bash
-just ci               # Full CI run (checks + all tests + examples + bench compile)
+just ci               # Comprehensive checks + tests + examples
 just ci-slow          # Optional: also includes slow/stress tests (100+ vertices)
 ```
 
@@ -451,13 +456,13 @@ just ci-slow          # Optional: also includes slow/stress tests (100+ vertices
 just bench-baseline   # Generate baseline
 # Make changes...
 just bench-compare    # Check for regressions
-just bench-dev        # Quick development iteration (10x faster)
+just bench-dev        # Reduced-sample perf-profile comparison
 ```
 
 **Testing CI locally:**
 
 ```bash
-just ci               # Full CI run (matches .github/workflows/ci.yml)
+just ci               # Comprehensive local CI run
 ```
 
 **See all available commands:**

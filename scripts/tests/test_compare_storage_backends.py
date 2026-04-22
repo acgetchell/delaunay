@@ -239,6 +239,9 @@ class TestStorageBackendComparator:
         assert result["features"] == []
         assert "benchmarks" in result
 
+        args = mock_run_cargo.call_args.args[0]
+        assert args[:5] == ["bench", "--profile", "perf", "--no-default-features", "--bench"]
+
     @patch("compare_storage_backends.run_cargo_command")
     def test_run_benchmark_with_dense_slotmap(self, mock_run_cargo, comparator, completed_ok):
         """Test benchmark execution with DenseSlotMap feature."""
@@ -253,6 +256,7 @@ class TestStorageBackendComparator:
         # Verify cargo command included --features flag
         call_args = mock_run_cargo.call_args
         args = call_args[0][0]
+        assert args[:5] == ["bench", "--profile", "perf", "--no-default-features", "--bench"]
         assert "--features" in args
         assert "dense-slotmap" in args
 

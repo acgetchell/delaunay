@@ -48,7 +48,7 @@ type SeedSearchResult<const D: usize> = Option<(u64, Vec<Point<f64, D>>, Vec<Ver
 /// To refresh seeds (e.g. after algorithm changes that invalidate them), run:
 ///
 /// ```bash
-/// DELAUNAY_BENCH_DISCOVER_SEEDS=1 cargo bench --bench ci_performance_suite
+/// DELAUNAY_BENCH_DISCOVER_SEEDS=1 cargo bench --profile perf --bench ci_performance_suite
 /// ```
 ///
 /// (Use a Criterion filter for individual cases, e.g.
@@ -175,7 +175,7 @@ macro_rules! benchmark_tds_new_dimension {
             // so it is meant to be run with a Criterion filter that selects a single
             // case, for example:
             //
-            //     cargo bench --bench ci_performance_suite -- 'tds_new_3d/tds_new/50'
+            //     cargo bench --profile perf --bench ci_performance_suite -- 'tds_new_3d/tds_new/50'
             //
             // Because the base seed is derived from `count`, a seed that works for one
             // count may still fail for a different count.

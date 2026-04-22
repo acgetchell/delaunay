@@ -24,22 +24,53 @@ This directory contains performance benchmarks for the delaunay library, organiz
 
 | Use Case | Benchmark | Command |
 |----------|-----------|----------|
-| Quick CI regression check | `ci_performance_suite.rs` | `just bench-ci` or `cargo bench --bench ci_performance_suite` |
-| Phase 4 SlotMap evaluation | `large_scale_performance.rs` | `cargo bench --bench large_scale_performance` |
-| Deep profiling (1-2 hours) | `profiling_suite.rs` | `cargo bench --bench profiling_suite` |
-| Memory analysis | `profiling_suite.rs` (memory groups) | `cargo bench --bench profiling_suite -- memory_profiling` |
-| Algorithm comparison | `circumsphere_containment.rs` | `cargo bench --bench circumsphere_containment` |
-| Topology guarantee overhead (PL-manifold vs pseudomanifold) | `topology_guarantee_construction.rs` | `cargo bench --bench topology_guarantee_construction` |
+| CI regression check | `ci_performance_suite.rs` | `just bench-ci` or `cargo bench --profile perf --bench ci_performance_suite` |
+| Release performance summary | `circumsphere_containment.rs` | `just bench-perf-summary` |
+| Smoke-test benchmark harnesses | Workspace benches | `just bench-smoke` |
+| Phase 4 SlotMap evaluation | `large_scale_performance.rs` | `cargo bench --profile perf --bench large_scale_performance` |
+| Deep profiling (1-2 hours) | `profiling_suite.rs` | `cargo bench --profile perf --bench profiling_suite` |
+| Memory analysis | `profiling_suite.rs` (memory groups) | `cargo bench --profile perf --bench profiling_suite -- memory_profiling` |
+| Algorithm comparison | `circumsphere_containment.rs` | `cargo bench --profile perf --bench circumsphere_containment` |
+| Topology guarantee overhead | `topology_guarantee_construction.rs` | See section below |
 
 ## Running Benchmarks
 
 Benchmark discussions below are sorted lexicographically by benchmark name.
 
+### Cargo Profiles
+
+Benchmark commands that produce performance data use the `perf` profile:
+
+```bash
+just bench
+just bench-ci
+just bench-baseline
+just bench-compare
+just bench-perf-summary
+cargo bench --profile perf --bench ci_performance_suite
+```
+
+Use smoke or compile-only recipes for fast validation when you do not need
+performance data:
+
+```bash
+just bench-smoke
+just bench-compile
+just bench-test-compile
+```
+
+The `perf` profile inherits from release and restores ThinLTO with
+`codegen-units = 1`. It is intentionally separate from the default release
+profile used by `just ci` for comprehensive compile/test validation. `just ci`
+does not need the `perf` profile because it is catching correctness, lint,
+documentation, example, and build errors rather than publishing benchmark
+numbers. Do not treat `bench-smoke` output as performance data.
+
 ### CI Performance Suite (`ci_performance_suite.rs`) (primary)
 
 ```bash
-# Run CI performance suite benchmarks for 2D, 3D, 4D, and 5D (optimized for CI)
-cargo bench --bench ci_performance_suite
+# Run CI performance suite benchmarks for 2D, 3D, 4D, and 5D
+cargo bench --profile perf --bench ci_performance_suite
 ```
 
 The CI Performance Suite is the primary benchmarking suite used for automated performance-regression testing:
@@ -55,7 +86,7 @@ The CI Performance Suite is the primary benchmarking suite used for automated pe
 
 ```bash
 # Run all circumsphere benchmarks
-cargo bench --bench circumsphere_containment
+cargo bench --profile perf --bench circumsphere_containment
 
 # Run with test mode (faster, no actual benchmarking)
 cargo bench --bench circumsphere_containment -- --test
@@ -89,8 +120,8 @@ Performance results are automatically updated using the benchmark infrastructure
 # Generate updated performance summary
 uv run benchmark-utils generate-summary
 
-# Generate summary with fresh benchmark data
-uv run benchmark-utils generate-summary --run-benchmarks
+# Generate summary with fresh perf-profile benchmark data
+uv run benchmark-utils generate-summary --run-benchmarks --profile perf
 
 # Compare current performance against baseline
 uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
@@ -143,12 +174,12 @@ performance improvement**.
 
 ```bash
 # Run large-scale performance benchmarks (Phase 4 primary)
-cargo bench --bench large_scale_performance
+cargo bench --profile perf --bench large_scale_performance
 
 # Run specific test categories
-cargo bench --bench large_scale_performance -- "construction/3D"
-cargo bench --bench large_scale_performance -- "queries/neighbors"
-cargo bench --bench large_scale_performance -- "iteration/vertices"
+cargo bench --profile perf --bench large_scale_performance -- "construction/3D"
+cargo bench --profile perf --bench large_scale_performance -- "queries/neighbors"
+cargo bench --profile perf --bench large_scale_performance -- "iteration/vertices"
 
 # Storage backend comparison
 just compare-storage       # Compare SlotMap vs DenseSlotMap (~4-6 hours)
@@ -164,29 +195,29 @@ for SlotMap comparison.
 A collection of smaller benchmarks for core operations (varies by module).
 
 ```bash
-cargo bench --bench microbenchmarks
+cargo bench --profile perf --bench microbenchmarks
 ```
 
 ### Profiling Suite (`profiling_suite.rs`) (comprehensive)
 
 ```bash
 # Run comprehensive profiling suite (1-2 hours, 10³-10⁶ vertices)
-cargo bench --bench profiling_suite --features count-allocations
+cargo bench --profile perf --bench profiling_suite --features count-allocations
 
 # Development mode (faster, reduced scale)
-PROFILING_DEV_MODE=1 cargo bench --bench profiling_suite --features count-allocations
+PROFILING_DEV_MODE=1 cargo bench --profile perf --bench profiling_suite --features count-allocations
 
 # Override measurement times for faster iteration
-BENCH_MEASUREMENT_TIME=10 cargo bench --bench profiling_suite --features count-allocations
+BENCH_MEASUREMENT_TIME=10 cargo bench --profile perf --bench profiling_suite --features count-allocations
 
 # Run specific profiling categories
-cargo bench --bench profiling_suite --features count-allocations -- triangulation_scaling
-cargo bench --bench profiling_suite --features count-allocations -- memory_profiling
-cargo bench --bench profiling_suite --features count-allocations -- query_latency
-cargo bench --bench profiling_suite --features count-allocations -- algorithmic_bottlenecks
+cargo bench --profile perf --bench profiling_suite --features count-allocations -- triangulation_scaling
+cargo bench --profile perf --bench profiling_suite --features count-allocations -- memory_profiling
+cargo bench --profile perf --bench profiling_suite --features count-allocations -- query_latency
+cargo bench --profile perf --bench profiling_suite --features count-allocations -- algorithmic_bottlenecks
 
 # Run only memory profiling group (useful for focused analysis)
-cargo bench --bench profiling_suite --features count-allocations -- "memory_profiling"
+cargo bench --profile perf --bench profiling_suite --features count-allocations -- "memory_profiling"
 ```
 
 The **Profiling Suite** provides comprehensive performance analysis for optimization work:
@@ -251,13 +282,13 @@ It is intended for **manual** runs (not used by CI).
 
 ```bash
 # Run the full suite (recommended: disable plot generation)
-cargo bench --bench topology_guarantee_construction -- --noplot
+cargo bench --profile perf --bench topology_guarantee_construction -- --noplot
 
 # Filter by dimension
-cargo bench --bench topology_guarantee_construction -- "topology_guarantee_construction/2d"
-cargo bench --bench topology_guarantee_construction -- "topology_guarantee_construction/3d"
-cargo bench --bench topology_guarantee_construction -- "topology_guarantee_construction/4d"
-cargo bench --bench topology_guarantee_construction -- "topology_guarantee_construction/5d"
+cargo bench --profile perf --bench topology_guarantee_construction -- "topology_guarantee_construction/2d"
+cargo bench --profile perf --bench topology_guarantee_construction -- "topology_guarantee_construction/3d"
+cargo bench --profile perf --bench topology_guarantee_construction -- "topology_guarantee_construction/4d"
+cargo bench --profile perf --bench topology_guarantee_construction -- "topology_guarantee_construction/5d"
 ```
 
 ### All Benchmarks
@@ -267,11 +298,11 @@ cargo bench --bench topology_guarantee_construction -- "topology_guarantee_const
 just bench
 
 # Run all benchmarks with memory tracking (direct cargo command)
-cargo bench --features count-allocations
+cargo bench --profile perf --features count-allocations
 
 # Compile-only check (useful for CI validation without running benchmarks)
 just bench-compile
 ```
 
-**💡 Targeted Benchmark Runs**: Use `cargo bench --bench profiling_suite -- --help` to see available filters and Criterion flags for scoping
+**💡 Targeted Benchmark Runs**: Use `cargo bench --profile perf --bench profiling_suite -- --help` to see available filters and Criterion flags for scoping
 long-running benchmarks. This helps target specific test categories or adjust measurement parameters for faster iteration.

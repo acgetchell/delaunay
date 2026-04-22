@@ -241,6 +241,7 @@ jobs:
           echo "   Baseline origin: ${BASELINE_ORIGIN:-unknown}"
           echo "   Baseline tag:    ${BASELINE_TAG:-unknown}"
 
+          # --dev reduces Criterion sampling while benchmark-utils keeps the perf Cargo profile.
           uv run benchmark-utils compare \
             --baseline "baseline-artifact/baseline_results.txt" \
             --bench-timeout "${BENCHMARK_TIMEOUT}" \

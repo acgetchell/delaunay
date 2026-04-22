@@ -9,7 +9,7 @@
 //!
 //! Run with:
 //! ```bash
-//! cargo bench --bench topology_guarantee_construction
+//! cargo bench --profile perf --bench topology_guarantee_construction
 //! ```
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
