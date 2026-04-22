@@ -4258,11 +4258,13 @@ where
                 // insertion schedule that keeps the triangulation near-Delaunay (local repairs on
                 // each insertion) so we do not get stuck in a non-regular configuration that flip
                 // repair cannot escape.
-                let topology = self.tri.topology_guarantee();
+                let topology_guarantee = self.tri.topology_guarantee();
+                let global_topology = self.tri.global_topology();
                 let mut candidate = Self::with_empty_kernel_and_topology_guarantee(
                     self.tri.kernel.clone(),
-                    topology,
+                    topology_guarantee,
                 );
+                candidate.set_global_topology(global_topology);
 
                 // During rebuild, force local repair after every insertion. We'll restore the caller's
                 // policies after we have a repaired candidate.
@@ -5987,6 +5989,7 @@ mod tests {
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel, RobustKernel};
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::topology::characteristics::euler::TopologyClassification;
+    use crate::topology::traits::topological_space::ToroidalConstructionMode;
     use crate::triangulation::flips::BistellarFlips;
     use crate::vertex;
     use rand::{RngExt, SeedableRng};
@@ -6853,6 +6856,36 @@ mod tests {
         // Original vertex_key may be stale after heuristic rebuild; that is
         // expected. The important invariant is that the UUID lookup works.
         let _ = vertex_key;
+    }
+
+    #[test]
+    fn test_heuristic_rebuild_preserves_global_topology() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let global_topology = GlobalTopology::Toroidal {
+            domain: [1.0, 1.0],
+            mode: ToroidalConstructionMode::PeriodicImagePoint,
+        };
+        dt.set_global_topology(global_topology);
+
+        let _guard = ForceHeuristicRebuildGuard::enable();
+        let outcome = dt
+            .repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())
+            .unwrap();
+
+        assert!(
+            outcome.used_heuristic(),
+            "Expected forced heuristic rebuild to be used"
+        );
+        assert_eq!(dt.global_topology(), global_topology);
+        assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
     }
 
     /// Slow search helper to find a natural stale-key repro case.

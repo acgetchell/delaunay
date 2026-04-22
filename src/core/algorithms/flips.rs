@@ -53,6 +53,7 @@ use crate::topology::traits::global_topology_model::{
 };
 use crate::topology::traits::topological_space::GlobalTopology;
 use slotmap::Key;
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -2972,6 +2973,7 @@ where
         &mut queues.facet_queue,
         &config,
         &mut diagnostics,
+        mode,
     )?;
     verify_postcondition_k3_ridges(
         tds,
@@ -2980,6 +2982,7 @@ where
         &mut queues.ridge_queue,
         &config,
         &mut diagnostics,
+        mode,
     )?;
     verify_postcondition_inverse_k2_edges(
         tds,
@@ -3018,6 +3021,21 @@ where
     Ok(())
 }
 
+/// Centralizes Strict/Repair handling so inconclusive predicates fail validation
+/// while remaining skippable during best-effort repair passes.
+fn handle_postcondition_predicate_failure(
+    mode: PostconditionMode,
+    context: &str,
+    error: &FlipError,
+) -> Result<(), DelaunayRepairError> {
+    match mode {
+        PostconditionMode::Repair => Ok(()),
+        PostconditionMode::Strict => Err(DelaunayRepairError::PostconditionFailed {
+            message: format!("{context} predicate failed in strict mode: {error}"),
+        }),
+    }
+}
+
 /// Rechecks queued facets after repair so unresolved k=2 violations surface as
 /// postcondition failures instead of latent invalid triangulations.
 fn verify_postcondition_k2_facets<K, U, V, const D: usize>(
@@ -3027,6 +3045,7 @@ fn verify_postcondition_k2_facets<K, U, V, const D: usize>(
     queue: &mut VecDeque<(FacetHandle, u64)>,
     config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
+    mode: PostconditionMode,
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -3052,8 +3071,12 @@ where
             Ok(true) => {
                 let flip_degenerate = match k2_flip_would_create_degenerate_cell(tds, &context) {
                     Ok(degenerate) => degenerate,
-                    Err(FlipError::PredicateFailure { .. }) => {
-                        // Inconclusive due to numeric degeneracy; skip.
+                    Err(error @ FlipError::PredicateFailure { .. }) => {
+                        handle_postcondition_predicate_failure(
+                            mode,
+                            "local k=2 degeneracy verification",
+                            &error,
+                        )?;
                         continue;
                     }
                     Err(e) => {
@@ -3101,8 +3124,15 @@ where
                 }
                 return Err(DelaunayRepairError::PostconditionFailed { message });
             }
-            Ok(false) | Err(FlipError::PredicateFailure { .. }) => {
-                // No violation detected, or inconclusive due to numeric degeneracy.
+            Ok(false) => {
+                // No violation detected.
+            }
+            Err(error @ FlipError::PredicateFailure { .. }) => {
+                handle_postcondition_predicate_failure(
+                    mode,
+                    "local k=2 postcondition verification",
+                    &error,
+                )?;
             }
             Err(e) => {
                 return Err(DelaunayRepairError::PostconditionFailed {
@@ -3124,6 +3154,7 @@ fn verify_postcondition_k3_ridges<K, U, V, const D: usize>(
     queue: &mut VecDeque<(RidgeHandle, u64)>,
     config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
+    mode: PostconditionMode,
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -3152,8 +3183,12 @@ where
                     &context.inserted_face_vertices,
                 ) {
                     Ok(degenerate) => degenerate,
-                    Err(FlipError::PredicateFailure { .. }) => {
-                        // Inconclusive due to numeric degeneracy; skip.
+                    Err(error @ FlipError::PredicateFailure { .. }) => {
+                        handle_postcondition_predicate_failure(
+                            mode,
+                            "local k=3 degeneracy verification",
+                            &error,
+                        )?;
                         continue;
                     }
                     Err(e) => {
@@ -3180,8 +3215,15 @@ where
                     message: format!("local k=3 violation remains after repair (ridge={ridge:?})"),
                 });
             }
-            Ok(false) | Err(FlipError::PredicateFailure { .. }) => {
-                // No violation detected, or inconclusive due to numeric degeneracy.
+            Ok(false) => {
+                // No violation detected.
+            }
+            Err(error @ FlipError::PredicateFailure { .. }) => {
+                handle_postcondition_predicate_failure(
+                    mode,
+                    "local k=3 postcondition verification",
+                    &error,
+                )?;
             }
             Err(e) => {
                 return Err(DelaunayRepairError::PostconditionFailed {
@@ -3244,8 +3286,12 @@ where
             diagnostics,
         ) {
             Ok(violates) => violates,
-            Err(FlipError::PredicateFailure { .. }) => {
-                // Inconclusive due to numeric degeneracy; skip.
+            Err(error @ FlipError::PredicateFailure { .. }) => {
+                handle_postcondition_predicate_failure(
+                    mode,
+                    "local inverse k=2 postcondition verification",
+                    &error,
+                )?;
                 continue;
             }
             Err(e) => {
@@ -3323,8 +3369,12 @@ where
             diagnostics,
         ) {
             Ok(violates) => violates,
-            Err(FlipError::PredicateFailure { .. }) => {
-                // Inconclusive due to numeric degeneracy; skip.
+            Err(error @ FlipError::PredicateFailure { .. }) => {
+                handle_postcondition_predicate_failure(
+                    mode,
+                    "local inverse k=3 postcondition verification",
+                    &error,
+                )?;
                 continue;
             }
             Err(e) => {
@@ -4930,10 +4980,7 @@ where
         .ok_or(FlipError::MissingCell {
             cell_key: target_cell_key,
         })?;
-    let Some(target_offsets) = target_cell.periodic_vertex_offsets() else {
-        return vertex_point_with_optional_lift(tds, topology_model, vertex_key, None);
-    };
-    validate_periodic_offset_len(target_cell_key, target_cell, target_offsets)?;
+    let target_offsets = periodic_offsets_or_zero_frame(target_cell_key, target_cell)?;
 
     for &source_cell_key in source_cells {
         let Some(source_cell) = tds.get_cell(source_cell_key) else {
@@ -4942,14 +4989,7 @@ where
         if !source_cell.contains_vertex(vertex_key) {
             continue;
         }
-        let Some(source_offsets) = source_cell.periodic_vertex_offsets() else {
-            return Err(FlipError::InvalidFlipContext {
-                message: format!(
-                    "cannot align periodic vertex {vertex_key:?} from cell {source_cell_key:?} into frame {target_cell_key:?}: source cell has no periodic offsets"
-                ),
-            });
-        };
-        validate_periodic_offset_len(source_cell_key, source_cell, source_offsets)?;
+        let source_offsets = periodic_offsets_or_zero_frame(source_cell_key, source_cell)?;
         let Some(source_vertex_index) = source_cell
             .vertices()
             .iter()
@@ -4957,15 +4997,31 @@ where
         else {
             continue;
         };
-        if let Some((target_shared_index, source_shared_index)) =
-            shared_vertex_indices(target_cell, source_cell)
-        {
+        let shared_indices = shared_vertex_indices(target_cell, source_cell);
+        if shared_indices.is_empty() {
+            continue;
+        }
+        let source_vertex_offset = source_offsets[source_vertex_index];
+        let mut aligned_offset: Option<[i8; D]> = None;
+        for (target_shared_index, source_shared_index) in shared_indices {
             let target_offset = target_offsets[target_shared_index];
             let source_offset = source_offsets[source_shared_index];
-            let source_vertex_offset = source_offsets[source_vertex_index];
-            let aligned_offset =
+            let candidate_offset =
                 align_periodic_offset(source_vertex_offset, source_offset, target_offset)?;
-            return lift_vertex_point(tds, topology_model, vertex_key, Some(aligned_offset));
+            if let Some(expected_offset) = aligned_offset {
+                if candidate_offset != expected_offset {
+                    return Err(FlipError::InvalidFlipContext {
+                        message: format!(
+                            "conflicting periodic frame translations while aligning vertex {vertex_key:?} from cell {source_cell_key:?} into frame {target_cell_key:?}: expected {expected_offset:?}, got {candidate_offset:?}"
+                        ),
+                    });
+                }
+            } else {
+                aligned_offset = Some(candidate_offset);
+            }
+        }
+        if let Some(offset) = aligned_offset {
+            return lift_vertex_point(tds, topology_model, vertex_key, Some(offset));
         }
     }
 
@@ -5016,15 +5072,32 @@ where
     let cell = tds
         .get_cell(cell_key)
         .ok_or(FlipError::MissingCell { cell_key })?;
-    let Some(offsets) = cell.periodic_vertex_offsets() else {
-        return Ok(None);
-    };
-    validate_periodic_offset_len(cell_key, cell, offsets)?;
+    let offsets = periodic_offsets_or_zero_frame(cell_key, cell)?;
     Ok(cell
         .vertices()
         .iter()
         .position(|&vkey| vkey == vertex_key)
         .map(|index| offsets[index]))
+}
+
+/// Borrows stored periodic offsets, or treats a periodic cell without explicit
+/// offsets as a zero-offset frame.
+fn periodic_offsets_or_zero_frame<T, U, V, const D: usize>(
+    cell_key: CellKey,
+    cell: &Cell<T, U, V, D>,
+) -> Result<Cow<'_, [[i8; D]]>, FlipError>
+where
+    U: DataType,
+    V: DataType,
+{
+    let offsets = cell.periodic_vertex_offsets().map_or_else(
+        // The fallback frame is synthesized locally, so `Cow::Owned` keeps the
+        // temporary vector alive while the stored-offset path can stay borrowed.
+        || Cow::Owned(vec![[0_i8; D]; cell.number_of_vertices()]),
+        Cow::Borrowed,
+    );
+    validate_periodic_offset_len(cell_key, cell, offsets.as_ref())?;
+    Ok(offsets)
 }
 
 /// Rejects malformed quotient cells before offset indexing can desynchronize
@@ -5050,27 +5123,27 @@ where
     })
 }
 
-/// Finds a common vertex to act as the reference point for aligning two
+/// Finds every common vertex to act as a consistency check when aligning two
 /// periodic cell frames.
 fn shared_vertex_indices<T, U, V, const D: usize>(
     target_cell: &Cell<T, U, V, D>,
     source_cell: &Cell<T, U, V, D>,
-) -> Option<(usize, usize)>
+) -> SmallBuffer<(usize, usize), MAX_PRACTICAL_DIMENSION_SIZE>
 where
     U: DataType,
     V: DataType,
 {
-    target_cell
-        .vertices()
-        .iter()
-        .enumerate()
-        .find_map(|(target_index, &target_vertex)| {
-            source_cell
-                .vertices()
-                .iter()
-                .position(|&source_vertex| source_vertex == target_vertex)
-                .map(|source_index| (target_index, source_index))
-        })
+    let mut shared = SmallBuffer::new();
+    for (target_index, &target_vertex) in target_cell.vertices().iter().enumerate() {
+        if let Some(source_index) = source_cell
+            .vertices()
+            .iter()
+            .position(|&source_vertex| source_vertex == target_vertex)
+        {
+            shared.push((target_index, source_index));
+        }
+    }
+    shared
 }
 
 /// Aligns a periodic vertex offset from a source cell's frame into a target
@@ -8002,7 +8075,7 @@ mod tests {
                 }
 
                 #[test]
-                fn [<test_periodic_lift_rejects_missing_source_offsets_ $dim d>]() {
+                fn [<test_periodic_lift_treats_missing_source_offsets_as_zero_frame_ $dim d>]() {
                     let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
                     let shared_vertex = tds
                         .insert_vertex_with_mapping(vertex!([0.0; $dim]))
@@ -8035,7 +8108,65 @@ mod tests {
                         Some(target_cell),
                         &[source_cell],
                     );
-                    assert!(matches!(result, Err(FlipError::InvalidFlipContext { .. })));
+                    let lifted = result.unwrap();
+                    assert_relative_eq!(
+                        lifted.coords().as_slice(),
+                        unit_vector::<$dim>(0).as_slice()
+                    );
+                }
+
+                #[test]
+                fn [<test_periodic_lift_rejects_conflicting_shared_translations_ $dim d>]() {
+                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let shared_a = tds
+                        .insert_vertex_with_mapping(vertex!([0.0; $dim]))
+                        .unwrap();
+                    let mut shared_b_coords = [0.0; $dim];
+                    shared_b_coords[0] = 0.2;
+                    let shared_b = tds
+                        .insert_vertex_with_mapping(vertex!(shared_b_coords))
+                        .unwrap();
+                    let lifted_vertex = tds
+                        .insert_vertex_with_mapping(vertex!(unit_vector::<$dim>(0)))
+                        .unwrap();
+
+                    let mut target_vertices = Vec::with_capacity($dim + 1);
+                    target_vertices.push(shared_a);
+                    target_vertices.push(shared_b);
+                    target_vertices.extend(periodic_helper_vertices::<$dim>(&mut tds, $dim - 1));
+                    let mut target_offsets = vec![[0_i8; $dim]; target_vertices.len()];
+                    target_offsets[1][0] = 1;
+                    let target_cell =
+                        insert_periodic_cell_with_offsets(&mut tds, target_vertices, target_offsets);
+
+                    let mut source_vertices = Vec::with_capacity($dim + 1);
+                    source_vertices.push(shared_a);
+                    source_vertices.push(shared_b);
+                    source_vertices.push(lifted_vertex);
+                    source_vertices.extend(periodic_helper_vertices::<$dim>(
+                        &mut tds,
+                        $dim - 2,
+                    ));
+                    let source_offsets = vec![[0_i8; $dim]; source_vertices.len()];
+                    let source_cell =
+                        insert_periodic_cell_with_offsets(&mut tds, source_vertices, source_offsets);
+                    let topology_model = toroidal_periodic_model::<$dim>();
+
+                    let result = vertex_point_lifted_into_cell(
+                        &tds,
+                        &topology_model,
+                        lifted_vertex,
+                        Some(target_cell),
+                        &[source_cell],
+                    );
+                    assert!(
+                        matches!(
+                            result,
+                            Err(FlipError::InvalidFlipContext { ref message })
+                                if message.contains("conflicting periodic frame translations")
+                        ),
+                        "conflicting shared translations should be rejected: {result:?}"
+                    );
                 }
 
                 #[test]
