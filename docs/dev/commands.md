@@ -145,15 +145,15 @@ This runs:
 
 ## Benchmark Profiles
 
-`just ci` is the comprehensive error-catching validation path. It runs checks,
-the test workflow, and examples. The test workflow includes benchmark/release-test
-compile coverage using Cargo's default release profile because it is validating
-the code, not producing performance data:
+`just ci` is the comprehensive error-catching validation path. It runs the
+`check`, `test`, and `examples` recipes. The `test` recipe already depends on
+`bench-test-compile`, so CI compiles benchmark harnesses and release tests
+through that path; `bench-compile` is a standalone recipe that is **not**
+executed by `just ci`:
 
 ```bash
 just ci
-just test
-just bench-compile
+just test              # includes just bench-test-compile
 just bench-test-compile
 ```
 

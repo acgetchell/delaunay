@@ -700,7 +700,7 @@ tag-force version: python-sync
     uv run tag-release {{version}} --force
 
 # Testing
-# test: runs test coverage plus default-profile benchmark/release compile smoke.
+# test: runs default-profile benchmark/release compile checks plus all tests.
 test: bench-test-compile test-all
     @echo "✅ Test workflow passed!"
 

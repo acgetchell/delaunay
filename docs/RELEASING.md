@@ -263,10 +263,8 @@ git branch -d "release/$TAG"
 - If multiple crates or files reference the version, confirm all of them are updated consistently.
 - Always run `just ci` before committing the release to catch issues early.
 - `just ci` is the comprehensive validation path for release work: checks,
-  tests, examples, docs, and benchmark/release-test compile coverage. It uses
-  the default release profile for benchmark compile validation; use `just
-  bench`, `just bench-ci`, or `just bench-perf-summary` when release work needs
-  profile-grade benchmark data.
+  tests, and examples. Benchmark/profile-grade data must be produced separately
+  with `just bench`, `just bench-ci`, or `just bench-perf-summary`.
 - `just changelog` may create or update files under `docs/archive/changelog/`. Include these in the release PR.
 - The root `CHANGELOG.md` only contains Unreleased + the active minor series. Completed minors are archived verbatim in `docs/archive/changelog/X.Y.md`.
 - For future convenience, parts of this document can be automated into a release script.

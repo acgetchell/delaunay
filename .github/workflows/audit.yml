@@ -9,6 +9,9 @@ on:
       - "**/Cargo.lock"
   pull_request:
     paths:
+      # Run if workflow changes
+      - .github/workflows/audit.yml
+      # Run on changed dependencies
       - "**/Cargo.toml"
       - "**/Cargo.lock"
   # Rerun periodically to pick up new advisories (weekly instead of daily)

@@ -118,10 +118,12 @@ jobs:
           # Create results directory
           mkdir -p profiling-results
 
-          # Set benchmark filter if provided
-          BENCH_FILTER=""
-          if [[ -n "${{ github.event.inputs.benchmark_filter || '' }}" ]]; then
-            BENCH_FILTER="-- ${{ github.event.inputs.benchmark_filter }}"
+          # Set benchmark filter if provided. Keep the Criterion separator and
+          # filter as separate argv tokens for cargo bench.
+          BENCH_FILTER_VALUE="${{ github.event.inputs.benchmark_filter || '' }}"
+          BENCH_FILTER_ARGS=()
+          if [[ -n "$BENCH_FILTER_VALUE" ]]; then
+            BENCH_FILTER_ARGS=("--" "$BENCH_FILTER_VALUE")
           fi
 
           # Run profiling (timing-focused)
@@ -130,13 +132,13 @@ jobs:
           # Determine if memory profiling is requested via filter
           # Match memory_profiling group specifically (not just any "memory" substring)
           MEMORY_FEATURES=""
-          if [[ "$BENCH_FILTER" =~ (^|[[:space:]])memory_profiling($|[[:space:]]) ]]; then
+          if [[ "$BENCH_FILTER_VALUE" =~ (^|[[:space:]])memory_profiling($|[[:space:]]) ]]; then
             MEMORY_FEATURES="--features count-allocations"
             echo "MEMORY_BENCHMARKS_RUN=true" >> "$GITHUB_ENV"
           fi
 
           # shellcheck disable=SC2086
-          cargo bench --profile perf --bench profiling_suite $MEMORY_FEATURES "${BENCH_FILTER:-}" \
+          cargo bench --profile perf --bench profiling_suite $MEMORY_FEATURES "${BENCH_FILTER_ARGS[@]}" \
             2>&1 | tee profiling-results/profiling_output.log
 
       # Run dedicated memory profiling if not already executed above

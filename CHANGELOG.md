@@ -94,6 +94,31 @@ Perform a general dependency update, including a patch bump for `uuid`.
   updates, and merged pull requests. Add `.kilo/` to the ignored user
   configuration patterns.
 
+- Use dedicated perf profile for consistent benchmark measurement
+  [`ebf9abf`](https://github.com/acgetchell/delaunay/commit/ebf9abf1571b397aeabd47196a101961c456c0c4)
+
+Introduce a `perf` Cargo profile that inherits from `release` but
+  restores ThinLTO and single codegen units. This ensures local, CI, and
+  release benchmarks are generated with identical optimization settings.
+
+  Update all benchmark harnesses, `just` recipes, and documentation to
+  standardize on `--profile perf` for performance measurements, while
+  retaining the default release profile for fast validation in `just ci`.
+  A new `bench-smoke` target provides quick harness validation without
+  the overhead of high-sample measurements.
+
+  Also deniest warnings via the manifest lint policy to ensure consistent
+  repository-wide enforcement.
+
+- Standardize benchmark profiles and enhance SARIF analysis [`9acf503`](https://github.com/acgetchell/delaunay/commit/9acf503ad75f031a4c2c5978f0f353951623499f)
+
+Standardize benchmark workflows to use the `perf` profile by default
+  across local scripts and CI for consistent optimization settings. Add a
+  dedicated CodeQL analysis workflow and refactor SARIF reporting for
+  cargo-audit, Clippy, and Codacy to improve GitHub Code Scanning
+  integration. Update manifest lints to comply with RFC 3389 priority
+  requirements and fix the minimum sample size for benchmark smoke tests.
+
 ### Documentation
 
 - Sync documentation with post-v0.7.5 changes [skip ci] [`5fa36aa`](https://github.com/acgetchell/delaunay/commit/5fa36aa67cb99bb3a5781e4c2733c2acec3adea8)
