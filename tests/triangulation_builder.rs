@@ -356,6 +356,10 @@ fn build_toroidal_periodic_triangulation<const D: usize>()
         dt.global_topology().is_toroidal(),
         "global_topology should be Toroidal"
     );
+    assert!(
+        dt.global_topology().is_periodic(),
+        "global_topology should use periodic image-point construction"
+    );
     dt
 }
 
@@ -414,6 +418,38 @@ macro_rules! gen_toroidal_periodic_validation_test {
 }
 
 gen_toroidal_periodic_validation_test!(2, levels_1_to_4, true);
+#[test]
+fn test_builder_periodic_topology_level4_smoke_3d() {
+    let vertices = vec![
+        vertex!([0.2_f64, 0.3, 0.4]),
+        vertex!([0.8, 0.1, 0.2]),
+        vertex!([0.5, 0.7, 0.6]),
+        vertex!([0.1, 0.9, 0.3]),
+        vertex!([0.6, 0.4, 0.8]),
+    ];
+    let kernel = RobustKernel::new();
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+        .build_with_kernel::<_, ()>(&kernel)
+        .expect("compact 3D build should succeed");
+
+    assert_eq!(dt.number_of_vertices(), vertices.len());
+    assert!(
+        dt.as_triangulation().validate().is_ok(),
+        "PLManifold Levels 1-3 validate() should pass for compact 3D"
+    );
+    dt.set_global_topology(GlobalTopology::Toroidal {
+        domain: [1.0_f64; 3],
+        mode: ToroidalConstructionMode::PeriodicImagePoint,
+    });
+    assert!(
+        dt.global_topology().is_periodic(),
+        "global_topology should use periodic image-point construction"
+    );
+    assert!(
+        dt.is_delaunay_via_flips().is_ok(),
+        "Level 4 flip validation should pass under periodic 3D topology"
+    );
+}
 gen_toroidal_periodic_validation_test!(
     3,
     levels_1_to_4,

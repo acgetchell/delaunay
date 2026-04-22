@@ -2872,7 +2872,13 @@ where
     U: DataType,
     V: DataType,
 {
-    verify_repair_postcondition_with_topology(tds, kernel, None, global_topology)
+    verify_repair_postcondition_with_topology(
+        tds,
+        kernel,
+        None,
+        global_topology,
+        PostconditionMode::Strict,
+    )
 }
 
 /// Keeps legacy Euclidean repair checks on the same validation path as the
@@ -2887,7 +2893,19 @@ where
     U: DataType,
     V: DataType,
 {
-    verify_repair_postcondition_with_topology(tds, kernel, seed_cells, GlobalTopology::DEFAULT)
+    verify_repair_postcondition_with_topology(
+        tds,
+        kernel,
+        seed_cells,
+        GlobalTopology::DEFAULT,
+        PostconditionMode::Repair,
+    )
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PostconditionMode {
+    Repair,
+    Strict,
 }
 
 /// Adapts the public topology enum into the model used for lifted predicate
@@ -2897,6 +2915,7 @@ fn verify_repair_postcondition_with_topology<K, U, V, const D: usize>(
     kernel: &K,
     seed_cells: Option<&[CellKey]>,
     global_topology: GlobalTopology<D>,
+    mode: PostconditionMode,
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -2904,7 +2923,7 @@ where
     V: DataType,
 {
     let topology_model = global_topology.model();
-    verify_repair_postcondition_locally(tds, kernel, seed_cells, &topology_model)
+    verify_repair_postcondition_locally(tds, kernel, seed_cells, &topology_model, mode)
 }
 
 /// Replays the repair queues without mutating the TDS so postconditions cover
@@ -2914,6 +2933,7 @@ fn verify_repair_postcondition_locally<K, U, V, const D: usize>(
     kernel: &K,
     seed_cells: Option<&[CellKey]>,
     topology_model: &GlobalTopologyModelAdapter<D>,
+    mode: PostconditionMode,
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -2968,6 +2988,7 @@ where
         &mut queues.edge_queue,
         &config,
         &mut diagnostics,
+        mode,
     )?;
     verify_postcondition_inverse_k3_triangles(
         tds,
@@ -2976,6 +2997,7 @@ where
         &mut queues.triangle_queue,
         &config,
         &mut diagnostics,
+        mode,
     )?;
 
     // After all flip predicates pass, verify that the repair did not disconnect the
@@ -3181,6 +3203,7 @@ fn verify_postcondition_inverse_k2_edges<K, U, V, const D: usize>(
     queue: &mut VecDeque<(EdgeKey, u64)>,
     config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
+    mode: PostconditionMode,
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -3233,14 +3256,12 @@ where
         };
 
         if !violates {
-            // For D≥4, flip-based inverse postcondition checks can produce false
+            // During repair, D≥4 inverse postcondition checks can produce false
             // positives in near-degenerate configurations (both forward and inverse
             // flip predicates simultaneously report a violation — a numerical
-            // artifact).  Ground-truth validation via `is_delaunay_property_only()`
-            // is performed at the bulk-construction layer (e.g.
-            // `build_with_shuffled_retries`), not here, because calling it per-edge
-            // would be O(cells × vertices) per iteration.
-            if D >= 4 {
+            // artifact).  Strict validation still reports these instead of
+            // suppressing applicable inverse flips.
+            if mode == PostconditionMode::Repair && D >= 4 {
                 continue;
             }
             if repair_trace_enabled() {
@@ -3268,6 +3289,7 @@ fn verify_postcondition_inverse_k3_triangles<K, U, V, const D: usize>(
     queue: &mut VecDeque<(TriangleHandle, u64)>,
     config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
+    mode: PostconditionMode,
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -3313,12 +3335,10 @@ where
         };
 
         if !violates {
-            // Symmetric guard to the inverse k=2 check above: for D≥4,
-            // flip-based inverse postcondition checks can produce false
-            // positives in near-degenerate configurations.  Ground-truth
-            // validation via `is_delaunay_property_only()` is performed at the
-            // bulk-construction layer, not here (see inverse k=2 comment).
-            if D >= 4 {
+            // Symmetric repair-mode guard to the inverse k=2 check above:
+            // D≥4 inverse checks can be noisy in near-degenerate repair states,
+            // while strict validation still reports applicable inverse flips.
+            if mode == PostconditionMode::Repair && D >= 4 {
                 continue;
             }
             if repair_trace_enabled() {
@@ -4896,16 +4916,13 @@ where
         return vertex_point_with_optional_lift(tds, topology_model, vertex_key, None);
     };
 
-    let target_offset = periodic_offset_for_cell_vertex(tds, target_cell_key, vertex_key)?;
-    if let Some(offset) = target_offset {
-        let periodic_offset = topology_model
-            .supports_periodic_orientation_offsets()
-            .then_some(offset);
-        return lift_vertex_point(tds, topology_model, vertex_key, periodic_offset);
-    }
-
     if !topology_model.supports_periodic_orientation_offsets() {
         return lift_vertex_point(tds, topology_model, vertex_key, None);
+    }
+
+    let target_offset = periodic_offset_for_cell_vertex(tds, target_cell_key, vertex_key)?;
+    if let Some(offset) = target_offset {
+        return lift_vertex_point(tds, topology_model, vertex_key, Some(offset));
     }
 
     let target_cell = tds
