@@ -416,6 +416,8 @@ where
     })
 }
 
+/// Detects replacement simplices that already exist outside the flip cavity so
+/// a flip cannot silently duplicate a cell.
 fn find_cell_containing_simplex<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     simplex_vertices: &[VertexKey],
@@ -450,6 +452,8 @@ where
     None
 }
 
+/// Scans the whole TDS for ridge diagnostics when local neighbor links are the
+/// thing being investigated.
 fn cells_containing_vertices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     vertices: &[VertexKey],
@@ -471,6 +475,8 @@ where
     cells
 }
 
+/// Emits a bounded ridge snapshot so repair failures can distinguish bad local
+/// handles from genuinely inconsistent global incidence.
 fn debug_ridge_context<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     ridge: RidgeHandle,
@@ -550,6 +556,7 @@ where
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
         &context.removed_cells,
+        None,
         config,
         diagnostics,
     )
@@ -646,6 +653,8 @@ struct FlipCycleContext<'a> {
 }
 
 impl<'a> FlipCycleContext<'a> {
+    /// Bundles the flip data needed for diagnostics without cloning vertex
+    /// buffers on every repair step.
     const fn new(
         signature: u64,
         k_move: usize,
@@ -663,6 +672,8 @@ impl<'a> FlipCycleContext<'a> {
     }
 }
 
+/// Converts repeated flip signatures into typed non-convergence before the
+/// repair loop burns the full budget on a short oscillation.
 fn check_flip_cycle<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     context: FlipCycleContext<'_>,
@@ -1731,6 +1742,7 @@ fn delaunay_violation_k2_for_facet<K, U, V, const D: usize>(
     opposite_a: VertexKey,
     opposite_b: VertexKey,
     source_cells: &[CellKey],
+    frame_cell: Option<CellKey>,
     config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
 ) -> Result<bool, FlipError>
@@ -1770,12 +1782,22 @@ where
     cell_vertices[0].sort_unstable_by_key(|v| v.data().as_ffi());
     cell_vertices[1].sort_unstable_by_key(|v| v.data().as_ffi());
 
-    let source_a = matching_source_cell(tds, &cell_vertices[0], source_cells);
-    let source_b = matching_source_cell(tds, &cell_vertices[1], source_cells);
-    let points_a =
-        vertices_to_points_with_optional_lift(tds, topology_model, &cell_vertices[0], source_a)?;
-    let points_b =
-        vertices_to_points_with_optional_lift(tds, topology_model, &cell_vertices[1], source_b)?;
+    let source_a = matching_source_cell(tds, &cell_vertices[0], source_cells).or(frame_cell);
+    let source_b = matching_source_cell(tds, &cell_vertices[1], source_cells).or(frame_cell);
+    let points_a = vertices_to_points_with_optional_lift(
+        tds,
+        topology_model,
+        &cell_vertices[0],
+        source_a,
+        source_cells,
+    )?;
+    let points_b = vertices_to_points_with_optional_lift(
+        tds,
+        topology_model,
+        &cell_vertices[1],
+        source_b,
+        source_cells,
+    )?;
 
     let opposite_point_a =
         vertex_point_lifted_into_cell(tds, topology_model, opposite_a, source_b, source_cells)?;
@@ -1935,6 +1957,7 @@ where
         opposite_a,
         opposite_b,
         &context.removed_cells,
+        None,
         config,
         diagnostics,
     )
@@ -2168,6 +2191,7 @@ fn delaunay_violation_k3_for_ridge<K, U, V, const D: usize>(
     ridge_vertices: &[VertexKey],
     triangle_vertices: &[VertexKey],
     source_cells: &[CellKey],
+    frame_cell: Option<CellKey>,
     _config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
 ) -> Result<bool, FlipError>
@@ -2207,12 +2231,13 @@ where
         // Sort by VertexKey for canonical SoS perturbation ordering
         cell_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
 
-        let source_cell = matching_source_cell(tds, &cell_vertices, source_cells);
+        let source_cell = matching_source_cell(tds, &cell_vertices, source_cells).or(frame_cell);
         let points = vertices_to_points_with_optional_lift(
             tds,
             topology_model,
             &cell_vertices,
             source_cell,
+            source_cells,
         )?;
         let missing_point =
             vertex_point_lifted_into_cell(tds, topology_model, missing, source_cell, source_cells)?;
@@ -2850,6 +2875,8 @@ where
     verify_repair_postcondition_with_topology(tds, kernel, None, global_topology)
 }
 
+/// Keeps legacy Euclidean repair checks on the same validation path as the
+/// topology-aware verifier.
 fn verify_repair_postcondition<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -2863,6 +2890,8 @@ where
     verify_repair_postcondition_with_topology(tds, kernel, seed_cells, GlobalTopology::DEFAULT)
 }
 
+/// Adapts the public topology enum into the model used for lifted predicate
+/// evaluation.
 fn verify_repair_postcondition_with_topology<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -2878,6 +2907,8 @@ where
     verify_repair_postcondition_locally(tds, kernel, seed_cells, &topology_model)
 }
 
+/// Replays the repair queues without mutating the TDS so postconditions cover
+/// the same local predicates that drive repair.
 fn verify_repair_postcondition_locally<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -2965,6 +2996,8 @@ where
     Ok(())
 }
 
+/// Rechecks queued facets after repair so unresolved k=2 violations surface as
+/// postcondition failures instead of latent invalid triangulations.
 fn verify_postcondition_k2_facets<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -3060,6 +3093,8 @@ where
     Ok(())
 }
 
+/// Rechecks queued ridges after repair so higher-dimensional k=3 violations get
+/// the same explicit postcondition treatment as facets.
 fn verify_postcondition_k3_ridges<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -3137,6 +3172,8 @@ where
     Ok(())
 }
 
+/// Exercises inverse k=2 predicates after repair because an apparently valid
+/// facet pass can still leave an edge-collapse move applicable.
 fn verify_postcondition_inverse_k2_edges<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -3169,6 +3206,7 @@ where
         }
         let opposite_a = context.removed_face_vertices[0];
         let opposite_b = context.removed_face_vertices[1];
+        let frame_cell = removed_cell_frame(&context.removed_cells)?;
 
         let violates = match delaunay_violation_k2_for_facet(
             tds,
@@ -3178,6 +3216,7 @@ where
             opposite_a,
             opposite_b,
             &context.removed_cells,
+            Some(frame_cell),
             config,
             diagnostics,
         ) {
@@ -3220,6 +3259,8 @@ where
     Ok(())
 }
 
+/// Exercises inverse k=3 predicates after repair so triangle-collapse moves do
+/// not hide behind forward-only verification.
 fn verify_postcondition_inverse_k3_triangles<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -3247,6 +3288,7 @@ where
             Err(e) => return Err(e.into()),
         };
 
+        let frame_cell = removed_cell_frame(&context.removed_cells)?;
         let violates = match delaunay_violation_k3_for_ridge(
             tds,
             kernel,
@@ -3254,6 +3296,7 @@ where
             &context.inserted_face_vertices,
             &context.removed_face_vertices,
             &context.removed_cells,
+            Some(frame_cell),
             config,
             diagnostics,
         ) {
@@ -3323,6 +3366,8 @@ struct RepairDiagnostics {
 }
 
 impl RepairDiagnostics {
+    /// Records uncertain predicate sites with bounded samples so diagnostics stay
+    /// actionable on large repairs.
     fn record_ambiguous(&mut self, key: u64) {
         self.ambiguous_predicates += 1;
         if self.ambiguous_samples.len() >= AMBIGUOUS_SAMPLE_LIMIT {
@@ -3333,10 +3378,14 @@ impl RepairDiagnostics {
         }
     }
 
+    /// Counts predicate failures separately from ambiguity because failures abort
+    /// the current local check.
     const fn record_predicate_failure(&mut self) {
         self.predicate_failures = self.predicate_failures.saturating_add(1);
     }
 
+    /// Maintains a sliding signature window so cycle detection is bounded in
+    /// memory but still catches local oscillations.
     fn record_flip_signature(&mut self, signature: u64) {
         let count = self.flip_signature_counts.entry(signature).or_insert(0);
         *count = count.saturating_add(1);
@@ -3362,6 +3411,8 @@ impl RepairDiagnostics {
         }
     }
 
+    /// Preserves the signature that triggered a non-convergence abort even if it
+    /// was already sampled earlier.
     fn record_cycle_abort(&mut self, signature: u64) {
         self.cycle_detections = self.cycle_detections.saturating_add(1);
         if self.cycle_samples.len() < CYCLE_SAMPLE_LIMIT && !self.cycle_samples.contains(&signature)
@@ -3370,6 +3421,8 @@ impl RepairDiagnostics {
         }
     }
 
+    /// Captures one duplicate-simplex skip sample without formatting strings on
+    /// every skipped flip.
     fn record_inserted_simplex_skip(&mut self, sample: impl FnOnce() -> String) {
         self.inserted_simplex_skips = self.inserted_simplex_skips.saturating_add(1);
         if self.inserted_simplex_sample.is_none() {
@@ -3377,6 +3430,7 @@ impl RepairDiagnostics {
         }
     }
 
+    /// Captures one invalid-ridge sample lazily so common skip paths stay cheap.
     fn record_invalid_ridge_multiplicity_skip(&mut self, sample: impl FnOnce() -> String) {
         self.invalid_ridge_multiplicity_skips =
             self.invalid_ridge_multiplicity_skips.saturating_add(1);
@@ -3385,6 +3439,8 @@ impl RepairDiagnostics {
         }
     }
 
+    /// Captures one stale-cell sample lazily so slot-swap churn is visible when
+    /// repair diagnostics are inspected.
     fn record_missing_cell_skip(&mut self, sample: impl FnOnce() -> String) {
         self.missing_cell_skips = self.missing_cell_skips.saturating_add(1);
         if self.missing_cell_sample.is_none() {
@@ -3403,6 +3459,8 @@ struct RepairAttemptConfig {
     max_flips_override: Option<usize>,
 }
 
+/// Builds the public non-convergence error in one place so diagnostics, queue
+/// order, and attempt metadata stay consistent.
 fn non_convergent_error(
     max_flips: usize,
     stats: &DelaunayRepairStats,
@@ -3427,6 +3485,8 @@ fn non_convergent_error(
     }
 }
 
+/// Gates the expensive repair summary behind an environment variable while
+/// keeping all attempts logged in a uniform shape.
 fn emit_repair_debug_summary(
     label: &str,
     stats: &DelaunayRepairStats,
@@ -3459,6 +3519,8 @@ fn emit_repair_debug_summary(
     );
 }
 
+/// Shares FIFO/LIFO behavior across repair queues so alternate attempts only
+/// differ by scheduling policy.
 fn pop_queue<T>(queue: &mut VecDeque<T>, order: RepairQueueOrder) -> Option<T> {
     match order {
         RepairQueueOrder::Fifo => queue.pop_front(),
@@ -3466,6 +3528,8 @@ fn pop_queue<T>(queue: &mut VecDeque<T>, order: RepairQueueOrder) -> Option<T> {
     }
 }
 
+/// Hashes a predicate site canonically so ambiguous-predicate samples are stable
+/// across vertex ordering in a simplex.
 fn predicate_key_from_vertices(simplex_vertices: &[VertexKey], test_vertex: VertexKey) -> u64 {
     let mut sorted: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
         simplex_vertices.iter().copied().collect();
@@ -3479,6 +3543,7 @@ fn predicate_key_from_vertices(simplex_vertices: &[VertexKey], test_vertex: Vert
     hasher.finish()
 }
 
+/// Canonicalizes a flip attempt into a compact key for cycle detection.
 fn flip_signature(
     k_move: usize,
     direction: FlipDirection,
@@ -3518,6 +3583,8 @@ struct LastAppliedFlip {
 }
 
 impl LastAppliedFlip {
+    /// Sorts faces so immediate-reversal detection is independent of local cell
+    /// vertex order.
     fn new(k_move: usize, removed: &[VertexKey], inserted: &[VertexKey]) -> Self {
         let mut removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
             removed.iter().copied().collect();
@@ -3535,6 +3602,8 @@ impl LastAppliedFlip {
     }
 }
 
+/// Catches two-step flip oscillations before they inflate repair diagnostics or
+/// consume the global flip budget.
 fn would_immediately_reverse_last_flip<const D: usize>(
     last: Option<&LastAppliedFlip>,
     k_move: usize,
@@ -3554,11 +3623,15 @@ fn would_immediately_reverse_last_flip<const D: usize>(
         && current.inserted_face_vertices == last_flip.removed_face_vertices
 }
 
+/// Keeps verbose repair tracing opt-in because the hot repair loop calls this
+/// frequently.
 #[inline]
 fn repair_trace_enabled() -> bool {
     std::env::var_os("DELAUNAY_REPAIR_TRACE").is_some()
 }
 
+/// Treats full repair tracing as enabling ridge snapshots so one debug switch
+/// gives enough topology context.
 #[inline]
 fn repair_ridge_debug_enabled() -> bool {
     std::env::var_os("DELAUNAY_REPAIR_DEBUG_RIDGE").is_some() || repair_trace_enabled()
@@ -3567,6 +3640,8 @@ fn repair_ridge_debug_enabled() -> bool {
 const RIDGE_DEBUG_LIMIT_DEFAULT: usize = 64;
 static RIDGE_DEBUG_EMITTED: AtomicUsize = AtomicUsize::new(0);
 
+/// Rate-limits ridge snapshots to keep pathological repair runs from flooding
+/// logs.
 fn ridge_debug_limit() -> usize {
     std::env::var("DELAUNAY_REPAIR_DEBUG_RIDGE_LIMIT")
         .ok()
@@ -3574,6 +3649,8 @@ fn ridge_debug_limit() -> usize {
         .unwrap_or(RIDGE_DEBUG_LIMIT_DEFAULT)
 }
 
+/// Applies the ridge debug limit atomically so concurrent tests still share a
+/// bounded diagnostic budget.
 fn should_emit_ridge_debug() -> bool {
     let limit = ridge_debug_limit();
     if limit == 0 {
@@ -3587,6 +3664,9 @@ fn should_emit_ridge_debug() -> bool {
     }
     current < limit
 }
+
+/// Computes a dimension-sensitive flip budget so non-convergent repair fails
+/// predictably instead of running unbounded.
 fn default_max_flips<const D: usize>(cell_count: usize) -> usize {
     // Flip budget strategy by dimension and build mode:
     //
@@ -3633,6 +3713,8 @@ struct RepairQueues {
 }
 
 impl RepairQueues {
+    /// Initializes all repair worklists together so queue state cannot be
+    /// partially seeded.
     fn new() -> Self {
         Self {
             facet_queue: VecDeque::new(),
@@ -3648,6 +3730,8 @@ impl RepairQueues {
         }
     }
 
+    /// Reports aggregate queued work for diagnostics that compare scheduling
+    /// strategies.
     fn total_len(&self) -> usize {
         self.facet_queue.len()
             + self.ridge_queue.len()
@@ -3655,6 +3739,8 @@ impl RepairQueues {
             + self.triangle_queue.len()
     }
 
+    /// Gives the repair loop one invariant-preserving exit check across all
+    /// dimension-specific queues.
     fn has_work(&self) -> bool {
         !self.facet_queue.is_empty()
             || !self.ridge_queue.is_empty()
@@ -3663,6 +3749,8 @@ impl RepairQueues {
     }
 }
 
+/// Seeds exactly the queues supported by the current dimension so repair and
+/// verification inspect the same local neighborhoods.
 #[allow(
     clippy::too_many_lines,
     reason = "Seeding logic mirrors runtime queues; keep as single flow for diagnostics"
@@ -3784,6 +3872,8 @@ where
     Ok(())
 }
 
+/// Requeues the local neighborhood created by a flip so the repair loop follows
+/// newly exposed violations instead of rescanning the whole triangulation.
 fn enqueue_new_cells_for_repair<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     new_cells: &[CellKey],
@@ -3831,6 +3921,8 @@ where
     Ok(())
 }
 
+/// Processes one queued ridge because k=3 moves are only meaningful in D>=3 and
+/// need their own adjacency validation.
 #[expect(
     clippy::too_many_arguments,
     reason = "Repair step threads queues, diagnostics, and config explicitly"
@@ -4013,6 +4105,8 @@ where
     Ok(true)
 }
 
+/// Processes one queued edge for inverse k=2 moves so higher-dimensional repair
+/// can collapse locally Delaunay edge stars.
 #[expect(
     clippy::too_many_arguments,
     reason = "Repair step threads queues, diagnostics, and config explicitly"
@@ -4072,6 +4166,7 @@ where
     }
     let opposite_a = context.removed_face_vertices[0];
     let opposite_b = context.removed_face_vertices[1];
+    let frame_cell = removed_cell_frame(&context.removed_cells)?;
 
     let violates = match delaunay_violation_k2_for_facet(
         tds,
@@ -4081,6 +4176,7 @@ where
         opposite_a,
         opposite_b,
         &context.removed_cells,
+        Some(frame_cell),
         config,
         diagnostics,
     ) {
@@ -4198,6 +4294,8 @@ where
     Ok(true)
 }
 
+/// Processes one queued triangle for inverse k=3 moves, which only appear once
+/// D is high enough for a triangle star to be replaced.
 #[expect(
     clippy::too_many_arguments,
     reason = "Repair step threads queues, diagnostics, and config explicitly"
@@ -4255,6 +4353,7 @@ where
         Err(e) => return Err(e.into()),
     };
 
+    let frame_cell = removed_cell_frame(&context.removed_cells)?;
     let violates = match delaunay_violation_k3_for_ridge(
         tds,
         kernel,
@@ -4262,6 +4361,7 @@ where
         &context.inserted_face_vertices,
         &context.removed_face_vertices,
         &context.removed_cells,
+        Some(frame_cell),
         config,
         diagnostics,
     ) {
@@ -4375,6 +4475,8 @@ where
     Ok(true)
 }
 
+/// Processes one queued facet because k=2 facet flips are the primary local
+/// repair move across supported dimensions.
 #[expect(
     clippy::too_many_arguments,
     reason = "Repair step threads queues, diagnostics, and config explicitly"
@@ -4558,6 +4660,8 @@ where
     Ok(true)
 }
 
+/// Extracts facet vertices by omitted slot so facet hashing matches the cell's
+/// current vertex ordering.
 fn facet_vertices_from_cell<T, U, V, const D: usize>(
     cell: &Cell<T, U, V, D>,
     facet_index: usize,
@@ -4577,6 +4681,8 @@ where
     vertices
 }
 
+/// Extracts ridge vertices by omitted slots so ridge handles remain compact but
+/// can still be converted into stable vertex sets.
 fn ridge_vertices_from_cell<T, U, V, const D: usize>(
     cell: &Cell<T, U, V, D>,
     omit_a: usize,
@@ -4597,6 +4703,8 @@ where
     vertices
 }
 
+/// Finds the two vertices opposite a ridge in one cell while validating that the
+/// requested ridge is actually incident to that cell.
 fn cell_extras_for_ridge<T, U, V, const D: usize>(
     cell_key: CellKey,
     cell: &Cell<T, U, V, D>,
@@ -4621,6 +4729,7 @@ where
     Ok(extras)
 }
 
+/// Identifies the one opposite vertex needed to complete a k=3 cavity cycle.
 fn missing_opposite_for_cell(
     extras: &[VertexKey; 2],
     opposites: &[VertexKey; 3],
@@ -4631,6 +4740,8 @@ fn missing_opposite_for_cell(
         .find(|v| *v != extras[0] && *v != extras[1])
 }
 
+/// Walks the neighbor graph around a ridge so k=3 context construction uses the
+/// local star rather than a global incidence scan.
 fn collect_cells_around_ridge<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     start_cell: CellKey,
@@ -4693,6 +4804,8 @@ where
     Ok(cells)
 }
 
+/// Converts vertex keys to Euclidean points for predicates that do not need a
+/// periodic frame.
 fn vertices_to_points<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     vertices: &[VertexKey],
@@ -4713,11 +4826,14 @@ where
     Ok(points)
 }
 
+/// Builds predicate points in one periodic frame so quotient-cell coordinates
+/// compare as lifted representatives.
 fn vertices_to_points_with_optional_lift<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     topology_model: &GlobalTopologyModelAdapter<D>,
     vertices: &[VertexKey],
     source_cell: Option<CellKey>,
+    source_cells: &[CellKey],
 ) -> Result<SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>, FlipError>
 where
     T: CoordinateScalar,
@@ -4727,16 +4843,19 @@ where
     let mut points: SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::with_capacity(vertices.len());
     for &vkey in vertices {
-        points.push(vertex_point_with_optional_lift(
+        points.push(vertex_point_lifted_into_cell(
             tds,
             topology_model,
             vkey,
             source_cell,
+            source_cells,
         )?);
     }
     Ok(points)
 }
 
+/// Applies a cell-local periodic offset when the vertex is already present in
+/// the selected source cell.
 fn vertex_point_with_optional_lift<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     topology_model: &GlobalTopologyModelAdapter<D>,
@@ -4755,6 +4874,8 @@ where
     lift_vertex_point(tds, topology_model, vertex_key, periodic_offset)
 }
 
+/// Lifts a vertex into a target cell's frame, aligning from neighboring source
+/// cells instead of falling back to bare periodic coordinates.
 fn vertex_point_lifted_into_cell<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     topology_model: &GlobalTopologyModelAdapter<D>,
@@ -4793,7 +4914,11 @@ where
             continue;
         }
         let Some(source_offsets) = source_cell.periodic_vertex_offsets() else {
-            return vertex_point_with_optional_lift(tds, topology_model, vertex_key, None);
+            return Err(FlipError::InvalidFlipContext {
+                message: format!(
+                    "cannot align periodic vertex {vertex_key:?} from cell {source_cell_key:?} into frame {target_cell_key:?}: source cell has no periodic offsets"
+                ),
+            });
         };
         validate_periodic_offset_len(source_cell_key, source_cell, source_offsets)?;
         let Some(source_vertex_index) = source_cell
@@ -4815,9 +4940,15 @@ where
         }
     }
 
-    vertex_point_with_optional_lift(tds, topology_model, vertex_key, None)
+    Err(FlipError::InvalidFlipContext {
+        message: format!(
+            "cannot align periodic vertex {vertex_key:?} into frame {target_cell_key:?}"
+        ),
+    })
 }
 
+/// Centralizes topology-model lifting so missing vertices and non-liftable
+/// offsets become typed flip errors.
 fn lift_vertex_point<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     topology_model: &GlobalTopologyModelAdapter<D>,
@@ -4842,6 +4973,8 @@ where
     Ok(Point::new(lifted_coords))
 }
 
+/// Looks up the offset paired with a vertex slot, preserving the invariant that
+/// periodic offsets are indexed exactly like cell vertices.
 fn periodic_offset_for_cell_vertex<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cell_key: CellKey,
@@ -4865,6 +4998,8 @@ where
         .map(|index| offsets[index]))
 }
 
+/// Rejects malformed quotient cells before offset indexing can desynchronize
+/// vertices from their lifted representatives.
 fn validate_periodic_offset_len<T, U, V, const D: usize>(
     cell_key: CellKey,
     cell: &Cell<T, U, V, D>,
@@ -4886,6 +5021,8 @@ where
     })
 }
 
+/// Finds a common vertex to act as the reference point for aligning two
+/// periodic cell frames.
 fn shared_vertex_indices<T, U, V, const D: usize>(
     target_cell: &Cell<T, U, V, D>,
     source_cell: &Cell<T, U, V, D>,
@@ -4907,6 +5044,9 @@ where
         })
 }
 
+/// Aligns a periodic vertex offset from a source cell's frame into a target
+/// cell's frame so cross-cell insphere predicates see consistent lifted
+/// coordinates.
 fn align_periodic_offset<const D: usize>(
     source_vertex_offset: [i8; D],
     source_reference_offset: [i8; D],
@@ -4928,6 +5068,8 @@ fn align_periodic_offset<const D: usize>(
     Ok(aligned)
 }
 
+/// Reuses an existing removed cell as the predicate frame when the candidate
+/// simplex exactly matches that cell.
 fn matching_source_cell<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     vertices: &[VertexKey],
@@ -4945,6 +5087,17 @@ where
                     .all(|&vertex_key| cell.contains_vertex(vertex_key))
         })
     })
+}
+
+/// Selects a concrete removed-cell frame for inverse predicates, where no
+/// forward replacement simplex may match exactly.
+fn removed_cell_frame(source_cells: &[CellKey]) -> Result<CellKey, FlipError> {
+    source_cells
+        .first()
+        .copied()
+        .ok_or_else(|| FlipError::InvalidFlipContext {
+            message: "inverse flip predicate requires at least one removed cell frame".to_string(),
+        })
 }
 
 #[derive(Debug, Default)]
@@ -4972,6 +5125,8 @@ struct CandidateFacetInfo {
     last_cell: Option<CellKey>,
 }
 
+/// Sorts stable slotmap key values before hashing so signatures are independent
+/// of local cell vertex order.
 fn sorted_vertex_key_values(
     vertices: &[VertexKey],
 ) -> SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> {
@@ -4981,11 +5136,14 @@ fn sorted_vertex_key_values(
     key_values
 }
 
+/// Hashes a complete cell vertex set for duplicate-cell detection during flips.
 fn cell_signature(vertices: &[VertexKey]) -> u64 {
     let key_values = sorted_vertex_key_values(vertices);
     stable_hash_u64_slice(&key_values)
 }
 
+/// Builds the small topology index needed to reject duplicate cells and
+/// non-manifold internal facets without repeated global scans.
 fn build_flip_topology_index<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     new_cell_vertices: &[SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
@@ -5126,6 +5284,8 @@ where
     }
 }
 
+/// Checks candidate cells against the topology index before mutation so a flip
+/// cannot introduce two cells with the same vertex set.
 fn flip_would_duplicate_cell_any<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     vertices: &[VertexKey],
@@ -5172,6 +5332,8 @@ where
     true
 }
 
+/// Checks candidate internal facets against existing incidence so a flip cannot
+/// create facet multiplicity greater than two.
 fn flip_would_create_nonmanifold_facets_any(
     vertices: &[VertexKey],
     topology: &FlipTopologyIndex,
@@ -5223,6 +5385,8 @@ fn flip_would_create_nonmanifold_facets_any(
     false
 }
 
+/// Queues all interior facets of a cell because k=2 repair is driven by shared
+/// facet predicates.
 fn enqueue_cell_facets<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cell_key: CellKey,
@@ -5253,6 +5417,8 @@ where
     Ok(())
 }
 
+/// Enqueues a facet by stable vertex hash so stale handles can be resolved after
+/// slot swaps.
 fn enqueue_facet<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     handle: FacetHandle,
@@ -5292,6 +5458,7 @@ fn enqueue_facet<T, U, V, const D: usize>(
     }
 }
 
+/// Queues cell edges only in dimensions where inverse k=2 repair is admissible.
 fn enqueue_cell_edges<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cell_key: CellKey,
@@ -5321,6 +5488,7 @@ fn enqueue_cell_edges<T, U, V, const D: usize>(
     }
 }
 
+/// Deduplicates inverse k=2 edge work by vertex-set hash across incident cells.
 fn enqueue_edge(
     edge: EdgeKey,
     queue: &mut VecDeque<(EdgeKey, u64)>,
@@ -5334,6 +5502,8 @@ fn enqueue_edge(
     }
 }
 
+/// Queues cell triangles only in dimensions where inverse k=3 repair is
+/// admissible.
 fn enqueue_cell_triangles<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cell_key: CellKey,
@@ -5365,6 +5535,8 @@ fn enqueue_cell_triangles<T, U, V, const D: usize>(
     }
 }
 
+/// Deduplicates inverse k=3 triangle work by vertex-set hash across incident
+/// cells.
 fn enqueue_triangle(
     triangle: TriangleHandle,
     queue: &mut VecDeque<(TriangleHandle, u64)>,
@@ -5379,6 +5551,8 @@ fn enqueue_triangle(
     }
 }
 
+/// Queues all ridges of a cell because k=3 repair needs codimension-two local
+/// stars.
 fn enqueue_cell_ridges<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cell_key: CellKey,
@@ -5425,6 +5599,8 @@ where
     Ok(())
 }
 
+/// Enqueues a ridge by stable vertex hash so post-flip slot swaps do not strand
+/// stale ridge handles.
 fn enqueue_ridge<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     handle: RidgeHandle,
@@ -5471,8 +5647,10 @@ mod tests {
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
     use crate::core::collections::Uuid;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
+    use crate::topology::traits::topological_space::ToroidalConstructionMode;
     use crate::triangulation::delaunay::DelaunayTriangulation;
     use crate::vertex;
+    use approx::assert_relative_eq;
     use rand::{RngExt, SeedableRng, rngs::StdRng};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -7594,46 +7772,353 @@ mod tests {
         assert_ne!(post_test, topo_err);
     }
 
-    #[test]
-    fn test_align_periodic_offset_identity() {
-        // Same reference offset in source and target → no change.
-        let result = align_periodic_offset([0, 1], [0, 0], [0, 0]).unwrap();
-        assert_eq!(result, [0, 1]);
+    macro_rules! gen_align_periodic_offset_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_align_periodic_offset_identity_ $dim d>]() {
+                    // Same reference offset in source and target -> no change.
+                    let mut source_vertex_offset = [0_i8; $dim];
+                    source_vertex_offset[$dim - 1] = 1;
+                    let result = align_periodic_offset(
+                        source_vertex_offset,
+                        [0_i8; $dim],
+                        [0_i8; $dim],
+                    )
+                    .unwrap();
+                    assert_eq!(result, source_vertex_offset);
+                }
+
+                #[test]
+                fn [<test_align_periodic_offset_shifts_by_delta_ $dim d>]() {
+                    // delta = target reference - source reference.
+                    let mut source_vertex_offset = [0_i8; $dim];
+                    source_vertex_offset[0] = 1;
+                    let mut target_reference_offset = [0_i8; $dim];
+                    target_reference_offset[$dim - 1] = 1;
+                    let mut expected = source_vertex_offset;
+                    expected[$dim - 1] = expected[$dim - 1].saturating_add(1);
+
+                    let result = align_periodic_offset(
+                        source_vertex_offset,
+                        [0_i8; $dim],
+                        target_reference_offset,
+                    )
+                    .unwrap();
+                    assert_eq!(result, expected);
+                }
+
+                #[test]
+                fn [<test_align_periodic_offset_negative_delta_ $dim d>]() {
+                    let source_vertex_offset = [1_i8; $dim];
+                    let mut source_reference_offset = [0_i8; $dim];
+                    source_reference_offset[0] = 1;
+                    let mut expected = source_vertex_offset;
+                    expected[0] = 0;
+
+                    let result = align_periodic_offset(
+                        source_vertex_offset,
+                        source_reference_offset,
+                        [0_i8; $dim],
+                    )
+                    .unwrap();
+                    assert_eq!(result, expected);
+                }
+
+                #[test]
+                fn [<test_align_periodic_offset_subtraction_overflow_ $dim d>]() {
+                    // i8::MIN - 1 overflows.
+                    let mut source_reference_offset = [0_i8; $dim];
+                    source_reference_offset[0] = 1;
+                    let mut target_reference_offset = [0_i8; $dim];
+                    target_reference_offset[0] = i8::MIN;
+
+                    let result = align_periodic_offset(
+                        [0_i8; $dim],
+                        source_reference_offset,
+                        target_reference_offset,
+                    );
+                    assert!(result.is_err());
+                }
+
+                #[test]
+                fn [<test_align_periodic_offset_addition_overflow_ $dim d>]() {
+                    // i8::MAX + 1 overflows.
+                    let mut source_vertex_offset = [0_i8; $dim];
+                    source_vertex_offset[0] = i8::MAX;
+                    let mut target_reference_offset = [0_i8; $dim];
+                    target_reference_offset[0] = 1;
+
+                    let result = align_periodic_offset(
+                        source_vertex_offset,
+                        [0_i8; $dim],
+                        target_reference_offset,
+                    );
+                    assert!(result.is_err());
+                }
+            }
+        };
     }
 
-    #[test]
-    fn test_align_periodic_offset_shifts_by_delta() {
-        // Source vertex at [1, 0], source ref at [0, 0], target ref at [0, 1].
-        // delta = [0, 1], aligned = [1, 1].
-        let result = align_periodic_offset([1, 0], [0, 0], [0, 1]).unwrap();
-        assert_eq!(result, [1, 1]);
+    gen_align_periodic_offset_tests!(2);
+    gen_align_periodic_offset_tests!(3);
+    gen_align_periodic_offset_tests!(4);
+    gen_align_periodic_offset_tests!(5);
+
+    fn toroidal_periodic_model<const D: usize>() -> GlobalTopologyModelAdapter<D> {
+        GlobalTopology::Toroidal {
+            domain: [1.0; D],
+            mode: ToroidalConstructionMode::PeriodicImagePoint,
+        }
+        .model()
     }
 
-    #[test]
-    fn test_align_periodic_offset_negative_delta() {
-        // delta = [-1, 0], aligned = [0, 1].
-        let result = align_periodic_offset([1, 1], [1, 0], [0, 0]).unwrap();
-        assert_eq!(result, [0, 1]);
+    fn insert_periodic_cell_with_lifted_vertex<const D: usize>(
+        tds: &mut Tds<f64, (), (), D>,
+        vertices: Vec<VertexKey>,
+        lifted_vertex: VertexKey,
+    ) -> CellKey {
+        let mut offsets = vec![[0_i8; D]; vertices.len()];
+        if let Some(index) = vertices.iter().position(|&vkey| vkey == lifted_vertex) {
+            offsets[index][0] = 1;
+        }
+        let mut cell = Cell::new(vertices, None).unwrap();
+        cell.set_periodic_vertex_offsets(offsets);
+        tds.insert_cell_with_mapping(cell).unwrap()
     }
 
-    #[test]
-    fn test_align_periodic_offset_higher_dimension() {
-        let result = align_periodic_offset([0, 0, 1, -1], [0, 0, 0, 0], [1, -1, 0, 1]).unwrap();
-        assert_eq!(result, [1, -1, 1, 0]);
+    fn periodic_inverse_k2_fixture<const D: usize>() -> (
+        Tds<f64, (), (), D>,
+        Vec<VertexKey>,
+        VertexKey,
+        VertexKey,
+        CellKeyBuffer,
+    ) {
+        let mut tds: Tds<f64, (), (), D> = Tds::empty();
+        let mut face_vertices = Vec::with_capacity(D);
+        for axis in 0..D {
+            face_vertices.push(
+                tds.insert_vertex_with_mapping(vertex!(unit_vector::<D>(axis)))
+                    .unwrap(),
+            );
+        }
+        let opposite_a = tds.insert_vertex_with_mapping(vertex!([0.0; D])).unwrap();
+        let opposite_b = tds.insert_vertex_with_mapping(vertex!([0.25; D])).unwrap();
+
+        let lifted_vertex = face_vertices[0];
+        let mut removed_cells = CellKeyBuffer::new();
+        for skip in 0..D {
+            let mut vertices = Vec::with_capacity(D + 1);
+            vertices.push(opposite_a);
+            vertices.push(opposite_b);
+            for (index, &vertex) in face_vertices.iter().enumerate() {
+                if index != skip {
+                    vertices.push(vertex);
+                }
+            }
+            removed_cells.push(insert_periodic_cell_with_lifted_vertex(
+                &mut tds,
+                vertices,
+                lifted_vertex,
+            ));
+        }
+
+        (tds, face_vertices, opposite_a, opposite_b, removed_cells)
     }
 
-    #[test]
-    fn test_align_periodic_offset_subtraction_overflow() {
-        // i8::MIN - 1 overflows.
-        let result = align_periodic_offset::<1>([0], [1], [i8::MIN]);
-        assert!(result.is_err());
+    fn periodic_inverse_k3_fixture<const D: usize>() -> (
+        Tds<f64, (), (), D>,
+        Vec<VertexKey>,
+        Vec<VertexKey>,
+        CellKeyBuffer,
+    ) {
+        let mut tds: Tds<f64, (), (), D> = Tds::empty();
+        let mut ridge_vertices = Vec::with_capacity(D - 1);
+        for axis in 0..(D - 1) {
+            ridge_vertices.push(
+                tds.insert_vertex_with_mapping(vertex!(unit_vector::<D>(axis)))
+                    .unwrap(),
+            );
+        }
+        let a = tds.insert_vertex_with_mapping(vertex!([0.0; D])).unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(vertex!(unit_vector::<D>(D - 1)))
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(vertex!(skewed_point::<D>()))
+            .unwrap();
+        let triangle_vertices = vec![a, b, c];
+
+        let lifted_vertex = ridge_vertices[0];
+        let mut removed_cells = CellKeyBuffer::new();
+        for skip in 0..(D - 1) {
+            let mut vertices = Vec::with_capacity(D + 1);
+            vertices.extend_from_slice(&triangle_vertices);
+            for (index, &vertex) in ridge_vertices.iter().enumerate() {
+                if index != skip {
+                    vertices.push(vertex);
+                }
+            }
+            removed_cells.push(insert_periodic_cell_with_lifted_vertex(
+                &mut tds,
+                vertices,
+                lifted_vertex,
+            ));
+        }
+
+        (tds, ridge_vertices, triangle_vertices, removed_cells)
     }
 
+    macro_rules! gen_periodic_inverse_predicate_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_periodic_inverse_k2_uses_removed_cell_frame_ $dim d>]() {
+                    let (tds, face_vertices, opposite_a, opposite_b, removed_cells) =
+                        periodic_inverse_k2_fixture::<$dim>();
+                    let mut target_cell_vertices = face_vertices.clone();
+                    target_cell_vertices.push(opposite_a);
+                    target_cell_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
+                    assert!(
+                        matching_source_cell(&tds, &target_cell_vertices, &removed_cells)
+                            .is_none(),
+                        "inverse k=2 target cell should require explicit frame alignment",
+                    );
+
+                    let topology_model = toroidal_periodic_model::<$dim>();
+                    let frame_cell = removed_cell_frame(&removed_cells).unwrap();
+                    let lifted = vertex_point_lifted_into_cell(
+                        &tds,
+                        &topology_model,
+                        face_vertices[0],
+                        Some(frame_cell),
+                        &removed_cells,
+                    )
+                    .unwrap();
+                    let mut expected = unit_vector::<$dim>(0);
+                    expected[0] += 1.0;
+                    assert_relative_eq!(lifted.coords().as_slice(), expected.as_slice());
+
+                    let kernel = AdaptiveKernel::<f64>::new();
+                    let config = RepairAttemptConfig {
+                        attempt: 0,
+                        queue_order: RepairQueueOrder::Fifo,
+                        max_flips_override: None,
+                    };
+                    let mut diagnostics = RepairDiagnostics::default();
+                    let result = delaunay_violation_k2_for_facet(
+                        &tds,
+                        &kernel,
+                        &topology_model,
+                        &face_vertices,
+                        opposite_a,
+                        opposite_b,
+                        &removed_cells,
+                        Some(frame_cell),
+                        &config,
+                        &mut diagnostics,
+                    );
+                    assert!(result.is_ok(), "inverse k=2 predicate should align periodic frame: {result:?}");
+                }
+
+                #[test]
+                fn [<test_periodic_inverse_k3_uses_removed_cell_frame_ $dim d>]() {
+                    let (tds, ridge_vertices, triangle_vertices, removed_cells) =
+                        periodic_inverse_k3_fixture::<$dim>();
+                    let mut target_cell_vertices = ridge_vertices.clone();
+                    target_cell_vertices.extend_from_slice(&triangle_vertices[1..]);
+                    target_cell_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
+                    assert!(
+                        matching_source_cell(&tds, &target_cell_vertices, &removed_cells)
+                            .is_none(),
+                        "inverse k=3 target cell should require explicit frame alignment",
+                    );
+
+                    let topology_model = toroidal_periodic_model::<$dim>();
+                    let frame_cell = removed_cell_frame(&removed_cells).unwrap();
+                    let lifted = vertex_point_lifted_into_cell(
+                        &tds,
+                        &topology_model,
+                        ridge_vertices[0],
+                        Some(frame_cell),
+                        &removed_cells,
+                    )
+                    .unwrap();
+                    let mut expected = unit_vector::<$dim>(0);
+                    expected[0] += 1.0;
+                    assert_relative_eq!(lifted.coords().as_slice(), expected.as_slice());
+
+                    let kernel = AdaptiveKernel::<f64>::new();
+                    let config = RepairAttemptConfig {
+                        attempt: 0,
+                        queue_order: RepairQueueOrder::Fifo,
+                        max_flips_override: None,
+                    };
+                    let mut diagnostics = RepairDiagnostics::default();
+                    let result = delaunay_violation_k3_for_ridge(
+                        &tds,
+                        &kernel,
+                        &topology_model,
+                        &ridge_vertices,
+                        &triangle_vertices,
+                        &removed_cells,
+                        Some(frame_cell),
+                        &config,
+                        &mut diagnostics,
+                    );
+                    assert!(result.is_ok(), "inverse k=3 predicate should align periodic frame: {result:?}");
+                }
+            }
+        };
+    }
+
+    gen_periodic_inverse_predicate_tests!(4);
+    gen_periodic_inverse_predicate_tests!(5);
+
     #[test]
-    fn test_align_periodic_offset_addition_overflow() {
-        // i8::MAX + 1 overflows.
-        let result = align_periodic_offset::<1>([i8::MAX], [0], [1]);
-        assert!(result.is_err());
+    fn test_periodic_inverse_k2_alignment_failure_is_error() {
+        let (tds, face_vertices, opposite_a, opposite_b, removed_cells) =
+            periodic_inverse_k2_fixture::<4>();
+        let topology_model = toroidal_periodic_model::<4>();
+        let frame_cell = removed_cell_frame(&removed_cells).unwrap();
+        let truncated_removed_cells: CellKeyBuffer = std::iter::once(frame_cell).collect();
+        let lift_result = vertex_point_lifted_into_cell(
+            &tds,
+            &topology_model,
+            face_vertices[0],
+            Some(frame_cell),
+            &truncated_removed_cells,
+        );
+        assert!(matches!(
+            lift_result,
+            Err(FlipError::InvalidFlipContext { .. })
+        ));
+
+        let kernel = AdaptiveKernel::<f64>::new();
+        let config = RepairAttemptConfig {
+            attempt: 0,
+            queue_order: RepairQueueOrder::Fifo,
+            max_flips_override: None,
+        };
+        let mut diagnostics = RepairDiagnostics::default();
+
+        let result = delaunay_violation_k2_for_facet(
+            &tds,
+            &kernel,
+            &topology_model,
+            &face_vertices,
+            opposite_a,
+            opposite_b,
+            &truncated_removed_cells,
+            Some(frame_cell),
+            &config,
+            &mut diagnostics,
+        );
+
+        assert!(
+            result.is_err(),
+            "periodic inverse predicate should not fall back to bare coordinates"
+        );
     }
 
     #[test]

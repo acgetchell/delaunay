@@ -74,6 +74,8 @@ struct HeuristicRebuildRecursionGuard {
 }
 
 impl HeuristicRebuildRecursionGuard {
+    /// Tracks nested heuristic rebuilds so fallback construction cannot recurse
+    /// indefinitely through repair hooks.
     fn enter() -> Self {
         let prior_depth = HEURISTIC_REBUILD_DEPTH.with(|depth| {
             let prior = depth.get();
@@ -562,6 +564,8 @@ pub struct DelaunayTriangulationConstructionErrorWithStatistics {
 }
 
 impl ConstructionStatistics {
+    /// Aggregates attempt counters shared by inserted, skipped, and duplicate
+    /// insertion outcomes.
     #[inline]
     fn record_common(&mut self, stats: &InsertionStatistics) {
         self.total_attempts = self.total_attempts.saturating_add(stats.attempts);
@@ -630,14 +634,20 @@ where
     T: CoordinateScalar,
     U: DataType,
 {
+    /// Borrows the preprocessed vertex order when one exists, avoiding a clone
+    /// for policies that leave the input unchanged.
     fn primary_slice<'a>(&'a self, input: &'a [Vertex<T, U, D>]) -> &'a [Vertex<T, U, D>] {
         self.primary.as_deref().unwrap_or(input)
     }
 
+    /// Exposes the original order as a retry fallback for balanced-simplex
+    /// preprocessing.
     fn fallback_slice(&self) -> Option<&[Vertex<T, U, D>]> {
         self.fallback.as_deref()
     }
 
+    /// Carries the dedup grid size forward so incremental insertion can reuse a
+    /// compatible spatial index.
     const fn grid_cell_size(&self) -> Option<T> {
         self.grid_cell_size
     }
@@ -646,6 +656,7 @@ where
 type PreprocessVerticesResult<T, U, const D: usize> =
     Result<PreprocessVertices<T, U, D>, DelaunayTriangulationConstructionError>;
 
+/// Hashes coordinates as a deterministic tiebreaker for partial vertex ordering.
 fn vertex_coordinate_hash<T, U, const D: usize>(vertex: &Vertex<T, U, D>) -> u64
 where
     T: CoordinateScalar,
@@ -656,6 +667,8 @@ where
     hasher.finish()
 }
 
+/// Produces a stable construction order when Hilbert ordering is unavailable or
+/// unsuitable.
 fn order_vertices_lexicographic<T, U, const D: usize>(
     vertices: Vec<Vertex<T, U, D>>,
 ) -> Vec<Vertex<T, U, D>>
@@ -685,6 +698,8 @@ where
 const BATCH_DEDUP_BUCKET_INLINE_CAPACITY: usize = 8;
 const BATCH_DEDUP_MAX_DIMENSION: usize = 5;
 
+/// Centralizes insertion-order dispatch so preprocessing applies dedup and
+/// ordering in a consistent sequence.
 fn order_vertices_by_strategy<T, U, const D: usize>(
     vertices: Vec<Vertex<T, U, D>>,
     insertion_order: InsertionOrderStrategy,
@@ -699,10 +714,14 @@ where
     }
 }
 
+/// Provides a scalar-aware tolerance for dedup paths that need a nonzero grid
+/// size even under exact duplicate policy.
 fn default_duplicate_tolerance<T: CoordinateScalar>() -> T {
     <T as NumCast>::from(1e-10_f64).unwrap_or_else(T::default_tolerance)
 }
 
+/// Verifies the hash grid can represent every input coordinate before choosing
+/// the O(n) duplicate path.
 fn hash_grid_usable_for_vertices<T, U, const D: usize>(
     grid: &HashGridIndex<T, D, usize>,
     vertices: &[Vertex<T, U, D>],
@@ -719,6 +738,8 @@ where
         .all(|v| grid.can_key_coords(v.point().coords()))
 }
 
+/// Keeps exact dedup deterministic when the hash grid cannot safely key the
+/// input coordinates.
 fn dedup_vertices_exact_sorted<T, U, const D: usize>(
     vertices: Vec<Vertex<T, U, D>>,
 ) -> Vec<Vertex<T, U, D>>
@@ -743,6 +764,8 @@ where
     unique
 }
 
+/// Uses the spatial grid for exact duplicate removal while falling back to the
+/// sorted path if coordinate keying is unavailable.
 fn dedup_vertices_exact_hash_grid<T, U, const D: usize>(
     vertices: Vec<Vertex<T, U, D>>,
     grid: &mut HashGridIndex<T, D, usize>,
@@ -786,6 +809,8 @@ where
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct QuantizedKey<const D: usize>([i64; D]);
 
+/// Quantizes coordinates for epsilon buckets only when finite values can be
+/// represented without losing the bucket invariant.
 fn quantize_coords<T: CoordinateScalar, const D: usize>(
     coords: &[T; D],
     inv_cell: f64,
@@ -807,6 +832,8 @@ fn quantize_coords<T: CoordinateScalar, const D: usize>(
     Some(key)
 }
 
+/// Visits adjacent epsilon buckets recursively so near-duplicate checks cover
+/// boundary-straddling points.
 fn visit_quantized_neighbors<const D: usize, F>(
     axis: usize,
     base: &[i64; D],
@@ -832,6 +859,8 @@ where
     true
 }
 
+/// Provides the correctness fallback for epsilon dedup when bucket or grid
+/// assumptions fail.
 fn dedup_vertices_epsilon_n2<T, U, const D: usize>(
     vertices: Vec<Vertex<T, U, D>>,
     epsilon: T,
@@ -857,6 +886,8 @@ where
     unique
 }
 
+/// Uses bounded quantized buckets for epsilon dedup in practical dimensions
+/// while preserving an exact fallback for unsupported cases.
 fn dedup_vertices_epsilon_quantized<T, U, const D: usize>(
     vertices: Vec<Vertex<T, U, D>>,
     epsilon: T,
@@ -925,6 +956,8 @@ where
     unique
 }
 
+/// Prefers the reusable hash grid for epsilon dedup when its coordinate model is
+/// valid for every input vertex.
 fn dedup_vertices_epsilon_hash_grid<T, U, const D: usize>(
     vertices: Vec<Vertex<T, U, D>>,
     epsilon: T,
@@ -972,6 +1005,8 @@ where
     unique
 }
 
+/// Chooses a well-spread initial simplex to reduce early degeneracy in
+/// incremental construction.
 fn select_balanced_simplex_indices<T, U, const D: usize>(
     vertices: &[Vertex<T, U, D>],
 ) -> Option<Vec<usize>>
@@ -1072,6 +1107,8 @@ where
     }
 }
 
+/// Places the selected simplex first while preserving every remaining input
+/// vertex exactly once.
 fn reorder_vertices_for_simplex<T, U, const D: usize>(
     vertices: &[Vertex<T, U, D>],
     simplex_indices: &[usize],
@@ -1104,6 +1141,8 @@ where
     Some(reordered)
 }
 
+/// Computes the largest per-axis Hilbert precision that still fits in the
+/// u128-backed index.
 fn hilbert_bits_per_coord<const D: usize>() -> Option<u32> {
     if D == 0 {
         return None;
@@ -1126,6 +1165,8 @@ fn hilbert_bits_per_coord<const D: usize>() -> Option<u32> {
 /// Sort key for Hilbert ordering: `(hilbert_index, quantized_coords, vertex, input_index)`.
 type HilbertSortKey<T, U, const D: usize> = (u128, [u32; D], Vertex<T, U, D>, usize);
 
+/// Orders vertices along a Hilbert curve to improve insertion locality while
+/// retaining deterministic lexicographic fallbacks.
 fn order_vertices_hilbert<T, U, const D: usize>(
     vertices: Vec<Vertex<T, U, D>>,
     dedup_quantized: bool,
@@ -2044,6 +2085,8 @@ where
         result
     }
 
+    /// Applies deduplication, insertion ordering, and initial-simplex selection
+    /// before any topology is created.
     fn preprocess_vertices_for_construction(
         vertices: &[Vertex<K::Scalar, U, D>],
         dedup_policy: DedupPolicy,
@@ -2162,6 +2205,8 @@ where
         )
     }
 
+    /// Retries batch construction with deterministic shuffles so retryable
+    /// degeneracies can be escaped reproducibly.
     #[allow(clippy::too_many_lines)]
     fn build_with_shuffled_retries(
         kernel: &K,
@@ -2293,6 +2338,8 @@ where
         .into())
     }
 
+    /// Mirrors shuffled retry construction while preserving per-attempt
+    /// statistics for callers that need skip and retry diagnostics.
     #[allow(clippy::too_many_lines)]
     #[expect(
         clippy::result_large_err,
@@ -2453,10 +2500,13 @@ where
         })
     }
 
+    /// Avoids retry work when construction has no incremental phase to reorder.
     const fn should_retry_construction(vertices: &[Vertex<K::Scalar, U, D>]) -> bool {
         D >= 2 && vertices.len() > D + 1
     }
 
+    /// Derives an input-order-independent seed so retries are reproducible for
+    /// the same vertex set.
     fn construction_shuffle_seed(vertices: &[Vertex<K::Scalar, U, D>]) -> u64 {
         let mut vertex_hashes = Vec::with_capacity(vertices.len());
         for vertex in vertices {
@@ -2468,11 +2518,15 @@ where
         stable_hash_u64_slice(&vertex_hashes)
     }
 
+    /// Keeps construction retry shuffling deterministic for diagnostics and
+    /// tests.
     fn shuffle_vertices(vertices: &mut [Vertex<K::Scalar, U, D>], seed: u64) {
         let mut rng = StdRng::seed_from_u64(seed);
         vertices.shuffle(&mut rng);
     }
 
+    /// Runs batch construction without statistics while preserving the same
+    /// final validation path as the statistics variant.
     fn build_with_kernel_inner(
         kernel: K,
         vertices: &[Vertex<K::Scalar, U, D>],
@@ -2531,6 +2585,8 @@ where
         Ok(dt)
     }
 
+    /// Runs batch construction with aggregate statistics without changing the
+    /// construction algorithm itself.
     #[expect(
         clippy::result_large_err,
         reason = "Internal helper propagates public by-value construction-statistics error type"
@@ -2603,6 +2659,8 @@ where
         Ok((dt, stats))
     }
 
+    /// Implements the seeded batch-construction core so retry and statistics
+    /// entry points share perturbation behavior.
     #[expect(
         clippy::result_large_err,
         reason = "Internal helper propagates public by-value construction-statistics error type"
@@ -2726,6 +2784,8 @@ where
         Ok((dt, stats))
     }
 
+    /// Implements the non-statistics seeded construction core for callers that
+    /// only need the triangulation.
     fn build_with_kernel_inner_seeded(
         kernel: K,
         vertices: &[Vertex<K::Scalar, U, D>],
@@ -2853,6 +2913,8 @@ where
         .into())
     }
 
+    /// Inserts the non-simplex vertices under a fixed perturbation seed so bulk
+    /// construction retries are reproducible.
     #[allow(clippy::too_many_lines)]
     fn insert_remaining_vertices_seeded(
         &mut self,
@@ -3200,6 +3262,8 @@ where
         Ok(())
     }
 
+    /// Restores runtime policies and performs the final repair/orientation
+    /// checks that were deferred during batch insertion.
     fn finalize_bulk_construction(
         &mut self,
         original_validation_policy: ValidationPolicy,
@@ -3366,6 +3430,8 @@ where
         }
     }
 
+    /// Classifies insertion-layer failures as input degeneracy or internal
+    /// inconsistency for construction callers.
     fn map_insertion_error(error: InsertionError) -> TriangulationConstructionError {
         match error {
             // Preserve underlying construction errors (e.g. duplicate UUID).
@@ -3924,7 +3990,8 @@ where
         self.repair_delaunay_with_flips_capped(None)
     }
 
-    /// Internal helper: runs flip-based repair with an optional per-attempt flip cap.
+    /// Runs flip-based repair with an optional per-attempt cap so public repair
+    /// and heuristic harnesses share one mutation path.
     fn repair_delaunay_with_flips_capped(
         &mut self,
         max_flips: Option<usize>,
@@ -3965,6 +4032,8 @@ where
             })
     }
 
+    /// Replays repair with an exact-predicate kernel before escalating to
+    /// heuristic rebuild.
     fn repair_delaunay_with_flips_robust(
         &mut self,
         seed_cells: Option<&[CellKey]>,
@@ -3976,6 +4045,8 @@ where
         repair_delaunay_with_flips_k2_k3(tds, kernel, seed_cells, topology, max_flips)
     }
 
+    /// Applies the repair policy only when the dimension and topology can
+    /// support bistellar flips.
     fn should_run_delaunay_repair_for(
         &self,
         topology: TopologyGuarantee,
@@ -3998,6 +4069,8 @@ where
             RepairDecision::Proceed
         )
     }
+
+    /// Enables test-only repair fallback paths without exposing a public knob.
     #[allow(clippy::missing_const_for_fn)]
     fn force_heuristic_rebuild_enabled() -> bool {
         #[cfg(test)]
@@ -4129,6 +4202,8 @@ where
         }
     }
 
+    /// Rebuilds from the current vertex set with varied deterministic seeds when
+    /// flip repair cannot converge directly.
     #[allow(clippy::too_many_lines)]
     fn rebuild_with_heuristic(
         &self,
@@ -4308,6 +4383,8 @@ where
         })
     }
 
+    /// Preserves vertex UUIDs and data so heuristic rebuilds remain an internal
+    /// repair strategy, not a user-visible remapping.
     fn collect_vertices_for_rebuild(&self) -> Vec<Vertex<K::Scalar, U, D>> {
         self.tri
             .tds
@@ -4316,6 +4393,8 @@ where
             .collect()
     }
 
+    /// Derives rebuild seeds from the vertex set so fallback behavior is
+    /// reproducible regardless of slotmap iteration accidents.
     fn heuristic_rebuild_base_seed(&self) -> u64 {
         let mut vertex_hashes = Vec::with_capacity(self.tri.tds.number_of_vertices());
         for (_, vertex) in self.tri.tds.vertices() {
@@ -4784,6 +4863,8 @@ where
     U: DataType,
     V: DataType,
 {
+    /// Lazily seeds the spatial index from existing vertices so incremental
+    /// insertion can start from deserialized or manually constructed TDS state.
     fn ensure_spatial_index_seeded(&mut self) {
         if self.spatial_index.is_some() {
             return;
@@ -5061,6 +5142,8 @@ where
         }
     }
 
+    /// Keeps the default insertion path on the same repair helper as capped
+    /// debug and heuristic paths.
     fn maybe_repair_after_insertion(
         &mut self,
         vertex_key: VertexKey,
@@ -5181,6 +5264,8 @@ where
         Ok(())
     }
 
+    /// Runs policy-controlled global validation after insertion so expensive
+    /// Delaunay checks stay opt-in for incremental workflows.
     fn maybe_check_after_insertion(&self) -> Result<(), InsertionError> {
         if self.tri.tds.number_of_cells() == 0 {
             return Ok(());
@@ -5760,6 +5845,8 @@ pub struct DelaunayRepairHeuristicConfig {
 }
 
 impl DelaunayRepairHeuristicConfig {
+    /// Fills omitted seeds from a stable base so heuristic rebuilds are
+    /// repeatable even when callers only configure one axis of randomness.
     fn resolve_seeds(self, base_seed: u64) -> DelaunayRepairHeuristicSeeds {
         // Derive deterministic defaults when the caller does not provide explicit seeds.
         const SHUFFLE_SALT: u64 = 0x9E37_79B9_7F4A_7C15;

@@ -3,6 +3,8 @@
 //! These tests exercise the public API from the outside, using only items exposed
 //! through `delaunay::prelude::triangulation` and `delaunay::triangulation::builder`.
 
+#![forbid(unsafe_code)]
+
 use std::collections::HashMap;
 use std::f64::consts::TAU;
 
