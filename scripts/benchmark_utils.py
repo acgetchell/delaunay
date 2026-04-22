@@ -163,7 +163,10 @@ class PerformanceSummaryGenerator:
             output_path: Output file path (defaults to benches/PERFORMANCE_RESULTS.md)
             run_benchmarks: Whether to run fresh circumsphere benchmarks
             generator_name: Name of the tool generating the summary (for attribution)
-            cargo_profile: Optional Cargo profile for fresh benchmark runs
+            cargo_profile: Optional Cargo profile for fresh benchmark runs.  When
+                ``run_benchmarks`` is True and no profile is specified, defaults
+                to :data:`TRUSTED_BENCH_PROFILE` so fresh runs match baseline
+                and comparison measurements.
 
         Returns:
             True if successful, False otherwise
@@ -177,6 +180,10 @@ class PerformanceSummaryGenerator:
 
             # Optionally run fresh benchmarks
             if run_benchmarks:
+                # Default fresh runs to the trusted perf profile so numbers are
+                # comparable with baseline/compare output.
+                if cargo_profile is None:
+                    cargo_profile = TRUSTED_BENCH_PROFILE
                 success, accuracy_data = self._run_circumsphere_benchmarks(cargo_profile=cargo_profile)
                 if success:
                     self.numerical_accuracy_data = accuracy_data
@@ -331,16 +338,20 @@ class PerformanceSummaryGenerator:
         """
         Run the circumsphere containment benchmarks to generate fresh data.
 
+        Args:
+            cargo_profile: Cargo profile for the fresh run.  Defaults to
+                :data:`TRUSTED_BENCH_PROFILE` so every fresh benchmark run
+                goes through the same ThinLTO/codegen-units settings used
+                by baseline generation and comparison.
+
         Returns:
             Tuple of (success, numerical_accuracy_data)
         """
         try:
             print("🔄 Running circumsphere containment benchmarks...")
 
-            cargo_args = ["bench"]
-            if cargo_profile is not None:
-                cargo_args.extend(["--profile", cargo_profile])
-            cargo_args.extend(["--bench", "circumsphere_containment", "--", *DEV_MODE_BENCH_ARGS])
+            profile = cargo_profile if cargo_profile is not None else TRUSTED_BENCH_PROFILE
+            cargo_args = ["bench", "--profile", profile, "--bench", "circumsphere_containment", "--", *DEV_MODE_BENCH_ARGS]
 
             # Run the circumsphere benchmark with reduced sample size for speed
             result = run_cargo_command(

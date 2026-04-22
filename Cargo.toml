@@ -97,10 +97,12 @@ path = "benches/cold_path_predicates.rs"
 harness = false
 
 [lints.rust]
-warnings = "deny"
+# Per RFC 3389: lint groups must use a lower (more negative) priority so specific
+# lints at default priority 0 deterministically override the group level.
+warnings = { level = "deny", priority = -1 }
 unsafe_code = "forbid"
-dead_code = "warn"
-missing_docs = "warn"
+dead_code = { level = "warn", priority = 0 }
+missing_docs = { level = "warn", priority = 0 }
 
 [lints.clippy]
 extra_unused_type_parameters = "warn"

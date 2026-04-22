@@ -528,9 +528,10 @@ The project uses comprehensive CI workflows:
 
 - **Main CI** (`.github/workflows/ci.yml`): Build, test, lint on every PR
 - **Benchmarks** (`.github/workflows/benchmarks.yml`): Performance regression testing
-- **Security** (`.github/workflows/audit.yml`): Dependency vulnerability scanning
-- **Code Quality** (`.github/workflows/rust-clippy.yml`): Strict linting
-- **Codacy** (`.github/workflows/codacy.yml`): Code quality analysis using project configurations
+- **CodeQL** (`.github/workflows/codeql.yml`): GitHub code scanning for Actions, Python, and Rust
+- **Security** (`.github/workflows/audit.yml`): Dependency vulnerability scanning with SARIF upload
+- **Code Quality** (`.github/workflows/rust-clippy.yml`): Strict linting with SARIF upload
+- **Codacy** (`.github/workflows/codacy.yml`): Code quality analysis using project configurations and SARIF upload
 - **Coverage** (`.github/workflows/codecov.yml`): Test coverage tracking with 5-minute per-test timeout
 
 All PRs must pass CI checks before merging.
@@ -549,6 +550,7 @@ The project uses **Codacy** for automated code quality analysis across both Rust
 - **Unified Quality Dashboard**: Single view of code quality across all languages
 - **Uses Project Settings**: Respects your local tool configurations (no duplicate/conflicting rules)
 - **Pull Request Integration**: Quality feedback directly in PR reviews
+- **Code Scanning Integration**: SARIF results are uploaded to GitHub Code Scanning
 - **Trend Tracking**: Monitor code quality improvements over time
 
 **For Contributors:**
@@ -700,8 +702,9 @@ uv run pytest       # Run Python tests
 # Example tests (ensure examples compile and run)
 ./scripts/run_all_examples.sh
 
-# Benchmark tests (performance verification)
-cargo bench
+# Benchmark tests (performance verification) - always use the perf profile for
+# consistent ThinLTO + single codegen-unit measurements across local/CI runs
+cargo bench --profile perf
 ```
 
 ### Writing Tests

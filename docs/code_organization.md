@@ -49,6 +49,7 @@ delaunay/
 │   │   ├── benchmarks.yml
 │   │   ├── ci.yml
 │   │   ├── codacy.yml
+│   │   ├── codeql.yml
 │   │   ├── codecov.yml
 │   │   ├── generate-baseline.yml
 │   │   ├── profiling-benchmarks.yml

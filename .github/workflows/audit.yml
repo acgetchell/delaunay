@@ -19,6 +19,7 @@ on:
 
 # Security: Define minimal required permissions
 permissions:
+  actions: read
   contents: read
   issues: write
   security-events: write
@@ -47,14 +48,37 @@ jobs:
 
       - name: Run cargo audit
         run: |
+          set +e
+          cargo audit --format sarif > audit-results.sarif
+          sarif_status=$?
           cargo audit --json > audit-results.json
+          json_status=$?
           # Show human-readable output as well
           cargo audit
+          terminal_status=$?
+
+          if [ "$sarif_status" -ne 0 ]; then
+            exit "$sarif_status"
+          fi
+          if [ "$json_status" -ne 0 ]; then
+            exit "$json_status"
+          fi
+          exit "$terminal_status"
         continue-on-error: true
+
+      - name: Upload audit SARIF results
+        if: always()
+        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4
+        with:
+          sarif_file: audit-results.sarif
+          category: "cargo-audit"
+          wait-for-processing: true
 
       - name: Upload audit results
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         if: always()
         with:
           name: audit-results
-          path: audit-results.json
+          path: |
+            audit-results.json
+            audit-results.sarif

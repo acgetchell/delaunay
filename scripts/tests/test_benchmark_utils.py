@@ -2190,7 +2190,15 @@ Benchmark completed."""
             assert numerical_data is None or isinstance(numerical_data, dict)
             mock_cargo.assert_called_once()
             args = mock_cargo.call_args.args[0]
-            assert args[:3] == ["bench", "--bench", "circumsphere_containment"]
+            # Fresh benchmark runs must default to the trusted perf profile so
+            # numbers are comparable with baseline/compare output.
+            assert args[:5] == [
+                "bench",
+                "--profile",
+                TRUSTED_BENCH_PROFILE,
+                "--bench",
+                "circumsphere_containment",
+            ]
 
     @patch("benchmark_utils.run_cargo_command")
     def test_run_circumsphere_benchmarks_uses_requested_cargo_profile(self, mock_cargo):
@@ -2238,6 +2246,15 @@ Benchmark completed."""
             assert numerical_data["distance_lifted"] == "18.0%"
             assert numerical_data["all_agree"] == "0.2%"
             mock_cargo.assert_called_once()
+            # Fresh runs must still go through the trusted perf profile.
+            args = mock_cargo.call_args.args[0]
+            assert args[:5] == [
+                "bench",
+                "--profile",
+                TRUSTED_BENCH_PROFILE,
+                "--bench",
+                "circumsphere_containment",
+            ]
 
     @patch("benchmark_utils.run_cargo_command")
     def test_run_circumsphere_benchmarks_failure(self, mock_cargo, capsys):
@@ -2295,7 +2312,9 @@ Benchmark completed."""
             success = generator.generate_summary(output_path=output_file, run_benchmarks=True)
 
             assert success is True
-            mock_run_benchmarks.assert_called_once_with(cargo_profile=None)
+            # When run_benchmarks=True without an explicit profile, generate_summary
+            # must default to TRUSTED_BENCH_PROFILE.
+            mock_run_benchmarks.assert_called_once_with(cargo_profile=TRUSTED_BENCH_PROFILE)
             assert output_file.exists()
 
     @patch("benchmark_utils.PerformanceSummaryGenerator._run_circumsphere_benchmarks")

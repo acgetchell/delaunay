@@ -66,7 +66,7 @@ jobs:
         # Cap Codacy runtime so a hung analyzer does not consume the full job timeout.
         timeout-minutes: 20
         # Codacy's opengrep/semgrep engine can fail intermittently;
-        # allow the workflow to continue so we can still upload a fallback SARIF.
+        # allow the workflow to continue so any generated SARIF is still uploaded.
         continue-on-error: true
         uses: codacy/codacy-analysis-cli-action@562ee3e92b8e92df8b67e0a5ff8aa8e261919c08
         with:
@@ -86,56 +86,71 @@ jobs:
           # This will handover control about PR rejection to the GitHub side
           max-allowed-issues: 2147483647
 
-      # Process SARIF file to split by tool
-      - name: Split SARIF by tool
-        run: |
-          # Fail fast and surface errors clearly
-          set -euo pipefail
-          if [ -f "$CODACY_SARIF" ] && [ -s "$CODACY_SARIF" ]; then
-            echo "$CODACY_SARIF present; preselecting for upload and skipping split."
-            echo "SARIF_FILE=$CODACY_SARIF" >> "$GITHUB_ENV"
-            exit 0
-          else
-            echo "No SARIF file found or file is empty: $CODACY_SARIF"
-            echo "Creating empty SARIF file to prevent workflow failure"
-            # Create empty SARIF file with proper schema
-            schema_url="https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json"
-            empty_sarif="$RUNNER_TEMP/sarif_empty.sarif"
-            {
-              echo '{'
-              echo "  \"\$schema\": \"$schema_url\","
-              echo '  "version": "2.1.0",'
-              echo '  "runs": []'
-              echo '}'
-            } > "$empty_sarif"
-            # Mark the empty SARIF for upload
-            echo "SARIF_FILE=$empty_sarif" >> "$GITHUB_ENV"
-            exit 0
-          fi
-
-      # Select SARIF file for upload
-      - name: Select SARIF file for upload
+      - name: Split SARIF runs for upload
         run: |
           set -euo pipefail
-          # Honor preselected SARIF_FILE from earlier steps (e.g., empty SARIF case)
-          if [ -n "${SARIF_FILE:-}" ]; then
-            echo "Preselected SARIF_FILE=$SARIF_FILE; not overriding."
-            exit 0
-          fi
-          # First, try to upload the original SARIF file if it exists
-          if [ -f "$CODACY_SARIF" ] && [ -s "$CODACY_SARIF" ]; then
-            echo "Found $CODACY_SARIF, attempting upload..."
-            echo "SARIF_FILE=$CODACY_SARIF" >> "$GITHUB_ENV"
-          else
-            echo "No valid SARIF files found"
-            echo "SARIF_FILE=" >> "$GITHUB_ENV"
-          fi
-        continue-on-error: true
 
-      # Upload the identified SARIF file
-      - name: Upload identified SARIF file
-        if: always() && env.SARIF_FILE != ''
-        uses: github/codeql-action/upload-sarif@b36bf259c813715f76eafece573914b94412cd13 # v3
+          python3 <<'PY'
+          import copy
+          import json
+          import os
+          import re
+          import sys
+          from pathlib import Path
+
+          source = Path(os.environ["CODACY_SARIF"])
+          out_dir = Path(os.environ["RUNNER_TEMP"]) / "codacy-sarif"
+
+          if not source.is_file() or source.stat().st_size == 0:
+              sys.exit(f"Codacy did not produce a SARIF file at {source}")
+
+          try:
+              sarif = json.loads(source.read_text(encoding="utf-8"))
+          except json.JSONDecodeError as exc:
+              raise SystemExit(f"Codacy produced invalid SARIF JSON: {exc}") from exc
+
+          runs = sarif.get("runs")
+          if not isinstance(runs, list) or not runs:
+              sys.exit("Codacy SARIF did not contain any runs to upload")
+
+          out_dir.mkdir(parents=True, exist_ok=True)
+          for stale in out_dir.glob("*.sarif"):
+              stale.unlink()
+
+          def slug(value: str) -> str:
+              normalized = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip().lower())
+              return normalized.strip("-") or "unknown"
+
+          seen_categories: dict[str, int] = {}
+          for index, run in enumerate(runs, start=1):
+              run_copy = copy.deepcopy(run)
+              tool = run_copy.get("tool", {}).get("driver", {}).get("name")
+              base_category = f"codacy-{slug(str(tool or f'run-{index}'))}"
+              seen_categories[base_category] = seen_categories.get(base_category, 0) + 1
+              suffix = seen_categories[base_category]
+              category = base_category if suffix == 1 else f"{base_category}-{suffix}"
+
+              automation = run_copy.get("automationDetails")
+              if not isinstance(automation, dict):
+                  automation = {}
+              automation["id"] = category
+              run_copy["automationDetails"] = automation
+
+              split_sarif = {key: value for key, value in sarif.items() if key != "runs"}
+              split_sarif.setdefault("$schema", "https://json.schemastore.org/sarif-2.1.0.json")
+              split_sarif.setdefault("version", "2.1.0")
+              split_sarif["runs"] = [run_copy]
+
+              out_file = out_dir / f"{index:02d}-{category}.sarif"
+              out_file.write_text(json.dumps(split_sarif, indent=2), encoding="utf-8")
+              print(f"Wrote {out_file} with category {category}")
+
+          with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as env_file:
+              env_file.write(f"CODACY_SPLIT_SARIF_DIR={out_dir}\n")
+          PY
+
+      - name: Upload split SARIF files
+        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4
         with:
-          sarif_file: ${{ env.SARIF_FILE }}
-        continue-on-error: true
+          sarif_file: ${{ env.CODACY_SPLIT_SARIF_DIR }}
+          wait-for-processing: true

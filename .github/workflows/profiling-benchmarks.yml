@@ -109,7 +109,9 @@ jobs:
 
       - name: Build profiling suite
         run: |
-          cargo build --release --bench profiling_suite
+          # Build with the same perf profile used by `cargo bench --profile perf`
+          # below so the bench step reuses these artifacts instead of rebuilding.
+          cargo build --profile perf --bench profiling_suite
 
       - name: Run comprehensive profiling benchmarks
         run: |

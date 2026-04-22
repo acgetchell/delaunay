@@ -133,8 +133,9 @@ bench-perf-summary: _ensure-uv
     uv run benchmark-utils generate-summary --run-benchmarks --profile perf
 
 # Smoke-test benchmark harnesses with minimal samples; not for performance data.
+# Criterion requires sample_size >= 10; use the minimum with short measurement/warm-up windows.
 bench-smoke:
-    CRIT_SAMPLE_SIZE=5 CRIT_MEASUREMENT_MS=500 CRIT_WARMUP_MS=200 cargo bench --workspace --profile perf
+    CRIT_SAMPLE_SIZE=10 CRIT_MEASUREMENT_MS=500 CRIT_WARMUP_MS=200 cargo bench --workspace --profile perf
 
 # Build commands
 build:
