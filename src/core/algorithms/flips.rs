@@ -4867,9 +4867,13 @@ where
     U: DataType,
     V: DataType,
 {
-    let periodic_offset = match source_cell {
-        Some(cell_key) => periodic_offset_for_cell_vertex(tds, cell_key, vertex_key)?,
-        None => None,
+    let periodic_offset = if topology_model.supports_periodic_orientation_offsets() {
+        match source_cell {
+            Some(cell_key) => periodic_offset_for_cell_vertex(tds, cell_key, vertex_key)?,
+            None => None,
+        }
+    } else {
+        None
     };
     lift_vertex_point(tds, topology_model, vertex_key, periodic_offset)
 }
@@ -4892,8 +4896,16 @@ where
         return vertex_point_with_optional_lift(tds, topology_model, vertex_key, None);
     };
 
-    if let Some(offset) = periodic_offset_for_cell_vertex(tds, target_cell_key, vertex_key)? {
-        return lift_vertex_point(tds, topology_model, vertex_key, Some(offset));
+    let target_offset = periodic_offset_for_cell_vertex(tds, target_cell_key, vertex_key)?;
+    if let Some(offset) = target_offset {
+        let periodic_offset = topology_model
+            .supports_periodic_orientation_offsets()
+            .then_some(offset);
+        return lift_vertex_point(tds, topology_model, vertex_key, periodic_offset);
+    }
+
+    if !topology_model.supports_periodic_orientation_offsets() {
+        return lift_vertex_point(tds, topology_model, vertex_key, None);
     }
 
     let target_cell = tds
@@ -7887,6 +7899,142 @@ mod tests {
         tds.insert_cell_with_mapping(cell).unwrap()
     }
 
+    fn insert_periodic_cell_with_offsets<const D: usize>(
+        tds: &mut Tds<f64, (), (), D>,
+        vertices: Vec<VertexKey>,
+        offsets: Vec<[i8; D]>,
+    ) -> CellKey {
+        let mut cell = Cell::new(vertices, None).unwrap();
+        cell.set_periodic_vertex_offsets(offsets);
+        tds.insert_cell_with_mapping(cell).unwrap()
+    }
+
+    fn insert_plain_cell<const D: usize>(
+        tds: &mut Tds<f64, (), (), D>,
+        vertices: Vec<VertexKey>,
+    ) -> CellKey {
+        tds.insert_cell_with_mapping(Cell::new(vertices, None).unwrap())
+            .unwrap()
+    }
+
+    fn periodic_helper_vertices<const D: usize>(
+        tds: &mut Tds<f64, (), (), D>,
+        count: usize,
+    ) -> Vec<VertexKey> {
+        (0..count)
+            .map(|index| {
+                let mut coords = [0.0; D];
+                coords[index % D] =
+                    0.05 * f64::from(u32::try_from(index + 1).expect("test index fits in u32"));
+                coords[(index + 1) % D] +=
+                    0.01 * f64::from(u32::try_from(index + 2).expect("test index fits in u32"));
+                tds.insert_vertex_with_mapping(vertex!(coords)).unwrap()
+            })
+            .collect()
+    }
+
+    macro_rules! gen_periodic_lift_helper_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_periodic_lift_helpers_use_cell_offsets_ $dim d>]() {
+                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let lifted_vertex = tds
+                        .insert_vertex_with_mapping(vertex!(unit_vector::<$dim>(0)))
+                        .unwrap();
+                    let mut cell_vertices = Vec::with_capacity($dim + 1);
+                    cell_vertices.push(lifted_vertex);
+                    cell_vertices.extend(periodic_helper_vertices::<$dim>(&mut tds, $dim));
+                    let mut offsets = vec![[0_i8; $dim]; cell_vertices.len()];
+                    offsets[0][0] = 1;
+                    let cell_key =
+                        insert_periodic_cell_with_offsets(&mut tds, cell_vertices.clone(), offsets);
+                    let topology_model = toroidal_periodic_model::<$dim>();
+
+                    let direct = vertex_point_with_optional_lift(
+                        &tds,
+                        &topology_model,
+                        lifted_vertex,
+                        Some(cell_key),
+                    )
+                    .unwrap();
+                    let mut expected = unit_vector::<$dim>(0);
+                    expected[0] += 1.0;
+                    assert_relative_eq!(direct.coords().as_slice(), expected.as_slice());
+
+                    let framed = vertex_point_lifted_into_cell(
+                        &tds,
+                        &topology_model,
+                        lifted_vertex,
+                        Some(cell_key),
+                        &[],
+                    )
+                    .unwrap();
+                    assert_relative_eq!(framed.coords().as_slice(), expected.as_slice());
+
+                    let points = vertices_to_points_with_optional_lift(
+                        &tds,
+                        &topology_model,
+                        &[lifted_vertex],
+                        Some(cell_key),
+                        &[cell_key],
+                    )
+                    .unwrap();
+                    assert_relative_eq!(points[0].coords().as_slice(), expected.as_slice());
+                    assert_eq!(matching_source_cell(&tds, &cell_vertices, &[cell_key]), Some(cell_key));
+                }
+
+                #[test]
+                fn [<test_periodic_lift_rejects_missing_source_offsets_ $dim d>]() {
+                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let shared_vertex = tds
+                        .insert_vertex_with_mapping(vertex!([0.0; $dim]))
+                        .unwrap();
+                    let lifted_vertex = tds
+                        .insert_vertex_with_mapping(vertex!(unit_vector::<$dim>(0)))
+                        .unwrap();
+
+                    let mut target_vertices = Vec::with_capacity($dim + 1);
+                    target_vertices.push(shared_vertex);
+                    target_vertices.extend(periodic_helper_vertices::<$dim>(&mut tds, $dim));
+                    let target_offsets = vec![[0_i8; $dim]; target_vertices.len()];
+                    let target_cell =
+                        insert_periodic_cell_with_offsets(&mut tds, target_vertices, target_offsets);
+
+                    let mut source_vertices = Vec::with_capacity($dim + 1);
+                    source_vertices.push(shared_vertex);
+                    source_vertices.push(lifted_vertex);
+                    source_vertices.extend(periodic_helper_vertices::<$dim>(
+                        &mut tds,
+                        $dim - 1,
+                    ));
+                    let source_cell = insert_plain_cell(&mut tds, source_vertices);
+                    let topology_model = toroidal_periodic_model::<$dim>();
+
+                    let result = vertex_point_lifted_into_cell(
+                        &tds,
+                        &topology_model,
+                        lifted_vertex,
+                        Some(target_cell),
+                        &[source_cell],
+                    );
+                    assert!(matches!(result, Err(FlipError::InvalidFlipContext { .. })));
+                }
+
+                #[test]
+                fn [<test_removed_cell_frame_requires_source_cell_ $dim d>]() {
+                    let result = removed_cell_frame(&[]);
+                    assert!(matches!(result, Err(FlipError::InvalidFlipContext { .. })));
+                }
+            }
+        };
+    }
+
+    gen_periodic_lift_helper_tests!(2);
+    gen_periodic_lift_helper_tests!(3);
+    gen_periodic_lift_helper_tests!(4);
+    gen_periodic_lift_helper_tests!(5);
+
     fn periodic_inverse_k2_fixture<const D: usize>() -> (
         Tds<f64, (), (), D>,
         Vec<VertexKey>,
@@ -8074,6 +8222,41 @@ mod tests {
 
     gen_periodic_inverse_predicate_tests!(4);
     gen_periodic_inverse_predicate_tests!(5);
+
+    #[test]
+    fn test_non_periodic_lift_ignores_stored_periodic_offsets() {
+        let (tds, face_vertices, _opposite_a, _opposite_b, removed_cells) =
+            periodic_inverse_k2_fixture::<4>();
+        let lifted_vertex = face_vertices[0];
+        let source_cell = removed_cells
+            .iter()
+            .copied()
+            .find(|&cell_key| {
+                tds.get_cell(cell_key)
+                    .is_some_and(|cell| cell.contains_vertex(lifted_vertex))
+            })
+            .expect("fixture should contain a removed cell with the lifted vertex");
+        let topology_model = GlobalTopology::Euclidean.model();
+
+        let direct = vertex_point_with_optional_lift(
+            &tds,
+            &topology_model,
+            lifted_vertex,
+            Some(source_cell),
+        )
+        .unwrap();
+        assert_relative_eq!(direct.coords().as_slice(), unit_vector::<4>(0).as_slice());
+
+        let framed = vertex_point_lifted_into_cell(
+            &tds,
+            &topology_model,
+            lifted_vertex,
+            Some(source_cell),
+            &removed_cells,
+        )
+        .unwrap();
+        assert_relative_eq!(framed.coords().as_slice(), unit_vector::<4>(0).as_slice());
+    }
 
     #[test]
     fn test_periodic_inverse_k2_alignment_failure_is_error() {

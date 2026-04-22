@@ -522,14 +522,18 @@ brief comment explaining **why they exist** — what problem they solve or
 what invariant they maintain.  The *what* is often clear from the
 signature; the *why* is not.
 
-Prefer:
+Prefer a normal comment when the helper is private:
 
 ```rust
-/// Aligns a periodic vertex offset from a source cell's frame into a
-/// target cell's frame so that cross-cell insphere predicates see
-/// consistent lifted coordinates.
+// Aligns a periodic vertex offset from a source cell's frame into a
+// target cell's frame so that cross-cell insphere predicates see
+// consistent lifted coordinates.
 fn align_periodic_offset<const D: usize>(...) -> Result<[i8; D], FlipError>
 ```
+
+Doc comments (`///`) are also acceptable for private helpers such as
+`align_periodic_offset` when the project intentionally documents private items,
+for example with `cargo doc --document-private-items`.
 
 A bare signature with no context forces readers to reverse-engineer
 intent from the implementation.
