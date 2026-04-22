@@ -3,9 +3,12 @@
 //! These tests exercise the public API from the outside, using only items exposed
 //! through `delaunay::prelude::triangulation` and `delaunay::triangulation::builder`.
 
+#![forbid(unsafe_code)]
+
 use std::collections::HashMap;
 use std::f64::consts::TAU;
 
+use delaunay::core::algorithms::flips::DelaunayRepairError;
 use delaunay::core::triangulation::TopologyGuarantee;
 use delaunay::core::vertex::{Vertex, VertexBuilder};
 use delaunay::geometry::kernel::RobustKernel;
@@ -314,29 +317,62 @@ fn test_builder_toroidal_robust_kernel_3d() {
 // Periodic (image-point method) path
 // =============================================================================
 
+fn toroidal_periodic_vertices<const D: usize>() -> Vec<Vertex<f64, (), D>> {
+    assert!((2..=5).contains(&D));
+
+    let multipliers = [
+        0.618_033_988_749_894_8,
+        0.414_213_562_373_095_03,
+        0.732_050_807_568_877_2,
+        0.236_067_977_499_789_8,
+        0.324_717_957_244_746,
+    ];
+    (0..(2 * D + 3))
+        .map(|index| {
+            let mut coords = [0.0_f64; D];
+            let index_f64 = f64::from(u32::try_from(index).expect("test index fits in u32"));
+            for axis in 0..D {
+                let axis_f64 = f64::from(u32::try_from(axis).expect("test axis fits in u32"));
+                let stride = 0.037_f64.mul_add(axis_f64 + 1.0, multipliers[axis]);
+                let phase = (index_f64 + 1.0) * stride;
+                coords[axis] = 0.9_f64.mul_add(phase.fract(), 0.05);
+            }
+            vertex!(coords)
+        })
+        .collect()
+}
+
+fn build_toroidal_periodic_triangulation<const D: usize>()
+-> DelaunayTriangulation<RobustKernel<f64>, (), (), D> {
+    let vertices = toroidal_periodic_vertices::<D>();
+    let expected_vertices = vertices.len();
+    let kernel = RobustKernel::new();
+    let dt = DelaunayTriangulationBuilder::new(&vertices)
+        .toroidal_periodic([1.0_f64; D])
+        .build_with_kernel::<_, ()>(&kernel)
+        .expect("periodic build should succeed");
+
+    assert_eq!(dt.number_of_vertices(), expected_vertices);
+    assert!(
+        dt.global_topology().is_toroidal(),
+        "global_topology should be Toroidal"
+    );
+    assert!(
+        dt.global_topology().is_periodic(),
+        "global_topology should use periodic image-point construction"
+    );
+    dt
+}
+
 /// `toroidal_periodic` builds a valid 2D periodic triangulation with χ = 0.
 ///
 /// Verifies TDS structural validity and χ = 0 directly.
-/// See `test_builder_toroidal_periodic_full_validate_2d` for the full
-/// `PLManifold` `validate()` path.
+/// See the macro-generated toroidal periodic validation tests for the full
+/// `PLManifold` and Level 4 `validate()` paths.
 #[test]
 fn test_builder_toroidal_periodic_chi_zero_2d() {
-    let vertices = vec![
-        vertex!([0.1_f64, 0.2]),
-        vertex!([0.4, 0.7]),
-        vertex!([0.7, 0.3]),
-        vertex!([0.2, 0.9]),
-        vertex!([0.8, 0.6]),
-        vertex!([0.5, 0.1]),
-        vertex!([0.3, 0.5]),
-    ];
-    let kernel = RobustKernel::new();
-    let dt = DelaunayTriangulationBuilder::new(&vertices)
-        .toroidal_periodic([1.0_f64, 1.0])
-        .build_with_kernel::<_, ()>(&kernel)
-        .expect("periodic 2D build should succeed");
+    let dt = build_toroidal_periodic_triangulation::<2>();
 
-    assert_eq!(dt.number_of_vertices(), 7);
     assert!(
         dt.tds().is_valid().is_ok(),
         "TDS structural validity should pass for periodic triangulation"
@@ -349,45 +385,108 @@ fn test_builder_toroidal_periodic_chi_zero_2d() {
     );
 }
 
-/// `toroidal_periodic` 2D with full `PLManifold` Levels 1–3 validation.
-///
-/// Periodic-aware ridge and vertex link validation correctly handles reused
-/// vertex keys via lifted vertex identity.  This exercises the
-/// `GlobalTopology::Toroidal` Euler override AND the lifted-vertex-identity
-/// logic in `validate_ridge_links` / `validate_vertex_links`.
-///
-/// Level 4 (Delaunay property) is not checked because the quotient mesh
-/// may contain local violations that are valid under periodic identification.
+macro_rules! gen_toroidal_periodic_validation_test {
+    ($dim:literal, $label:ident, $run_level4:expr $(, #[$attr:meta])?) => {
+        pastey::paste! {
+            /// `toroidal_periodic` validation for this dimension.
+            ///
+            /// Periodic-aware ridge and vertex link validation correctly handles reused
+            /// vertex keys via lifted vertex identity. When `$run_level4` is true, this
+            /// also exercises Level 4 periodic lifted Delaunay predicates.
+            #[test]
+            $(#[$attr])?
+            fn [<test_builder_toroidal_periodic_validate_ $label _ $dim d>]() {
+                let dt = build_toroidal_periodic_triangulation::<$dim>();
+
+                let topology_result = dt.as_triangulation().validate();
+                assert!(
+                    topology_result.is_ok(),
+                    "PLManifold Levels 1-3 validate() should pass for toroidal_periodic: {:?}",
+                    topology_result.err()
+                );
+
+                if $run_level4 {
+                    let level4_result = dt.validate();
+                    assert!(
+                        level4_result.is_ok(),
+                        "Level 1-4 validate() should pass for toroidal_periodic: {:?}",
+                        level4_result.err()
+                    );
+                }
+            }
+        }
+    };
+}
+
+gen_toroidal_periodic_validation_test!(2, levels_1_to_4, true);
 #[test]
-fn test_builder_toroidal_periodic_full_validate_2d() {
+#[ignore = "Slow (>60s): periodic 3D Level 4 scans image-point quotient cells"]
+fn test_builder_periodic_topology_level4_smoke_3d() {
     let vertices = vec![
-        vertex!([0.1_f64, 0.2]),
-        vertex!([0.4, 0.7]),
-        vertex!([0.7, 0.3]),
-        vertex!([0.2, 0.9]),
-        vertex!([0.8, 0.6]),
-        vertex!([0.5, 0.1]),
-        vertex!([0.3, 0.5]),
+        vertex!([0.2_f64, 0.3, 0.4]),
+        vertex!([0.8, 0.1, 0.2]),
+        vertex!([0.5, 0.7, 0.6]),
+        vertex!([0.1, 0.9, 0.3]),
+        vertex!([0.6, 0.4, 0.8]),
+        vertex!([0.3, 0.5, 0.9]),
+        vertex!([0.9, 0.2, 0.6]),
     ];
     let kernel = RobustKernel::new();
     let dt = DelaunayTriangulationBuilder::new(&vertices)
-        .toroidal_periodic([1.0_f64, 1.0])
+        .toroidal_periodic([1.0_f64; 3])
         .build_with_kernel::<_, ()>(&kernel)
-        .expect("periodic 2D build should succeed");
+        .expect("compact periodic 3D build should succeed");
 
-    assert_eq!(dt.number_of_vertices(), 7);
+    assert_eq!(dt.number_of_vertices(), vertices.len());
     assert!(
-        dt.global_topology().is_toroidal(),
-        "global_topology should be Toroidal"
+        dt.tds().is_valid().is_ok(),
+        "TDS structural validity should pass for compact periodic 3D"
     );
-    // Levels 1–3 (TDS structure + topology including PLManifold ridge/vertex links).
-    let result = dt.as_triangulation().validate();
     assert!(
-        result.is_ok(),
-        "PLManifold Levels 1-3 validate() should pass for toroidal_periodic: {:?}",
-        result.err()
+        dt.global_topology().is_periodic(),
+        "global_topology should use periodic image-point construction"
     );
+    assert!(
+        dt.cells().all(|(_, cell)| {
+            cell.periodic_vertex_offsets()
+                .is_some_and(|offsets| offsets.len() == cell.number_of_vertices())
+        }),
+        "periodic image-point construction should populate per-cell periodic offsets"
+    );
+    // The compact 3D quotient is a smoke fixture for lifted predicate evaluation,
+    // not a full periodic-Delaunay quality fixture. A local violation is a valid
+    // Level 4 result; malformed periodic-offset plumbing is not.
+    match dt.is_delaunay_via_flips() {
+        Ok(()) => {}
+        Err(DelaunayRepairError::PostconditionFailed { message }) => {
+            assert!(
+                !message.contains("predicate failed in strict mode")
+                    && !message.contains("periodic offset")
+                    && !message.contains("cannot align periodic vertex"),
+                "periodic Level 4 should evaluate lifted predicates with populated offsets: {message}"
+            );
+        }
+        Err(err) => panic!("periodic Level 4 validation returned an unexpected error: {err:?}"),
+    }
 }
+gen_toroidal_periodic_validation_test!(
+    3,
+    levels_1_to_4,
+    true,
+    #[ignore = "Slow (>60s): periodic 3D expands to 3^D image points; run with --ignored"]
+);
+gen_toroidal_periodic_validation_test!(
+    4,
+    levels_1_to_3,
+    false,
+    #[ignore = "Slow: periodic 4D expands to 3^D image points; run with --ignored"]
+);
+gen_toroidal_periodic_validation_test!(
+    5,
+    levels_1_to_3,
+    false,
+    #[ignore = "Slow: periodic 5D expands to 3^D image points; run with --ignored"]
+);
 
 /// Explicit 7-vertex torus (Heawood triangulation) with `GlobalTopology::Toroidal`
 /// builds successfully under `PLManifold` guarantee.

@@ -504,7 +504,8 @@ Avoid giant catch‑all preludes.
 
 ## Documentation
 
-All public items must have documentation.
+All public items must have documentation. Public functions must include a
+doctest in their documentation.
 
 Example:
 
@@ -512,8 +513,48 @@ Example:
 /// Inserts a vertex into the triangulation.
 ///
 /// Returns the key of the inserted vertex.
+///
+/// # Examples
+///
+/// ```rust
+/// # use delaunay::prelude::triangulation::*;
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let mut triangulation = DelaunayTriangulation::<_, _, _, 2>::default();
+/// let key = triangulation.insert_vertex([0.0, 0.0])?;
+/// assert!(triangulation.contains_vertex(key));
+/// # Ok(())
+/// # }
+/// ```
 pub fn insert_vertex(...)
 ```
+
+### Private functions
+
+Private functions must have a brief doc comment (`///`) explaining **why they
+exist** — what problem they solve or what invariant they maintain. The *what*
+is often clear from the signature; the *why* is not.
+
+Prefer:
+
+```rust
+/// Aligns source-cell periodic offsets into the target-cell frame so
+/// cross-cell insphere predicates see consistent lifted coordinates.
+fn align_periodic_offset<const D: usize>(...) -> Result<[i8; D], FlipError>
+```
+
+Use normal comments (`//`) for documentation inside function bodies or other
+implementation-local notes:
+
+```rust
+fn align_periodic_offset<const D: usize>(...) -> Result<[i8; D], FlipError> {
+    // Compare deltas in each coordinate so conflicting frame translations are
+    // rejected before lifted coordinates are constructed.
+    ...
+}
+```
+
+A bare signature with no context forces readers to reverse-engineer
+intent from the implementation.
 
 After Rust changes, verify documentation builds:
 
