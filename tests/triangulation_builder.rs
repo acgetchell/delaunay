@@ -356,8 +356,8 @@ fn test_builder_toroidal_periodic_chi_zero_2d() {
 /// `GlobalTopology::Toroidal` Euler override AND the lifted-vertex-identity
 /// logic in `validate_ridge_links` / `validate_vertex_links`.
 ///
-/// Level 4 (Delaunay property) is not checked because the quotient mesh
-/// may contain local violations that are valid under periodic identification.
+/// Level 4 (Delaunay property) is exercised separately by
+/// `test_builder_toroidal_periodic_level4_validate_2d`.
 #[test]
 fn test_builder_toroidal_periodic_full_validate_2d() {
     let vertices = vec![
@@ -385,6 +385,33 @@ fn test_builder_toroidal_periodic_full_validate_2d() {
     assert!(
         result.is_ok(),
         "PLManifold Levels 1-3 validate() should pass for toroidal_periodic: {:?}",
+        result.err()
+    );
+}
+
+/// `toroidal_periodic` full Level 1–4 validation uses periodic lifted
+/// coordinates for local Delaunay flip predicates.
+#[test]
+fn test_builder_toroidal_periodic_level4_validate_2d() {
+    let vertices = vec![
+        vertex!([0.1_f64, 0.2]),
+        vertex!([0.4, 0.7]),
+        vertex!([0.7, 0.3]),
+        vertex!([0.2, 0.9]),
+        vertex!([0.8, 0.6]),
+        vertex!([0.5, 0.1]),
+        vertex!([0.3, 0.5]),
+    ];
+    let kernel = RobustKernel::new();
+    let dt = DelaunayTriangulationBuilder::new(&vertices)
+        .toroidal_periodic([1.0_f64, 1.0])
+        .build_with_kernel::<_, ()>(&kernel)
+        .expect("periodic 2D build should succeed");
+
+    let result = dt.validate();
+    assert!(
+        result.is_ok(),
+        "Level 1-4 validate() should pass for toroidal_periodic: {:?}",
         result.err()
     );
 }

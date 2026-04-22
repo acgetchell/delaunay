@@ -9,6 +9,7 @@ use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
 use crate::core::algorithms::flips::{
     DelaunayRepairError, DelaunayRepairStats, FlipError, apply_bistellar_flip_k1_inverse,
     repair_delaunay_local_single_pass, repair_delaunay_with_flips_k2_k3,
+    verify_delaunay_for_triangulation,
 };
 use crate::core::algorithms::incremental_insertion::InsertionError;
 use crate::core::cell::{Cell, CellValidationError};
@@ -5406,10 +5407,7 @@ where
     /// assert!(dt.is_delaunay_via_flips().is_ok());
     /// ```
     pub fn is_delaunay_via_flips(&self) -> Result<(), DelaunayRepairError> {
-        crate::core::algorithms::flips::verify_delaunay_via_flip_predicates(
-            &self.tri.tds,
-            &self.tri.kernel,
-        )
+        verify_delaunay_for_triangulation(&self.tri)
     }
 
     /// Performs cumulative validation for Levels 1–4.
