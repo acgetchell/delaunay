@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 type: software
 title: "delaunay: A d-dimensional Delaunay triangulation library"
-version: 0.7.4
+version: 0.7.5
 doi: 10.5281/zenodo.16931097
 date-released: 2026-03-26
 url: "https://github.com/acgetchell/delaunay"

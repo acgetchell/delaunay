@@ -8,6 +8,33 @@ referenced files before making changes.
 
 ---
 
+## Contents
+
+- [Required Reading](#required-reading)
+- [Core Rules](#core-rules)
+  - [Git Operations](#git-operations)
+  - [GitHub CLI (`gh`)](#github-cli-gh)
+  - [Code Editing](#code-editing)
+  - [Commit Message Generation](#commit-message-generation)
+- [Validation Workflow](#validation-workflow)
+- [Project Context](#project-context)
+- [Design Principles](#design-principles)
+  - [Numerical correctness as an invariant](#numerical-correctness-as-an-invariant)
+  - [Topological correctness as an invariant](#topological-correctness-as-an-invariant)
+  - [Validation layering](#validation-layering)
+  - [Symbolic perturbation (SoS)](#symbolic-perturbation-sos)
+  - [Public‑API stability](#publicapi-stability)
+  - [Composability](#composability)
+  - [Idiomatic Rust as a proxy for mathematical clarity](#idiomatic-rust-as-a-proxy-for-mathematical-clarity)
+  - [Scientific notation in docs](#scientific-notation-in-docs)
+  - [Performance within scope](#performance-within-scope)
+  - [Testing mirrors the principles](#testing-mirrors-the-principles)
+- [Testing](#testing)
+- [Documentation Maintenance](#documentation-maintenance)
+- [Agent Behavior Expectations](#agent-behavior-expectations)
+
+---
+
 ## Required Reading
 
 Before modifying code, agents MUST read:
@@ -162,25 +189,11 @@ Refer to `docs/dev/commands.md` for full details.
 
 ---
 
-## Testing Rules
-
-Testing guidance lives in:
-
-```text
-docs/dev/testing.md
-```
-
-Key principle:
-
-- Rust changes must pass unit tests, integration tests, and documentation builds.
-
----
-
 ## Project Context
 
 - **Language**: Rust
 - **Project**: d‑dimensional Delaunay triangulation library
-- **MSRV**: 1.94
+- **MSRV**: 1.95
 - **Edition**: 2024
 - **Unsafe code**: forbidden (`#![forbid(unsafe_code)]`)
 
@@ -192,7 +205,171 @@ docs/code_organization.md
 
 ---
 
-## Testing Execution Reference
+## Design Principles
+
+This is a scientific d‑dimensional Delaunay triangulation library.  Design
+decisions trade off in roughly this priority: **numerical correctness →
+topological correctness → API stability → composability → idiomatic Rust →
+performance within scope**.  The sections below spell out what each means
+in practice; when in doubt, favour the invariant over the convenient edit.
+
+### Numerical correctness as an invariant
+
+- Geometric predicates (`insphere`, `insphere_lifted`, `orientation`) use
+  the three‑stage pattern from `src/geometry/predicates.rs`:
+  **Stage 1** — provable f64 fast filter with a Shewchuk‑style errbound;
+  **Stage 2** — exact sign via Bareiss in `la-stack`;
+  **Stage 3** — deterministic `InSphere::BOUNDARY` / `Orientation::DEGENERATE`
+  fallback for non‑finite inputs.  A new predicate must either plug into
+  this pattern or justify the deviation in its docs.
+- No f64 operation may silently lose sign information.  `unwrap_or(NaN)`,
+  `unwrap_or(f64::INFINITY)`, or "return `true` on error" are anti‑patterns.
+- Algorithms cite their source (Shewchuk, Bowyer–Watson, Edelsbrunner,
+  Preparata–Shamos, …) in `REFERENCES.md` and document their
+  conditioning behaviour.
+- When two predicate implementations cover the same question
+  (e.g. `insphere` vs `insphere_distance` vs `insphere_lifted`), a
+  proptest verifies they agree on the domain where all are defined.
+
+### Topological correctness as an invariant
+
+- Every mutating operation preserves the invariants checked by
+  `Tds::is_valid` (Level 1–3) and `DelaunayTriangulation::is_valid`
+  (Level 4).  An operation that cannot preserve them must fail explicitly
+  rather than leave the triangulation in an inconsistent state.
+- PL‑manifold invariants: facets have multiplicity 1 (boundary) or 2
+  (interior); ridges are linked consistently; the Euler characteristic
+  matches the triangulation's `TopologyGuarantee`.  The checks live in
+  `src/topology/manifold.rs` and `src/topology/characteristics/`.
+- Repair paths (`repair_delaunay_with_flips`, `repair_facet_oversharing`,
+  `delaunayize_by_flips`) bound their work via explicit budgets
+  (`max_flips`, `max_iterations`, `max_cells_removed`) and surface
+  non‑convergence as a typed error — never by logging and proceeding.
+
+### Validation layering
+
+The library exposes four validation levels, each a superset of the last:
+
+1. **Level 1 — elements**: individual cells, vertices, facets are
+   internally consistent (dimensions, UUIDs, coordinate finiteness).
+2. **Level 2 — structure**: adjacency pointers and neighbour links form a
+   valid incidence graph; no dangling keys.
+3. **Level 3 — topology**: PL‑manifold‑with‑boundary, Euler characteristic,
+   ridge‑link consistency.
+4. **Level 4 — Delaunay property**: every facet is locally Delaunay.
+
+Only Level 4 requires predicate evaluation; Levels 1–3 are pure graph
+checks.  Agents adding validation code should place it at the correct
+layer and avoid reaching into lower layers unnecessarily.
+
+### Symbolic perturbation (SoS)
+
+Degenerate configurations (cospherical, collinear, coplanar inputs) are
+resolved by Simulation‑of‑Simplicity in `src/geometry/sos.rs`.  This is
+a first‑class invariant, not an implementation detail — callers can
+rely on predicates returning a consistent, total ordering even on
+degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
+
+### Public‑API stability
+
+- Error enums are `#[non_exhaustive]`; public wrapper types are
+  `#[must_use]`.  New variants are additive.
+- New functionality is additive: use `crate::prelude::*` (or the focused
+  `prelude::triangulation`, `prelude::query`, etc.) for ergonomic
+  re‑exports; never silently rename or remove a public item.
+- Pre‑1.0 semver: `0.x.Y` is a patch‑level additive bump, `0.X.y` is a
+  minor bump that may include breaking changes.  Conventional‑commit
+  types (`feat`, `fix`, `refactor`, …) mirror this convention.
+- Publish documentation changes *before* bumping the crates.io version
+  (crates.io does not allow re‑publishing docs without a version bump).
+
+### Composability
+
+- Const‑generic `D` on every core type (`DelaunayTriangulation<K, U, V, D>`,
+  `Tds<T, U, V, D>`, `Cell<T, U, V, D>`, `Vertex<T, U, D>`, `Point<T, D>`).
+  No runtime dimension.
+- Per‑simplex data is stack‑allocated (`[T; D]` coordinates,
+  `SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>`).  The
+  triangulation's topology is stored in `SlotMap` — heap‑backed by
+  necessity, not by accident.
+- Feature flags isolate optional dependency weight.  Default builds stay
+  dep‑minimal.  Known flags: `dense-slotmap` (default),
+  `count-allocations`, `bench`, `bench-logging`, `test-debug`,
+  `slow-tests`.
+
+### Idiomatic Rust as a proxy for mathematical clarity
+
+- `#![forbid(unsafe_code)]` is a hard constraint, not a guideline.
+- `const fn` for pure‑math helpers (`sign_to_orientation`,
+  `sign_to_insphere`, coordinate conversions) where the inputs allow.
+  Do not twist mutating APIs into `const fn` for its own sake.
+- `Result<_, _Error>` for every fallible operation.  Panics are reserved
+  for documented, debug‑only precondition violations; library code in
+  `src/` must not panic on user input.
+- Borrow by default (`&T`, `&mut T`, `&[T]`); return borrowed views where
+  possible.  `FacetView`, `AdjacencyIndex`, and the `cells()`/`vertices()`
+  iterators are examples.
+- Type and function names match the textbook vocabulary: `Triangulation`,
+  `Vertex`, `Cell`, `Facet`, `Ridge`, `InSphere`, `Orientation`,
+  `insphere`, `circumcenter`, `circumradius`.  Avoid Rust‑ecosystem
+  abstractions that obscure the math.
+- Use `tracing::{debug,info,warn,error}!` for all runtime diagnostics.
+  Never `eprintln!` / `println!` outside examples and benches.
+
+### Scientific notation in docs
+
+- Unicode math (×, ≤, ≥, ∈, Σ, ², `2^-50`, …) is welcome in doc
+  comments — readability trumps ASCII‑only preference.
+- Reference literature via `REFERENCES.md` numbered citations.
+- State invariants mathematically where possible (e.g.
+  `χ(S^d) = 1 + (−1)^d`) rather than prose‑only.
+
+### Performance within scope
+
+- Performance is a design goal but strictly subordinate to the principles
+  above.  Never trade correctness, stability, or clarity for speed; if
+  the two conflict, re‑scope the problem rather than compromise the
+  invariant.
+- **In scope**: d‑dimensional Delaunay triangulations for small‑to‑medium
+  dimensions (typically 2 ≤ D ≤ 7), single‑threaded in‑memory
+  construction, `SlotMap`‑backed topology, Hilbert‑ordered insertion.
+- **Out of scope**: massively parallel / GPU meshing, out‑of‑core
+  triangulations, sparse sampling, dynamic remeshing at scale.  Those
+  belong to specialised tools (CGAL, TetGen, Gmsh).
+- Within scope, prefer:
+  - allocation‑free hot paths (`SmallBuffer`, stack arrays, iterators)
+  - Shewchuk‑style f64 fast filters with `core::hint::cold_path()` on
+    exact‑arithmetic fallbacks (see `src/geometry/predicates.rs`)
+  - `const fn` where the inputs allow
+  - typed flip/insertion budgets rather than heuristic timeouts
+- Validate any performance claim against one of the benchmark suites in
+  `benches/` (`ci_performance_suite`, `large_scale_performance`,
+  `profiling_suite`, `cold_path_predicates`, `microbenchmarks`,
+  `circumsphere_containment`, `topology_guarantee_construction`) before
+  relying on it.
+
+### Testing mirrors the principles
+
+- Unit tests cover known values, error paths, and dimension‑generic
+  correctness.  Dimension‑generic tests **must cover D=2 through D=5**
+  whenever feasible; use `pastey` macros to generate per‑dimension tests
+  (see `src/core/cell.rs`, `src/core/tds.rs` for patterns).
+- Proptests under `tests/proptest_*.rs` cover algebraic and
+  topological invariants — round‑trips, Euler characteristic, orientation
+  sign agreement, SoS consistency — not just "does it not panic".
+- Adversarial inputs (near‑boundary points, cospherical sets, degenerate
+  simplices, large coordinates) accompany well‑conditioned inputs in
+  both tests and benchmarks.
+- When a public API has two paths for the same question (fast filter +
+  exact fallback, or two alternative predicates), a proptest verifies
+  they agree on the domain where all are defined.
+
+---
+
+## Testing
+
+For *what* tests cover and why, see **Design Principles → Testing mirrors the principles** above.
+For detailed rules (proptest conventions, adversarial inputs, etc.), see `docs/dev/testing.md`.
 
 Typical commands:
 
@@ -202,8 +379,6 @@ just test-integration
 just test-all
 just examples
 ```
-
-See `docs/dev/testing.md` for full testing guidance.
 
 ---
 
@@ -217,16 +392,12 @@ See `docs/dev/testing.md` for full testing guidance.
 
 ## Agent Behavior Expectations
 
-Agents should:
+The invariants in **Design Principles** above are authoritative; this
+section only lists expectations that are not already codified there.
 
-- Prefer small, focused patches
-- Follow Rust idioms and borrowing conventions
-- Avoid introducing allocations unless necessary
-- Avoid panics in library code
-- Search documentation under `docs/` when unsure
-
-If multiple solutions exist, prefer the one that:
-
-1. Preserves API stability
-2. Maintains generic const‑dimension architecture
-3. Keeps code simple and maintainable
+- Prefer small, focused patches.
+- Search `docs/` and `docs/dev/` before inventing new conventions.
+- When a design question is ambiguous, default to the trade‑off ordering
+  in Design Principles (numerical correctness → topological correctness
+  → API stability → composability → idiomatic Rust → performance).
+- Keep code simple and maintainable when multiple correct solutions exist.

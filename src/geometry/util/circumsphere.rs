@@ -10,6 +10,7 @@ use super::norms::{hypot, squared_norm};
 use crate::geometry::matrix::matrix_set;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
+use core::hint::cold_path;
 use la_stack::{DEFAULT_PIVOT_TOL, LaError, Vector as LaVector};
 
 // Re-export error type
@@ -157,6 +158,10 @@ where
             })?
             .into_array(),
         Err(LaError::Singular { .. }) => {
+            // Exact-arithmetic fallback: LU rejected the system as
+            // near-singular, so we pay for BigRational Gaussian elimination.
+            // This path is cold — well-conditioned simplices return above.
+            cold_path();
             #[cfg(debug_assertions)]
             if std::env::var_os("DELAUNAY_DEBUG_LU_FALLBACK").is_some() {
                 tracing::debug!("circumcenter<{D}>: LU near-singular, using solve_exact_f64");
@@ -169,6 +174,7 @@ where
                 .into_array()
         }
         Err(e) => {
+            cold_path();
             return Err(CircumcenterError::MatrixInversionFailed {
                 details: format!("LU factorization failed: {e}"),
             });
@@ -342,6 +348,19 @@ mod tests {
         // For this triangle, circumcenter should be at (1.0, 0.75)
         assert_relative_eq!(center.coords()[0], 1.0, epsilon = 1e-10);
         assert_relative_eq!(center.coords()[1], 0.75, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_circumradius_with_center_empty_point_set() {
+        // Hits the `points.is_empty()` early-return branch in
+        // `circumradius_with_center` (previously only exercised by
+        // `circumcenter`).
+        let points: Vec<Point<f64, 3>> = Vec::new();
+        let center = Point::new([0.0, 0.0, 0.0]);
+        match circumradius_with_center(&points, &center) {
+            Err(CircumcenterError::EmptyPointSet) => {}
+            other => panic!("expected EmptyPointSet, got {other:?}"),
+        }
     }
 
     #[test]

@@ -141,15 +141,11 @@ fn find_seed_and_vertices<const D: usize>(
 }
 
 fn bench_logging_enabled() -> bool {
-    std::env::var("DELAUNAY_BENCH_LOG")
-        .map(|value| value != "0")
-        .unwrap_or(false)
+    std::env::var("DELAUNAY_BENCH_LOG").is_ok_and(|value| value != "0")
 }
 
 fn bench_discover_seeds_enabled() -> bool {
-    std::env::var("DELAUNAY_BENCH_DISCOVER_SEEDS")
-        .map(|value| value != "0")
-        .unwrap_or(false)
+    std::env::var("DELAUNAY_BENCH_DISCOVER_SEEDS").is_ok_and(|value| value != "0")
 }
 
 fn bench_seed_search_limit() -> usize {

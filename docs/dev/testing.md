@@ -6,6 +6,30 @@ Agents must follow these expectations when adding or modifying Rust code.
 
 ---
 
+## Contents
+
+- [Testing Philosophy](#testing-philosophy)
+- [Test Types](#test-types)
+  - [Unit Tests](#unit-tests)
+  - [Integration Tests](#integration-tests)
+  - [Property Tests](#property-tests)
+- [Floating-Point Comparisons](#floating-point-comparisons)
+- [Degenerate Geometry](#degenerate-geometry)
+- [Dimension Coverage (2D–5D)](#dimension-coverage-2d5d)
+- [Deterministic Randomness](#deterministic-randomness)
+- [Error Handling in Tests](#error-handling-in-tests)
+- [Triangulation Validation](#triangulation-validation)
+- [Core Geometry Invariants](#core-geometry-invariants)
+- [Triangulation Validity Checklist](#triangulation-validity-checklist)
+- [Test Commands](#test-commands)
+- [Documentation Tests](#documentation-tests)
+- [Performance-Sensitive Tests](#performance-sensitive-tests)
+- [CI Expectations](#ci-expectations)
+- [Test Module Organization](#test-module-organization)
+- [Preferred Test Style](#preferred-test-style)
+
+---
+
 ## Testing Philosophy
 
 This project is a **scientific computational geometry library**.

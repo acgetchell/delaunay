@@ -209,7 +209,7 @@ fn extract_and_analyze_convex_hull(dt: &DelaunayTriangulation<AdaptiveKernel<f64
                 facet_handle.cell_key(),
                 facet_handle.facet_index(),
             ) {
-                let vertex_count = facet_view.vertices().map(Iterator::count).unwrap_or(0);
+                let vertex_count = facet_view.vertices().map_or(0, Iterator::count);
                 let facet_key = facet_view.key().unwrap_or(0);
                 println!(
                     "    Facet {}: key = {}, vertices = {}",

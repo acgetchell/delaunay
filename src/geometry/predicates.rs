@@ -15,6 +15,7 @@ use crate::geometry::util::{
     squared_norm,
 };
 use crate::prelude::CircumcenterError;
+use core::hint::cold_path;
 use num_traits::Float;
 
 /// Convert an exact determinant sign (from `det_sign_exact`) to an [`Orientation`].
@@ -87,7 +88,10 @@ pub(crate) fn insphere_from_matrix<const N: usize>(
     }
 
     // Stage 2: exact sign via Bareiss — reached for ambiguous f64 results
-    // (D ≤ 4) or always for D ≥ 5.
+    // (D ≤ 4) or always for D ≥ 5.  `cold_path()` nudges the optimizer to
+    // keep Stage 1 lean; for D ≤ 4 with well-separated inputs, the vast
+    // majority of calls return before reaching this point.
+    cold_path();
     let exact_is_safe = det_direct.is_some_and(f64::is_finite)
         || (0..k).all(|i| (0..k).all(|j| matrix.get(i, j).is_some_and(f64::is_finite)));
     if exact_is_safe && let Ok(sign) = matrix.det_sign_exact() {
@@ -96,6 +100,7 @@ pub(crate) fn insphere_from_matrix<const N: usize>(
 
     // Stage 3: sign is unresolvable (non-finite entries prevent exact
     // arithmetic from running).
+    cold_path();
     InSphere::BOUNDARY
 }
 
@@ -129,7 +134,9 @@ pub(crate) fn orientation_from_matrix<const N: usize>(
     }
 
     // Stage 2: exact sign via Bareiss — reached for ambiguous f64 results
-    // (D ≤ 4) or always for D ≥ 5.
+    // (D ≤ 4) or always for D ≥ 5.  See `insphere_from_matrix` for why this
+    // is annotated cold.
+    cold_path();
     let exact_is_safe = det_direct.is_some_and(f64::is_finite)
         || (0..k).all(|i| (0..k).all(|j| matrix.get(i, j).is_some_and(f64::is_finite)));
     if exact_is_safe && let Ok(sign) = matrix.det_sign_exact() {
@@ -137,6 +144,7 @@ pub(crate) fn orientation_from_matrix<const N: usize>(
     }
 
     // Stage 3: sign is unresolvable (same reasoning as insphere_from_matrix).
+    cold_path();
     Orientation::DEGENERATE
 }
 
