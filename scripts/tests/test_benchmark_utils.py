@@ -646,6 +646,8 @@ Criterion warm-up time: 1
             assert "Sampling configuration differs from baseline" in warning
             assert "sampling mode: baseline=dev, current=full" in warning
             assert "Criterion sample size: baseline=10, current=criterion-default" in warning
+            assert "Criterion measurement time: baseline=2, current=criterion-default" in warning
+            assert "Criterion warm-up time: baseline=1, current=criterion-default" in warning
 
     def test_sampling_warning_reports_missing_baseline_metadata(self, comparator, sample_baseline_content):
         """Test that legacy baselines without sampling metadata produce a warning."""
@@ -654,6 +656,9 @@ Criterion warm-up time: 1
         assert "Sampling configuration differs from baseline" in warning
         assert "sampling mode: baseline=Unknown, current=full" in warning
         assert f"Cargo profile: baseline=Unknown, current={TRUSTED_BENCH_PROFILE}" in warning
+        assert "Criterion sample size: baseline=Unknown, current=criterion-default" in warning
+        assert "Criterion measurement time: baseline=Unknown, current=criterion-default" in warning
+        assert "Criterion warm-up time: baseline=Unknown, current=criterion-default" in warning
 
 
 class TestBaselineGenerator:
