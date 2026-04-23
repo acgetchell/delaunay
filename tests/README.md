@@ -500,7 +500,7 @@ just test-debug
    - `*_debug_tools.rs` - Interactive debugging utilities
    - `*_integration.rs` - Algorithm integration testing
    - `*_comparison.rs` - Comparative analysis testing
-   - `*_error.rs` - Error-path testing
+   - `*_errors.rs` - Error-path testing
    - `regressions.rs` - Fixed-bug regression tests; add new bug regressions here
 
 2. **Test Categories**: Organize tests by function:

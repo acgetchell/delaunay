@@ -546,15 +546,15 @@ All PRs must pass CI checks before merging.
 Non-security quality feedback should surface as PR review comments, normal
 status checks, or CI logs rather than broad GitHub Code Scanning alerts.
 
-The project uses **CodeRabbit** for PR review comments from the curated
-quality tool set:
+The project uses **CodeRabbit** for PR review comments from two surfaces:
 
-- **Rust**: Clippy
-- **Python**: Ruff
-- **Shell**: ShellCheck
-- **Markdown**: Markdownlint
-- **Configuration**: actionlint and yamllint
-- **Workflow context**: GitHub check summaries
+- **Native CodeRabbit tools** from `.coderabbit.yml`: Clippy, Ruff,
+  ShellCheck, Markdownlint, actionlint, yamllint, ast-grep, gitleaks, and
+  LanguageTool. CodeRabbit also provides its own security, complexity,
+  refactor, suggestion, labeling, linked-issue, and review-effort feedback.
+- **CI/GitHub summaries**: GitHub check summaries surface the broader
+  workflow results, including `just check` coverage for local-only or
+  environment-specific checks.
 
 The project uses **Codacy** as a second PR-quality surface. Enable and disable
 Codacy tools in the Codacy Code Patterns UI; `.codacy.yml` records path and

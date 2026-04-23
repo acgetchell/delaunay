@@ -6468,6 +6468,194 @@ mod tests {
     }
 
     #[test]
+    fn test_orient_replacement_cells_rejects_missing_external_cell() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let external_cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        assert!(tds.remove_cell_by_key(external_cell_key).is_some());
+
+        let mut replacement_cells = vec![[v0, v1, v2].into_iter().collect()];
+        let result = orient_replacement_cells(
+            &tds,
+            &mut replacement_cells,
+            &[FacetHandle::new(external_cell_key, 0)],
+        );
+
+        assert!(
+            matches!(
+                result,
+                Err(FlipError::MissingCell { cell_key }) if cell_key == external_cell_key
+            ),
+            "missing external cell should fail explicitly: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_replacement_orientation_helpers_cover_error_paths() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v_origin = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_x = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_y = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_square = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+        let v_collinear = tds.insert_vertex_with_mapping(vertex!([2.0, 0.0])).unwrap();
+
+        let source: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            [v_origin, v_x, v_y].into_iter().collect();
+        let target: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            [v_x, v_y, v_square].into_iter().collect();
+        let neighbor: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            [v_origin, v_x, v_square].into_iter().collect();
+        let short: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            [v_origin, v_x].into_iter().collect();
+        let two_unique: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            [v_origin, v_square, v_collinear].into_iter().collect();
+
+        let order = facet_order(&source, 1).unwrap();
+        assert_eq!(
+            order.iter().copied().collect::<Vec<_>>(),
+            vec![v_origin, v_y]
+        );
+        assert!(
+            matches!(
+                facet_order(&source, source.len()),
+                Err(FlipError::InvalidFlipContext { ref message })
+                    if message.contains("facet index")
+            ),
+            "out-of-range facet indices should be rejected"
+        );
+
+        assert_eq!(matching_facet_index(&source, 0, &target).unwrap(), Some(2));
+        assert_eq!(matching_facet_index(&source, 0, &short).unwrap(), None);
+        assert_eq!(matching_facet_index(&source, 0, &two_unique).unwrap(), None);
+
+        assert_eq!(shared_facet_indices(&source, &neighbor), Some((2, 2)));
+        assert_eq!(shared_facet_indices(&source, &short), None);
+        assert_eq!(shared_facet_indices(&source, &two_unique), None);
+
+        assert!(!facet_orders_coherent(&source, 2, &neighbor, 2).unwrap());
+        assert!(
+            matches!(
+                facet_orders_coherent(&source, source.len(), &neighbor, 2),
+                Err(FlipError::InvalidFlipContext { .. })
+            ),
+            "invalid facet-order constraints should surface as invalid context"
+        );
+
+        let odd_target: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            [v_origin, v_y, v_x].into_iter().collect();
+        assert_eq!(permutation_odd(&source, &odd_target), Some(true));
+        assert_eq!(permutation_odd(&source, &short), None);
+        assert_eq!(permutation_odd(&source, &neighbor), None);
+    }
+
+    #[test]
+    fn test_set_flip_assignment_rejects_conflicts_and_invalid_indices() {
+        let mut assignments: SmallBuffer<Option<bool>, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::from_elem(None, 1);
+
+        assert!(set_flip_assignment(&mut assignments, 0, true).unwrap());
+        assert_eq!(assignments[0], Some(true));
+        assert!(!set_flip_assignment(&mut assignments, 0, true).unwrap());
+        assert!(
+            matches!(
+                set_flip_assignment(&mut assignments, 0, false),
+                Err(FlipError::InvalidFlipContext { ref message })
+                    if message.contains("conflicting replacement-cell orientation")
+            ),
+            "conflicting parity assignments should fail"
+        );
+        assert!(
+            matches!(
+                set_flip_assignment(&mut assignments, 1, false),
+                Err(FlipError::InvalidFlipContext { ref message })
+                    if message.contains("out of range")
+            ),
+            "out-of-range parity assignments should fail"
+        );
+    }
+
+    #[test]
+    fn test_orient_replacement_cells_aligns_external_and_internal_facets() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v_origin = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_x = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_y = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_square = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+        let external_cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_origin, v_x, v_y], None).unwrap())
+            .unwrap();
+
+        let mut external_aligned = vec![[v_origin, v_x, v_y].into_iter().collect()];
+        orient_replacement_cells(
+            &tds,
+            &mut external_aligned,
+            &[FacetHandle::new(external_cell_key, 0)],
+        )
+        .unwrap();
+        assert_eq!(
+            external_aligned[0].iter().copied().collect::<Vec<_>>(),
+            vec![v_x, v_origin, v_y],
+            "external facet parity should flip a same-order replacement cell"
+        );
+
+        let mut internally_aligned = vec![
+            [v_origin, v_x, v_y].into_iter().collect(),
+            [v_origin, v_x, v_square].into_iter().collect(),
+        ];
+        orient_replacement_cells(&tds, &mut internally_aligned, &[]).unwrap();
+        let (source_facet_idx, target_facet_idx) =
+            shared_facet_indices(&internally_aligned[0], &internally_aligned[1]).unwrap();
+        assert!(
+            facet_orders_coherent(
+                &internally_aligned[0],
+                source_facet_idx,
+                &internally_aligned[1],
+                target_facet_idx,
+            )
+            .unwrap(),
+            "internal shared facets should be coherent after parity propagation"
+        );
+    }
+
+    #[test]
+    fn test_validate_replacement_orientation_rejects_bad_geometry() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v_origin = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_x = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_y = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_collinear = tds.insert_vertex_with_mapping(vertex!([2.0, 0.0])).unwrap();
+
+        let positive: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            [v_origin, v_x, v_y].into_iter().collect();
+        let positive_cells = vec![positive];
+        assert!(validate_replacement_orientation(&tds, &positive_cells).is_ok());
+
+        let negative: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            [v_origin, v_y, v_x].into_iter().collect();
+        let negative_result = validate_replacement_orientation(&tds, &[negative]);
+        assert!(
+            matches!(
+                negative_result,
+                Err(FlipError::NegativeOrientation { ref cell_vertices })
+                    if cell_vertices == &vec![v_origin, v_y, v_x]
+            ),
+            "negative replacement cells should fail before mutation: {negative_result:?}"
+        );
+
+        let degenerate: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            [v_origin, v_x, v_collinear].into_iter().collect();
+        let degenerate_result = validate_replacement_orientation(&tds, &[degenerate]);
+        assert!(
+            matches!(degenerate_result, Err(FlipError::DegenerateCell)),
+            "degenerate replacement cells should fail before mutation: {degenerate_result:?}"
+        );
+    }
+
+    #[test]
     #[expect(
         clippy::too_many_lines,
         reason = "Test constructs an explicit k=3 ridge-flip fixture and checks neighbor rewiring"

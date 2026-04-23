@@ -3056,6 +3056,13 @@ where
                                             max_flips,
                                         )
                                     };
+                                    #[cfg(test)]
+                                    let repair_result =
+                                        if tests::force_repair_nonconvergent_enabled() {
+                                            Err(tests::synthetic_nonconvergent_error())
+                                        } else {
+                                            repair_result
+                                        };
                                     match repair_result {
                                         Ok(stats) => {
                                             if stats.flips_performed > 0 {
@@ -3207,6 +3214,13 @@ where
                                             max_flips,
                                         )
                                     };
+                                    #[cfg(test)]
+                                    let repair_result =
+                                        if tests::force_repair_nonconvergent_enabled() {
+                                            Err(tests::synthetic_nonconvergent_error())
+                                        } else {
+                                            repair_result
+                                        };
                                     match repair_result {
                                         Ok(stats) => {
                                             if stats.flips_performed > 0 {
@@ -8292,6 +8306,61 @@ mod tests {
                 .unwrap();
         assert_eq!(dt.number_of_vertices(), 5);
         assert_eq!(stats.inserted, 5);
+        assert!(dt.validate().is_ok());
+    }
+
+    /// Forced local repair non-convergence exercises the D>=4 soft-fail branch
+    /// without relying on a fragile floating-point cycling fixture.
+    #[test]
+    fn test_batch_4d_forced_nonconvergent_local_repair_canonicalizes_without_stats() {
+        init_tracing();
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+            vertex!([0.2, 0.2, 0.2, 0.2]),
+        ];
+
+        let _guard = ForceRepairNonconvergentGuard::enable();
+        let kernel = RobustKernel::<f64>::new();
+        let dt =
+            DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::with_kernel(&kernel, &vertices)
+                .expect(
+                    "D>=4 construction should continue after forced local repair non-convergence",
+                );
+
+        assert_eq!(dt.number_of_vertices(), vertices.len());
+        assert!(dt.validate().is_ok());
+    }
+
+    /// The statistics path has a separate insertion loop, so it needs its own
+    /// forced D>=4 local-repair non-convergence assertion.
+    #[test]
+    fn test_batch_4d_forced_nonconvergent_local_repair_canonicalizes_with_stats() {
+        init_tracing();
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+            vertex!([0.2, 0.2, 0.2, 0.2]),
+        ];
+
+        let _guard = ForceRepairNonconvergentGuard::enable();
+        let kernel = RobustKernel::<f64>::new();
+        let (dt, stats) = DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::with_topology_guarantee_and_options_with_construction_statistics(
+            &kernel,
+            &vertices,
+            TopologyGuarantee::DEFAULT,
+            ConstructionOptions::default(),
+        )
+        .expect("D>=4 stats construction should continue after forced local repair non-convergence");
+
+        assert_eq!(dt.number_of_vertices(), vertices.len());
+        assert_eq!(stats.inserted, vertices.len());
         assert!(dt.validate().is_ok());
     }
 

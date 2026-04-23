@@ -158,14 +158,14 @@ fn regression_issue_306_3d_construction_succeeds() {
     );
 }
 
-/// The first 13 vertices from the 100-point 4D seed used to leave one negative
-/// cell after bulk local repair, causing every later insertion to be skipped.
+/// The first 14 vertices from the 100-point 4D seed used to leave one negative
+/// cell after bulk local repair, causing the next insertion to be skipped.
 #[test]
 fn regression_issue_307_4d_bulk_repair_keeps_positive_orientation() {
     let seed: u64 = 0x9B77_86C9_99C5_6A16;
     let points = generate_random_points_in_ball_seeded::<f64, 4>(100, 100.0, seed)
         .expect("point generation should succeed");
-    let vertices = hilbert_ordered_prefix(points, 13);
+    let vertices = hilbert_ordered_prefix(points, 14);
 
     let kernel = RobustKernel::<f64>::new();
     let options = ConstructionOptions::default()
@@ -186,7 +186,11 @@ fn regression_issue_307_4d_bulk_repair_keeps_positive_orientation() {
     );
     assert_eq!(stats.total_skipped(), 0);
     assert!(
-        dt.as_triangulation().validate().is_ok(),
+        dt.as_triangulation().is_valid().is_ok(),
         "bulk repair must leave all cells in positive geometric orientation",
+    );
+    assert!(
+        dt.as_triangulation().validate().is_ok(),
+        "bulk repair must leave the triangulation structurally and topologically valid",
     );
 }

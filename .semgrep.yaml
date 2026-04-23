@@ -24,7 +24,11 @@ rules:
       rationale: "Runtime diagnostics should be filterable through tracing and RUST_LOG."
     paths:
       include:
-        - "__semgrep_disabled__/**/*.rs"
+        - "/__semgrep_disabled__/**/*.rs"
+      exclude:
+        - "/tests/**"
+        - "/examples/**"
+        - "/benches/**"
     patterns:
       - pattern-either:
           - pattern: println!(...)
@@ -32,6 +36,31 @@ rules:
       - pattern-not-inside: |
           #[cfg(test)]
           mod $MOD {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(any(test, ...))]
+          mod $MOD {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          fn $FUNC(...) {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(any(test, ...))]
+          fn $FUNC(...) {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          impl $TYPE {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(any(test, ...))]
+          impl $TYPE {
               ...
           }
 
@@ -49,7 +78,7 @@ rules:
         sentinels after conversion failure.
     paths:
       include:
-        - "__semgrep_disabled__/**/*.rs"
+        - "/__semgrep_disabled__/**/*.rs"
     pattern-either:
       - pattern: $VALUE.unwrap_or(f64::NAN)
       - pattern: $VALUE.unwrap_or(f64::INFINITY)
