@@ -28,7 +28,10 @@ use crate::core::util::canonical_points::{sorted_cell_points, sorted_facet_point
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
+use std::env;
 use std::hash::{Hash, Hasher};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(debug_assertions)]
 #[derive(Debug, Clone, Copy)]
 struct ConflictDebugConfig {
@@ -39,17 +42,25 @@ struct ConflictDebugConfig {
 
 #[cfg(debug_assertions)]
 fn conflict_debug_config() -> &'static ConflictDebugConfig {
-    static CONFIG: std::sync::OnceLock<ConflictDebugConfig> = std::sync::OnceLock::new();
+    static CONFIG: OnceLock<ConflictDebugConfig> = OnceLock::new();
 
     CONFIG.get_or_init(|| ConflictDebugConfig {
-        log_conflict: std::env::var_os("DELAUNAY_DEBUG_CONFLICT").is_some(),
-        progress_enabled: std::env::var_os("DELAUNAY_DEBUG_CONFLICT_PROGRESS").is_some(),
-        progress_every: std::env::var("DELAUNAY_DEBUG_CONFLICT_PROGRESS_EVERY")
+        log_conflict: env::var_os("DELAUNAY_DEBUG_CONFLICT").is_some(),
+        progress_enabled: env::var_os("DELAUNAY_DEBUG_CONFLICT_PROGRESS").is_some(),
+        progress_every: env::var("DELAUNAY_DEBUG_CONFLICT_PROGRESS_EVERY")
             .ok()
             .and_then(|value| value.parse::<usize>().ok())
             .filter(|value| *value > 0)
             .unwrap_or(5000),
     })
+}
+
+static RIDGE_FAN_DUMP_ENABLED: OnceLock<bool> = OnceLock::new();
+static RIDGE_FAN_DUMP_EMITTED: AtomicBool = AtomicBool::new(false);
+
+/// Returns whether a one-shot release-visible ridge-fan dump is enabled.
+fn ridge_fan_dump_enabled() -> bool {
+    *RIDGE_FAN_DUMP_ENABLED.get_or_init(|| env::var_os("DELAUNAY_DEBUG_RIDGE_FAN_ONCE").is_some())
 }
 
 /// Result of point location query.
@@ -142,12 +153,45 @@ pub enum ConflictError {
     },
 
     /// Failed to access required cell data (e.g., vertices) or build facet identifiers.
+    ///
+    /// This represents a *data-sourcing* failure attributable to a specific cell key:
+    /// the key resolved but its vertex list, facet index, or derived identifier could
+    /// not be produced. For invariant violations that are *not* about a specific cell
+    /// (e.g., a `boundary_facets` index that must be in range by construction), use
+    /// [`ConflictError::InternalInconsistency`] instead of fabricating a cell key.
     #[error("Failed to access required data for cell {cell_key:?}: {message}")]
     CellDataAccessFailed {
         /// The cell key for which required data could not be accessed.
         cell_key: CellKey,
         /// Human-readable details about what data could not be accessed.
         message: String,
+    },
+
+    /// Internal invariant violation during cavity-boundary extraction.
+    ///
+    /// This is raised when an invariant that must hold by construction does not —
+    /// typically a `boundary_facets` or `RidgeInfo` index that is unconditionally
+    /// valid in correct code. Debug builds catch these with `debug_assert!` so the
+    /// error path is only reachable in release mode; returning it rather than
+    /// panicking preserves the caller's transactional rollback guarantees.
+    ///
+    /// Orthogonality: this variant is distinct from
+    /// [`ConflictError::CellDataAccessFailed`]. Use `CellDataAccessFailed` when
+    /// a specific, real cell key is the subject of the failure; use
+    /// `InternalInconsistency` when the failure is structural and has no such key.
+    /// Treated as non-retryable by [`InsertionError::is_retryable`] because
+    /// perturbing coordinates cannot resolve a logic error.
+    ///
+    /// The specific violation site is carried in [`InternalInconsistencySite`]
+    /// as a typed payload so callers can pattern-match without parsing strings.
+    ///
+    /// [`InsertionError::is_retryable`]:
+    ///     crate::core::algorithms::incremental_insertion::InsertionError::is_retryable
+    #[error("Internal cavity-boundary inconsistency: {site}")]
+    InternalInconsistency {
+        /// Structured, typed description of the violated invariant — the index,
+        /// counts, and slice lengths that exposed the failure.
+        site: InternalInconsistencySite,
     },
 
     /// Non-manifold facet detected (facet shared by more than 2 conflict cells).
@@ -161,19 +205,37 @@ pub enum ConflictError {
         cell_count: usize,
     },
 
-    /// Ridge fan detected (many facets sharing same (D-2)-simplex)
+    /// Ridge fan detected (many facets sharing same (D-2)-simplex).
+    ///
+    /// When a single conflict region contains multiple ridge fans,
+    /// [`extract_cavity_boundary`] accumulates the removal candidates from every
+    /// fan into `extra_cells` before returning, so a single cavity-reduction step
+    /// can shrink all of them at once. In that case:
+    ///
+    /// - `facet_count` and `ridge_vertex_count` describe the **first** fan that
+    ///   the boundary walk observed (a representative example, not an aggregate).
+    /// - `extra_cells` contains the **union** of extra-cell candidates across all
+    ///   detected fans in the conflict region (deduplicated).
+    ///
+    /// The error message reports the representative scalars; consult
+    /// `extra_cells.len()` in traces when the conflict region is large enough to
+    /// host several fans.
     #[error(
         "Ridge fan detected: {facet_count} facets share ridge with {ridge_vertex_count} vertices (indicates degenerate geometry requiring perturbation)"
     )]
     RidgeFan {
-        /// Number of facets in the fan
+        /// Number of facets in the *first* fan encountered during the boundary
+        /// walk. When several ridge fans are present in the same conflict region,
+        /// this is a representative value, not the maximum or sum.
         facet_count: usize,
-        /// Number of vertices in the shared ridge
+        /// Number of vertices in the shared ridge for the first fan encountered.
         ridge_vertex_count: usize,
-        /// Cell keys of the conflict-region cells that contribute the *extra* (3rd, 4th, …)
-        /// facets to the fan.  Removing these cells from the conflict region eliminates the
-        /// ridge fan, enabling cavity insertion to proceed at the cost of leaving those cells
-        /// temporarily non-Delaunay (fixed by the subsequent flip-repair pass).
+        /// Deduplicated cell keys that contribute the *extra* (3rd, 4th, …)
+        /// facets to one or more ridge fans in the conflict region. Removing
+        /// these cells from the conflict region eliminates every currently
+        /// detected ridge fan at once, enabling cavity insertion to proceed at
+        /// the cost of leaving those cells temporarily non-Delaunay (the
+        /// subsequent flip-repair pass restores the Delaunay property).
         extra_cells: Vec<CellKey>,
     },
 
@@ -216,16 +278,303 @@ pub enum ConflictError {
     },
 }
 
+/// Typed site of a [`ConflictError::InternalInconsistency`] violation.
+///
+/// Each variant describes one specific invariant that `extract_cavity_boundary`
+/// maintains by construction. The fields carry the indices, counts, and slice
+/// lengths that would normally appear in a `format!(...)` context string, but
+/// keep them as typed data so callers can `matches!` / `assert_eq!` on them and
+/// so future localized formatting does not need to reparse prose.
+///
+/// These paths are unreachable in debug builds — the corresponding
+/// `debug_assert!` invariants fire there — and are guarded only to preserve
+/// transactional-rollback semantics in release builds.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::core::algorithms::locate::{ConflictError, InternalInconsistencySite};
+///
+/// let site = InternalInconsistencySite::RidgeFanExtraFacetOutOfBounds {
+///     index: 7,
+///     boundary_facets_len: 5,
+///     extra_facets_len: 3,
+/// };
+/// let err = ConflictError::InternalInconsistency { site: site.clone() };
+/// assert!(matches!(
+///     err,
+///     ConflictError::InternalInconsistency {
+///         site: InternalInconsistencySite::RidgeFanExtraFacetOutOfBounds { .. }
+///     }
+/// ));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum InternalInconsistencySite {
+    /// A `RidgeFan` `extra_facets` entry references an index outside the
+    /// `boundary_facets` slice that populated it during the same traversal.
+    RidgeFanExtraFacetOutOfBounds {
+        /// Offending `extra_facets` value that indexed outside `boundary_facets`.
+        index: usize,
+        /// Length of the boundary-facet slice at the time of the violation.
+        boundary_facets_len: usize,
+        /// Total number of entries in the offending `extra_facets` list.
+        extra_facets_len: usize,
+    },
+
+    /// An `OpenBoundary` `first_facet` index is out of range for
+    /// `boundary_facets` even though the two are written together.
+    OpenBoundaryMissingFirstFacet {
+        /// Out-of-range `first_facet` index that should have resolved to a boundary facet.
+        first_facet: usize,
+        /// Length of the boundary-facet slice at the time of the violation.
+        boundary_facets_len: usize,
+        /// Observed `facet_count` for the violating ridge.
+        facet_count: usize,
+        /// Observed ridge-vertex count for the violating ridge.
+        ridge_vertex_count: usize,
+    },
+
+    /// `RidgeInfo::second_facet` is `None` while `facet_count == 2`, even
+    /// though the two fields are written together when a second incident
+    /// facet is added.
+    RidgeInfoMissingSecondFacet {
+        /// `first_facet` index that was recorded alongside the missing `second_facet`.
+        first_facet: usize,
+        /// Length of the boundary-facet slice at the time of the violation.
+        boundary_facets_len: usize,
+        /// Observed ridge-vertex count for the violating ridge.
+        ridge_vertex_count: usize,
+    },
+}
+
+impl std::fmt::Display for InternalInconsistencySite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RidgeFanExtraFacetOutOfBounds {
+                index,
+                boundary_facets_len,
+                extra_facets_len,
+            } => write!(
+                f,
+                "RidgeFan extra_facets index {index} out of bounds \
+                 (boundary_facets.len()={boundary_facets_len}, extra_facets_len={extra_facets_len})"
+            ),
+            Self::OpenBoundaryMissingFirstFacet {
+                first_facet,
+                boundary_facets_len,
+                facet_count,
+                ridge_vertex_count,
+            } => write!(
+                f,
+                "OpenBoundary missing first_facet index {first_facet} \
+                 (boundary_facets.len()={boundary_facets_len}, facet_count={facet_count}, \
+                 ridge_vertex_count={ridge_vertex_count})"
+            ),
+            Self::RidgeInfoMissingSecondFacet {
+                first_facet,
+                boundary_facets_len,
+                ridge_vertex_count,
+            } => write!(
+                f,
+                "RidgeInfo missing second_facet when facet_count == 2 \
+                 (first_facet={first_facet}, boundary_facets_len={boundary_facets_len}, \
+                 ridge_vertex_count={ridge_vertex_count})"
+            ),
+        }
+    }
+}
+
 /// Ridge incidence information used for cavity-boundary validation.
 #[derive(Debug, Clone)]
 struct RidgeInfo {
     ridge_vertex_count: usize,
+    /// Canonical vertex keys for the shared ridge.
+    ridge_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
     facet_count: usize,
     first_facet: usize,
     second_facet: Option<usize>,
     /// Indices (into `boundary_facets`) of the 3rd, 4th, … facets in the fan.
     /// Populated only when `facet_count >= 3`.
     extra_facets: Vec<usize>,
+}
+
+fn format_vertex_refs<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    vertex_keys: &[VertexKey],
+) -> String
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    vertex_keys
+        .iter()
+        .map(|&vertex_key| {
+            let uuid = tds.get_vertex_by_key(vertex_key).map_or_else(
+                || String::from("missing"),
+                |vertex| vertex.uuid().to_string(),
+            );
+            format!("{vertex_key:?}/{uuid}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn format_facet_vertices<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    handle: FacetHandle,
+) -> String
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let Some(cell) = tds.get_cell(handle.cell_key()) else {
+        return String::from("<missing-cell>");
+    };
+
+    let facet_index = usize::from(handle.facet_index());
+    let vertex_keys: Vec<VertexKey> = cell
+        .vertices()
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, &vertex_key)| (idx != facet_index).then_some(vertex_key))
+        .collect();
+    format_vertex_refs(tds, &vertex_keys)
+}
+
+fn format_cell_vertices<T, U, V, const D: usize>(tds: &Tds<T, U, V, D>, cell_key: CellKey) -> String
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let Some(cell) = tds.get_cell(cell_key) else {
+        return String::from("<missing-cell>");
+    };
+    format_vertex_refs(tds, cell.vertices())
+}
+
+/// Emits a compact one-shot snapshot of the first detected ridge fan in a run.
+///
+/// Enabled via `DELAUNAY_DEBUG_RIDGE_FAN_ONCE`. Output is routed through
+/// `tracing::debug!` so it respects the configured tracing subscriber;
+/// callers that want these lines during a release-mode run should set
+/// `RUST_LOG=debug` (or the matching filter in the large-scale debug harness).
+///
+/// The snapshot captures the shared ridge vertices, the participating boundary
+/// facets, and the extra cells that cavity reduction would remove.
+fn log_first_ridge_fan_dump<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    conflict_cells: &CellKeyBuffer,
+    boundary_facets: &CavityBoundaryBuffer,
+    info: &RidgeInfo,
+    extra_cells: &[CellKey],
+) where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    if !ridge_fan_dump_enabled() || RIDGE_FAN_DUMP_EMITTED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+
+    let mut participating_indices = Vec::with_capacity(2 + info.extra_facets.len());
+    participating_indices.push(info.first_facet);
+    if let Some(second_facet) = info.second_facet {
+        participating_indices.push(second_facet);
+    }
+    participating_indices.extend(info.extra_facets.iter().copied());
+
+    let conflict_preview: Vec<CellKey> = conflict_cells.iter().copied().take(16).collect();
+    let ridge_vertices = format_vertex_refs(tds, info.ridge_vertices.as_slice());
+
+    let participating_facets: Vec<String> = participating_indices
+        .iter()
+        .copied()
+        .map(|boundary_index| {
+            boundary_facets.get(boundary_index).copied().map_or_else(
+                || format!("boundary_idx={boundary_index} <missing-boundary-facet>"),
+                |handle| {
+                    format!(
+                        "boundary_idx={} cell={:?} facet_index={} vertices=[{}]",
+                        boundary_index,
+                        handle.cell_key(),
+                        handle.facet_index(),
+                        format_facet_vertices(tds, handle),
+                    )
+                },
+            )
+        })
+        .collect();
+
+    let extra_cell_details: Vec<String> = extra_cells
+        .iter()
+        .copied()
+        .map(|cell_key| {
+            format!(
+                "cell={cell_key:?} vertices=[{}]",
+                format_cell_vertices(tds, cell_key)
+            )
+        })
+        .collect();
+
+    tracing::debug!(
+        target: "delaunay::ridge_fan_dump",
+        D,
+        conflict_cells = conflict_cells.len(),
+        boundary_facets = boundary_facets.len(),
+        facet_count = info.facet_count,
+        ridge_vertex_count = info.ridge_vertex_count,
+        extra_cells = ?extra_cells,
+        conflict_preview = ?conflict_preview,
+        ridge_vertices = %ridge_vertices,
+        participating_boundary_indices = ?participating_indices,
+        participating_facets = ?participating_facets,
+        extra_cell_details = ?extra_cell_details,
+        "ridge-fan-dump: first detected ridge fan"
+    );
+}
+
+fn collect_ridge_fan_extra_cells(
+    boundary_facets: &CavityBoundaryBuffer,
+    info: &RidgeInfo,
+) -> Result<Vec<CellKey>, ConflictError> {
+    debug_assert!(
+        info.extra_facets
+            .iter()
+            .all(|&fi| fi < boundary_facets.len()),
+        "RidgeFan extra_facets index out of bounds: extra_facets={:?}, boundary_facets.len()={}",
+        info.extra_facets,
+        boundary_facets.len(),
+    );
+
+    // Deduplicate: multiple extra facets can come from the same cell. Downstream code
+    // expects unique cell keys when shrinking the conflict region.
+    let mut seen = FastHashSet::<CellKey>::default();
+    let mut extra_cells: Vec<CellKey> = Vec::new();
+    for &fi in &info.extra_facets {
+        // Every entry in `info.extra_facets` is a `boundary_facets` index written by the
+        // same traversal that populated `boundary_facets`, so any out-of-range value
+        // represents an internal invariant violation rather than a data-access failure
+        // attributable to a real cell. Report it as such so the error message is truthful
+        // (no fabricated `CellKey::default()` placeholder) and stays non-retryable.
+        let ck = boundary_facets
+            .get(fi)
+            .ok_or_else(|| ConflictError::InternalInconsistency {
+                site: InternalInconsistencySite::RidgeFanExtraFacetOutOfBounds {
+                    index: fi,
+                    boundary_facets_len: boundary_facets.len(),
+                    extra_facets_len: info.extra_facets.len(),
+                },
+            })?
+            .cell_key();
+        if seen.insert(ck) {
+            extra_cells.push(ck);
+        }
+    }
+    Ok(extra_cells)
 }
 
 /// Indicates why facet-walking fell back to a brute-force scan.
@@ -1108,7 +1457,7 @@ where
     }
 
     #[cfg(debug_assertions)]
-    let detail_enabled = std::env::var_os("DELAUNAY_DEBUG_CAVITY").is_some();
+    let detail_enabled = env::var_os("DELAUNAY_DEBUG_CAVITY").is_some();
     #[cfg(debug_assertions)]
     let start_time = std::time::Instant::now();
     #[cfg(debug_assertions)]
@@ -1225,9 +1574,12 @@ where
                     let ridge_vertex_count = facet_vkeys.len() - 1;
 
                     for ridge_idx in 0..facet_vkeys.len() {
+                        let mut ridge_vertices =
+                            SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
                         let mut ridge_hasher = FastHasher::default();
                         for (i, &vkey) in facet_vkeys.iter().enumerate() {
                             if i != ridge_idx {
+                                ridge_vertices.push(vkey);
                                 vkey.hash(&mut ridge_hasher);
                             }
                         }
@@ -1246,6 +1598,7 @@ where
                             })
                             .or_insert(RidgeInfo {
                                 ridge_vertex_count,
+                                ridge_vertices,
                                 facet_count: 1,
                                 first_facet: boundary_facet_idx,
                                 second_facet: None,
@@ -1334,6 +1687,9 @@ where
     if !boundary_facets.is_empty() {
         let boundary_len = boundary_facets.len();
         let mut adjacency: Vec<Vec<usize>> = vec![Vec::new(); boundary_len];
+        let mut first_ridge_fan: Option<(usize, usize)> = None;
+        let mut ridge_fan_extra_cells: Vec<CellKey> = Vec::new();
+        let mut ridge_fan_seen_cells = FastHashSet::<CellKey>::default();
 
         for info in ridge_map.values() {
             // Closed manifold boundary requires exactly 2 incident facets per ridge.
@@ -1350,19 +1706,19 @@ where
                     );
                 }
                 // The open facet's cell is the cell to remove to close the boundary.
-                // first_facet is always a valid index by construction (it is set during the
-                // same boundary-building traversal), so None here is an internal
-                // consistency error — return CellDataAccessFailed rather than a null key.
+                // `first_facet` is always a valid `boundary_facets` index by construction
+                // (it is set during the same boundary-building traversal), so a missing
+                // entry is an internal invariant violation rather than a cell-data-access
+                // failure attributable to a real cell.
                 let open_cell = boundary_facets
                     .get(info.first_facet)
-                    .ok_or_else(|| ConflictError::CellDataAccessFailed {
-                        cell_key: CellKey::default(),
-                        message: format!(
-                            "OpenBoundary: boundary_facets missing first_facet index {} \
-                             (boundary_facets.len()={})",
-                            info.first_facet,
-                            boundary_facets.len(),
-                        ),
+                    .ok_or_else(|| ConflictError::InternalInconsistency {
+                        site: InternalInconsistencySite::OpenBoundaryMissingFirstFacet {
+                            first_facet: info.first_facet,
+                            boundary_facets_len: boundary_facets.len(),
+                            facet_count: info.facet_count,
+                            ridge_vertex_count: info.ridge_vertex_count,
+                        },
                     })
                     .map(FacetHandle::cell_key)?;
                 return Err(ConflictError::OpenBoundary {
@@ -1385,70 +1741,44 @@ where
                         "extract_cavity_boundary: ridge fan"
                     );
                 }
-                // Collect the cell keys of the extra (3rd, 4th, …) facets so callers can
-                // reduce the conflict region to eliminate the fan without skipping the vertex.
-                // Every index in extra_facets is written by the same traversal that populates
-                // boundary_facets, so an out-of-range index is an internal logic error — assert
-                // loudly instead of silently dropping it with filter_map.
-                debug_assert!(
-                    info.extra_facets
-                        .iter()
-                        .all(|&fi| fi < boundary_facets.len()),
-                    "RidgeFan extra_facets index out of bounds: extra_facets={:?}, boundary_facets.len()={}",
-                    info.extra_facets,
-                    boundary_facets.len(),
-                );
-                // Deduplicate: multiple extra facets can come from the same cell. Downstream
-                // code (e.g., triangulation cavity reduction) converts this to a FastHashSet and
-                // expects unique keys; keep the payload minimal and stable for testing.
-                let mut seen = FastHashSet::<CellKey>::default();
-                let mut extra_cells: Vec<CellKey> = Vec::new();
-                for &fi in &info.extra_facets {
-                    let ck = boundary_facets
-                        .get(fi)
-                        .ok_or_else(|| ConflictError::CellDataAccessFailed {
-                            cell_key: CellKey::default(),
-                            message: format!(
-                                "RidgeFan extra_facets index {fi} out of bounds \
-                                 (boundary_facets.len()={})",
-                                boundary_facets.len()
-                            ),
-                        })?
-                        .cell_key();
-                    if seen.insert(ck) {
-                        extra_cells.push(ck);
+                // Collect the extra cells for this fan, but keep scanning so we can shrink
+                // all currently-detected ridge fans in one reduction step instead of peeling
+                // them one hash-map iteration at a time.
+                let extra_cells = collect_ridge_fan_extra_cells(&boundary_facets, info)?;
+                log_first_ridge_fan_dump(tds, conflict_cells, &boundary_facets, info, &extra_cells);
+                first_ridge_fan.get_or_insert((info.facet_count, info.ridge_vertex_count));
+                for cell_key in extra_cells {
+                    if ridge_fan_seen_cells.insert(cell_key) {
+                        ridge_fan_extra_cells.push(cell_key);
                     }
                 }
-                return Err(ConflictError::RidgeFan {
-                    facet_count: info.facet_count,
-                    ridge_vertex_count: info.ridge_vertex_count,
-                    extra_cells,
-                });
+                continue;
             }
 
             // facet_count == 2
             let a = info.first_facet;
-            let b = info.second_facet.ok_or_else(|| {
-                // This should be impossible by construction; treat as an internal consistency error.
-                let fallback_cell_key = boundary_facets.first().map_or_else(
-                    || {
-                        // boundary_facets is non-empty by the enclosing `if`, but keep this
-                        // branch to avoid panics and satisfy strict clippy.
-                        CellKey::default()
+            // `second_facet` is populated by the same ridge-map update that increments
+            // `facet_count` to 2, so a `None` here is an internal invariant violation.
+            // Report it as such instead of fabricating a cell key.
+            let b = info
+                .second_facet
+                .ok_or_else(|| ConflictError::InternalInconsistency {
+                    site: InternalInconsistencySite::RidgeInfoMissingSecondFacet {
+                        first_facet: a,
+                        boundary_facets_len: boundary_facets.len(),
+                        ridge_vertex_count: info.ridge_vertex_count,
                     },
-                    FacetHandle::cell_key,
-                );
-                let cell_key = boundary_facets
-                    .get(a)
-                    .map_or(fallback_cell_key, FacetHandle::cell_key);
-
-                ConflictError::CellDataAccessFailed {
-                    cell_key,
-                    message: "RidgeInfo missing second_facet when facet_count == 2".to_string(),
-                }
-            })?;
+                })?;
             adjacency[a].push(b);
             adjacency[b].push(a);
+        }
+
+        if let Some((facet_count, ridge_vertex_count)) = first_ridge_fan {
+            return Err(ConflictError::RidgeFan {
+                facet_count,
+                ridge_vertex_count,
+                extra_cells: ridge_fan_extra_cells,
+            });
         }
 
         // Connectedness: the cavity boundary must be a single component.

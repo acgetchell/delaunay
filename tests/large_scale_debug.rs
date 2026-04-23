@@ -10,7 +10,7 @@
 //!
 //! Run one dimension with full output:
 //! ```bash
-//! cargo test --test large_scale_debug debug_large_scale_3d -- --ignored --nocapture
+//! cargo test --release --test large_scale_debug debug_large_scale_3d -- --ignored --nocapture
 //! ```
 //!
 //! Override defaults via environment variables:
@@ -47,7 +47,15 @@
 //! DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=128 \
 //! # Hard wall-clock cap in seconds before the harness aborts (0 = no cap; default: 600)
 //! DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=600 \
-//! cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
+//! # Optional: emit periodic batch-construction summaries for new()/Hilbert runs
+//! DELAUNAY_BULK_PROGRESS_EVERY=100 \
+//! # Optional: dump the first cavity reduction chain once per run
+//! DELAUNAY_DEBUG_CAVITY_REDUCTION_ONCE=1 \
+//! # Optional: trace retryable conflict-region skips with attempt/rollback details
+//! DELAUNAY_DEBUG_RETRYABLE_SKIP=1 \
+//! # Optional: dump the first detected ridge-fan cavity snapshot once per run
+//! DELAUNAY_DEBUG_RIDGE_FAN_ONCE=1 \
+//! cargo test --release --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
 //! ```
 
 #![forbid(unsafe_code)]
@@ -62,6 +70,7 @@ use delaunay::triangulation::delaunay::{
     DelaunayTriangulationConstructionErrorWithStatistics,
 };
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
+use std::env;
 use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
 
@@ -214,11 +223,11 @@ fn parse_u64(s: &str) -> Option<u64> {
 }
 
 fn env_u64(name: &str) -> Option<u64> {
-    std::env::var(name).ok().and_then(|v| parse_u64(&v))
+    env::var(name).ok().and_then(|v| parse_u64(&v))
 }
 
 fn env_usize(name: &str) -> Option<usize> {
-    std::env::var(name).ok().and_then(|v| {
+    env::var(name).ok().and_then(|v| {
         let trimmed = v.trim();
         trimmed.parse().ok().or_else(|| {
             trimmed
@@ -229,7 +238,7 @@ fn env_usize(name: &str) -> Option<usize> {
 }
 
 fn env_flag(name: &str) -> bool {
-    std::env::var(name).ok().is_some_and(|v| {
+    env::var(name).ok().is_some_and(|v| {
         let v = v.trim();
         !v.is_empty() && v != "0" && v != "false"
     })
@@ -238,8 +247,27 @@ fn env_flag(name: &str) -> bool {
 fn init_tracing() {
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| {
+        // Debug-level tracing is needed to surface the release-visible diagnostic hooks
+        // (retryable-skip, cavity-reduction, ridge-fan-dump, bulk-progress, bulk-retry)
+        // that are emitted through `tracing::debug!` inside the library.
+        let debug_env_vars = [
+            "DELAUNAY_INSERT_TRACE",
+            "DELAUNAY_DEBUG_RETRYABLE_SKIP",
+            "DELAUNAY_DEBUG_CAVITY_REDUCTION_ONCE",
+            "DELAUNAY_DEBUG_RIDGE_FAN_ONCE",
+            "DELAUNAY_BULK_PROGRESS_EVERY",
+            "DELAUNAY_DEBUG_SHUFFLE",
+        ];
+        let default_filter = if debug_env_vars
+            .iter()
+            .any(|name| env::var_os(name).is_some())
+        {
+            "debug"
+        } else {
+            "warn"
+        };
         let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_filter));
         let _ = tracing_subscriber::fmt()
             .with_env_filter(filter)
             .with_test_writer()
@@ -297,7 +325,7 @@ impl PointDistribution {
 }
 
 fn env_f64(name: &str) -> Option<f64> {
-    let Ok(raw) = std::env::var(name) else {
+    let Ok(raw) = env::var(name) else {
         return None;
     };
 
@@ -313,7 +341,7 @@ fn env_f64(name: &str) -> Option<f64> {
 }
 
 fn point_distribution_from_env() -> PointDistribution {
-    let Ok(raw) = std::env::var("DELAUNAY_LARGE_DEBUG_DISTRIBUTION") else {
+    let Ok(raw) = env::var("DELAUNAY_LARGE_DEBUG_DISTRIBUTION") else {
         return PointDistribution::Ball;
     };
 
@@ -330,7 +358,7 @@ fn point_distribution_from_env() -> PointDistribution {
 }
 
 fn construction_mode_from_env() -> ConstructionMode {
-    let Ok(raw) = std::env::var("DELAUNAY_LARGE_DEBUG_CONSTRUCTION_MODE") else {
+    let Ok(raw) = env::var("DELAUNAY_LARGE_DEBUG_CONSTRUCTION_MODE") else {
         return ConstructionMode::New;
     };
 
@@ -349,7 +377,7 @@ fn construction_mode_from_env() -> ConstructionMode {
 }
 
 fn debug_mode_from_env() -> DebugMode {
-    let Ok(raw) = std::env::var("DELAUNAY_LARGE_DEBUG_DEBUG_MODE") else {
+    let Ok(raw) = env::var("DELAUNAY_LARGE_DEBUG_DEBUG_MODE") else {
         return DebugMode::Cadenced;
     };
 
@@ -867,23 +895,29 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
     DebugOutcome::Success
 }
 
+/// Failure detail captured for one prefix probe in the bisect harness.
 #[derive(Debug, Clone)]
-struct IncrementalFailure3d {
+struct IncrementalFailure<const D: usize> {
     prefix_len: usize,
     index: usize,
     uuid: uuid::Uuid,
-    coords: [f64; 3],
+    coords: [f64; D],
     error: String,
 }
 
-fn run_incremental_prefix_3d(
-    vertices: &[Vertex<f64, (), 3>],
+/// Runs one batch-construction probe against a deterministic prefix of the input.
+///
+/// The bisect harness uses this helper so every probe exercises the same path as the
+/// regular `debug_large_scale_*d` tests: batch/new construction, optional final repair,
+/// then full validation.
+fn run_incremental_prefix<const D: usize>(
+    vertices: &[Vertex<f64, (), D>],
     prefix_len: usize,
     _repair_every: usize,
-) -> Result<(), IncrementalFailure3d> {
+) -> Result<(), IncrementalFailure<D>> {
     let kernel = RobustKernel::<f64>::new();
     let prefix = &vertices[..prefix_len];
-    let mut dt = match DelaunayTriangulation::<RobustKernel<f64>, (), (), 3>::with_topology_guarantee_and_options_with_construction_statistics(
+    let mut dt = match DelaunayTriangulation::<RobustKernel<f64>, (), (), D>::with_topology_guarantee_and_options_with_construction_statistics(
         &kernel,
         prefix,
         TopologyGuarantee::PLManifoldStrict,
@@ -894,15 +928,17 @@ fn run_incremental_prefix_3d(
             let DelaunayTriangulationConstructionErrorWithStatistics {
                 error, statistics, ..
             } = err;
+            // Attribute constructor failures to the last successfully processed prefix slot
+            // so the operator gets a stable replay anchor instead of an abstract count.
             let idx = statistics
                 .inserted
                 .saturating_sub(1)
                 .min(prefix_len.saturating_sub(1));
             let (uuid, coords) = prefix.get(idx).copied().map_or_else(
-                || (uuid::Uuid::nil(), [0.0; 3]),
+                || (uuid::Uuid::nil(), [0.0; D]),
                 |vertex| (vertex.uuid(), *vertex.point().coords()),
             );
-            return Err(IncrementalFailure3d {
+            return Err(IncrementalFailure {
                 prefix_len,
                 index: idx,
                 uuid,
@@ -922,10 +958,10 @@ fn run_incremental_prefix_3d(
     if !env_flag("DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS") && skipped_total > 0 {
         let idx = prefix_len.saturating_sub(1);
         let (uuid, coords) = prefix.get(idx).copied().map_or_else(
-            || (uuid::Uuid::nil(), [0.0; 3]),
+            || (uuid::Uuid::nil(), [0.0; D]),
             |vertex| (vertex.uuid(), *vertex.point().coords()),
         );
-        return Err(IncrementalFailure3d {
+        return Err(IncrementalFailure {
             prefix_len,
             index: idx,
             uuid,
@@ -936,6 +972,8 @@ fn run_incremental_prefix_3d(
         });
     }
 
+    // Keep the bisect path aligned with the main debug harness by allowing an optional
+    // final repair pass before we classify the prefix as a validation failure.
     if !env_flag("DELAUNAY_LARGE_DEBUG_SKIP_FINAL_REPAIR") && dt.number_of_cells() > 0 {
         let _ = dt.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default());
     }
@@ -943,14 +981,14 @@ fn run_incremental_prefix_3d(
     if let Err(report) = dt.validation_report() {
         let idx = prefix_len.saturating_sub(1);
         let (uuid, coords) = prefix.get(idx).copied().map_or_else(
-            || (uuid::Uuid::nil(), [0.0; 3]),
+            || (uuid::Uuid::nil(), [0.0; D]),
             |vertex| (vertex.uuid(), *vertex.point().coords()),
         );
         let detail = report.violations.first().map_or_else(
             || "no violations captured".to_string(),
             |violation| format!("{:?}: {}", violation.kind, violation.error),
         );
-        return Err(IncrementalFailure3d {
+        return Err(IncrementalFailure {
             prefix_len,
             index: idx,
             uuid,
@@ -962,51 +1000,61 @@ fn run_incremental_prefix_3d(
     Ok(())
 }
 
-#[test]
-#[ignore = "large-scale debug harness (manual run)"]
 #[expect(
     clippy::too_many_lines,
     reason = "Debug harness intentionally verbose for reproducibility and operator guidance"
 )]
-fn debug_large_scale_3d_incremental_prefix_bisect() {
+/// Binary-searches the smallest prefix that still reproduces a batch-construction failure.
+///
+/// This is intentionally dimension-generic so 3D and 4D seeded repros can share the
+/// same workflow while keeping their own defaults and replay commands.
+fn debug_large_scale_incremental_prefix_bisect<const D: usize>(
+    dimension_name: &str,
+    default_total_n: usize,
+    default_case_seed: Option<u64>,
+) {
     init_tracing();
 
     let total_n = env_usize("DELAUNAY_LARGE_DEBUG_PREFIX_TOTAL")
-        .unwrap_or(1000)
-        .max(4);
+        .unwrap_or(default_total_n)
+        .max(D + 1);
     let base_seed = env_u64("DELAUNAY_LARGE_DEBUG_SEED").unwrap_or(42);
-    let case_seed = env_u64("DELAUNAY_LARGE_DEBUG_CASE_SEED_3D")
+    let case_seed = env_u64(&format!("DELAUNAY_LARGE_DEBUG_CASE_SEED_{D}D"))
         .or_else(|| env_u64("DELAUNAY_LARGE_DEBUG_CASE_SEED"))
-        .unwrap_or_else(|| seed_for_case::<3>(base_seed, total_n));
+        .or(default_case_seed)
+        .unwrap_or_else(|| seed_for_case::<D>(base_seed, total_n));
     let ball_radius = env_f64("DELAUNAY_LARGE_DEBUG_BALL_RADIUS").unwrap_or(100.0);
     let repair_every = env_usize("DELAUNAY_LARGE_DEBUG_REPAIR_EVERY").unwrap_or(128);
     let max_probes = env_usize("DELAUNAY_LARGE_DEBUG_PREFIX_MAX_PROBES");
     let max_runtime_secs = env_usize("DELAUNAY_LARGE_DEBUG_PREFIX_MAX_RUNTIME_SECS").unwrap_or(0);
 
     println!("=============================================");
-    println!("3D incremental prefix bisect");
+    println!("{dimension_name} incremental prefix bisect");
     println!("=============================================");
     println!("Config:");
+    println!("  D:              {D}");
     println!("  total_n:        {total_n}");
     println!("  base_seed:      0x{base_seed:X} ({base_seed})");
     println!("  case_seed:      0x{case_seed:X} ({case_seed})");
     println!("  ball_radius:    {ball_radius}");
-    println!("  repair_every:   {repair_every}");
-    println!("  probe_mode:     new (batch, matches debug_large_scale_3d default)");
+    println!("  repair_every:   {repair_every} (ignored in batch/new mode)");
+    println!("  probe_mode:     new (batch, matches debug_large_scale_{D}d default)");
     println!("  max_probes:     {max_probes:?}");
     println!("  max_runtime_secs:{max_runtime_secs}");
     println!();
 
-    let points = generate_random_points_in_ball_seeded::<f64, 3>(total_n, ball_radius, case_seed)
+    let points = generate_random_points_in_ball_seeded::<f64, D>(total_n, ball_radius, case_seed)
         .unwrap_or_else(|e| {
-            panic!("failed to generate deterministic 3D ball points for bisect: {e}")
+            panic!("failed to generate deterministic {dimension_name} ball points for bisect: {e}")
         });
-    let vertices: Vec<Vertex<f64, (), 3>> = points.into_iter().map(|p| vertex!(p)).collect();
+    let vertices: Vec<Vertex<f64, (), D>> = points.into_iter().map(|p| vertex!(p)).collect();
 
     let t_bisect = Instant::now();
     let mut probe_count = 0usize;
 
-    let mut run_probe = |prefix_len: usize| -> Option<Result<(), IncrementalFailure3d>> {
+    let mut run_probe = |prefix_len: usize| -> Option<Result<(), IncrementalFailure<D>>> {
+        // The probe limiter keeps manual investigations bounded even when a single prefix
+        // is expensive, which matters for the 4D retry-collapse cases.
         if let Some(limit) = max_probes
             && probe_count >= limit
         {
@@ -1028,7 +1076,7 @@ fn debug_large_scale_3d_incremental_prefix_bisect() {
 
         probe_count = probe_count.saturating_add(1);
         let t_probe = Instant::now();
-        let result = run_incremental_prefix_3d(&vertices, prefix_len, repair_every);
+        let result = run_incremental_prefix(&vertices, prefix_len, repair_every);
         println!(
             "  probe #{probe_count}: prefix_len={prefix_len} -> {} ({:?})",
             if result.is_err() { "FAIL" } else { "PASS" },
@@ -1040,7 +1088,9 @@ fn debug_large_scale_3d_incremental_prefix_bisect() {
     let first_failure = match run_probe(total_n) {
         None => return,
         Some(Ok(())) => {
-            if let Err(mismatch) = run_incremental_prefix_3d(&vertices, total_n, repair_every) {
+            // Re-run the full prefix outside the closure to catch any accidental harness
+            // mismatch before we report that the seed no longer fails.
+            if let Err(mismatch) = run_incremental_prefix(&vertices, total_n, repair_every) {
                 println!(
                     "HARNESS MISMATCH: bisect full-prefix probe passed but canonical full-prefix recheck failed."
                 );
@@ -1058,14 +1108,14 @@ fn debug_large_scale_3d_incremental_prefix_bisect() {
                 "Config recap: base_seed=0x{base_seed:X} case_seed=0x{case_seed:X} ball_radius={ball_radius} repair_every={repair_every} mode=new"
             );
             println!(
-                "To force a failure, increase DELAUNAY_LARGE_DEBUG_PREFIX_TOTAL or adjust DELAUNAY_LARGE_DEBUG_CASE_SEED_3D."
+                "To force a failure, increase DELAUNAY_LARGE_DEBUG_PREFIX_TOTAL or adjust DELAUNAY_LARGE_DEBUG_CASE_SEED_{D}D."
             );
             return;
         }
         Some(Err(err)) => err,
     };
 
-    let mut lo = 4;
+    let mut lo = D + 1;
     let mut hi = first_failure.prefix_len.max(lo);
     println!(
         "Full-run first failure: idx={} (prefix_len={})",
@@ -1073,6 +1123,8 @@ fn debug_large_scale_3d_incremental_prefix_bisect() {
     );
     println!("Initial binary-search range: [{lo}, {hi}]");
 
+    // Standard binary search: shrink toward the first failing prefix while preserving
+    // the invariant that everything below `lo` is known-good and `hi` is known-bad.
     while lo < hi {
         let mid = lo + (hi - lo) / 2;
         let Some(result) = run_probe(mid) else {
@@ -1098,6 +1150,7 @@ fn debug_large_scale_3d_incremental_prefix_bisect() {
         Some(Err(err)) => err,
     };
 
+    // Double-check the boundary so we can trust the replay command we print below.
     if minimal_prefix > 4 {
         assert!(
             run_probe(minimal_prefix - 1).is_some_and(|result| result.is_ok()),
@@ -1116,8 +1169,20 @@ fn debug_large_scale_3d_incremental_prefix_bisect() {
     println!();
     println!("Replay command:");
     println!(
-        "  DELAUNAY_LARGE_DEBUG_CONSTRUCTION_MODE=new DELAUNAY_LARGE_DEBUG_N_3D={minimal_prefix} DELAUNAY_LARGE_DEBUG_CASE_SEED_3D=0x{case_seed:X} DELAUNAY_REPAIR_DEBUG_FACETS=1 cargo test --test large_scale_debug debug_large_scale_3d -- --ignored --nocapture"
+        "  DELAUNAY_LARGE_DEBUG_CONSTRUCTION_MODE=new DELAUNAY_LARGE_DEBUG_N_{D}D={minimal_prefix} DELAUNAY_LARGE_DEBUG_CASE_SEED_{D}D=0x{case_seed:X} DELAUNAY_REPAIR_DEBUG_FACETS=1 cargo test --release --test large_scale_debug debug_large_scale_{D}d -- --ignored --nocapture"
     );
+}
+
+#[test]
+#[ignore = "large-scale debug harness (manual run)"]
+fn debug_large_scale_3d_incremental_prefix_bisect() {
+    debug_large_scale_incremental_prefix_bisect::<3>("3D", 1000, None);
+}
+
+#[test]
+#[ignore = "large-scale debug harness (manual run)"]
+fn debug_large_scale_4d_incremental_prefix_bisect() {
+    debug_large_scale_incremental_prefix_bisect::<4>("4D", 500, Some(0xD225_B8A0_7E27_4AE6));
 }
 
 /// Regression test for issue #228: 3D 1000-point flip-repair non-convergence.

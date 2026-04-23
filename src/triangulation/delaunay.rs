@@ -14,7 +14,7 @@ use crate::core::algorithms::flips::{
 use crate::core::algorithms::incremental_insertion::InsertionError;
 use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
-use crate::core::collections::{CellKeyBuffer, FastHashMap, FastHasher, SmallBuffer};
+use crate::core::collections::{CellKeyBuffer, FastHashMap, FastHashSet, FastHasher, SmallBuffer};
 use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::operations::{
@@ -37,6 +37,7 @@ use crate::core::util::{
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates, Kernel, RobustKernel};
 use crate::geometry::traits::coordinate::CoordinateScalar;
+use crate::geometry::util::safe_usize_to_scalar;
 use crate::topology::manifold::validate_ridge_links_for_cells;
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
 use crate::triangulation::builder::DelaunayTriangulationBuilder;
@@ -46,6 +47,7 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::env;
 use std::hash::{Hash, Hasher};
 use std::num::NonZeroUsize;
 use std::time::Instant;
@@ -1162,6 +1164,163 @@ fn hilbert_bits_per_coord<const D: usize>() -> Option<u32> {
     Some(bits_per_coord)
 }
 
+/// Reads the optional batch-construction progress cadence from the environment.
+///
+/// `DELAUNAY_BULK_PROGRESS_EVERY` is the canonical knob. The large-scale debug
+/// harness also reuses `DELAUNAY_LARGE_DEBUG_PROGRESS_EVERY` so manual runs can
+/// request periodic progress without additional wiring.
+fn bulk_progress_every_from_env() -> Option<usize> {
+    [
+        "DELAUNAY_BULK_PROGRESS_EVERY",
+        "DELAUNAY_LARGE_DEBUG_PROGRESS_EVERY",
+    ]
+    .into_iter()
+    .find_map(|name| {
+        env::var(name)
+            .ok()
+            .and_then(|raw| raw.trim().parse::<usize>().ok())
+    })
+    .filter(|every| *every > 0)
+}
+
+/// Enables release-visible retry-boundary tracing for bulk construction.
+fn construction_retry_trace_enabled() -> bool {
+    bulk_progress_every_from_env().is_some()
+        || env::var_os("DELAUNAY_DEBUG_SHUFFLE").is_some()
+        || env::var_os("DELAUNAY_INSERT_TRACE").is_some()
+}
+
+#[derive(Clone, Copy, Debug)]
+/// Snapshot of one batch-construction progress sample.
+struct BatchProgressSample {
+    processed: usize,
+    inserted: usize,
+    skipped: usize,
+    cell_count: usize,
+    perturbation_seed: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+/// Rolling state used to compute periodic batch throughput summaries.
+struct BatchProgressState {
+    total_vertices: usize,
+    progress_every: usize,
+    started: Instant,
+    last_progress: Instant,
+    last_processed: usize,
+}
+
+/// Emits periodic batch-construction progress for long-running release-mode
+/// investigations such as the 4D large-scale debug harness.
+///
+/// Progress is emitted via `tracing::debug!`; enable with `RUST_LOG=debug` (the
+/// large-scale debug harness wires this up automatically when
+/// `DELAUNAY_BULK_PROGRESS_EVERY` is set).
+fn log_bulk_progress_if_due(sample: BatchProgressSample, state: &mut Option<BatchProgressState>) {
+    let Some(state) = state.as_mut() else {
+        return;
+    };
+    if sample.processed == 0 {
+        return;
+    }
+
+    // Always log the final sample, even when the total is not an exact multiple of the
+    // requested cadence, so interrupted runs still end with a complete progress line.
+    let should_log = sample.processed == state.total_vertices
+        || sample.processed.is_multiple_of(state.progress_every);
+    if !should_log {
+        return;
+    }
+
+    let elapsed = state.started.elapsed();
+    let chunk_elapsed = state.last_progress.elapsed();
+    let chunk_processed = sample.processed.saturating_sub(state.last_processed);
+
+    let overall_rate = safe_usize_to_scalar::<f64>(sample.processed).unwrap_or(f64::NAN)
+        / elapsed.as_secs_f64().max(1e-9);
+    let chunk_rate = safe_usize_to_scalar::<f64>(chunk_processed).unwrap_or(f64::NAN)
+        / chunk_elapsed.as_secs_f64().max(1e-9);
+
+    tracing::debug!(
+        target: "delaunay::bulk_progress",
+        perturbation_seed = format_args!("0x{:X}", sample.perturbation_seed),
+        processed = sample.processed,
+        total_vertices = state.total_vertices,
+        inserted = sample.inserted,
+        skipped = sample.skipped,
+        cells = sample.cell_count,
+        elapsed = ?elapsed,
+        total_rate_pts_per_s = overall_rate,
+        recent_rate_pts_per_s = chunk_rate,
+        "bulk-construction progress"
+    );
+
+    state.last_progress = Instant::now();
+    state.last_processed = sample.processed;
+}
+
+/// Emits retry-boundary events for release-mode large-scale construction runs.
+fn log_construction_retry_start(attempt: usize, attempt_seed: u64, perturbation_seed: u64) {
+    if !construction_retry_trace_enabled() {
+        return;
+    }
+
+    tracing::debug!(
+        target: "delaunay::bulk_retry",
+        attempt,
+        attempt_seed = format_args!("0x{:X}", attempt_seed),
+        perturbation_seed = format_args!("0x{:X}", perturbation_seed),
+        "shuffled retry attempt starting"
+    );
+}
+
+/// Emits retry attempt outcomes with optional construction statistics.
+fn log_construction_retry_result(
+    attempt: usize,
+    attempt_seed: Option<u64>,
+    perturbation_seed: u64,
+    outcome: &'static str,
+    error: Option<&str>,
+    stats: Option<&ConstructionStatistics>,
+) {
+    if !construction_retry_trace_enabled() {
+        return;
+    }
+
+    let attempt_seed_display =
+        attempt_seed.map_or_else(|| String::from("input-order"), |seed| format!("0x{seed:X}"));
+    let error_display = error.unwrap_or("-");
+
+    if let Some(stats) = stats {
+        tracing::debug!(
+            target: "delaunay::bulk_retry",
+            attempt,
+            attempt_seed = %attempt_seed_display,
+            perturbation_seed = format_args!("0x{:X}", perturbation_seed),
+            outcome,
+            inserted = stats.inserted,
+            skipped_duplicate = stats.skipped_duplicate,
+            skipped_degeneracy = stats.skipped_degeneracy,
+            total_attempts = stats.total_attempts,
+            max_attempts = stats.max_attempts,
+            cells_removed_total = stats.cells_removed_total,
+            cells_removed_max = stats.cells_removed_max,
+            error = %error_display,
+            "shuffled retry attempt result (with stats)"
+        );
+    } else {
+        tracing::debug!(
+            target: "delaunay::bulk_retry",
+            attempt,
+            attempt_seed = %attempt_seed_display,
+            perturbation_seed = format_args!("0x{:X}", perturbation_seed),
+            outcome,
+            error = %error_display,
+            "shuffled retry attempt result"
+        );
+    }
+}
+
 /// Sort key for Hilbert ordering: `(hilbert_index, quantized_coords, vertex, input_index)`.
 type HilbertSortKey<T, U, const D: usize> = (u128, [u32; D], Vertex<T, U, D>, usize);
 
@@ -2220,7 +2379,7 @@ where
         let base_seed = base_seed.unwrap_or_else(|| Self::construction_shuffle_seed(vertices));
 
         #[cfg(debug_assertions)]
-        let log_shuffle = std::env::var_os("DELAUNAY_DEBUG_SHUFFLE").is_some();
+        let log_shuffle = env::var_os("DELAUNAY_DEBUG_SHUFFLE").is_some();
 
         #[cfg(debug_assertions)]
         if log_shuffle {
@@ -2264,6 +2423,7 @@ where
                 "build_with_shuffled_retries: initial attempt failed: {last_error}"
             );
         }
+        log_construction_retry_result(0, None, 0_u64, "failed", Some(&last_error), None);
 
         // Shuffled retries (total iterations: attempts shuffled).
         for attempt in 1..=attempts.get() {
@@ -2289,6 +2449,7 @@ where
                     "build_with_shuffled_retries: shuffled attempt starting"
                 );
             }
+            log_construction_retry_start(attempt, attempt_seed, perturbation_seed);
 
             match Self::build_with_kernel_inner_seeded(
                 <K as Clone>::clone(kernel),
@@ -2301,7 +2462,17 @@ where
             ) {
                 Ok(candidate) => {
                     match crate::core::util::is_delaunay_property_only(&candidate.tri.tds) {
-                        Ok(()) => return Ok(candidate),
+                        Ok(()) => {
+                            log_construction_retry_result(
+                                attempt,
+                                Some(attempt_seed),
+                                perturbation_seed,
+                                "succeeded",
+                                None,
+                                None,
+                            );
+                            return Ok(candidate);
+                        }
                         Err(err) => {
                             last_error =
                                 format!("Delaunay property violated after construction: {err}");
@@ -2326,6 +2497,14 @@ where
                     "build_with_shuffled_retries: attempt failed: {last_error}"
                 );
             }
+            log_construction_retry_result(
+                attempt,
+                Some(attempt_seed),
+                perturbation_seed,
+                "failed",
+                Some(&last_error),
+                None,
+            );
         }
 
         // Treat persistent construction failures or Delaunay violations as hard construction
@@ -2358,7 +2537,7 @@ where
         let base_seed = base_seed.unwrap_or_else(|| Self::construction_shuffle_seed(vertices));
 
         #[cfg(debug_assertions)]
-        let log_shuffle = std::env::var_os("DELAUNAY_DEBUG_SHUFFLE").is_some();
+        let log_shuffle = env::var_os("DELAUNAY_DEBUG_SHUFFLE").is_some();
 
         #[cfg(debug_assertions)]
         if log_shuffle {
@@ -2415,6 +2594,14 @@ where
                 "build_with_shuffled_retries_with_construction_statistics: initial attempt failed: {last_error}"
             );
         }
+        log_construction_retry_result(
+            0,
+            None,
+            0_u64,
+            "failed",
+            Some(&last_error),
+            last_stats.as_ref(),
+        );
 
         // Shuffled retries (total iterations: attempts shuffled).
         for attempt in 1..=attempts.get() {
@@ -2440,6 +2627,7 @@ where
                     "build_with_shuffled_retries_with_construction_statistics: shuffled attempt starting"
                 );
             }
+            log_construction_retry_start(attempt, attempt_seed, perturbation_seed);
 
             match Self::build_with_kernel_inner_seeded_with_construction_statistics(
                 <K as Clone>::clone(kernel),
@@ -2452,7 +2640,17 @@ where
             ) {
                 Ok((candidate, stats)) => {
                     match crate::core::util::is_delaunay_property_only(&candidate.tri.tds) {
-                        Ok(()) => return Ok((candidate, stats)),
+                        Ok(()) => {
+                            log_construction_retry_result(
+                                attempt,
+                                Some(attempt_seed),
+                                perturbation_seed,
+                                "succeeded",
+                                None,
+                                Some(&stats),
+                            );
+                            return Ok((candidate, stats));
+                        }
                         Err(err) => {
                             last_stats.replace(stats);
                             last_error =
@@ -2484,6 +2682,14 @@ where
                     "build_with_shuffled_retries_with_construction_statistics: attempt failed: {last_error}"
                 );
             }
+            log_construction_retry_result(
+                attempt,
+                Some(attempt_seed),
+                perturbation_seed,
+                "failed",
+                Some(&last_error),
+                last_stats.as_ref(),
+            );
         }
 
         // Treat persistent construction failures or Delaunay violations as hard construction
@@ -2956,7 +3162,21 @@ where
             }
         }
 
-        let trace_insertion = std::env::var_os("DELAUNAY_INSERT_TRACE").is_some();
+        let trace_insertion = env::var_os("DELAUNAY_INSERT_TRACE").is_some();
+        let mut batch_progress = bulk_progress_every_from_env().map(|progress_every| {
+            let started = Instant::now();
+            BatchProgressState {
+                // The initial simplex is already present when this loop starts, so progress
+                // and throughput should only count the remaining bulk vertices.
+                total_vertices: vertices.len(),
+                progress_every,
+                started,
+                last_progress: started,
+                last_processed: D + 1,
+            }
+        });
+        let mut inserted_vertices = D + 1;
+        let mut skipped_vertices = 0usize;
 
         match construction_stats {
             None => {
@@ -2982,12 +3202,16 @@ where
 
                     let started = trace_insertion.then(std::time::Instant::now);
                     let mut insert = || {
-                        self.tri.insert_with_statistics_seeded_indexed(
+                        // Pass the batch index through to transactional insertion so the
+                        // lower-layer retryable-skip trace can point back to this exact
+                        // bulk-construction position.
+                        self.tri.insert_with_statistics_seeded_indexed_detailed(
                             *vertex,
                             None,
                             self.insertion_state.last_inserted_cell,
                             perturbation_seed,
                             grid_index.as_mut(),
+                            Some(index),
                         )
                     };
                     let insert_result = if trace_insertion {
@@ -3002,6 +3226,10 @@ where
                         insert()
                     };
                     let elapsed = started.map(|started| started.elapsed());
+                    let insert_result = insert_result.map(|detail| {
+                        let repair_seed_cells = detail.repair_seed_cells;
+                        (detail.outcome, detail.stats, repair_seed_cells)
+                    });
                     match insert_result {
                         Ok((
                             InsertionOutcome::Inserted {
@@ -3009,7 +3237,9 @@ where
                                 hint,
                             },
                             _stats,
+                            repair_seed_cells,
                         )) => {
+                            inserted_vertices = inserted_vertices.saturating_add(1);
                             if trace_insertion && let Some(elapsed) = elapsed {
                                 eprintln!(
                                     "[bulk] inserted idx={index} uuid={uuid} elapsed={elapsed:?}"
@@ -3041,8 +3271,8 @@ where
                                 && TopologicalOperation::FacetFlip.is_admissible_under(topology)
                                 && self.tri.tds.number_of_cells() > 0
                             {
-                                let seed_cells: Vec<CellKey> =
-                                    self.tri.adjacent_cells(v_key).collect();
+                                let seed_cells =
+                                    self.collect_local_repair_seed_cells(v_key, &repair_seed_cells);
                                 if !seed_cells.is_empty() {
                                     let max_flips = if D >= 4 {
                                         (seed_cells.len() * (D + 1) * 2).max(8)
@@ -3096,8 +3326,19 @@ where
                                     }
                                 }
                             }
+                            log_bulk_progress_if_due(
+                                BatchProgressSample {
+                                    processed: index + 1,
+                                    inserted: inserted_vertices,
+                                    skipped: skipped_vertices,
+                                    cell_count: self.tri.tds.number_of_cells(),
+                                    perturbation_seed,
+                                },
+                                &mut batch_progress,
+                            );
                         }
-                        Ok((InsertionOutcome::Skipped { error }, stats)) => {
+                        Ok((InsertionOutcome::Skipped { error }, stats, _repair_seed_cells)) => {
+                            skipped_vertices = skipped_vertices.saturating_add(1);
                             if trace_insertion && let Some(elapsed) = elapsed {
                                 eprintln!(
                                     "[bulk] skipped idx={index} uuid={uuid} attempts={} elapsed={elapsed:?} err={error}",
@@ -3116,6 +3357,16 @@ where
                             {
                                 let _ = (error, stats);
                             }
+                            log_bulk_progress_if_due(
+                                BatchProgressSample {
+                                    processed: index + 1,
+                                    inserted: inserted_vertices,
+                                    skipped: skipped_vertices,
+                                    cell_count: self.tri.tds.number_of_cells(),
+                                    perturbation_seed,
+                                },
+                                &mut batch_progress,
+                            );
                         }
                         Err(e) => {
                             if trace_insertion && let Some(elapsed) = elapsed {
@@ -3150,12 +3401,16 @@ where
 
                     let started = trace_insertion.then(std::time::Instant::now);
                     let mut insert = || {
-                        self.tri.insert_with_statistics_seeded_indexed(
+                        // Keep the stats and non-stats branches aligned so bulk-index-based
+                        // tracing behaves the same regardless of whether the caller records
+                        // construction statistics.
+                        self.tri.insert_with_statistics_seeded_indexed_detailed(
                             *vertex,
                             None,
                             self.insertion_state.last_inserted_cell,
                             perturbation_seed,
                             grid_index.as_mut(),
+                            Some(index),
                         )
                     };
                     let insert_result = if trace_insertion {
@@ -3170,6 +3425,10 @@ where
                         insert()
                     };
                     let elapsed = started.map(|started| started.elapsed());
+                    let insert_result = insert_result.map(|detail| {
+                        let repair_seed_cells = detail.repair_seed_cells;
+                        (detail.outcome, detail.stats, repair_seed_cells)
+                    });
                     match insert_result {
                         Ok((
                             InsertionOutcome::Inserted {
@@ -3177,7 +3436,9 @@ where
                                 hint,
                             },
                             stats,
+                            repair_seed_cells,
                         )) => {
+                            inserted_vertices = inserted_vertices.saturating_add(1);
                             if trace_insertion && let Some(elapsed) = elapsed {
                                 eprintln!(
                                     "[bulk] inserted idx={index} uuid={uuid} attempts={} elapsed={elapsed:?}",
@@ -3199,8 +3460,8 @@ where
                                 && TopologicalOperation::FacetFlip.is_admissible_under(topology)
                                 && self.tri.tds.number_of_cells() > 0
                             {
-                                let seed_cells: Vec<CellKey> =
-                                    self.tri.adjacent_cells(v_key).collect();
+                                let seed_cells =
+                                    self.collect_local_repair_seed_cells(v_key, &repair_seed_cells);
                                 if !seed_cells.is_empty() {
                                     let max_flips = if D >= 4 {
                                         (seed_cells.len() * (D + 1) * 2).max(8)
@@ -3254,8 +3515,19 @@ where
                                     }
                                 }
                             }
+                            log_bulk_progress_if_due(
+                                BatchProgressSample {
+                                    processed: index + 1,
+                                    inserted: inserted_vertices,
+                                    skipped: skipped_vertices,
+                                    cell_count: self.tri.tds.number_of_cells(),
+                                    perturbation_seed,
+                                },
+                                &mut batch_progress,
+                            );
                         }
-                        Ok((InsertionOutcome::Skipped { error }, stats)) => {
+                        Ok((InsertionOutcome::Skipped { error }, stats, _repair_seed_cells)) => {
+                            skipped_vertices = skipped_vertices.saturating_add(1);
                             if trace_insertion && let Some(elapsed) = elapsed {
                                 eprintln!(
                                     "[bulk] skipped idx={index} uuid={uuid} attempts={} elapsed={elapsed:?} err={error}",
@@ -3291,6 +3563,16 @@ where
                             {
                                 let _ = (error, stats);
                             }
+                            log_bulk_progress_if_due(
+                                BatchProgressSample {
+                                    processed: index + 1,
+                                    inserted: inserted_vertices,
+                                    skipped: skipped_vertices,
+                                    cell_count: self.tri.tds.number_of_cells(),
+                                    perturbation_seed,
+                                },
+                                &mut batch_progress,
+                            );
                         }
                         Err(e) => {
                             if trace_insertion && let Some(elapsed) = elapsed {
@@ -4329,15 +4611,16 @@ where
                     let coords = *vertex.point().coords();
 
                     let hint = candidate.insertion_state.last_inserted_cell;
-                    let (outcome, _stats) = {
+                    let insert_detail = {
                         let (tri, spatial_index) =
                             (&mut candidate.tri, &mut candidate.spatial_index);
-                        tri.insert_with_statistics_seeded_indexed(
+                        tri.insert_with_statistics_seeded_indexed_detailed(
                             vertex,
                             None,
                             hint,
                             seeds.perturbation_seed,
                             spatial_index.as_mut(),
+                            Some(idx),
                         )
                         .map_err(|e| DelaunayRepairError::HeuristicRebuildFailed {
                             message: format!(
@@ -4345,8 +4628,9 @@ where
                             ),
                         })?
                     };
+                    let repair_seed_cells = insert_detail.repair_seed_cells;
 
-                    match outcome {
+                    match insert_detail.outcome {
                         InsertionOutcome::Inserted { vertex_key, hint } => {
                             candidate.insertion_state.last_inserted_cell = hint;
                             candidate.insertion_state.delaunay_repair_insertion_count = candidate
@@ -4358,6 +4642,7 @@ where
                                 .maybe_repair_after_insertion_capped(
                                     vertex_key,
                                     hint,
+                                    &repair_seed_cells,
                                     max_flips_override,
                                 )
                                 .map_err(|e| DelaunayRepairError::HeuristicRebuildFailed {
@@ -5056,18 +5341,20 @@ where
 
         let insertion_result = (|| {
             let hint = self.insertion_state.last_inserted_cell;
-            let (outcome, _stats) = {
+            let insert_detail = {
                 let (tri, spatial_index) = (&mut self.tri, &mut self.spatial_index);
-                tri.insert_with_statistics_seeded_indexed(
+                tri.insert_with_statistics_seeded_indexed_detailed(
                     vertex,
                     None,
                     hint,
                     0,
                     spatial_index.as_mut(),
+                    None,
                 )?
             };
+            let repair_seed_cells = insert_detail.repair_seed_cells;
 
-            match outcome {
+            match insert_detail.outcome {
                 InsertionOutcome::Inserted {
                     vertex_key: v_key,
                     hint,
@@ -5077,7 +5364,7 @@ where
                         .insertion_state
                         .delaunay_repair_insertion_count
                         .saturating_add(1);
-                    self.maybe_repair_after_insertion(v_key, hint)?;
+                    self.maybe_repair_after_insertion(v_key, hint, &repair_seed_cells)?;
                     self.maybe_check_after_insertion()?;
                     Ok(v_key)
                 }
@@ -5153,25 +5440,28 @@ where
 
         let insertion_result = (|| {
             let hint = self.insertion_state.last_inserted_cell;
-            let (outcome, stats) = {
+            let insert_detail = {
                 let (tri, spatial_index) = (&mut self.tri, &mut self.spatial_index);
-                tri.insert_with_statistics_seeded_indexed(
+                tri.insert_with_statistics_seeded_indexed_detailed(
                     vertex,
                     None,
                     hint,
                     0,
                     spatial_index.as_mut(),
+                    None,
                 )?
             };
+            let stats = insert_detail.stats;
+            let repair_seed_cells = insert_detail.repair_seed_cells;
 
-            let outcome = match outcome {
+            let outcome = match insert_detail.outcome {
                 InsertionOutcome::Inserted { vertex_key, hint } => {
                     self.insertion_state.last_inserted_cell = hint;
                     self.insertion_state.delaunay_repair_insertion_count = self
                         .insertion_state
                         .delaunay_repair_insertion_count
                         .saturating_add(1);
-                    self.maybe_repair_after_insertion(vertex_key, hint)?;
+                    self.maybe_repair_after_insertion(vertex_key, hint, &repair_seed_cells)?;
                     self.maybe_check_after_insertion()?;
                     InsertionOutcome::Inserted { vertex_key, hint }
                 }
@@ -5200,16 +5490,23 @@ where
         &mut self,
         vertex_key: VertexKey,
         hint: Option<CellKey>,
+        extra_seed_cells: &[CellKey],
     ) -> Result<(), InsertionError> {
-        self.maybe_repair_after_insertion_capped(vertex_key, hint, None)
+        self.maybe_repair_after_insertion_capped(vertex_key, hint, extra_seed_cells, None)
     }
 
     /// Like [`maybe_repair_after_insertion`](Self::maybe_repair_after_insertion) but
     /// forwards an optional per-attempt flip cap to the underlying repair functions.
+    ///
+    /// `extra_seed_cells` widens the local repair frontier beyond the inserted vertex
+    /// star. This is used when cavity reduction shrinks cells out of the conflict
+    /// region: those cells stay in the triangulation and may still need a local
+    /// Delaunay revisit even though they are no longer adjacent to the new vertex.
     fn maybe_repair_after_insertion_capped(
         &mut self,
         vertex_key: VertexKey,
         hint: Option<CellKey>,
+        extra_seed_cells: &[CellKey],
         max_flips: Option<usize>,
     ) -> Result<(), InsertionError> {
         let topology = self.tri.topology_guarantee();
@@ -5220,10 +5517,12 @@ where
             return Ok(());
         }
 
-        let seed_cells: Vec<CellKey> = self.tri.adjacent_cells(vertex_key).collect();
+        // Prefer the merged local frontier when we have one; otherwise fall back to the
+        // validated locate hint so repair can still start from the inserted star.
+        let seed_cells = self.collect_local_repair_seed_cells(vertex_key, extra_seed_cells);
         let hint_seed = hint.and_then(|ck| {
             if !self.tri.tds.contains_cell(ck) {
-                if std::env::var_os("DELAUNAY_REPAIR_TRACE").is_some() {
+                if env::var_os("DELAUNAY_REPAIR_TRACE").is_some() {
                     tracing::debug!(
                         "[repair] insertion seed hint missing (cell={ck:?}, vertex={vertex_key:?})"
                     );
@@ -5236,7 +5535,7 @@ where
                 .tds
                 .get_cell(ck)
                 .is_some_and(|cell| cell.contains_vertex(vertex_key));
-            if !contains_vertex && std::env::var_os("DELAUNAY_REPAIR_TRACE").is_some() {
+            if !contains_vertex && env::var_os("DELAUNAY_REPAIR_TRACE").is_some() {
                 tracing::debug!(
                     "[repair] insertion seed hint does not contain vertex (cell={ck:?}, vertex={vertex_key:?})"
                 );
@@ -5314,6 +5613,35 @@ where
             .validate_geometric_cell_orientation()
             .map_err(InsertionError::TopologyValidation)?;
         Ok(())
+    }
+
+    /// Merge the inserted vertex star with any cells that cavity reduction touched and
+    /// left in place. Stale cells are ignored so callers can pass raw cavity-trace sets.
+    fn collect_local_repair_seed_cells(
+        &self,
+        vertex_key: VertexKey,
+        extra_seed_cells: &[CellKey],
+    ) -> Vec<CellKey> {
+        let mut seen: FastHashSet<CellKey> = FastHashSet::default();
+        let mut seed_cells = Vec::new();
+
+        // Keep the inserted vertex star first because it is the hottest local region and
+        // the best chance of fixing ordinary post-insertion violations cheaply.
+        for cell_key in self.tri.adjacent_cells(vertex_key) {
+            if seen.insert(cell_key) {
+                seed_cells.push(cell_key);
+            }
+        }
+
+        // Then widen the frontier with cells touched by cavity shaping that survived in
+        // the triangulation; deduping here lets callers pass raw trace buffers safely.
+        for &cell_key in extra_seed_cells {
+            if self.tri.tds.contains_cell(cell_key) && seen.insert(cell_key) {
+                seed_cells.push(cell_key);
+            }
+        }
+
+        seed_cells
     }
 
     /// Runs policy-controlled global validation after insertion so expensive

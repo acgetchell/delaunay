@@ -36,6 +36,9 @@ in release builds.
 | Variable | Activation | Module | Description |
 |---|---|---|---|
 | `DELAUNAY_INSERT_TRACE` | presence | `triangulation.rs` | Per-insertion summary (vertex index, location, conflict size, suspicion flags) |
+| `DELAUNAY_BULK_PROGRESS_EVERY` | **value** (integer) | `triangulation/delaunay.rs` | Periodic batch progress plus retry-boundary output. |
+| `DELAUNAY_DEBUG_CAVITY_REDUCTION_ONCE` | presence | `triangulation.rs` | One-shot trace of the first cavity reduction chain and each re-extraction outcome. |
+| `DELAUNAY_DEBUG_RETRYABLE_SKIP` | presence | `triangulation.rs` | Retryable conflict skip trace with attempt and rollback context. |
 | `DELAUNAY_DEBUG_SHUFFLE` | presence | `triangulation.rs` | Logs vertex shuffle order during batch construction |
 | `DELAUNAY_DUPLICATE_METRICS` | presence | `triangulation/delaunay.rs` | Duplicate-detection metrics (spatial hash grid stats) |
 
@@ -54,6 +57,7 @@ in release builds.
 | `DELAUNAY_DEBUG_CONFLICT_PROGRESS` | presence | `locate.rs` | Periodic progress during large BFS traversals |
 | `DELAUNAY_DEBUG_CONFLICT_PROGRESS_EVERY` | **value** (integer) | `locate.rs` | Interval for progress logging (default: dimension-dependent) |
 | `DELAUNAY_DEBUG_CONFLICT_VERIFY` | presence | `triangulation.rs` | Brute-force verification of BFS conflict-region completeness with reachability analysis |
+| `DELAUNAY_DEBUG_RIDGE_FAN_ONCE` | presence | `locate.rs` | One-shot dump of the first detected ridge fan (ridge vertices, boundary facets, extra cells). |
 
 ## Cavity & Hull
 
@@ -82,9 +86,11 @@ in release builds.
 |---|---|---|---|
 | `DELAUNAY_REPAIR_TRACE` | presence | `flips.rs` | Per-flip trace: enqueue, skip, apply, context details |
 | `DELAUNAY_REPAIR_DEBUG_FACETS` | presence | `flips.rs` | Facet-level flip skip reasons (degenerate, duplicate, non-manifold, existing simplex) |
+| `DELAUNAY_REPAIR_DEBUG_POSTCONDITION_FACET` | presence | `flips.rs` | One-shot snapshot of the first unresolved k=2 facet with last-flip overlap |
 | `DELAUNAY_REPAIR_DEBUG_PREDICATES` | presence | `flips.rs` | Insphere classification details for k=2 and k=3 violation checks |
 | `DELAUNAY_REPAIR_DEBUG_RIDGE` | presence | `flips.rs` | Ridge context snapshots during k=3 repair |
 | `DELAUNAY_REPAIR_DEBUG_RIDGE_LIMIT` | **value** (integer) | `flips.rs` | Maximum ridge debug snapshots (default: 64) |
+| `DELAUNAY_REPAIR_DEBUG_RIDGE_MIN_MULTIPLICITY` | **value** (integer) | `flips.rs` | Skip low-multiplicity snapshots; emit when `found >= N` (default: 0). |
 | `DELAUNAY_REPAIR_DEBUG_SUMMARY` | presence | `flips.rs` | Per-attempt repair summary (flips, checks, cycles, ambiguous, skips) |
 
 ## Predicates & Validation
