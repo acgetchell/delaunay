@@ -56,6 +56,12 @@ making changes.
 - **NEVER** run `git commit`, `git push`, `git tag`, or any git commands that modify version control state
 - **ALLOWED**: read‑only git commands (`git --no-pager status`, `git --no-pager diff`, `git --no-pager log`, `git --no-pager show`, `git --no-pager blame`)
 - **ALWAYS** use `git --no-pager` when reading git output
+- When suggesting branch names, prefer `{type}/{issue}-descriptor-or-two`,
+  e.g. `fix/307-oriented-flips`, `perf/315-bench-profile`, or
+  `doc/329-branch-guidance`. If an environment requires an owner/tool prefix,
+  keep this structure after the prefix, e.g. `codex/fix/307-oriented-flips`.
+  Typical types are `fix`, `feat`, `perf`, `doc`, `test`, `refactor`, `ci`,
+  `build`, `chore`, and `style`.
 - Suggest git commands that modify version control state for the user to run manually
 
 ### GitHub CLI (`gh`)

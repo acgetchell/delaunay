@@ -300,13 +300,13 @@ To avoid triggering lengthy baseline comparisons unnecessarily:
 
 ```bash
 # Branch 1: Documentation updates only
-git checkout -b docs/update-readme
+git checkout -b doc/329-readme-guidance
 # Edit README.md, CONTRIBUTING.md, etc.
 git commit -m "docs: update contributing guidelines"
 # → No benchmarks triggered, fast CI
 
 # Branch 2: Rust code changes (separate PR)
-git checkout -b feat/improve-algorithm 
+git checkout -b perf/315-algorithm-hot-path
 # Edit src/core/triangulation.rs
 git commit -m "feat: optimize triangulation algorithm"
 # → Benchmarks triggered, but isolated to code changes
@@ -487,17 +487,20 @@ Before starting work:
 
 ### 2. Branch Strategy
 
-Create focused branches for your work:
+Create focused branches for your work. Prefer
+`{type}/{issue}-descriptor-or-two`, where `{issue}` is the GitHub issue number
+when one exists. Use a concise type aligned with the change: `fix`, `feat`,
+`perf`, `doc`, `test`, `refactor`, `ci`, `build`, `chore`, or `style`.
 
 ```bash
 # For bug fixes
-git checkout -b fix/issue-description
+git checkout -b fix/307-oriented-flips
 
-# For new features  
-git checkout -b feature/feature-name
+# For performance work
+git checkout -b perf/315-bench-profile
 
 # For documentation
-git checkout -b docs/doc-improvement
+git checkout -b doc/329-branch-guidance
 ```
 
 ### 3. Development Process

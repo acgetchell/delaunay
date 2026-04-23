@@ -2913,6 +2913,22 @@ where
         .into())
     }
 
+    /// Restores positive geometric orientation after bulk repair calls the
+    /// low-level TDS flip routine directly.
+    fn canonicalize_after_bulk_repair(
+        &mut self,
+    ) -> Result<(), DelaunayTriangulationConstructionError> {
+        self.tri
+            .normalize_and_promote_positive_orientation()
+            .map_err(Self::map_orientation_canonicalization_error)?;
+        self.tri
+            .validate_geometric_cell_orientation()
+            .map_err(|error| {
+                Self::map_insertion_error(InsertionError::TopologyValidation(error))
+            })?;
+        Ok(())
+    }
+
     /// Inserts the non-simplex vertices under a fixed perturbation seed so bulk
     /// construction retries are reproducible.
     #[allow(clippy::too_many_lines)]
@@ -3040,25 +3056,33 @@ where
                                             max_flips,
                                         )
                                     };
-                                    if let Err(repair_err) = repair_result {
-                                        if D < 4 {
-                                            Self::try_d_lt4_global_repair_fallback(
-                                                &mut self.tri.tds,
-                                                &self.tri.kernel,
-                                                topology,
-                                                self.insertion_state.use_global_repair_fallback,
-                                                index,
-                                                &repair_err,
-                                            )?;
-                                            continue;
+                                    match repair_result {
+                                        Ok(stats) => {
+                                            if stats.flips_performed > 0 {
+                                                self.canonicalize_after_bulk_repair()?;
+                                            }
                                         }
-                                        tracing::debug!(
-                                            error = %repair_err,
-                                            idx = index,
-                                            "bulk D≥4: per-insertion repair non-convergent; \
-                                             continuing (both_positive_artifact handled)"
-                                        );
-                                        soft_fail_seeds.extend(seed_cells.iter().copied());
+                                        Err(repair_err) => {
+                                            if D < 4 {
+                                                Self::try_d_lt4_global_repair_fallback(
+                                                    &mut self.tri.tds,
+                                                    &self.tri.kernel,
+                                                    topology,
+                                                    self.insertion_state.use_global_repair_fallback,
+                                                    index,
+                                                    &repair_err,
+                                                )?;
+                                                self.canonicalize_after_bulk_repair()?;
+                                                continue;
+                                            }
+                                            tracing::debug!(
+                                                error = %repair_err,
+                                                idx = index,
+                                                "bulk D≥4: per-insertion repair non-convergent; \
+                                                 continuing (both_positive_artifact handled)"
+                                            );
+                                            soft_fail_seeds.extend(seed_cells.iter().copied());
+                                        }
                                     }
                                 }
                             }
@@ -3182,25 +3206,33 @@ where
                                             max_flips,
                                         )
                                     };
-                                    if let Err(repair_err) = repair_result {
-                                        if D < 4 {
-                                            Self::try_d_lt4_global_repair_fallback(
-                                                &mut self.tri.tds,
-                                                &self.tri.kernel,
-                                                topology,
-                                                self.insertion_state.use_global_repair_fallback,
-                                                index,
-                                                &repair_err,
-                                            )?;
-                                            continue;
+                                    match repair_result {
+                                        Ok(stats) => {
+                                            if stats.flips_performed > 0 {
+                                                self.canonicalize_after_bulk_repair()?;
+                                            }
                                         }
-                                        tracing::debug!(
-                                            error = %repair_err,
-                                            idx = index,
-                                            "bulk D≥4: per-insertion repair non-convergent; \
-                                             continuing (both_positive_artifact handled)"
-                                        );
-                                        soft_fail_seeds.extend(seed_cells.iter().copied());
+                                        Err(repair_err) => {
+                                            if D < 4 {
+                                                Self::try_d_lt4_global_repair_fallback(
+                                                    &mut self.tri.tds,
+                                                    &self.tri.kernel,
+                                                    topology,
+                                                    self.insertion_state.use_global_repair_fallback,
+                                                    index,
+                                                    &repair_err,
+                                                )?;
+                                                self.canonicalize_after_bulk_repair()?;
+                                                continue;
+                                            }
+                                            tracing::debug!(
+                                                error = %repair_err,
+                                                idx = index,
+                                                "bulk D≥4: per-insertion repair non-convergent; \
+                                                 continuing (both_positive_artifact handled)"
+                                            );
+                                            soft_fail_seeds.extend(seed_cells.iter().copied());
+                                        }
                                     }
                                 }
                             }

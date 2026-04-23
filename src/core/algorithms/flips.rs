@@ -225,6 +225,7 @@ fn apply_bistellar_flip_with_k<T, U, V, const D: usize>(
     inserted_face_vertices: &[VertexKey],
     removed_cells: &CellKeyBuffer,
     direction: FlipDirection,
+    orientation_policy: ReplacementOrientationPolicy,
 ) -> Result<FlipInfo<D>, FlipError>
 where
     T: CoordinateScalar,
@@ -318,6 +319,16 @@ where
         new_cell_vertices.push(vertices);
     }
 
+    let boundary_facets =
+        extract_cavity_boundary(tds, removed_cells).map_err(|e| FlipError::NeighborWiring {
+            message: format!("flip boundary extraction failed: {e}"),
+        })?;
+
+    let external_facets = external_facets_for_boundary(tds, removed_cells, &boundary_facets)
+        .map_err(|e| FlipError::NeighborWiring {
+            message: e.to_string(),
+        })?;
+
     let topology_index = build_flip_topology_index(
         tds,
         &new_cell_vertices,
@@ -366,6 +377,14 @@ where
         }
     }
 
+    orient_replacement_cells(tds, &mut new_cell_vertices, &external_facets)?;
+    if matches!(
+        orientation_policy,
+        ReplacementOrientationPolicy::RequirePositive
+    ) {
+        validate_replacement_orientation(tds, &new_cell_vertices)?;
+    }
+
     for vertices in new_cell_vertices {
         let cell = Cell::new(vertices, None)?;
         let cell_key = tds
@@ -375,16 +394,6 @@ where
             })?;
         new_cells.push(cell_key);
     }
-
-    let boundary_facets =
-        extract_cavity_boundary(tds, removed_cells).map_err(|e| FlipError::NeighborWiring {
-            message: format!("flip boundary extraction failed: {e}"),
-        })?;
-
-    let external_facets = external_facets_for_boundary(tds, removed_cells, &boundary_facets)
-        .map_err(|e| FlipError::NeighborWiring {
-            message: e.to_string(),
-        })?;
 
     wire_cavity_neighbors(
         tds,
@@ -397,10 +406,6 @@ where
     })?;
 
     tds.remove_cells_by_keys(removed_cells);
-    tds.normalize_coherent_orientation()
-        .map_err(|e| FlipError::TdsMutation {
-            message: e.to_string(),
-        })?;
 
     debug_assert!(
         tds.is_coherently_oriented(),
@@ -415,6 +420,15 @@ where
         removed_face_vertices: removed_face_vertices.iter().copied().collect(),
         inserted_face_vertices: inserted_face_vertices.iter().copied().collect(),
     })
+}
+
+/// Selects whether a flip is only topological or must preserve Delaunay geometry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReplacementOrientationPolicy {
+    /// Allow coherent replacement cells regardless of geometric sign.
+    AllowSigned,
+    /// Require replacement cells to stay in positive canonical orientation.
+    RequirePositive,
 }
 
 /// Detects replacement simplices that already exist outside the flip cavity so
@@ -451,6 +465,309 @@ where
     }
 
     None
+}
+
+/// Chooses replacement-cell parity from the oriented cavity boundary.
+fn orient_replacement_cells<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cells: &mut [SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
+    external_facets: &[FacetHandle],
+) -> Result<(), FlipError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let mut flips = SmallBuffer::from_elem(None, cells.len());
+
+    for &external in external_facets {
+        let external_cell =
+            tds.get_cell(external.cell_key())
+                .ok_or_else(|| FlipError::MissingCell {
+                    cell_key: external.cell_key(),
+                })?;
+        if external_cell.periodic_vertex_offsets().is_some() {
+            continue;
+        }
+
+        let external_facet_idx = usize::from(external.facet_index());
+        for (cell_idx, vertices) in cells.iter().enumerate() {
+            let Some(replacement_facet_idx) =
+                matching_facet_index(external_cell.vertices(), external_facet_idx, vertices)?
+            else {
+                continue;
+            };
+            let coherent = facet_orders_coherent(
+                external_cell.vertices(),
+                external_facet_idx,
+                vertices,
+                replacement_facet_idx,
+            )?;
+            set_flip_assignment(&mut flips, cell_idx, !coherent)?;
+        }
+    }
+
+    loop {
+        let mut changed = false;
+
+        for source_idx in 0..cells.len() {
+            for target_idx in (source_idx + 1)..cells.len() {
+                let Some((source_facet_idx, target_facet_idx)) =
+                    shared_facet_indices(&cells[source_idx], &cells[target_idx])
+                else {
+                    continue;
+                };
+                let coherent = facet_orders_coherent(
+                    &cells[source_idx],
+                    source_facet_idx,
+                    &cells[target_idx],
+                    target_facet_idx,
+                )?;
+                match (flips[source_idx], flips[target_idx]) {
+                    (Some(source_flip), Some(target_flip)) => {
+                        if target_flip != (source_flip ^ !coherent) {
+                            return Err(FlipError::InvalidFlipContext {
+                                message: format!(
+                                    "conflicting replacement-cell orientation constraints between \
+                                     local cells {source_idx} and {target_idx}"
+                                ),
+                            });
+                        }
+                    }
+                    (Some(source_flip), None) => {
+                        changed |=
+                            set_flip_assignment(&mut flips, target_idx, source_flip ^ !coherent)?;
+                    }
+                    (None, Some(target_flip)) => {
+                        changed |=
+                            set_flip_assignment(&mut flips, source_idx, target_flip ^ !coherent)?;
+                    }
+                    (None, None) => {}
+                }
+            }
+        }
+
+        if flips.iter().all(Option::is_some) {
+            break;
+        }
+
+        if !changed {
+            let Some(root_idx) = flips.iter().position(Option::is_none) else {
+                break;
+            };
+            flips[root_idx] = Some(false);
+        }
+    }
+
+    for (vertices, should_flip) in cells.iter_mut().zip(flips) {
+        if should_flip.unwrap_or(false) {
+            if vertices.len() < 2 {
+                return Err(FlipError::InvalidFlipContext {
+                    message: "replacement cell needs at least two vertices to flip orientation"
+                        .to_string(),
+                });
+            }
+            vertices.swap(0, 1);
+        }
+    }
+
+    Ok(())
+}
+
+/// Records a required local parity flip and rejects contradictory constraints.
+fn set_flip_assignment(
+    assignments: &mut SmallBuffer<Option<bool>, MAX_PRACTICAL_DIMENSION_SIZE>,
+    cell_idx: usize,
+    required: bool,
+) -> Result<bool, FlipError> {
+    if cell_idx >= assignments.len() {
+        return Err(FlipError::InvalidFlipContext {
+            message: format!("replacement orientation index {cell_idx} out of range"),
+        });
+    }
+
+    match assignments[cell_idx] {
+        Some(existing) if existing != required => Err(FlipError::InvalidFlipContext {
+            message: format!(
+                "conflicting replacement-cell orientation constraints for local cell {cell_idx}"
+            ),
+        }),
+        Some(_) => Ok(false),
+        None => {
+            assignments[cell_idx] = Some(required);
+            Ok(true)
+        }
+    }
+}
+
+/// Finds the target facet opposite the source facet, if the cells share it.
+fn matching_facet_index(
+    source_vertices: &[VertexKey],
+    source_facet_idx: usize,
+    target_vertices: &[VertexKey],
+) -> Result<Option<usize>, FlipError> {
+    if source_vertices.len() != target_vertices.len() {
+        return Ok(None);
+    }
+
+    let source_facet = facet_order(source_vertices, source_facet_idx)?;
+    if !source_facet
+        .iter()
+        .copied()
+        .all(|vertex| target_vertices.contains(&vertex))
+    {
+        return Ok(None);
+    }
+
+    let mut target_facet_idx = None;
+    for (idx, &vertex) in target_vertices.iter().enumerate() {
+        if source_facet.contains(&vertex) {
+            continue;
+        }
+        if target_facet_idx.is_some() {
+            return Ok(None);
+        }
+        target_facet_idx = Some(idx);
+    }
+
+    Ok(target_facet_idx)
+}
+
+/// Finds the opposite slots for two replacement cells that share a facet.
+fn shared_facet_indices(
+    source_vertices: &[VertexKey],
+    target_vertices: &[VertexKey],
+) -> Option<(usize, usize)> {
+    if source_vertices.len() != target_vertices.len() {
+        return None;
+    }
+
+    let source_facet_idx = unique_vertex_index(source_vertices, target_vertices)?;
+    let target_facet_idx = unique_vertex_index(target_vertices, source_vertices)?;
+    Some((source_facet_idx, target_facet_idx))
+}
+
+/// Returns the single vertex slot in `vertices` that is absent from `other`.
+fn unique_vertex_index(vertices: &[VertexKey], other: &[VertexKey]) -> Option<usize> {
+    let mut unique_idx = None;
+    for (idx, &vertex) in vertices.iter().enumerate() {
+        if other.contains(&vertex) {
+            continue;
+        }
+        if unique_idx.is_some() {
+            return None;
+        }
+        unique_idx = Some(idx);
+    }
+    unique_idx
+}
+
+/// Checks the TDS coherent-orientation parity convention for one shared facet.
+fn facet_orders_coherent(
+    source_vertices: &[VertexKey],
+    source_facet_idx: usize,
+    target_vertices: &[VertexKey],
+    target_facet_idx: usize,
+) -> Result<bool, FlipError> {
+    let source_order = facet_order(source_vertices, source_facet_idx)?;
+    let target_order = facet_order(target_vertices, target_facet_idx)?;
+    let observed_odd = permutation_odd(&source_order, &target_order).ok_or_else(|| {
+        FlipError::InvalidFlipContext {
+            message: "could not derive replacement facet-order permutation parity".to_string(),
+        }
+    })?;
+    let expected_odd = (source_facet_idx + target_facet_idx).is_multiple_of(2);
+    Ok(observed_odd == expected_odd)
+}
+
+/// Returns facet vertices in cell-local order.
+fn facet_order(
+    vertices: &[VertexKey],
+    omit_idx: usize,
+) -> Result<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>, FlipError> {
+    if omit_idx >= vertices.len() {
+        return Err(FlipError::InvalidFlipContext {
+            message: format!(
+                "facet index {omit_idx} out of range for replacement cell with {} vertices",
+                vertices.len()
+            ),
+        });
+    }
+
+    let mut order = SmallBuffer::with_capacity(vertices.len().saturating_sub(1));
+    for (idx, &vertex) in vertices.iter().enumerate() {
+        if idx != omit_idx {
+            order.push(vertex);
+        }
+    }
+    Ok(order)
+}
+
+/// Returns whether the permutation from `source_order` to `target_order` is odd.
+fn permutation_odd(source_order: &[VertexKey], target_order: &[VertexKey]) -> Option<bool> {
+    if source_order.len() != target_order.len() {
+        return None;
+    }
+
+    let mut target_positions: SmallBuffer<usize, MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::with_capacity(source_order.len());
+    let mut used_target_indices: SmallBuffer<bool, MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::from_elem(false, target_order.len());
+
+    for source_vertex in source_order {
+        let mut matched_target_position = None;
+        for (target_idx, target_vertex) in target_order.iter().enumerate() {
+            if target_vertex == source_vertex && !used_target_indices[target_idx] {
+                matched_target_position = Some(target_idx);
+                used_target_indices[target_idx] = true;
+                break;
+            }
+        }
+        target_positions.push(matched_target_position?);
+    }
+
+    let mut inversion_count = 0usize;
+    for i in 0..target_positions.len() {
+        for j in (i + 1)..target_positions.len() {
+            if target_positions[i] > target_positions[j] {
+                inversion_count += 1;
+            }
+        }
+    }
+
+    Some(inversion_count % 2 == 1)
+}
+
+/// Ensures Delaunay-repair replacement cells have positive geometric orientation.
+fn validate_replacement_orientation<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cells: &[SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
+) -> Result<(), FlipError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    for vertices in cells {
+        let points = vertices_to_points(tds, vertices)?;
+        match robust_orientation(&points) {
+            Ok(Orientation::POSITIVE) => {}
+            Ok(Orientation::DEGENERATE) => return Err(FlipError::DegenerateCell),
+            Ok(Orientation::NEGATIVE) => {
+                return Err(FlipError::NegativeOrientation {
+                    cell_vertices: vertices.iter().copied().collect(),
+                });
+            }
+            Err(error) => {
+                return Err(FlipError::PredicateFailure {
+                    message: format!(
+                        "robust orientation failed for Delaunay repair flip cell {vertices:?}: {error}"
+                    ),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Scans the whole TDS for ridge diagnostics when local neighbor links are the
@@ -586,6 +903,7 @@ where
         &context.inserted_face_vertices,
         &context.removed_cells,
         context.direction,
+        ReplacementOrientationPolicy::AllowSigned,
     )
 }
 
@@ -613,6 +931,71 @@ where
         &context.inserted_face_vertices,
         &context.removed_cells,
         context.direction,
+        ReplacementOrientationPolicy::AllowSigned,
+    )
+}
+
+/// Apply a k=2 Delaunay-repair move with positive replacement geometry.
+fn apply_delaunay_flip_k2<T, U, V, const D: usize>(
+    tds: &mut Tds<T, U, V, D>,
+    context: &FlipContext<D, 2>,
+) -> Result<FlipInfo<D>, FlipError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    apply_bistellar_flip_with_k(
+        tds,
+        2,
+        &context.removed_face_vertices,
+        &context.inserted_face_vertices,
+        &context.removed_cells,
+        context.direction,
+        ReplacementOrientationPolicy::RequirePositive,
+    )
+}
+
+/// Apply a k=3 Delaunay-repair move with positive replacement geometry.
+fn apply_delaunay_flip_k3<T, U, V, const D: usize>(
+    tds: &mut Tds<T, U, V, D>,
+    context: &FlipContext<D, 3>,
+) -> Result<FlipInfo<D>, FlipError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    apply_bistellar_flip_with_k(
+        tds,
+        3,
+        &context.removed_face_vertices,
+        &context.inserted_face_vertices,
+        &context.removed_cells,
+        context.direction,
+        ReplacementOrientationPolicy::RequirePositive,
+    )
+}
+
+/// Apply a runtime-k Delaunay-repair move with positive replacement geometry.
+fn apply_delaunay_flip_dynamic<T, U, V, const D: usize>(
+    tds: &mut Tds<T, U, V, D>,
+    k_move: usize,
+    context: &FlipContextDyn<D>,
+) -> Result<FlipInfo<D>, FlipError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    apply_bistellar_flip_with_k(
+        tds,
+        k_move,
+        &context.removed_face_vertices,
+        &context.inserted_face_vertices,
+        &context.removed_cells,
+        context.direction,
+        ReplacementOrientationPolicy::RequirePositive,
     )
 }
 
@@ -1031,6 +1414,14 @@ pub enum FlipError {
     /// Flip would create a degenerate cell (zero orientation).
     #[error("Flip would create a degenerate cell (zero orientation)")]
     DegenerateCell,
+    /// Delaunay repair would create a negative-orientation replacement cell.
+    #[error(
+        "Delaunay repair would create a negative-orientation replacement cell {cell_vertices:?}"
+    )]
+    NegativeOrientation {
+        /// Replacement cell vertices in the rejected order.
+        cell_vertices: Vec<VertexKey>,
+    },
     /// Flip would create a duplicate cell.
     #[error("Flip would create a duplicate cell")]
     DuplicateCell,
@@ -2502,10 +2893,11 @@ where
             ));
         }
 
-        let info = match apply_bistellar_flip_k2(tds, &context) {
+        let info = match apply_delaunay_flip_k2(tds, &context) {
             Ok(info) => info,
             Err(
                 err @ (FlipError::DegenerateCell
+                | FlipError::NegativeOrientation { .. }
                 | FlipError::DuplicateCell
                 | FlipError::NonManifoldFacet
                 | FlipError::InsertedSimplexAlreadyExists { .. }
@@ -4128,7 +4520,7 @@ where
             );
         }
     };
-    let info = match apply_bistellar_flip_k3(tds, &context) {
+    let info = match apply_delaunay_flip_k3(tds, &context) {
         Ok(info) => info,
         Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
             diagnostics.record_inserted_simplex_skip(|| {
@@ -4142,6 +4534,7 @@ where
         }
         Err(
             err @ (FlipError::DegenerateCell
+            | FlipError::NegativeOrientation { .. }
             | FlipError::DuplicateCell
             | FlipError::NonManifoldFacet
             | FlipError::CellCreation(_)),
@@ -4317,7 +4710,7 @@ where
             );
         }
     };
-    let info = match apply_bistellar_flip_dynamic(tds, D, &context) {
+    let info = match apply_delaunay_flip_dynamic(tds, D, &context) {
         Ok(info) => info,
         Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
             diagnostics.record_inserted_simplex_skip(|| {
@@ -4331,6 +4724,7 @@ where
         }
         Err(
             err @ (FlipError::DegenerateCell
+            | FlipError::NegativeOrientation { .. }
             | FlipError::DuplicateCell
             | FlipError::NonManifoldFacet
             | FlipError::CellCreation(_)),
@@ -4498,7 +4892,7 @@ where
             );
         }
     };
-    let info = match apply_bistellar_flip_dynamic(tds, D - 1, &context) {
+    let info = match apply_delaunay_flip_dynamic(tds, D - 1, &context) {
         Ok(info) => info,
         Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
             diagnostics.record_inserted_simplex_skip(|| {
@@ -4512,6 +4906,7 @@ where
         }
         Err(
             err @ (FlipError::DegenerateCell
+            | FlipError::NegativeOrientation { .. }
             | FlipError::DuplicateCell
             | FlipError::NonManifoldFacet
             | FlipError::CellCreation(_)),
@@ -4683,7 +5078,7 @@ where
             );
         }
     };
-    let info = match apply_bistellar_flip_k2(tds, &context) {
+    let info = match apply_delaunay_flip_k2(tds, &context) {
         Ok(info) => info,
         Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
             diagnostics.record_inserted_simplex_skip(|| {
@@ -4697,6 +5092,7 @@ where
         }
         Err(
             err @ (FlipError::DegenerateCell
+            | FlipError::NegativeOrientation { .. }
             | FlipError::DuplicateCell
             | FlipError::NonManifoldFacet
             | FlipError::CellCreation(_)),
