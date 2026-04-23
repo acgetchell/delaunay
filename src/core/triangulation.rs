@@ -4718,6 +4718,16 @@ where
             Some(&conflict_cells),
         )?;
 
+        // Drop any repair-seed entries that are about to be deleted. Cavity
+        // reduction shrinks `conflict_cells` in place; the cells that were in
+        // the *initial* conflict region but remain in the final reduced set
+        // will be removed by `remove_cells_by_keys` below, so their keys
+        // become stale. Callers filter with `contains_cell` as a safety net,
+        // but the contract of `repair_seed_cells` is "cells that participated
+        // in cavity shaping and survived", so the filter belongs here.
+        let dead_conflict_cells: FastHashSet<CellKey> = conflict_cells.iter().copied().collect();
+        repair_seed_cells.retain(|ck| !dead_conflict_cells.contains(ck));
+
         // Remove conflict cells (now that new cells are wired up)
         let _removed_count = self.tds.remove_cells_by_keys(&conflict_cells);
 

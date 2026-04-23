@@ -157,7 +157,11 @@ pub fn generate_random_points<T: CoordinateScalar + SampleUniform, const D: usiz
 ) -> Result<Vec<Point<T, D>>, RandomPointGenerationError> {
     #[cfg(debug_assertions)]
     if std::env::var_os("DELAUNAY_DEBUG_UNUSED_IMPORTS").is_some() {
-        eprintln!("point_generation::generate_random_points called (n_points={n_points}, D={D})");
+        tracing::debug!(
+            n_points,
+            dimension = D,
+            "point_generation::generate_random_points called"
+        );
     }
     // Validate range
     if range.0 >= range.1 {
@@ -227,8 +231,11 @@ pub fn generate_random_points_seeded<T: CoordinateScalar + SampleUniform, const 
 
     #[cfg(debug_assertions)]
     if std::env::var_os("DELAUNAY_DEBUG_UNUSED_IMPORTS").is_some() {
-        eprintln!(
-            "point_generation::generate_random_points_seeded called (n_points={n_points}, D={D}, seed={seed})"
+        tracing::debug!(
+            n_points,
+            dimension = D,
+            seed,
+            "point_generation::generate_random_points_seeded called"
         );
     }
 

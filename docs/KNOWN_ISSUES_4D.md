@@ -4,57 +4,83 @@
 
 ### Re-verified on 2026-04-23 (release mode)
 
-These release-mode reruns supersede the old 35-point 3D and 100-point 4D
-correctness failures described below:
+These release-mode reruns supersede the old 35-point 3D, 100-point 4D, and
+500-point 4D correctness failures described below:
 
 - 3D seed `0xE30C78582376677C` now passes at 35 vertices and at 1000 vertices.
 - The 3D 1000-prefix bisect reports no failing prefix for that seed.
-- 4D seed `0x9B7786C999C56A16` now inserts 100/100 vertices with zero skips and
-  passes validation in about 15.4s total wall time.
+- 4D seed `0x9B7786C999C56A16` now completes the 100-point batch: attempt 0
+  finishes with `inserted=86`, `skipped=14`, and the shuffled retry 1
+  (`perturbation_seed=0x34D84963BCC98F21`) inserts 100/100 vertices with zero
+  skips and passes validation in about 15.4s total wall time.
+- 4D seed `0xD225B8A07E274AE6` now inserts **500/500** vertices with zero
+  skips on the first attempt (no perturbation retries triggered) and passes
+  Level 1–4 validation in ~233s total wall time. See the
+  "Historical 4D 500-point retry-collapse reproducer (now fixed)" section
+  below and `docs/archive/issue_204_investigation.md` for the Fix 2 details.
 - The remaining open part of #204 is the default 4D 3000-point batch run,
   which now has progress instrumentation and is clearly a scale/observability
-  problem rather than the earlier 35/100-point correctness repros.
+  problem rather than the earlier correctness repros.
 
 ### Current issues
 
-#### 4D+ bulk construction retry collapse
+#### 4D+ bulk construction at very large scale
 
-Large-scale 4D bulk construction still has a deterministic seeded failure mode
-in release mode. The historical 100-point negative-orientation skip repro is
-fixed, but larger seeded cases can still enter a skip-heavy path where the
-input-order attempt and every shuffled retry finish with a Delaunay-property
-violation after repeated conflict-region ridge-fan degeneracies.
+The historical correctness failures at 35–100 vertices in 3D and 100–500
+vertices in 4D are now fixed. What remains is a scale/runtime concern: the
+default 3000-point 4D large-scale debug harness is expensive to investigate
+and may still degrade at very large input counts without a bounded test fixture.
 
-**Severity:** High (4D batch-construction correctness / runtime)
-**Affects:** seeded 4D batch construction at a few hundred vertices and above;
-the default 3000-point large-scale debug harness remains especially expensive
-to investigate.
-**Recommended workaround:** use release-mode runs and smaller seeded probes when
-you need quick iteration; prefer incremental insertion for production 4D
-workloads if large batch runtimes are unacceptable.
+**Severity:** Medium (4D batch-construction runtime / observability)
+**Affects:** the default 3000-point large-scale debug harness and any
+similarly large seeded 4D batch inputs.
+**Recommended workaround:** use release-mode runs and smaller seeded probes
+when you need quick iteration; prefer incremental insertion for production
+4D workloads if large batch runtimes are unacceptable.
 
-**Current rechecks (2026-04-23):**
+#### Historical 4D 500-point retry-collapse reproducer (now fixed)
 
-- 4D 100-point batch construction (release
-mode, seed `0x9B7786C999C56A16`, ball radius=100) inserts **100 of 100**
-vertices, skips **0**, and passes validation in ~15.4s total wall time.
-- The same 4D 100-point run now exposes the retry boundary directly: attempt 0
-  finishes with `inserted=86`, `skipped=14`, then retry 1
-  (`perturbation_seed=0x34D84963BCC98F21`) inserts **100 of 100** and passes.
+Before Fix 2 of the #204 plan, 4D seed `0xD225B8A07E274AE6` (ball radius 100,
+allow skips) exhausted all 7 shuffled retries. Each attempt finished with
+`inserted≈266–300`, `skipped≈200–234`, and the same final error:
+`Cell violates Delaunay property: cell contains vertex that is inside
+circumsphere`. Representative skip samples were dominated by
+`Conflict region error: Ridge fan detected: 4 facets share ridge with 3
+vertices`.
+
+**Root cause:** the D≥4 per-insertion local-repair flip budget was too tight
+(50-flip ceiling vs. observed `max_queue` p95 = 312), so repair never drained
+its backlog. The D≥4 soft-fail arm then silently continued after each failed
+local repair, accumulating unresolved k=2 postcondition violations and
+negative-orientation cells into the next insertion's conflict BFS. See
+`docs/archive/issue_204_investigation.md` for the full measurement and
+root-cause analysis.
+
+**Fix (2026-04-23):** Fix 2 of the #204 plan raised the D≥4 flip budget
+(`LOCAL_REPAIR_FLIP_BUDGET_FACTOR_D_GE_4 = 12`,
+`LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_GE_4 = 96`) and added one escalation pass
+(`LOCAL_REPAIR_ESCALATION_BUDGET_FACTOR_D_GE_4 = 4`, rate-limited by
+`LOCAL_REPAIR_ESCALATION_MIN_GAP = 8`) with the full TDS as seed set before
+the soft-fail arm accepts a non-convergent repair. The #307 orientation
+relaxation stays in place so flip repair still has its chance at eventual
+consistency; the budget bump is what lets that chance materialize. Regression
+coverage lives in
+`tests/regressions.rs::regression_issue_204_4d_500_local_repair_budget`
+(gated behind `slow-tests`).
+
+**Current recheck (2026-04-23):**
+
 - 4D 500-point batch construction (release mode, seed `0xD225B8A07E274AE6`,
-  ball radius=100, allow skips) is now a smaller deterministic failure repro.
-  Attempts 0 through 6 all finish invalid after roughly 78–95s each, ending
-  with `inserted≈266–300`, `skipped≈200–234`, and the same final error:
-  `Cell violates Delaunay property: cell contains vertex that is inside circumsphere`.
-  Representative skip samples are dominated by
-  `Conflict region error: Ridge fan detected: 4 facets share ridge with 3 vertices`.
+  ball radius=100) inserts **500 of 500** vertices, skips **0**, and passes
+  `validation_report` (Levels 1–4) in ~233.4s total wall time.
+- Only 2 local-repair budget hits were observed, both resolved by the new
+  escalation path. No `DisconnectedBoundary`, `RidgeFan`, or
+  `postcondition k=2` retryable-skip traces fired (down from 501 / 31 / 711
+  respectively on the pre-fix run).
 - 4D 3000-point batch construction (release mode, seed `0xE7E6701F918B07FA`,
-  ball radius=100) now emits periodic batch-progress summaries. On the first
-  attempt (`perturbation_seed=0x0`), it had reached:
-  - processed 100/3000: inserted 81, skipped 19, elapsed ~4.27s
-  - processed 300/3000: inserted 221, skipped 79, elapsed ~36.11s
-  - processed 500/3000: inserted 324, skipped 176, elapsed ~94.70s
-  This run was manually interrupted after capturing the 500-point progress mark.
+  ball radius=100) still emits periodic batch-progress summaries. Large-scale
+  runtime characterisation at 3000+ points remains open under the
+  "4D+ bulk construction at very large scale" item above.
 
 #### Historical 3D flip-cycle reproducer (now fixed)
 

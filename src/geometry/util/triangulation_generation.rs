@@ -306,8 +306,11 @@ where
 {
     #[cfg(debug_assertions)]
     if std::env::var_os("DELAUNAY_DEBUG_UNUSED_IMPORTS").is_some() {
-        eprintln!(
-            "triangulation_generation::generate_random_triangulation called (n_points={n_points}, D={D}, seed={seed:?})"
+        tracing::debug!(
+            n_points,
+            dimension = D,
+            seed = ?seed,
+            "triangulation_generation::generate_random_triangulation called"
         );
     }
     generate_random_triangulation_with_topology_guarantee(
@@ -413,8 +416,10 @@ where
     for attempt in 0..RANDOM_TRIANGULATION_MAX_POINTSET_ATTEMPTS {
         #[cfg(debug_assertions)]
         if std::env::var_os("DELAUNAY_DEBUG_RANDOM_POINTSET_RETRIES").is_some() {
-            eprintln!(
-                "random_triangulation: pointset attempt {attempt} of {RANDOM_TRIANGULATION_MAX_POINTSET_ATTEMPTS} (0-based)"
+            tracing::debug!(
+                attempt,
+                max_attempts = RANDOM_TRIANGULATION_MAX_POINTSET_ATTEMPTS,
+                "random_triangulation: pointset attempt"
             );
         }
         let point_seed = seed.map(|base| {
@@ -700,13 +705,13 @@ where
         // Build triangulation with configured options
         #[cfg(debug_assertions)]
         if std::env::var_os("DELAUNAY_DEBUG_RANDOM_BUILDER").is_some() {
-            eprintln!(
-                "random_triangulation_builder: single call to with_topology_guarantee_and_options with n_points={}, topology_guarantee={:?}, insertion_order={:?}, dedup_policy={:?}, retry_policy={:?}",
-                self.n_points,
-                self.topology_guarantee,
-                self.construction_options.insertion_order(),
-                self.construction_options.dedup_policy(),
-                self.construction_options.retry_policy(),
+            tracing::debug!(
+                n_points = self.n_points,
+                topology_guarantee = ?self.topology_guarantee,
+                insertion_order = ?self.construction_options.insertion_order(),
+                dedup_policy = ?self.construction_options.dedup_policy(),
+                retry_policy = ?self.construction_options.retry_policy(),
+                "random_triangulation_builder: single call to with_topology_guarantee_and_options"
             );
         }
         let dt = DelaunayTriangulation::with_topology_guarantee_and_options(

@@ -66,6 +66,30 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "bench-logging")]
+fn init_tracing() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+        let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+    });
+}
+
+#[cfg(not(feature = "bench-logging"))]
+const fn init_tracing() {}
+
+#[cfg(not(feature = "count-allocations"))]
+macro_rules! bench_warn {
+    ($($arg:tt)*) => {{
+        #[cfg(feature = "bench-logging")]
+        {
+            init_tracing();
+            tracing::warn!($($arg)*);
+        }
+    }};
+}
+
 // SmallBuffer size constants for different use cases
 const BENCHMARK_ITERATION_BUFFER_SIZE: usize = 8; // For tracking allocation info across benchmark iterations
 const SIMPLEX_VERTICES_BUFFER_SIZE: usize = 4; // 3D simplex = 4 vertices
@@ -102,7 +126,7 @@ fn print_count_allocations_banner_once() {
     use std::sync::Once;
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        eprintln!("count-allocations feature not enabled; memory stats are placeholders.");
+        bench_warn!("count-allocations feature not enabled; memory stats are placeholders.");
     });
 }
 
@@ -826,6 +850,7 @@ fn benchmark_algorithmic_bottlenecks(c: &mut Criterion) {
 criterion_group!(
     name = profiling_benches;
     config = {
+        init_tracing();
         // Allow configuration via environment variables for CI stability
         let sample_size = std::env::var("BENCH_SAMPLE_SIZE")
             .ok()

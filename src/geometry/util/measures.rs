@@ -81,10 +81,10 @@ where
 {
     #[cfg(debug_assertions)]
     if std::env::var_os("DELAUNAY_DEBUG_UNUSED_IMPORTS").is_some() {
-        eprintln!(
-            "measures::simplex_volume called (points_len={}, D={})",
-            points.len(),
-            D
+        tracing::debug!(
+            points_len = points.len(),
+            dimension = D,
+            "measures::simplex_volume called"
         );
     }
     if points.len() != D + 1 {

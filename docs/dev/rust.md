@@ -726,14 +726,21 @@ with migration guidance.
 
 ## Logging and Diagnostics
 
-Use `tracing` for all runtime diagnostics. **Never use `eprintln!`** or
-`println!` for debug output — use `tracing::debug!`, `tracing::trace!`, etc.
+Use `tracing` for committed diagnostics across production code, tests,
+and benchmarks. This includes library/runtime code, non-trivial test
+diagnostics, and debugging of numerical instability or topological
+invariants. Prefer `tracing::debug!`, `tracing::trace!`, etc. over
+ad-hoc printing.
 
 This ensures all diagnostic output is:
 
 - filterable via `RUST_LOG` / `tracing-subscriber`
 - structured and machine-parseable
 - suppressible in production builds
+
+`eprintln!` is acceptable only for short-lived local debugging while
+investigating an issue. Do not leave it in committed code when `tracing`
+or a typed error path is more appropriate.
 
 Debug hooks gated on environment variables should still use `tracing`:
 
@@ -742,6 +749,26 @@ Debug hooks gated on environment variables should still use `tracing`:
 if std::env::var_os("DELAUNAY_DEBUG_FOO").is_some() {
     tracing::debug!("diagnostic message: {value}");
 }
+```
+
+### Tests and Benchmarks
+
+- Use `tracing` for non-trivial test diagnostics rather than
+  `eprintln!`, especially when diagnosing geometric predicate behavior,
+  invariant failures, or shrink/reproduction context.
+- Never log inside hot benchmark loops or Criterion-measured closures.
+  Emit diagnostics before or after the measured path so measurements stay
+  meaningful.
+- Gate non-essential test and benchmark diagnostics behind feature flags.
+  In this repository, use `test-debug` for test diagnostics and
+  `bench-logging` for benchmark diagnostics:
+
+```rust
+#[cfg(feature = "test-debug")]
+tracing::debug!("test diagnostic");
+
+#[cfg(feature = "bench-logging")]
+tracing::debug!("benchmark diagnostic");
 ```
 
 ---

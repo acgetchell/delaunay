@@ -61,6 +61,111 @@ const DELAUNAY_SHUFFLE_SEED_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
 // release-only construction failures (see #306).
 const HEURISTIC_REBUILD_ATTEMPTS: usize = 6;
 
+// Per-insertion local-repair flip-budget tunables.
+//
+// Budget formula: `seed_cells.len() * (D + 1) * FACTOR` with a minimum of
+// `FLOOR`. Two regimes so that D≥4's higher queue demand does not force a
+// global budget increase.
+//
+// The D≥4 constants are sized from the measured `max_queue` distribution on
+// the 500-point 4D seeded repro (seed `0xD225B8A07E274AE6`, ball radius 100)
+// captured in `docs/archive/issue_204_investigation.md`:
+//
+//   max_queue samples  min=91 p50=207 p90=281 p95=312 p99=409 max=416
+//
+// `FACTOR = 12` with `FLOOR = 96` yields a typical 300-flip budget (5-cell seed
+// set), covering p50–p90 and brushing p95. The p95–p99 tail is intentionally
+// left to the escalation pass (see `LOCAL_REPAIR_ESCALATION_*`) rather than
+// paid for on every insertion.
+pub(crate) const LOCAL_REPAIR_FLIP_BUDGET_FACTOR_D_GE_4: usize = 12;
+pub(crate) const LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_GE_4: usize = 96;
+pub(crate) const LOCAL_REPAIR_FLIP_BUDGET_FACTOR_D_LT_4: usize = 4;
+pub(crate) const LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_LT_4: usize = 16;
+
+// Escalation tunables for D≥4. When the base local repair hits its budget,
+// the soft-fail path reruns the repair once with `BASE_BUDGET * ESCALATION_FACTOR`
+// and the full TDS as seed set before giving up. The escalation is rate-limited
+// so every insertion does not pay for a near-global flip pass.
+pub(crate) const LOCAL_REPAIR_ESCALATION_BUDGET_FACTOR_D_GE_4: usize = 4;
+pub(crate) const LOCAL_REPAIR_ESCALATION_MIN_GAP: usize = 8;
+
+/// Outcome of a per-insertion D≥4 local-repair escalation attempt.
+///
+/// Three orthogonal cases so the caller and any telemetry downstream can match
+/// on the outcome without string parsing:
+///
+/// - [`Skipped`](Self::Skipped) — the escalation did not run. The caller
+///   should fall through to the soft-fail path using the original
+///   [`DelaunayRepairError`] that triggered escalation.
+/// - [`Succeeded`](Self::Succeeded) — the escalation converged. The caller
+///   has already canonicalized the triangulation and should continue to the
+///   next insertion.
+/// - [`FailedAlso`](Self::FailedAlso) — the escalation ran but also hit its
+///   budget or postcondition. The typed `DelaunayRepairError` is preserved so
+///   downstream diagnostics can correlate it with the original error; the
+///   caller should fall through to the soft-fail path.
+///
+/// [`DelaunayRepairError`]: crate::core::algorithms::flips::DelaunayRepairError
+#[derive(Clone, Debug)]
+enum LocalRepairEscalationOutcome {
+    /// The escalation was not attempted.
+    Skipped {
+        /// Why the escalation was skipped.
+        reason: EscalationSkipReason,
+    },
+    /// The escalation ran and successfully converged.
+    Succeeded {
+        /// Repair diagnostics from the successful escalation attempt.
+        stats: DelaunayRepairStats,
+    },
+    /// The escalation ran but also failed to converge or satisfy its
+    /// postcondition.
+    FailedAlso {
+        /// Typed repair error produced by the escalation attempt. Preserved
+        /// by value so callers can match on the variant instead of parsing
+        /// the display form.
+        escalation_error: DelaunayRepairError,
+    },
+}
+
+/// Why a [`LocalRepairEscalationOutcome::Skipped`] escalation attempt did not
+/// run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EscalationSkipReason {
+    /// The previous escalation ran within the `min_gap` insertion window, so
+    /// this attempt was rate-limited.
+    RateLimited {
+        /// Insertion index of the previous escalation.
+        last_escalation_idx: usize,
+        /// Configured minimum gap between escalations.
+        min_gap: usize,
+    },
+    /// The triangulation had no cells to seed repair with. This is an edge
+    /// case for early insertions where the initial simplex has not been
+    /// committed; escalation there has nothing to escalate against.
+    EmptyTds,
+}
+
+/// Per-insertion local Delaunay repair flip budget.
+///
+/// Computes `seeds * (D + 1) * FACTOR` with a minimum of `FLOOR`, using the
+/// dimension-aware constants above.
+const fn local_repair_flip_budget<const D: usize>(seed_cells_len: usize) -> usize {
+    let (factor, floor) = if D >= 4 {
+        (
+            LOCAL_REPAIR_FLIP_BUDGET_FACTOR_D_GE_4,
+            LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_GE_4,
+        )
+    } else {
+        (
+            LOCAL_REPAIR_FLIP_BUDGET_FACTOR_D_LT_4,
+            LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_LT_4,
+        )
+    };
+    let raw = seed_cells_len.saturating_mul(D + 1).saturating_mul(factor);
+    if raw > floor { raw } else { floor }
+}
+
 thread_local! {
     static HEURISTIC_REBUILD_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -3137,6 +3242,99 @@ where
         Ok(())
     }
 
+    /// Attempt one D≥4 local-repair escalation before the soft-fail path
+    /// continues.
+    ///
+    /// Reruns `repair_delaunay_local_single_pass` with
+    /// `base_budget * LOCAL_REPAIR_ESCALATION_BUDGET_FACTOR_D_GE_4` and the
+    /// full TDS as seed set. Rate-limited by `LOCAL_REPAIR_ESCALATION_MIN_GAP`
+    /// so only every Nth insertion pays the (near-global) flip pass cost.
+    ///
+    /// Returns a typed [`LocalRepairEscalationOutcome`] so the caller can
+    /// distinguish `Skipped { reason }` (rate-limited or empty TDS) from
+    /// `Succeeded { stats }` (caller has already canonicalized and should
+    /// continue normally) from `FailedAlso { escalation_error }` (the
+    /// escalation ran but also hit its budget; the caller should fall through
+    /// to the soft-fail path, and the typed `DelaunayRepairError` is
+    /// preserved for downstream diagnostics). `Err(...)` is reserved for
+    /// canonicalization failures after a successful escalation, which are
+    /// hard errors the bulk loop must propagate.
+    fn try_local_repair_escalation_d_ge_4(
+        &mut self,
+        index: usize,
+        base_budget: usize,
+        last_escalation_idx: &mut Option<usize>,
+        original_err: &DelaunayRepairError,
+    ) -> Result<LocalRepairEscalationOutcome, DelaunayTriangulationConstructionError> {
+        // Rate-limit: only escalate if we have not escalated within the last
+        // LOCAL_REPAIR_ESCALATION_MIN_GAP insertions. This keeps healthy runs
+        // from paying the near-global flip pass on every insertion while still
+        // catching pathological clusters of consecutive soft-fails.
+        if let Some(last_idx) = *last_escalation_idx
+            && index.saturating_sub(last_idx) < LOCAL_REPAIR_ESCALATION_MIN_GAP
+        {
+            return Ok(LocalRepairEscalationOutcome::Skipped {
+                reason: EscalationSkipReason::RateLimited {
+                    last_escalation_idx: last_idx,
+                    min_gap: LOCAL_REPAIR_ESCALATION_MIN_GAP,
+                },
+            });
+        }
+
+        // Escalation seed set: use every current cell key. This gives the
+        // repair the broadest possible view of the local backlog without
+        // switching to a different repair entry point.
+        let full_seeds: Vec<CellKey> = self.tri.tds.cell_keys().collect();
+        if full_seeds.is_empty() {
+            return Ok(LocalRepairEscalationOutcome::Skipped {
+                reason: EscalationSkipReason::EmptyTds,
+            });
+        }
+        let escalated_budget =
+            base_budget.saturating_mul(LOCAL_REPAIR_ESCALATION_BUDGET_FACTOR_D_GE_4);
+
+        tracing::debug!(
+            idx = index,
+            seed_cells = full_seeds.len(),
+            base_budget,
+            escalated_budget,
+            original_error = %original_err,
+            "bulk D≥4: escalating local repair with full-TDS seed set"
+        );
+
+        let escalation_result = {
+            let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
+            repair_delaunay_local_single_pass(tds, kernel, &full_seeds, escalated_budget)
+        };
+
+        *last_escalation_idx = Some(index);
+
+        match escalation_result {
+            Ok(stats) => {
+                tracing::debug!(
+                    idx = index,
+                    flips = stats.flips_performed,
+                    max_queue = stats.max_queue_len,
+                    "bulk D≥4: escalation succeeded"
+                );
+                if stats.flips_performed > 0 {
+                    self.canonicalize_after_bulk_repair()?;
+                }
+                Ok(LocalRepairEscalationOutcome::Succeeded { stats })
+            }
+            Err(escalation_err) => {
+                tracing::debug!(
+                    idx = index,
+                    error = %escalation_err,
+                    "bulk D≥4: escalation also non-convergent; falling through to soft-fail"
+                );
+                Ok(LocalRepairEscalationOutcome::FailedAlso {
+                    escalation_error: escalation_err,
+                })
+            }
+        }
+    }
+
     /// Inserts the non-simplex vertices under a fixed perturbation seed so bulk
     /// construction retries are reproducible.
     #[allow(clippy::too_many_lines)]
@@ -3167,16 +3365,24 @@ where
             let started = Instant::now();
             BatchProgressState {
                 // The initial simplex is already present when this loop starts, so progress
-                // and throughput should only count the remaining bulk vertices.
-                total_vertices: vertices.len(),
+                // and throughput only count the remaining bulk vertices — the counters live
+                // in a "bulk-only" frame, 0…(input_len - (D+1)).
+                total_vertices: vertices.len().saturating_sub(D + 1),
                 progress_every,
                 started,
                 last_progress: started,
-                last_processed: D + 1,
+                last_processed: 0,
             }
         });
-        let mut inserted_vertices = D + 1;
+        // Bulk-only counters: `inserted_vertices` and `skipped_vertices` track work done
+        // inside this loop and sum to `offset + 1` after each iteration, so the logged
+        // progress line reads `processed=N/total inserted=I skipped=S` coherently.
+        let mut inserted_vertices = 0usize;
         let mut skipped_vertices = 0usize;
+        // Last insertion index at which the D≥4 local-repair escalation ran,
+        // used for `LOCAL_REPAIR_ESCALATION_MIN_GAP` rate limiting across both
+        // stats-enabled and stats-disabled arms.
+        let mut last_escalation_idx: Option<usize> = None;
 
         match construction_stats {
             None => {
@@ -3197,7 +3403,7 @@ where
                     });
 
                     if trace_insertion && let Some(coords) = coords.as_ref() {
-                        eprintln!("[bulk] start idx={index} uuid={uuid} coords={coords:?}");
+                        tracing::debug!(index, %uuid, coords = ?coords, "[bulk] start");
                     }
 
                     let started = trace_insertion.then(std::time::Instant::now);
@@ -3241,9 +3447,7 @@ where
                         )) => {
                             inserted_vertices = inserted_vertices.saturating_add(1);
                             if trace_insertion && let Some(elapsed) = elapsed {
-                                eprintln!(
-                                    "[bulk] inserted idx={index} uuid={uuid} elapsed={elapsed:?}"
-                                );
+                                tracing::debug!(index, %uuid, elapsed = ?elapsed, "[bulk] inserted");
                             }
                             // Cache hint for faster subsequent insertions.
                             self.insertion_state.last_inserted_cell = hint;
@@ -3274,11 +3478,7 @@ where
                                 let seed_cells =
                                     self.collect_local_repair_seed_cells(v_key, &repair_seed_cells);
                                 if !seed_cells.is_empty() {
-                                    let max_flips = if D >= 4 {
-                                        (seed_cells.len() * (D + 1) * 2).max(8)
-                                    } else {
-                                        (seed_cells.len() * (D + 1) * 4).max(16)
-                                    };
+                                    let max_flips = local_repair_flip_budget::<D>(seed_cells.len());
                                     let repair_result = {
                                         let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
                                         repair_delaunay_local_single_pass(
@@ -3314,21 +3514,69 @@ where
                                                 self.canonicalize_after_bulk_repair()?;
                                                 continue;
                                             }
-                                            tracing::debug!(
-                                                error = %repair_err,
-                                                idx = index,
-                                                "bulk D≥4: per-insertion repair non-convergent; \
-                                                 continuing (both_positive_artifact handled)"
-                                            );
-                                            self.canonicalize_after_bulk_repair()?;
-                                            soft_fail_seeds.extend(seed_cells.iter().copied());
+                                            // D≥4: try one escalation with a 4× budget and the full
+                                            // TDS as seed set before accepting the soft-fail. The
+                                            // escalation is rate-limited so healthy runs do not pay
+                                            // for it on every insertion.
+                                            let outcome = self.try_local_repair_escalation_d_ge_4(
+                                                index,
+                                                max_flips,
+                                                &mut last_escalation_idx,
+                                                &repair_err,
+                                            )?;
+                                            match outcome {
+                                                LocalRepairEscalationOutcome::Succeeded {
+                                                    stats,
+                                                } => {
+                                                    tracing::debug!(
+                                                        idx = index,
+                                                        flips = stats.flips_performed,
+                                                        max_queue = stats.max_queue_len,
+                                                        "bulk D≥4: escalation closed the \
+                                                         non-convergence; continuing"
+                                                    );
+                                                    continue;
+                                                }
+                                                LocalRepairEscalationOutcome::Skipped {
+                                                    reason,
+                                                } => {
+                                                    tracing::debug!(
+                                                        idx = index,
+                                                        error = %repair_err,
+                                                        escalation_outcome = "skipped",
+                                                        skip_reason = ?reason,
+                                                        "bulk D≥4: per-insertion repair \
+                                                         non-convergent; continuing \
+                                                         (both_positive_artifact handled)"
+                                                    );
+                                                    self.canonicalize_after_bulk_repair()?;
+                                                    soft_fail_seeds
+                                                        .extend(seed_cells.iter().copied());
+                                                }
+                                                LocalRepairEscalationOutcome::FailedAlso {
+                                                    escalation_error,
+                                                } => {
+                                                    tracing::debug!(
+                                                        idx = index,
+                                                        error = %repair_err,
+                                                        escalation_outcome = "failed_also",
+                                                        escalation_error = %escalation_error,
+                                                        "bulk D≥4: per-insertion repair \
+                                                         non-convergent; continuing \
+                                                         (both_positive_artifact handled)"
+                                                    );
+                                                    self.canonicalize_after_bulk_repair()?;
+                                                    soft_fail_seeds
+                                                        .extend(seed_cells.iter().copied());
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             }
                             log_bulk_progress_if_due(
                                 BatchProgressSample {
-                                    processed: index + 1,
+                                    processed: offset + 1,
                                     inserted: inserted_vertices,
                                     skipped: skipped_vertices,
                                     cell_count: self.tri.tds.number_of_cells(),
@@ -3340,9 +3588,13 @@ where
                         Ok((InsertionOutcome::Skipped { error }, stats, _repair_seed_cells)) => {
                             skipped_vertices = skipped_vertices.saturating_add(1);
                             if trace_insertion && let Some(elapsed) = elapsed {
-                                eprintln!(
-                                    "[bulk] skipped idx={index} uuid={uuid} attempts={} elapsed={elapsed:?} err={error}",
-                                    stats.attempts
+                                tracing::debug!(
+                                    index,
+                                    %uuid,
+                                    attempts = stats.attempts,
+                                    elapsed = ?elapsed,
+                                    error = %error,
+                                    "[bulk] skipped"
                                 );
                             }
                             // Keep going: this vertex was intentionally skipped (e.g. duplicate/near-duplicate
@@ -3359,7 +3611,7 @@ where
                             }
                             log_bulk_progress_if_due(
                                 BatchProgressSample {
-                                    processed: index + 1,
+                                    processed: offset + 1,
                                     inserted: inserted_vertices,
                                     skipped: skipped_vertices,
                                     cell_count: self.tri.tds.number_of_cells(),
@@ -3370,8 +3622,12 @@ where
                         }
                         Err(e) => {
                             if trace_insertion && let Some(elapsed) = elapsed {
-                                eprintln!(
-                                    "[bulk] failed idx={index} uuid={uuid} elapsed={elapsed:?} err={e}"
+                                tracing::debug!(
+                                    index,
+                                    %uuid,
+                                    elapsed = ?elapsed,
+                                    error = %e,
+                                    "[bulk] failed"
                                 );
                             }
                             // Non-retryable failure: abort construction with a structured error.
@@ -3396,7 +3652,7 @@ where
                     });
 
                     if trace_insertion && let Some(coords) = coords.as_ref() {
-                        eprintln!("[bulk] start idx={index} uuid={uuid} coords={coords:?}");
+                        tracing::debug!(index, %uuid, coords = ?coords, "[bulk] start");
                     }
 
                     let started = trace_insertion.then(std::time::Instant::now);
@@ -3440,9 +3696,12 @@ where
                         )) => {
                             inserted_vertices = inserted_vertices.saturating_add(1);
                             if trace_insertion && let Some(elapsed) = elapsed {
-                                eprintln!(
-                                    "[bulk] inserted idx={index} uuid={uuid} attempts={} elapsed={elapsed:?}",
-                                    stats.attempts
+                                tracing::debug!(
+                                    index,
+                                    %uuid,
+                                    attempts = stats.attempts,
+                                    elapsed = ?elapsed,
+                                    "[bulk] inserted"
                                 );
                             }
                             construction_stats.record_insertion(&stats);
@@ -3463,11 +3722,7 @@ where
                                 let seed_cells =
                                     self.collect_local_repair_seed_cells(v_key, &repair_seed_cells);
                                 if !seed_cells.is_empty() {
-                                    let max_flips = if D >= 4 {
-                                        (seed_cells.len() * (D + 1) * 2).max(8)
-                                    } else {
-                                        (seed_cells.len() * (D + 1) * 4).max(16)
-                                    };
+                                    let max_flips = local_repair_flip_budget::<D>(seed_cells.len());
                                     let repair_result = {
                                         let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
                                         repair_delaunay_local_single_pass(
@@ -3503,21 +3758,69 @@ where
                                                 self.canonicalize_after_bulk_repair()?;
                                                 continue;
                                             }
-                                            tracing::debug!(
-                                                error = %repair_err,
-                                                idx = index,
-                                                "bulk D≥4: per-insertion repair non-convergent; \
-                                                 continuing (both_positive_artifact handled)"
-                                            );
-                                            self.canonicalize_after_bulk_repair()?;
-                                            soft_fail_seeds.extend(seed_cells.iter().copied());
+                                            // D≥4: try one escalation with a 4× budget and the full
+                                            // TDS as seed set before accepting the soft-fail. The
+                                            // escalation is rate-limited so healthy runs do not pay
+                                            // for it on every insertion.
+                                            let outcome = self.try_local_repair_escalation_d_ge_4(
+                                                index,
+                                                max_flips,
+                                                &mut last_escalation_idx,
+                                                &repair_err,
+                                            )?;
+                                            match outcome {
+                                                LocalRepairEscalationOutcome::Succeeded {
+                                                    stats,
+                                                } => {
+                                                    tracing::debug!(
+                                                        idx = index,
+                                                        flips = stats.flips_performed,
+                                                        max_queue = stats.max_queue_len,
+                                                        "bulk D≥4: escalation closed the \
+                                                         non-convergence; continuing"
+                                                    );
+                                                    continue;
+                                                }
+                                                LocalRepairEscalationOutcome::Skipped {
+                                                    reason,
+                                                } => {
+                                                    tracing::debug!(
+                                                        idx = index,
+                                                        error = %repair_err,
+                                                        escalation_outcome = "skipped",
+                                                        skip_reason = ?reason,
+                                                        "bulk D≥4: per-insertion repair \
+                                                         non-convergent; continuing \
+                                                         (both_positive_artifact handled)"
+                                                    );
+                                                    self.canonicalize_after_bulk_repair()?;
+                                                    soft_fail_seeds
+                                                        .extend(seed_cells.iter().copied());
+                                                }
+                                                LocalRepairEscalationOutcome::FailedAlso {
+                                                    escalation_error,
+                                                } => {
+                                                    tracing::debug!(
+                                                        idx = index,
+                                                        error = %repair_err,
+                                                        escalation_outcome = "failed_also",
+                                                        escalation_error = %escalation_error,
+                                                        "bulk D≥4: per-insertion repair \
+                                                         non-convergent; continuing \
+                                                         (both_positive_artifact handled)"
+                                                    );
+                                                    self.canonicalize_after_bulk_repair()?;
+                                                    soft_fail_seeds
+                                                        .extend(seed_cells.iter().copied());
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             }
                             log_bulk_progress_if_due(
                                 BatchProgressSample {
-                                    processed: index + 1,
+                                    processed: offset + 1,
                                     inserted: inserted_vertices,
                                     skipped: skipped_vertices,
                                     cell_count: self.tri.tds.number_of_cells(),
@@ -3529,9 +3832,13 @@ where
                         Ok((InsertionOutcome::Skipped { error }, stats, _repair_seed_cells)) => {
                             skipped_vertices = skipped_vertices.saturating_add(1);
                             if trace_insertion && let Some(elapsed) = elapsed {
-                                eprintln!(
-                                    "[bulk] skipped idx={index} uuid={uuid} attempts={} elapsed={elapsed:?} err={error}",
-                                    stats.attempts
+                                tracing::debug!(
+                                    index,
+                                    %uuid,
+                                    attempts = stats.attempts,
+                                    elapsed = ?elapsed,
+                                    error = %error,
+                                    "[bulk] skipped"
                                 );
                             }
                             construction_stats.record_insertion(&stats);
@@ -3565,7 +3872,7 @@ where
                             }
                             log_bulk_progress_if_due(
                                 BatchProgressSample {
-                                    processed: index + 1,
+                                    processed: offset + 1,
                                     inserted: inserted_vertices,
                                     skipped: skipped_vertices,
                                     cell_count: self.tri.tds.number_of_cells(),
@@ -3576,8 +3883,12 @@ where
                         }
                         Err(e) => {
                             if trace_insertion && let Some(elapsed) = elapsed {
-                                eprintln!(
-                                    "[bulk] failed idx={index} uuid={uuid} elapsed={elapsed:?} err={e}"
+                                tracing::debug!(
+                                    index,
+                                    %uuid,
+                                    elapsed = ?elapsed,
+                                    error = %e,
+                                    "[bulk] failed"
                                 );
                             }
                             // Non-retryable failure: abort construction with a structured error.
@@ -5595,10 +5906,22 @@ where
         // introduce PL-manifold violations (e.g., disconnected ridge links). Catch those
         // locally and surface an insertion error so the outer transactional guard can roll
         // back the insertion.
+        //
+        // The validation scope must match what repair actually touched: the inserted
+        // vertex star (which may have grown via flips) **plus** any still-alive cells
+        // from the pre-repair seed frontier. Otherwise a violation introduced in an
+        // `extra_seed_cells` cell that is no longer adjacent to the new vertex would
+        // slip past this safety-net.
         if topology.requires_ridge_links() {
-            let local_cells: Vec<CellKey> = self.tri.adjacent_cells(vertex_key).collect();
-            if !local_cells.is_empty()
-                && let Err(err) = validate_ridge_links_for_cells(&self.tri.tds, &local_cells)
+            let mut validation_cells: Vec<CellKey> = self.tri.adjacent_cells(vertex_key).collect();
+            let mut seen: FastHashSet<CellKey> = validation_cells.iter().copied().collect();
+            for &cell_key in &seed_cells {
+                if self.tri.tds.contains_cell(cell_key) && seen.insert(cell_key) {
+                    validation_cells.push(cell_key);
+                }
+            }
+            if !validation_cells.is_empty()
+                && let Err(err) = validate_ridge_links_for_cells(&self.tri.tds, &validation_cells)
             {
                 return Err(InsertionError::TopologyValidationFailed {
                     message: "Topology invalid after Delaunay repair".to_string(),

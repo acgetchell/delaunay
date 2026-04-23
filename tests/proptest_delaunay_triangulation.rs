@@ -39,8 +39,13 @@ use proptest::prelude::*;
 fn init_tracing() {
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| {
+        let default_filter = if cfg!(feature = "test-debug") {
+            "info"
+        } else {
+            "warn"
+        };
         let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_filter));
         let _ = tracing_subscriber::fmt()
             .with_env_filter(filter)
             .with_test_writer()
@@ -256,7 +261,7 @@ fn has_no_cospherical_5_tuples_3d(vertices: &[Vertex<f64, (), 3>]) -> bool {
     let in_sphere_calls: u128 = tuples * 5u128;
 
     if n > MAX_N && allow_slow {
-        eprintln!(
+        tracing::warn!(
             "has_no_cospherical_5_tuples_3d warning: n={n} > {MAX_N}; checking {tuples} 5-tuples (~{in_sphere_calls} in_sphere predicate calls)"
         );
     }
@@ -366,10 +371,10 @@ fn insert_vertices_3d_no_retry_or_skip(
                 && let Err(err) = result
             {
                 let points: Vec<_> = vertices.iter().map(|vertex| *vertex.point()).collect();
-                eprintln!(
+                tracing::warn!(
                     "3D insertion-order: non-retryable insertion error at index {idx}: {err}"
                 );
-                eprintln!("3D insertion-order: insertion order points: {points:?}");
+                tracing::warn!("3D insertion-order: insertion order points: {points:?}");
             }
             return InsertionOrder3dRunStatus::NonRetryableError;
         };
@@ -499,7 +504,7 @@ macro_rules! gen_incremental_insertion_validity {
                     );
                     if let Err(err) = &dt {
                         if std::env::var_os("DELAUNAY_PROPTEST_CONSTRUCTION_ERRORS").is_some() {
-                            eprintln!(
+                            tracing::warn!(
                                 "{}D: incremental insertion construction failed (treated as rejection): {err}",
                                 $dim
                             );
@@ -511,7 +516,7 @@ macro_rules! gen_incremental_insertion_validity {
                     let insert_result = dt.insert(additional_vertex);
                     if let Err(e) = &insert_result {
                         if std::env::var_os("DELAUNAY_PROPTEST_INSERT_ERRORS").is_some() {
-                            eprintln!(
+                            tracing::warn!(
                                 "{}D: incremental insertion error (treated as rejection): {e}",
                                 $dim
                             );
@@ -564,7 +569,7 @@ macro_rules! gen_incremental_insertion_validity {
                     );
                     if let Err(err) = &dt {
                         if std::env::var_os("DELAUNAY_PROPTEST_CONSTRUCTION_ERRORS").is_some() {
-                            eprintln!(
+                            tracing::warn!(
                                 "{}D: incremental insertion construction failed (treated as rejection): {err}",
                                 $dim
                             );
@@ -576,7 +581,7 @@ macro_rules! gen_incremental_insertion_validity {
                     let insert_result = dt.insert(additional_vertex);
                     if let Err(e) = &insert_result {
                         if std::env::var_os("DELAUNAY_PROPTEST_INSERT_ERRORS").is_some() {
-                            eprintln!(
+                            tracing::warn!(
                                 "{}D: incremental insertion error (treated as rejection): {e}",
                                 $dim
                             );
@@ -770,7 +775,7 @@ proptest! {
                     );
                     if let Err(err) = &dt {
                         if std::env::var_os("DELAUNAY_PROPTEST_CONSTRUCTION_ERRORS").is_some() {
-                            eprintln!(
+                            tracing::warn!(
                                 "{}D: empty-circumsphere construction failed (treated as rejection): {err}",
                                 $dim
                             );
@@ -822,7 +827,7 @@ proptest! {
                     );
                     if let Err(err) = &dt {
                         if std::env::var_os("DELAUNAY_PROPTEST_CONSTRUCTION_ERRORS").is_some() {
-                            eprintln!(
+                            tracing::warn!(
                                 "{}D: empty-circumsphere construction failed (treated as rejection): {err}",
                                 $dim
                             );
@@ -1025,6 +1030,8 @@ fn prop_insertion_order_robustness_3d() {
         rejected_new_b_skipped_vertices: usize,
         rejected_new_b_invalid_levels_1_to_3: usize,
     }
+
+    init_tracing();
 
     let config = Config::default();
     let target_cases = config.cases;
@@ -1263,7 +1270,7 @@ fn prop_insertion_order_robustness_3d() {
                 stats.accepted
             );
         } else {
-            eprintln!(
+            tracing::warn!(
                 "prop_insertion_order_robustness_3d: invalid DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT={min_acceptance_pct_str:?} (expected integer percent, e.g. 10)"
             );
         }
@@ -1272,7 +1279,7 @@ fn prop_insertion_order_robustness_3d() {
     if print_stats {
         let rejected_total = stats.generated.saturating_sub(stats.accepted);
 
-        eprintln!(
+        tracing::warn!(
             "prop_insertion_order_robustness_3d reject stats: target_cases={target_cases} generated={} accepted={} acceptance_rate={}.{:02}% rejected_total={} too_few_unique={} nearly_coplanar={} cospherical={} run_a(retry={}, skip={}, err={}, invalid={}) run_b(retry={}, skip={}, err={}, invalid={}) new_a(fail={}, skip={}, invalid={}) new_b(fail={}, skip={}, invalid={})",
             stats.generated,
             stats.accepted,
@@ -1333,6 +1340,8 @@ macro_rules! gen_insertion_order_robustness_high_dim_impl {
                     rejected_new_b_failed: usize,
                     rejected_new_b_invalid_levels_1_to_3: usize,
                 }
+
+                init_tracing();
 
                 let config = Config::default();
                 let target_cases = config.cases;
@@ -1471,7 +1480,7 @@ macro_rules! gen_insertion_order_robustness_high_dim_impl {
                             stats.accepted
                         );
                     } else {
-                        eprintln!(
+                        tracing::warn!(
                             "prop_insertion_order_robustness_{}d: invalid DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT value {min_acceptance_pct_str:?} (expected integer percent, e.g. 10)",
                             $dim
                         );
@@ -1484,7 +1493,7 @@ macro_rules! gen_insertion_order_robustness_high_dim_impl {
                 if print_stats {
                     let rejected_total = stats.generated.saturating_sub(stats.accepted);
 
-                    eprintln!(
+                    tracing::warn!(
                         "prop_insertion_order_robustness_{}d reject stats: target_cases={target_cases} generated={} accepted={} acceptance_rate={}.{:02}% rejected_total={} too_few_unique={} coord_hyperplane={} new_a(fail={}, invalid={}) new_b(fail={}, invalid={})",
                         $dim,
                         stats.generated,
@@ -1604,7 +1613,7 @@ macro_rules! gen_duplicate_cloud_test {
                     let build_elapsed = build_start.elapsed();
                     if let Err(err) = &dt {
                         if std::env::var_os("DELAUNAY_PROPTEST_CONSTRUCTION_ERRORS").is_some() {
-                            eprintln!(
+                            tracing::warn!(
                                 "{}D: duplicate-cloud construction failed (treated as rejection): {err}",
                                 $dim
                             );
@@ -1706,7 +1715,7 @@ macro_rules! gen_duplicate_cloud_test {
                     let build_elapsed = build_start.elapsed();
                     if let Err(err) = &dt {
                         if std::env::var_os("DELAUNAY_PROPTEST_CONSTRUCTION_ERRORS").is_some() {
-                            eprintln!(
+                            tracing::warn!(
                                 "{}D: duplicate-cloud construction failed (treated as rejection): {err}",
                                 $dim
                             );

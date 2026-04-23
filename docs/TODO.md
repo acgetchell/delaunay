@@ -1,6 +1,6 @@
 # TODO — Weaknesses & Risks
 
-**As of:** 2026-04-12 · post-v0.7.5 (main, unreleased)
+**As of:** 2026-04-23 · post-v0.7.5 (main, unreleased)
 
 Identified during a full codebase evaluation. Items are grouped by category
 and prioritized by severity. Scoping notes reference the *next release*
@@ -55,22 +55,33 @@ optimization needed.
 **Status:** profiling can begin; targeted fixes possible if
 bottlenecks are clear.
 
+### ✅ ~~4D 500-point local-repair retry collapse (#204)~~ — FIXED
+
+The 4D 500-point seed `0xD225B8A07E274AE6` (ball radius 100) used to exhaust
+all 7 shuffled retries with `inserted≈266–300`, `skipped≈200–234`, and a final
+`Cell violates Delaunay property: cell contains vertex that is inside
+circumsphere` error. Fix 2 of the #204 plan (budget raise + one escalation
+pass; see `docs/archive/issue_204_investigation.md`) resolved it: the same
+seed now inserts 500/500 vertices with zero skips and passes Level 1–4
+validation in ~233s.
+
+**Status:** release-mode recheck completed on 2026-04-23; regression coverage
+lives in `tests/regressions.rs::regression_issue_204_4d_500_local_repair_budget`
+(gated behind `slow-tests`). Continue #204 on the remaining 3000-point
+scale/observability work item below.
+
 ### 🟡 4D large-scale batch runtime / observability (#204)
 
-The known 100-point correctness repro is fixed, but larger seeded 4D release
-batch runs still degrade into skip-heavy retries and can fail all shuffled
-attempts. The clearest bounded repro is now the 500-point seed
-`0xD225B8A07E274AE6`, which spent ~595.9s exhausting attempts 0..6 before
-failing with `Cell violates Delaunay property: cell contains vertex that is
-inside circumsphere`.
+The default 4D 3000-point large-scale debug harness still exercises a
+batch-construction path that is expensive to investigate and has no bounded
+test fixture. With the 100-point and 500-point correctness repros closed,
+what's left is a runtime/observability concern at very large input counts.
 
-**Status:** 2026-04-23 rechecks confirmed the 100-point case is healthy and the
-new retry-boundary instrumentation is working. The 500-point seeded repro shows
-attempts ending around `inserted≈266–300`, `skipped≈200–234`, with skip samples
-dominated by `Conflict region error: Ridge fan detected: 4 facets share ridge
-with 3 vertices`. Continue #204 by tracing that conflict-region ridge-fan path
-through the retryable skip logic rather than treating the issue as pure
-observability.
+**Status:** PR #339 added batch-progress, retry-boundary, and retryable-skip
+instrumentation that make 3000-point runs tractable to monitor. Future #204
+work should (a) characterise the 3000-point run's steady-state runtime in
+release mode and (b) decide whether to add a bounded 3000-point regression
+fixture or keep large-scale coverage as a manual debug harness only.
 
 ---
 

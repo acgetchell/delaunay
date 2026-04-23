@@ -409,6 +409,24 @@ where
         message: e.to_string(),
     })?;
 
+    // Snapshot the removed cells' vertex lists BEFORE removal so postcondition
+    // diagnostics can reconstruct the lost simplices. After
+    // `tds.remove_cells_by_keys` runs, `tds.get_cell(removed_key)` returns
+    // `None`, which would strip the most useful context from predecessor-flip
+    // traces (see #204 investigation).
+    let removed_cell_vertices: SmallBuffer<
+        SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+        MAX_PRACTICAL_DIMENSION_SIZE,
+    > = removed_cells
+        .iter()
+        .copied()
+        .map(|cell_key| {
+            tds.get_cell(cell_key)
+                .map(|cell| cell.vertices().iter().copied().collect())
+                .unwrap_or_default()
+        })
+        .collect();
+
     tds.remove_cells_by_keys(removed_cells);
 
     debug_assert!(
@@ -423,6 +441,7 @@ where
         new_cells,
         removed_face_vertices: removed_face_vertices.iter().copied().collect(),
         inserted_face_vertices: inserted_face_vertices.iter().copied().collect(),
+        removed_cell_vertices,
     })
 }
 
@@ -1091,12 +1110,11 @@ where
         .copied()
         .map(|cell_key| cell_vertex_summary(tds, cell_key))
         .collect();
-    let predecessor_removed_cell_vertices: Vec<String> = last_applied_flip
-        .removed_cells
-        .iter()
-        .copied()
-        .map(|cell_key| cell_vertex_summary(tds, cell_key))
-        .collect();
+    // Removed cells are already deleted from the TDS by the time this summary
+    // runs, so reach for the pre-flip snapshot in `LastAppliedFlip` to avoid
+    // emitting "CellKey(N): missing" for every entry.
+    let predecessor_removed_cell_vertices: Vec<String> =
+        last_applied_flip.removed_cell_vertex_lines();
 
     format!(
         "k={} removed_face={:?} inserted_face={:?} removed_cells={:?} new_cells={:?} incident_cells_in_new={incident_cells_in_new:?} incident_cells_in_removed={incident_cells_in_removed:?} predecessor_new_cell_vertices={predecessor_new_cell_vertices:?} predecessor_removed_cell_vertices={predecessor_removed_cell_vertices:?}",
@@ -1742,6 +1760,12 @@ pub enum FlipError {
 ///     SmallBuffer::new();
 /// inserted_face_vertices.push(VertexKey::from(KeyData::from_ffi(4)));
 ///
+/// let mut removed_cell_vertices: SmallBuffer<
+///     SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+///     MAX_PRACTICAL_DIMENSION_SIZE,
+/// > = SmallBuffer::new();
+/// removed_cell_vertices.push(SmallBuffer::new());
+///
 /// let info: FlipInfo<3> = FlipInfo {
 ///     kind: BistellarFlipKind::k2(3),
 ///     direction: FlipDirection::Forward,
@@ -1749,6 +1773,7 @@ pub enum FlipError {
 ///     new_cells,
 ///     removed_face_vertices,
 ///     inserted_face_vertices,
+///     removed_cell_vertices,
 /// };
 /// assert_eq!(info.kind.k(), 2);
 /// ```
@@ -1766,6 +1791,17 @@ pub struct FlipInfo<const D: usize> {
     pub removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
     /// The inserted-face simplex (complementary simplex).
     pub inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+    /// Snapshot of each removed cell's vertex list, captured **before** the
+    /// flip's `remove_cells_by_keys` call. Entries correspond 1:1 with
+    /// `removed_cells`. An empty inner buffer indicates the cell was already
+    /// missing at snapshot time.
+    ///
+    /// This exists so postcondition diagnostics can reconstruct the removed
+    /// simplices after the keys in `removed_cells` are stale.
+    pub removed_cell_vertices: SmallBuffer<
+        SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+        MAX_PRACTICAL_DIMENSION_SIZE,
+    >,
 }
 
 /// Const-generic flip context for a k-move (forward or inverse).
@@ -3692,6 +3728,7 @@ where
         &config,
         &mut diagnostics,
         mode,
+        last_applied_flip,
     )?;
     verify_postcondition_inverse_k2_edges(
         tds,
@@ -3862,6 +3899,10 @@ where
 
 /// Rechecks queued ridges after repair so higher-dimensional k=3 violations get
 /// the same explicit postcondition treatment as facets.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Postcondition replay threads topology, diagnostics, and predecessor context explicitly (matches k=2 signature)"
+)]
 fn verify_postcondition_k3_ridges<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -3870,6 +3911,7 @@ fn verify_postcondition_k3_ridges<K, U, V, const D: usize>(
     config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
     mode: PostconditionMode,
+    last_applied_flip: Option<&LastAppliedFlip>,
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -3926,6 +3968,11 @@ where
                         "[repair] postcondition k=3 violation remains (ridge={ridge:?})"
                     );
                 }
+                // Emit the ridge adjacency snapshot — including the immediately
+                // preceding flip, when available — so #204-style ridge
+                // diagnostics carry the same predecessor-flip context as the
+                // k=2 facet path via `debug_postcondition_facet_context`.
+                debug_ridge_context(tds, ridge, None, last_applied_flip);
                 return Err(DelaunayRepairError::PostconditionFailed {
                     message: format!("local k=3 violation remains after repair (ridge={ridge:?})"),
                 });
@@ -4367,6 +4414,13 @@ struct LastAppliedFlip {
     inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
     removed_cells: CellKeyBuffer,
     new_cells: CellKeyBuffer,
+    /// Snapshot of each removed cell's vertex list captured before the flip's
+    /// `remove_cells_by_keys` call; pairs 1:1 with `removed_cells`. Empty
+    /// inner buffers indicate snapshot-time-missing cells.
+    removed_cell_vertices: SmallBuffer<
+        SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+        MAX_PRACTICAL_DIMENSION_SIZE,
+    >,
 }
 
 impl LastAppliedFlip {
@@ -4388,6 +4442,7 @@ impl LastAppliedFlip {
             inserted_face_vertices,
             removed_cells: CellKeyBuffer::new(),
             new_cells: CellKeyBuffer::new(),
+            removed_cell_vertices: SmallBuffer::new(),
         }
     }
 
@@ -4401,7 +4456,29 @@ impl LastAppliedFlip {
         );
         last.removed_cells.clone_from(&info.removed_cells);
         last.new_cells.clone_from(&info.new_cells);
+        last.removed_cell_vertices
+            .clone_from(&info.removed_cell_vertices);
         last
+    }
+
+    /// Formats each removed cell as `CellKey(N): vertices=[...]` using the
+    /// snapshot captured before the flip's cell removal. Falls back to
+    /// `missing-snapshot` when the snapshot row is empty (either the cell was
+    /// gone at snapshot time or `Self::new` produced the placeholder).
+    fn removed_cell_vertex_lines(&self) -> Vec<String> {
+        self.removed_cells
+            .iter()
+            .copied()
+            .enumerate()
+            .map(
+                |(idx, cell_key)| match self.removed_cell_vertices.get(idx) {
+                    Some(verts) if !verts.is_empty() => {
+                        format!("{cell_key:?}: vertices={verts:?}")
+                    }
+                    _ => format!("{cell_key:?}: missing-snapshot"),
+                },
+            )
+            .collect()
     }
 }
 

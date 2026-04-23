@@ -20,9 +20,43 @@ use delaunay::vertex;
 use std::hint::black_box;
 use std::sync::OnceLock;
 
+#[cfg(feature = "bench-logging")]
+fn init_tracing() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+        let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+    });
+}
+
+#[cfg(not(feature = "bench-logging"))]
+const fn init_tracing() {}
+
+macro_rules! bench_info {
+    ($($arg:tt)*) => {{
+        #[cfg(feature = "bench-logging")]
+        {
+            init_tracing();
+            tracing::info!($($arg)*);
+        }
+    }};
+}
+
+macro_rules! bench_warn {
+    ($($arg:tt)*) => {{
+        #[cfg(feature = "bench-logging")]
+        {
+            init_tracing();
+            tracing::warn!($($arg)*);
+        }
+    }};
+}
+
 /// Get the deterministic seed for random point generation.
 /// Reads `DELAUNAY_BENCH_SEED` (decimal or 0x-hex). Defaults to 0xD1EA.
-/// Prints the resolved seed once on first use if `PRINT_BENCH_SEED` is set.
+/// Logs the resolved seed once on first use if `PRINT_BENCH_SEED` is set and
+/// the `bench-logging` feature is enabled.
 fn get_benchmark_seed() -> u64 {
     static SEED: OnceLock<u64> = OnceLock::new();
     *SEED.get_or_init(|| {
@@ -36,7 +70,7 @@ fn get_benchmark_seed() -> u64 {
             })
             .unwrap_or(0xD1EA);
         if std::env::var("PRINT_BENCH_SEED").is_ok() {
-            eprintln!("Benchmark seed: 0x{seed:X} ({seed})");
+            bench_info!("Benchmark seed: 0x{seed:X} ({seed})");
         }
         seed
     })
@@ -330,6 +364,7 @@ generate_incremental_construction_benchmarks!(5);
 /// This allows CI and local tuning without code changes.
 fn bench_config() -> Criterion {
     use std::time::Duration;
+    init_tracing();
     let mut c = Criterion::default();
 
     if let Some(v) = std::env::var("CRIT_SAMPLE_SIZE")
@@ -338,7 +373,7 @@ fn bench_config() -> Criterion {
     {
         c = c.sample_size(v);
     } else if std::env::var("CRIT_SAMPLE_SIZE").is_ok() {
-        eprintln!("Warning: Failed to parse CRIT_SAMPLE_SIZE, using default");
+        bench_warn!("Failed to parse CRIT_SAMPLE_SIZE, using default");
     }
 
     if let Some(v) = std::env::var("CRIT_MEASUREMENT_MS")
@@ -347,7 +382,7 @@ fn bench_config() -> Criterion {
     {
         c = c.measurement_time(Duration::from_millis(v));
     } else if std::env::var("CRIT_MEASUREMENT_MS").is_ok() {
-        eprintln!("Warning: Failed to parse CRIT_MEASUREMENT_MS, using default");
+        bench_warn!("Failed to parse CRIT_MEASUREMENT_MS, using default");
     }
 
     if let Some(v) = std::env::var("CRIT_WARMUP_MS")
@@ -356,7 +391,7 @@ fn bench_config() -> Criterion {
     {
         c = c.warm_up_time(Duration::from_millis(v));
     } else if std::env::var("CRIT_WARMUP_MS").is_ok() {
-        eprintln!("Warning: Failed to parse CRIT_WARMUP_MS, using default");
+        bench_warn!("Failed to parse CRIT_WARMUP_MS, using default");
     }
 
     c

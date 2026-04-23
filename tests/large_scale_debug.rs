@@ -89,7 +89,9 @@ fn install_runtime_cap(max_secs: u64) -> std::sync::mpsc::SyncSender<()> {
             Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {}
             // Deadline exceeded — hard abort.
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                eprintln!("=== TIMEOUT: wall time exceeded {max_secs} seconds — aborting ===");
+                tracing::error!(
+                    "=== TIMEOUT: wall time exceeded {max_secs} seconds — aborting ==="
+                );
                 std::process::abort();
             }
         }
@@ -1151,7 +1153,10 @@ fn debug_large_scale_incremental_prefix_bisect<const D: usize>(
     };
 
     // Double-check the boundary so we can trust the replay command we print below.
-    if minimal_prefix > 4 {
+    // The guard must match the binary search's lower bound (`lo = D + 1`): if
+    // `minimal_prefix == D + 1`, probing `minimal_prefix - 1` would request a
+    // prefix shorter than the initial simplex, which the harness cannot build.
+    if minimal_prefix > D + 1 {
         assert!(
             run_probe(minimal_prefix - 1).is_some_and(|result| result.is_ok()),
             "internal bisect inconsistency: prefix {} should pass",

@@ -124,7 +124,7 @@ where
     U: DataType,
 {
     if epsilon < T::zero() {
-        eprintln!("dedup_vertices_epsilon received negative epsilon; enforcing contract");
+        tracing::error!("dedup_vertices_epsilon received negative epsilon; enforcing contract");
     }
     assert!(
         epsilon >= T::zero(),
@@ -240,8 +240,9 @@ pub(crate) fn coords_within_epsilon<T: CoordinateScalar, const D: usize>(
         .fold(T::zero(), |acc, d| acc + d);
     let epsilon_sq = epsilon * epsilon;
 
-    if cfg!(debug_assertions) && dist_sq == epsilon_sq {
-        eprintln!(
+    #[cfg(debug_assertions)]
+    if dist_sq == epsilon_sq {
+        tracing::debug!(
             "[dedup_vertices_epsilon] distance equals epsilon; keeping point (strict < epsilon)"
         );
     }
