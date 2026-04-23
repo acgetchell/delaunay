@@ -286,6 +286,7 @@ help-workflows:
     @echo "  just ci-slow             # CI + slow tests (100+ vertices)"
     @echo "  just ci-baseline         # CI + save performance baseline"
     @echo "  just coverage            # Generate coverage report (HTML)"
+    @echo "  just semgrep             # Run repository-owned Semgrep rules"
     @echo "  just compare-storage       # Compare SlotMap vs DenseSlotMap (~4-6 hours)"
     @echo "  just compare-storage-large # Large scale comparison (~8-12 hours, compute cluster)"
     @echo ""
@@ -480,6 +481,11 @@ python-sync: _ensure-uv
 
 python-typecheck: _ensure-uv
     uv run ty check scripts/
+
+# Repository-owned Semgrep rules. Currently opt-in because the Rust rules are
+# staged but disabled while legacy diagnostics are cleaned up.
+semgrep: _ensure-uv
+    uv run semgrep --config .semgrep.yaml .
 
 # Development setup
 setup: setup-tools

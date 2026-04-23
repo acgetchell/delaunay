@@ -300,13 +300,13 @@ To avoid triggering lengthy baseline comparisons unnecessarily:
 
 ```bash
 # Branch 1: Documentation updates only
-git checkout -b docs/update-readme
+git checkout -b doc/329-readme-guidance
 # Edit README.md, CONTRIBUTING.md, etc.
 git commit -m "docs: update contributing guidelines"
 # → No benchmarks triggered, fast CI
 
 # Branch 2: Rust code changes (separate PR)
-git checkout -b feat/improve-algorithm 
+git checkout -b perf/315-algorithm-hot-path
 # Edit src/core/triangulation.rs
 git commit -m "feat: optimize triangulation algorithm"
 # → Benchmarks triggered, but isolated to code changes
@@ -487,17 +487,20 @@ Before starting work:
 
 ### 2. Branch Strategy
 
-Create focused branches for your work:
+Create focused branches for your work. Prefer
+`{type}/{issue}-descriptor-or-two`, where `{issue}` is the GitHub issue number
+when one exists. Use a concise type aligned with the change: `fix`, `feat`,
+`perf`, `doc`, `test`, `refactor`, `ci`, `build`, `chore`, or `style`.
 
 ```bash
 # For bug fixes
-git checkout -b fix/issue-description
+git checkout -b fix/307-oriented-flips
 
-# For new features  
-git checkout -b feature/feature-name
+# For performance work
+git checkout -b perf/315-bench-profile
 
 # For documentation
-git checkout -b docs/doc-improvement
+git checkout -b doc/329-branch-guidance
 ```
 
 ### 3. Development Process
@@ -528,36 +531,59 @@ The project uses comprehensive CI workflows:
 
 - **Main CI** (`.github/workflows/ci.yml`): Build, test, lint on every PR
 - **Benchmarks** (`.github/workflows/benchmarks.yml`): Performance regression testing
-- **CodeQL** (`.github/workflows/codeql.yml`): GitHub code scanning for Actions, Python, and Rust
+- **CodeQL** (`.github/workflows/codeql.yml`): Security-focused GitHub code scanning for Actions, Python, and Rust
 - **Security** (`.github/workflows/audit.yml`): Dependency vulnerability scanning with SARIF upload
 - **Code Quality** (`.github/workflows/rust-clippy.yml`): Strict linting with SARIF upload
-- **Codacy** (`.github/workflows/codacy.yml`): Code quality analysis using project configurations and SARIF upload
+- **CodeRabbit** (`.coderabbit.yml`): PR review comments for curated quality feedback
+- **Codacy** (`.codacy.yml`): Curated PR quality feedback and duplication/complexity metrics
+- **Codacy SARIF mirror** (`.github/workflows/codacy.yml`): Markdownlint-only SARIF upload
 - **Coverage** (`.github/workflows/codecov.yml`): Test coverage tracking with 5-minute per-test timeout
 
 All PRs must pass CI checks before merging.
 
 ### 5. Code Quality Analysis
 
-The project uses **Codacy** for automated code quality analysis across both Rust and Python code:
+Non-security quality feedback should surface as PR review comments, normal
+status checks, or CI logs rather than broad GitHub Code Scanning alerts.
+
+The project uses **CodeRabbit** for PR review comments from two surfaces:
+
+- **Native CodeRabbit tools** from `.coderabbit.yml`: Clippy, Ruff,
+  ShellCheck, Markdownlint, actionlint, yamllint, ast-grep, gitleaks, and
+  LanguageTool. CodeRabbit also provides its own security, complexity,
+  refactor, suggestion, labeling, linked-issue, and review-effort feedback.
+- **CI/GitHub summaries**: GitHub check summaries surface the broader
+  workflow results, including `just check` coverage for local-only or
+  environment-specific checks.
+
+The project uses **Codacy** as a second PR-quality surface. Enable and disable
+Codacy tools in the Codacy Code Patterns UI; `.codacy.yml` records path and
+tool configuration, but Codacy does not use that file to turn tools on or off.
 
 - **Configuration**: `.codacy.yml` in the project root
-- **Rust Analysis**: Uses Clippy (configured via `Cargo.toml`) and rustfmt (configured via `rustfmt.toml`)
-- **Python Analysis**: Uses Ruff and Pylint (configured via `pyproject.toml`)
-- **Additional Tools**: ShellCheck for shell scripts, markdownlint for documentation, yamllint for config files
+- **Source of Truth**: Treat the tool lists below as a snapshot; verify current enablement in
+  Codacy project settings -> Tools / Code Patterns or Codacy configuration sync before relying on them
+- **Enabled Tools**: Markdownlint, Ruff, ShellCheck, duplication, and advisory Lizard
+- **Disabled Tools**: Bandit, Prospector, Pylint, broad Opengrep, Trivy, Jackson Linter, and Spectral
+- **Documentation Analysis**: Markdownlint uses `.markdownlint.json`
+- **Python Analysis**: Ruff uses `pyproject.toml`
+- **Local/CI Analysis**: Rust, Python, shell, YAML, TOML, JSON, and GitHub Actions checks run through `just check`
+- **Security Analysis**: Uses CodeQL and cargo-audit rather than Codacy's broader engine set
+- **Code Scanning Mirror**: `.github/workflows/codacy.yml` runs Markdownlint only so Codacy's maintainability
+  findings stay in PR feedback instead of GitHub Code Scanning
 
 **Key Benefits:**
 
-- **Unified Quality Dashboard**: Single view of code quality across all languages
-- **Uses Project Settings**: Respects your local tool configurations (no duplicate/conflicting rules)
-- **Pull Request Integration**: Quality feedback directly in PR reviews
-- **Code Scanning Integration**: SARIF results are uploaded to GitHub Code Scanning
-- **Trend Tracking**: Monitor code quality improvements over time
+- **Reduced Noise**: Avoids duplicate feedback from Bandit, Prospector, Pylint, broad Opengrep, Trivy,
+  Jackson Linter, and Spectral
+- **Uses Project Settings**: Respects repository Markdownlint and Ruff configuration
+- **Review Feedback**: Keeps maintainability comments close to the pull request
 
 **For Contributors:**
 
-- Codacy analysis runs automatically on all PRs
-- Quality issues are reported as PR comments
-- The same tools and rules used locally in development (following AGENTS.md guidelines)
+- CodeRabbit review feedback runs automatically on all PRs
+- Codacy analysis runs the curated quality tool set above
+- Broader lint and validation checks run locally and in CI via `just check`
 - No additional setup required - uses existing project configurations
 
 ## Commit Message Format

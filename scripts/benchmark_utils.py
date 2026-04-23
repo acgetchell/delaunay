@@ -1179,7 +1179,7 @@ class PerformanceSummaryGenerator:
                     # the caller's f-string wraps the result in (...) already.
                     # Use removeprefix/removesuffix (not strip) to avoid
                     # accidentally removing internal parentheses.
-                    return desc.split(" - ")[0].removeprefix("(").removesuffix(")")
+                    return desc.split(" - ", maxsplit=1)[0].removeprefix("(").removesuffix(")")
                 defaults = ["fastest average", "second fastest", "third fastest"]
                 return defaults[position] if position < len(defaults) else "slower"
 

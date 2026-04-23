@@ -2913,6 +2913,24 @@ where
         .into())
     }
 
+    /// Restores positive geometric orientation after bulk repair calls the
+    /// low-level TDS flip routine directly.
+    fn canonicalize_after_bulk_repair(
+        &mut self,
+    ) -> Result<(), DelaunayTriangulationConstructionError> {
+        self.tri
+            .normalize_and_promote_positive_orientation()
+            .map_err(Self::map_orientation_canonicalization_error)?;
+        self.tri
+            .validate_geometric_cell_orientation()
+            .map_err(|error| {
+                Self::map_orientation_canonicalization_error(InsertionError::TopologyValidation(
+                    error,
+                ))
+            })?;
+        Ok(())
+    }
+
     /// Inserts the non-simplex vertices under a fixed perturbation seed so bulk
     /// construction retries are reproducible.
     #[allow(clippy::too_many_lines)]
@@ -3040,25 +3058,41 @@ where
                                             max_flips,
                                         )
                                     };
-                                    if let Err(repair_err) = repair_result {
-                                        if D < 4 {
-                                            Self::try_d_lt4_global_repair_fallback(
-                                                &mut self.tri.tds,
-                                                &self.tri.kernel,
-                                                topology,
-                                                self.insertion_state.use_global_repair_fallback,
-                                                index,
-                                                &repair_err,
-                                            )?;
-                                            continue;
+                                    #[cfg(test)]
+                                    let repair_result =
+                                        if tests::force_repair_nonconvergent_enabled() {
+                                            Err(tests::synthetic_nonconvergent_error())
+                                        } else {
+                                            repair_result
+                                        };
+                                    match repair_result {
+                                        Ok(stats) => {
+                                            if stats.flips_performed > 0 {
+                                                self.canonicalize_after_bulk_repair()?;
+                                            }
                                         }
-                                        tracing::debug!(
-                                            error = %repair_err,
-                                            idx = index,
-                                            "bulk D≥4: per-insertion repair non-convergent; \
-                                             continuing (both_positive_artifact handled)"
-                                        );
-                                        soft_fail_seeds.extend(seed_cells.iter().copied());
+                                        Err(repair_err) => {
+                                            if D < 4 {
+                                                Self::try_d_lt4_global_repair_fallback(
+                                                    &mut self.tri.tds,
+                                                    &self.tri.kernel,
+                                                    topology,
+                                                    self.insertion_state.use_global_repair_fallback,
+                                                    index,
+                                                    &repair_err,
+                                                )?;
+                                                self.canonicalize_after_bulk_repair()?;
+                                                continue;
+                                            }
+                                            tracing::debug!(
+                                                error = %repair_err,
+                                                idx = index,
+                                                "bulk D≥4: per-insertion repair non-convergent; \
+                                                 continuing (both_positive_artifact handled)"
+                                            );
+                                            self.canonicalize_after_bulk_repair()?;
+                                            soft_fail_seeds.extend(seed_cells.iter().copied());
+                                        }
                                     }
                                 }
                             }
@@ -3182,25 +3216,41 @@ where
                                             max_flips,
                                         )
                                     };
-                                    if let Err(repair_err) = repair_result {
-                                        if D < 4 {
-                                            Self::try_d_lt4_global_repair_fallback(
-                                                &mut self.tri.tds,
-                                                &self.tri.kernel,
-                                                topology,
-                                                self.insertion_state.use_global_repair_fallback,
-                                                index,
-                                                &repair_err,
-                                            )?;
-                                            continue;
+                                    #[cfg(test)]
+                                    let repair_result =
+                                        if tests::force_repair_nonconvergent_enabled() {
+                                            Err(tests::synthetic_nonconvergent_error())
+                                        } else {
+                                            repair_result
+                                        };
+                                    match repair_result {
+                                        Ok(stats) => {
+                                            if stats.flips_performed > 0 {
+                                                self.canonicalize_after_bulk_repair()?;
+                                            }
                                         }
-                                        tracing::debug!(
-                                            error = %repair_err,
-                                            idx = index,
-                                            "bulk D≥4: per-insertion repair non-convergent; \
-                                             continuing (both_positive_artifact handled)"
-                                        );
-                                        soft_fail_seeds.extend(seed_cells.iter().copied());
+                                        Err(repair_err) => {
+                                            if D < 4 {
+                                                Self::try_d_lt4_global_repair_fallback(
+                                                    &mut self.tri.tds,
+                                                    &self.tri.kernel,
+                                                    topology,
+                                                    self.insertion_state.use_global_repair_fallback,
+                                                    index,
+                                                    &repair_err,
+                                                )?;
+                                                self.canonicalize_after_bulk_repair()?;
+                                                continue;
+                                            }
+                                            tracing::debug!(
+                                                error = %repair_err,
+                                                idx = index,
+                                                "bulk D≥4: per-insertion repair non-convergent; \
+                                                 continuing (both_positive_artifact handled)"
+                                            );
+                                            self.canonicalize_after_bulk_repair()?;
+                                            soft_fail_seeds.extend(seed_cells.iter().copied());
+                                        }
                                     }
                                 }
                             }
@@ -8258,6 +8308,63 @@ mod tests {
                 .unwrap();
         assert_eq!(dt.number_of_vertices(), 5);
         assert_eq!(stats.inserted, 5);
+        assert!(dt.validate().is_ok());
+    }
+
+    /// Forced local repair non-convergence exercises the D>=4 soft-fail branch
+    /// without relying on a fragile floating-point cycling fixture.
+    #[test]
+    fn test_batch_4d_forced_nonconvergent_local_repair_canonicalizes_without_stats() {
+        init_tracing();
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+            vertex!([0.2, 0.2, 0.2, 0.2]),
+            vertex!([0.35, 0.25, 0.15, 0.3]),
+        ];
+
+        let _guard = ForceRepairNonconvergentGuard::enable();
+        let kernel = RobustKernel::<f64>::new();
+        let dt =
+            DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::with_kernel(&kernel, &vertices)
+                .expect(
+                    "D>=4 construction should continue after forced local repair non-convergence",
+                );
+
+        assert_eq!(dt.number_of_vertices(), vertices.len());
+        assert!(dt.validate().is_ok());
+    }
+
+    /// The statistics path has a separate insertion loop, so it needs its own
+    /// forced D>=4 local-repair non-convergence assertion.
+    #[test]
+    fn test_batch_4d_forced_nonconvergent_local_repair_canonicalizes_with_stats() {
+        init_tracing();
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+            vertex!([0.2, 0.2, 0.2, 0.2]),
+            vertex!([0.35, 0.25, 0.15, 0.3]),
+        ];
+
+        let _guard = ForceRepairNonconvergentGuard::enable();
+        let kernel = RobustKernel::<f64>::new();
+        let (dt, stats) = DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::with_topology_guarantee_and_options_with_construction_statistics(
+            &kernel,
+            &vertices,
+            TopologyGuarantee::DEFAULT,
+            ConstructionOptions::default(),
+        )
+        .expect("D>=4 stats construction should continue after forced local repair non-convergence");
+
+        assert_eq!(dt.number_of_vertices(), vertices.len());
+        assert_eq!(stats.inserted, vertices.len());
         assert!(dt.validate().is_ok());
     }
 

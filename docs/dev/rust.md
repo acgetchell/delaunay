@@ -619,6 +619,10 @@ Each integration test crate should include a crate‑level doc comment:
 
 This satisfies `clippy::missing_docs` in CI.
 
+Fixed-bug regression integration tests belong in `tests/regressions.rs` unless
+they need separate crate-level configuration, feature flags, or profile
+isolation.
+
 ---
 
 ## Testing Expectations
