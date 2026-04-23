@@ -561,6 +561,8 @@ Codacy tools in the Codacy Code Patterns UI; `.codacy.yml` records path and
 tool configuration, but Codacy does not use that file to turn tools on or off.
 
 - **Configuration**: `.codacy.yml` in the project root
+- **Source of Truth**: Treat the tool lists below as a snapshot; verify current enablement in
+  Codacy project settings -> Tools / Code Patterns or Codacy configuration sync before relying on them
 - **Enabled Tools**: Markdownlint, Ruff, ShellCheck, duplication, and advisory Lizard
 - **Disabled Tools**: Bandit, Prospector, Pylint, broad Opengrep, Trivy, Jackson Linter, and Spectral
 - **Documentation Analysis**: Markdownlint uses `.markdownlint.json`

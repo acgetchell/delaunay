@@ -2924,7 +2924,9 @@ where
         self.tri
             .validate_geometric_cell_orientation()
             .map_err(|error| {
-                Self::map_insertion_error(InsertionError::TopologyValidation(error))
+                Self::map_orientation_canonicalization_error(InsertionError::TopologyValidation(
+                    error,
+                ))
             })?;
         Ok(())
     }
@@ -8321,6 +8323,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 0.0, 1.0]),
             vertex!([0.2, 0.2, 0.2, 0.2]),
+            vertex!([0.35, 0.25, 0.15, 0.3]),
         ];
 
         let _guard = ForceRepairNonconvergentGuard::enable();
@@ -8347,6 +8350,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 0.0, 1.0]),
             vertex!([0.2, 0.2, 0.2, 0.2]),
+            vertex!([0.35, 0.25, 0.15, 0.3]),
         ];
 
         let _guard = ForceRepairNonconvergentGuard::enable();
