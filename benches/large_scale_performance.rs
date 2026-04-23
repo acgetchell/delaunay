@@ -38,14 +38,14 @@
 //! just bench-compile
 //!
 //! # Run all large-scale benchmarks
-//! cargo bench --bench large_scale_performance
+//! cargo bench --profile perf --bench large_scale_performance
 //!
 //! # Run specific dimension
-//! cargo bench --bench large_scale_performance -- "2D"
+//! cargo bench --profile perf --bench large_scale_performance -- "2D"
 //!
 //! # Run specific measurement type
-//! cargo bench --bench large_scale_performance -- "construction"
-//! cargo bench --bench large_scale_performance -- "queries"
+//! cargo bench --profile perf --bench large_scale_performance -- "construction"
+//! cargo bench --profile perf --bench large_scale_performance -- "queries"
 //!
 //! # Create baseline for comparison
 //! just bench-baseline
@@ -70,7 +70,7 @@
 //! **Scaling for Large Runs:**
 //! ```bash
 //! # Enable 10K points for 4D (use on compute cluster)
-//! BENCH_LARGE_SCALE=1 cargo bench --bench large_scale_performance
+//! BENCH_LARGE_SCALE=1 cargo bench --profile perf --bench large_scale_performance
 //! ```
 //!
 //! **Memory complexity:** O(n^⌈d/2⌉) cells in d dimensions

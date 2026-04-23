@@ -98,6 +98,10 @@ just changelog
 
 5. Generate performance results with fresh benchmark data
 
+Run `just bench-perf-summary` for this step. It runs the summary benchmarks
+with Cargo's `perf` profile and updates `benches/PERFORMANCE_RESULTS.md` for
+the release.
+
 ```bash
 # Run benchmarks and generate performance summary automatically
 # This takes ~30-45 minutes and provides official performance data for the release
@@ -258,6 +262,9 @@ git branch -d "release/$TAG"
 - Keep the release PR strictly to version + changelog + documentation to maintain a clean history.
 - If multiple crates or files reference the version, confirm all of them are updated consistently.
 - Always run `just ci` before committing the release to catch issues early.
+- `just ci` is the comprehensive validation path for release work: checks,
+  tests, and examples. Benchmark/profile-grade data must be produced separately
+  with `just bench`, `just bench-ci`, or `just bench-perf-summary`.
 - `just changelog` may create or update files under `docs/archive/changelog/`. Include these in the release PR.
 - The root `CHANGELOG.md` only contains Unreleased + the active minor series. Completed minors are archived verbatim in `docs/archive/changelog/X.Y.md`.
 - For future convenience, parts of this document can be automated into a release script.

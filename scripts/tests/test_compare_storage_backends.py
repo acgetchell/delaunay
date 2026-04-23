@@ -17,7 +17,7 @@ from unittest.mock import patch
 
 import pytest
 
-from compare_storage_backends import StorageBackendComparator, find_project_root
+from compare_storage_backends import TRUSTED_BENCH_PROFILE, StorageBackendComparator, find_project_root
 
 
 @pytest.fixture
@@ -239,6 +239,10 @@ class TestStorageBackendComparator:
         assert result["features"] == []
         assert "benchmarks" in result
 
+        args = mock_run_cargo.call_args.args[0]
+        assert args[:5] == ["bench", "--profile", TRUSTED_BENCH_PROFILE, "--no-default-features", "--bench"]
+        assert args[5] == "test_bench"
+
     @patch("compare_storage_backends.run_cargo_command")
     def test_run_benchmark_with_dense_slotmap(self, mock_run_cargo, comparator, completed_ok):
         """Test benchmark execution with DenseSlotMap feature."""
@@ -253,6 +257,8 @@ class TestStorageBackendComparator:
         # Verify cargo command included --features flag
         call_args = mock_run_cargo.call_args
         args = call_args[0][0]
+        assert args[:5] == ["bench", "--profile", TRUSTED_BENCH_PROFILE, "--no-default-features", "--bench"]
+        assert args[5] == "test_bench"
         assert "--features" in args
         assert "dense-slotmap" in args
 

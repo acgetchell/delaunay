@@ -20,6 +20,7 @@ Agents must follow these rules when modifying or adding Rust code.
   - [Preserve typed sources — no boxing, no `dyn Error`](#preserve-typed-sources--no-boxing-no-dyn-error)
   - [Do not stringify; carry typed context instead](#do-not-stringify-carry-typed-context-instead)
   - [Derive `Clone, Debug, Error, PartialEq, Eq`](#derive-clone-debug-error-partialeq-eq)
+- [Naming and Paths](#naming-and-paths)
 - [Imports](#imports)
 - [Module Layout](#module-layout)
 - [Prelude Design](#prelude-design)
@@ -429,6 +430,33 @@ or nondeterministic samples.
 
 ---
 
+## Naming and Paths
+
+Function names should be concise but specific. Prefer short verbs and domain
+terms over names that restate the module, type, or every implementation detail.
+
+Prefer:
+
+```rust
+fn align_offsets(...)
+fn validate_link(...)
+fn rebuild_candidate(...)
+```
+
+Avoid:
+
+```rust
+fn align_periodic_vertex_offsets_for_source_cell_to_target_cell(...)
+fn validate_manifold_link_consistency_for_all_ridges(...)
+fn rebuild_delaunay_triangulation_candidate_after_repair_failure(...)
+```
+
+Use short, unqualified paths inside function bodies. If a function needs a type,
+trait, constant, or helper from another module, import it at the top of the
+module and refer to the item by its short name locally.
+
+---
+
 ## Imports
 
 Always import types at the top of the module rather than using fully‑qualified
@@ -455,6 +483,11 @@ use crate::core::tds::{
     CellKey, EntityKind, Tds, TdsError, VertexKey,
 };
 ```
+
+Do not add `use` statements inside function bodies just to shorten a path.
+Move those imports to the top of the module. Local imports are acceptable only
+when they are intentionally scoped for conditional compilation, tests, macro
+expansion, or to avoid a documented name collision.
 
 If a test module already has `use super::*;`, do not re‑import items that are
 already brought into scope by the parent module's imports.

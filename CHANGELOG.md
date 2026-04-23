@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Merged Pull Requests
 
+- Periodic-aware Delaunay verification (Level 4) for toroidal tria… [#333](https://github.com/acgetchell/delaunay/pull/333)
+- Adopt Rust 1.95.0 MSRV [#330](https://github.com/acgetchell/delaunay/pull/330)
+- Bump actions-rust-lang/setup-rust-toolchain [#328](https://github.com/acgetchell/delaunay/pull/328)
+- Bump actions/setup-node from 6.3.0 to 6.4.0 [#327](https://github.com/acgetchell/delaunay/pull/327)
+- Bump taiki-e/install-action from 2.75.9 to 2.75.18 [#326](https://github.com/acgetchell/delaunay/pull/326)
+- Bump astral-sh/setup-uv from 8.0.0 to 8.1.0 [#325](https://github.com/acgetchell/delaunay/pull/325)
 - Bump pytest in the uv group across 1 directory [#322](https://github.com/acgetchell/delaunay/pull/322)
 - Bump taiki-e/install-action from 2.73.0 to 2.75.9 [#321](https://github.com/acgetchell/delaunay/pull/321)
 - Bump actions/github-script from 8.0.0 to 9.0.0 [#320](https://github.com/acgetchell/delaunay/pull/320)
@@ -81,6 +87,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Remove ScalarAccumulative and ScalarSummable traits and their blanket impls
   - Replace all ScalarAccumulative bounds with CoordinateScalar across 20 files
   - Simplify operator usage (e.g. coords[axis] += … instead of manual add-assign)
+- Update dependencies and synchronize changelog (internal) [`7a1066b`](https://github.com/acgetchell/delaunay/commit/7a1066b4da9229a5148994f8a80f3521df62ec6c)
+
+Perform a general dependency update, including a patch bump for `uuid`.
+  Synchronize `CHANGELOG.md` with recent maintenance tasks, documentation
+  updates, and merged pull requests. Add `.kilo/` to the ignored user
+  configuration patterns.
+
+- Use dedicated perf profile for consistent benchmark measurement
+  [`ebf9abf`](https://github.com/acgetchell/delaunay/commit/ebf9abf1571b397aeabd47196a101961c456c0c4)
+
+Introduce a `perf` Cargo profile that inherits from `release` but
+  restores ThinLTO and single codegen units. This ensures local, CI, and
+  release benchmarks are generated with identical optimization settings.
+
+  Update all benchmark harnesses, `just` recipes, and documentation to
+  standardize on `--profile perf` for performance measurements, while
+  retaining the default release profile for fast validation in `just ci`.
+  A new `bench-smoke` target provides quick harness validation without
+  the overhead of high-sample measurements.
+
+  Also deniest warnings via the manifest lint policy to ensure consistent
+  repository-wide enforcement.
+
+- Standardize benchmark profiles and enhance SARIF analysis [`9acf503`](https://github.com/acgetchell/delaunay/commit/9acf503ad75f031a4c2c5978f0f353951623499f)
+
+Standardize benchmark workflows to use the `perf` profile by default
+  across local scripts and CI for consistent optimization settings. Add a
+  dedicated CodeQL analysis workflow and refactor SARIF reporting for
+  cargo-audit, Clippy, and Codacy to improve GitHub Code Scanning
+  integration. Update manifest lints to comply with RFC 3389 priority
+  requirements and fix the minimum sample size for benchmark smoke tests.
 
 ### Documentation
 
@@ -147,6 +184,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   consistent behavior between debug and release builds and includes a
   regression test for the reported failure case.
 
+- Periodic-aware Delaunay verification (Level 4) for toroidal tria… [#333](https://github.com/acgetchell/delaunay/pull/333)
+  [`7c788aa`](https://github.com/acgetchell/delaunay/commit/7c788aa1a7e3b2a94a53193d8d5894718b6afa07)
+
+- fix: periodic-aware Delaunay verification (Level 4) for toroidal triangulations [#315](https://github.com/acgetchell/delaunay/pull/315)
+
+  - Thread GlobalTopologyModelAdapter through all flip-predicate evaluation
+    functions (k=2 facets, k=3 ridges, and their inverses) so insphere
+    predicates use lifted coordinates for periodic topologies.
+
+  - Add verify_delaunay_for_triangulation() as the preferred topology-aware
+    Level 4 entry point; is_delaunay_via_flips() now delegates to it.
+
+  - Add periodic lifting helpers: vertices_to_points_with_optional_lift,
+    vertex_point_lifted_into_cell, align_periodic_offset, and supporting
+    functions for offset lookup, validation, and cross-cell alignment.
+
+  - Repair paths continue to use GlobalTopology::DEFAULT (non-periodic),
+    which is correct since flip repair runs during construction.
+
+  - Add integration test reproducing the issue: toroidal_periodic 2D
+    triangulation now passes dt.validate() (Levels 1–4).
+
+  - Add doctest for verify_delaunay_for_triangulation.
+  - Add unit tests for align_periodic_offset (identity, delta shifts,
+    higher-dimension, overflow).
+
 ### Maintenance
 
 - Bump pytest in the uv group across 1 directory [#322](https://github.com/acgetchell/delaunay/pull/322)
@@ -203,6 +266,96 @@ Bumps [taiki-e/install-action](https://github.com/taiki-e/install-action) from 2
     dependency-type: direct:production
     update-type: version-update:semver-minor
   ...
+
+- Bump actions-rust-lang/setup-rust-toolchain [#328](https://github.com/acgetchell/delaunay/pull/328)
+  [`b8222f5`](https://github.com/acgetchell/delaunay/commit/b8222f505e7b7980f228d3f75eed3ffcabb43c0e)
+
+Bumps [actions-rust-lang/setup-rust-toolchain](https://github.com/actions-rust-lang/setup-rust-toolchain) from 1.15.4 to 1.16.0.
+
+- [Release notes](https://github.com/actions-rust-lang/setup-rust-toolchain/releases)
+- [Changelog](https://github.com/actions-rust-lang/setup-rust-toolchain/blob/main/CHANGELOG.md)
+- [Commits](https://github.com/actions-rust-lang/setup-rust-toolchain/compare/150fca883cd4034361b621bd4e6a9d34e5143606...2b1f5e9b395427c92ee4e3331786ca3c37afe2d7)
+
+  ---
+  updated-dependencies:
+
+- dependency-name: actions-rust-lang/setup-rust-toolchain
+    dependency-version: 1.16.0
+    dependency-type: direct:production
+    update-type: version-update:semver-minor
+  ...
+
+- Bump astral-sh/setup-uv from 8.0.0 to 8.1.0 [#325](https://github.com/acgetchell/delaunay/pull/325)
+  [`dc6b5eb`](https://github.com/acgetchell/delaunay/commit/dc6b5ebbfdf4340ad76c96178024c7e076f1ae8d)
+
+Bumps [astral-sh/setup-uv](https://github.com/astral-sh/setup-uv) from 8.0.0 to 8.1.0.
+
+- [Release notes](https://github.com/astral-sh/setup-uv/releases)
+- [Commits](https://github.com/astral-sh/setup-uv/compare/cec208311dfd045dd5311c1add060b2062131d57...08807647e7069bb48b6ef5acd8ec9567f424441b)
+
+  ---
+  updated-dependencies:
+
+- dependency-name: astral-sh/setup-uv
+    dependency-version: 8.1.0
+    dependency-type: direct:production
+    update-type: version-update:semver-minor
+  ...
+
+- Bump taiki-e/install-action from 2.75.9 to 2.75.18 [#326](https://github.com/acgetchell/delaunay/pull/326)
+  [`f14b760`](https://github.com/acgetchell/delaunay/commit/f14b7607b76a7914c31556295005c7b7559932f4)
+
+Bumps [taiki-e/install-action](https://github.com/taiki-e/install-action) from 2.75.9 to 2.75.18.
+
+- [Release notes](https://github.com/taiki-e/install-action/releases)
+- [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
+- [Commits](https://github.com/taiki-e/install-action/compare/d0f23220b09a75c6db730f13bb37c4f8144b4382...055f5df8c3f65ea01cd41e9dc855becd88953486)
+
+  ---
+  updated-dependencies:
+
+- dependency-name: taiki-e/install-action
+    dependency-version: 2.75.18
+    dependency-type: direct:production
+    update-type: version-update:semver-patch
+  ...
+
+- Bump actions/setup-node from 6.3.0 to 6.4.0 [#327](https://github.com/acgetchell/delaunay/pull/327)
+  [`7de0dc1`](https://github.com/acgetchell/delaunay/commit/7de0dc18fddf65d00fa218361e01d727a71aeefa)
+
+Bumps [actions/setup-node](https://github.com/actions/setup-node) from 6.3.0 to 6.4.0.
+
+- [Release notes](https://github.com/actions/setup-node/releases)
+- [Commits](https://github.com/actions/setup-node/compare/53b83947a5a98c8d113130e565377fae1a50d02f...48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e)
+
+  ---
+  updated-dependencies:
+
+- dependency-name: actions/setup-node
+    dependency-version: 6.4.0
+    dependency-type: direct:production
+    update-type: version-update:semver-minor
+  ...
+
+- Adopt Rust 1.95.0 MSRV [#330](https://github.com/acgetchell/delaunay/pull/330)
+  [`d0c53d9`](https://github.com/acgetchell/delaunay/commit/d0c53d95e748bac33e079a4256222b7bff7fad53)
+
+- chore: adopt Rust 1.95.0 MSRV
+
+  Bump MSRV from 1.94 to 1.95 and adopt stabilized features where
+  they fit.  Coordinates with la-stack 0.4.0 -> 0.4.1, which also
+  requires 1.95.
+
+  Toolchain and docs:
+
+  - Cargo.toml (rust-version), rust-toolchain.toml (channel) and
+    clippy.toml (msrv) all set to 1.95.
+
+  - AGENTS.md and CONTRIBUTING.md MSRV references refreshed;
+    AGENTS.md Design Principles section expanded.
+
+  - CITATION.cff caught up to 0.7.5.
+  - la-stack bumped 0.4.0 -> 0.4.1 in Cargo.toml / Cargo.lock.
 
 ## [0.7.5] - 2026-04-10
 

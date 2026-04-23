@@ -615,7 +615,7 @@ uv run benchmark-utils generate-baseline
 
 ```bash
 # Quick iteration during development using --dev flag
-# (Reduces benchmark time from ~10 minutes to ~30 seconds)
+# (Reduces Criterion sampling time while retaining the perf Cargo profile)
 
 # 1. Make code changes
 # ... your modifications ...
@@ -680,7 +680,10 @@ gh release create vX.Y.Z --notes-from-tag
 
 ```bash
 # 1. Run benchmarks directly (CI performance suite)
-cargo bench --bench ci_performance_suite
+cargo bench --profile perf --bench ci_performance_suite
+
+# Generate release performance summary with fresh perf-profile data
+uv run benchmark-utils generate-summary --run-benchmarks --profile perf
 
 # 2. Generate new baseline
 uv run benchmark-utils generate-baseline

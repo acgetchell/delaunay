@@ -14,6 +14,7 @@ Agents must run appropriate checks after modifying code.
 - [Linting](#linting)
 - [Documentation Validation](#documentation-validation)
 - [Full CI Validation](#full-ci-validation)
+- [Benchmark Profiles](#benchmark-profiles)
 - [Examples](#examples)
 - [Spell Checking](#spell-checking)
 - [TOML Formatting](#toml-formatting)
@@ -34,6 +35,7 @@ Typical development loop:
 just fix
 just check
 just test
+just ci
 ```
 
 These commands ensure:
@@ -88,13 +90,18 @@ Lint checks include:
 cargo clippy
 ```
 
-Warnings are treated as errors in CI.
+Repository warnings are denied through the manifest lint policy in
+`Cargo.toml`; explicitly configured lint exceptions remain warnings. Clippy
+invocations also deny warnings.
 
 Run via:
 
 ```bash
 just check
 ```
+
+`just check` is the non-mutating lint/validator bundle. It does not run tests,
+examples, or benchmarks.
 
 ---
 
@@ -128,10 +135,45 @@ This runs:
 
 - formatting checks
 - lint checks
+- benchmark and release-test compile checks using Cargo's default release profile
 - unit tests
 - integration tests
 - documentation builds
 - example builds
+
+---
+
+## Benchmark Profiles
+
+`just ci` is the comprehensive error-catching validation path. It runs the
+`check`, `test`, and `examples` recipes. The `test` recipe already depends on
+`bench-test-compile`, so CI compiles benchmark harnesses and release tests
+through that path; `bench-compile` is a standalone recipe that is **not**
+executed by `just ci`:
+
+```bash
+just ci
+just test              # includes just bench-test-compile
+just bench-test-compile
+```
+
+Commands that run benchmarks and produce performance data use the `perf`
+profile:
+
+```bash
+just bench
+just bench-ci
+just bench-baseline
+just bench-compare
+just bench-perf-summary
+cargo bench --profile perf --bench ci_performance_suite
+```
+
+The `perf` profile inherits from release and restores ThinLTO with one codegen
+unit. Use it for measured benchmark output; `just ci` does not need it to catch
+compile, lint, test, documentation, example, or benchmark-harness build errors.
+Use `just bench-smoke` only for quick harness validation with minimal samples;
+do not treat smoke output as performance data.
 
 ---
 
@@ -239,11 +281,13 @@ just action-lint
 |-----|-----|
 | Format code | `just fix` |
 | Run lints | `just check` |
-| Run unit tests | `just test` |
+| Run tests + compile smoke | `just test` |
+| Run unit/doc tests only | `just test-unit` |
 | Run integration tests | `just test-integration` |
 | Run all tests | `just test-all` |
 | Run examples | `just examples` |
 | Run full CI | `just ci` |
+| Run perf-profile benchmarks | `just bench` |
 
 ---
 
@@ -256,7 +300,9 @@ CI enforces:
 - documentation build
 - tests
 
-All warnings are treated as errors.
+Rust warnings are denied by the manifest lint policy and Clippy warnings are
+denied by the `just clippy` invocations. Keep any intentional warning-level
+exceptions explicit in `Cargo.toml`.
 
 Agents must ensure changes pass CI locally before proposing patches.
 

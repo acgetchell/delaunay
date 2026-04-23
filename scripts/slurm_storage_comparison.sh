@@ -409,7 +409,7 @@ SLOTMAP_START=$(date +%s)
 echo "⏰ Start time: $(date)"
 echo
 
-if timeout "$PHASE_TIMEOUT" cargo bench --no-default-features --bench large_scale_performance -- --save-baseline slotmap; then
+if timeout "$PHASE_TIMEOUT" cargo bench --profile perf --no-default-features --bench large_scale_performance -- --save-baseline slotmap; then
 	echo "✅ SlotMap benchmarks completed successfully"
 	SLOTMAP_STATUS="ok"
 else
@@ -458,7 +458,7 @@ DENSESLOTMAP_START=$(date +%s)
 echo "⏰ Start time: $(date)"
 echo
 
-if timeout "$PHASE_TIMEOUT" cargo bench --bench large_scale_performance -- --save-baseline denseslotmap; then
+if timeout "$PHASE_TIMEOUT" cargo bench --profile perf --bench large_scale_performance -- --save-baseline denseslotmap; then
 	echo "✅ DenseSlotMap benchmarks completed successfully"
 	DENSESLOTMAP_STATUS="ok"
 else

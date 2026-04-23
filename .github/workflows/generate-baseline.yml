@@ -120,7 +120,8 @@ jobs:
           echo "🚀 Generating performance baseline for tag ${TAG_NAME}"
 
           # Generate baseline using fixed tooling (this checkout) against the tag checkout.
-          # Use --dev mode to match the comparison workflow (benchmarks.yml) settings.
+          # Use --dev to match the comparison workflow's reduced Criterion settings;
+          # benchmark-utils still runs the benchmark under Cargo's perf profile.
           uv run benchmark-utils generate-baseline \
             --project-root bench-target \
             --tag "${TAG_NAME}" \

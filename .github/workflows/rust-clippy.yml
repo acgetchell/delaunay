@@ -4,7 +4,8 @@
 name: "Clippy Security Analysis"
 
 on:
-  # Only run on schedule and manual trigger to avoid duplication with CI
+  pull_request:
+    branches: ["main"]
   schedule:
     - cron: "17 22 * * 0" # Weekly on Sunday
   workflow_dispatch:
@@ -58,7 +59,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload SARIF results
-        uses: github/codeql-action/upload-sarif@b36bf259c813715f76eafece573914b94412cd13 # v3
+        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4
         with:
           sarif_file: rust-clippy-results.sarif
           category: "clippy"

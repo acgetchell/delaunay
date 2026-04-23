@@ -97,6 +97,10 @@ else:
             run_safe_command,
         )
 
+# Trusted benchmark commands use this Cargo profile so local, CI, and release
+# numbers are generated with the same ThinLTO/codegen-units settings.
+TRUSTED_BENCH_PROFILE = "perf"
+
 # Development mode arguments - centralized to keep baseline generation and comparison in sync
 # Reduces samples for faster iteration during development (10x faster than full benchmarks)
 #
@@ -113,6 +117,41 @@ DEV_MODE_BENCH_ARGS = [
     "1",
     "--noplot",
 ]
+
+
+def _criterion_arg_value(args: list[str], flag: str) -> str:
+    """Return the Criterion value that follows flag in args."""
+    try:
+        index = args.index(flag)
+    except ValueError:
+        return "unknown"
+
+    value_index = index + 1
+    if value_index >= len(args):
+        return "unknown"
+    return args[value_index]
+
+
+def _sampling_metadata(dev_mode: bool) -> dict[str, str]:
+    """Return benchmark sampling metadata for baseline/compare validation."""
+    if not dev_mode:
+        return {
+            "sampling_mode": "full",
+            "cargo_profile": TRUSTED_BENCH_PROFILE,
+            "criterion_args": "default",
+            "criterion_sample_size": "criterion-default",
+            "criterion_measurement_time": "criterion-default",
+            "criterion_warm_up_time": "criterion-default",
+        }
+
+    return {
+        "sampling_mode": "dev",
+        "cargo_profile": TRUSTED_BENCH_PROFILE,
+        "criterion_args": " ".join(DEV_MODE_BENCH_ARGS),
+        "criterion_sample_size": _criterion_arg_value(DEV_MODE_BENCH_ARGS, "--sample-size"),
+        "criterion_measurement_time": _criterion_arg_value(DEV_MODE_BENCH_ARGS, "--measurement-time"),
+        "criterion_warm_up_time": _criterion_arg_value(DEV_MODE_BENCH_ARGS, "--warm-up-time"),
+    }
 
 
 # Use the shared secure wrapper from subprocess_utils
@@ -145,7 +184,13 @@ class PerformanceSummaryGenerator:
         self.current_version = self._get_current_version()
         self.current_date = self._get_version_date()
 
-    def generate_summary(self, output_path: Path | None = None, run_benchmarks: bool = False, generator_name: str | None = None) -> bool:
+    def generate_summary(
+        self,
+        output_path: Path | None = None,
+        run_benchmarks: bool = False,
+        generator_name: str | None = None,
+        cargo_profile: str | None = None,
+    ) -> bool:
         """
         Generate performance summary markdown file.
 
@@ -153,6 +198,10 @@ class PerformanceSummaryGenerator:
             output_path: Output file path (defaults to benches/PERFORMANCE_RESULTS.md)
             run_benchmarks: Whether to run fresh circumsphere benchmarks
             generator_name: Name of the tool generating the summary (for attribution)
+            cargo_profile: Optional Cargo profile for fresh benchmark runs.  When
+                ``run_benchmarks`` is True and no profile is specified, defaults
+                to :data:`TRUSTED_BENCH_PROFILE` so fresh runs match baseline
+                and comparison measurements.
 
         Returns:
             True if successful, False otherwise
@@ -166,7 +215,11 @@ class PerformanceSummaryGenerator:
 
             # Optionally run fresh benchmarks
             if run_benchmarks:
-                success, accuracy_data = self._run_circumsphere_benchmarks()
+                # Default fresh runs to the trusted perf profile so numbers are
+                # comparable with baseline/compare output.
+                if cargo_profile is None:
+                    cargo_profile = TRUSTED_BENCH_PROFILE
+                success, accuracy_data = self._run_circumsphere_benchmarks(cargo_profile=cargo_profile)
                 if success:
                     self.numerical_accuracy_data = accuracy_data
                 else:
@@ -316,9 +369,15 @@ class PerformanceSummaryGenerator:
         except Exception:
             return datetime.now(UTC).strftime("%Y-%m-%d")
 
-    def _run_circumsphere_benchmarks(self) -> tuple[bool, dict[str, str] | None]:
+    def _run_circumsphere_benchmarks(self, cargo_profile: str | None = None) -> tuple[bool, dict[str, str] | None]:
         """
         Run the circumsphere containment benchmarks to generate fresh data.
+
+        Args:
+            cargo_profile: Cargo profile for the fresh run.  Defaults to
+                :data:`TRUSTED_BENCH_PROFILE` so every fresh benchmark run
+                goes through the same ThinLTO/codegen-units settings used
+                by baseline generation and comparison.
 
         Returns:
             Tuple of (success, numerical_accuracy_data)
@@ -326,9 +385,12 @@ class PerformanceSummaryGenerator:
         try:
             print("🔄 Running circumsphere containment benchmarks...")
 
+            profile = cargo_profile if cargo_profile is not None else TRUSTED_BENCH_PROFILE
+            cargo_args = ["bench", "--profile", profile, "--bench", "circumsphere_containment", "--", *DEV_MODE_BENCH_ARGS]
+
             # Run the circumsphere benchmark with reduced sample size for speed
             result = run_cargo_command(
-                ["bench", "--bench", "circumsphere_containment", "--", *DEV_MODE_BENCH_ARGS],
+                cargo_args,
                 cwd=self.project_root,
                 timeout=240,  # 4 minute timeout for quick benchmarks
                 capture_output=True,
@@ -743,7 +805,7 @@ class PerformanceSummaryGenerator:
                 "",
                 "⚠️ No benchmark results available. Run benchmarks first:",
                 "```bash",
-                "uv run benchmark-utils generate-summary --run-benchmarks",
+                f"uv run benchmark-utils generate-summary --run-benchmarks --profile {TRUSTED_BENCH_PROFILE}",
                 "```",
                 "",
             ]
@@ -1204,8 +1266,8 @@ class PerformanceSummaryGenerator:
             "# Generate performance summary with current data",
             "uv run benchmark-utils generate-summary",
             "",
-            "# Run fresh benchmarks and generate summary (includes numerical accuracy)",
-            "uv run benchmark-utils generate-summary --run-benchmarks",
+            "# Run fresh perf-profile benchmarks and generate summary (includes numerical accuracy)",
+            f"uv run benchmark-utils generate-summary --run-benchmarks --profile {TRUSTED_BENCH_PROFILE}",
             "",
             "# Generate baseline results for regression testing",
             "uv run benchmark-utils generate-baseline",
@@ -1400,7 +1462,7 @@ class BaselineGenerator:
         Generate a performance baseline by running benchmarks and parsing results.
 
         Args:
-            dev_mode: Use faster benchmark settings
+            dev_mode: Use faster Criterion settings with the trusted Cargo profile
             output_file: Output file path (default: baseline-artifact/baseline_results.txt)
             bench_timeout: Timeout for cargo bench commands in seconds
 
@@ -1418,14 +1480,22 @@ class BaselineGenerator:
             # Run fresh benchmark - using secure subprocess wrapper
             if dev_mode:
                 run_cargo_command(
-                    ["bench", "--bench", "ci_performance_suite", "--", *DEV_MODE_BENCH_ARGS],
+                    [
+                        "bench",
+                        "--profile",
+                        TRUSTED_BENCH_PROFILE,
+                        "--bench",
+                        "ci_performance_suite",
+                        "--",
+                        *DEV_MODE_BENCH_ARGS,
+                    ],
                     cwd=self.project_root,
                     timeout=bench_timeout,
                     capture_output=True,
                 )
             else:
                 run_cargo_command(
-                    ["bench", "--bench", "ci_performance_suite"],
+                    ["bench", "--profile", TRUSTED_BENCH_PROFILE, "--bench", "ci_performance_suite"],
                     cwd=self.project_root,
                     timeout=bench_timeout,
                     capture_output=True,
@@ -1439,7 +1509,7 @@ class BaselineGenerator:
                 return False
 
             # Generate baseline file
-            self._write_baseline_file(benchmark_results, output_file)
+            self._write_baseline_file(benchmark_results, output_file, dev_mode=dev_mode)
 
             return True
 
@@ -1465,7 +1535,7 @@ class BaselineGenerator:
             logging.exception("Error in generate_baseline")
             return False
 
-    def _write_baseline_file(self, benchmark_results: list[BenchmarkData], output_file: Path) -> None:
+    def _write_baseline_file(self, benchmark_results: list[BenchmarkData], output_file: Path, *, dev_mode: bool = False) -> None:
         """Write baseline results to file."""
         # Get current date, git commit, and hardware info
         # Get current date with timezone
@@ -1487,6 +1557,13 @@ class BaselineGenerator:
             f.write(f"Git commit: {git_commit}\n")
             if self.tag:
                 f.write(f"Tag: {self.tag}\n")
+            sampling = _sampling_metadata(dev_mode)
+            f.write(f"Sampling mode: {sampling['sampling_mode']}\n")
+            f.write(f"Cargo profile: {sampling['cargo_profile']}\n")
+            f.write(f"Criterion args: {sampling['criterion_args']}\n")
+            f.write(f"Criterion sample size: {sampling['criterion_sample_size']}\n")
+            f.write(f"Criterion measurement time: {sampling['criterion_measurement_time']}\n")
+            f.write(f"Criterion warm-up time: {sampling['criterion_warm_up_time']}\n")
             f.write(hardware_info)
 
             for benchmark in benchmark_results:
@@ -1518,7 +1595,7 @@ class PerformanceComparator:
 
         Args:
             baseline_file: Path to baseline file
-            dev_mode: Use faster benchmark settings
+            dev_mode: Use faster Criterion settings with the trusted Cargo profile
             output_file: Output file path (default: benches/compare_results.txt)
             bench_timeout: Timeout for cargo bench commands in seconds
 
@@ -1536,14 +1613,22 @@ class PerformanceComparator:
             # Run fresh benchmark - using secure subprocess wrapper
             if dev_mode:
                 run_cargo_command(
-                    ["bench", "--bench", "ci_performance_suite", "--", *DEV_MODE_BENCH_ARGS],
+                    [
+                        "bench",
+                        "--profile",
+                        TRUSTED_BENCH_PROFILE,
+                        "--bench",
+                        "ci_performance_suite",
+                        "--",
+                        *DEV_MODE_BENCH_ARGS,
+                    ],
                     cwd=self.project_root,
                     timeout=bench_timeout,
                     capture_output=True,
                 )
             else:
                 run_cargo_command(
-                    ["bench", "--bench", "ci_performance_suite"],
+                    ["bench", "--profile", TRUSTED_BENCH_PROFILE, "--bench", "ci_performance_suite"],
                     cwd=self.project_root,
                     timeout=bench_timeout,
                     capture_output=True,
@@ -1562,7 +1647,7 @@ class PerformanceComparator:
             baseline_results = self._parse_baseline_file(baseline_content)
 
             # Generate comparison report
-            regression_found = self._write_comparison_file(current_results, baseline_results, baseline_content, output_file)
+            regression_found = self._write_comparison_file(current_results, baseline_results, baseline_content, output_file, dev_mode=dev_mode)
 
             return True, regression_found
 
@@ -1671,6 +1756,8 @@ class PerformanceComparator:
         baseline_results: dict[str, BenchmarkData],
         baseline_content: str,
         output_file: Path,
+        *,
+        dev_mode: bool = False,
     ) -> bool:
         """Write comparison results to file."""
         logger.debug(
@@ -1684,11 +1771,12 @@ class PerformanceComparator:
 
         # Prepare hardware comparison
         hardware_report = self._prepare_hardware_comparison(baseline_content)
+        sampling_warning = self._sampling_warning(baseline_content, dev_mode=dev_mode)
 
         # Write comparison file
         output_file.parent.mkdir(parents=True, exist_ok=True)
         with output_file.open("w", encoding="utf-8") as f:
-            self._write_comparison_header(f, metadata, hardware_report)
+            self._write_comparison_header(f, metadata, hardware_report, sampling_warning=sampling_warning)
             return self._write_performance_comparison(f, current_results, baseline_results)
 
     def _prepare_comparison_metadata(self, baseline_content: str) -> dict[str, str]:
@@ -1726,7 +1814,56 @@ class PerformanceComparator:
         hardware_report, _ = HardwareComparator.compare_hardware(current_hardware, baseline_hardware)
         return hardware_report
 
-    def _write_comparison_header(self, f, metadata: dict[str, str], hardware_report: str) -> None:
+    @staticmethod
+    def _parse_sampling_metadata(baseline_content: str) -> dict[str, str]:
+        """Extract benchmark sampling metadata from a baseline file."""
+        fields = {
+            "sampling_mode": "Unknown",
+            "cargo_profile": "Unknown",
+            "criterion_sample_size": "Unknown",
+            "criterion_measurement_time": "Unknown",
+            "criterion_warm_up_time": "Unknown",
+        }
+        line_map = {
+            "Sampling mode: ": "sampling_mode",
+            "Cargo profile: ": "cargo_profile",
+            "Criterion sample size: ": "criterion_sample_size",
+            "Criterion measurement time: ": "criterion_measurement_time",
+            "Criterion warm-up time: ": "criterion_warm_up_time",
+        }
+
+        for line in baseline_content.splitlines():
+            for prefix, field in line_map.items():
+                if line.startswith(prefix):
+                    fields[field] = line.removeprefix(prefix).strip()
+                    break
+
+        return fields
+
+    def _sampling_warning(self, baseline_content: str, *, dev_mode: bool) -> str:
+        """Return a warning when current benchmark sampling differs from baseline."""
+        baseline = self._parse_sampling_metadata(baseline_content)
+        current = _sampling_metadata(dev_mode)
+        checks = [
+            ("sampling mode", "sampling_mode"),
+            ("Cargo profile", "cargo_profile"),
+            ("Criterion sample size", "criterion_sample_size"),
+            ("Criterion measurement time", "criterion_measurement_time"),
+            ("Criterion warm-up time", "criterion_warm_up_time"),
+        ]
+
+        mismatches = []
+        for label, field in checks:
+            baseline_value = baseline[field]
+            if baseline_value == "Unknown" or baseline_value != current[field]:
+                mismatches.append(f"{label}: baseline={baseline_value}, current={current[field]}")
+
+        if not mismatches:
+            return ""
+
+        return "⚠️ Sampling configuration differs from baseline: " + "; ".join(mismatches)
+
+    def _write_comparison_header(self, f, metadata: dict[str, str], hardware_report: str, *, sampling_warning: str = "") -> None:
         """Write the header section of comparison file."""
         f.write("Comparison Results\n")
         f.write("==================\n")
@@ -1734,6 +1871,8 @@ class PerformanceComparator:
         f.write(f"Current Git commit: {metadata['current_commit']}\n\n")
         f.write(f"Baseline Date: {metadata['baseline_date']}\n")
         f.write(f"Baseline Git commit: {metadata['baseline_commit']}\n\n")
+        if sampling_warning:
+            f.write(f"{sampling_warning}\n\n")
         f.write(hardware_report)
 
     def _write_performance_comparison(self, f: TextIO, current_results: list[BenchmarkData], baseline_results: dict[str, BenchmarkData]) -> bool:
@@ -2795,7 +2934,9 @@ class GitHubBaselineFetcher:
 def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
     """Add benchmark-running subcommands."""
     gen_parser = subparsers.add_parser("generate-baseline", help="Generate performance baseline")
-    gen_parser.add_argument("--dev", action="store_true", help="Use development mode with faster benchmark settings")
+    gen_parser.add_argument(
+        "--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile"
+    )
     gen_parser.add_argument("--output", type=Path, help="Output file path")
     gen_parser.add_argument("--project-root", type=Path, help="Project root to benchmark (directory containing Cargo.toml)")
     gen_parser.add_argument("--tag", type=str, default=os.getenv("TAG_NAME"), help="Tag name for this baseline (from TAG_NAME env or --tag option)")
@@ -2815,7 +2956,9 @@ def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.
         default=DEFAULT_REGRESSION_THRESHOLD,
         help=f"Regression threshold percentage for marking regressions (default: {DEFAULT_REGRESSION_THRESHOLD})",
     )
-    cmp_parser.add_argument("--dev", action="store_true", help="Use development mode with faster benchmark settings")
+    cmp_parser.add_argument(
+        "--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile"
+    )
     cmp_parser.add_argument("--output", type=Path, help="Output file path")
     cmp_parser.add_argument("--project-root", type=Path, help="Project root to benchmark (directory containing Cargo.toml)")
     cmp_parser.add_argument(
@@ -2906,7 +3049,9 @@ def _add_regression_subcommands(subparsers: "argparse._SubParsersAction[argparse
 
     regress_parser = subparsers.add_parser("run-regression-test", help="Run performance regression test")
     regress_parser.add_argument("--baseline", type=Path, required=True, help="Path to baseline file")
-    regress_parser.add_argument("--dev", action="store_true", help="Use development mode with faster benchmark settings")
+    regress_parser.add_argument(
+        "--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile"
+    )
     regress_parser.add_argument(
         "--bench-timeout",
         type=int,
@@ -2926,6 +3071,11 @@ def _add_performance_summary_subcommands(subparsers: "argparse._SubParsersAction
     perf_summary_parser = subparsers.add_parser("generate-summary", help="Generate performance summary markdown")
     perf_summary_parser.add_argument("--output", type=Path, help="Output file path (defaults to benches/PERFORMANCE_RESULTS.md)")
     perf_summary_parser.add_argument("--run-benchmarks", action="store_true", help="Run fresh circumsphere benchmarks before generating summary")
+    perf_summary_parser.add_argument(
+        "--profile",
+        default=TRUSTED_BENCH_PROFILE,
+        help=f"Cargo profile to use when --run-benchmarks is set (default: {TRUSTED_BENCH_PROFILE})",
+    )
 
 
 def create_argument_parser() -> argparse.ArgumentParser:
@@ -3162,7 +3312,12 @@ def execute_command(args: argparse.Namespace, project_root: Path) -> None:
     # Try performance summary commands
     if args.command == "generate-summary":
         generator = PerformanceSummaryGenerator(project_root)
-        success = generator.generate_summary(output_path=args.output, run_benchmarks=args.run_benchmarks, generator_name="benchmark_utils.py")
+        success = generator.generate_summary(
+            output_path=args.output,
+            run_benchmarks=args.run_benchmarks,
+            generator_name="benchmark_utils.py",
+            cargo_profile=args.profile,
+        )
         sys.exit(0 if success else 1)
 
     # Try regression commands

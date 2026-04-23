@@ -6,6 +6,7 @@
 [![License](https://img.shields.io/crates/l/delaunay.svg)](https://github.com/acgetchell/delaunay/blob/main/LICENSE)
 [![Docs.rs](https://docs.rs/delaunay/badge.svg)](https://docs.rs/delaunay)
 [![CI](https://github.com/acgetchell/delaunay/actions/workflows/ci.yml/badge.svg)](https://github.com/acgetchell/delaunay/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/acgetchell/delaunay/actions/workflows/codeql.yml/badge.svg)](https://github.com/acgetchell/delaunay/actions/workflows/codeql.yml)
 [![rust-clippy analyze](https://github.com/acgetchell/delaunay/actions/workflows/rust-clippy.yml/badge.svg)](https://github.com/acgetchell/delaunay/actions/workflows/rust-clippy.yml)
 [![codecov](https://codecov.io/gh/acgetchell/delaunay/graph/badge.svg?token=WT7qZGT9bO)](https://codecov.io/gh/acgetchell/delaunay)
 [![Audit dependencies](https://github.com/acgetchell/delaunay/actions/workflows/audit.yml/badge.svg)](https://github.com/acgetchell/delaunay/actions/workflows/audit.yml)
@@ -222,12 +223,17 @@ just setup            # Installs all development tools and dependencies
 
 # Development workflow
 just fix              # Apply formatters/auto-fixes (mutating)
-just check            # Lint/validators (non-mutating)
-just ci               # Full CI run (checks + all tests + examples + bench compile)
-just ci-slow          # CI + slow tests (100+ vertices)
+just check            # All non-mutating lints/validators
+just test             # Tests + benchmark/release compile smoke
+just ci               # Comprehensive checks + tests + examples
 just --list           # See all available commands
 just help-workflows   # Show common workflow patterns
 ```
+
+Benchmark commands that produce performance data use the `perf` Cargo profile
+for consistent ThinLTO settings. `just ci` remains the comprehensive validation
+path: it runs checks, the test workflow, and examples, but it does not pay the
+`perf` profile cost unless measuring performance.
 
 **Try the examples:**
 

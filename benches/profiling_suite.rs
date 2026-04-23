@@ -14,19 +14,19 @@
 //!
 //! Run comprehensive profiling (expect 1-2 hours):
 //! ```bash
-//! cargo bench --bench profiling_suite
+//! cargo bench --profile perf --bench profiling_suite
 //! ```
 //!
 //! Run specific profiling categories:
 //! ```bash
 //! # Large-scale triangulation only
-//! cargo bench --bench profiling_suite -- triangulation_scaling
+//! cargo bench --profile perf --bench profiling_suite -- triangulation_scaling
 //!
 //! # Memory profiling only  
-//! cargo bench --bench profiling_suite -- memory_profiling
+//! cargo bench --profile perf --bench profiling_suite -- memory_profiling
 //!
 //! # Query latency only
-//! cargo bench --bench profiling_suite -- query_latency
+//! cargo bench --profile perf --bench profiling_suite -- query_latency
 //! ```
 //!
 //! ## Development vs Production Mode
@@ -34,7 +34,7 @@
 //! For faster iteration during optimization work:
 //! ```bash
 //! # Development mode - reduced scale for quick feedback
-//! PROFILING_DEV_MODE=1 cargo bench --bench profiling_suite
+//! PROFILING_DEV_MODE=1 cargo bench --profile perf --bench profiling_suite
 //! ```
 //!
 //! ## Environment Variable Configuration
@@ -49,7 +49,7 @@
 //!
 //! Example with custom configuration:
 //! ```bash
-//! BENCH_SAMPLE_SIZE=5 BENCH_WARMUP_SECS=5 BENCH_PERCENTILE=90 cargo bench --bench profiling_suite
+//! BENCH_SAMPLE_SIZE=5 BENCH_WARMUP_SECS=5 BENCH_PERCENTILE=90 cargo bench --profile perf --bench profiling_suite
 //! ```
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};

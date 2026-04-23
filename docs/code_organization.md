@@ -49,6 +49,7 @@ delaunay/
 │   │   ├── benchmarks.yml
 │   │   ├── ci.yml
 │   │   ├── codacy.yml
+│   │   ├── codeql.yml
 │   │   ├── codecov.yml
 │   │   ├── generate-baseline.yml
 │   │   ├── profiling-benchmarks.yml
@@ -310,7 +311,7 @@ cargo test --test circumsphere_debug_tools -- --nocapture
 just test-allocation
 
 # Run benchmarks with allocation counting (direct cargo for specific bench)
-cargo bench --bench profiling_suite --features count-allocations
+cargo bench --profile perf --bench profiling_suite --features count-allocations
 ```
 
 > **Allocator Requirements**: Results depend on the system allocator (typically the default allocator on stable Rust).
@@ -358,7 +359,7 @@ just bench-baseline
 just bench-perf-summary
 
 # Or use the CLI directly
-uv run benchmark-utils generate-summary --run-benchmarks
+uv run benchmark-utils generate-summary --run-benchmarks --profile perf
 ```
 
 The `benchmark-utils` CLI provides integrated benchmark workflow functionality, with convenient `just` shortcuts for common workflows.
@@ -510,24 +511,25 @@ Exact performance characteristics depend on dimension, input distribution, and k
 
 The project uses [`just`](https://github.com/casey/just) as a command runner to simplify common development tasks. Key workflows include:
 
-**Fast Iteration:**
+**Recommended Workflow:**
 
 ```bash
 just fix           # Apply formatters/auto-fixes (mutating)
-just check         # Lint/validators (non-mutating)
+just check         # All non-mutating lints/validators
+just test          # Tests + benchmark/release compile smoke
 ```
 
 **Full CI / Pre-Push Validation:**
 
 ```bash
-just ci            # Full CI run (checks + all tests + examples + bench compile)
+just ci            # Comprehensive checks + tests + examples
 just ci-slow       # CI + slow tests (100+ vertices)
 ```
 
 **Testing Workflows:**
 
 ```bash
-just test          # Lib and doc tests only (fast, used by CI)
+just test-unit     # Lib and doc tests only
 just test-integration # All integration tests (includes proptests)
 just test-all      # All tests (lib + doc + integration + Python)
 just test-python   # Python tests only (pytest)
@@ -555,26 +557,26 @@ just spell-check   # Check spelling across project files
 **Benchmarks and Performance:**
 
 ```bash
-just bench         # Run all benchmarks
-just bench-baseline # Generate performance baseline
-just bench-ci      # CI regression benchmarks (fast, ~5-10 min)
-just bench-compare # Compare against baseline
-just bench-dev     # Development mode (10x faster, ~1-2 min)
-just bench-quick   # Quick validation (minimal samples, ~30 sec)
-just bench-perf-summary # Generate performance summary for releases (~30-45 min)
+just bench         # Run all benchmarks with perf profile (ThinLTO)
+just bench-baseline # Generate perf-profile performance baseline
+just bench-ci      # CI regression benchmarks with perf profile (~5-10 min)
+just bench-compare # Compare against baseline with perf profile
+just bench-dev     # Reduced-sample perf-profile comparison (~1-2 min)
+just bench-smoke   # Smoke-test benchmark harnesses (minimal samples)
+just bench-perf-summary # Generate perf-profile release summary (~30-45 min)
 ```
 
 **Storage Backend Comparison (large-scale):**
 
 ```bash
 # DenseSlotMap (default)
-cargo bench --bench large_scale_performance
+cargo bench --profile perf --bench large_scale_performance
 
 # SlotMap (disable default DenseSlotMap)
-cargo bench --no-default-features --bench large_scale_performance
+cargo bench --profile perf --no-default-features --bench large_scale_performance
 
 # Enable larger 4D point counts (use on a compute cluster)
-BENCH_LARGE_SCALE=1 cargo bench --bench large_scale_performance
+BENCH_LARGE_SCALE=1 cargo bench --profile perf --bench large_scale_performance
 
 # Compare SlotMap (--no-default-features) vs DenseSlotMap (default)
 just compare-storage    # SlotMap (--no-default-features) vs DenseSlotMap (default) (~4-6 hours)
@@ -595,7 +597,7 @@ just profile-mem   # Profile memory allocations
 **CI Simulation:**
 
 ```bash
-just ci            # Full CI run (matches .github/workflows/ci.yml)
+just ci            # Comprehensive local CI run
 just ci-baseline   # CI + save performance baseline
 ```
 

@@ -35,8 +35,10 @@ from json import loads
 from pathlib import Path
 
 try:
+    from benchmark_utils import TRUSTED_BENCH_PROFILE  # type: ignore[import-not-found]
     from subprocess_utils import find_project_root, run_cargo_command  # type: ignore[import-not-found]
 except ModuleNotFoundError:
+    from scripts.benchmark_utils import TRUSTED_BENCH_PROFILE  # type: ignore[no-redef,import-not-found]
     from scripts.subprocess_utils import find_project_root, run_cargo_command  # type: ignore[no-redef,import-not-found]
 
 logger = logging.getLogger(__name__)
@@ -137,14 +139,17 @@ class StorageBackendComparator:
             # Avoid mixing results between backends and/or prior runs.
             shutil.rmtree(self.criterion_dir, ignore_errors=True)
 
-            # Build cargo bench command
-            args = ["bench", "--bench", benchmark_name]
-
             # Keep the feature set explicit so we always compare the intended backends,
             # even if crate defaults change in the future.
             # SlotMap is the baseline when `dense-slotmap` is not enabled.
-            args.insert(1, "--no-default-features")
-
+            args = [
+                "bench",
+                "--profile",
+                TRUSTED_BENCH_PROFILE,
+                "--no-default-features",
+                "--bench",
+                benchmark_name,
+            ]
             if use_dense_slotmap:
                 args.extend(["--features", "dense-slotmap"])
 
@@ -426,10 +431,10 @@ class StorageBackendComparator:
                 "",
                 "```bash",
                 "# DenseSlotMap",
-                f"cargo bench --no-default-features --features dense-slotmap --bench {benchmark_name}",
+                f"cargo bench --profile {TRUSTED_BENCH_PROFILE} --no-default-features --features dense-slotmap --bench {benchmark_name}",
                 "",
                 "# SlotMap",
-                f"cargo bench --no-default-features --bench {benchmark_name}",
+                f"cargo bench --profile {TRUSTED_BENCH_PROFILE} --no-default-features --bench {benchmark_name}",
                 "```",
                 "",
                 "---",

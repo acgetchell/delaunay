@@ -52,9 +52,15 @@ dense-slotmap = [  ] # Use DenseSlotMap-backed internal storage (default)
 slow-tests = [
 ] # Enable slow-running integration tests (100+ vertices, multiple dimensions)
 
-[profile.release]
+# Performance profile for benchmark baselines, comparisons, summaries, and
+# profiling. Comprehensive CI validation intentionally uses Cargo's default
+# release profile for compile checks because it is catching errors, not
+# producing benchmark measurements.
+[profile.perf]
+inherits = "release"
 lto = "thin"
 codegen-units = 1
+debug = "line-tables-only"
 
 [[bench]]
 name = "circumsphere_containment"
@@ -92,9 +98,12 @@ path = "benches/cold_path_predicates.rs"
 harness = false
 
 [lints.rust]
+# Per RFC 3389: lint groups must use a lower (more negative) priority so specific
+# lints at default priority 0 deterministically override the group level.
+warnings = { level = "deny", priority = -1 }
 unsafe_code = "forbid"
-dead_code = "warn"
-missing_docs = "warn"
+dead_code = { level = "warn", priority = 0 }
+missing_docs = { level = "warn", priority = 0 }
 
 [lints.clippy]
 extra_unused_type_parameters = "warn"
