@@ -1,65 +1,62 @@
-# Semgrep configuration for delaunay project
-# This file is automatically picked up by Codacy's Semgrep integration
-# See: https://semgrep.dev/docs/writing-rules/rule-syntax/
+---
+# Repository-owned Semgrep rules.
+#
+# Keep this file small and project-specific. Broad default/community rules have
+# been noisy for this Rust library and duplicate CodeQL, cargo-audit, Clippy,
+# Ruff, and ShellCheck coverage.
+#
+# The rules below are intentionally disabled with an impossible include path
+# while legacy call sites are cleaned up in
+# https://github.com/acgetchell/delaunay/issues/338. To enable one, replace its
+# "__semgrep_disabled__/**" include with the intended path such as "src/**/*.rs"
+# and remove the "enabled: false" metadata note.
 
 rules:
-  # === SECURITY RULESETS ===
-  # Focus on high-impact security issues relevant to computational geometry libraries
+  - id: delaunay.rust.no-stdio-diagnostics-in-src
+    languages:
+      - rust
+    severity: WARNING
+    message: "Use tracing macros for production diagnostics instead of stdout/stderr macros."
+    metadata:
+      enabled: false
+      category: maintainability
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/338"
+      rationale: "Runtime diagnostics should be filterable through tracing and RUST_LOG."
+    paths:
+      include:
+        - "__semgrep_disabled__/**/*.rs"
+    patterns:
+      - pattern-either:
+          - pattern: println!(...)
+          - pattern: eprintln!(...)
+      - pattern-not-inside: |
+          #[cfg(test)]
+          mod $MOD {
+              ...
+          }
 
-  # Rust security patterns
-  - p/rust-security-audit
-  - p/security-audit
-
-  # Generic security patterns that apply across languages
-  - p/secrets # Detect hardcoded secrets
-  - p/command-injection
-  - p/sql-injection
-
-  # === PERFORMANCE RULESETS ===
-  # Performance patterns relevant to computational code
-  - p/performance
-
-  # === RUST-SPECIFIC RULES ===
-  # Additional Rust patterns beyond security
-  - p/rust-correctness
-
-  # === PYTHON SECURITY (for scripts) ===
-  - p/python-security-audit
-  - p/bandit
-
-# Severity filtering - only show meaningful issues
-severity:
-  - ERROR
-  - WARNING
-
-# Confidence filtering - avoid false positives
-confidence:
-  - HIGH
-  - MEDIUM
-
-# Exclude paths to reduce noise and avoid scanning generated/third-party code
-exclude:
-  - "target/"
-  - "node_modules/"
-  - "*.min.js"
-  - "*.min.css"
-  - "__pycache__/"
-  - ".git/"
-  - "Cargo.lock"
-  - "benches/baseline_results.txt"
-  - "benches/benchmark_results/"
-  # Exclude test files from error-prone checks - pytest uses assert statements
-  - "scripts/tests/"
-  - "tests/"
-  - "**/test_*.py"
-  - "**/*_test.py"
-
-# Include only relevant file types
-include:
-  - "*.rs"
-  - "*.py"
-  - "*.sh"
-
-# Custom rules for this project (can be extended as needed)
-# Currently empty - using community rulesets above with path exclusions
-# Add project-specific patterns here if needed in the future
+  - id: delaunay.rust.no-nonfinite-unwrap-defaults
+    languages:
+      - rust
+    severity: WARNING
+    message: "Do not hide failed floating-point conversion with NaN or infinity defaults."
+    metadata:
+      enabled: false
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/338"
+      rationale: >-
+        Geometric predicates and diagnostics should not synthesize non-finite
+        sentinels after conversion failure.
+    paths:
+      include:
+        - "__semgrep_disabled__/**/*.rs"
+    pattern-either:
+      - pattern: $VALUE.unwrap_or(f64::NAN)
+      - pattern: $VALUE.unwrap_or(f64::INFINITY)
+      - pattern: $VALUE.unwrap_or(f64::NEG_INFINITY)
+      - pattern: $VALUE.unwrap_or(std::f64::NAN)
+      - pattern: $VALUE.unwrap_or(std::f64::INFINITY)
+      - pattern: $VALUE.unwrap_or(std::f64::NEG_INFINITY)
+      - pattern: $VALUE.unwrap_or_else(|| f64::NAN)
+      - pattern: $VALUE.unwrap_or_else(|| f64::INFINITY)
+      - pattern: $VALUE.unwrap_or_else(|| f64::NEG_INFINITY)

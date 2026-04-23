@@ -3081,6 +3081,7 @@ where
                                                 "bulk D≥4: per-insertion repair non-convergent; \
                                                  continuing (both_positive_artifact handled)"
                                             );
+                                            self.canonicalize_after_bulk_repair()?;
                                             soft_fail_seeds.extend(seed_cells.iter().copied());
                                         }
                                     }
@@ -3231,6 +3232,7 @@ where
                                                 "bulk D≥4: per-insertion repair non-convergent; \
                                                  continuing (both_positive_artifact handled)"
                                             );
+                                            self.canonicalize_after_bulk_repair()?;
                                             soft_fail_seeds.extend(seed_cells.iter().copied());
                                         }
                                     }

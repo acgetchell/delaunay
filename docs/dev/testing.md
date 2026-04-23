@@ -100,6 +100,11 @@ Integration tests should validate:
 - public API behavior
 - cross-module interactions
 
+Fixed-bug regression integration tests belong in `tests/regressions.rs`. Add
+new regression cases there instead of creating issue-specific files such as
+`tests/regression_issue_123.rs`, unless the case needs separate crate-level
+configuration, feature flags, or profile isolation.
+
 ---
 
 ### Property Tests

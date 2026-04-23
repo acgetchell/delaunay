@@ -251,8 +251,7 @@ delaunay/
 │   ├── proptest_triangulation.rs
 │   ├── proptest_vertex.rs
 │   ├── public_topology_api.rs
-│   ├── regression_delaunay_2d.rs
-│   ├── regression_issue_306.rs
+│   ├── regressions.rs
 │   ├── serialization_vertex_preservation.rs
 │   ├── storage_backend_compatibility.rs
 │   ├── tds_orientation.rs

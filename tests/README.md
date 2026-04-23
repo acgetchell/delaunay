@@ -270,9 +270,12 @@ Proptest automatically captures minimal failing test cases in `.proptest-regress
 - **Filtering**: Use test filters to narrow scope when iterating on specific properties
 - **Maintenance**: It's acceptable to prune obsolete entries in follow-up PRs (keep diffs focused)
 
-**Current Regression Files:**
+**Current Proptest Regression Files:**
 
 - `proptest_delaunay_triangulation.proptest-regressions`
+
+These generated property-test corpora are separate from fixed-bug integration
+regressions, which belong in [`regressions.rs`](./regressions.rs).
 
 ### 🔧 Debugging and Analysis Tools
 
@@ -327,7 +330,7 @@ Core integration coverage currently includes:
 - [`euler_characteristic.rs`](./euler_characteristic.rs)
 - [`insert_with_statistics.rs`](./insert_with_statistics.rs)
 - [`k3_cycle_predicate.rs`](./k3_cycle_predicate.rs)
-- [`regression_delaunay_2d.rs`](./regression_delaunay_2d.rs)
+- [`regressions.rs`](./regressions.rs)
 
 #### [`serialization_vertex_preservation.rs`](./serialization_vertex_preservation.rs)
 
@@ -393,17 +396,18 @@ Exercises `verify_conflict_region_completeness` using the known-failing
 
 **Note:** Tests are `#[ignore]` by default — they are diagnostic rather than correctness assertions.
 
-#### [`regression_issue_306.rs`](./regression_issue_306.rs)
+#### [`regressions.rs`](./regressions.rs)
 
-Regression test for issue #306: 3D flip-repair cycling in release builds.
-Verifies that the 35-vertex 3D seed `0xE30C78582376677C` constructs
-successfully after unifying repair constants across build profiles.
+Fixed-bug regression tests for known Delaunay construction and repair failures,
+including the issue #120 2D minimal input, issue #306 3D flip-repair cycling
+seed, and issue #307 4D bulk repair orientation case.
 
-**Run with:** `cargo test --release --test regression_issue_306`
+**Run with:** `cargo test --release --test regressions`
 
-**Note:** Must be run as an integration test (not unit test) because the
-original bug used `cfg(any(test, debug_assertions))` to gate constants —
-unit tests would always see the permissive values.
+**Note:** Add new fixed-bug regression cases to this file by default. Keep them
+as integration tests so the library is compiled without `cfg(test)`; only create
+a separate regression test crate when the case needs separate crate-level
+configuration, feature flags, or profile isolation.
 
 #### [`check_perturbation_stats.rs`](./check_perturbation_stats.rs)
 
@@ -496,7 +500,8 @@ just test-debug
    - `*_debug_tools.rs` - Interactive debugging utilities
    - `*_integration.rs` - Algorithm integration testing
    - `*_comparison.rs` - Comparative analysis testing
-   - `*_error.rs` - Error reproduction and regression testing
+   - `*_error.rs` - Error-path testing
+   - `regressions.rs` - Fixed-bug regression tests; add new bug regressions here
 
 2. **Test Categories**: Organize tests by function:
    - **Debugging Tools**: Interactive analysis and debugging utilities

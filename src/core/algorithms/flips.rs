@@ -487,7 +487,12 @@ where
                     cell_key: external.cell_key(),
                 })?;
         if external_cell.periodic_vertex_offsets().is_some() {
-            continue;
+            return Err(FlipError::InvalidFlipContext {
+                message: format!(
+                    "periodic external cell {:?} cannot be used for replacement-cell parity without aligned periodic offsets",
+                    external.cell_key()
+                ),
+            });
         }
 
         let external_facet_idx = usize::from(external.facet_index());
@@ -6430,6 +6435,36 @@ mod tests {
         }
 
         assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_orient_replacement_cells_rejects_periodic_external_cell() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let mut external_cell = Cell::new(vec![v0, v1, v2], None).unwrap();
+        external_cell.set_periodic_vertex_offsets(vec![[0_i8; 2]; 3]);
+        let external_cell_key = tds.insert_cell_with_mapping(external_cell).unwrap();
+
+        let mut replacement_cells = vec![[v0, v1, v2].into_iter().collect()];
+        let result = orient_replacement_cells(
+            &tds,
+            &mut replacement_cells,
+            &[FacetHandle::new(external_cell_key, 0)],
+        );
+        let expected_key = format!("{external_cell_key:?}");
+
+        assert!(
+            matches!(
+                result,
+                Err(FlipError::InvalidFlipContext { ref message })
+                    if message.contains("periodic external cell")
+                        && message.contains(&expected_key)
+            ),
+            "periodic external cells should fail before parity constraints are dropped: {result:?}"
+        );
     }
 
     #[test]

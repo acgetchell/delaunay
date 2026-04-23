@@ -35,6 +35,9 @@ on:
     tags:
       - "v*.*.*"
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -51,9 +54,10 @@ jobs:
         uses: actions/checkout@v6.0.2
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7 # v1.16.0
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
+          cache: false
 
       - name: Cache Cargo dependencies
         uses: actions/cache@v5
@@ -246,9 +250,10 @@ jobs:
         uses: actions/checkout@v6.0.2
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7 # v1.16.0
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
+          cache: false
 
       - name: Cache Cargo dependencies
         uses: actions/cache@v5
