@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Merged Pull Requests
 
+- Orient Delaunay repair replacement cells [#307](https://github.com/acgetchell/delaunay/pull/307) [#336](https://github.com/acgetchell/delaunay/pull/336)
+- Use dedicated perf profile for consistent benchmark measurement [#334](https://github.com/acgetchell/delaunay/pull/334)
 - Periodic-aware Delaunay verification (Level 4) for toroidal tria… [#333](https://github.com/acgetchell/delaunay/pull/333)
 - Adopt Rust 1.95.0 MSRV [#330](https://github.com/acgetchell/delaunay/pull/330)
 - Bump actions-rust-lang/setup-rust-toolchain [#328](https://github.com/acgetchell/delaunay/pull/328)
@@ -52,6 +54,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   - Add T² (3×3 grid) and T³ (3×3×3 Freudenthal) integration tests
     validating χ = 0 via explicit construction
+
+- Instrument large-scale 4D debugging and widen local repair seeds
+  [`fd5dbf2`](https://github.com/acgetchell/delaunay/commit/fd5dbf211af14124db6cc21ceef0b821b53cdffe)
+
+- Thread cavity-touched cells through insertion as `repair_seed_cells`
+    so post-insertion local Delaunay repair widens its frontier beyond
+    the inserted vertex star; cells shrunk out of the conflict region
+    during cavity reduction now participate in the next repair pass.
+
+  - Accumulate ridge-fan extras across every fan in a conflict region
+    before returning `RidgeFan`, letting one cavity-reduction step
+    shrink all detected fans at once instead of peeling them iteration
+    by iteration.
+
+  - Add release-visible diagnostic hooks routed through `tracing::debug!`:
+    `DELAUNAY_BULK_PROGRESS_EVERY` for periodic batch-construction
+    progress, `DELAUNAY_DEBUG_RETRYABLE_SKIP` for retryable
+    conflict-region skip traces, `DELAUNAY_DEBUG_CAVITY_REDUCTION_ONCE`
+    for the first cavity-reduction chain, `DELAUNAY_DEBUG_RIDGE_FAN_ONCE`
+    for the first detected ridge fan, and
+    `DELAUNAY_REPAIR_DEBUG_POSTCONDITION_FACET` /
+    `DELAUNAY_REPAIR_DEBUG_RIDGE_MIN_MULTIPLICITY` for repair
+    postcondition debugging.
+
+  - Thread `last_applied_flip` through repair postcondition verification
+    so unresolved k=2 facet and ridge snapshots can relate the violating
+    local star to the immediately preceding flip.
+
+  - Replace `ConflictError::InternalInconsistency { context: String }`
+    with a typed `InternalInconsistencySite` enum carrying structured
+    indices and counts, so callers can `matches!` on specific sites
+    instead of parsing prose.
+
+  - Generalize the large-scale incremental prefix bisect over `const D`,
+    add a 4D counterpart targeting the seeded 500-point repro
+    (`0xD225_B8A0_7E27_4AE6`), and expose it via
+    `just debug-large-scale-4d-incremental-bisect`.
+
+  - Switch the large-scale debug just recipes to `--release` and
+    document the 2026-04-23 re-verification: historical 35-point 3D and
+    100-point 4D correctness repros from #306/#307 now pass, while a
+    500-point 4D seed still fails all shuffled retries with
+    `Ridge fan detected: 4 facets share ridge with 3 vertices`.
+
+  - Default the large-scale debug harness tracing filter to `debug` when
+    any of the new release-visible env vars are present so library-side
+    `tracing::debug!` events surface without extra `RUST_LOG` wiring.
+
+  - Broaden `test_perturbation_retry_and_exhaustion_4d` and
+    `test_perturbation_retry_seeded_branch_4d` to iterate over 50 seeds
+    so the retry-path assertions stay robust to insertion-path
+    improvements that make individual well-conditioned seeds less likely
+    to trigger retries.
 
 ### Changed
 
@@ -94,10 +149,12 @@ Perform a general dependency update, including a patch bump for `uuid`.
   updates, and merged pull requests. Add `.kilo/` to the ignored user
   configuration patterns.
 
-- Use dedicated perf profile for consistent benchmark measurement
-  [`ebf9abf`](https://github.com/acgetchell/delaunay/commit/ebf9abf1571b397aeabd47196a101961c456c0c4)
+- Use dedicated perf profile for consistent benchmark measurement [#334](https://github.com/acgetchell/delaunay/pull/334)
+  [`f527c0c`](https://github.com/acgetchell/delaunay/commit/f527c0cf37b76f09222800afcfc138e623957678)
 
-Introduce a `perf` Cargo profile that inherits from `release` but
+- Changed: use dedicated perf profile for consistent benchmark measurement
+
+  Introduce a `perf` Cargo profile that inherits from `release` but
   restores ThinLTO and single codegen units. This ensures local, CI, and
   release benchmarks are generated with identical optimization settings.
 
@@ -110,14 +167,57 @@ Introduce a `perf` Cargo profile that inherits from `release` but
   Also deniest warnings via the manifest lint policy to ensure consistent
   repository-wide enforcement.
 
-- Standardize benchmark profiles and enhance SARIF analysis [`9acf503`](https://github.com/acgetchell/delaunay/commit/9acf503ad75f031a4c2c5978f0f353951623499f)
+  - Changed: standardize benchmark profiles and enhance SARIF analysis
 
-Standardize benchmark workflows to use the `perf` profile by default
+  Standardize benchmark workflows to use the `perf` profile by default
   across local scripts and CI for consistent optimization settings. Add a
   dedicated CodeQL analysis workflow and refactor SARIF reporting for
   cargo-audit, Clippy, and Codacy to improve GitHub Code Scanning
   integration. Update manifest lints to comply with RFC 3389 priority
   requirements and fix the minimum sample size for benchmark smoke tests.
+
+  - Changed: track sampling metadata and standardize benchmark profiles
+
+  Enhance performance regression testing by embedding sampling configuration
+  (Criterion settings and Cargo profile) into baseline files. This enables
+  automatic detection of configuration mismatches during comparisons.
+  Standardize benchmarking scripts on the trusted perf profile and update
+  developer guidelines for naming conventions and local imports.
+
+  - Changed: enable debug line tables for perf profile and refine validation
+
+  Include `debug = "line-tables-only"` in the perf Cargo profile to
+  enable source-level profiling. Update the benchmark comparison logic
+  to ensure that legacy baselines with missing or "Unknown" metadata
+  trigger configuration mismatch warnings.
+
+  - Changed: expand benchmark metadata validation tests
+
+  Update the benchmark utility tests to verify that differences or
+  omissions in Criterion measurement and warm-up time are correctly
+  reported in configuration mismatch warnings.
+
+  - Changed: enable CodeRabbit request changes workflow
+
+  Enable the request_changes_workflow in the CodeRabbit configuration to
+  allow the AI reviewer to formally request changes on pull requests. This
+  ensures that identified issues are explicitly addressed during the
+  review process rather than appearing as informational comments only.
+
+- Harden flip diagnostics and refine large-scale debug workflows
+  [`fb23595`](https://github.com/acgetchell/delaunay/commit/fb23595fd664ef19bb3ea7ca134e725214dfeeca)
+
+Refactor flip snapshotting and cavity-reduction bookkeeping to ensure
+  diagnostic reliability and accurate repair-seed collection. Update
+  documentation and justfile recipes to reflect fixed historical repros
+  and transition to monitoring active scalability investigations for 3D,
+  4D, and 5D datasets.
+
+- Move removed-cell vertex capturing into fallible internal helpers
+- Implement lazy evaluation for cavity-reduction diagnostic logs
+- Harden vertex deduplication with fallible epsilon validation
+- Update 4D known issues to reflect 100-point and 500-point fixes
+- Simplify the large-scale debug harness CLI and documentation
 
 ### Documentation
 
@@ -209,6 +309,27 @@ Standardize benchmark workflows to use the `perf` profile by default
   - Add doctest for verify_delaunay_for_triangulation.
   - Add unit tests for align_periodic_offset (identity, delta shifts,
     higher-dimension, overflow).
+
+- Orient Delaunay repair replacement cells [#307](https://github.com/acgetchell/delaunay/pull/307) [#336](https://github.com/acgetchell/delaunay/pull/336)
+  [`68deb62`](https://github.com/acgetchell/delaunay/commit/68deb6212a0860cd85776744d29ba7e76f368579)
+
+- fix: orient Delaunay repair replacement cells [#307](https://github.com/acgetchell/delaunay/pull/307)
+
+  - Build flip replacement cell order from oriented cavity-boundary constraints.
+  - Keep raw bistellar flips topology-oriented while requiring positive replacement geometry for Delaunay repair.
+  - Canonicalize bulk repair results before continuing construction.
+  - Add a 4D regression test for the issue #307 bulk construction failure.
+  - Document branch naming conventions for contributors and agents.
+- Close the 4D bulk repair retry collapse [`8c110f3`](https://github.com/acgetchell/delaunay/commit/8c110f3d1eac51ca189eb608fd6f09715afde879)
+
+- Raise the D≥4 per-insertion repair budget, add a rate-limited escalation pass, and widen local post-repair validation so the 500-point #204 repro converges
+  without skipped vertices.
+  - Preserve removed-cell snapshots and predecessor context in flip diagnostics, drop stale repair seeds after cavity reduction, and re-export locate conflict
+    diagnostics from the prelude.
+  - Replace committed `eprintln!` diagnostics in production, tests, and benches with `tracing` , using `test-debug` and `bench-logging` gates and keeping logs
+    out of Criterion hot loops.
+  - Document the #204 investigation, refresh the 4D known-issues and TODO notes, and record the repository logging policy plus release-visible debug environment
+    variables.
 
 ### Maintenance
 
@@ -1979,7 +2100,7 @@ Bumps [actions/setup-node](https://github.com/actions/setup-node) from 6.2.0 to 
   Implements correctness fixes, API improvements, and comprehensive testing
   for the Hilbert space-filling curve ordering utilities.
 
-  ## Correctness Fixes
+  **Correctness Fixes**
 
   - Add debug_assert guards in hilbert_index_from_quantized for parameter
     validation (bits range and overflow checks)
@@ -1988,7 +2109,7 @@ Bumps [actions/setup-node](https://github.com/actions/setup-node) from 6.2.0 to 
     to scaled.round().to_u32() for fairer spatial distribution across grid
     cells, improving point ordering quality
 
-  ## API Design
+  **API Design**
 
   - Add HilbertError enum with InvalidBitsParameter, IndexOverflow, and
     DimensionTooLarge variants for proper error handling
@@ -1999,7 +2120,7 @@ Bumps [actions/setup-node](https://github.com/actions/setup-node) from 6.2.0 to 
   - Bulk API avoids redundant quantization computation, significantly
     improving performance for large insertion batches
 
-  ## Testing
+  **Testing**
 
   - Add 4D continuity test verifying Hilbert curve property on 256-point
     grid (bits=2)
@@ -2012,7 +2133,7 @@ Bumps [actions/setup-node](https://github.com/actions/setup-node) from 6.2.0 to 
 
   - All 17 Hilbert-specific tests pass (11 existing + 6 new)
 
-  ## Known Issue
+  **Known Issue**
 
   Temporarily ignore repair_fallback_produces_valid_triangulation test as
   the rounding change affects insertion order, exposing a latent geometric

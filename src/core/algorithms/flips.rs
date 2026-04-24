@@ -58,7 +58,6 @@ use std::collections::VecDeque;
 use std::env;
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use thiserror::Error;
 
 type VertexKeyList = SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>;
@@ -845,13 +844,14 @@ fn debug_ridge_context<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     ridge: RidgeHandle,
     reported_multiplicity: Option<usize>,
+    diagnostics: &mut RepairDiagnostics,
     last_applied_flip: Option<&LastAppliedFlip>,
 ) where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    if !should_emit_ridge_debug(reported_multiplicity) {
+    if !should_emit_ridge_debug(diagnostics, reported_multiplicity) {
         return;
     }
     let Some(cell) = tds.get_cell(ridge.cell_key()) else {
@@ -1019,13 +1019,14 @@ fn debug_postcondition_facet_context<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     facet: FacetHandle,
     context: &FlipContext<D, 2>,
+    diagnostics: &mut RepairDiagnostics,
     last_applied_flip: Option<&LastAppliedFlip>,
 ) where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    if !should_emit_postcondition_facet_debug() {
+    if !should_emit_postcondition_facet_debug(diagnostics) {
         return;
     }
 
@@ -3856,7 +3857,13 @@ where
                         "[repair] postcondition k=2 violation remains (facet={facet:?})"
                     );
                 }
-                debug_postcondition_facet_context(tds, facet, &context, last_applied_flip);
+                debug_postcondition_facet_context(
+                    tds,
+                    facet,
+                    &context,
+                    diagnostics,
+                    last_applied_flip,
+                );
                 let mut message =
                     format!("local k=2 violation remains after repair (facet={facet:?})");
                 if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
@@ -3978,7 +3985,7 @@ where
                 // preceding flip, when available — so #204-style ridge
                 // diagnostics carry the same predecessor-flip context as the
                 // k=2 facet path via `debug_postcondition_facet_context`.
-                debug_ridge_context(tds, ridge, None, last_applied_flip);
+                debug_ridge_context(tds, ridge, None, diagnostics, last_applied_flip);
                 return Err(DelaunayRepairError::PostconditionFailed {
                     message: format!("local k=3 violation remains after repair (ridge={ridge:?})"),
                 });
@@ -4201,6 +4208,8 @@ struct RepairDiagnostics {
     missing_cell_sample: Option<String>,
     flip_signature_window: VecDeque<u64>,
     flip_signature_counts: FastHashMap<u64, usize>,
+    ridge_debug_emitted: usize,
+    postcondition_facet_debug_emitted: usize,
 }
 
 impl RepairDiagnostics {
@@ -4522,8 +4531,6 @@ fn repair_ridge_debug_enabled() -> bool {
 
 const RIDGE_DEBUG_LIMIT_DEFAULT: usize = 64;
 const RIDGE_DEBUG_MIN_MULTIPLICITY_DEFAULT: usize = 0;
-static RIDGE_DEBUG_EMITTED: AtomicUsize = AtomicUsize::new(0);
-static POSTCONDITION_FACET_DEBUG_EMITTED: AtomicUsize = AtomicUsize::new(0);
 
 /// Rate-limits ridge snapshots to keep pathological repair runs from flooding
 /// logs.
@@ -4543,9 +4550,12 @@ fn ridge_debug_min_multiplicity() -> usize {
         .unwrap_or(RIDGE_DEBUG_MIN_MULTIPLICITY_DEFAULT)
 }
 
-/// Applies the ridge debug limit atomically so concurrent tests still share a
-/// bounded diagnostic budget.
-fn should_emit_ridge_debug(reported_multiplicity: Option<usize>) -> bool {
+/// Applies the ridge debug limit per repair attempt so independent repairs do
+/// not consume each other's diagnostic budget.
+fn should_emit_ridge_debug(
+    diagnostics: &mut RepairDiagnostics,
+    reported_multiplicity: Option<usize>,
+) -> bool {
     let min_multiplicity = ridge_debug_min_multiplicity();
     match reported_multiplicity {
         // Multiplicity-based skips dominate large 4D traces, so let callers suppress
@@ -4561,7 +4571,8 @@ fn should_emit_ridge_debug(reported_multiplicity: Option<usize>) -> bool {
     if limit == 0 {
         return false;
     }
-    let current = RIDGE_DEBUG_EMITTED.fetch_add(1, Ordering::Relaxed);
+    let current = diagnostics.ridge_debug_emitted;
+    diagnostics.ridge_debug_emitted = diagnostics.ridge_debug_emitted.saturating_add(1);
     if current == limit {
         tracing::debug!(
             "repair: ridge debug output limit reached; suppressing further ridge snapshots"
@@ -4577,13 +4588,17 @@ fn postcondition_facet_debug_enabled() -> bool {
     env::var_os("DELAUNAY_REPAIR_DEBUG_POSTCONDITION_FACET").is_some()
 }
 
-/// Emits at most one postcondition facet snapshot per process so the focused
-/// #204 debug path stays readable.
-fn should_emit_postcondition_facet_debug() -> bool {
+/// Emits at most one postcondition facet snapshot per repair attempt so the
+/// focused #204 debug path stays readable.
+fn should_emit_postcondition_facet_debug(diagnostics: &mut RepairDiagnostics) -> bool {
     if !postcondition_facet_debug_enabled() {
         return false;
     }
-    POSTCONDITION_FACET_DEBUG_EMITTED.fetch_add(1, Ordering::Relaxed) == 0
+    let current = diagnostics.postcondition_facet_debug_emitted;
+    diagnostics.postcondition_facet_debug_emitted = diagnostics
+        .postcondition_facet_debug_emitted
+        .saturating_add(1);
+    current == 0
 }
 
 /// Computes a dimension-sensitive flip budget so non-convergent repair fails
@@ -4894,11 +4909,17 @@ where
                     // and the full global incidence so we can see whether repair is skipping
                     // a stale handle or a genuinely overshared ridge.
                     if repair_ridge_debug_enabled() {
-                        debug_ridge_context(tds, ridge, Some(*found), last_applied_flip.as_ref());
+                        debug_ridge_context(
+                            tds,
+                            ridge,
+                            Some(*found),
+                            diagnostics,
+                            last_applied_flip.as_ref(),
+                        );
                     }
                 }
                 FlipError::InvalidRidgeAdjacency { .. } if repair_ridge_debug_enabled() => {
-                    debug_ridge_context(tds, ridge, None, last_applied_flip.as_ref());
+                    debug_ridge_context(tds, ridge, None, diagnostics, last_applied_flip.as_ref());
                 }
                 FlipError::MissingCell { cell_key } => {
                     diagnostics.record_missing_cell_skip(|| {
@@ -6669,89 +6690,100 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_snapshot_removed_cell_vertices_captures_vertices_and_reports_missing_cell() {
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
-        let vertices = insert_standard_simplex_vertices::<2>(&mut tds);
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vertices.clone(), None).unwrap())
-            .unwrap();
+    macro_rules! gen_removed_cell_snapshot_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_snapshot_removed_cell_vertices_captures_vertices_and_reports_missing_cell_ $dim d>]() {
+                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let vertices = insert_standard_simplex_vertices::<$dim>(&mut tds);
+                    let cell_key = tds
+                        .insert_cell_with_mapping(Cell::new(vertices.clone(), None).unwrap())
+                        .unwrap();
 
-        let removed_cells: CellKeyBuffer = std::iter::once(cell_key).collect();
-        let snapshot = snapshot_removed_cell_vertices(&tds, &removed_cells).unwrap();
-        assert_eq!(snapshot.len(), 1);
-        assert_eq!(snapshot[0].iter().copied().collect::<Vec<_>>(), vertices);
+                    let removed_cells: CellKeyBuffer = std::iter::once(cell_key).collect();
+                    let snapshot = snapshot_removed_cell_vertices(&tds, &removed_cells).unwrap();
+                    assert_eq!(snapshot.len(), 1);
+                    assert_eq!(snapshot[0].iter().copied().collect::<Vec<_>>(), vertices);
 
-        let missing_cell = CellKey::from(KeyData::from_ffi(999_999));
-        let missing_cells: CellKeyBuffer = std::iter::once(missing_cell).collect();
-        let err = snapshot_removed_cell_vertices(&tds, &missing_cells).unwrap_err();
-        assert!(matches!(
-            err,
-            FlipError::MissingCell { cell_key } if cell_key == missing_cell
-        ));
-    }
+                    let missing_cell = CellKey::from(KeyData::from_ffi(999_999 + $dim));
+                    let missing_cells: CellKeyBuffer = std::iter::once(missing_cell).collect();
+                    let err = snapshot_removed_cell_vertices(&tds, &missing_cells).unwrap_err();
+                    assert!(matches!(
+                        err,
+                        FlipError::MissingCell { cell_key } if cell_key == missing_cell
+                    ));
+                }
 
-    #[test]
-    fn test_last_applied_flip_preserves_removed_cell_vertex_snapshots() {
-        let removed_cell = CellKey::from(KeyData::from_ffi(101));
-        let new_cell = CellKey::from(KeyData::from_ffi(102));
-        let v1 = VertexKey::from(KeyData::from_ffi(201));
-        let v2 = VertexKey::from(KeyData::from_ffi(202));
-        let v3 = VertexKey::from(KeyData::from_ffi(203));
-        let v4 = VertexKey::from(KeyData::from_ffi(204));
+                #[test]
+                fn [<test_last_applied_flip_preserves_removed_cell_vertex_snapshots_ $dim d>]() {
+                    let removed_cell = CellKey::from(KeyData::from_ffi(101 + $dim));
+                    let new_cell = CellKey::from(KeyData::from_ffi(102 + $dim));
+                    let v1 = VertexKey::from(KeyData::from_ffi(201 + $dim));
+                    let v2 = VertexKey::from(KeyData::from_ffi(202 + $dim));
+                    let v3 = VertexKey::from(KeyData::from_ffi(203 + $dim));
+                    let v4 = VertexKey::from(KeyData::from_ffi(204 + $dim));
 
-        let mut removed_cell_vertices = RemovedCellVertexSnapshot::new();
-        removed_cell_vertices.push([v1, v2, v3].into_iter().collect::<VertexKeyList>());
+                    let mut removed_cell_vertices = RemovedCellVertexSnapshot::new();
+                    removed_cell_vertices.push([v1, v2, v3].into_iter().collect::<VertexKeyList>());
 
-        let applied = AppliedFlip::<3> {
-            info: FlipInfo {
-                kind: BistellarFlipKind::k2(3),
-                direction: FlipDirection::Forward,
-                removed_cells: std::iter::once(removed_cell).collect(),
-                new_cells: std::iter::once(new_cell).collect(),
-                removed_face_vertices: [v3, v1].into_iter().collect(),
-                inserted_face_vertices: [v4, v2].into_iter().collect(),
-            },
-            removed_cell_vertices,
+                    let applied = AppliedFlip::<$dim> {
+                        info: FlipInfo {
+                            kind: BistellarFlipKind::k2($dim),
+                            direction: FlipDirection::Forward,
+                            removed_cells: std::iter::once(removed_cell).collect(),
+                            new_cells: std::iter::once(new_cell).collect(),
+                            removed_face_vertices: [v3, v1].into_iter().collect(),
+                            inserted_face_vertices: [v4, v2].into_iter().collect(),
+                        },
+                        removed_cell_vertices,
+                    };
+
+                    let last = LastAppliedFlip::from_applied_flip(&applied);
+                    assert_eq!(last.k_move, 2);
+                    assert_eq!(
+                        last.removed_face_vertices
+                            .iter()
+                            .copied()
+                            .collect::<Vec<_>>(),
+                        vec![v1, v3]
+                    );
+                    assert_eq!(
+                        last.inserted_face_vertices
+                            .iter()
+                            .copied()
+                            .collect::<Vec<_>>(),
+                        vec![v2, v4]
+                    );
+                    assert_eq!(
+                        last.removed_cells.iter().copied().collect::<Vec<_>>(),
+                        vec![removed_cell]
+                    );
+                    assert_eq!(
+                        last.new_cells.iter().copied().collect::<Vec<_>>(),
+                        vec![new_cell]
+                    );
+
+                    let lines = last.removed_cell_vertex_lines();
+                    assert_eq!(lines.len(), 1);
+                    assert!(lines[0].contains(&format!("{removed_cell:?}: vertices=")));
+                    assert!(!lines[0].contains("missing-snapshot"));
+
+                    let mut placeholder = LastAppliedFlip::new(1, &[v1], &[v2]);
+                    placeholder.removed_cells.push(removed_cell);
+                    assert_eq!(
+                        placeholder.removed_cell_vertex_lines(),
+                        vec![format!("{removed_cell:?}: missing-snapshot")]
+                    );
+                }
+            }
         };
-
-        let last = LastAppliedFlip::from_applied_flip(&applied);
-        assert_eq!(last.k_move, 2);
-        assert_eq!(
-            last.removed_face_vertices
-                .iter()
-                .copied()
-                .collect::<Vec<_>>(),
-            vec![v1, v3]
-        );
-        assert_eq!(
-            last.inserted_face_vertices
-                .iter()
-                .copied()
-                .collect::<Vec<_>>(),
-            vec![v2, v4]
-        );
-        assert_eq!(
-            last.removed_cells.iter().copied().collect::<Vec<_>>(),
-            vec![removed_cell]
-        );
-        assert_eq!(
-            last.new_cells.iter().copied().collect::<Vec<_>>(),
-            vec![new_cell]
-        );
-
-        let lines = last.removed_cell_vertex_lines();
-        assert_eq!(lines.len(), 1);
-        assert!(lines[0].contains(&format!("{removed_cell:?}: vertices=")));
-        assert!(!lines[0].contains("missing-snapshot"));
-
-        let mut placeholder = LastAppliedFlip::new(1, &[v1], &[v2]);
-        placeholder.removed_cells.push(removed_cell);
-        assert_eq!(
-            placeholder.removed_cell_vertex_lines(),
-            vec![format!("{removed_cell:?}: missing-snapshot")]
-        );
     }
+
+    gen_removed_cell_snapshot_tests!(2);
+    gen_removed_cell_snapshot_tests!(3);
+    gen_removed_cell_snapshot_tests!(4);
+    gen_removed_cell_snapshot_tests!(5);
 
     fn facet_index_for_edge_2d(
         tds: &Tds<f64, (), (), 2>,

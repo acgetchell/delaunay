@@ -4417,8 +4417,8 @@ where
             {
                 const MAX_CAVITY_ITERATIONS: usize = 32;
                 let mut iterations: usize = 0;
-                let trace_cavity_reduction = cavity_reduction_trace_enabled()
-                    && !CAVITY_REDUCTION_TRACE_EMITTED.swap(true, Ordering::Relaxed);
+                let trace_enabled = cavity_reduction_trace_enabled();
+                let mut trace_cavity_reduction = false;
                 let mut saw_ridge_fan_shrink = false;
 
                 match &extraction_result {
@@ -4431,6 +4431,8 @@ where
                         );
                     }
                     Err(err) => {
+                        trace_cavity_reduction = trace_enabled
+                            && !CAVITY_REDUCTION_TRACE_EMITTED.swap(true, Ordering::Relaxed);
                         log_cavity_reduction_event(
                             trace_cavity_reduction,
                             iterations,

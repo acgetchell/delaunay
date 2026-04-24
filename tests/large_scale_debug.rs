@@ -250,13 +250,15 @@ fn init_tracing() {
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| {
         // Debug-level tracing is needed to surface the release-visible diagnostic hooks
-        // (retryable-skip, cavity-reduction, ridge-fan-dump, bulk-progress, bulk-retry)
-        // that are emitted through `tracing::debug!` inside the library.
+        // (retryable-skip, cavity-reduction, ridge/postcondition repair debug,
+        // bulk-progress, bulk-retry) emitted through `tracing::debug!` inside the library.
         let debug_env_vars = [
             "DELAUNAY_INSERT_TRACE",
             "DELAUNAY_DEBUG_RETRYABLE_SKIP",
             "DELAUNAY_DEBUG_CAVITY_REDUCTION_ONCE",
             "DELAUNAY_DEBUG_RIDGE_FAN_ONCE",
+            "DELAUNAY_REPAIR_DEBUG_POSTCONDITION_FACET",
+            "DELAUNAY_REPAIR_DEBUG_RIDGE_MIN_MULTIPLICITY",
             "DELAUNAY_BULK_PROGRESS_EVERY",
             "DELAUNAY_DEBUG_SHUFFLE",
         ];

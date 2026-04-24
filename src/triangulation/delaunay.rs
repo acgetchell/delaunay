@@ -2497,6 +2497,7 @@ where
         }
 
         // Attempt 0: original order, no extra perturbation salt.
+        log_construction_retry_result(0, None, 0_u64, "started", None, None);
         let mut last_error: String = match Self::build_with_kernel_inner_seeded(
             <K as Clone>::clone(kernel),
             vertices,
@@ -2508,14 +2509,26 @@ where
         ) {
             Ok(candidate) => match crate::core::util::is_delaunay_property_only(&candidate.tri.tds)
             {
-                Ok(()) => return Ok(candidate),
+                Ok(()) => {
+                    log_construction_retry_result(0, None, 0_u64, "succeeded", None, None);
+                    return Ok(candidate);
+                }
                 Err(err) => format!("Delaunay property violated after construction: {err}"),
             },
             Err(err) => {
+                let err_string = err.to_string();
                 if Self::is_non_retryable_construction_error(&err) {
+                    log_construction_retry_result(
+                        0,
+                        None,
+                        0_u64,
+                        "failed",
+                        Some(&err_string),
+                        None,
+                    );
                     return Err(err);
                 }
-                err.to_string()
+                err_string
             }
         };
 
@@ -3512,6 +3525,16 @@ where
                                                     &repair_err,
                                                 )?;
                                                 self.canonicalize_after_bulk_repair()?;
+                                                log_bulk_progress_if_due(
+                                                    BatchProgressSample {
+                                                        processed: offset + 1,
+                                                        inserted: inserted_vertices,
+                                                        skipped: skipped_vertices,
+                                                        cell_count: self.tri.tds.number_of_cells(),
+                                                        perturbation_seed,
+                                                    },
+                                                    &mut batch_progress,
+                                                );
                                                 continue;
                                             }
                                             // D≥4: try one escalation with a 4× budget and the full
@@ -3534,6 +3557,19 @@ where
                                                         max_queue = stats.max_queue_len,
                                                         "bulk D≥4: escalation closed the \
                                                          non-convergence; continuing"
+                                                    );
+                                                    log_bulk_progress_if_due(
+                                                        BatchProgressSample {
+                                                            processed: offset + 1,
+                                                            inserted: inserted_vertices,
+                                                            skipped: skipped_vertices,
+                                                            cell_count: self
+                                                                .tri
+                                                                .tds
+                                                                .number_of_cells(),
+                                                            perturbation_seed,
+                                                        },
+                                                        &mut batch_progress,
                                                     );
                                                     continue;
                                                 }
@@ -3756,6 +3792,16 @@ where
                                                     &repair_err,
                                                 )?;
                                                 self.canonicalize_after_bulk_repair()?;
+                                                log_bulk_progress_if_due(
+                                                    BatchProgressSample {
+                                                        processed: offset + 1,
+                                                        inserted: inserted_vertices,
+                                                        skipped: skipped_vertices,
+                                                        cell_count: self.tri.tds.number_of_cells(),
+                                                        perturbation_seed,
+                                                    },
+                                                    &mut batch_progress,
+                                                );
                                                 continue;
                                             }
                                             // D≥4: try one escalation with a 4× budget and the full
@@ -3778,6 +3824,19 @@ where
                                                         max_queue = stats.max_queue_len,
                                                         "bulk D≥4: escalation closed the \
                                                          non-convergence; continuing"
+                                                    );
+                                                    log_bulk_progress_if_due(
+                                                        BatchProgressSample {
+                                                            processed: offset + 1,
+                                                            inserted: inserted_vertices,
+                                                            skipped: skipped_vertices,
+                                                            cell_count: self
+                                                                .tri
+                                                                .tds
+                                                                .number_of_cells(),
+                                                            perturbation_seed,
+                                                        },
+                                                        &mut batch_progress,
                                                     );
                                                     continue;
                                                 }
@@ -6729,29 +6788,41 @@ mod tests {
         });
     }
 
-    #[test]
-    fn test_local_repair_flip_budget_uses_dimension_specific_floor_and_factor() {
-        assert_eq!(
-            local_repair_flip_budget::<3>(0),
-            LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_LT_4
-        );
-        assert_eq!(
-            local_repair_flip_budget::<4>(0),
-            LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_GE_4
-        );
+    macro_rules! gen_local_repair_flip_budget_tests {
+        ($dim:literal, $floor:ident, $factor:ident) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_local_repair_flip_budget_uses_dimension_specific_floor_and_factor_ $dim d>]() {
+                    assert_eq!(local_repair_flip_budget::<$dim>(0), $floor);
 
-        let seed_count = 10;
-        let raw_3d = seed_count * (3 + 1) * LOCAL_REPAIR_FLIP_BUDGET_FACTOR_D_LT_4;
-        let raw_4d = seed_count * (4 + 1) * LOCAL_REPAIR_FLIP_BUDGET_FACTOR_D_GE_4;
-        assert_eq!(
-            local_repair_flip_budget::<3>(seed_count),
-            raw_3d.max(LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_LT_4)
-        );
-        assert_eq!(
-            local_repair_flip_budget::<4>(seed_count),
-            raw_4d.max(LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_GE_4)
-        );
+                    let seed_count = 10;
+                    let raw = seed_count * ($dim + 1) * $factor;
+                    assert_eq!(local_repair_flip_budget::<$dim>(seed_count), raw.max($floor));
+                }
+            }
+        };
     }
+
+    gen_local_repair_flip_budget_tests!(
+        2,
+        LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_LT_4,
+        LOCAL_REPAIR_FLIP_BUDGET_FACTOR_D_LT_4
+    );
+    gen_local_repair_flip_budget_tests!(
+        3,
+        LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_LT_4,
+        LOCAL_REPAIR_FLIP_BUDGET_FACTOR_D_LT_4
+    );
+    gen_local_repair_flip_budget_tests!(
+        4,
+        LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_GE_4,
+        LOCAL_REPAIR_FLIP_BUDGET_FACTOR_D_GE_4
+    );
+    gen_local_repair_flip_budget_tests!(
+        5,
+        LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_GE_4,
+        LOCAL_REPAIR_FLIP_BUDGET_FACTOR_D_GE_4
+    );
 
     #[test]
     fn test_log_bulk_progress_if_due_updates_progress_state_only_when_due() {

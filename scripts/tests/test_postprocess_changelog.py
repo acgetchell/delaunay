@@ -9,6 +9,7 @@ from postprocess_changelog import (
     _fix_typos,
     _inject_summary_sections,
     _max_pr_number,
+    _normalize_indented_heading,
     _reflow_line,
     postprocess,
 )
@@ -369,6 +370,42 @@ class TestBlankLineBeforeList:
         postprocess(f)
         # Heading directly followed by list is fine per MD032.
         assert "\n\n- item" not in f.read_text(encoding="utf-8")
+
+
+class TestIndentedHeadingNormalization:
+    """MD023: commit-body headings are rendered as prose, not nested headings."""
+
+    def test_indented_atx_heading_becomes_bold_prose(self) -> None:
+        assert _normalize_indented_heading("  ## Correctness Fixes") == "  **Correctness Fixes**"
+
+    def test_indented_atx_closing_sequence_becomes_bold_prose(self) -> None:
+        assert _normalize_indented_heading("  ### API Design ###") == "  **API Design**"
+
+    def test_column_zero_changelog_heading_is_preserved(self) -> None:
+        assert _normalize_indented_heading("### Added") == "### Added"
+
+    def test_full_pipeline_normalizes_commit_body_headings(self, tmp_path: Path) -> None:
+        f = tmp_path / "CHANGELOG.md"
+        f.write_text(
+            "# Changelog\n\n"
+            "## [1.0.0]\n\n"
+            "### Performance\n\n"
+            "- perf: improve Hilbert curve correctness\n\n"
+            "  ## Correctness Fixes\n\n"
+            "  - Add debug_assert guards\n\n"
+            "  ## API Design\n\n"
+            "  - Add HilbertError enum\n",
+            encoding="utf-8",
+        )
+
+        postprocess(f)
+
+        result = f.read_text(encoding="utf-8")
+        assert "  ## Correctness Fixes" not in result
+        assert "  ## API Design" not in result
+        assert "  **Correctness Fixes**" in result
+        assert "  **API Design**" in result
+        assert "### Performance" in result
 
 
 class TestCodeBlockLanguage:

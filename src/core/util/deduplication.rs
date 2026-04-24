@@ -14,6 +14,10 @@ pub enum DeduplicationError {
     /// Epsilon must be non-negative for distance-based deduplication.
     #[error("epsilon must be non-negative")]
     NegativeEpsilon,
+
+    /// Epsilon must be finite for distance-based deduplication.
+    #[error("epsilon must be finite")]
+    NonFiniteEpsilon,
 }
 
 /// Filters vertices to remove exact coordinate duplicates.
@@ -102,9 +106,9 @@ where
 /// A new vector containing vertices that are at least `epsilon` apart from each
 /// other (distance >= epsilon). The first occurrence of each cluster is kept.
 ///
-/// If `epsilon` is negative, the input is returned unchanged and a warning is
-/// emitted. Use [`try_dedup_vertices_epsilon`] when callers should receive a
-/// typed error for invalid epsilon values.
+/// If `epsilon` is negative, NaN, or infinite, the input is returned unchanged
+/// and a warning is emitted. Use [`try_dedup_vertices_epsilon`] when callers
+/// should receive a typed error for invalid epsilon values.
 ///
 /// # Examples
 ///
@@ -133,10 +137,10 @@ where
     T: CoordinateScalar,
     U: DataType,
 {
-    if epsilon < T::zero() {
+    if !epsilon.is_finite_generic() || epsilon < T::zero() {
         tracing::warn!(
             epsilon = ?epsilon,
-            "dedup_vertices_epsilon received negative epsilon; returning input unchanged"
+            "dedup_vertices_epsilon received non-finite or negative epsilon; returning input unchanged"
         );
         return vertices.to_vec();
     }
@@ -146,12 +150,14 @@ where
 
 /// Fallible variant of [`dedup_vertices_epsilon`].
 ///
-/// This function rejects negative epsilon values with a typed error instead of
-/// falling back to returning the input unchanged.
+/// This function rejects negative, NaN, and infinite epsilon values with a
+/// typed error instead of falling back to returning the input unchanged.
 ///
 /// # Errors
 ///
 /// Returns [`DeduplicationError::NegativeEpsilon`] when `epsilon` is negative.
+/// Returns [`DeduplicationError::NonFiniteEpsilon`] when `epsilon` is NaN or
+/// infinite.
 pub fn try_dedup_vertices_epsilon<T, U, const D: usize>(
     vertices: &[Vertex<T, U, D>],
     epsilon: T,
@@ -160,6 +166,10 @@ where
     T: CoordinateScalar,
     U: DataType,
 {
+    if !epsilon.is_finite_generic() {
+        return Err(DeduplicationError::NonFiniteEpsilon);
+    }
+
     if epsilon < T::zero() {
         return Err(DeduplicationError::NegativeEpsilon);
     }
@@ -419,7 +429,7 @@ mod tests {
     }
 
     #[test]
-    fn test_coords_within_epsilon_exact_boundary_logs_and_keeps_point() {
+    fn test_coords_within_epsilon_exact_boundary_keeps_point() {
         let a = [0.0, 0.0];
         let b = [1.0, 0.0];
 
@@ -456,6 +466,42 @@ mod tests {
         let err = try_dedup_vertices_epsilon(&vertices, -1.0).unwrap_err();
 
         assert_eq!(err, DeduplicationError::NegativeEpsilon);
+    }
+
+    #[test]
+    fn test_dedup_vertices_epsilon_non_finite_epsilon_returns_input_unchanged() {
+        let vertices: Vec<Vertex<f64, (), 2>> = Vertex::from_points(&[
+            Point::new([0.0, 0.0]),
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+        ]);
+
+        for epsilon in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let unique = dedup_vertices_epsilon(&vertices, epsilon);
+
+            assert_eq!(unique.len(), vertices.len());
+            assert_eq!(
+                unique
+                    .iter()
+                    .map(<&Vertex<_, _, _> as Into<[f64; 2]>>::into)
+                    .collect::<Vec<_>>(),
+                vertices
+                    .iter()
+                    .map(<&Vertex<_, _, _> as Into<[f64; 2]>>::into)
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn test_try_dedup_vertices_epsilon_non_finite_epsilon_returns_error() {
+        let vertices: Vec<Vertex<f64, (), 2>> = Vertex::from_points(&[Point::new([0.0, 0.0])]);
+
+        for epsilon in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let err = try_dedup_vertices_epsilon(&vertices, epsilon).unwrap_err();
+
+            assert_eq!(err, DeduplicationError::NonFiniteEpsilon);
+        }
     }
 
     #[test]
