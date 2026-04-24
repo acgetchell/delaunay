@@ -219,7 +219,10 @@ where
     })
 }
 
-/// Apply a bistellar flip using explicit k and vertex/cell slices.
+/// Captures each removed cell's vertex list before a flip deletes the cells.
+///
+/// The snapshot lets later diagnostics describe removed simplices even after
+/// their `CellKey`s no longer resolve in the TDS.
 fn snapshot_removed_cell_vertices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     removed_cells: &CellKeyBuffer,
@@ -241,6 +244,7 @@ where
         .collect()
 }
 
+/// Apply a bistellar flip using explicit k and vertex/cell slices.
 #[expect(
     clippy::too_many_lines,
     reason = "Keep flip construction, validation, and wiring together for clarity"
@@ -6784,6 +6788,297 @@ mod tests {
     gen_removed_cell_snapshot_tests!(3);
     gen_removed_cell_snapshot_tests!(4);
     gen_removed_cell_snapshot_tests!(5);
+
+    struct RidgeDiagnosticFixture3d {
+        tds: Tds<f64, (), (), 3>,
+        origin_vertex: VertexKey,
+        x_axis_vertex: VertexKey,
+        y_axis_vertex: VertexKey,
+        upper_apex_vertex: VertexKey,
+        lower_apex_vertex: VertexKey,
+        upper_tetrahedron: CellKey,
+        lower_neighbor: CellKey,
+    }
+
+    impl RidgeDiagnosticFixture3d {
+        fn new() -> Self {
+            let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+            let origin_vertex = tds
+                .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+                .unwrap();
+            let x_axis_vertex = tds
+                .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+                .unwrap();
+            let y_axis_vertex = tds
+                .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+                .unwrap();
+            let upper_apex_vertex = tds
+                .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+                .unwrap();
+            let lower_apex_vertex = tds
+                .insert_vertex_with_mapping(vertex!([0.0, 0.0, -1.0]))
+                .unwrap();
+
+            let upper_tetrahedron = tds
+                .insert_cell_with_mapping(
+                    Cell::new(
+                        vec![
+                            origin_vertex,
+                            x_axis_vertex,
+                            y_axis_vertex,
+                            upper_apex_vertex,
+                        ],
+                        None,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            let lower_neighbor = tds
+                .insert_cell_with_mapping(
+                    Cell::new(
+                        vec![
+                            origin_vertex,
+                            x_axis_vertex,
+                            y_axis_vertex,
+                            lower_apex_vertex,
+                        ],
+                        None,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            repair_neighbor_pointers(&mut tds).unwrap();
+
+            Self {
+                tds,
+                origin_vertex,
+                x_axis_vertex,
+                y_axis_vertex,
+                upper_apex_vertex,
+                lower_apex_vertex,
+                upper_tetrahedron,
+                lower_neighbor,
+            }
+        }
+
+        fn ridge_ab(&self) -> SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> {
+            [self.origin_vertex, self.x_axis_vertex]
+                .into_iter()
+                .collect()
+        }
+
+        fn ridge_handle_abcd(&self) -> RidgeHandle {
+            RidgeHandle::new(self.upper_tetrahedron, 2, 3)
+        }
+
+        fn last_applied_flip(&self) -> LastAppliedFlip {
+            let mut removed_cell_vertices = RemovedCellVertexSnapshot::new();
+            removed_cell_vertices.push(
+                [
+                    self.origin_vertex,
+                    self.x_axis_vertex,
+                    self.y_axis_vertex,
+                    self.upper_apex_vertex,
+                ]
+                .into_iter()
+                .collect::<VertexKeyList>(),
+            );
+
+            let applied = AppliedFlip::<3> {
+                info: FlipInfo {
+                    kind: BistellarFlipKind::k2(3),
+                    direction: FlipDirection::Forward,
+                    removed_cells: std::iter::once(self.upper_tetrahedron).collect(),
+                    new_cells: std::iter::once(self.lower_neighbor).collect(),
+                    removed_face_vertices: [
+                        self.origin_vertex,
+                        self.x_axis_vertex,
+                        self.y_axis_vertex,
+                    ]
+                    .into_iter()
+                    .collect(),
+                    inserted_face_vertices: [self.upper_apex_vertex, self.lower_apex_vertex]
+                        .into_iter()
+                        .collect(),
+                },
+                removed_cell_vertices,
+            };
+
+            LastAppliedFlip::from_applied_flip(&applied)
+        }
+    }
+
+    #[test]
+    fn test_ridge_diagnostic_helpers_format_valid_missing_and_invalid_cells() {
+        init_tracing();
+        let fixture = RidgeDiagnosticFixture3d::new();
+        let ridge = fixture.ridge_ab();
+        let cell = fixture.tds.get_cell(fixture.upper_tetrahedron).unwrap();
+
+        let ridge_neighbors = ridge_neighbor_cells_for_cell(cell, &ridge);
+        assert!(
+            ridge_neighbors.contains(&fixture.lower_neighbor),
+            "shared-face neighbor should be visible from the ridge diagnostics"
+        );
+
+        let incident = ridge_incident_cell_summary(&fixture.tds, fixture.upper_tetrahedron, &ridge);
+        assert!(incident.contains(&format!("{:?}: extras=", fixture.upper_tetrahedron)));
+        assert!(incident.contains("ridge_neighbors="));
+        assert!(incident.contains(&format!("{:?}", fixture.lower_neighbor)));
+
+        let cell_summary = cell_vertex_summary(&fixture.tds, fixture.upper_tetrahedron);
+        assert!(cell_summary.contains("vertices="));
+
+        let facet_summary = facet_incident_cell_summary(
+            &fixture.tds,
+            fixture.upper_tetrahedron,
+            &[
+                fixture.origin_vertex,
+                fixture.x_axis_vertex,
+                fixture.y_axis_vertex,
+            ],
+        );
+        assert!(facet_summary.contains("opposite_vertices="));
+        assert!(facet_summary.contains("neighbors="));
+
+        let missing_cell = CellKey::from(KeyData::from_ffi(999_901));
+        assert_eq!(
+            ridge_incident_cell_summary(&fixture.tds, missing_cell, &ridge),
+            format!("{missing_cell:?}: missing")
+        );
+        assert_eq!(
+            cell_vertex_summary(&fixture.tds, missing_cell),
+            format!("{missing_cell:?}: missing")
+        );
+        assert_eq!(
+            facet_incident_cell_summary(
+                &fixture.tds,
+                missing_cell,
+                &[fixture.origin_vertex, fixture.x_axis_vertex],
+            ),
+            format!("{missing_cell:?}: missing")
+        );
+
+        let missing_vertex = VertexKey::from(KeyData::from_ffi(999_902));
+        let invalid_ridge: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            [fixture.origin_vertex, missing_vertex]
+                .into_iter()
+                .collect();
+        let invalid_summary =
+            ridge_incident_cell_summary(&fixture.tds, fixture.upper_tetrahedron, &invalid_ridge);
+        assert!(invalid_summary.contains("extras_error="));
+    }
+
+    #[test]
+    fn test_predecessor_diagnostic_summaries_include_flip_overlap() {
+        init_tracing();
+        let fixture = RidgeDiagnosticFixture3d::new();
+        let last = fixture.last_applied_flip();
+
+        let ridge_summary = predecessor_flip_summary(
+            &fixture.tds,
+            RidgeHandle::new(fixture.lower_neighbor, 2, 3),
+            &[fixture.lower_neighbor],
+            &last,
+        );
+        assert!(ridge_summary.contains("ridge_cell_is_new=true"));
+        assert!(ridge_summary.contains("global_cells_in_new"));
+        assert!(ridge_summary.contains("predecessor_new_cell_vertices"));
+
+        let postcondition_summary = postcondition_facet_predecessor_summary(
+            &fixture.tds,
+            &[fixture.upper_tetrahedron, fixture.lower_neighbor],
+            &last,
+        );
+        assert!(postcondition_summary.contains("incident_cells_in_new"));
+        assert!(postcondition_summary.contains("incident_cells_in_removed"));
+        assert!(postcondition_summary.contains("predecessor_removed_cell_vertices"));
+        assert!(!postcondition_summary.contains("missing-snapshot"));
+    }
+
+    #[test]
+    fn test_debug_ridge_context_exercises_valid_missing_and_invalid_paths() {
+        init_tracing();
+        let fixture = RidgeDiagnosticFixture3d::new();
+        let last = fixture.last_applied_flip();
+        let mut diagnostics = RepairDiagnostics::default();
+
+        debug_ridge_context(
+            &fixture.tds,
+            fixture.ridge_handle_abcd(),
+            Some(2),
+            &mut diagnostics,
+            Some(&last),
+        );
+        assert_eq!(diagnostics.ridge_debug_emitted, 1);
+
+        let missing_cell = CellKey::from(KeyData::from_ffi(999_903));
+        debug_ridge_context(
+            &fixture.tds,
+            RidgeHandle::new(missing_cell, 0, 1),
+            None,
+            &mut diagnostics,
+            None,
+        );
+        assert_eq!(diagnostics.ridge_debug_emitted, 2);
+
+        debug_ridge_context(
+            &fixture.tds,
+            RidgeHandle::new(fixture.upper_tetrahedron, 0, 0),
+            None,
+            &mut diagnostics,
+            None,
+        );
+        assert_eq!(diagnostics.ridge_debug_emitted, 3);
+    }
+
+    #[test]
+    fn test_ridge_debug_limit_suppresses_after_attempt_budget() {
+        let mut diagnostics = RepairDiagnostics {
+            ridge_debug_emitted: RIDGE_DEBUG_LIMIT_DEFAULT,
+            ..RepairDiagnostics::default()
+        };
+
+        assert!(!should_emit_ridge_debug(&mut diagnostics, Some(99)));
+        assert_eq!(
+            diagnostics.ridge_debug_emitted,
+            RIDGE_DEBUG_LIMIT_DEFAULT + 1
+        );
+    }
+
+    #[test]
+    fn test_postcondition_facet_debug_context_is_noop_without_env_flag() {
+        init_tracing();
+        let fixture = RidgeDiagnosticFixture3d::new();
+        let last = fixture.last_applied_flip();
+        let context = FlipContext::<3, 2> {
+            removed_face_vertices: [
+                fixture.origin_vertex,
+                fixture.x_axis_vertex,
+                fixture.y_axis_vertex,
+            ]
+            .into_iter()
+            .collect(),
+            inserted_face_vertices: [fixture.upper_apex_vertex, fixture.lower_apex_vertex]
+                .into_iter()
+                .collect(),
+            removed_cells: [fixture.upper_tetrahedron, fixture.lower_neighbor]
+                .into_iter()
+                .collect(),
+            direction: FlipDirection::Forward,
+        };
+        let mut diagnostics = RepairDiagnostics::default();
+
+        debug_postcondition_facet_context(
+            &fixture.tds,
+            FacetHandle::new(fixture.upper_tetrahedron, 3),
+            &context,
+            &mut diagnostics,
+            Some(&last),
+        );
+
+        assert_eq!(diagnostics.postcondition_facet_debug_emitted, 0);
+    }
 
     fn facet_index_for_edge_2d(
         tds: &Tds<f64, (), (), 2>,

@@ -708,7 +708,15 @@ pub struct ConstructionSkipSample {
     /// UUID of the skipped vertex.
     pub uuid: Uuid,
     /// Coordinates of the skipped vertex, converted to `f64` for logging/debugging.
+    ///
+    /// Empty when [`coords_available`](Self::coords_available) is `false`.
     pub coords: Vec<f64>,
+    /// Whether [`coords`](Self::coords) contains a successfully converted coordinate vector.
+    ///
+    /// `false` means at least one coordinate could not be represented as `f64`;
+    /// callers should omit coordinates rather than treating an empty vector as
+    /// real geometry.
+    pub coords_available: bool,
     /// Number of insertion attempts for this vertex.
     pub attempts: usize,
     /// Human-readable error message describing why the vertex was skipped.
@@ -4004,11 +4012,13 @@ where
                             construction_stats.record_insertion(&stats);
 
                             // Keep the first few skip samples so we have concrete reproduction anchors.
-                            let coords = vertex_coords_f64(vertex).unwrap_or_default();
+                            let (coords, coords_available) = vertex_coords_f64(vertex)
+                                .map_or_else(|| (Vec::new(), false), |coords| (coords, true));
                             construction_stats.record_skip_sample(ConstructionSkipSample {
                                 index,
                                 uuid: vertex.uuid(),
                                 coords,
+                                coords_available,
                                 attempts: stats.attempts,
                                 error: error.to_string(),
                             });
@@ -6018,7 +6028,7 @@ where
 
         let repair_result = {
             let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-            repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology, max_flips).map(|_| ())
+            repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology, max_flips)
         };
 
         #[cfg(test)]
@@ -6029,7 +6039,9 @@ where
         };
 
         match repair_result {
-            Ok(()) => {}
+            Ok(stats) => {
+                self.validate_ridge_links_after_repair(topology, &stats)?;
+            }
             Err(
                 e @ (DelaunayRepairError::NonConvergent { .. }
                 | DelaunayRepairError::PostconditionFailed { .. }),
@@ -6040,11 +6052,13 @@ where
                 // If the robust pass also fails, return an error. Callers that need
                 // the full heuristic rebuild (shuffled re-insertion) can invoke
                 // `repair_delaunay_with_flips_advanced()` explicitly.
-                self.repair_delaunay_with_flips_robust(seed_ref, max_flips)
+                let robust_stats = self
+                    .repair_delaunay_with_flips_robust(seed_ref, max_flips)
                     .map_err(|robust_err| InsertionError::DelaunayRepairFailed {
                         source: Box::new(robust_err),
                         context: format!("local repair failed ({e}); robust fallback also failed"),
                     })?;
+                self.validate_ridge_links_after_repair(topology, &robust_stats)?;
             }
             Err(e) => {
                 return Err(InsertionError::DelaunayRepairFailed {
@@ -6054,36 +6068,6 @@ where
             }
         }
 
-        // Topology safety-net: flip-based repair is a topological operation and must not
-        // violate the requested topology guarantee.
-        //
-        // In practice, higher-dimensional flip sequences can transiently (or permanently)
-        // introduce PL-manifold violations (e.g., disconnected ridge links). Catch those
-        // locally and surface an insertion error so the outer transactional guard can roll
-        // back the insertion.
-        //
-        // The validation scope must match what repair actually touched: the inserted
-        // vertex star (which may have grown via flips) **plus** any still-alive cells
-        // from the pre-repair seed frontier. Otherwise a violation introduced in an
-        // `extra_seed_cells` cell that is no longer adjacent to the new vertex would
-        // slip past this safety-net.
-        if topology.requires_ridge_links() {
-            let mut validation_cells: Vec<CellKey> = self.tri.adjacent_cells(vertex_key).collect();
-            let mut seen: FastHashSet<CellKey> = validation_cells.iter().copied().collect();
-            for &cell_key in &seed_cells {
-                if self.tri.tds.contains_cell(cell_key) && seen.insert(cell_key) {
-                    validation_cells.push(cell_key);
-                }
-            }
-            if !validation_cells.is_empty()
-                && let Err(err) = validate_ridge_links_for_cells(&self.tri.tds, &validation_cells)
-            {
-                return Err(InsertionError::TopologyValidationFailed {
-                    message: "Topology invalid after Delaunay repair".to_string(),
-                    source: Box::new(TriangulationValidationError::from(err)),
-                });
-            }
-        }
         // Flip-based repair mutates cell orderings; restore canonical positive geometric
         // orientation before exposing the updated triangulation state.
         self.tri.normalize_and_promote_positive_orientation()?;
@@ -6091,6 +6075,34 @@ where
             .validate_geometric_cell_orientation()
             .map_err(InsertionError::TopologyValidation)?;
         Ok(())
+    }
+
+    /// Validates PL ridge links after a repair pass that actually performed flips.
+    ///
+    /// `repair_delaunay_with_flips_k2_k3` may retry internally with a full-TDS
+    /// reseed after local postcondition failure or non-convergence, so the caller
+    /// cannot infer the final mutation frontier from the original seed cells.
+    /// Validate all current cells in that case to preserve the topology invariant.
+    fn validate_ridge_links_after_repair(
+        &self,
+        topology: TopologyGuarantee,
+        stats: &DelaunayRepairStats,
+    ) -> Result<(), InsertionError> {
+        if !topology.requires_ridge_links() || stats.flips_performed == 0 {
+            return Ok(());
+        }
+
+        let validation_cells: Vec<CellKey> = self.tri.tds.cell_keys().collect();
+        if validation_cells.is_empty() {
+            return Ok(());
+        }
+
+        validate_ridge_links_for_cells(&self.tri.tds, &validation_cells).map_err(|err| {
+            InsertionError::TopologyValidationFailed {
+                message: "Topology invalid after Delaunay repair".to_string(),
+                source: Box::new(TriangulationValidationError::from(err)),
+            }
+        })
     }
 
     /// Merge the inserted vertex star with any cells that cavity reduction touched and
@@ -7142,6 +7154,7 @@ mod tests {
         assert_eq!(sample.index, 4);
         assert_eq!(sample.uuid, duplicate_uuid);
         assert_eq!(sample.coords, vec![0.0, 0.0, 0.0]);
+        assert!(sample.coords_available);
         assert_eq!(sample.attempts, 1);
         assert!(sample.error.contains("Duplicate coordinates"));
     }
@@ -7243,6 +7256,7 @@ mod tests {
                     coordinate_base + 0.5,
                     coordinate_base + 1.0,
                 ],
+                coords_available: true,
                 attempts: index + 1,
                 error: format!("skip sample #{index}"),
             });

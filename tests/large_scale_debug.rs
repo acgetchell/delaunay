@@ -116,7 +116,7 @@ fn install_runtime_cap(max_secs: u64) -> std::sync::mpsc::SyncSender<()> {
 struct SkipSample<const D: usize> {
     index: usize,
     uuid: uuid::Uuid,
-    coords: [f64; D],
+    coords: Option<[f64; D]>,
     attempts: usize,
     error: String,
 }
@@ -193,17 +193,20 @@ impl<const D: usize> From<ConstructionStatistics> for InsertionSummary<D> {
             .skip_samples
             .iter()
             .filter_map(|s| {
-                let coords: [f64; D] = if let Ok(coords) = s.coords.as_slice().try_into() {
-                    coords
+                let coords = if s.coords_available {
+                    let Ok(coords) = s.coords.as_slice().try_into() else {
+                        tracing::warn!(
+                            index = s.index,
+                            uuid = %s.uuid,
+                            coords_len = s.coords.len(),
+                            expected_dim = D,
+                            "dropping skip sample due to coordinate dimension mismatch"
+                        );
+                        return None;
+                    };
+                    Some(coords)
                 } else {
-                    tracing::warn!(
-                        index = s.index,
-                        uuid = %s.uuid,
-                        coords_len = s.coords.len(),
-                        expected_dim = D,
-                        "dropping skip sample due to coordinate dimension mismatch"
-                    );
-                    return None;
+                    None
                 };
                 Some(SkipSample {
                     index: s.index,
@@ -756,7 +759,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
                         let sample = SkipSample {
                             index: idx,
                             uuid,
-                            coords,
+                            coords: Some(coords),
                             attempts: stats.attempts,
                             error: error.to_string(),
                         };

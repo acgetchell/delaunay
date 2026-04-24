@@ -10937,11 +10937,14 @@ mod tests {
 
         for point in perturbation_retry_repro_points_4d() {
             let v = VertexBuilder::default().point(point).build().unwrap();
-            let (_outcome, stats) = exhaustion_tri
+            let (outcome, stats) = exhaustion_tri
                 .insert_with_statistics(v, None, None)
                 .unwrap();
 
-            saw_exhausted_skip |= stats.skipped() && stats.attempts > 1;
+            saw_exhausted_skip |= stats.skipped()
+                && stats.attempts == DEFAULT_PERTURBATION_RETRIES + 1
+                && matches!(stats.result, InsertionResult::SkippedDegeneracy)
+                && matches!(outcome, InsertionOutcome::Skipped { error } if error.is_retryable());
         }
 
         assert!(

@@ -387,6 +387,12 @@ class TestIndentedHeadingNormalization:
     def test_column_zero_changelog_heading_is_preserved(self) -> None:
         assert _normalize_indented_heading("### Added") == "### Added"
 
+    def test_normalized_heading_is_idempotent(self) -> None:
+        assert _normalize_indented_heading("  **Title**") == "  **Title**"
+
+        once = _normalize_indented_heading("  ## Correctness Fixes")
+        assert _normalize_indented_heading(once) == once
+
     def test_full_pipeline_normalizes_commit_body_headings(self, tmp_path: Path) -> None:
         f = tmp_path / "CHANGELOG.md"
         f.write_text(
