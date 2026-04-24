@@ -76,10 +76,13 @@ macro_rules! test_debug_info {
             init_tracing();
             tracing::info!($($arg)*);
         }
+        #[cfg(not(feature = "test-debug"))]
+        {
+            let _ = format_args!($($arg)*);
+        }
     }};
 }
 
-#[cfg(feature = "test-debug")]
 macro_rules! test_debug_warn {
     ($($arg:tt)*) => {{
         #[cfg(feature = "test-debug")]
@@ -87,17 +90,17 @@ macro_rules! test_debug_warn {
             init_tracing();
             tracing::warn!($($arg)*);
         }
+        #[cfg(not(feature = "test-debug"))]
+        {
+            let _ = format_args!($($arg)*);
+        }
     }};
 }
 
-#[cfg(feature = "test-debug")]
 fn log_large_scale_skip(expected: &str) {
     test_debug_warn!("Large-scale test skipped (set RUN_LARGE_SCALE_TESTS=1 to enable)");
     test_debug_info!("Expected: {expected}");
 }
-
-#[cfg(not(feature = "test-debug"))]
-const fn log_large_scale_skip(_expected: &str) {}
 
 // =============================================================================
 // TEST GENERATION MACROS (reduces duplication across 2D-5D)

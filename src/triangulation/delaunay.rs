@@ -6694,6 +6694,7 @@ mod tests {
     use crate::triangulation::flips::BistellarFlips;
     use crate::vertex;
     use rand::{RngExt, SeedableRng};
+    use slotmap::KeyData;
 
     pub(super) fn force_repair_nonconvergent_enabled() -> bool {
         FORCE_REPAIR_NONCONVERGENT.with(std::cell::Cell::get)
@@ -6726,6 +6727,123 @@ mod tests {
                 .with_test_writer()
                 .try_init();
         });
+    }
+
+    #[test]
+    fn test_local_repair_flip_budget_uses_dimension_specific_floor_and_factor() {
+        assert_eq!(
+            local_repair_flip_budget::<3>(0),
+            LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_LT_4
+        );
+        assert_eq!(
+            local_repair_flip_budget::<4>(0),
+            LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_GE_4
+        );
+
+        let seed_count = 10;
+        let raw_3d = seed_count * (3 + 1) * LOCAL_REPAIR_FLIP_BUDGET_FACTOR_D_LT_4;
+        let raw_4d = seed_count * (4 + 1) * LOCAL_REPAIR_FLIP_BUDGET_FACTOR_D_GE_4;
+        assert_eq!(
+            local_repair_flip_budget::<3>(seed_count),
+            raw_3d.max(LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_LT_4)
+        );
+        assert_eq!(
+            local_repair_flip_budget::<4>(seed_count),
+            raw_4d.max(LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_GE_4)
+        );
+    }
+
+    #[test]
+    fn test_log_bulk_progress_if_due_updates_progress_state_only_when_due() {
+        let sample = BatchProgressSample {
+            processed: 5,
+            inserted: 4,
+            skipped: 1,
+            cell_count: 7,
+            perturbation_seed: 0xCAFE,
+        };
+
+        let mut disabled = None;
+        log_bulk_progress_if_due(sample, &mut disabled);
+        assert!(disabled.is_none());
+
+        let mut state = Some(BatchProgressState {
+            total_vertices: 10,
+            progress_every: 5,
+            started: Instant::now(),
+            last_progress: Instant::now(),
+            last_processed: 0,
+        });
+
+        log_bulk_progress_if_due(
+            BatchProgressSample {
+                processed: 0,
+                ..sample
+            },
+            &mut state,
+        );
+        assert_eq!(state.as_ref().unwrap().last_processed, 0);
+
+        log_bulk_progress_if_due(
+            BatchProgressSample {
+                processed: 3,
+                ..sample
+            },
+            &mut state,
+        );
+        assert_eq!(state.as_ref().unwrap().last_processed, 0);
+
+        log_bulk_progress_if_due(sample, &mut state);
+        assert_eq!(state.as_ref().unwrap().last_processed, 5);
+
+        log_bulk_progress_if_due(
+            BatchProgressSample {
+                processed: 10,
+                inserted: 8,
+                skipped: 2,
+                cell_count: 11,
+                perturbation_seed: 0xBEEF,
+            },
+            &mut state,
+        );
+        assert_eq!(state.as_ref().unwrap().last_processed, 10);
+    }
+
+    #[test]
+    fn test_collect_local_repair_seed_cells_merges_adjacent_extra_and_ignores_stale() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 1.0]),
+            vertex!([0.5, 0.5]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let all_cells: Vec<CellKey> = dt.cells().map(|(cell_key, _)| cell_key).collect();
+
+        let (vertex_key, adjacent, extra_cell) = dt
+            .vertices()
+            .find_map(|(vertex_key, _)| {
+                let adjacent: Vec<CellKey> = dt.tri.adjacent_cells(vertex_key).collect();
+                all_cells
+                    .iter()
+                    .copied()
+                    .find(|cell_key| !adjacent.contains(cell_key))
+                    .map(|extra_cell| (vertex_key, adjacent, extra_cell))
+            })
+            .expect("fixture should contain a cell outside at least one vertex star");
+
+        let stale_cell = CellKey::from(KeyData::from_ffi(999_999));
+        let seeds = dt.collect_local_repair_seed_cells(
+            vertex_key,
+            &[adjacent[0], extra_cell, extra_cell, stale_cell],
+        );
+
+        assert_eq!(seeds.len(), adjacent.len() + 1);
+        assert_eq!(&seeds[..adjacent.len()], adjacent.as_slice());
+        assert_eq!(seeds[adjacent.len()], extra_cell);
+        assert!(!seeds.contains(&stale_cell));
     }
 
     struct ForceHeuristicRebuildGuard {

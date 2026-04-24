@@ -382,18 +382,21 @@ Integration tests for the `delaunayize_by_flips` workflow validating the public 
 
 #### [`large_scale_debug.rs`](./large_scale_debug.rs)
 
-Reproduction-oriented debug harnesses for larger 3D/4D datasets, including ignored tests and bisect-style workflows.
+Reproduction-oriented debug harnesses for the active larger 3D/4D/5D
+datasets tracked in issues #340, #341, and #342.
 
-**Run with:** `cargo test --release --test large_scale_debug -- --ignored --nocapture` (or the `just debug-large-scale-*` helpers)
+**Run with:** `cargo test --release --test large_scale_debug -- --ignored --nocapture`
+or one of the active large-scale helpers:
+
+- `just debug-large-scale-4d [n]` — issue #340, default `n=3000`
+- `just debug-large-scale-3d [n]` — issue #341, default `n=10000`
+- `just debug-large-scale-5d [n]` — issue #342, default `n=1000`
 
 **Note:** Use `--release` for runs above roughly 30 vertices; debug-mode
 overhead makes large 3D/4D cases look hung even when the algorithm is making
 progress. For the `new`/batch path, set
 `DELAUNAY_BULK_PROGRESS_EVERY=<N>` to emit periodic batch-construction
-summaries. For minimal seeded repros, use the ignored
-`debug_large_scale_3d_incremental_prefix_bisect` and
-`debug_large_scale_4d_incremental_prefix_bisect` tests (or the matching
-`just debug-large-scale-*-incremental-bisect` helpers).
+summaries.
 
 #### [`conflict_region_verification.rs`](./conflict_region_verification.rs)
 

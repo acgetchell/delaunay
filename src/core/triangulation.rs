@@ -313,17 +313,20 @@ fn cavity_conflict_error_summary(error: &ConflictError) -> String {
 /// Routed through `tracing::debug!`; enable with `RUST_LOG=debug` (the
 /// large-scale debug harness wires this up automatically when
 /// `DELAUNAY_DEBUG_CAVITY_REDUCTION_ONCE` is set).
-fn log_cavity_reduction_event(
+fn log_cavity_reduction_event<F>(
     enabled: bool,
     iteration: usize,
     conflict_cells: &CellKeyBuffer,
-    event: &str,
-) {
+    event: F,
+) where
+    F: FnOnce() -> String,
+{
     if !enabled {
         return;
     }
 
     let conflict_preview: Vec<CellKey> = conflict_cells.iter().copied().take(12).collect();
+    let event = event();
     tracing::debug!(
         target: "delaunay::cavity_reduction",
         iteration,
@@ -332,6 +335,34 @@ fn log_cavity_reduction_event(
         conflict_preview = ?conflict_preview,
         "cavity-reduction event"
     );
+}
+
+fn retain_conflict_cells_and_record_removed(
+    conflict_cells: &mut CellKeyBuffer,
+    repair_seed_cells: &mut CellKeyBuffer,
+    mut keep_cell: impl FnMut(CellKey) -> bool,
+) {
+    conflict_cells.retain(|cell_key| {
+        let keep = keep_cell(*cell_key);
+        if !keep {
+            repair_seed_cells.push(*cell_key);
+        }
+        keep
+    });
+}
+
+fn replace_conflict_cells_and_record_removed(
+    conflict_cells: &mut CellKeyBuffer,
+    repair_seed_cells: &mut CellKeyBuffer,
+    replacement: CellKeyBuffer,
+) {
+    let replacement_set: FastHashSet<CellKey> = replacement.iter().copied().collect();
+    for &cell_key in conflict_cells.iter() {
+        if !replacement_set.contains(&cell_key) {
+            repair_seed_cells.push(cell_key);
+        }
+    }
+    *conflict_cells = replacement;
 }
 
 #[expect(
@@ -4355,9 +4386,10 @@ where
             conflict_cells.push(start_cell);
         }
 
-        // Preserve every cell that participates in cavity shaping so callers can seed
-        // local Delaunay repair from cells that were shrunk out of the final cavity.
-        let mut repair_seed_cells = conflict_cells.clone();
+        // Preserve every cell that participates in cavity shaping and is later
+        // removed from the final cavity so callers can seed local Delaunay
+        // repair from the surviving fringe.
+        let mut repair_seed_cells = CellKeyBuffer::new();
 
         // Extract cavity boundary.
         //
@@ -4395,7 +4427,7 @@ where
                             trace_cavity_reduction,
                             iterations,
                             &conflict_cells,
-                            &format!("initial_ok boundary_facets={}", boundary.len()),
+                            || format!("initial_ok boundary_facets={}", boundary.len()),
                         );
                     }
                     Err(err) => {
@@ -4403,7 +4435,7 @@ where
                             trace_cavity_reduction,
                             iterations,
                             &conflict_cells,
-                            &format!("initial_err {}", cavity_conflict_error_summary(err)),
+                            || format!("initial_err {}", cavity_conflict_error_summary(err)),
                         );
                     }
                 }
@@ -4414,7 +4446,7 @@ where
                             trace_cavity_reduction,
                             iterations,
                             &conflict_cells,
-                            "budget_exhausted",
+                            || "budget_exhausted".to_string(),
                         );
                         break;
                     }
@@ -4435,12 +4467,16 @@ where
                                 trace_cavity_reduction,
                                 iterations,
                                 &conflict_cells,
-                                &format!("ridge_fan_shrink remove_cells={extra_cells:?}"),
+                                || format!("ridge_fan_shrink remove_cells={extra_cells:?}"),
                             );
                             saw_ridge_fan_shrink = true;
                             let remove_set: FastHashSet<CellKey> =
                                 extra_cells.iter().copied().collect();
-                            conflict_cells.retain(|k| !remove_set.contains(k));
+                            retain_conflict_cells_and_record_removed(
+                                &mut conflict_cells,
+                                &mut repair_seed_cells,
+                                |cell_key| !remove_set.contains(&cell_key),
+                            );
                         }
 
                         // DisconnectedBoundary: EXPAND – add non-conflict neighbors of the
@@ -4483,11 +4519,10 @@ where
                                     trace_cavity_reduction,
                                     iterations,
                                     &conflict_cells,
-                                    &format!("disconnected_boundary_expand add_cells={added:?}"),
+                                    || format!("disconnected_boundary_expand add_cells={added:?}"),
                                 );
                                 for k in cells_to_add {
                                     conflict_cells.push(k);
-                                    repair_seed_cells.push(k);
                                 }
                             } else if conflict_cells.len() > D + 1 {
                                 // SHRINK fallback: no non-conflict neighbors found.
@@ -4501,19 +4536,25 @@ where
                                     trace_cavity_reduction,
                                     iterations,
                                     &conflict_cells,
-                                    &format!(
-                                        "disconnected_boundary_shrink remove_cells={disconnected_cells:?}"
-                                    ),
+                                    || {
+                                        format!(
+                                            "disconnected_boundary_shrink remove_cells={disconnected_cells:?}"
+                                        )
+                                    },
                                 );
                                 let remove_set: FastHashSet<CellKey> =
                                     disconnected_cells.iter().copied().collect();
-                                conflict_cells.retain(|k| !remove_set.contains(k));
+                                retain_conflict_cells_and_record_removed(
+                                    &mut conflict_cells,
+                                    &mut repair_seed_cells,
+                                    |cell_key| !remove_set.contains(&cell_key),
+                                );
                             } else {
                                 log_cavity_reduction_event(
                                     trace_cavity_reduction,
                                     iterations,
                                     &conflict_cells,
-                                    "disconnected_boundary_no_progress",
+                                    || "disconnected_boundary_no_progress".to_string(),
                                 );
                                 break;
                             }
@@ -4533,10 +4574,14 @@ where
                                 trace_cavity_reduction,
                                 iterations,
                                 &conflict_cells,
-                                &format!("open_boundary_shrink open_cell={open_cell:?}"),
+                                || format!("open_boundary_shrink open_cell={open_cell:?}"),
                             );
                             let open = *open_cell;
-                            conflict_cells.retain(|k| *k != open);
+                            retain_conflict_cells_and_record_removed(
+                                &mut conflict_cells,
+                                &mut repair_seed_cells,
+                                |cell_key| cell_key != open,
+                            );
                         }
 
                         _ => {
@@ -4544,7 +4589,7 @@ where
                                 trace_cavity_reduction,
                                 iterations,
                                 &conflict_cells,
-                                "no_reduction_rule_matched",
+                                || "no_reduction_rule_matched".to_string(),
                             );
                             break;
                         }
@@ -4557,7 +4602,7 @@ where
                                 trace_cavity_reduction,
                                 iterations,
                                 &conflict_cells,
-                                &format!("reextract_ok boundary_facets={}", boundary.len()),
+                                || format!("reextract_ok boundary_facets={}", boundary.len()),
                             );
                         }
                         Err(err) => {
@@ -4565,7 +4610,7 @@ where
                                 trace_cavity_reduction,
                                 iterations,
                                 &conflict_cells,
-                                &format!("reextract_err {}", cavity_conflict_error_summary(err)),
+                                || format!("reextract_err {}", cavity_conflict_error_summary(err)),
                             );
                         }
                     }
@@ -4611,12 +4656,13 @@ where
                             "Conflict region degeneracy ({err}); falling back to star-split of cell {start_cell:?}"
                         );
 
-                        conflict_cells = {
-                            let mut owned = CellKeyBuffer::new();
-                            owned.push(start_cell);
-                            owned
-                        };
-                        repair_seed_cells.push(start_cell);
+                        let mut replacement = CellKeyBuffer::new();
+                        replacement.push(start_cell);
+                        replace_conflict_cells_and_record_removed(
+                            &mut conflict_cells,
+                            &mut repair_seed_cells,
+                            replacement,
+                        );
 
                         Self::star_split_boundary_facets(start_cell)
                     } else {
@@ -4646,12 +4692,13 @@ where
                 "Empty cavity boundary; falling back to splitting containing cell {start_cell:?}"
             );
 
-            conflict_cells = {
-                let mut owned = CellKeyBuffer::new();
-                owned.push(start_cell);
-                owned
-            };
-            repair_seed_cells.push(start_cell);
+            let mut replacement = CellKeyBuffer::new();
+            replacement.push(start_cell);
+            replace_conflict_cells_and_record_removed(
+                &mut conflict_cells,
+                &mut repair_seed_cells,
+                replacement,
+            );
             boundary_facets = Self::star_split_boundary_facets(start_cell);
         }
 
@@ -4718,13 +4765,9 @@ where
             Some(&conflict_cells),
         )?;
 
-        // Drop any repair-seed entries that are about to be deleted. Cavity
-        // reduction shrinks `conflict_cells` in place; the cells that were in
-        // the *initial* conflict region but remain in the final reduced set
-        // will be removed by `remove_cells_by_keys` below, so their keys
-        // become stale. Callers filter with `contains_cell` as a safety net,
-        // but the contract of `repair_seed_cells` is "cells that participated
-        // in cavity shaping and survived", so the filter belongs here.
+        // Drop any repair-seed entries that were removed earlier but later got
+        // reintroduced into the final conflict region. Those keys will be
+        // deleted by `remove_cells_by_keys` below, so they cannot seed repair.
         let dead_conflict_cells: FastHashSet<CellKey> = conflict_cells.iter().copied().collect();
         repair_seed_cells.retain(|ck| !dead_conflict_cells.contains(ck));
 
@@ -6020,12 +6063,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::algorithms::locate::InternalInconsistencySite;
     use crate::core::collections::NeighborBuffer;
     use crate::core::collections::spatial_hash_grid::HashGridIndex;
     use crate::core::vertex::VertexBuilder;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::geometry::point::Point;
-    use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
+    use crate::geometry::traits::coordinate::{
+        Coordinate, CoordinateConversionError, CoordinateScalar,
+    };
     use crate::topology::characteristics::validation::validate_triangulation_euler;
     use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
     use crate::triangulation::delaunay::DelaunayTriangulation;
@@ -6157,6 +6203,191 @@ mod tests {
             err.to_string(),
             "Internal inconsistency during construction: missing vertex in lookup table"
         );
+    }
+
+    #[test]
+    fn test_retryable_conflict_trace_detail_formats_retryable_variants() {
+        let extra_cell = CellKey::from(KeyData::from_ffi(10));
+        let disconnected_cell = CellKey::from(KeyData::from_ffi(11));
+        let open_cell = CellKey::from(KeyData::from_ffi(12));
+
+        let non_manifold = InsertionError::ConflictRegion(ConflictError::NonManifoldFacet {
+            facet_hash: 0xABCD,
+            cell_count: 3,
+        });
+        assert_eq!(
+            retryable_conflict_trace_detail(&non_manifold).as_deref(),
+            Some("kind=non_manifold_facet facet_hash=0xabcd cell_count=3")
+        );
+
+        let ridge_fan = InsertionError::ConflictRegion(ConflictError::RidgeFan {
+            facet_count: 4,
+            ridge_vertex_count: 2,
+            extra_cells: vec![extra_cell],
+        });
+        assert_eq!(
+            retryable_conflict_trace_detail(&ridge_fan).as_deref(),
+            Some("kind=ridge_fan facet_count=4 ridge_vertex_count=2 extra_cells=1")
+        );
+
+        let disconnected = InsertionError::ConflictRegion(ConflictError::DisconnectedBoundary {
+            visited: 2,
+            total: 5,
+            disconnected_cells: vec![disconnected_cell],
+        });
+        assert_eq!(
+            retryable_conflict_trace_detail(&disconnected).as_deref(),
+            Some("kind=disconnected_boundary visited=2 total=5 disconnected_cells=1")
+        );
+
+        let open = InsertionError::ConflictRegion(ConflictError::OpenBoundary {
+            facet_count: 1,
+            ridge_vertex_count: 2,
+            open_cell,
+        });
+        assert_eq!(
+            retryable_conflict_trace_detail(&open).as_deref(),
+            Some("kind=open_boundary facet_count=1 ridge_vertex_count=2")
+        );
+
+        let not_retryable = InsertionError::CavityFilling {
+            message: "plain insertion failure".to_string(),
+        };
+        assert!(retryable_conflict_trace_detail(&not_retryable).is_none());
+    }
+
+    #[test]
+    fn test_cavity_conflict_error_summary_formats_all_variants() {
+        let cell_key = CellKey::from(KeyData::from_ffi(21));
+
+        let cases = vec![
+            (
+                ConflictError::NonManifoldFacet {
+                    facet_hash: 0xCAFE,
+                    cell_count: 4,
+                },
+                "non_manifold_facet facet_hash=0xcafe cell_count=4".to_string(),
+            ),
+            (
+                ConflictError::RidgeFan {
+                    facet_count: 5,
+                    ridge_vertex_count: 3,
+                    extra_cells: vec![cell_key],
+                },
+                "ridge_fan facet_count=5 ridge_vertex_count=3 extra_cells=1".to_string(),
+            ),
+            (
+                ConflictError::DisconnectedBoundary {
+                    visited: 1,
+                    total: 3,
+                    disconnected_cells: vec![cell_key],
+                },
+                "disconnected_boundary visited=1 total=3 disconnected_cells=1".to_string(),
+            ),
+            (
+                ConflictError::OpenBoundary {
+                    facet_count: 1,
+                    ridge_vertex_count: 2,
+                    open_cell: cell_key,
+                },
+                format!("open_boundary facet_count=1 ridge_vertex_count=2 open_cell={cell_key:?}"),
+            ),
+            (
+                ConflictError::InvalidStartCell { cell_key },
+                format!("invalid_start_cell cell_key={cell_key:?}"),
+            ),
+            (
+                ConflictError::CellDataAccessFailed {
+                    cell_key,
+                    message: "missing vertices".to_string(),
+                },
+                format!("cell_data_access_failed cell_key={cell_key:?} message=missing vertices"),
+            ),
+        ];
+
+        for (error, expected) in cases {
+            assert_eq!(cavity_conflict_error_summary(&error), expected);
+        }
+
+        let predicate = ConflictError::PredicateError {
+            source: CoordinateConversionError::ConversionFailed {
+                coordinate_index: 2,
+                coordinate_value: "NaN".to_string(),
+                from_type: "f64",
+                to_type: "f32",
+            },
+        };
+        assert!(
+            cavity_conflict_error_summary(&predicate)
+                .starts_with("predicate_error source=Failed to convert coordinate")
+        );
+
+        let internal = ConflictError::InternalInconsistency {
+            site: InternalInconsistencySite::RidgeInfoMissingSecondFacet {
+                first_facet: 4,
+                boundary_facets_len: 6,
+                ridge_vertex_count: 2,
+            },
+        };
+        assert!(cavity_conflict_error_summary(&internal).contains("internal_inconsistency site="));
+    }
+
+    #[test]
+    fn test_cavity_reduction_cell_bookkeeping_records_removed_cells() {
+        let a = CellKey::from(KeyData::from_ffi(31));
+        let b = CellKey::from(KeyData::from_ffi(32));
+        let c = CellKey::from(KeyData::from_ffi(33));
+        let d = CellKey::from(KeyData::from_ffi(34));
+
+        let mut conflict_cells: CellKeyBuffer = [a, b, c].into_iter().collect();
+        let mut repair_seed_cells = CellKeyBuffer::new();
+        retain_conflict_cells_and_record_removed(
+            &mut conflict_cells,
+            &mut repair_seed_cells,
+            |ck| ck != b,
+        );
+        assert_eq!(
+            conflict_cells.iter().copied().collect::<Vec<_>>(),
+            vec![a, c]
+        );
+        assert_eq!(
+            repair_seed_cells.iter().copied().collect::<Vec<_>>(),
+            vec![b]
+        );
+
+        let replacement: CellKeyBuffer = [c, d].into_iter().collect();
+        replace_conflict_cells_and_record_removed(
+            &mut conflict_cells,
+            &mut repair_seed_cells,
+            replacement,
+        );
+        assert_eq!(
+            conflict_cells.iter().copied().collect::<Vec<_>>(),
+            vec![c, d]
+        );
+        assert_eq!(
+            repair_seed_cells.iter().copied().collect::<Vec<_>>(),
+            vec![b, a]
+        );
+    }
+
+    #[test]
+    fn test_log_cavity_reduction_event_only_evaluates_when_enabled() {
+        let mut conflict_cells = CellKeyBuffer::new();
+        conflict_cells.push(CellKey::from(KeyData::from_ffi(41)));
+
+        let mut called = false;
+        log_cavity_reduction_event(false, 0, &conflict_cells, || {
+            called = true;
+            "should not run".to_string()
+        });
+        assert!(!called);
+
+        log_cavity_reduction_event(true, 1, &conflict_cells, || {
+            called = true;
+            "ran".to_string()
+        });
+        assert!(called);
     }
 
     #[test]

@@ -324,6 +324,9 @@ fn bench_memory_usage<const D: usize>(c: &mut Criterion, dimension_name: &str, n
         );
     }
 
+    // Prime the one-time memory-unit log outside Criterion's measured closure.
+    let _ = get_memory_usage();
+
     group.bench_function("construction_memory_delta", |b| {
         b.iter(|| {
             let mem_info = measure_construction_with_memory::<D>(n_points, seed);

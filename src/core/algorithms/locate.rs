@@ -136,6 +136,7 @@ pub enum LocateError {
 /// assert!(matches!(err, ConflictError::InvalidStartCell { .. }));
 /// ```
 #[derive(Debug, Clone, thiserror::Error)]
+#[non_exhaustive]
 pub enum ConflictError {
     /// Starting cell is invalid
     #[error("Invalid starting cell: {cell_key:?}")]
@@ -1852,6 +1853,107 @@ mod tests {
     use crate::prelude::DelaunayTriangulation;
     use crate::vertex;
     use slotmap::KeyData;
+
+    #[test]
+    fn test_internal_inconsistency_site_display_variants() {
+        let ridge_fan = InternalInconsistencySite::RidgeFanExtraFacetOutOfBounds {
+            index: 7,
+            boundary_facets_len: 5,
+            extra_facets_len: 3,
+        };
+        assert_eq!(
+            ridge_fan.to_string(),
+            "RidgeFan extra_facets index 7 out of bounds \
+             (boundary_facets.len()=5, extra_facets_len=3)"
+        );
+
+        let open_boundary = InternalInconsistencySite::OpenBoundaryMissingFirstFacet {
+            first_facet: 11,
+            boundary_facets_len: 9,
+            facet_count: 1,
+            ridge_vertex_count: 2,
+        };
+        assert_eq!(
+            open_boundary.to_string(),
+            "OpenBoundary missing first_facet index 11 \
+             (boundary_facets.len()=9, facet_count=1, ridge_vertex_count=2)"
+        );
+
+        let missing_second = InternalInconsistencySite::RidgeInfoMissingSecondFacet {
+            first_facet: 4,
+            boundary_facets_len: 6,
+            ridge_vertex_count: 3,
+        };
+        assert_eq!(
+            missing_second.to_string(),
+            "RidgeInfo missing second_facet when facet_count == 2 \
+             (first_facet=4, boundary_facets_len=6, ridge_vertex_count=3)"
+        );
+    }
+
+    #[test]
+    fn test_format_vertex_and_cell_references_include_missing_markers() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let tds = dt.tds();
+        let cell_key = tds.cell_keys().next().unwrap();
+        let cell = tds.get_cell(cell_key).unwrap();
+
+        let formatted_vertices = format_vertex_refs(tds, cell.vertices());
+        assert!(formatted_vertices.contains("VertexKey"));
+        assert!(!formatted_vertices.contains("missing"));
+
+        let missing_vertex = VertexKey::from(KeyData::from_ffi(999_999));
+        let formatted_missing = format_vertex_refs(tds, &[missing_vertex]);
+        assert!(formatted_missing.contains("missing"));
+
+        let facet = FacetHandle::new(cell_key, 0);
+        let formatted_facet = format_facet_vertices(tds, facet);
+        assert!(formatted_facet.contains("VertexKey"));
+
+        let formatted_cell = format_cell_vertices(tds, cell_key);
+        assert!(formatted_cell.contains("VertexKey"));
+
+        let missing_cell = CellKey::from(KeyData::from_ffi(999_999));
+        assert_eq!(
+            format_facet_vertices(tds, FacetHandle::new(missing_cell, 0)),
+            "<missing-cell>"
+        );
+        assert_eq!(format_cell_vertices(tds, missing_cell), "<missing-cell>");
+    }
+
+    #[test]
+    fn test_collect_ridge_fan_extra_cells_deduplicates_cells() {
+        let cell_a = CellKey::from(KeyData::from_ffi(1));
+        let cell_b = CellKey::from(KeyData::from_ffi(2));
+        let cell_c = CellKey::from(KeyData::from_ffi(3));
+        let cell_d = CellKey::from(KeyData::from_ffi(4));
+        let boundary_facets: CavityBoundaryBuffer = [
+            FacetHandle::new(cell_a, 0),
+            FacetHandle::new(cell_b, 1),
+            FacetHandle::new(cell_c, 2),
+            FacetHandle::new(cell_c, 3),
+            FacetHandle::new(cell_d, 0),
+        ]
+        .into_iter()
+        .collect();
+
+        let info = RidgeInfo {
+            ridge_vertex_count: 2,
+            ridge_vertices: SmallBuffer::new(),
+            facet_count: 5,
+            first_facet: 0,
+            second_facet: Some(1),
+            extra_facets: vec![2, 3, 4],
+        };
+
+        let extra_cells = collect_ridge_fan_extra_cells(&boundary_facets, &info).unwrap();
+        assert_eq!(extra_cells, vec![cell_c, cell_d]);
+    }
 
     #[test]
     fn test_orientation_logic_manual() {

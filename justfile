@@ -214,23 +214,14 @@ coverage:
 coverage-ci:
     cargo tarpaulin {{_coverage_base_args}} --out Xml --output-dir coverage -- --skip prop_
 
-debug-large-scale-3d-100:
-    DELAUNAY_LARGE_DEBUG_N_3D=100 cargo test --release --test large_scale_debug debug_large_scale_3d -- --ignored --exact --nocapture
+debug-large-scale-3d n="10000":
+    DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_3D={{n}} cargo test --release --test large_scale_debug debug_large_scale_3d -- --ignored --exact --nocapture
 
-debug-large-scale-3d-1000:
-    DELAUNAY_LARGE_DEBUG_N_3D=1000 cargo test --release --test large_scale_debug debug_large_scale_3d -- --ignored --exact --nocapture
+debug-large-scale-4d n="3000":
+    DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_4D={{n}} cargo test --release --test large_scale_debug debug_large_scale_4d -- --ignored --exact --nocapture
 
-debug-large-scale-3d-incremental-bisect total="1000":
-    DELAUNAY_LARGE_DEBUG_PREFIX_TOTAL={{total}} cargo test --release --test large_scale_debug debug_large_scale_3d_incremental_prefix_bisect -- --ignored --nocapture
-
-debug-large-scale-4d-incremental-bisect total="500":
-    DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 DELAUNAY_LARGE_DEBUG_PREFIX_TOTAL={{total}} cargo test --release --test large_scale_debug debug_large_scale_4d_incremental_prefix_bisect -- --ignored --nocapture
-
-debug-large-scale-4d:
-    DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 cargo test --release --test large_scale_debug debug_large_scale_4d -- --ignored --exact --nocapture
-
-debug-large-scale-4d-100:
-    DELAUNAY_LARGE_DEBUG_N_4D=100 DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 cargo test --release --test large_scale_debug debug_large_scale_4d -- --ignored --exact --nocapture
+debug-large-scale-5d n="1000":
+    DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_5D={{n}} cargo test --release --test large_scale_debug debug_large_scale_5d -- --ignored --exact --nocapture
 
 # Default recipe shows available commands
 default:
@@ -268,14 +259,11 @@ help-workflows:
     @echo "  just test-slow         # Run slow/stress tests with --features slow-tests"
     @echo "  just examples          # Run all examples"
     @echo ""
-    @echo "Active large-scale debugging (keep until #307/#204 are resolved):"
+    @echo "Active large-scale debugging:"
     @echo "  just test-debug            # Run debug tools with output"
-    @echo "  just debug-large-scale-3d-100   # Run large-scale 3D debug harness at 100 points"
-    @echo "  just debug-large-scale-3d-1000  # Run large-scale 3D debug harness at 1000 points"
-    @echo "  just debug-large-scale-3d-incremental-bisect [total] # Bisect failing 3D incremental prefix"
-    @echo "  just debug-large-scale-4d-incremental-bisect [total] # Bisect failing 4D batch prefix"
-    @echo "  just debug-large-scale-4d-100   # Run large-scale 4D debug harness at 100 points"
-    @echo "  just debug-large-scale-4d       # Run large-scale 4D debug harness"
+    @echo "  just debug-large-scale-4d [n] # Issue #340: 4D large-scale runtime (default n=3000)"
+    @echo "  just debug-large-scale-3d [n] # Issue #341: 3D scalability (default n=10000)"
+    @echo "  just debug-large-scale-5d [n] # Issue #342: 5D feasibility (default n=1000)"
     @echo ""
     @echo "Benchmark workflows (explicit perf-profile runs):"
     @echo "  just bench-smoke        # Smoke-test benchmark harnesses (minimal samples)"

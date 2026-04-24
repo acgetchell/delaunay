@@ -61,6 +61,9 @@ use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use thiserror::Error;
 
+type VertexKeyList = SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>;
+type RemovedCellVertexSnapshot = SmallBuffer<VertexKeyList, MAX_PRACTICAL_DIMENSION_SIZE>;
+
 /// Bistellar flip kind descriptor.
 ///
 /// Access the move size with [`BistellarFlipKind::k`].
@@ -218,6 +221,27 @@ where
 }
 
 /// Apply a bistellar flip using explicit k and vertex/cell slices.
+fn snapshot_removed_cell_vertices<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    removed_cells: &CellKeyBuffer,
+) -> Result<RemovedCellVertexSnapshot, FlipError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    removed_cells
+        .iter()
+        .copied()
+        .map(|cell_key| {
+            let cell = tds
+                .get_cell(cell_key)
+                .ok_or(FlipError::MissingCell { cell_key })?;
+            Ok(cell.vertices().iter().copied().collect())
+        })
+        .collect()
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "Keep flip construction, validation, and wiring together for clarity"
@@ -230,7 +254,7 @@ fn apply_bistellar_flip_with_k<T, U, V, const D: usize>(
     removed_cells: &CellKeyBuffer,
     direction: FlipDirection,
     orientation_policy: ReplacementOrientationPolicy,
-) -> Result<FlipInfo<D>, FlipError>
+) -> Result<AppliedFlip<D>, FlipError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -414,18 +438,7 @@ where
     // `tds.remove_cells_by_keys` runs, `tds.get_cell(removed_key)` returns
     // `None`, which would strip the most useful context from predecessor-flip
     // traces (see #204 investigation).
-    let removed_cell_vertices: SmallBuffer<
-        SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-        MAX_PRACTICAL_DIMENSION_SIZE,
-    > = removed_cells
-        .iter()
-        .copied()
-        .map(|cell_key| {
-            tds.get_cell(cell_key)
-                .map(|cell| cell.vertices().iter().copied().collect())
-                .unwrap_or_default()
-        })
-        .collect();
+    let removed_cell_vertices = snapshot_removed_cell_vertices(tds, removed_cells)?;
 
     tds.remove_cells_by_keys(removed_cells);
 
@@ -434,13 +447,15 @@ where
         "TDS coherent orientation invariant violated after bistellar flip (k={k_move}, direction={direction:?})",
     );
 
-    Ok(FlipInfo {
-        kind: BistellarFlipKind { k: k_move, d: D },
-        direction,
-        removed_cells: removed_cells.iter().copied().collect(),
-        new_cells,
-        removed_face_vertices: removed_face_vertices.iter().copied().collect(),
-        inserted_face_vertices: inserted_face_vertices.iter().copied().collect(),
+    Ok(AppliedFlip {
+        info: FlipInfo {
+            kind: BistellarFlipKind { k: k_move, d: D },
+            direction,
+            removed_cells: removed_cells.iter().copied().collect(),
+            new_cells,
+            removed_face_vertices: removed_face_vertices.iter().copied().collect(),
+            inserted_face_vertices: inserted_face_vertices.iter().copied().collect(),
+        },
         removed_cell_vertices,
     })
 }
@@ -1174,7 +1189,7 @@ where
     U: DataType,
     V: DataType,
 {
-    apply_bistellar_flip_with_k(
+    Ok(apply_bistellar_flip_with_k(
         tds,
         K_MOVE,
         &context.removed_face_vertices,
@@ -1182,7 +1197,8 @@ where
         &context.removed_cells,
         context.direction,
         ReplacementOrientationPolicy::AllowSigned,
-    )
+    )?
+    .info)
 }
 
 /// Apply a generic k-move with runtime k (no Delaunay check).
@@ -1202,7 +1218,7 @@ where
     U: DataType,
     V: DataType,
 {
-    apply_bistellar_flip_with_k(
+    Ok(apply_bistellar_flip_with_k(
         tds,
         k_move,
         &context.removed_face_vertices,
@@ -1210,14 +1226,15 @@ where
         &context.removed_cells,
         context.direction,
         ReplacementOrientationPolicy::AllowSigned,
-    )
+    )?
+    .info)
 }
 
 /// Apply a k=2 Delaunay-repair move with positive replacement geometry.
 fn apply_delaunay_flip_k2<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
     context: &FlipContext<D, 2>,
-) -> Result<FlipInfo<D>, FlipError>
+) -> Result<AppliedFlip<D>, FlipError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -1238,7 +1255,7 @@ where
 fn apply_delaunay_flip_k3<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
     context: &FlipContext<D, 3>,
-) -> Result<FlipInfo<D>, FlipError>
+) -> Result<AppliedFlip<D>, FlipError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -1260,7 +1277,7 @@ fn apply_delaunay_flip_dynamic<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
     k_move: usize,
     context: &FlipContextDyn<D>,
-) -> Result<FlipInfo<D>, FlipError>
+) -> Result<AppliedFlip<D>, FlipError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -1760,12 +1777,6 @@ pub enum FlipError {
 ///     SmallBuffer::new();
 /// inserted_face_vertices.push(VertexKey::from(KeyData::from_ffi(4)));
 ///
-/// let mut removed_cell_vertices: SmallBuffer<
-///     SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-///     MAX_PRACTICAL_DIMENSION_SIZE,
-/// > = SmallBuffer::new();
-/// removed_cell_vertices.push(SmallBuffer::new());
-///
 /// let info: FlipInfo<3> = FlipInfo {
 ///     kind: BistellarFlipKind::k2(3),
 ///     direction: FlipDirection::Forward,
@@ -1773,7 +1784,6 @@ pub enum FlipError {
 ///     new_cells,
 ///     removed_face_vertices,
 ///     inserted_face_vertices,
-///     removed_cell_vertices,
 /// };
 /// assert_eq!(info.kind.k(), 2);
 /// ```
@@ -1791,17 +1801,12 @@ pub struct FlipInfo<const D: usize> {
     pub removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
     /// The inserted-face simplex (complementary simplex).
     pub inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-    /// Snapshot of each removed cell's vertex list, captured **before** the
-    /// flip's `remove_cells_by_keys` call. Entries correspond 1:1 with
-    /// `removed_cells`. An empty inner buffer indicates the cell was already
-    /// missing at snapshot time.
-    ///
-    /// This exists so postcondition diagnostics can reconstruct the removed
-    /// simplices after the keys in `removed_cells` are stale.
-    pub removed_cell_vertices: SmallBuffer<
-        SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-        MAX_PRACTICAL_DIMENSION_SIZE,
-    >,
+}
+
+#[derive(Debug, Clone)]
+struct AppliedFlip<const D: usize> {
+    info: FlipInfo<D>,
+    removed_cell_vertices: RemovedCellVertexSnapshot,
 }
 
 /// Const-generic flip context for a k-move (forward or inverse).
@@ -3200,8 +3205,8 @@ where
             ));
         }
 
-        let info = match apply_delaunay_flip_k2(tds, &context) {
-            Ok(info) => info,
+        let applied = match apply_delaunay_flip_k2(tds, &context) {
+            Ok(applied) => applied,
             Err(
                 err @ (FlipError::DegenerateCell
                 | FlipError::NegativeOrientation { .. }
@@ -3230,7 +3235,8 @@ where
         };
         stats.flips_performed += 1;
         diagnostics.record_flip_signature(signature);
-        last_applied_flip = Some(LastAppliedFlip::from_info(&info));
+        last_applied_flip = Some(LastAppliedFlip::from_applied_flip(&applied));
+        let info = applied.info;
 
         for &cell_key in &info.new_cells {
             enqueue_cell_facets(
@@ -4416,11 +4422,8 @@ struct LastAppliedFlip {
     new_cells: CellKeyBuffer,
     /// Snapshot of each removed cell's vertex list captured before the flip's
     /// `remove_cells_by_keys` call; pairs 1:1 with `removed_cells`. Empty
-    /// inner buffers indicate snapshot-time-missing cells.
-    removed_cell_vertices: SmallBuffer<
-        SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-        MAX_PRACTICAL_DIMENSION_SIZE,
-    >,
+    /// inner buffers only appear in placeholder instances built via `Self::new`.
+    removed_cell_vertices: RemovedCellVertexSnapshot,
 }
 
 impl LastAppliedFlip {
@@ -4448,7 +4451,8 @@ impl LastAppliedFlip {
 
     /// Preserves the concrete flip footprint so a later ridge snapshot can tell
     /// whether the immediately preceding move created the bad local star.
-    fn from_info<const D: usize>(info: &FlipInfo<D>) -> Self {
+    fn from_applied_flip<const D: usize>(applied: &AppliedFlip<D>) -> Self {
+        let info = &applied.info;
         let mut last = Self::new(
             info.kind.k(),
             &info.removed_face_vertices,
@@ -4457,14 +4461,13 @@ impl LastAppliedFlip {
         last.removed_cells.clone_from(&info.removed_cells);
         last.new_cells.clone_from(&info.new_cells);
         last.removed_cell_vertices
-            .clone_from(&info.removed_cell_vertices);
+            .clone_from(&applied.removed_cell_vertices);
         last
     }
 
     /// Formats each removed cell as `CellKey(N): vertices=[...]` using the
     /// snapshot captured before the flip's cell removal. Falls back to
-    /// `missing-snapshot` when the snapshot row is empty (either the cell was
-    /// gone at snapshot time or `Self::new` produced the placeholder).
+    /// `missing-snapshot` only for placeholder rows created by `Self::new`.
     fn removed_cell_vertex_lines(&self) -> Vec<String> {
         self.removed_cells
             .iter()
@@ -4979,8 +4982,8 @@ where
             );
         }
     };
-    let info = match apply_delaunay_flip_k3(tds, &context) {
-        Ok(info) => info,
+    let applied = match apply_delaunay_flip_k3(tds, &context) {
+        Ok(applied) => applied,
         Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
             diagnostics.record_inserted_simplex_skip(|| {
                 format!(
@@ -5003,6 +5006,8 @@ where
         }
         Err(e) => return Err(e.into()),
     };
+    *last_applied_flip = Some(LastAppliedFlip::from_applied_flip(&applied));
+    let info = applied.info;
     if repair_trace_enabled() {
         tracing::debug!(
             "[repair] apply k=3 flip: kind={:?} direction={:?} removed_face={:?} inserted_face={:?} removed_cells={:?} new_cells={:?}",
@@ -5016,7 +5021,6 @@ where
     }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
-    *last_applied_flip = Some(LastAppliedFlip::from_info(&info));
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
@@ -5165,8 +5169,8 @@ where
             );
         }
     };
-    let info = match apply_delaunay_flip_dynamic(tds, D, &context) {
-        Ok(info) => info,
+    let applied = match apply_delaunay_flip_dynamic(tds, D, &context) {
+        Ok(applied) => applied,
         Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
             diagnostics.record_inserted_simplex_skip(|| {
                 format!(
@@ -5189,6 +5193,8 @@ where
         }
         Err(e) => return Err(e.into()),
     };
+    *last_applied_flip = Some(LastAppliedFlip::from_applied_flip(&applied));
+    let info = applied.info;
     if repair_trace_enabled() {
         tracing::debug!(
             "[repair] apply inverse k=2 flip: kind={:?} direction={:?} removed_face={:?} inserted_face={:?} removed_cells={:?} new_cells={:?}",
@@ -5202,7 +5208,6 @@ where
     }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
-    *last_applied_flip = Some(LastAppliedFlip::from_info(&info));
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
@@ -5343,8 +5348,8 @@ where
             );
         }
     };
-    let info = match apply_delaunay_flip_dynamic(tds, D - 1, &context) {
-        Ok(info) => info,
+    let applied = match apply_delaunay_flip_dynamic(tds, D - 1, &context) {
+        Ok(applied) => applied,
         Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
             diagnostics.record_inserted_simplex_skip(|| {
                 format!(
@@ -5367,6 +5372,8 @@ where
         }
         Err(e) => return Err(e.into()),
     };
+    *last_applied_flip = Some(LastAppliedFlip::from_applied_flip(&applied));
+    let info = applied.info;
     if repair_trace_enabled() {
         tracing::debug!(
             "[repair] apply inverse k=3 flip: kind={:?} direction={:?} removed_face={:?} inserted_face={:?} removed_cells={:?} new_cells={:?}",
@@ -5380,7 +5387,6 @@ where
     }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
-    *last_applied_flip = Some(LastAppliedFlip::from_info(&info));
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
@@ -5525,8 +5531,8 @@ where
             );
         }
     };
-    let info = match apply_delaunay_flip_k2(tds, &context) {
-        Ok(info) => info,
+    let applied = match apply_delaunay_flip_k2(tds, &context) {
+        Ok(applied) => applied,
         Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
             diagnostics.record_inserted_simplex_skip(|| {
                 format!(
@@ -5549,6 +5555,8 @@ where
         }
         Err(e) => return Err(e.into()),
     };
+    *last_applied_flip = Some(LastAppliedFlip::from_applied_flip(&applied));
+    let info = applied.info;
     if repair_trace_enabled() {
         tracing::debug!(
             "[repair] apply k=2 flip: kind={:?} direction={:?} removed_face={:?} inserted_face={:?} removed_cells={:?} new_cells={:?}",
@@ -5562,7 +5570,6 @@ where
     }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
-    *last_applied_flip = Some(LastAppliedFlip::from_info(&info));
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
@@ -6593,6 +6600,7 @@ mod tests {
     use crate::vertex;
     use approx::assert_relative_eq;
     use rand::{RngExt, SeedableRng, rngs::StdRng};
+    use slotmap::KeyData;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn init_tracing() {
@@ -6659,6 +6667,90 @@ mod tests {
             removed_cells: context.removed_cells,
             direction: context.direction,
         }
+    }
+
+    #[test]
+    fn test_snapshot_removed_cell_vertices_captures_vertices_and_reports_missing_cell() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let vertices = insert_standard_simplex_vertices::<2>(&mut tds);
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vertices.clone(), None).unwrap())
+            .unwrap();
+
+        let removed_cells: CellKeyBuffer = std::iter::once(cell_key).collect();
+        let snapshot = snapshot_removed_cell_vertices(&tds, &removed_cells).unwrap();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].iter().copied().collect::<Vec<_>>(), vertices);
+
+        let missing_cell = CellKey::from(KeyData::from_ffi(999_999));
+        let missing_cells: CellKeyBuffer = std::iter::once(missing_cell).collect();
+        let err = snapshot_removed_cell_vertices(&tds, &missing_cells).unwrap_err();
+        assert!(matches!(
+            err,
+            FlipError::MissingCell { cell_key } if cell_key == missing_cell
+        ));
+    }
+
+    #[test]
+    fn test_last_applied_flip_preserves_removed_cell_vertex_snapshots() {
+        let removed_cell = CellKey::from(KeyData::from_ffi(101));
+        let new_cell = CellKey::from(KeyData::from_ffi(102));
+        let v1 = VertexKey::from(KeyData::from_ffi(201));
+        let v2 = VertexKey::from(KeyData::from_ffi(202));
+        let v3 = VertexKey::from(KeyData::from_ffi(203));
+        let v4 = VertexKey::from(KeyData::from_ffi(204));
+
+        let mut removed_cell_vertices = RemovedCellVertexSnapshot::new();
+        removed_cell_vertices.push([v1, v2, v3].into_iter().collect::<VertexKeyList>());
+
+        let applied = AppliedFlip::<3> {
+            info: FlipInfo {
+                kind: BistellarFlipKind::k2(3),
+                direction: FlipDirection::Forward,
+                removed_cells: std::iter::once(removed_cell).collect(),
+                new_cells: std::iter::once(new_cell).collect(),
+                removed_face_vertices: [v3, v1].into_iter().collect(),
+                inserted_face_vertices: [v4, v2].into_iter().collect(),
+            },
+            removed_cell_vertices,
+        };
+
+        let last = LastAppliedFlip::from_applied_flip(&applied);
+        assert_eq!(last.k_move, 2);
+        assert_eq!(
+            last.removed_face_vertices
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![v1, v3]
+        );
+        assert_eq!(
+            last.inserted_face_vertices
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![v2, v4]
+        );
+        assert_eq!(
+            last.removed_cells.iter().copied().collect::<Vec<_>>(),
+            vec![removed_cell]
+        );
+        assert_eq!(
+            last.new_cells.iter().copied().collect::<Vec<_>>(),
+            vec![new_cell]
+        );
+
+        let lines = last.removed_cell_vertex_lines();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains(&format!("{removed_cell:?}: vertices=")));
+        assert!(!lines[0].contains("missing-snapshot"));
+
+        let mut placeholder = LastAppliedFlip::new(1, &[v1], &[v2]);
+        placeholder.removed_cells.push(removed_cell);
+        assert_eq!(
+            placeholder.removed_cell_vertex_lines(),
+            vec![format!("{removed_cell:?}: missing-snapshot")]
+        );
     }
 
     fn facet_index_for_edge_2d(

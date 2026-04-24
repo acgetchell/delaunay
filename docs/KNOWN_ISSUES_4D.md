@@ -165,40 +165,25 @@ Use the debug large-scale test to verify current behavior on a given branch.
 makes larger runs appear to hang.
 
 ```bash
-# 3D minimal reproducer (35 vertices, fails at insertion 22)
-DELAUNAY_LARGE_DEBUG_CONSTRUCTION_MODE=new \
-  DELAUNAY_LARGE_DEBUG_N_3D=35 \
-  DELAUNAY_LARGE_DEBUG_CASE_SEED_3D=0xE30C78582376677C \
-  cargo test --release --test large_scale_debug debug_large_scale_3d \
-  -- --ignored --nocapture
+# 3D historical 35-point seed check (now passes)
+DELAUNAY_LARGE_DEBUG_CASE_SEED_3D=0xE30C78582376677C just debug-large-scale-3d 35
 
-# 3D incremental-prefix bisect (finds minimal failing prefix)
-DELAUNAY_LARGE_DEBUG_PREFIX_TOTAL=1000 \
-  cargo test --release --test large_scale_debug \
-  debug_large_scale_3d_incremental_prefix_bisect -- --ignored --nocapture
+# 3D 10000-point scalability investigation (#341)
+just debug-large-scale-3d
 
 # 4D 100-point — permissive (allows skips)
-DELAUNAY_LARGE_DEBUG_N_4D=100 DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 \
-  cargo test --release --test large_scale_debug debug_large_scale_4d \
-  -- --ignored --nocapture
+DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 just debug-large-scale-4d 100
 
 # 4D 100-point — strict (no skips)
-DELAUNAY_LARGE_DEBUG_N_4D=100 DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=0 \
-  cargo test --release --test large_scale_debug debug_large_scale_4d \
-  -- --ignored --nocapture
+DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=0 just debug-large-scale-4d 100
 
-# 4D 500-point seeded repro (all shuffled retries still fail)
-DELAUNAY_BULK_PROGRESS_EVERY=50 \
-  DELAUNAY_LARGE_DEBUG_N_4D=500 \
-  DELAUNAY_LARGE_DEBUG_CASE_SEED_4D=0xD225B8A07E274AE6 \
+# 4D 500-point seeded case — now passes (verified 2026-04-23)
+# First attempt inserts 500/500 with zero skips and no RidgeFan /
+# DisconnectedBoundary / postcondition k=2 retryable-skip traces.
+DELAUNAY_LARGE_DEBUG_CASE_SEED_4D=0xD225B8A07E274AE6 \
   DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 \
-  cargo test --release --test large_scale_debug debug_large_scale_4d \
-  -- --ignored --nocapture
+  just debug-large-scale-4d 500
 
-# 4D prefix bisect (targets the seeded 500-point repro by default)
-DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 \
-  cargo test --release --test large_scale_debug \
-  debug_large_scale_4d_incremental_prefix_bisect -- --ignored --nocapture
 ```
 
 ### Recommendations
@@ -207,11 +192,12 @@ DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 \
 - **3D:** the historical #306/#204 seed now passes in release mode; continue to
   use the large-scale harness as a monitoring tool rather than assuming a 35-point
   correctness failure still exists.
-- **4D:** the historical 100-point skip repro is fixed, but seeded 500-point
-  and larger batch runs can still fail after all shuffled retries. Use release
-  mode for investigation, prefer smaller seeded probes to debug the
-  `Ridge fan detected` path, and use incremental insertion when you need more
-  predictable progress at large N.
+- **4D:** the historical 100-point and 500-point seeded repros are fixed. Seed
+  `0xD225B8A07E274AE6` now inserts **500/500** on the first attempt with no
+  `RidgeFan`, `DisconnectedBoundary`, or local `k=2` retryable-skip traces.
+  The remaining concern is the 3000-point scale/observability path; use release
+  mode to investigate it, and prefer incremental insertion when you need more
+  predictable large-N progress.
 - **5D:** experimental; incremental insertion strongly recommended. Exact insphere
   predicates are available (5D uses a 7×7 matrix, within the stack limit).
 - **6D+:** exact insphere is not available (matrix exceeds stack limit); falls back

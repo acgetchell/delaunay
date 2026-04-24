@@ -22,13 +22,16 @@ fn init_tracing() {
 #[cfg(not(feature = "test-debug"))]
 const fn init_tracing() {}
 
-#[cfg(feature = "test-debug")]
 macro_rules! test_debug_info {
     ($($arg:tt)*) => {{
         #[cfg(feature = "test-debug")]
         {
             init_tracing();
             tracing::info!($($arg)*);
+        }
+        #[cfg(not(feature = "test-debug"))]
+        {
+            let _ = format_args!($($arg)*);
         }
     }};
 }
@@ -135,10 +138,7 @@ fn incremental_insertion_with_repair_fallback() {
             }
             Err(e) => {
                 // Some insertions may be skipped (duplicates, degeneracies), which is fine
-                #[cfg(feature = "test-debug")]
                 test_debug_info!("Vertex {} skipped: {}", i + 1, e);
-                #[cfg(not(feature = "test-debug"))]
-                let _ = &e;
             }
         }
     }
