@@ -36,5 +36,6 @@ ND = "ND"
 Udo = "Udo"
 # Intentional misspellings used in the postprocess_changelog.py correction map
 # and its tests.  Suppressing here avoids false positives on the map keys.
+deniest = "deniest"
 runtim = "runtim"
 varous = "varous"

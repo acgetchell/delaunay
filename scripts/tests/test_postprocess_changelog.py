@@ -76,6 +76,9 @@ class TestStripTrailingBlanks:
 
 
 class TestFixTypos:
+    def test_fixes_deniest(self) -> None:
+        assert _fix_typos("Also deniest warnings") == "Also denies warnings"
+
     def test_fixes_varous(self) -> None:
         assert _fix_typos("Fix varous issues") == "Fix various issues"
 

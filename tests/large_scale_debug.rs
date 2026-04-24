@@ -55,6 +55,10 @@
 //! DELAUNAY_DEBUG_RETRYABLE_SKIP=1 \
 //! # Optional: dump the first detected ridge-fan cavity snapshot once per run
 //! DELAUNAY_DEBUG_RIDGE_FAN_ONCE=1 \
+//! # Optional: dump the first unresolved repair postcondition facet once per run
+//! DELAUNAY_REPAIR_DEBUG_POSTCONDITION_FACET=1 \
+//! # Optional: only emit ridge repair debug when multiplicity is at least N
+//! DELAUNAY_REPAIR_DEBUG_RIDGE_MIN_MULTIPLICITY=4 \
 //! cargo test --release --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
 //! ```
 

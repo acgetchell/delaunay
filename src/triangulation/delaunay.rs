@@ -1341,10 +1341,12 @@ fn log_bulk_progress_if_due(sample: BatchProgressSample, state: &mut Option<Batc
     let chunk_elapsed = state.last_progress.elapsed();
     let chunk_processed = sample.processed.saturating_sub(state.last_processed);
 
-    let overall_rate = safe_usize_to_scalar::<f64>(sample.processed).unwrap_or(f64::NAN)
-        / elapsed.as_secs_f64().max(1e-9);
-    let chunk_rate = safe_usize_to_scalar::<f64>(chunk_processed).unwrap_or(f64::NAN)
-        / chunk_elapsed.as_secs_f64().max(1e-9);
+    let overall_rate = safe_usize_to_scalar::<f64>(sample.processed)
+        .ok()
+        .map(|processed| processed / elapsed.as_secs_f64().max(1e-9));
+    let chunk_rate = safe_usize_to_scalar::<f64>(chunk_processed)
+        .ok()
+        .map(|processed| processed / chunk_elapsed.as_secs_f64().max(1e-9));
 
     tracing::debug!(
         target: "delaunay::bulk_progress",
@@ -1355,8 +1357,8 @@ fn log_bulk_progress_if_due(sample: BatchProgressSample, state: &mut Option<Batc
         skipped = sample.skipped,
         cells = sample.cell_count,
         elapsed = ?elapsed,
-        total_rate_pts_per_s = overall_rate,
-        recent_rate_pts_per_s = chunk_rate,
+        total_rate_pts_per_s = ?overall_rate,
+        recent_rate_pts_per_s = ?chunk_rate,
         "bulk-construction progress"
     );
 
@@ -2670,6 +2672,7 @@ where
         let mut last_stats: Option<ConstructionStatistics> = None;
 
         // Attempt 0: original order, no extra perturbation salt.
+        log_construction_retry_result(0, None, 0_u64, "started", None, None);
         let mut last_error: String =
             match Self::build_with_kernel_inner_seeded_with_construction_statistics(
                 <K as Clone>::clone(kernel),
@@ -2682,7 +2685,17 @@ where
             ) {
                 Ok((candidate, stats)) => {
                     match crate::core::util::is_delaunay_property_only(&candidate.tri.tds) {
-                        Ok(()) => return Ok((candidate, stats)),
+                        Ok(()) => {
+                            log_construction_retry_result(
+                                0,
+                                None,
+                                0_u64,
+                                "succeeded",
+                                None,
+                                Some(&stats),
+                            );
+                            return Ok((candidate, stats));
+                        }
                         Err(err) => {
                             last_stats.replace(stats);
                             format!("Delaunay property violated after construction: {err}")
@@ -2693,6 +2706,15 @@ where
                     let DelaunayTriangulationConstructionErrorWithStatistics { error, statistics } =
                         err;
                     if Self::is_non_retryable_construction_error(&error) {
+                        let last_error = error.to_string();
+                        log_construction_retry_result(
+                            0,
+                            None,
+                            0_u64,
+                            "failed",
+                            Some(&last_error),
+                            Some(&statistics),
+                        );
                         return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                             error,
                             statistics,
@@ -2780,6 +2802,15 @@ where
                     let DelaunayTriangulationConstructionErrorWithStatistics { error, statistics } =
                         err;
                     if Self::is_non_retryable_construction_error(&error) {
+                        let last_error = error.to_string();
+                        log_construction_retry_result(
+                            attempt,
+                            Some(attempt_seed),
+                            perturbation_seed,
+                            "failed",
+                            Some(&last_error),
+                            Some(&statistics),
+                        );
                         return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                             error,
                             statistics,

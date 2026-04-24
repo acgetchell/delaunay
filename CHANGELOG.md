@@ -164,7 +164,7 @@ Perform a general dependency update, including a patch bump for `uuid`.
   A new `bench-smoke` target provides quick harness validation without
   the overhead of high-sample measurements.
 
-  Also deniest warnings via the manifest lint policy to ensure consistent
+  Also denies warnings via the manifest lint policy to ensure consistent
   repository-wide enforcement.
 
   - Changed: standardize benchmark profiles and enhance SARIF analysis
@@ -330,6 +330,17 @@ Refactor flip snapshotting and cavity-reduction bookkeeping to ensure
     out of Criterion hot loops.
   - Document the #204 investigation, refresh the 4D known-issues and TODO notes, and record the repository logging policy plus release-visible debug environment
     variables.
+- Normalize indented headings in changelog post-processing [`cff07db`](https://github.com/acgetchell/delaunay/commit/cff07db377414f8e0176d7e41d8fe6073c661576)
+
+Update the changelog post-processing script to convert indented ATX
+  headings from commit bodies into bold prose. This ensures the generated
+  CHANGELOG.md complies with Markdownlint rule MD023 (headings must start
+  at column 0) while preserving the visual hierarchy and readability of
+  historical commit summaries.
+
+  Additionally, internal diagnostic state for Delaunay repair was moved
+  from global atomics to a per-attempt structure to ensure reliable
+  rate-limiting across concurrent threads.
 
 ### Maintenance
 

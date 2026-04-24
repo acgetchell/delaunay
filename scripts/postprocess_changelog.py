@@ -30,6 +30,7 @@ MAX_LINE_WIDTH = 160
 # Keys are whole-word patterns; values are their replacements.
 # Applied as word-boundary replacements so partial matches are avoided.
 _TYPO_MAP: dict[str, str] = {
+    "deniest": "denies",
     "varous": "various",
     "runtim": "runtime",
 }

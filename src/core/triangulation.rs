@@ -4772,6 +4772,8 @@ where
         // deleted by `remove_cells_by_keys` below, so they cannot seed repair.
         let dead_conflict_cells: FastHashSet<CellKey> = conflict_cells.iter().copied().collect();
         repair_seed_cells.retain(|ck| !dead_conflict_cells.contains(ck));
+        let mut seen_repair_seed_cells = FastHashSet::default();
+        repair_seed_cells.retain(|ck| seen_repair_seed_cells.insert(*ck));
 
         // Remove conflict cells (now that new cells are wired up)
         let _removed_count = self.tds.remove_cells_by_keys(&conflict_cells);
@@ -10706,55 +10708,162 @@ mod tests {
     // PROGRESSIVE PERTURBATION: RETRY PATH COVERAGE
     // =========================================================================
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Literal 4D repro point set keeps retry-path coverage deterministic"
+    )]
+    fn perturbation_retry_repro_points_4d() -> [Point<f64, 4>; 20] {
+        // Fixed adversarial insertion sequence captured from the former
+        // randomized sweep (seed 4, index 19). The final insertion exhausts
+        // perturbation retries in the current 4D path, so this keeps retry
+        // coverage deterministic without looping over random seeds.
+        [
+            Point::new([
+                0.660_063_804_566_304_3,
+                3.139_352_812_821_116,
+                1.460_437_437_858_557_2,
+                1.683_976_950_416_514_7,
+            ]),
+            Point::new([
+                2.451_966_162_957_145,
+                9.547_229_335_697_903,
+                3.306_128_696_560_687_5,
+                -3.722_166_730_957_705_6,
+            ]),
+            Point::new([
+                -2.344_360_378_074_79,
+                -2.755_831_029_562_339,
+                -1.275_699_073_649_171_6,
+                7.667_812_493_160_508,
+            ]),
+            Point::new([
+                -8.633_692_230_033_44,
+                1.995_093_685_275_964_6,
+                7.993_316_108_703_105,
+                -3.310_780_098_197_376_7,
+            ]),
+            Point::new([
+                9.710_410_828_147_591,
+                -9.675_293_457_452_888,
+                -7.169_080_272_753_141,
+                5.405_946_111_675_925_5,
+            ]),
+            Point::new([
+                2.266_246_031_487_613,
+                2.481_673_939_102_995,
+                3.039_413_140_674_462,
+                4.441_464_307_622_285,
+            ]),
+            Point::new([
+                2.565_731_492_709_954,
+                8.916_218_617_699_3,
+                -3.878_340_784_199_263_4,
+                -9.518_720_806_139_726,
+            ]),
+            Point::new([
+                -2.067_801_258_479_087_2,
+                -5.739_002_626_992_522,
+                7.554_154_642_458_165,
+                -2.983_334_995_469_171_2,
+            ]),
+            Point::new([
+                7.592_645_474_686_005,
+                -3.326_646_745_715_216,
+                -3.259_537_116_123_248,
+                -4.935_000_398_073_641,
+            ]),
+            Point::new([
+                -5.931_807_896_262_18,
+                8.897_268_005_841_394,
+                0.324_049_126_782_281_15,
+                -8.328_532_028_712_647,
+            ]),
+            Point::new([
+                -8.182_644_118_410_867,
+                5.373_925_359_941_506,
+                -9.015_837_749_827_128,
+                -1.703_973_344_007_208,
+            ]),
+            Point::new([
+                1.455_467_619_488_706_2,
+                9.869_985_381_801_74,
+                8.605_618_759_378_327,
+                -1.050_236_122_559_873_3,
+            ]),
+            Point::new([
+                -5.687_160_826_499_058,
+                6.504_655_423_433_022,
+                8.941_590_411_569_816,
+                9.543_547_641_077_382,
+            ]),
+            Point::new([
+                8.975_549_245_653_312,
+                -8.089_655_037_805_944,
+                9.936_284_142_216_682,
+                -7.816_992_427_475_977,
+            ]),
+            Point::new([
+                5.825_845_324_524_742,
+                -7.639_141_597_632_388,
+                1.549_524_653_880_336_4,
+                4.563_088_344_949_309,
+            ]),
+            Point::new([
+                7.387_141_055_690_918,
+                6.194_972_387_680_284,
+                -5.764_015_058_796_046,
+                9.298_338_336_238_999,
+            ]),
+            Point::new([
+                -1.597_916_740_077_209_9,
+                -4.938_008_036_006_716,
+                7.414_979_546_687_874,
+                -7.718_146_418_588_452,
+            ]),
+            Point::new([
+                -2.414_045_007_912_424_3,
+                8.888_648_260_600_007,
+                -5.859_329_894_512_815,
+                3.268_096_825_406_147,
+            ]),
+            Point::new([
+                -8.294_250_893_230_837,
+                3.083_275_278_154_95,
+                8.020_989_920_767_69,
+                8.155_291_219_012_977,
+            ]),
+            Point::new([
+                6.718_748_825_685_814_6,
+                -4.640_634_945_941_695,
+                2.283_644_483_657_752_7,
+                0.837_537_687_473_188_8,
+            ]),
+        ]
+    }
+
     /// Exercise the perturbation retry loop (`attempt > 0`) and exhaustion
-    /// path (`SkippedDegeneracy`) using 4D random points where orientation
-    /// degeneracies are common.
+    /// path (`SkippedDegeneracy`) using a deterministic 4D repro.
     ///
     /// Covers: progressive scale factor, perturbation coordinate generation
     /// with `perturbation_seed == 0`, retry decision, and retry exhaustion.
-    ///
-    /// Iterates over multiple seeds to remain robust to insertion-path
-    /// improvements (e.g. ridge-fan accumulation, widened local repair) that
-    /// make retries less common for any individual well-conditioned seed.
-    /// The test's contract is that the retry path is reachable for *some*
-    /// seed, not that every seed must exercise it.
     #[test]
     fn test_perturbation_retry_and_exhaustion_4d() {
-        // 50 seeds × 20 points = 1000 insertion attempts in 4D; empirically
-        // more than sufficient to trigger at least one retry or exhaustion
-        // from orientation/ridge-fan degeneracies regardless of improvements
-        // to the non-degenerate insertion path.
-        const SEED_COUNT: u64 = 50;
-        const POINTS_PER_SEED: usize = 20;
+        let mut tri: Triangulation<AdaptiveKernel<f64>, (), (), 4> =
+            Triangulation::new_empty(AdaptiveKernel::new());
 
-        for seed in 123..(123 + SEED_COUNT) {
-            let points = crate::geometry::util::generate_random_points_seeded::<f64, 4>(
-                POINTS_PER_SEED,
-                (-10.0, 10.0),
-                seed,
-            )
-            .unwrap();
+        for point in perturbation_retry_repro_points_4d() {
+            let v = VertexBuilder::default().point(point).build().unwrap();
+            let (_outcome, stats) = tri.insert_with_statistics(v, None, None).unwrap();
 
-            let mut tri: Triangulation<AdaptiveKernel<f64>, (), (), 4> =
-                Triangulation::new_empty(AdaptiveKernel::new());
-
-            for point in points {
-                let v = VertexBuilder::default().point(point).build().unwrap();
-                let (_outcome, stats) = tri.insert_with_statistics(v, None, None).unwrap();
-
-                if (stats.used_perturbation() && stats.success())
-                    || (stats.skipped() && stats.attempts > 1)
-                {
-                    return;
-                }
+            if (stats.used_perturbation() && stats.success())
+                || (stats.skipped() && stats.attempts > 1)
+            {
+                return;
             }
         }
 
         panic!(
-            "4D insertion with {SEED_COUNT} random seeds of {POINTS_PER_SEED} points each \
-             did not trigger a perturbation retry or exhaustion; the retry path may be \
-             unreachable from random well-conditioned input and needs a dedicated \
-             adversarial repro."
+            "deterministic 4D adversarial repro did not trigger a perturbation retry or exhaustion"
         );
     }
 
@@ -10764,49 +10873,32 @@ mod tests {
     /// Covers: the `mix` computation and sign selection in the seeded path
     /// (lines using `perturbation_seed ^ ...`).
     ///
-    /// Uses the same multi-seed iteration as
-    /// [`test_perturbation_retry_and_exhaustion_4d`] for the same reason.
+    /// Uses the same deterministic 4D repro as
+    /// [`test_perturbation_retry_and_exhaustion_4d`].
     #[test]
     fn test_perturbation_retry_seeded_branch_4d() {
-        const SEED_COUNT: u64 = 50;
-        const POINTS_PER_SEED: usize = 20;
+        let mut tri: Triangulation<AdaptiveKernel<f64>, (), (), 4> =
+            Triangulation::new_empty(AdaptiveKernel::new());
 
-        for seed in 123..(123 + SEED_COUNT) {
-            let points = crate::geometry::util::generate_random_points_seeded::<f64, 4>(
-                POINTS_PER_SEED,
-                (-10.0, 10.0),
-                seed,
-            )
-            .unwrap();
+        for point in perturbation_retry_repro_points_4d() {
+            let v = VertexBuilder::default().point(point).build().unwrap();
+            let (_outcome, stats) = tri
+                .insert_transactional(
+                    v,
+                    None,
+                    None,
+                    DEFAULT_PERTURBATION_RETRIES,
+                    0xDEAD_BEEF,
+                    None,
+                    None,
+                )
+                .unwrap();
 
-            let mut tri: Triangulation<AdaptiveKernel<f64>, (), (), 4> =
-                Triangulation::new_empty(AdaptiveKernel::new());
-
-            for point in points {
-                let v = VertexBuilder::default().point(point).build().unwrap();
-                let (_outcome, stats) = tri
-                    .insert_transactional(
-                        v,
-                        None,
-                        None,
-                        DEFAULT_PERTURBATION_RETRIES,
-                        0xDEAD_BEEF,
-                        None,
-                        None,
-                    )
-                    .unwrap();
-
-                if stats.used_perturbation() {
-                    return;
-                }
+            if stats.used_perturbation() && (stats.success() || stats.skipped()) {
+                return;
             }
         }
 
-        panic!(
-            "4D seeded insertion with {SEED_COUNT} random seeds of {POINTS_PER_SEED} points each \
-             did not trigger a perturbation retry; the seeded retry branch \
-             (perturbation_seed != 0) may be unreachable from random well-conditioned input and \
-             needs a dedicated adversarial repro."
-        );
+        panic!("deterministic 4D adversarial repro did not trigger the seeded perturbation branch");
     }
 }
