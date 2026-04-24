@@ -75,8 +75,17 @@ use delaunay::triangulation::delaunay::{
 };
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use std::env;
+use std::io::{self, Write};
 use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
+
+/// Writes the timeout diagnostic synchronously so it survives the watchdog abort.
+fn write_timeout_abort_message<W: Write>(mut writer: W, max_secs: u64) -> io::Result<()> {
+    let message = format!("=== TIMEOUT: wall time exceeded {max_secs} seconds — aborting ===");
+    tracing::error!("{message}");
+    writeln!(writer, "{message}")?;
+    writer.flush()
+}
 
 /// Installs a per-test wall-clock cap.
 ///
@@ -93,9 +102,9 @@ fn install_runtime_cap(max_secs: u64) -> std::sync::mpsc::SyncSender<()> {
             Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {}
             // Deadline exceeded — hard abort.
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                tracing::error!(
-                    "=== TIMEOUT: wall time exceeded {max_secs} seconds — aborting ==="
-                );
+                if let Err(err) = write_timeout_abort_message(std::io::stderr().lock(), max_secs) {
+                    tracing::debug!(?err, "failed to flush timeout message before abort");
+                }
                 std::process::abort();
             }
         }
@@ -901,6 +910,19 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
     println!();
     println!("Total wall time: {:?}", t_gen.elapsed());
     DebugOutcome::Success
+}
+
+#[test]
+fn test_write_timeout_abort_message_flushes_message() {
+    let mut output = Vec::new();
+
+    write_timeout_abort_message(&mut output, 17).expect("timeout diagnostic write should succeed");
+
+    let message = String::from_utf8(output).expect("timeout diagnostic should be UTF-8");
+    assert_eq!(
+        message,
+        "=== TIMEOUT: wall time exceeded 17 seconds — aborting ===\n"
+    );
 }
 
 /// Regression test for issue #228: 3D 1000-point flip-repair non-convergence.

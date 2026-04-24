@@ -200,6 +200,27 @@ static DUPLICATE_DETECTION_FORCE_ENABLED: AtomicBool = AtomicBool::new(false);
 #[cfg(debug_assertions)]
 static VERTEX_TO_CELLS_SPILL_EVENTS: AtomicU64 = AtomicU64::new(0);
 
+#[cfg(test)]
+mod test_hooks {
+    use std::cell::Cell;
+
+    thread_local! {
+        static FORCE_NEXT_INSERTION_RETRYABLE_FAILURE: Cell<bool> = const { Cell::new(false) };
+    }
+
+    pub(super) fn take_force_next_insertion_retryable_failure() -> bool {
+        FORCE_NEXT_INSERTION_RETRYABLE_FAILURE.replace(false)
+    }
+
+    pub(super) fn set_force_next_insertion_retryable_failure(enabled: bool) -> bool {
+        FORCE_NEXT_INSERTION_RETRYABLE_FAILURE.replace(enabled)
+    }
+
+    pub(super) fn restore_force_next_insertion_retryable_failure(prior: bool) {
+        FORCE_NEXT_INSERTION_RETRYABLE_FAILURE.set(prior);
+    }
+}
+
 fn duplicate_detection_metrics_enabled() -> bool {
     #[cfg(test)]
     if DUPLICATE_DETECTION_FORCE_ENABLED.load(Ordering::Relaxed) {
@@ -3609,6 +3630,24 @@ where
             // Topology safety net: ensure we don't commit an insertion that breaks Level 3 topology.
             // If the cavity-based insertion produces an Euler/topology mismatch, roll back and retry a
             // conservative fallback (star-split of the containing cell) within the same transactional attempt.
+            #[cfg(test)]
+            // Test-only hook for deterministic coverage of the rollback + perturbation retry
+            // success path, which is otherwise rare under the adaptive SoS predicates.
+            let result = if test_hooks::take_force_next_insertion_retryable_failure() {
+                Err(InsertionError::NonManifoldTopology {
+                    facet_hash: 0x000F_0CED,
+                    cell_count: 3,
+                })
+            } else {
+                self.try_insert_with_topology_safety_net(
+                    current_vertex,
+                    conflict_cells,
+                    hint,
+                    attempt,
+                    &tds_snapshot,
+                )
+            };
+            #[cfg(not(test))]
             let result = self.try_insert_with_topology_safety_net(
                 current_vertex,
                 conflict_cells,
@@ -6120,6 +6159,23 @@ mod tests {
         }
 
         (tri, [v0, v1, v2, v3], ck)
+    }
+
+    struct ForceNextRetryableInsertionFailureGuard {
+        prior: bool,
+    }
+
+    impl ForceNextRetryableInsertionFailureGuard {
+        fn enable() -> Self {
+            let prior = test_hooks::set_force_next_insertion_retryable_failure(true);
+            Self { prior }
+        }
+    }
+
+    impl Drop for ForceNextRetryableInsertionFailureGuard {
+        fn drop(&mut self) {
+            test_hooks::restore_force_next_insertion_retryable_failure(self.prior);
+        }
     }
 
     #[test]
@@ -10841,29 +10897,60 @@ mod tests {
         ]
     }
 
-    /// Exercise the perturbation retry loop (`attempt > 0`) and exhaustion
-    /// path (`SkippedDegeneracy`) using a deterministic 4D repro.
+    /// Exercise both successful perturbation retry (`attempt > 0`) and
+    /// exhaustion (`SkippedDegeneracy`) paths with deterministic 4D fixtures.
     ///
     /// Covers: progressive scale factor, perturbation coordinate generation
-    /// with `perturbation_seed == 0`, retry decision, and retry exhaustion.
+    /// with `perturbation_seed == 0`, retry decision, retry success, and
+    /// retry exhaustion.
     #[test]
     fn test_perturbation_retry_and_exhaustion_4d() {
-        let mut tri: Triangulation<AdaptiveKernel<f64>, (), (), 4> =
+        let initial_vertices: Vec<Vertex<f64, (), 4>> = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+        ];
+        let tds = Triangulation::<AdaptiveKernel<f64>, (), (), 4>::build_initial_simplex(
+            &initial_vertices,
+        )
+        .unwrap();
+        let mut retry_success_tri = Triangulation::<AdaptiveKernel<f64>, (), (), 4>::new_with_tds(
+            AdaptiveKernel::new(),
+            tds,
+        );
+
+        let _guard = ForceNextRetryableInsertionFailureGuard::enable();
+        let retry_success_vertex = VertexBuilder::default()
+            .point(Point::new([0.2, 0.2, 0.2, 0.2]))
+            .build()
+            .unwrap();
+        let (_outcome, retry_success_stats) = retry_success_tri
+            .insert_with_statistics(retry_success_vertex, None, None)
+            .unwrap();
+        let saw_retry = retry_success_stats.used_perturbation() && retry_success_stats.success();
+
+        let mut exhaustion_tri: Triangulation<AdaptiveKernel<f64>, (), (), 4> =
             Triangulation::new_empty(AdaptiveKernel::new());
+        let mut saw_exhausted_skip = false;
 
         for point in perturbation_retry_repro_points_4d() {
             let v = VertexBuilder::default().point(point).build().unwrap();
-            let (_outcome, stats) = tri.insert_with_statistics(v, None, None).unwrap();
+            let (_outcome, stats) = exhaustion_tri
+                .insert_with_statistics(v, None, None)
+                .unwrap();
 
-            if (stats.used_perturbation() && stats.success())
-                || (stats.skipped() && stats.attempts > 1)
-            {
-                return;
-            }
+            saw_exhausted_skip |= stats.skipped() && stats.attempts > 1;
         }
 
-        panic!(
-            "deterministic 4D adversarial repro did not trigger a perturbation retry or exhaustion"
+        assert!(
+            saw_retry,
+            "deterministic 4D fixture did not trigger a successful perturbation retry"
+        );
+        assert!(
+            saw_exhausted_skip,
+            "deterministic 4D adversarial repro did not trigger retry exhaustion"
         );
     }
 

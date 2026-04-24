@@ -342,6 +342,15 @@ Update the changelog post-processing script to convert indented ATX
   from global atomics to a per-attempt structure to ensure reliable
   rate-limiting across concurrent threads.
 
+- Harden 4D perturbation tests and enhance construction diagnostics
+  [`c04ec01`](https://github.com/acgetchell/delaunay/commit/c04ec0176a16221a376fd0d7f134a690f66b2696)
+
+Replace randomized seed sweeps with a deterministic 4D adversarial repro
+  set to ensure retry paths remain covered. Deduplicate repair seeds
+  during vertex insertion, instrument construction attempts with
+  structured tracing, and document new debug environment variables for
+  large-scale repair analysis.
+
 ### Maintenance
 
 - Bump pytest in the uv group across 1 directory [#322](https://github.com/acgetchell/delaunay/pull/322)

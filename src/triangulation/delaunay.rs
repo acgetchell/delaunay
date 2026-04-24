@@ -171,9 +171,66 @@ thread_local! {
 }
 
 #[cfg(test)]
-thread_local! {
-    static FORCE_HEURISTIC_REBUILD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static FORCE_REPAIR_NONCONVERGENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+mod test_hooks {
+    use crate::core::algorithms::flips::{
+        DelaunayRepairDiagnostics, DelaunayRepairError, RepairQueueOrder,
+    };
+    use std::cell::Cell;
+
+    thread_local! {
+        static FORCE_HEURISTIC_REBUILD: Cell<bool> = const { Cell::new(false) };
+        static FORCE_REPAIR_NONCONVERGENT: Cell<bool> = const { Cell::new(false) };
+    }
+
+    pub(super) fn force_heuristic_rebuild_enabled() -> bool {
+        FORCE_HEURISTIC_REBUILD.with(Cell::get)
+    }
+
+    pub(super) fn set_force_heuristic_rebuild(enabled: bool) -> bool {
+        FORCE_HEURISTIC_REBUILD.with(|flag| {
+            let prior = flag.get();
+            flag.set(enabled);
+            prior
+        })
+    }
+
+    pub(super) fn restore_force_heuristic_rebuild(prior: bool) {
+        FORCE_HEURISTIC_REBUILD.with(|flag| flag.set(prior));
+    }
+
+    pub(super) fn force_repair_nonconvergent_enabled() -> bool {
+        FORCE_REPAIR_NONCONVERGENT.with(Cell::get)
+    }
+
+    pub(super) fn set_force_repair_nonconvergent(enabled: bool) -> bool {
+        FORCE_REPAIR_NONCONVERGENT.with(|flag| {
+            let prior = flag.get();
+            flag.set(enabled);
+            prior
+        })
+    }
+
+    pub(super) fn restore_force_repair_nonconvergent(prior: bool) {
+        FORCE_REPAIR_NONCONVERGENT.with(|flag| flag.set(prior));
+    }
+
+    pub(super) fn synthetic_nonconvergent_error() -> DelaunayRepairError {
+        DelaunayRepairError::NonConvergent {
+            max_flips: 0,
+            diagnostics: Box::new(DelaunayRepairDiagnostics {
+                facets_checked: 0,
+                flips_performed: 0,
+                max_queue_len: 0,
+                ambiguous_predicates: 0,
+                ambiguous_predicate_samples: Vec::new(),
+                predicate_failures: 0,
+                cycle_detections: 0,
+                cycle_signature_samples: Vec::new(),
+                attempt: 0,
+                queue_order: RepairQueueOrder::Fifo,
+            }),
+        }
+    }
 }
 
 struct HeuristicRebuildRecursionGuard {
@@ -1428,6 +1485,24 @@ fn log_construction_retry_result(
     }
 }
 
+/// Converts vertex coordinates for diagnostics without synthesizing sentinel values.
+///
+/// Returns `None` if any coordinate cannot be represented as `f64`, allowing
+/// callers to omit diagnostic coordinates instead of hiding conversion failure
+/// behind `NaN` or infinity.
+fn vertex_coords_f64<T, U, const D: usize>(vertex: &Vertex<T, U, D>) -> Option<Vec<f64>>
+where
+    T: CoordinateScalar,
+    U: DataType,
+{
+    vertex
+        .point()
+        .coords()
+        .iter()
+        .map(ToPrimitive::to_f64)
+        .collect()
+}
+
 /// Sort key for Hilbert ordering: `(hilbert_index, quantized_coords, vertex, input_index)`.
 type HilbertSortKey<T, U, const D: usize> = (u128, [u32; D], Vertex<T, U, D>, usize);
 
@@ -2600,10 +2675,19 @@ where
                     }
                 }
                 Err(err) => {
+                    let err_string = err.to_string();
                     if Self::is_non_retryable_construction_error(&err) {
+                        log_construction_retry_result(
+                            attempt,
+                            Some(attempt_seed),
+                            perturbation_seed,
+                            "failed",
+                            Some(&err_string),
+                            None,
+                        );
                         return Err(err);
                     }
-                    last_error = err.to_string();
+                    last_error = err_string;
                 }
             }
 
@@ -3437,14 +3521,7 @@ where
                 for (offset, vertex) in vertices.iter().skip(D + 1).enumerate() {
                     let index = (D + 1).saturating_add(offset);
                     let uuid = vertex.uuid();
-                    let coords = trace_insertion.then(|| {
-                        vertex
-                            .point()
-                            .coords()
-                            .iter()
-                            .map(|c| c.to_f64().unwrap_or(f64::NAN))
-                            .collect::<Vec<f64>>()
-                    });
+                    let coords = trace_insertion.then(|| vertex_coords_f64(vertex)).flatten();
 
                     if trace_insertion && let Some(coords) = coords.as_ref() {
                         tracing::debug!(index, %uuid, coords = ?coords, "[bulk] start");
@@ -3534,8 +3611,8 @@ where
                                     };
                                     #[cfg(test)]
                                     let repair_result =
-                                        if tests::force_repair_nonconvergent_enabled() {
-                                            Err(tests::synthetic_nonconvergent_error())
+                                        if test_hooks::force_repair_nonconvergent_enabled() {
+                                            Err(test_hooks::synthetic_nonconvergent_error())
                                         } else {
                                             repair_result
                                         };
@@ -3709,14 +3786,7 @@ where
                 for (offset, vertex) in vertices.iter().skip(D + 1).enumerate() {
                     let index = (D + 1).saturating_add(offset);
                     let uuid = vertex.uuid();
-                    let coords = trace_insertion.then(|| {
-                        vertex
-                            .point()
-                            .coords()
-                            .iter()
-                            .map(|c| c.to_f64().unwrap_or(f64::NAN))
-                            .collect::<Vec<f64>>()
-                    });
+                    let coords = trace_insertion.then(|| vertex_coords_f64(vertex)).flatten();
 
                     if trace_insertion && let Some(coords) = coords.as_ref() {
                         tracing::debug!(index, %uuid, coords = ?coords, "[bulk] start");
@@ -3801,8 +3871,8 @@ where
                                     };
                                     #[cfg(test)]
                                     let repair_result =
-                                        if tests::force_repair_nonconvergent_enabled() {
-                                            Err(tests::synthetic_nonconvergent_error())
+                                        if test_hooks::force_repair_nonconvergent_enabled() {
+                                            Err(test_hooks::synthetic_nonconvergent_error())
                                         } else {
                                             repair_result
                                         };
@@ -3934,12 +4004,7 @@ where
                             construction_stats.record_insertion(&stats);
 
                             // Keep the first few skip samples so we have concrete reproduction anchors.
-                            let coords: Vec<f64> = vertex
-                                .point()
-                                .coords()
-                                .iter()
-                                .map(|c| c.to_f64().unwrap_or(f64::NAN))
-                                .collect();
+                            let coords = vertex_coords_f64(vertex).unwrap_or_default();
                             construction_stats.record_skip_sample(ConstructionSkipSample {
                                 index,
                                 uuid: vertex.uuid(),
@@ -4733,8 +4798,8 @@ where
         K: ExactPredicates,
     {
         #[cfg(test)]
-        if tests::force_repair_nonconvergent_enabled() {
-            return Err(tests::synthetic_nonconvergent_error());
+        if test_hooks::force_repair_nonconvergent_enabled() {
+            return Err(test_hooks::synthetic_nonconvergent_error());
         }
         let operation = TopologicalOperation::FacetFlip;
         let topology = self.tri.topology_guarantee();
@@ -4808,7 +4873,7 @@ where
     fn force_heuristic_rebuild_enabled() -> bool {
         #[cfg(test)]
         {
-            FORCE_HEURISTIC_REBUILD.with(std::cell::Cell::get)
+            test_hooks::force_heuristic_rebuild_enabled()
         }
         #[cfg(not(test))]
         {
@@ -5957,8 +6022,8 @@ where
         };
 
         #[cfg(test)]
-        let repair_result = if tests::force_repair_nonconvergent_enabled() {
-            Err(tests::synthetic_nonconvergent_error())
+        let repair_result = if test_hooks::force_repair_nonconvergent_enabled() {
+            Err(test_hooks::synthetic_nonconvergent_error())
         } else {
             repair_result
         };
@@ -6786,27 +6851,6 @@ mod tests {
     use rand::{RngExt, SeedableRng};
     use slotmap::KeyData;
 
-    pub(super) fn force_repair_nonconvergent_enabled() -> bool {
-        FORCE_REPAIR_NONCONVERGENT.with(std::cell::Cell::get)
-    }
-
-    pub(super) fn synthetic_nonconvergent_error() -> DelaunayRepairError {
-        DelaunayRepairError::NonConvergent {
-            max_flips: 0,
-            diagnostics: Box::new(DelaunayRepairDiagnostics {
-                facets_checked: 0,
-                flips_performed: 0,
-                max_queue_len: 0,
-                ambiguous_predicates: 0,
-                ambiguous_predicate_samples: Vec::new(),
-                predicate_failures: 0,
-                cycle_detections: 0,
-                cycle_signature_samples: Vec::new(),
-                attempt: 0,
-                queue_order: RepairQueueOrder::Fifo,
-            }),
-        }
-    }
     fn init_tracing() {
         static INIT: std::sync::Once = std::sync::Once::new();
         INIT.call_once(|| {
@@ -6954,18 +6998,14 @@ mod tests {
 
     impl ForceHeuristicRebuildGuard {
         fn enable() -> Self {
-            let prior = FORCE_HEURISTIC_REBUILD.with(|flag| {
-                let prior = flag.get();
-                flag.set(true);
-                prior
-            });
+            let prior = test_hooks::set_force_heuristic_rebuild(true);
             Self { prior }
         }
     }
 
     impl Drop for ForceHeuristicRebuildGuard {
         fn drop(&mut self) {
-            FORCE_HEURISTIC_REBUILD.with(|flag| flag.set(self.prior));
+            test_hooks::restore_force_heuristic_rebuild(self.prior);
         }
     }
 
@@ -6975,18 +7015,14 @@ mod tests {
 
     impl ForceRepairNonconvergentGuard {
         fn enable() -> Self {
-            let prior = FORCE_REPAIR_NONCONVERGENT.with(|flag| {
-                let prior = flag.get();
-                flag.set(true);
-                prior
-            });
+            let prior = test_hooks::set_force_repair_nonconvergent(true);
             Self { prior }
         }
     }
 
     impl Drop for ForceRepairNonconvergentGuard {
         fn drop(&mut self) {
-            FORCE_REPAIR_NONCONVERGENT.with(|flag| flag.set(self.prior));
+            test_hooks::restore_force_repair_nonconvergent(self.prior);
         }
     }
 
@@ -7109,6 +7145,23 @@ mod tests {
         assert_eq!(sample.attempts, 1);
         assert!(sample.error.contains("Duplicate coordinates"));
     }
+
+    #[test]
+    fn test_vertex_coords_f64_converts_f64_vertex_coords() {
+        init_tracing();
+        let vertex: Vertex<f64, (), 3> = vertex!([1.25, -2.5, 3.75]);
+
+        assert_eq!(vertex_coords_f64(&vertex), Some(vec![1.25, -2.5, 3.75]));
+    }
+
+    #[test]
+    fn test_vertex_coords_f64_converts_f32_vertex_coords() {
+        init_tracing();
+        let vertex: Vertex<f32, (), 3> = vertex!([1.25f32, -2.5f32, 3.75f32]);
+
+        assert_eq!(vertex_coords_f64(&vertex), Some(vec![1.25, -2.5, 3.75]));
+    }
+
     #[test]
     fn test_construction_statistics_record_insertion_tracks_inserted_common_fields() {
         init_tracing();
