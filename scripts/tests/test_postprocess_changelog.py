@@ -484,6 +484,26 @@ class TestSquashHeadingNormalization:
         assert "**Fixed: Close the 4D bulk repair retry collapse**" in result
         assert "  - Thread cavity-touched cells through insertion." in result
 
+    def test_full_pipeline_resets_parent_summary_at_version_heading(self, tmp_path: Path) -> None:
+        """Version headings reset duplicate-squash tracking between releases."""
+        f = tmp_path / "CHANGELOG.md"
+        f.write_text(
+            "# Changelog\n\n"
+            "## [1.0.0]\n\n"
+            "### Added\n\n"
+            f"- Repeatable summary {_commit()}\n\n"
+            "## [0.9.0]\n\n"
+            "- fixed: repeatable summary\n\n"
+            "  - Preserve this historical squash-body heading.\n",
+            encoding="utf-8",
+        )
+
+        postprocess(f)
+
+        result = f.read_text(encoding="utf-8")
+        assert "**Fixed: Repeatable summary**" in result
+        assert "  - Preserve this historical squash-body heading." in result
+
     def test_full_pipeline_preserves_non_isolated_conventional_bullets(self, tmp_path: Path) -> None:
         f = tmp_path / "CHANGELOG.md"
         f.write_text(

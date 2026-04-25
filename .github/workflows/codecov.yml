@@ -21,7 +21,7 @@ jobs:
     name: Code Coverage
     runs-on: ubuntu-latest
     env:
-      TARPAULIN_VERSION: "0.32.8"
+      CARGO_LLVM_COV_VERSION: "0.8.5"
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -34,18 +34,27 @@ jobs:
           cache: true
           # toolchain, components, etc. are specified in rust-toolchain.toml
 
-      - name: Cache tarpaulin
+      - name: Install LLVM coverage tools
+        run: rustup component add llvm-tools-preview
+
+      - name: Cache cargo-llvm-cov
         uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb # v5.0.1
         with:
-          path: ~/.cargo/bin/cargo-tarpaulin
-          key: tarpaulin-${{ runner.os }}-${{ env.TARPAULIN_VERSION }}
+          path: ~/.cargo/bin/cargo-llvm-cov
+          key: cargo-llvm-cov-${{ runner.os }}-${{ env.CARGO_LLVM_COV_VERSION }}
           restore-keys: |
-            tarpaulin-${{ runner.os }}-
+            cargo-llvm-cov-${{ runner.os }}-
 
-      - name: Install tarpaulin
+      - name: Install cargo-llvm-cov
         run: |
-          if ! command -v cargo-tarpaulin &> /dev/null; then
-            cargo install cargo-tarpaulin --locked --version "${TARPAULIN_VERSION}"
+          installed_version=""
+          if command -v cargo-llvm-cov &> /dev/null; then
+            installed_version="$(cargo llvm-cov --version)"
+            installed_version="${installed_version#cargo-llvm-cov }"
+          fi
+
+          if [ "${installed_version}" != "${CARGO_LLVM_COV_VERSION}" ]; then
+            cargo install cargo-llvm-cov --locked --version "${CARGO_LLVM_COV_VERSION}"
           fi
 
       - name: Install just
@@ -60,13 +69,11 @@ jobs:
 
       - name: Run tests with nextest (for JUnit XML)
         run: |
-          # Note: We run tests twice in this workflow (nextest + tarpaulin).
+          # Note: We run tests twice in this workflow (nextest + cargo-llvm-cov).
           # This is intentional and necessary because:
           # 1. nextest: Fast parallel execution → high-quality JUnit XML for test analytics
-          # 2. tarpaulin: Instrumented execution → accurate code coverage metrics
+          # 2. cargo-llvm-cov: LLVM-instrumented execution → accurate code coverage metrics
           # Trade-off: ~1-2 extra minutes of CI time for significantly better data quality.
-          # Using tarpaulin's experimental JUnit output would save time but produces
-          # less reliable test analytics data.
 
           echo "::group::Running tests with nextest"
           # Generate JUnit XML for Codecov Test Analytics
@@ -113,8 +120,8 @@ jobs:
           find . -name "*cobertura*" -type f -ls 2>/dev/null || echo "No cobertura files found"
 
           if [ ! -f coverage/cobertura.xml ]; then
-            echo "::error::coverage/cobertura.xml not found. Tarpaulin failed to generate XML output."
-            echo "::error::Check tarpaulin logs above for errors."
+            echo "::error::coverage/cobertura.xml not found. cargo-llvm-cov failed to generate XML output."
+            echo "::error::Check cargo-llvm-cov logs above for errors."
             exit 2
           else
             coverage_bytes=$(wc -c < coverage/cobertura.xml)

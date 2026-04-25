@@ -71,6 +71,10 @@ _INDENTED_ATX_HEADING_RE = re.compile(r"^(?P<indent>\s+)#{1,6}\s+(?P<title>.*?)(
 # generated commits. Treat them as prose headings inside the parent entry.
 _SQUASH_HEADING_RE = re.compile(r"^(?P<indent>\s*)-\s+(?P<prefix>[A-Za-z]+(?:\([^)]+\))?!?):\s+(?P<title>.+?)\s*$")
 
+# This label set is intentionally broad, including release labels such as
+# "added", "fixed", "changed", "removed", and "deprecated". Rewriting is
+# only allowed when _is_isolated_body_heading accepts the line; do not relax
+# that guard because tests rely on it to preserve handcrafted sub-bullets.
 _SQUASH_HEADING_LABELS: dict[str, str] = {
     "feat": "Added",
     "fix": "Fixed",
@@ -484,7 +488,7 @@ def postprocess(path: Path) -> None:
 
         if line.startswith("- ") and _COMMIT_LINK_RE.search(line):
             current_entry_summary = _plain_summary(line)
-        elif line.startswith("### "):
+        elif line.startswith(("### ", "## ", "# ")):
             current_entry_summary = None
 
         is_isolated_body_heading = _is_isolated_body_heading(lines, idx)

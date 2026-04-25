@@ -119,7 +119,7 @@ class StorageBackendComparator:
 
         except Exception as e:
             print(f"❌ Comparison failed: {e}", file=sys.stderr)
-            logging.exception("Comparison failed")
+            logger.exception("Comparison failed")
             return False
 
     def _run_benchmark(self, benchmark_name: str, use_dense_slotmap: bool, dev_mode: bool, extra_args: list[str] | None = None) -> dict | None:
@@ -200,7 +200,7 @@ class StorageBackendComparator:
             return results
 
         except Exception:
-            logging.exception("Benchmark execution failed")
+            logger.exception("Benchmark execution failed")
             return None
 
     def _parse_criterion_output(self, output: str) -> dict:
@@ -512,7 +512,7 @@ def main():
 
     except Exception as e:
         print(f"❌ Error: {e}", file=sys.stderr)
-        logging.exception("Fatal error")
+        logger.exception("Fatal error")
         sys.exit(1)
 
 

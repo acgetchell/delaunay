@@ -71,6 +71,7 @@ select = [
     "N",
     "UP",
     "YTT",
+    "ASYNC",
     "S",
     "BLE",
     "FBT",
@@ -79,13 +80,19 @@ select = [
     "COM",
     "C4",
     "DTZ",
+    "FA",
     "T10",
     "EM",
     "EXE",
+    "FIX",
+    "FLY",
+    "FURB",
     "ISC",
     "ICN",
+    "LOG",
     "G",
     "INP",
+    "PERF",
     "PIE",
     "T20",
     "PYI",
@@ -95,7 +102,10 @@ select = [
     "RET",
     "SLF",
     "SIM",
+    "SLOT",
+    "TC",
     "TID",
+    "TD",
     "TCH",
     "ARG",
     "PTH",
@@ -106,6 +116,14 @@ select = [
     "TRY",
     "NPY",
     "RUF",
+    "D100",
+    "D101",
+    "D102",
+    "D103",
+    "D104",
+    "D105",
+    "D106",
+    "D107",
 ]
 fixable = [ "ALL" ]
 unfixable = [  ]
@@ -140,7 +158,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"**/tests/test_*.py" = [ "S101", "SLF001" ] # Allow assert statements and private member access in test files
+# Test names and class groupings already document behavior; avoid requiring
+# docstrings for each pytest case while still checking production scripts.
+"**/tests/test_*.py" = [ "S101", "SLF001", "D101", "D102", "D103" ]
 
 # Import sorting and organization configuration
 [tool.ruff.lint.isort]

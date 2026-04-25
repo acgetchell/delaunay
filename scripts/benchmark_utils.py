@@ -269,7 +269,7 @@ class PerformanceSummaryGenerator:
             if commit_hash and commit_hash != "unknown":
                 lines.append(f"**Git Commit**: {commit_hash}")
         except Exception as e:
-            logging.debug("Could not get git commit hash: %s", e)
+            logger.debug("Could not get git commit hash: %s", e)
 
         # Add hardware information
         try:
@@ -284,7 +284,7 @@ class PerformanceSummaryGenerator:
                 ],
             )
         except Exception as e:
-            logging.debug("Could not get hardware info: %s", e)
+            logger.debug("Could not get hardware info: %s", e)
             lines.append("**Hardware**: Unknown")
 
         lines.extend(
@@ -442,7 +442,7 @@ class PerformanceSummaryGenerator:
                                 accuracy_data[key] = f"{float(match.group(1)):.1f}%"
                     break
 
-            return accuracy_data if accuracy_data else None
+            return accuracy_data or None
 
         except Exception:
             return None
@@ -886,11 +886,8 @@ class PerformanceSummaryGenerator:
                 content = f.read()
 
             # Extract metadata from baseline
-            metadata_lines = []
             first_lines = content.split("\n")[:20]
-            for line in first_lines:
-                if line.startswith(("Generated at:", "Date:", "Git commit:", "Hardware:")):
-                    metadata_lines.append(line)
+            metadata_lines = [line for line in first_lines if line.startswith(("Generated at:", "Date:", "Git commit:", "Hardware:"))]
             if not any(line.startswith("Hardware:") for line in metadata_lines) and "Hardware Information:" in content:
                 hw = HardwareComparator.parse_baseline_hardware(content)
                 cpu = hw.get("CPU", "")
@@ -906,8 +903,7 @@ class PerformanceSummaryGenerator:
                         "",
                     ],
                 )
-                for meta_line in metadata_lines:
-                    lines.append(f"- **{meta_line}**")
+                lines.extend(f"- **{meta_line}**" for meta_line in metadata_lines)
                 lines.append("")
 
             # Extract and format benchmark data
@@ -948,9 +944,7 @@ class PerformanceSummaryGenerator:
 
                 # Extract and include specific regression details from content
                 content_lines = content.split("\n")
-                for line in content_lines:
-                    if "REGRESSION:" in line or "IMPROVEMENT:" in line:
-                        lines.append(f"- {line.strip()}")
+                lines.extend(f"- {line.strip()}" for line in content_lines if "REGRESSION:" in line or "IMPROVEMENT:" in line)
 
                 if any("REGRESSION:" in line or "IMPROVEMENT:" in line for line in content_lines):
                     lines.append("")
@@ -1453,6 +1447,7 @@ class BaselineGenerator:
     """Generate performance baselines from benchmark data."""
 
     def __init__(self, project_root: Path, tag: str | None = None):
+        """Initialize baseline generation for a project root and optional tag."""
         self.project_root = project_root
         self.hardware = HardwareInfo()
         self.tag = tag
@@ -1516,7 +1511,7 @@ class BaselineGenerator:
         except subprocess.TimeoutExpired as e:
             print(f"❌ Benchmark execution timed out after {bench_timeout} seconds", file=sys.stderr)
             print("   Consider increasing --bench-timeout or using --dev mode for faster benchmarks", file=sys.stderr)
-            logging.debug("TimeoutExpired: %s", e)
+            logger.debug("TimeoutExpired: %s", e)
             return False
         except subprocess.CalledProcessError as e:
             # Print captured stderr/stdout from cargo bench failure
@@ -1529,10 +1524,10 @@ class BaselineGenerator:
                 print("\n=== cargo bench stdout ===", file=sys.stderr)
                 print(e.stdout, file=sys.stderr)
                 print("=== end stdout ===\n", file=sys.stderr)
-            logging.exception("Error in generate_baseline")
+            logger.exception("Error in generate_baseline")
             return False
         except Exception:
-            logging.exception("Error in generate_baseline")
+            logger.exception("Error in generate_baseline")
             return False
 
     def _write_baseline_file(self, benchmark_results: list[BenchmarkData], output_file: Path, *, dev_mode: bool = False) -> None:
@@ -1574,6 +1569,7 @@ class PerformanceComparator:
     """Compare current performance against baseline."""
 
     def __init__(self, project_root: Path):
+        """Initialize comparison state for benchmark results under a project root."""
         self.project_root = project_root
         self.hardware = HardwareInfo()
         self.regression_threshold = DEFAULT_REGRESSION_THRESHOLD  # default threshold for proactive regression detection in CI
@@ -1654,7 +1650,7 @@ class PerformanceComparator:
         except subprocess.TimeoutExpired as e:
             print(f"❌ Benchmark execution timed out after {bench_timeout} seconds", file=sys.stderr)
             print("   Consider increasing --bench-timeout or using --dev mode for faster benchmarks", file=sys.stderr)
-            logging.debug("TimeoutExpired: %s", e)
+            logger.debug("TimeoutExpired: %s", e)
             self._write_error_file(output_file, "Benchmark execution timeout", f"{e} (timeout after {bench_timeout} seconds)")
             return False, False
         except subprocess.CalledProcessError as e:
@@ -1669,11 +1665,11 @@ class PerformanceComparator:
                 print(e.stdout, file=sys.stderr)
                 print("=== end stdout ===\n", file=sys.stderr)
             self._write_error_file(output_file, "Benchmark execution error", str(e))
-            logging.exception("Error in compare_with_baseline")
+            logger.exception("Error in compare_with_baseline")
             return False, False
         except Exception as e:
             self._write_error_file(output_file, "Benchmark execution error", str(e))
-            logging.exception("Error in compare_with_baseline")
+            logger.exception("Error in compare_with_baseline")
             return False, False
 
     def _parse_baseline_file(self, baseline_content: str) -> dict[str, BenchmarkData]:
@@ -2077,7 +2073,7 @@ class PerformanceComparator:
                 f.write("This error prevented the benchmark comparison from completing successfully.\n")
                 f.write("Please check the CI logs for more information.\n")
         except Exception:
-            logging.exception("Failed to write error file")
+            logger.exception("Failed to write error file")
 
 
 class WorkflowHelper:
@@ -2363,7 +2359,7 @@ class BenchmarkRegressionHelper:
                     return (1, version, p.name)
                 except Exception as e:
                     # Invalid version format, treat as non-semver
-                    logging.debug("Invalid version format in %s: %s", p.name, e)
+                    logger.debug("Invalid version format in %s: %s", p.name, e)
             # Fallback: put non-matching names last (priority 0, sorts after valid versions when reversed)
             return (0, p.name, "")
 
@@ -2392,7 +2388,7 @@ class BenchmarkRegressionHelper:
                         if re.match(r"^[0-9A-Fa-f]{7,40}$", potential_sha):
                             return potential_sha
         except (OSError, ValueError) as e:
-            logging.debug("Could not extract commit from %s: %s", baseline_file.name, e)
+            logger.debug("Could not extract commit from %s: %s", baseline_file.name, e)
         return None
 
     @staticmethod
@@ -2409,7 +2405,7 @@ class BenchmarkRegressionHelper:
             if isinstance(potential_sha, str) and re.match(r"^[0-9A-Fa-f]{7,40}$", potential_sha):
                 return potential_sha
         except (OSError, json.JSONDecodeError, KeyError) as e:
-            logging.debug("Could not extract commit from metadata.json: %s", e)
+            logger.debug("Could not extract commit from metadata.json: %s", e)
         return None
 
     @staticmethod
@@ -2522,7 +2518,7 @@ class BenchmarkRegressionHelper:
         print("⚠️ No performance baseline available for comparison.")
         print("   - No baseline artifacts found in recent workflow runs")
         print("   - Performance regression testing requires a baseline")
-        print("")
+        print()
         print("💡 To enable performance regression testing:")
         print("   1. Create a release tag (e.g., v0.4.3), or")
         print("   2. Manually trigger the 'Generate Performance Baseline' workflow")
@@ -2674,8 +2670,7 @@ def _default_baseline_cache_dir(project_root: Path, tag_name: str) -> Path:
 def _parse_github_owner_repo(remote_url: str) -> tuple[str, str] | None:
     """Parse a GitHub owner/repo from a git remote URL."""
     url = remote_url.strip()
-    if url.endswith(".git"):
-        url = url[: -len(".git")]
+    url = url.removesuffix(".git")
 
     # https://github.com/OWNER/REPO
     if url.startswith(("https://", "http://")):
@@ -2809,6 +2804,8 @@ def render_baseline_comparison(project_root: Path, old_baseline: Path, new_basel
 
 @dataclass(frozen=True)
 class BaselineFetchOptions:
+    """Options controlling how missing performance baselines are fetched."""
+
     regenerate_missing: bool = False
     workflow_ref: str = "main"
     wait_seconds: int = 3600
@@ -2819,6 +2816,7 @@ class GitHubBaselineFetcher:
     """Fetch tag baselines from GitHub Actions artifacts using the GitHub CLI."""
 
     def __init__(self, project_root: Path, *, repo: str | None = None, remote: str = "origin") -> None:
+        """Initialize artifact fetching for a project repository."""
         self.project_root = project_root
         self.repo = _resolve_github_repo(project_root, repo=repo, remote=remote)
 
