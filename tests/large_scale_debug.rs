@@ -64,6 +64,7 @@
 
 #![forbid(unsafe_code)]
 
+use delaunay::core::triangulation::TopologyGuarantee;
 use delaunay::geometry::kernel::RobustKernel;
 use delaunay::geometry::util::{
     generate_random_points_in_ball_seeded, generate_random_points_seeded,
@@ -75,37 +76,43 @@ use delaunay::triangulation::delaunay::{
 };
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use std::env;
+use std::fmt;
 use std::io::{self, Write};
 use std::num::NonZeroUsize;
+use std::process;
+use std::sync::{
+    Once,
+    mpsc::{self, RecvTimeoutError, SyncSender},
+};
+use std::thread;
 use std::time::{Duration, Instant};
 
 /// Writes the timeout diagnostic synchronously so it survives the watchdog abort.
 fn write_timeout_abort_message<W: Write>(mut writer: W, max_secs: u64) -> io::Result<()> {
     let message = format!("=== TIMEOUT: wall time exceeded {max_secs} seconds — aborting ===");
-    tracing::error!("{message}");
     writeln!(writer, "{message}")?;
     writer.flush()
 }
 
 /// Installs a per-test wall-clock cap.
 ///
-/// Spawns a watchdog thread that calls [`std::process::abort`] if `max_secs` elapses.
-/// Returns a [`std::sync::mpsc::SyncSender`] whose **drop** cancels the watchdog: when
+/// Spawns a watchdog thread that calls [`process::abort`] if `max_secs` elapses.
+/// Returns a [`SyncSender`] whose **drop** cancels the watchdog: when
 /// the sender is dropped (i.e. the test completes normally), the channel disconnects and
 /// the watchdog thread exits without aborting.  This prevents a stale watchdog installed
 /// for one test from firing during a subsequent test.
-fn install_runtime_cap(max_secs: u64) -> std::sync::mpsc::SyncSender<()> {
-    let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
-    std::thread::spawn(move || {
+fn install_runtime_cap(max_secs: u64) -> SyncSender<()> {
+    let (tx, rx) = mpsc::sync_channel::<()>(0);
+    thread::spawn(move || {
         match rx.recv_timeout(Duration::from_secs(max_secs)) {
             // Sender dropped (test finished) or explicit send — exit cleanly.
-            Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {}
+            Ok(()) | Err(RecvTimeoutError::Disconnected) => {}
             // Deadline exceeded — hard abort.
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                if let Err(err) = write_timeout_abort_message(std::io::stderr().lock(), max_secs) {
+            Err(RecvTimeoutError::Timeout) => {
+                if let Err(err) = write_timeout_abort_message(io::stderr().lock(), max_secs) {
                     tracing::debug!(?err, "failed to flush timeout message before abort");
                 }
-                std::process::abort();
+                process::abort();
             }
         }
     });
@@ -263,7 +270,7 @@ fn env_flag(name: &str) -> bool {
 }
 
 fn init_tracing() {
-    static INIT: std::sync::Once = std::sync::Once::new();
+    static INIT: Once = Once::new();
     INIT.call_once(|| {
         // Debug-level tracing is needed to surface the release-visible diagnostic hooks
         // (retryable-skip, cavity-reduction, ridge/postcondition repair debug,
@@ -442,8 +449,8 @@ enum DebugOutcome {
     },
 }
 
-impl std::fmt::Display for DebugOutcome {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for DebugOutcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Success => write!(f, "Success"),
             Self::ConstructionFailure { error } => {
@@ -915,6 +922,35 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
     DebugOutcome::Success
 }
 
+#[derive(Clone, Copy)]
+enum FailingWriterMode {
+    Write,
+    Flush,
+}
+
+struct FailingWriter {
+    mode: FailingWriterMode,
+    kind: io::ErrorKind,
+}
+
+impl Write for FailingWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if matches!(self.mode, FailingWriterMode::Write) {
+            return Err(io::Error::new(self.kind, "synthetic write failure"));
+        }
+
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        if matches!(self.mode, FailingWriterMode::Flush) {
+            return Err(io::Error::new(self.kind, "synthetic flush failure"));
+        }
+
+        Ok(())
+    }
+}
+
 #[test]
 fn test_write_timeout_abort_message_flushes_message() {
     let mut output = Vec::new();
@@ -926,6 +962,22 @@ fn test_write_timeout_abort_message_flushes_message() {
         message,
         "=== TIMEOUT: wall time exceeded 17 seconds — aborting ===\n"
     );
+}
+
+#[test]
+fn test_write_timeout_abort_message_propagates_error() {
+    // `install_runtime_cap` aborts immediately after this helper returns, so the
+    // caller must be able to observe write or flush failures before aborting.
+    let cases = [
+        (FailingWriterMode::Write, io::ErrorKind::BrokenPipe),
+        (FailingWriterMode::Flush, io::ErrorKind::WriteZero),
+    ];
+
+    for (mode, kind) in cases {
+        let err = write_timeout_abort_message(FailingWriter { mode, kind }, 17)
+            .expect_err("timeout diagnostic should propagate writer failures");
+        assert_eq!(err.kind(), kind);
+    }
 }
 
 /// Regression test for issue #228: 3D 1000-point flip-repair non-convergence.
@@ -952,8 +1004,6 @@ fn test_write_timeout_abort_message_flushes_message() {
 #[test]
 #[ignore = "1000-point 3D construction exceeds CI timeout (~30min debug)"]
 fn regression_issue_228_3d_1000_flip_repair_convergence() {
-    use delaunay::core::triangulation::TopologyGuarantee;
-
     let seed = seed_for_case::<3>(42, 1000);
     let points = generate_random_points_in_ball_seeded::<f64, 3>(1000, 100.0, seed)
         .expect("point generation should succeed");
@@ -995,8 +1045,6 @@ fn regression_issue_228_3d_1000_flip_repair_convergence() {
 #[test]
 #[ignore = "4D 100-point construction can take minutes in debug mode"]
 fn regression_issue_230_4d_100_orientation() {
-    use delaunay::core::triangulation::TopologyGuarantee;
-
     let seed = seed_for_case::<4>(42, 100);
     let points = generate_random_points_in_ball_seeded::<f64, 4>(100, 100.0, seed)
         .expect("point generation should succeed");

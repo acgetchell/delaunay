@@ -4555,12 +4555,15 @@ where
                                     conflict_cells_before = conflict_cells.len(),
                                     "D={D}: cavity expansion (DisconnectedBoundary hole-fill)"
                                 );
-                                let added: Vec<CellKey> = cells_to_add.iter().copied().collect();
                                 log_cavity_reduction_event(
                                     trace_cavity_reduction,
                                     iterations,
                                     &conflict_cells,
-                                    || format!("disconnected_boundary_expand add_cells={added:?}"),
+                                    || {
+                                        let added: Vec<CellKey> =
+                                            cells_to_add.iter().copied().collect();
+                                        format!("disconnected_boundary_expand add_cells={added:?}")
+                                    },
                                 );
                                 for k in cells_to_add {
                                     conflict_cells.push(k);

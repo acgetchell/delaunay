@@ -3471,6 +3471,29 @@ where
         }
     }
 
+    /// Identifies D≥4 local-repair failures that can safely try escalation and
+    /// then enter the bounded soft-fail path.
+    const fn can_soft_fail(repair_err: &DelaunayRepairError) -> bool {
+        matches!(
+            repair_err,
+            DelaunayRepairError::NonConvergent { .. }
+                | DelaunayRepairError::PostconditionFailed { .. }
+        )
+    }
+
+    /// Converts non-soft-fail local-repair errors into construction failures so
+    /// the bulk loop does not canonicalize or keep mutating after unexpected
+    /// topology/flip failures.
+    fn map_hard_repair_error(
+        index: usize,
+        repair_err: &DelaunayRepairError,
+    ) -> DelaunayTriangulationConstructionError {
+        TriangulationConstructionError::GeometricDegeneracy {
+            message: format!("per-insertion Delaunay repair failed at index {index}: {repair_err}"),
+        }
+        .into()
+    }
+
     /// Inserts the non-simplex vertices under a fixed perturbation seed so bulk
     /// construction retries are reproducible.
     #[allow(clippy::too_many_lines)]
@@ -3535,7 +3558,7 @@ where
                         tracing::debug!(index, %uuid, coords = ?coords, "[bulk] start");
                     }
 
-                    let started = trace_insertion.then(std::time::Instant::now);
+                    let started = trace_insertion.then(Instant::now);
                     let mut insert = || {
                         // Pass the batch index through to transactional insertion so the
                         // lower-layer retryable-skip trace can point back to this exact
@@ -3657,6 +3680,12 @@ where
                                             // TDS as seed set before accepting the soft-fail. The
                                             // escalation is rate-limited so healthy runs do not pay
                                             // for it on every insertion.
+                                            if !Self::can_soft_fail(&repair_err) {
+                                                return Err(Self::map_hard_repair_error(
+                                                    index,
+                                                    &repair_err,
+                                                ));
+                                            }
                                             let outcome = self.try_local_repair_escalation_d_ge_4(
                                                 index,
                                                 max_flips,
@@ -3800,7 +3829,7 @@ where
                         tracing::debug!(index, %uuid, coords = ?coords, "[bulk] start");
                     }
 
-                    let started = trace_insertion.then(std::time::Instant::now);
+                    let started = trace_insertion.then(Instant::now);
                     let mut insert = || {
                         // Keep the stats and non-stats branches aligned so bulk-index-based
                         // tracing behaves the same regardless of whether the caller records
@@ -3917,6 +3946,12 @@ where
                                             // TDS as seed set before accepting the soft-fail. The
                                             // escalation is rate-limited so healthy runs do not pay
                                             // for it on every insertion.
+                                            if !Self::can_soft_fail(&repair_err) {
+                                                return Err(Self::map_hard_repair_error(
+                                                    index,
+                                                    &repair_err,
+                                                ));
+                                            }
                                             let outcome = self.try_local_repair_escalation_d_ge_4(
                                                 index,
                                                 max_flips,
@@ -6862,9 +6897,12 @@ mod tests {
     use crate::vertex;
     use rand::{RngExt, SeedableRng};
     use slotmap::KeyData;
+    use std::sync::Once;
+
+    type TestDelaunay4 = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 4>;
 
     fn init_tracing() {
-        static INIT: std::sync::Once = std::sync::Once::new();
+        static INIT: Once = Once::new();
         INIT.call_once(|| {
             let filter = tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
@@ -7002,6 +7040,78 @@ mod tests {
         assert_eq!(&seeds[..adjacent.len()], adjacent.as_slice());
         assert_eq!(seeds[adjacent.len()], extra_cell);
         assert!(!seeds.contains(&stale_cell));
+    }
+
+    #[test]
+    fn test_local_repair_escalation_outcome_variants_are_orthogonal() {
+        // Skipped / Succeeded / FailedAlso must each match a distinct typed
+        // pattern so callers can decide "continue" vs "fall through" without
+        // string parsing. This locks in the typed-error contract added with
+        // Fix 2 of the #204 plan.
+        let skipped_rate_limited = LocalRepairEscalationOutcome::Skipped {
+            reason: EscalationSkipReason::RateLimited {
+                last_escalation_idx: 7,
+                min_gap: LOCAL_REPAIR_ESCALATION_MIN_GAP,
+            },
+        };
+        let skipped_empty = LocalRepairEscalationOutcome::Skipped {
+            reason: EscalationSkipReason::EmptyTds,
+        };
+        let succeeded = LocalRepairEscalationOutcome::Succeeded {
+            stats: DelaunayRepairStats::default(),
+        };
+        let failed_also = LocalRepairEscalationOutcome::FailedAlso {
+            escalation_error: DelaunayRepairError::PostconditionFailed {
+                message: "unit test escalation failure".to_string(),
+            },
+        };
+
+        // Each variant matches its own pattern and only its own pattern.
+        assert!(matches!(
+            skipped_rate_limited,
+            LocalRepairEscalationOutcome::Skipped { .. }
+        ));
+        assert!(matches!(
+            skipped_empty,
+            LocalRepairEscalationOutcome::Skipped { .. }
+        ));
+        assert!(matches!(
+            succeeded,
+            LocalRepairEscalationOutcome::Succeeded { .. }
+        ));
+        assert!(matches!(
+            failed_also,
+            LocalRepairEscalationOutcome::FailedAlso { .. }
+        ));
+
+        // Skip reasons are themselves orthogonal: RateLimited carries the
+        // index/gap pair; EmptyTds is fieldless. PartialEq makes the
+        // distinction explicit so future code can `assert_eq!` on it.
+        let LocalRepairEscalationOutcome::Skipped { reason } = skipped_rate_limited else {
+            panic!("skipped_rate_limited should match Skipped");
+        };
+        assert_eq!(
+            reason,
+            EscalationSkipReason::RateLimited {
+                last_escalation_idx: 7,
+                min_gap: LOCAL_REPAIR_ESCALATION_MIN_GAP,
+            },
+        );
+        assert_ne!(reason, EscalationSkipReason::EmptyTds);
+
+        // FailedAlso preserves the typed `DelaunayRepairError` by value (no
+        // boxing, no stringification) so downstream diagnostics can pattern-
+        // match the variant chain.
+        let LocalRepairEscalationOutcome::FailedAlso {
+            escalation_error: err,
+        } = failed_also
+        else {
+            panic!("failed_also should match FailedAlso");
+        };
+        assert!(matches!(
+            err,
+            DelaunayRepairError::PostconditionFailed { .. }
+        ));
     }
 
     struct ForceHeuristicRebuildGuard {
@@ -9304,6 +9414,40 @@ mod tests {
         assert_eq!(dt.number_of_vertices(), vertices.len());
         assert_eq!(stats.inserted, vertices.len());
         assert!(dt.validate().is_ok());
+    }
+
+    #[test]
+    fn test_repair_soft_fail_classification() {
+        let nonconvergent = test_hooks::synthetic_nonconvergent_error();
+        assert!(TestDelaunay4::can_soft_fail(&nonconvergent));
+
+        let postcondition = DelaunayRepairError::PostconditionFailed {
+            message: "unresolved facet".to_string(),
+        };
+        assert!(TestDelaunay4::can_soft_fail(&postcondition));
+
+        let flip_error =
+            DelaunayRepairError::Flip(FlipError::UnsupportedDimension { dimension: 1 });
+        assert!(!TestDelaunay4::can_soft_fail(&flip_error));
+
+        let topology_error = DelaunayRepairError::InvalidTopology {
+            required: TopologyGuarantee::PLManifold,
+            found: TopologyGuarantee::Pseudomanifold,
+            message: "local repair requires manifold topology",
+        };
+        assert!(!TestDelaunay4::can_soft_fail(&topology_error));
+
+        let mapped = TestDelaunay4::map_hard_repair_error(23, &flip_error);
+        assert!(
+            matches!(
+                mapped,
+                DelaunayTriangulationConstructionError::Triangulation(
+                    TriangulationConstructionError::GeometricDegeneracy { ref message }
+                ) if message.contains("per-insertion Delaunay repair failed at index 23")
+                    && message.contains("Bistellar flip not supported for D=1")
+            ),
+            "non-soft D>=4 repair failures should propagate as construction errors: {mapped:?}"
+        );
     }
 
     // =========================================================================

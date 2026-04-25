@@ -29,6 +29,7 @@ use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
 use std::env;
+use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -349,8 +350,8 @@ pub enum InternalInconsistencySite {
     },
 }
 
-impl std::fmt::Display for InternalInconsistencySite {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for InternalInconsistencySite {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::RidgeFanExtraFacetOutOfBounds {
                 index,

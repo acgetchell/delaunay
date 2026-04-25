@@ -319,7 +319,7 @@ where
         && let Some(existing_cell) =
             find_cell_containing_simplex(tds, inserted_face_vertices, removed_cells)
     {
-        if repair_trace_enabled() || std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+        if repair_trace_enabled() || env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
             tracing::debug!(
                 "[repair] skip flip: inserted simplex already exists (k={k_move}, inserted_face={inserted_face_vertices:?}, existing_cell={existing_cell:?})"
             );
@@ -388,7 +388,7 @@ where
                 });
             }
             Ok(Orientation::DEGENERATE) => {
-                if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+                if env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
                     tracing::debug!(
                         k_move,
                         direction = ?direction,
@@ -416,6 +416,13 @@ where
         validate_replacement_orientation(tds, &new_cell_vertices)?;
     }
 
+    // Snapshot the removed cells' vertex lists before any TDS mutation so an
+    // unexpected missing cell aborts without leaving replacement cells behind.
+    // After `tds.remove_cells_by_keys` runs, `tds.get_cell(removed_key)` returns
+    // `None`, which would strip the most useful context from predecessor-flip
+    // traces (see #204 investigation).
+    let removed_cell_vertices = snapshot_removed_cell_vertices(tds, removed_cells)?;
+
     for vertices in new_cell_vertices {
         let cell = Cell::new(vertices, None)?;
         let cell_key = tds
@@ -435,13 +442,6 @@ where
     .map_err(|e| FlipError::NeighborWiring {
         message: e.to_string(),
     })?;
-
-    // Snapshot the removed cells' vertex lists BEFORE removal so postcondition
-    // diagnostics can reconstruct the lost simplices. After
-    // `tds.remove_cells_by_keys` runs, `tds.get_cell(removed_key)` returns
-    // `None`, which would strip the most useful context from predecessor-flip
-    // traces (see #204 investigation).
-    let removed_cell_vertices = snapshot_removed_cell_vertices(tds, removed_cells)?;
 
     tds.remove_cells_by_keys(removed_cells);
 
@@ -2543,7 +2543,7 @@ where
     }
 
     let violates = in_a > 0 || in_b > 0;
-    if std::env::var_os("DELAUNAY_REPAIR_DEBUG_PREDICATES").is_some()
+    if env::var_os("DELAUNAY_REPAIR_DEBUG_PREDICATES").is_some()
         && (violates || in_a == 0 || in_b == 0)
     {
         tracing::debug!(
@@ -3220,7 +3220,7 @@ where
                 | FlipError::InsertedSimplexAlreadyExists { .. }
                 | FlipError::CellCreation(_)),
             ) => {
-                if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+                if env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
                     tracing::debug!(
                         "k=2 flip skipped in repair_delaunay_with_flips_k2_attempt (facet={facet:?}): {err}"
                     );
@@ -3870,7 +3870,7 @@ where
                 );
                 let mut message =
                     format!("local k=2 violation remains after repair (facet={facet:?})");
-                if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+                if env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
                     let removed_details: Vec<_> = context
                         .removed_face_vertices
                         .iter()
@@ -4345,7 +4345,7 @@ fn emit_repair_debug_summary(
     config: &RepairAttemptConfig,
     max_flips: usize,
 ) {
-    if std::env::var_os("DELAUNAY_REPAIR_DEBUG_SUMMARY").is_none() {
+    if env::var_os("DELAUNAY_REPAIR_DEBUG_SUMMARY").is_none() {
         return;
     }
 
@@ -5536,7 +5536,7 @@ where
 
     // Shared trace tail for apply-k=2-facet skip arms below.
     let log_apply_skip = |err: &FlipError| {
-        if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+        if env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
             tracing::debug!(
                 facet = ?facet,
                 reason = %err,
@@ -6278,7 +6278,7 @@ where
         return false;
     };
 
-    if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() || repair_trace_enabled() {
+    if env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() || repair_trace_enabled() {
         let mut target: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
             vertices.iter().copied().collect();
         target.sort_unstable();
@@ -6290,7 +6290,7 @@ where
             v
         });
 
-        if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+        if env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
             tracing::debug!(
                 "k=2 flip would duplicate existing cell {cell_key:?}; target={target:?}; existing={existing_sorted:?}"
             );
@@ -6619,6 +6619,7 @@ mod tests {
     use super::*;
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
     use crate::core::collections::Uuid;
+    use crate::core::triangulation::TopologyGuarantee;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
     use crate::triangulation::delaunay::DelaunayTriangulation;
@@ -6626,10 +6627,13 @@ mod tests {
     use approx::assert_relative_eq;
     use rand::{RngExt, SeedableRng, rngs::StdRng};
     use slotmap::KeyData;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{
+        Once,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     fn init_tracing() {
-        static INIT: std::sync::Once = std::sync::Once::new();
+        static INIT: Once = Once::new();
         INIT.call_once(|| {
             let filter = tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
@@ -9371,8 +9375,6 @@ mod tests {
 
     #[test]
     fn test_delaunay_repair_error_partial_eq() {
-        use crate::core::triangulation::TopologyGuarantee;
-
         let post_test = DelaunayRepairError::PostconditionFailed {
             message: "test".to_string(),
         };
