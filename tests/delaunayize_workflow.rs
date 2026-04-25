@@ -451,15 +451,12 @@ fn test_error_display_delaunay_repair_with_rebuild() {
 /// workflow's public typed error payloads.
 #[test]
 fn test_prelude_exports_error_payloads() {
-    let exported_type_sizes = [
-        size_of::<DelaunayRepairError>(),
-        size_of::<DelaunayRepairStats>(),
-        size_of::<PlManifoldRepairError>(),
-        size_of::<PlManifoldRepairStats<f64, (), (), 2>>(),
-        size_of::<CellValidationError>(),
-        size_of::<DelaunayTriangulationConstructionError>(),
-    ];
-    assert!(exported_type_sizes.iter().all(|size| *size > 0));
+    const _: usize = size_of::<DelaunayRepairError>();
+    const _: usize = size_of::<DelaunayRepairStats>();
+    const _: usize = size_of::<PlManifoldRepairError>();
+    const _: usize = size_of::<PlManifoldRepairStats<f64, (), (), 2>>();
+    const _: usize = size_of::<CellValidationError>();
+    const _: usize = size_of::<DelaunayTriangulationConstructionError>();
 }
 
 // =============================================================================

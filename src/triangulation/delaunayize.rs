@@ -160,12 +160,13 @@ pub struct DelaunayizeOutcome<T, U, V, const D: usize> {
 
 /// Errors that can occur during the [`delaunayize_by_flips`] workflow.
 ///
-/// There are three orthogonal failure modes:
+/// There are four orthogonal failure modes:
 /// - **Topology repair** failed (step 1).
 /// - **Delaunay repair** failed (step 2), with optional context about a
 ///   fallback rebuild attempt.
+/// - **Fallback snapshot** failed before any repair could run.
 /// - **Fallback cell-data recovery** failed while snapshotting or restoring
-///   cell payloads by vertex UUID.
+///   cell payloads after a repair failure.
 ///
 /// # Orthogonality
 ///
@@ -179,10 +180,11 @@ pub struct DelaunayizeOutcome<T, U, V, const D: usize> {
 /// - Delaunay repair, fallback rebuild succeeded but payload restore failed -> [`DelaunayRepairFailedWithRebuildRestore`](Self::DelaunayRepairFailedWithRebuildRestore).
 /// - Fallback was enabled, but the pre-repair payload snapshot failed -> [`FallbackCellDataSnapshotFailed`](Self::FallbackCellDataSnapshotFailed).
 ///
-/// The `*WithRebuild` variants preserve **both** the primary repair error and
-/// the secondary construction error as typed values (no stringification),
-/// so consumers can inspect both errors via pattern matching; the primary
-/// repair error is exposed via [`Error::source`](std::error::Error::source).
+/// Variants with secondary fallback failures preserve **both** the primary
+/// repair error and the secondary construction, snapshot, or restore error as
+/// typed values (no stringification), so consumers can inspect both errors via
+/// pattern matching; the primary repair error is exposed via
+/// [`Error::source`](std::error::Error::source).
 ///
 /// # Examples
 ///
@@ -281,8 +283,9 @@ pub enum DelaunayizeError {
     },
 
     /// Fallback rebuild was enabled, but the pre-repair cell-payload snapshot
-    /// could not be collected from the input triangulation.
-    #[error("Fallback cell-data snapshot failed before repair: {source}")]
+    /// could not be collected from the input triangulation. No topology or
+    /// Delaunay repair was attempted.
+    #[error("Fallback cell-data snapshot failed before repair; no repair attempted: {source}")]
     FallbackCellDataSnapshotFailed {
         /// The cell-data snapshot error from the input triangulation.
         #[from]
@@ -554,7 +557,10 @@ where
                     Ok(rebuilt) => {
                         *dt = rebuilt;
                         return Ok(DelaunayizeOutcome {
-                            topology_repair: PlManifoldRepairStats::default(),
+                            topology_repair: PlManifoldRepairStats {
+                                succeeded: true,
+                                ..PlManifoldRepairStats::default()
+                            },
                             delaunay_repair: DelaunayRepairStats::default(),
                             used_fallback_rebuild: true,
                         });
@@ -625,7 +631,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::tds::VertexKey;
+    use crate::core::{tds::VertexKey, triangulation::TriangulationConstructionError};
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::triangulation::builder::DelaunayTriangulationBuilder;
     use crate::vertex;
@@ -638,6 +644,14 @@ mod tests {
 
     fn init_tracing() {
         let _ = tracing_subscriber::fmt::try_init();
+    }
+
+    fn construction_error() -> DelaunayTriangulationConstructionError {
+        DelaunayTriangulationConstructionError::Triangulation(
+            TriangulationConstructionError::FailedToCreateCell {
+                message: "synthetic rebuild degeneracy".to_string(),
+            },
+        )
     }
 
     // =============================================================================
@@ -733,8 +747,11 @@ mod tests {
         .collect();
         let missing = vertex_keys[0];
         let cell = Cell::new(vertex_keys, Some(7)).unwrap();
-        tds.insert_cell_with_mapping(cell).unwrap();
+        let dangling_cell = cell.clone();
+        let cell_key = tds.insert_cell_with_mapping(cell).unwrap();
+        assert_eq!(tds.remove_cells_by_keys(&[cell_key]), 1);
         tds.remove_isolated_vertex(missing);
+        tds.cells_mut().insert(dangling_cell);
 
         let err = collect_cell_data(&tds).unwrap_err();
 
@@ -760,6 +777,7 @@ mod tests {
             err.to_string()
                 .contains("Fallback cell-data snapshot failed")
         );
+        assert!(err.to_string().contains("no repair attempted"));
         let error_source = StdError::source(&err).unwrap();
         assert_eq!(error_source.to_string(), source.to_string());
     }
@@ -832,6 +850,106 @@ mod tests {
         assert_eq!(
             StdError::source(&delaunay_err).unwrap().to_string(),
             delaunay_source.to_string()
+        );
+    }
+
+    #[test]
+    fn test_topology_rebuild_error_mapping() {
+        let source = PlManifoldRepairError::NoProgress {
+            over_shared_facets: 2,
+            iterations: 3,
+            cells_removed: 4,
+        };
+        let rebuild_error = construction_error();
+        let restore_error = CellValidationError::VertexKeyNotFound {
+            key: VertexKey::from(KeyData::from_ffi(0xBAD)),
+        };
+
+        let rebuild_err = topology_rebuild_error(
+            source.clone(),
+            FallbackRebuildError::Construction {
+                source: rebuild_error.clone(),
+            },
+        );
+        assert_eq!(
+            rebuild_err,
+            DelaunayizeError::TopologyRepairFailedWithRebuild {
+                source: source.clone(),
+                rebuild_error,
+            }
+        );
+        assert!(
+            rebuild_err
+                .to_string()
+                .contains("fallback rebuild also failed")
+        );
+
+        let restore_err = topology_rebuild_error(
+            source.clone(),
+            FallbackRebuildError::Restore {
+                source: restore_error.clone(),
+            },
+        );
+        assert_eq!(
+            restore_err,
+            DelaunayizeError::TopologyRepairFailedWithRebuildRestore {
+                source,
+                restore_error,
+            }
+        );
+        assert!(
+            restore_err
+                .to_string()
+                .contains("fallback rebuild succeeded but cell-data restore failed")
+        );
+    }
+
+    #[test]
+    fn test_delaunay_rebuild_error_mapping() {
+        let source = DelaunayRepairError::PostconditionFailed {
+            message: "synthetic postcondition".to_string(),
+        };
+        let rebuild_error = construction_error();
+        let restore_error = CellValidationError::VertexKeyNotFound {
+            key: VertexKey::from(KeyData::from_ffi(0xBAD)),
+        };
+
+        let rebuild_err = delaunay_rebuild_error(
+            source.clone(),
+            FallbackRebuildError::Construction {
+                source: rebuild_error.clone(),
+            },
+        );
+        assert_eq!(
+            rebuild_err,
+            DelaunayizeError::DelaunayRepairFailedWithRebuild {
+                source: source.clone(),
+                rebuild_error,
+            }
+        );
+        assert!(
+            rebuild_err
+                .to_string()
+                .contains("fallback rebuild also failed")
+        );
+
+        let restore_err = delaunay_rebuild_error(
+            source.clone(),
+            FallbackRebuildError::Restore {
+                source: restore_error.clone(),
+            },
+        );
+        assert_eq!(
+            restore_err,
+            DelaunayizeError::DelaunayRepairFailedWithRebuildRestore {
+                source,
+                restore_error,
+            }
+        );
+        assert!(
+            restore_err
+                .to_string()
+                .contains("fallback rebuild succeeded but cell-data restore failed")
         );
     }
 
