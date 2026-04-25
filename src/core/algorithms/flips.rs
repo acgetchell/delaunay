@@ -2001,7 +2001,11 @@ pub struct DelaunayRepairStats {
 pub(crate) struct DelaunayRepairRun {
     /// Public aggregate repair statistics.
     pub stats: DelaunayRepairStats,
-    /// Cells created by successful flips in the final repair attempt.
+    /// Cells to validate after the final repair attempt.
+    ///
+    /// Local attempts contain cells created by successful flips. Full-reseed
+    /// attempts contain every current cell because the repair frontier was the
+    /// whole triangulation.
     pub touched_cells: CellKeyBuffer,
     /// Whether the final attempt used full-TDS queue seeding.
     pub used_full_reseed: bool,
@@ -2032,11 +2036,26 @@ fn record_touched_cells(
 }
 
 /// Converts an attempt outcome into the crate-private repair run result.
-fn repair_run_from_attempt(outcome: RepairAttemptOutcome) -> DelaunayRepairRun {
+fn repair_run_from_attempt(
+    outcome: RepairAttemptOutcome,
+    current_cells: impl IntoIterator<Item = CellKey>,
+) -> DelaunayRepairRun {
+    let RepairAttemptOutcome {
+        stats,
+        touched_cells,
+        used_full_reseed,
+        ..
+    } = outcome;
+    let touched_cells = if used_full_reseed {
+        current_cells.into_iter().collect()
+    } else {
+        touched_cells
+    };
+
     DelaunayRepairRun {
-        stats: outcome.stats,
-        touched_cells: outcome.touched_cells,
-        used_full_reseed: outcome.used_full_reseed,
+        stats,
+        touched_cells,
+        used_full_reseed,
     }
 }
 
@@ -3171,7 +3190,7 @@ where
     let mut last_applied_flip: Option<LastAppliedFlip> = None;
     let mut touched_cells = CellKeyBuffer::new();
     let mut touched_cell_set = FastHashSet::<CellKey>::default();
-    let mut used_full_reseed = seed_cells.is_none();
+    let used_full_reseed = seed_cells.is_none();
     let topology_model = GlobalTopology::DEFAULT.model();
 
     if let Some(seeds) = seed_cells {
@@ -3184,20 +3203,6 @@ where
                 &mut facet_handles,
                 &mut stats,
             )?;
-        }
-        if queue.is_empty() {
-            used_full_reseed = true;
-            for facet in AllFacetsIter::new(tds) {
-                let handle = FacetHandle::new(facet.cell_key(), facet.facet_index());
-                enqueue_facet(
-                    tds,
-                    handle,
-                    &mut queue,
-                    &mut queued,
-                    &mut facet_handles,
-                    &mut stats,
-                );
-            }
         }
     } else {
         for facet in AllFacetsIter::new(tds) {
@@ -3413,7 +3418,7 @@ where
             retry_seed_cells,
             outcome.last_applied_flip.as_ref(),
         ) {
-            Ok(()) => Ok(repair_run_from_attempt(outcome)),
+            Ok(()) => Ok(repair_run_from_attempt(outcome, tds.cell_keys())),
             Err(err) => {
                 *tds = snapshot;
                 Err(err)
@@ -3492,7 +3497,7 @@ where
             )
             .is_ok()
             {
-                return Ok(repair_run_from_attempt(outcome));
+                return Ok(repair_run_from_attempt(outcome, tds.cell_keys()));
             }
             if repair_trace_enabled() {
                 tracing::debug!(
@@ -3525,8 +3530,8 @@ where
 /// provided `seed_cells` rather than `None` / all cells. This keeps the queue size
 /// bounded to `O(seed_cells × queues_per_cell)` regardless of the total triangulation size,
 /// which is critical for D≥4 where a full-triangulation seed would generate O(cells×30)
-/// items (prohibitively expensive with robust predicates). In 2D, stale local seeds fall
-/// back to all facets because the queue remains small and otherwise no repair work runs.
+/// items (prohibitively expensive with robust predicates). An explicit empty seed slice
+/// is a bounded no-op seed set; callers that want a whole-TDS repair pass `None`.
 ///
 /// Two attempts are made with alternating queue orders (FIFO → LIFO) to escape
 /// flip cycles — the same strategy as [`repair_delaunay_with_flips_k2_k3`], but without the
@@ -10156,6 +10161,73 @@ mod tests {
             result.is_err(),
             "periodic inverse predicate should not fall back to bare coordinates"
         );
+    }
+
+    #[test]
+    fn test_repair_run_full_reseed_frontier_covers_all_cells() {
+        init_tracing();
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 0.2]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let tds = dt.tds();
+        let local_cell = tds.cell_keys().next().unwrap();
+        let outcome = RepairAttemptOutcome {
+            stats: DelaunayRepairStats::default(),
+            last_applied_flip: None,
+            touched_cells: std::iter::once(local_cell).collect(),
+            used_full_reseed: true,
+        };
+
+        let run = repair_run_from_attempt(outcome, tds.cell_keys());
+        let expected_cells: Vec<CellKey> = tds.cell_keys().collect();
+
+        assert!(run.used_full_reseed);
+        assert!(
+            expected_cells.len() > 1,
+            "fixture should distinguish local and full frontiers"
+        );
+        assert_eq!(run.touched_cells.len(), expected_cells.len());
+        assert!(
+            expected_cells
+                .iter()
+                .all(|expected| { run.touched_cells.iter().any(|touched| touched == expected) })
+        );
+    }
+
+    #[test]
+    fn test_repair_k2_empty_seed_does_not_full_reseed() {
+        init_tracing();
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 0.2]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let mut tds = dt.tds().clone();
+        let before = snapshot_topology(&tds);
+        let kernel = AdaptiveKernel::<f64>::new();
+        let config = RepairAttemptConfig {
+            attempt: 1,
+            queue_order: RepairQueueOrder::Fifo,
+            max_flips_override: None,
+        };
+        let empty_seeds: &[CellKey] = &[];
+
+        let outcome =
+            repair_delaunay_with_flips_k2_attempt(&mut tds, &kernel, Some(empty_seeds), &config)
+                .unwrap();
+
+        assert!(!outcome.used_full_reseed);
+        assert_eq!(outcome.stats.facets_checked, 0);
+        assert!(outcome.touched_cells.is_empty());
+        assert_eq!(snapshot_topology(&tds), before);
     }
 
     #[test]
