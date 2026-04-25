@@ -8,9 +8,15 @@ from postprocess_changelog import (
     _compact_entry,
     _fix_typos,
     _inject_summary_sections,
+    _is_duplicate_squash_heading,
+    _is_isolated_body_heading,
     _max_pr_number,
     _normalize_indented_heading,
+    _normalize_squash_heading,
+    _plain_summary,
+    _process_code_fence,
     _reflow_line,
+    _squash_heading_parts,
     postprocess,
 )
 
@@ -417,7 +423,114 @@ class TestIndentedHeadingNormalization:
         assert "### Performance" in result
 
 
+class TestSquashHeadingNormalization:
+    """GitHub squash-body pseudo-commit headings are rendered as prose."""
+
+    def test_plain_summary_removes_links_and_conventional_prefix(self) -> None:
+        line = f"- fix: Improve benchmark output {_pr(42)} {_commit()}"
+        assert _plain_summary(line) == "improve benchmark output"
+
+    def test_squash_heading_parts_maps_kind_to_changelog_label(self) -> None:
+        assert _squash_heading_parts("  - perf(core): speed up predicates") == (
+            "  ",
+            "Performance",
+            "Speed up predicates",
+        )
+
+    def test_squash_heading_parts_ignores_commit_entries(self) -> None:
+        assert _squash_heading_parts(f"- fix: actual commit {_commit()}") is None
+
+    def test_conventional_squash_heading_becomes_bold_prose(self) -> None:
+        assert _normalize_squash_heading("- fix: close the 4D retry collapse") == "**Fixed: Close the 4D retry collapse**"
+
+    def test_nested_squash_heading_is_indented(self) -> None:
+        assert _normalize_squash_heading("- Changed: harden flip diagnostics", nested=True) == "  **Changed: Harden flip diagnostics**"
+
+    def test_commit_entry_is_preserved(self) -> None:
+        line = f"- fix: actual commit {_commit()}"
+        assert _normalize_squash_heading(line) == line
+
+    def test_duplicate_squash_heading_matches_parent_summary(self) -> None:
+        parent = _plain_summary("- Instrument large-scale 4D debugging")
+        assert _is_duplicate_squash_heading("- feat: instrument large-scale 4D debugging", parent)
+
+    def test_duplicate_squash_heading_rejects_distinct_heading(self) -> None:
+        parent = _plain_summary("- Instrument large-scale 4D debugging")
+        assert not _is_duplicate_squash_heading("- fix: close the 4D retry collapse", parent)
+
+    def test_isolated_body_heading_requires_blank_neighbors(self) -> None:
+        lines = ["- Parent entry", "", "- fix: child heading", "", "  - detail"]
+        assert _is_isolated_body_heading(lines, 2)
+        assert not _is_isolated_body_heading(lines, 4)
+
+    def test_full_pipeline_drops_duplicate_squash_heading(self, tmp_path: Path) -> None:
+        f = tmp_path / "CHANGELOG.md"
+        f.write_text(
+            "# Changelog\n\n"
+            "## [1.0.0]\n\n"
+            "### Added\n\n"
+            f"- Instrument large-scale 4D debugging {_commit('3af976e', '3af976ec2f7c33d49803b24ab8f1a7da598fea0b')}\n\n"
+            "* feat: instrument large-scale 4D debugging\n\n"
+            "  - Thread cavity-touched cells through insertion.\n\n"
+            "* fix: close the 4D bulk repair retry collapse\n\n"
+            "  - Raise the D>=4 per-insertion repair budget.\n",
+            encoding="utf-8",
+        )
+
+        postprocess(f)
+
+        result = f.read_text(encoding="utf-8")
+        assert "feat: instrument large-scale 4D debugging" not in result
+        assert "**Fixed: Close the 4D bulk repair retry collapse**" in result
+        assert "  - Thread cavity-touched cells through insertion." in result
+
+    def test_full_pipeline_preserves_non_isolated_conventional_bullets(self, tmp_path: Path) -> None:
+        f = tmp_path / "CHANGELOG.md"
+        f.write_text(
+            "# Changelog\n\n"
+            "## [1.0.0]\n\n"
+            "### Documentation\n\n"
+            f"- Update workflow docs {_commit()}\n\n"
+            "  - Added: `just help-workflows` references throughout\n"
+            "  - Expanded: Testing commands\n",
+            encoding="utf-8",
+        )
+
+        postprocess(f)
+
+        result = f.read_text(encoding="utf-8")
+        assert "  - Added: `just help-workflows` references throughout" in result
+        assert "**Added: `just help-workflows`" not in result
+
+
 class TestCodeBlockLanguage:
+    def test_process_code_fence_opens_and_tags_bare_fence(self) -> None:
+        result: list[str] = []
+
+        handled, in_code_block = _process_code_fence("```", result, in_code_block=False)
+
+        assert handled
+        assert in_code_block
+        assert result == ["```text"]
+
+    def test_process_code_fence_closes_existing_block(self) -> None:
+        result: list[str] = []
+
+        handled, in_code_block = _process_code_fence("```", result, in_code_block=True)
+
+        assert handled
+        assert not in_code_block
+        assert result == ["```"]
+
+    def test_process_code_fence_ignores_regular_line(self) -> None:
+        result: list[str] = []
+
+        handled, in_code_block = _process_code_fence("regular text", result, in_code_block=False)
+
+        assert not handled
+        assert not in_code_block
+        assert result == []
+
     def test_adds_language_to_bare_fence(self, tmp_path: Path) -> None:
         f = tmp_path / "CHANGELOG.md"
         f.write_text("  ```\n  let x = 1;\n  ```\n", encoding="utf-8")

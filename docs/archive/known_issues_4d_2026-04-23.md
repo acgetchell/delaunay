@@ -1,5 +1,9 @@
 # Known Issues: Dimensional and Large-Scale Limitations
 
+> Archived snapshot from 2026-04-23. Current operational limits are tracked in
+> [`../limitations.md`](../limitations.md), and active follow-up work is tracked
+> in [`../roadmap.md`](../roadmap.md).
+
 ## Status (v0.7.5)
 
 ### Re-verified on 2026-04-23 (release mode)
