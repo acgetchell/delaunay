@@ -11,10 +11,8 @@
 use delaunay::core::triangulation::TriangulationConstructionError;
 use delaunay::prelude::triangulation::delaunayize::*;
 use delaunay::prelude::triangulation::flips::BistellarFlips;
-use delaunay::prelude::triangulation::repair::DelaunayRepairError;
-use delaunay::triangulation::delaunay::DelaunayTriangulationConstructionError;
 use delaunay::triangulation::flips::FacetHandle;
-use std::error::Error;
+use std::{error::Error, mem::size_of};
 
 // =============================================================================
 // HELPER FUNCTIONS
@@ -447,6 +445,18 @@ fn test_error_display_delaunay_repair_with_rebuild() {
         source.to_string().contains("synthetic postcondition"),
         "source display should match the underlying DelaunayRepairError: {source}"
     );
+}
+
+/// Verify that the focused delaunayize prelude is sufficient for naming the
+/// workflow's public typed error payloads.
+#[test]
+fn test_prelude_exports_error_payloads() {
+    const _: usize = size_of::<DelaunayRepairError>();
+    const _: usize = size_of::<DelaunayRepairStats>();
+    const _: usize = size_of::<PlManifoldRepairError>();
+    const _: usize = size_of::<PlManifoldRepairStats<f64, (), (), 2>>();
+    const _: usize = size_of::<CellValidationError>();
+    const _: usize = size_of::<DelaunayTriangulationConstructionError>();
 }
 
 // =============================================================================

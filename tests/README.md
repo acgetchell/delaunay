@@ -547,7 +547,7 @@ just test-debug
 All integration tests are automatically run in the CI pipeline:
 
 - **GitHub Actions**: `.github/workflows/ci.yml`
-- **Coverage Tracking**: Results are uploaded to Codecov (5-minute per-test timeout for slow CI environments)
+- **Coverage Tracking**: Coverage is generated with `cargo-llvm-cov` through `just coverage-ci` and uploaded to Codecov
 - **Performance Regression**: Baseline comparisons are performed
 
 ### Development Testing

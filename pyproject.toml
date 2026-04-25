@@ -106,7 +106,6 @@ select = [
     "TC",
     "TID",
     "TD",
-    "TCH",
     "ARG",
     "PTH",
     "ERA",

@@ -10,6 +10,7 @@ and necessary for comprehensive unit testing of internal functionality.
 """
 
 import json
+import logging
 import math
 import os
 import re
@@ -39,6 +40,7 @@ from benchmark_utils import (
     PerformanceSummaryGenerator,
     ProjectRootNotFoundError,
     WorkflowHelper,
+    configure_logging,
     create_argument_parser,
     find_project_root,
     main,
@@ -1900,6 +1902,34 @@ class TestTimeoutHandling:
                 assert args.bench_timeout == 3600
                 assert hasattr(args, "validate_bench_timeout")
                 assert args.validate_bench_timeout
+
+    def test_parser_accepts_verbose_flag(self):
+        """Test that the CLI parser accepts the shared verbose logging flag."""
+        parser = create_argument_parser()
+        args = parser.parse_args(["--verbose", "generate-summary"])
+
+        assert args.verbose
+        assert args.command == "generate-summary"
+
+    def test_configure_logging_uses_debug_when_verbose(self):
+        """Test that verbose mode configures debug-level CLI logging."""
+        with patch("benchmark_utils.logging.basicConfig") as mock_basic_config:
+            configure_logging(verbose=True)
+
+        mock_basic_config.assert_called_once_with(
+            level=logging.DEBUG,
+            format="%(levelname)s: %(message)s",
+        )
+
+    def test_configure_logging_defaults_to_info(self):
+        """Test that non-verbose mode configures info-level CLI logging."""
+        with patch("benchmark_utils.logging.basicConfig") as mock_basic_config:
+            configure_logging(verbose=False)
+
+        mock_basic_config.assert_called_once_with(
+            level=logging.INFO,
+            format="%(levelname)s: %(message)s",
+        )
 
 
 class TestPerformanceSummaryGenerator:
