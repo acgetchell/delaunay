@@ -271,8 +271,7 @@ def build_root(
         # Build the Archives section.
         archive_lines = ["## Archives\n"]
         archive_lines.append("Older releases are archived by minor series:\n")
-        for minor in archived_minors:
-            archive_lines.append(f"- [{minor}.x]({archive_dir_rel}/{minor}.md)")
+        archive_lines.extend(f"- [{minor}.x]({archive_dir_rel}/{minor}.md)" for minor in archived_minors)
         archive_lines.append("")
         parts.append("\n".join(archive_lines))
 

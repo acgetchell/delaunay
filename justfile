@@ -6,18 +6,28 @@
 # Use bash with strict error handling for all recipes
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-# Common tarpaulin arguments for all coverage runs
-# Note: -t 300 sets per-test timeout to 5 minutes (needed for slow CI environments)
-# Excludes: storage_backend_compatibility (all tests ignored - Phase 4 evaluation tests)
-_coverage_base_args := '''--exclude-files 'benches/*' --exclude-files 'examples/*' \
+cargo_llvm_cov_version := "0.8.5"
+
+# Common cargo-llvm-cov arguments for all coverage runs.
+# Excludes benches/examples from reports while allowing integration tests to
+# exercise library code.
+_coverage_base_args := '''--ignore-filename-regex '(^|/)(benches|examples)/' \
   --workspace --lib --tests \
-  --exclude storage_backend_compatibility \
-  -t 300 --verbose --implicit-test-threads'''
+  --verbose'''
 
 _ensure-actionlint:
     #!/usr/bin/env bash
     set -euo pipefail
     command -v actionlint >/dev/null || { echo "❌ 'actionlint' not found. See 'just setup' or https://github.com/rhysd/actionlint"; exit 1; }
+
+_ensure-cargo-llvm-cov:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v cargo-llvm-cov >/dev/null; then
+        echo "❌ 'cargo-llvm-cov' not found. See 'just setup-tools' or install:"
+        echo "   cargo install --locked cargo-llvm-cov --version {{cargo_llvm_cov_version}}"
+        exit 1
+    fi
 
 # Internal helpers: ensure external tooling is installed
 _ensure-git-cliff:
@@ -181,7 +191,7 @@ ci-slow: ci test-slow
 # Clean build artifacts
 clean:
     cargo clean
-    rm -rf target/tarpaulin
+    rm -rf target/llvm-cov
     rm -rf coverage_report
     rm -rf coverage
 
@@ -206,13 +216,15 @@ compare-storage-large: _ensure-uv
     BENCH_LARGE_SCALE=1 uv run compare-storage-backends --bench large_scale_performance
 
 # Coverage analysis for local development (HTML output)
-coverage:
-    cargo tarpaulin {{_coverage_base_args}} --out Html --output-dir target/tarpaulin
-    @echo "📊 Coverage report generated: target/tarpaulin/tarpaulin-report.html"
+coverage: _ensure-cargo-llvm-cov
+    mkdir -p target/llvm-cov
+    cargo llvm-cov {{_coverage_base_args}} --html --output-dir target/llvm-cov
+    @echo "📊 Coverage report generated: target/llvm-cov/html/index.html"
 
 # Coverage analysis for CI (XML output for codecov/codacy)
-coverage-ci:
-    cargo tarpaulin {{_coverage_base_args}} --out Xml --output-dir coverage -- --skip prop_
+coverage-ci: _ensure-cargo-llvm-cov
+    mkdir -p coverage
+    cargo llvm-cov {{_coverage_base_args}} --cobertura --output-path coverage/cobertura.xml -- --skip prop_
 
 debug-large-scale-3d n="10000":
     DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_3D={{n}} cargo test --release --test large_scale_debug debug_large_scale_3d -- --ignored --exact --nocapture
@@ -472,7 +484,7 @@ python-sync: _ensure-uv
     uv sync --group dev
 
 python-typecheck: _ensure-uv
-    uv run ty check scripts/
+    uv run ty check scripts/ --error all
 
 # Repository-owned Semgrep rules. Currently opt-in because the Rust rules are
 # staged but disabled while legacy diagnostics are cleaned up.
@@ -572,15 +584,18 @@ setup-tools:
         echo "  ✓ git-cliff"
     fi
 
-    if ! have cargo-tarpaulin; then
-        if [[ "$os" == "Linux" ]]; then
-            echo "  ⏳ Installing cargo-tarpaulin (cargo)..."
-            cargo install --locked cargo-tarpaulin
-        else
-            echo "  ⚠️  Skipping cargo-tarpaulin install on $os (coverage is typically Linux-only)"
-        fi
+    if ! rustup component list --installed | grep -q '^llvm-tools'; then
+        echo "  ⏳ Installing llvm-tools-preview (rustup)..."
+        rustup component add llvm-tools-preview
     else
-        echo "  ✓ cargo-tarpaulin"
+        echo "  ✓ llvm-tools-preview"
+    fi
+
+    if ! have cargo-llvm-cov; then
+        echo "  ⏳ Installing cargo-llvm-cov {{cargo_llvm_cov_version}} (cargo)..."
+        cargo install --locked cargo-llvm-cov --version {{cargo_llvm_cov_version}}
+    else
+        echo "  ✓ cargo-llvm-cov"
     fi
 
     echo ""
@@ -588,9 +603,7 @@ setup-tools:
     missing=0
 
     cmds=(uv jq taplo yamllint shfmt shellcheck actionlint git-cliff node npx typos)
-    if [[ "$os" == "Linux" ]]; then
-        cmds+=(cargo-tarpaulin)
-    fi
+    cmds+=(cargo-llvm-cov)
 
     for cmd in "${cmds[@]}"; do
         if have "$cmd"; then

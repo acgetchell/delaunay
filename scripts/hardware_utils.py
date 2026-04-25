@@ -38,6 +38,7 @@ class HardwareInfo:
     """Cross-platform hardware information detection."""
 
     def __init__(self):
+        """Initialize cached platform identifiers for hardware probes."""
         self.os_type = platform.system()
         self.machine = platform.machine()
 

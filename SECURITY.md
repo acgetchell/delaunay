@@ -17,8 +17,8 @@ Users are expected to upgrade to the most recent version to receive security upd
 
 If you discover a security vulnerability, please report it **privately**.
 
-- Preferred: GitHub Security Advisory (Security tab → “Report a vulnerability”)
-- Alternative: Contact the maintainer via GitHub
+- Preferred: [GitHub private vulnerability report](https://github.com/acgetchell/delaunay/security/advisories/new)
+- Alternative: Email the maintainer at [adam@adamgetchell.org](mailto:adam@adamgetchell.org)
 
 Do **not** open a public issue for security vulnerabilities.
 
@@ -34,8 +34,9 @@ Do **not** open a public issue for security vulnerabilities.
 
 ## Disclosure Process
 
-- Reports will be acknowledged within a reasonable timeframe (typically a few days)
-- The issue will be triaged and severity assessed
+- Reports will be acknowledged as soon as maintainer availability allows
+- The issue will be triaged and severity assessed on a best-effort basis
+- For accepted reports, status updates will be provided when there is meaningful progress or a material change in assessment
 - If accepted:
   - A fix will be prepared and released
   - A GitHub Security Advisory will be published
@@ -53,7 +54,7 @@ This crate uses `#![forbid(unsafe_code)]`, reducing memory safety risks. However
 
 - Panics or crashes triggered by malformed or adversarial inputs
 - Denial-of-service (CPU or memory exhaustion)
-- Incorrect geometric or topological results under adversarial conditions
+- Incorrect geometric or topological results that affect security, integrity, or availability when processing untrusted input
 - Serialization/deserialization issues (e.g., malformed JSON inputs)
 
 Out of scope:
@@ -74,10 +75,20 @@ Out of scope:
 
 ## RustSec
 
-Security vulnerabilities may be disclosed via the RustSec Advisory Database:
-https://github.com/RustSec/advisory-db
+Security vulnerabilities may be disclosed via the
+[RustSec Advisory Database](https://github.com/RustSec/advisory-db).
 
 This enables detection via `cargo audit`.
+
+---
+
+## Safe Harbor
+
+Good-faith security research is welcome. Please avoid privacy violations,
+data destruction, persistence, service disruption, and public disclosure before
+a fix or mitigation is available. Reports that follow coordinated disclosure
+and make a reasonable effort to avoid harm will be treated as helpful
+contributions.
 
 ---
 
