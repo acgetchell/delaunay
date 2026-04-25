@@ -89,8 +89,10 @@ use std::time::{Duration, Instant};
 
 /// Writes the timeout diagnostic synchronously so it survives the watchdog abort.
 fn write_timeout_abort_message<W: Write>(mut writer: W, max_secs: u64) -> io::Result<()> {
-    let message = format!("=== TIMEOUT: wall time exceeded {max_secs} seconds — aborting ===");
-    writeln!(writer, "{message}")?;
+    writeln!(
+        writer,
+        "=== TIMEOUT: wall time exceeded {max_secs} seconds — aborting ==="
+    )?;
     writer.flush()
 }
 
@@ -110,7 +112,7 @@ fn install_runtime_cap(max_secs: u64) -> SyncSender<()> {
             // Deadline exceeded — hard abort.
             Err(RecvTimeoutError::Timeout) => {
                 if let Err(err) = write_timeout_abort_message(io::stderr().lock(), max_secs) {
-                    tracing::debug!(?err, "failed to flush timeout message before abort");
+                    tracing::warn!(?err, "failed to flush timeout message before abort");
                 }
                 process::abort();
             }
@@ -538,9 +540,13 @@ fn print_insertion_summary<const D: usize>(summary: &InsertionSummary<D>, elapse
         println!();
         println!("  skip_samples (first {}):", summary.skip_samples.len());
         for s in &summary.skip_samples {
+            let coords = s.coords.as_ref().map_or_else(
+                || "<unavailable>".to_string(),
+                |coords| format!("{coords:?}"),
+            );
             println!(
-                "    idx={} uuid={} attempts={} coords={:?} error={}",
-                s.index, s.uuid, s.attempts, s.coords, s.error
+                "    idx={} uuid={} attempts={} coords={} error={}",
+                s.index, s.uuid, s.attempts, coords, s.error
             );
         }
     }

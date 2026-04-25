@@ -7,8 +7,9 @@
 
 use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
 use crate::core::algorithms::flips::{
-    DelaunayRepairError, DelaunayRepairStats, FlipError, apply_bistellar_flip_k1_inverse,
-    repair_delaunay_local_single_pass, repair_delaunay_with_flips_k2_k3,
+    DelaunayRepairError, DelaunayRepairRun, DelaunayRepairStats, FlipError,
+    apply_bistellar_flip_k1_inverse, repair_delaunay_local_single_pass,
+    repair_delaunay_with_flips_k2_k3, repair_delaunay_with_flips_k2_k3_run,
     verify_delaunay_for_triangulation,
 };
 use crate::core::algorithms::incremental_insertion::InsertionError;
@@ -1507,7 +1508,7 @@ where
         .point()
         .coords()
         .iter()
-        .map(ToPrimitive::to_f64)
+        .map(|coord| coord.to_f64().filter(|value| value.is_finite()))
         .collect()
 }
 
@@ -3393,7 +3394,6 @@ where
     /// escalation ran but also hit its budget; the caller should fall through
     /// to the soft-fail path, and the typed `DelaunayRepairError` is
     /// preserved for downstream diagnostics). `Err(...)` is reserved for
-    /// canonicalization failures after a successful escalation, which are
     /// hard errors the bulk loop must propagate.
     fn try_local_repair_escalation_d_ge_4(
         &mut self,
@@ -3459,6 +3459,9 @@ where
                 Ok(LocalRepairEscalationOutcome::Succeeded { stats })
             }
             Err(escalation_err) => {
+                if !Self::can_soft_fail(&escalation_err) {
+                    return Err(Self::map_hard_repair_error(index, &escalation_err));
+                }
                 tracing::debug!(
                     idx = index,
                     error = %escalation_err,
@@ -4882,10 +4885,20 @@ where
         seed_cells: Option<&[CellKey]>,
         max_flips: Option<usize>,
     ) -> Result<DelaunayRepairStats, DelaunayRepairError> {
+        self.repair_delaunay_with_flips_robust_run(seed_cells, max_flips)
+            .map(|run| run.stats)
+    }
+
+    /// Replays repair with an exact-predicate kernel and returns the validation frontier.
+    fn repair_delaunay_with_flips_robust_run(
+        &mut self,
+        seed_cells: Option<&[CellKey]>,
+        max_flips: Option<usize>,
+    ) -> Result<DelaunayRepairRun, DelaunayRepairError> {
         let topology = self.tri.topology_guarantee();
         let kernel = RobustKernel::<K::Scalar>::new();
         let (tds, kernel) = (&mut self.tri.tds, &kernel);
-        repair_delaunay_with_flips_k2_k3(tds, kernel, seed_cells, topology, max_flips)
+        repair_delaunay_with_flips_k2_k3_run(tds, kernel, seed_cells, topology, max_flips)
     }
 
     /// Applies the repair policy only when the dimension and topology can
@@ -6063,7 +6076,7 @@ where
 
         let repair_result = {
             let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-            repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology, max_flips)
+            repair_delaunay_with_flips_k2_k3_run(tds, kernel, seed_ref, topology, max_flips)
         };
 
         #[cfg(test)]
@@ -6074,8 +6087,8 @@ where
         };
 
         match repair_result {
-            Ok(stats) => {
-                self.validate_ridge_links_after_repair(topology, &stats)?;
+            Ok(run) => {
+                self.validate_ridge_links_after_repair(topology, &run)?;
             }
             Err(
                 e @ (DelaunayRepairError::NonConvergent { .. }
@@ -6087,13 +6100,13 @@ where
                 // If the robust pass also fails, return an error. Callers that need
                 // the full heuristic rebuild (shuffled re-insertion) can invoke
                 // `repair_delaunay_with_flips_advanced()` explicitly.
-                let robust_stats = self
-                    .repair_delaunay_with_flips_robust(seed_ref, max_flips)
+                let robust_run = self
+                    .repair_delaunay_with_flips_robust_run(seed_ref, max_flips)
                     .map_err(|robust_err| InsertionError::DelaunayRepairFailed {
                         source: Box::new(robust_err),
                         context: format!("local repair failed ({e}); robust fallback also failed"),
                     })?;
-                self.validate_ridge_links_after_repair(topology, &robust_stats)?;
+                self.validate_ridge_links_after_repair(topology, &robust_run)?;
             }
             Err(e) => {
                 return Err(InsertionError::DelaunayRepairFailed {
@@ -6114,30 +6127,36 @@ where
 
     /// Validates PL ridge links after a repair pass that actually performed flips.
     ///
-    /// `repair_delaunay_with_flips_k2_k3` may retry internally with a full-TDS
-    /// reseed after local postcondition failure or non-convergence, so the caller
-    /// cannot infer the final mutation frontier from the original seed cells.
-    /// Validate all current cells in that case to preserve the topology invariant.
+    /// `repair_delaunay_with_flips_k2_k3_run` reports whether the final attempt
+    /// used a full-TDS reseed.  Full reseeds validate every current cell; local
+    /// repairs validate only cells created by flips in the final attempt.
     fn validate_ridge_links_after_repair(
         &self,
         topology: TopologyGuarantee,
-        stats: &DelaunayRepairStats,
+        run: &DelaunayRepairRun,
     ) -> Result<(), InsertionError> {
-        if !topology.requires_ridge_links() || stats.flips_performed == 0 {
+        if !topology.requires_ridge_links() || run.stats.flips_performed == 0 {
             return Ok(());
+        }
+
+        let validate_cells = |cells: &[CellKey]| {
+            if cells.is_empty() {
+                return Ok(());
+            }
+            validate_ridge_links_for_cells(&self.tri.tds, cells).map_err(|err| {
+                InsertionError::TopologyValidationFailed {
+                    message: "Topology invalid after Delaunay repair".to_string(),
+                    source: Box::new(TriangulationValidationError::from(err)),
+                }
+            })
+        };
+
+        if !run.used_full_reseed && !run.touched_cells.is_empty() {
+            return validate_cells(&run.touched_cells);
         }
 
         let validation_cells: Vec<CellKey> = self.tri.tds.cell_keys().collect();
-        if validation_cells.is_empty() {
-            return Ok(());
-        }
-
-        validate_ridge_links_for_cells(&self.tri.tds, &validation_cells).map_err(|err| {
-            InsertionError::TopologyValidationFailed {
-                message: "Topology invalid after Delaunay repair".to_string(),
-                source: Box::new(TriangulationValidationError::from(err)),
-            }
-        })
+        validate_cells(&validation_cells)
     }
 
     /// Merge the inserted vertex star with any cells that cavity reduction touched and
@@ -6889,7 +6908,9 @@ mod tests {
     };
     use crate::core::algorithms::locate::{ConflictError, LocateError};
     use crate::core::tds::{EntityKind, GeometricError};
+    use crate::core::vertex::VertexBuilder;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel, RobustKernel};
+    use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::topology::characteristics::euler::TopologyClassification;
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
@@ -7283,6 +7304,22 @@ mod tests {
         let vertex: Vertex<f32, (), 3> = vertex!([1.25f32, -2.5f32, 3.75f32]);
 
         assert_eq!(vertex_coords_f64(&vertex), Some(vec![1.25, -2.5, 3.75]));
+    }
+
+    #[test]
+    fn test_vertex_coords_f64_rejects_non_finite_coords() {
+        init_tracing();
+        let nan_vertex: Vertex<f64, (), 3> = VertexBuilder::default()
+            .point(Point::new([1.0, f64::NAN, 3.0]))
+            .build()
+            .unwrap();
+        let infinite_vertex: Vertex<f64, (), 3> = VertexBuilder::default()
+            .point(Point::new([1.0, f64::INFINITY, 3.0]))
+            .build()
+            .unwrap();
+
+        assert_eq!(vertex_coords_f64(&nan_vertex), None);
+        assert_eq!(vertex_coords_f64(&infinite_vertex), None);
     }
 
     #[test]

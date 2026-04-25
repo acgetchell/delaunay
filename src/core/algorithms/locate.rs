@@ -458,7 +458,8 @@ where
     format_vertex_refs(tds, cell.vertices())
 }
 
-/// Emits a compact one-shot snapshot of the first detected ridge fan in a run.
+/// Emits a compact one-shot snapshot of the first detected ridge fan in the
+/// current process/test binary.
 ///
 /// Enabled via `DELAUNAY_DEBUG_RIDGE_FAN_ONCE`. Output is routed through
 /// `tracing::debug!` so it respects the configured tracing subscriber;
@@ -1729,7 +1730,24 @@ where
                     open_cell,
                 });
             }
+        }
 
+        for info in ridge_map.values() {
+            // `second_facet` is populated by the same ridge-map update that increments
+            // `facet_count` to 2, so a `None` here is an internal invariant violation.
+            // Check this before accumulating ridge fans so error precedence is deterministic.
+            if info.facet_count == 2 && info.second_facet.is_none() {
+                return Err(ConflictError::InternalInconsistency {
+                    site: InternalInconsistencySite::RidgeInfoMissingSecondFacet {
+                        first_facet: info.first_facet,
+                        boundary_facets_len: boundary_facets.len(),
+                        ridge_vertex_count: info.ridge_vertex_count,
+                    },
+                });
+            }
+        }
+
+        for info in ridge_map.values() {
             if info.facet_count >= 3 {
                 #[cfg(debug_assertions)]
                 if detail_enabled {
@@ -1759,9 +1777,6 @@ where
 
             // facet_count == 2
             let a = info.first_facet;
-            // `second_facet` is populated by the same ridge-map update that increments
-            // `facet_count` to 2, so a `None` here is an internal invariant violation.
-            // Report it as such instead of fabricating a cell key.
             let b = info
                 .second_facet
                 .ok_or_else(|| ConflictError::InternalInconsistency {
@@ -1954,6 +1969,87 @@ mod tests {
 
         let extra_cells = collect_ridge_fan_extra_cells(&boundary_facets, &info).unwrap();
         assert_eq!(extra_cells, vec![cell_c, cell_d]);
+    }
+
+    #[test]
+    fn test_extract_cavity_boundary_accumulates_multiple_ridge_fans_2d() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let center_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let a0 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let a1 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let a2 = tds
+            .insert_vertex_with_mapping(vertex!([-1.0, 0.0]))
+            .unwrap();
+        let a3 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0]))
+            .unwrap();
+        let a4 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+        let a5 = tds
+            .insert_vertex_with_mapping(vertex!([-1.0, -1.0]))
+            .unwrap();
+
+        let center_b = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 0.0]))
+            .unwrap();
+        let b0 = tds
+            .insert_vertex_with_mapping(vertex!([11.0, 0.0]))
+            .unwrap();
+        let b1 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 1.0]))
+            .unwrap();
+        let b2 = tds.insert_vertex_with_mapping(vertex!([9.0, 0.0])).unwrap();
+        let b3 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, -1.0]))
+            .unwrap();
+        let b4 = tds
+            .insert_vertex_with_mapping(vertex!([11.0, 1.0]))
+            .unwrap();
+        let b5 = tds
+            .insert_vertex_with_mapping(vertex!([9.0, -1.0]))
+            .unwrap();
+
+        let origin_cells = [
+            tds.insert_cell_with_mapping(Cell::new(vec![center_a, a0, a1], None).unwrap())
+                .unwrap(),
+            tds.insert_cell_with_mapping(Cell::new(vec![center_a, a2, a3], None).unwrap())
+                .unwrap(),
+            tds.insert_cell_with_mapping(Cell::new(vec![center_a, a4, a5], None).unwrap())
+                .unwrap(),
+        ];
+        let shifted_cells = [
+            tds.insert_cell_with_mapping(Cell::new(vec![center_b, b0, b1], None).unwrap())
+                .unwrap(),
+            tds.insert_cell_with_mapping(Cell::new(vec![center_b, b2, b3], None).unwrap())
+                .unwrap(),
+            tds.insert_cell_with_mapping(Cell::new(vec![center_b, b4, b5], None).unwrap())
+                .unwrap(),
+        ];
+
+        let all_cells = [
+            origin_cells[0],
+            origin_cells[1],
+            origin_cells[2],
+            shifted_cells[0],
+            shifted_cells[1],
+            shifted_cells[2],
+        ];
+        let conflict_cells: CellKeyBuffer = all_cells.into_iter().collect();
+
+        match extract_cavity_boundary(&tds, &conflict_cells).unwrap_err() {
+            ConflictError::RidgeFan {
+                facet_count,
+                ridge_vertex_count,
+                extra_cells,
+            } => {
+                assert_eq!(facet_count, 6);
+                assert_eq!(ridge_vertex_count, 1);
+                let expected: FastHashSet<CellKey> = all_cells.into_iter().collect();
+                let actual: FastHashSet<CellKey> = extra_cells.iter().copied().collect();
+                assert_eq!(actual, expected);
+                assert_eq!(extra_cells.len(), expected.len());
+            }
+            other => panic!("Expected RidgeFan, got {other:?}"),
+        }
     }
 
     #[test]

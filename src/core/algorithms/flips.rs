@@ -115,7 +115,8 @@ where
     let mut diagnostics = RepairDiagnostics::default();
     let mut queues = RepairQueues::new();
     let mut last_applied_flip: Option<LastAppliedFlip> = None;
-    seed_repair_queues(tds, seed_cells, &mut queues, &mut stats)?;
+    let used_full_reseed = seed_repair_queues(tds, seed_cells, &mut queues, &mut stats)?;
+    let mut touched_cells = CellKeyBuffer::new();
 
     let mut prefer_secondary = false;
 
@@ -130,6 +131,7 @@ where
                 config,
                 &mut diagnostics,
                 &mut last_applied_flip,
+                &mut touched_cells,
             )? || process_edge_queue_step(
                 tds,
                 kernel,
@@ -139,6 +141,7 @@ where
                 config,
                 &mut diagnostics,
                 &mut last_applied_flip,
+                &mut touched_cells,
             )? || process_triangle_queue_step(
                 tds,
                 kernel,
@@ -148,6 +151,7 @@ where
                 config,
                 &mut diagnostics,
                 &mut last_applied_flip,
+                &mut touched_cells,
             )?)
         {
             prefer_secondary = false;
@@ -163,6 +167,7 @@ where
             config,
             &mut diagnostics,
             &mut last_applied_flip,
+            &mut touched_cells,
         )? {
             prefer_secondary = true;
             continue;
@@ -177,6 +182,7 @@ where
             config,
             &mut diagnostics,
             &mut last_applied_flip,
+            &mut touched_cells,
         )? || process_edge_queue_step(
             tds,
             kernel,
@@ -186,6 +192,7 @@ where
             config,
             &mut diagnostics,
             &mut last_applied_flip,
+            &mut touched_cells,
         )? || process_triangle_queue_step(
             tds,
             kernel,
@@ -195,6 +202,7 @@ where
             config,
             &mut diagnostics,
             &mut last_applied_flip,
+            &mut touched_cells,
         )? {
             prefer_secondary = false;
         }
@@ -216,6 +224,8 @@ where
     Ok(RepairAttemptOutcome {
         stats,
         last_applied_flip,
+        touched_cells,
+        used_full_reseed,
     })
 }
 
@@ -1977,6 +1987,18 @@ pub struct DelaunayRepairStats {
     pub max_queue_len: usize,
 }
 
+/// Crate-private repair result with the validation frontier for callers that
+/// need post-repair topology checks without scanning the whole TDS.
+#[derive(Debug, Clone)]
+pub(crate) struct DelaunayRepairRun {
+    /// Public aggregate repair statistics.
+    pub stats: DelaunayRepairStats,
+    /// Cells created by successful flips in the final repair attempt.
+    pub touched_cells: CellKeyBuffer,
+    /// Whether the final attempt used full-TDS queue seeding.
+    pub used_full_reseed: bool,
+}
+
 /// Carries both aggregate attempt stats and the final flip context so
 /// postcondition diagnostics can relate the first unresolved local violation to
 /// the last repair move that modified the TDS.
@@ -1984,6 +2006,26 @@ pub struct DelaunayRepairStats {
 struct RepairAttemptOutcome {
     stats: DelaunayRepairStats,
     last_applied_flip: Option<LastAppliedFlip>,
+    touched_cells: CellKeyBuffer,
+    used_full_reseed: bool,
+}
+
+/// Adds newly-created cells to the repair mutation frontier without duplicates.
+fn record_touched_cells(touched_cells: &mut CellKeyBuffer, new_cells: &[CellKey]) {
+    for &cell_key in new_cells {
+        if !touched_cells.contains(&cell_key) {
+            touched_cells.push(cell_key);
+        }
+    }
+}
+
+/// Converts an attempt outcome into the crate-private repair run result.
+fn repair_run_from_attempt(outcome: RepairAttemptOutcome) -> DelaunayRepairRun {
+    DelaunayRepairRun {
+        stats: outcome.stats,
+        touched_cells: outcome.touched_cells,
+        used_full_reseed: outcome.used_full_reseed,
+    }
 }
 
 /// Queue ordering policy for flip repair attempts.
@@ -3099,6 +3141,8 @@ where
     let mut queued: FastHashSet<u64> = FastHashSet::default();
     let mut facet_handles: FastHashMap<u64, FacetHandle> = FastHashMap::default();
     let mut last_applied_flip: Option<LastAppliedFlip> = None;
+    let mut touched_cells = CellKeyBuffer::new();
+    let used_full_reseed = seed_cells.is_none();
     let topology_model = GlobalTopology::DEFAULT.model();
 
     if let Some(seeds) = seed_cells {
@@ -3242,6 +3286,7 @@ where
         diagnostics.record_flip_signature(signature);
         last_applied_flip = Some(LastAppliedFlip::from_applied_flip(&applied));
         let info = applied.info;
+        record_touched_cells(&mut touched_cells, &info.new_cells);
 
         for &cell_key in &info.new_cells {
             enqueue_cell_facets(
@@ -3271,6 +3316,8 @@ where
     Ok(RepairAttemptOutcome {
         stats,
         last_applied_flip,
+        touched_cells,
+        used_full_reseed,
     })
 }
 
@@ -3288,6 +3335,28 @@ pub(crate) fn repair_delaunay_with_flips_k2_k3<K, U, V, const D: usize>(
     topology: TopologyGuarantee,
     max_flips_override: Option<usize>,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
+where
+    K: Kernel<D>,
+    U: DataType,
+    V: DataType,
+{
+    repair_delaunay_with_flips_k2_k3_run(tds, kernel, seed_cells, topology, max_flips_override)
+        .map(|run| run.stats)
+}
+
+/// Repair Delaunay violations and return the final validation frontier.
+///
+/// # Errors
+///
+/// Returns a [`DelaunayRepairError`] if the repair fails to converge or an underlying
+/// flip operation encounters an unrecoverable error.
+pub(crate) fn repair_delaunay_with_flips_k2_k3_run<K, U, V, const D: usize>(
+    tds: &mut Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    seed_cells: Option<&[CellKey]>,
+    topology: TopologyGuarantee,
+    max_flips_override: Option<usize>,
+) -> Result<DelaunayRepairRun, DelaunayRepairError>
 where
     K: Kernel<D>,
     U: DataType,
@@ -3341,7 +3410,7 @@ where
             )
             .is_ok()
             {
-                return Ok(outcome.stats);
+                return Ok(repair_run_from_attempt(outcome));
             }
             if repair_trace_enabled() {
                 tracing::debug!(
@@ -3364,7 +3433,7 @@ where
                 retry_seed_cells,
                 outcome2.last_applied_flip.as_ref(),
             )?;
-            Ok(outcome2.stats)
+            Ok(repair_run_from_attempt(outcome2))
         }
         Err(DelaunayRepairError::NonConvergent { .. }) => {
             if repair_trace_enabled() {
@@ -3387,7 +3456,7 @@ where
                 retry_seed_cells,
                 outcome2.last_applied_flip.as_ref(),
             )?;
-            Ok(outcome2.stats)
+            Ok(repair_run_from_attempt(outcome2))
         }
         Err(err) => Err(err),
     }
@@ -3705,7 +3774,7 @@ where
     let mut stats = DelaunayRepairStats::default();
     let mut diagnostics = RepairDiagnostics::default();
     let mut queues = RepairQueues::new();
-    seed_repair_queues(tds, seed_cells, &mut queues, &mut stats)?;
+    let _ = seed_repair_queues(tds, seed_cells, &mut queues, &mut stats)?;
     if repair_trace_enabled() {
         let seed_count = seed_cells.map_or(0, <[CellKey]>::len);
         tracing::debug!(
@@ -3985,11 +4054,11 @@ where
                         "[repair] postcondition k=3 violation remains (ridge={ridge:?})"
                     );
                 }
-                // Emit the ridge adjacency snapshot — including the immediately
-                // preceding flip, when available — so #204-style ridge
-                // diagnostics carry the same predecessor-flip context as the
-                // k=2 facet path via `debug_postcondition_facet_context`.
-                debug_ridge_context(tds, ridge, None, diagnostics, last_applied_flip);
+                // Emit the ridge adjacency snapshot only under the opt-in ridge
+                // debug flag; the helper performs global incidence scans.
+                if repair_ridge_debug_enabled() {
+                    debug_ridge_context(tds, ridge, None, diagnostics, last_applied_flip);
+                }
                 return Err(DelaunayRepairError::PostconditionFailed {
                     message: format!("local k=3 violation remains after repair (ridge={ridge:?})"),
                 });
@@ -4700,7 +4769,7 @@ fn seed_repair_queues<T, U, V, const D: usize>(
     seed_cells: Option<&[CellKey]>,
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
-) -> Result<(), FlipError>
+) -> Result<bool, FlipError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -4770,6 +4839,7 @@ where
                 );
             }
             seed_repair_queues(tds, None, queues, stats)?;
+            return Ok(true);
         }
     } else {
         for facet in AllFacetsIter::new(tds) {
@@ -4808,8 +4878,9 @@ where
             );
         }
         stats.max_queue_len = stats.max_queue_len.max(queues.total_len());
+        return Ok(true);
     }
-    Ok(())
+    Ok(false)
 }
 
 /// Requeues the local neighborhood created by a flip so the repair loop follows
@@ -4880,6 +4951,7 @@ fn process_ridge_queue_step<K, U, V, const D: usize>(
     config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
     last_applied_flip: &mut Option<LastAppliedFlip>,
+    touched_cells: &mut CellKeyBuffer,
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -5046,6 +5118,7 @@ where
     }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
+    record_touched_cells(touched_cells, &info.new_cells);
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
@@ -5071,6 +5144,7 @@ fn process_edge_queue_step<K, U, V, const D: usize>(
     config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
     last_applied_flip: &mut Option<LastAppliedFlip>,
+    touched_cells: &mut CellKeyBuffer,
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -5233,6 +5307,7 @@ where
     }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
+    record_touched_cells(touched_cells, &info.new_cells);
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
@@ -5258,6 +5333,7 @@ fn process_triangle_queue_step<K, U, V, const D: usize>(
     config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
     last_applied_flip: &mut Option<LastAppliedFlip>,
+    touched_cells: &mut CellKeyBuffer,
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -5412,6 +5488,7 @@ where
     }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
+    record_touched_cells(touched_cells, &info.new_cells);
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
@@ -5437,6 +5514,7 @@ fn process_facet_queue_step<K, U, V, const D: usize>(
     config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
     last_applied_flip: &mut Option<LastAppliedFlip>,
+    touched_cells: &mut CellKeyBuffer,
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -5595,6 +5673,7 @@ where
     }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
+    record_touched_cells(touched_cells, &info.new_cells);
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
