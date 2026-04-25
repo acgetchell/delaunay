@@ -117,6 +117,7 @@ where
     let mut last_applied_flip: Option<LastAppliedFlip> = None;
     let used_full_reseed = seed_repair_queues(tds, seed_cells, &mut queues, &mut stats)?;
     let mut touched_cells = CellKeyBuffer::new();
+    let mut touched_cell_set = FastHashSet::<CellKey>::default();
 
     let mut prefer_secondary = false;
 
@@ -132,6 +133,7 @@ where
                 &mut diagnostics,
                 &mut last_applied_flip,
                 &mut touched_cells,
+                &mut touched_cell_set,
             )? || process_edge_queue_step(
                 tds,
                 kernel,
@@ -142,6 +144,7 @@ where
                 &mut diagnostics,
                 &mut last_applied_flip,
                 &mut touched_cells,
+                &mut touched_cell_set,
             )? || process_triangle_queue_step(
                 tds,
                 kernel,
@@ -152,6 +155,7 @@ where
                 &mut diagnostics,
                 &mut last_applied_flip,
                 &mut touched_cells,
+                &mut touched_cell_set,
             )?)
         {
             prefer_secondary = false;
@@ -168,6 +172,7 @@ where
             &mut diagnostics,
             &mut last_applied_flip,
             &mut touched_cells,
+            &mut touched_cell_set,
         )? {
             prefer_secondary = true;
             continue;
@@ -183,6 +188,7 @@ where
             &mut diagnostics,
             &mut last_applied_flip,
             &mut touched_cells,
+            &mut touched_cell_set,
         )? || process_edge_queue_step(
             tds,
             kernel,
@@ -193,6 +199,7 @@ where
             &mut diagnostics,
             &mut last_applied_flip,
             &mut touched_cells,
+            &mut touched_cell_set,
         )? || process_triangle_queue_step(
             tds,
             kernel,
@@ -203,6 +210,7 @@ where
             &mut diagnostics,
             &mut last_applied_flip,
             &mut touched_cells,
+            &mut touched_cell_set,
         )? {
             prefer_secondary = false;
         }
@@ -1972,7 +1980,7 @@ impl RidgeHandle {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::flips::DelaunayRepairStats;
+/// use delaunay::prelude::triangulation::repair::DelaunayRepairStats;
 ///
 /// let stats = DelaunayRepairStats::default();
 /// assert_eq!(stats.flips_performed, 0);
@@ -2011,9 +2019,13 @@ struct RepairAttemptOutcome {
 }
 
 /// Adds newly-created cells to the repair mutation frontier without duplicates.
-fn record_touched_cells(touched_cells: &mut CellKeyBuffer, new_cells: &[CellKey]) {
+fn record_touched_cells(
+    touched_cells: &mut CellKeyBuffer,
+    touched_cell_set: &mut FastHashSet<CellKey>,
+    new_cells: &[CellKey],
+) {
     for &cell_key in new_cells {
-        if !touched_cells.contains(&cell_key) {
+        if touched_cell_set.insert(cell_key) {
             touched_cells.push(cell_key);
         }
     }
@@ -2033,7 +2045,7 @@ fn repair_run_from_attempt(outcome: RepairAttemptOutcome) -> DelaunayRepairRun {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::flips::RepairQueueOrder;
+/// use delaunay::prelude::triangulation::repair::RepairQueueOrder;
 ///
 /// let order = RepairQueueOrder::Fifo;
 /// assert_eq!(order, RepairQueueOrder::Fifo);
@@ -2051,7 +2063,9 @@ pub enum RepairQueueOrder {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::flips::{DelaunayRepairDiagnostics, RepairQueueOrder};
+/// use delaunay::prelude::triangulation::repair::{
+///     DelaunayRepairDiagnostics, RepairQueueOrder,
+/// };
 ///
 /// let diagnostics = DelaunayRepairDiagnostics {
 ///     facets_checked: 0,
@@ -2115,8 +2129,7 @@ impl fmt::Display for DelaunayRepairDiagnostics {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::flips::DelaunayRepairError;
-/// use delaunay::core::triangulation::TopologyGuarantee;
+/// use delaunay::prelude::triangulation::repair::{DelaunayRepairError, TopologyGuarantee};
 ///
 /// let err = DelaunayRepairError::InvalidTopology {
 ///     required: TopologyGuarantee::PLManifold,
@@ -2137,10 +2150,25 @@ pub enum DelaunayRepairError {
         /// error enum small on the stack).
         diagnostics: Box<DelaunayRepairDiagnostics>,
     },
-    /// Repair completed but left a Delaunay violation or otherwise could not be verified.
+    /// Repair completed but left a Delaunay violation.
     #[error("Delaunay repair postcondition failed: {message}")]
     PostconditionFailed {
         /// Additional context describing the postcondition failure.
+        message: String,
+    },
+    /// Post-repair verification could not evaluate a local flip predicate.
+    #[error("Delaunay repair verification failed during {context}: {source}")]
+    VerificationFailed {
+        /// Verification phase that failed.
+        context: &'static str,
+        /// Underlying flip or predicate error.
+        #[source]
+        source: FlipError,
+    },
+    /// Repair completed but orientation canonicalization failed.
+    #[error("Delaunay repair orientation canonicalization failed: {message}")]
+    OrientationCanonicalizationFailed {
+        /// Additional context describing the canonicalization failure.
         message: String,
     },
     /// Flip-based repair is not admissible under the current topology guarantee.
@@ -3142,7 +3170,8 @@ where
     let mut facet_handles: FastHashMap<u64, FacetHandle> = FastHashMap::default();
     let mut last_applied_flip: Option<LastAppliedFlip> = None;
     let mut touched_cells = CellKeyBuffer::new();
-    let used_full_reseed = seed_cells.is_none();
+    let mut touched_cell_set = FastHashSet::<CellKey>::default();
+    let mut used_full_reseed = seed_cells.is_none();
     let topology_model = GlobalTopology::DEFAULT.model();
 
     if let Some(seeds) = seed_cells {
@@ -3155,6 +3184,20 @@ where
                 &mut facet_handles,
                 &mut stats,
             )?;
+        }
+        if queue.is_empty() {
+            used_full_reseed = true;
+            for facet in AllFacetsIter::new(tds) {
+                let handle = FacetHandle::new(facet.cell_key(), facet.facet_index());
+                enqueue_facet(
+                    tds,
+                    handle,
+                    &mut queue,
+                    &mut queued,
+                    &mut facet_handles,
+                    &mut stats,
+                );
+            }
         }
     } else {
         for facet in AllFacetsIter::new(tds) {
@@ -3286,7 +3329,7 @@ where
         diagnostics.record_flip_signature(signature);
         last_applied_flip = Some(LastAppliedFlip::from_applied_flip(&applied));
         let info = applied.info;
-        record_touched_cells(&mut touched_cells, &info.new_cells);
+        record_touched_cells(&mut touched_cells, &mut touched_cell_set, &info.new_cells);
 
         for &cell_key in &info.new_cells {
             enqueue_cell_facets(
@@ -3342,6 +3385,45 @@ where
 {
     repair_delaunay_with_flips_k2_k3_run(tds, kernel, seed_cells, topology, max_flips_override)
         .map(|run| run.stats)
+}
+
+fn run_full_reseed_retry<K, U, V, const D: usize>(
+    tds: &mut Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    config: &RepairAttemptConfig,
+    snapshot: Tds<K::Scalar, U, V, D>,
+) -> Result<DelaunayRepairRun, DelaunayRepairError>
+where
+    K: Kernel<D>,
+    U: DataType,
+    V: DataType,
+{
+    *tds = snapshot.clone();
+    let retry_seed_cells = None;
+    let attempt_result = if D == 2 {
+        repair_delaunay_with_flips_k2_attempt(tds, kernel, retry_seed_cells, config)
+    } else {
+        repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, retry_seed_cells, config)
+    };
+
+    match attempt_result {
+        Ok(outcome) => match verify_repair_postcondition(
+            tds,
+            kernel,
+            retry_seed_cells,
+            outcome.last_applied_flip.as_ref(),
+        ) {
+            Ok(()) => Ok(repair_run_from_attempt(outcome)),
+            Err(err) => {
+                *tds = snapshot;
+                Err(err)
+            }
+        },
+        Err(err) => {
+            *tds = snapshot;
+            Err(err)
+        }
+    }
 }
 
 /// Repair Delaunay violations and return the final validation frontier.
@@ -3419,21 +3501,7 @@ where
             }
 
             // Postcondition verification failed: rerun with LIFO + full reseed.
-            *tds = tds_snapshot;
-            let retry_seed_cells = None;
-            let outcome2 = if D == 2 {
-                repair_delaunay_with_flips_k2_attempt(tds, kernel, retry_seed_cells, &attempt2)
-            } else {
-                repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, retry_seed_cells, &attempt2)
-            }?;
-
-            verify_repair_postcondition(
-                tds,
-                kernel,
-                retry_seed_cells,
-                outcome2.last_applied_flip.as_ref(),
-            )?;
-            Ok(repair_run_from_attempt(outcome2))
+            run_full_reseed_retry(tds, kernel, &attempt2, tds_snapshot)
         }
         Err(DelaunayRepairError::NonConvergent { .. }) => {
             if repair_trace_enabled() {
@@ -3442,33 +3510,23 @@ where
                 );
             }
             // Retry with LIFO + full reseed.
-            *tds = tds_snapshot;
-            let retry_seed_cells = None;
-            let outcome2 = if D == 2 {
-                repair_delaunay_with_flips_k2_attempt(tds, kernel, retry_seed_cells, &attempt2)
-            } else {
-                repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, retry_seed_cells, &attempt2)
-            }?;
-
-            verify_repair_postcondition(
-                tds,
-                kernel,
-                retry_seed_cells,
-                outcome2.last_applied_flip.as_ref(),
-            )?;
-            Ok(repair_run_from_attempt(outcome2))
+            run_full_reseed_retry(tds, kernel, &attempt2, tds_snapshot)
         }
-        Err(err) => Err(err),
+        Err(err) => {
+            *tds = tds_snapshot;
+            Err(err)
+        }
     }
 }
 
 /// Run a seeded, bounded Delaunay repair capped to a specific set of cells.
 ///
-/// Unlike [`repair_delaunay_with_flips_k2_k3`], this function **always reseeds from the
-/// provided `seed_cells`** (never from `None` / all cells).  This keeps the queue size
+/// Unlike [`repair_delaunay_with_flips_k2_k3`], this function normally reseeds from the
+/// provided `seed_cells` rather than `None` / all cells. This keeps the queue size
 /// bounded to `O(seed_cells × queues_per_cell)` regardless of the total triangulation size,
 /// which is critical for D≥4 where a full-triangulation seed would generate O(cells×30)
-/// items (prohibitively expensive with robust predicates).
+/// items (prohibitively expensive with robust predicates). In 2D, stale local seeds fall
+/// back to all facets because the queue remains small and otherwise no repair work runs.
 ///
 /// Two attempts are made with alternating queue orders (FIFO → LIFO) to escape
 /// flip cycles — the same strategy as [`repair_delaunay_with_flips_k2_k3`], but without the
@@ -3540,7 +3598,10 @@ where
                 tracing::debug!("[repair] local attempt 1 non-convergent; retrying LIFO");
             }
         }
-        Err(err) => return Err(err),
+        Err(err) => {
+            *tds = tds_snapshot;
+            return Err(err);
+        }
     }
     *tds = tds_snapshot.clone();
     let attempt2_result = if D == 2 {
@@ -3591,13 +3652,14 @@ where
 /// # Errors
 ///
 /// Returns [`DelaunayRepairError::PostconditionFailed`] if any flip predicate detects
-/// a Delaunay violation.
+/// a Delaunay violation, or [`DelaunayRepairError::VerificationFailed`] if a
+/// local predicate cannot be evaluated.
 ///
 /// # Examples
 ///
 /// ```
 /// use delaunay::prelude::triangulation::*;
-/// use delaunay::core::algorithms::flips::verify_delaunay_via_flip_predicates;
+/// use delaunay::prelude::triangulation::repair::verify_delaunay_via_flip_predicates;
 /// use delaunay::geometry::kernel::AdaptiveKernel;
 ///
 /// let vertices = vec![
@@ -3635,14 +3697,14 @@ where
 /// # Errors
 ///
 /// Returns [`DelaunayRepairError::PostconditionFailed`] if any flip predicate detects
-/// a Delaunay violation, or another [`DelaunayRepairError`] if verification cannot
-/// evaluate the local predicates.
+/// a Delaunay violation, or [`DelaunayRepairError::VerificationFailed`] if
+/// verification cannot evaluate the local predicates.
 ///
 /// # Examples
 ///
 /// ```
 /// use delaunay::prelude::triangulation::*;
-/// use delaunay::core::algorithms::flips::verify_delaunay_for_triangulation;
+/// use delaunay::prelude::triangulation::repair::verify_delaunay_for_triangulation;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -3722,6 +3784,11 @@ where
 enum PostconditionMode {
     Repair,
     Strict,
+}
+
+/// Builds a verification failure that preserves the structured flip error.
+const fn verification_failed(context: &'static str, source: FlipError) -> DelaunayRepairError {
+    DelaunayRepairError::VerificationFailed { context, source }
 }
 
 /// Adapts the public topology enum into the model used for lifted predicate
@@ -3851,14 +3918,12 @@ where
 /// while remaining skippable during best-effort repair passes.
 fn handle_postcondition_predicate_failure(
     mode: PostconditionMode,
-    context: &str,
+    context: &'static str,
     error: &FlipError,
 ) -> Result<(), DelaunayRepairError> {
     match mode {
         PostconditionMode::Repair => Ok(()),
-        PostconditionMode::Strict => Err(DelaunayRepairError::PostconditionFailed {
-            message: format!("{context} predicate failed in strict mode: {error}"),
-        }),
+        PostconditionMode::Strict => Err(verification_failed(context, error.clone())),
     }
 }
 
@@ -3911,9 +3976,7 @@ where
                         continue;
                     }
                     Err(e) => {
-                        return Err(DelaunayRepairError::PostconditionFailed {
-                            message: format!("local k=2 verification failed after repair: {e}"),
-                        });
+                        return Err(verification_failed("local k=2 degeneracy verification", e));
                     }
                 };
 
@@ -3973,9 +4036,10 @@ where
                 )?;
             }
             Err(e) => {
-                return Err(DelaunayRepairError::PostconditionFailed {
-                    message: format!("local k=2 verification failed after repair: {e}"),
-                });
+                return Err(verification_failed(
+                    "local k=2 postcondition verification",
+                    e,
+                ));
             }
         }
     }
@@ -4035,9 +4099,7 @@ where
                         continue;
                     }
                     Err(e) => {
-                        return Err(DelaunayRepairError::PostconditionFailed {
-                            message: format!("local k=3 verification failed after repair: {e}"),
-                        });
+                        return Err(verification_failed("local k=3 degeneracy verification", e));
                     }
                 };
 
@@ -4074,9 +4136,10 @@ where
                 )?;
             }
             Err(e) => {
-                return Err(DelaunayRepairError::PostconditionFailed {
-                    message: format!("local k=3 verification failed after repair: {e}"),
-                });
+                return Err(verification_failed(
+                    "local k=3 postcondition verification",
+                    e,
+                ));
             }
         }
     }
@@ -4143,9 +4206,10 @@ where
                 continue;
             }
             Err(e) => {
-                return Err(DelaunayRepairError::PostconditionFailed {
-                    message: format!("local inverse k=2 verification failed after repair: {e}"),
-                });
+                return Err(verification_failed(
+                    "local inverse k=2 postcondition verification",
+                    e,
+                ));
             }
         };
 
@@ -4226,9 +4290,10 @@ where
                 continue;
             }
             Err(e) => {
-                return Err(DelaunayRepairError::PostconditionFailed {
-                    message: format!("local inverse k=3 verification failed after repair: {e}"),
-                });
+                return Err(verification_failed(
+                    "local inverse k=3 postcondition verification",
+                    e,
+                ));
             }
         };
 
@@ -4418,7 +4483,7 @@ fn emit_repair_debug_summary(
         return;
     }
 
-    tracing::trace!(
+    tracing::debug!(
         label = %label,
         attempt = config.attempt,
         order = ?config.queue_order,
@@ -4952,6 +5017,7 @@ fn process_ridge_queue_step<K, U, V, const D: usize>(
     diagnostics: &mut RepairDiagnostics,
     last_applied_flip: &mut Option<LastAppliedFlip>,
     touched_cells: &mut CellKeyBuffer,
+    touched_cell_set: &mut FastHashSet<CellKey>,
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -5118,7 +5184,7 @@ where
     }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
-    record_touched_cells(touched_cells, &info.new_cells);
+    record_touched_cells(touched_cells, touched_cell_set, &info.new_cells);
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
@@ -5145,6 +5211,7 @@ fn process_edge_queue_step<K, U, V, const D: usize>(
     diagnostics: &mut RepairDiagnostics,
     last_applied_flip: &mut Option<LastAppliedFlip>,
     touched_cells: &mut CellKeyBuffer,
+    touched_cell_set: &mut FastHashSet<CellKey>,
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -5307,7 +5374,7 @@ where
     }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
-    record_touched_cells(touched_cells, &info.new_cells);
+    record_touched_cells(touched_cells, touched_cell_set, &info.new_cells);
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
@@ -5334,6 +5401,7 @@ fn process_triangle_queue_step<K, U, V, const D: usize>(
     diagnostics: &mut RepairDiagnostics,
     last_applied_flip: &mut Option<LastAppliedFlip>,
     touched_cells: &mut CellKeyBuffer,
+    touched_cell_set: &mut FastHashSet<CellKey>,
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -5488,7 +5556,7 @@ where
     }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
-    record_touched_cells(touched_cells, &info.new_cells);
+    record_touched_cells(touched_cells, touched_cell_set, &info.new_cells);
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
@@ -5515,6 +5583,7 @@ fn process_facet_queue_step<K, U, V, const D: usize>(
     diagnostics: &mut RepairDiagnostics,
     last_applied_flip: &mut Option<LastAppliedFlip>,
     touched_cells: &mut CellKeyBuffer,
+    touched_cell_set: &mut FastHashSet<CellKey>,
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -5673,7 +5742,7 @@ where
     }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
-    record_touched_cells(touched_cells, &info.new_cells);
+    record_touched_cells(touched_cells, touched_cell_set, &info.new_cells);
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
@@ -9466,6 +9535,33 @@ mod tests {
         assert_eq!(post_test, post_test_copy);
         assert_ne!(post_test, post_other);
 
+        let verification_err = DelaunayRepairError::VerificationFailed {
+            context: "strict validation",
+            source: FlipError::DegenerateCell,
+        };
+        let verification_err_copy = DelaunayRepairError::VerificationFailed {
+            context: "strict validation",
+            source: FlipError::DegenerateCell,
+        };
+        let verification_other = DelaunayRepairError::VerificationFailed {
+            context: "strict validation",
+            source: FlipError::DuplicateCell,
+        };
+        assert_eq!(verification_err, verification_err_copy);
+        assert_ne!(verification_err, verification_other);
+
+        let canonicalization_err = DelaunayRepairError::OrientationCanonicalizationFailed {
+            message: "test".to_string(),
+        };
+        let canonicalization_err_copy = DelaunayRepairError::OrientationCanonicalizationFailed {
+            message: "test".to_string(),
+        };
+        let canonicalization_other = DelaunayRepairError::OrientationCanonicalizationFailed {
+            message: "other".to_string(),
+        };
+        assert_eq!(canonicalization_err, canonicalization_err_copy);
+        assert_ne!(canonicalization_err, canonicalization_other);
+
         let topo_err = DelaunayRepairError::InvalidTopology {
             required: TopologyGuarantee::PLManifold,
             found: TopologyGuarantee::Pseudomanifold,
@@ -9480,6 +9576,8 @@ mod tests {
 
         // Different variants are never equal.
         assert_ne!(post_test, topo_err);
+        assert_ne!(post_test, verification_err);
+        assert_ne!(post_test, canonicalization_err);
     }
 
     macro_rules! gen_align_periodic_offset_tests {

@@ -67,7 +67,7 @@
 use delaunay::core::triangulation::TopologyGuarantee;
 use delaunay::geometry::kernel::RobustKernel;
 use delaunay::geometry::util::{
-    generate_random_points_in_ball_seeded, generate_random_points_seeded,
+    generate_random_points_in_ball_seeded, generate_random_points_seeded, safe_usize_to_scalar,
 };
 use delaunay::prelude::triangulation::*;
 use delaunay::triangulation::delaunay::{
@@ -201,29 +201,31 @@ impl<const D: usize> From<ConstructionStatistics> for InsertionSummary<D> {
         let skip_samples: Vec<SkipSample<D>> = stats
             .skip_samples
             .iter()
-            .filter_map(|s| {
+            .map(|s| {
                 let coords = if s.coords_available {
-                    let Ok(coords) = s.coords.as_slice().try_into() else {
-                        tracing::warn!(
-                            index = s.index,
-                            uuid = %s.uuid,
-                            coords_len = s.coords.len(),
-                            expected_dim = D,
-                            "dropping skip sample due to coordinate dimension mismatch"
-                        );
-                        return None;
-                    };
-                    Some(coords)
+                    s.coords.as_slice().try_into().map_or_else(
+                        |_| {
+                            tracing::warn!(
+                                index = s.index,
+                                uuid = %s.uuid,
+                                coords_len = s.coords.len(),
+                                expected_dim = D,
+                                "preserving skip sample without coordinates due to coordinate dimension mismatch"
+                            );
+                            None
+                        },
+                        Some,
+                    )
                 } else {
                     None
                 };
-                Some(SkipSample {
+                SkipSample {
                     index: s.index,
                     uuid: s.uuid,
                     coords,
                     attempts: s.attempts,
                     error: s.error.clone(),
-                })
+                }
             })
             .collect();
 
@@ -825,8 +827,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
                 if (idx + 1) % progress_every == 0 {
                     let chunk_elapsed = t_last_progress.elapsed();
                     let progress_f64: f64 =
-                        delaunay::geometry::util::safe_usize_to_scalar(progress_every)
-                            .unwrap_or(f64::NAN);
+                        safe_usize_to_scalar(progress_every).unwrap_or(f64::NAN);
                     let rate = progress_f64 / chunk_elapsed.as_secs_f64().max(1e-9);
                     println!(
                         "progress: {}/{} inserted={} skipped={} cells={} elapsed={:?} ({:.1} pts/s last {})",

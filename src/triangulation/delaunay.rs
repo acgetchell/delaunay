@@ -33,7 +33,7 @@ use crate::core::triangulation::{
 };
 use crate::core::util::{
     coords_equal_exact, coords_within_epsilon, hilbert_indices_prequantized, hilbert_quantize,
-    stable_hash_u64_slice,
+    is_delaunay_property_only, stable_hash_u64_slice,
 };
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates, Kernel, RobustKernel};
@@ -145,6 +145,35 @@ enum EscalationSkipReason {
     /// case for early insertions where the initial simplex has not been
     /// committed; escalation there has nothing to escalate against.
     EmptyTds,
+}
+
+/// Returns true when a repair error represents input geometry or predicate
+/// instability that shuffled construction may be able to resolve.
+const fn is_geometric_repair_error(repair_err: &DelaunayRepairError) -> bool {
+    match repair_err {
+        DelaunayRepairError::NonConvergent { .. }
+        | DelaunayRepairError::PostconditionFailed { .. } => true,
+        DelaunayRepairError::VerificationFailed { source, .. }
+        | DelaunayRepairError::Flip(source) => is_geometric_flip_error(source),
+        DelaunayRepairError::OrientationCanonicalizationFailed { .. }
+        | DelaunayRepairError::InvalidTopology { .. }
+        | DelaunayRepairError::HeuristicRebuildFailed { .. } => false,
+    }
+}
+
+/// Returns true for flip errors caused by geometric predicates or degenerate
+/// replacement cells rather than deterministic topology/cell-key failures.
+const fn is_geometric_flip_error(error: &FlipError) -> bool {
+    matches!(
+        error,
+        FlipError::PredicateFailure { .. }
+            | FlipError::DegenerateCell
+            | FlipError::NegativeOrientation { .. }
+            | FlipError::CellCreation(
+                CellValidationError::DegenerateSimplex
+                    | CellValidationError::CoordinateConversion { .. },
+            )
+    )
 }
 
 /// Per-insertion local Delaunay repair flip budget.
@@ -2593,8 +2622,7 @@ where
             grid_cell_size,
             use_global_repair_fallback,
         ) {
-            Ok(candidate) => match crate::core::util::is_delaunay_property_only(&candidate.tri.tds)
-            {
+            Ok(candidate) => match is_delaunay_property_only(&candidate.tri.tds) {
                 Ok(()) => {
                     log_construction_retry_result(0, None, 0_u64, "succeeded", None, None);
                     return Ok(candidate);
@@ -2664,25 +2692,23 @@ where
                 grid_cell_size,
                 use_global_repair_fallback,
             ) {
-                Ok(candidate) => {
-                    match crate::core::util::is_delaunay_property_only(&candidate.tri.tds) {
-                        Ok(()) => {
-                            log_construction_retry_result(
-                                attempt,
-                                Some(attempt_seed),
-                                perturbation_seed,
-                                "succeeded",
-                                None,
-                                None,
-                            );
-                            return Ok(candidate);
-                        }
-                        Err(err) => {
-                            last_error =
-                                format!("Delaunay property violated after construction: {err}");
-                        }
+                Ok(candidate) => match is_delaunay_property_only(&candidate.tri.tds) {
+                    Ok(()) => {
+                        log_construction_retry_result(
+                            attempt,
+                            Some(attempt_seed),
+                            perturbation_seed,
+                            "succeeded",
+                            None,
+                            None,
+                        );
+                        return Ok(candidate);
                     }
-                }
+                    Err(err) => {
+                        last_error =
+                            format!("Delaunay property violated after construction: {err}");
+                    }
+                },
                 Err(err) => {
                     let err_string = err.to_string();
                     if Self::is_non_retryable_construction_error(&err) {
@@ -2776,25 +2802,23 @@ where
                 grid_cell_size,
                 use_global_repair_fallback,
             ) {
-                Ok((candidate, stats)) => {
-                    match crate::core::util::is_delaunay_property_only(&candidate.tri.tds) {
-                        Ok(()) => {
-                            log_construction_retry_result(
-                                0,
-                                None,
-                                0_u64,
-                                "succeeded",
-                                None,
-                                Some(&stats),
-                            );
-                            return Ok((candidate, stats));
-                        }
-                        Err(err) => {
-                            last_stats.replace(stats);
-                            format!("Delaunay property violated after construction: {err}")
-                        }
+                Ok((candidate, stats)) => match is_delaunay_property_only(&candidate.tri.tds) {
+                    Ok(()) => {
+                        log_construction_retry_result(
+                            0,
+                            None,
+                            0_u64,
+                            "succeeded",
+                            None,
+                            Some(&stats),
+                        );
+                        return Ok((candidate, stats));
                     }
-                }
+                    Err(err) => {
+                        last_stats.replace(stats);
+                        format!("Delaunay property violated after construction: {err}")
+                    }
+                },
                 Err(err) => {
                     let DelaunayTriangulationConstructionErrorWithStatistics { error, statistics } =
                         err;
@@ -2871,26 +2895,24 @@ where
                 grid_cell_size,
                 use_global_repair_fallback,
             ) {
-                Ok((candidate, stats)) => {
-                    match crate::core::util::is_delaunay_property_only(&candidate.tri.tds) {
-                        Ok(()) => {
-                            log_construction_retry_result(
-                                attempt,
-                                Some(attempt_seed),
-                                perturbation_seed,
-                                "succeeded",
-                                None,
-                                Some(&stats),
-                            );
-                            return Ok((candidate, stats));
-                        }
-                        Err(err) => {
-                            last_stats.replace(stats);
-                            last_error =
-                                format!("Delaunay property violated after construction: {err}");
-                        }
+                Ok((candidate, stats)) => match is_delaunay_property_only(&candidate.tri.tds) {
+                    Ok(()) => {
+                        log_construction_retry_result(
+                            attempt,
+                            Some(attempt_seed),
+                            perturbation_seed,
+                            "succeeded",
+                            None,
+                            Some(&stats),
+                        );
+                        return Ok((candidate, stats));
                     }
-                }
+                    Err(err) => {
+                        last_stats.replace(stats);
+                        last_error =
+                            format!("Delaunay property violated after construction: {err}");
+                    }
+                },
                 Err(err) => {
                     let DelaunayTriangulationConstructionErrorWithStatistics { error, statistics } =
                         err;
@@ -3246,7 +3268,7 @@ where
         if vertices.len() < D + 1 {
             return Err(TriangulationConstructionError::InsufficientVertices {
                 dimension: D,
-                source: crate::core::cell::CellValidationError::InsufficientVertices {
+                source: CellValidationError::InsufficientVertices {
                     actual: vertices.len(),
                     expected: D + 1,
                     dimension: D,
@@ -3453,9 +3475,7 @@ where
                     max_queue = stats.max_queue_len,
                     "bulk D≥4: escalation succeeded"
                 );
-                if stats.flips_performed > 0 {
-                    self.canonicalize_after_bulk_repair()?;
-                }
+                self.canonicalize_after_bulk_repair()?;
                 Ok(LocalRepairEscalationOutcome::Succeeded { stats })
             }
             Err(escalation_err) => {
@@ -3491,10 +3511,13 @@ where
         index: usize,
         repair_err: &DelaunayRepairError,
     ) -> DelaunayTriangulationConstructionError {
-        TriangulationConstructionError::GeometricDegeneracy {
-            message: format!("per-insertion Delaunay repair failed at index {index}: {repair_err}"),
+        let message =
+            format!("per-insertion Delaunay repair failed at index {index}: {repair_err}");
+        if is_geometric_repair_error(repair_err) {
+            TriangulationConstructionError::GeometricDegeneracy { message }.into()
+        } else {
+            TriangulationConstructionError::InternalInconsistency { message }.into()
         }
-        .into()
     }
 
     /// Inserts the non-simplex vertices under a fixed perturbation seed so bulk
@@ -4259,13 +4282,23 @@ where
                     ),
                 }
             }
+            InsertionError::DelaunayRepairFailed { source, context } => {
+                let message = format!(
+                    "Failed to canonicalize orientation after post-construction repair: \
+                     Delaunay repair failed ({context}): {source}"
+                );
+                if is_geometric_repair_error(&source) {
+                    TriangulationConstructionError::GeometricDegeneracy { message }
+                } else {
+                    TriangulationConstructionError::InternalInconsistency { message }
+                }
+            }
             // Geometry-related failures (degenerate input, predicate issues).
             error @ (InsertionError::ConflictRegion(_)
             | InsertionError::Location(_)
             | InsertionError::NonManifoldTopology { .. }
             | InsertionError::HullExtension { .. }
             | InsertionError::DelaunayValidationFailed { .. }
-            | InsertionError::DelaunayRepairFailed { .. }
             | InsertionError::DuplicateCoordinates { .. }) => {
                 TriangulationConstructionError::GeometricDegeneracy {
                     message: format!(
@@ -4302,6 +4335,14 @@ where
             InsertionError::DuplicateCoordinates { coordinates } => {
                 TriangulationConstructionError::DuplicateCoordinates { coordinates }
             }
+            InsertionError::DelaunayRepairFailed { source, context } => {
+                let message = format!("Delaunay repair failed ({context}): {source}");
+                if is_geometric_repair_error(&source) {
+                    TriangulationConstructionError::GeometricDegeneracy { message }
+                } else {
+                    TriangulationConstructionError::InternalInconsistency { message }
+                }
+            }
 
             // Insertion-layer failures that are best surfaced during construction as a
             // geometric degeneracy (e.g. numerical instability, hull visibility issues).
@@ -4320,7 +4361,6 @@ where
             | InsertionError::NonManifoldTopology { .. }
             | InsertionError::HullExtension { .. }
             | InsertionError::DelaunayValidationFailed { .. }
-            | InsertionError::DelaunayRepairFailed { .. }
             | InsertionError::TopologyValidationFailed { .. }) => {
                 TriangulationConstructionError::GeometricDegeneracy {
                     message: insertion_error.to_string(),
@@ -4868,13 +4908,13 @@ where
         Ok(stats)
     }
 
-    /// Canonicalize geometric orientation to the positive sign, mapping failures
-    /// to [`DelaunayRepairError::PostconditionFailed`].
+    /// Canonicalize geometric orientation to the positive sign, preserving
+    /// canonicalization failures as their own repair error variant.
     fn ensure_positive_orientation(&mut self) -> Result<(), DelaunayRepairError> {
         self.tri
             .normalize_and_promote_positive_orientation()
-            .map_err(|e| DelaunayRepairError::PostconditionFailed {
-                message: format!("Orientation canonicalization failed after repair: {e}"),
+            .map_err(|e| DelaunayRepairError::OrientationCanonicalizationFailed {
+                message: format!("after flip repair: {e}"),
             })
     }
 
@@ -4974,8 +5014,8 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::triangulation::delaunay::DelaunayRepairHeuristicConfig;
     /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::repair::DelaunayRepairHeuristicConfig;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -6701,7 +6741,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::triangulation::delaunay::DelaunayRepairPolicy;
+/// use delaunay::prelude::triangulation::repair::DelaunayRepairPolicy;
 /// use std::num::NonZeroUsize;
 ///
 /// let policy = DelaunayRepairPolicy::EveryN(NonZeroUsize::new(4).unwrap());
@@ -6742,7 +6782,7 @@ impl DelaunayRepairPolicy {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::triangulation::delaunay::DelaunayRepairHeuristicConfig;
+/// use delaunay::prelude::triangulation::repair::DelaunayRepairHeuristicConfig;
 ///
 /// let mut config = DelaunayRepairHeuristicConfig::default();
 /// config.shuffle_seed = Some(7);
@@ -6805,7 +6845,7 @@ impl DelaunayRepairHeuristicConfig {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::triangulation::delaunay::DelaunayRepairHeuristicSeeds;
+/// use delaunay::prelude::triangulation::repair::DelaunayRepairHeuristicSeeds;
 ///
 /// let seeds = DelaunayRepairHeuristicSeeds {
 ///     shuffle_seed: 1,
@@ -6826,8 +6866,9 @@ pub struct DelaunayRepairHeuristicSeeds {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::flips::DelaunayRepairStats;
-/// use delaunay::triangulation::delaunay::DelaunayRepairOutcome;
+/// use delaunay::prelude::triangulation::repair::{
+///     DelaunayRepairOutcome, DelaunayRepairStats,
+/// };
 ///
 /// let outcome = DelaunayRepairOutcome {
 ///     stats: DelaunayRepairStats::default(),
@@ -6864,7 +6905,7 @@ impl DelaunayRepairOutcome {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::triangulation::delaunay::DelaunayCheckPolicy;
+/// use delaunay::prelude::triangulation::repair::DelaunayCheckPolicy;
 /// use std::num::NonZeroUsize;
 ///
 /// let policy = DelaunayCheckPolicy::EveryN(NonZeroUsize::new(3).unwrap());
@@ -6907,6 +6948,7 @@ mod tests {
         HullExtensionReason, repair_neighbor_pointers,
     };
     use crate::core::algorithms::locate::{ConflictError, LocateError};
+    use crate::core::operations::InsertionResult;
     use crate::core::tds::{EntityKind, GeometricError};
     use crate::core::vertex::VertexBuilder;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel, RobustKernel};
@@ -7330,7 +7372,7 @@ mod tests {
         let stats = InsertionStatistics {
             attempts: 3,
             cells_removed_during_repair: 4,
-            result: crate::core::operations::InsertionResult::Inserted,
+            result: InsertionResult::Inserted,
         };
 
         summary.record_insertion(&stats);
@@ -7347,10 +7389,7 @@ mod tests {
 
         // Borrowed API: caller retains ownership of insertion stats.
         assert_eq!(stats.attempts, 3);
-        assert!(matches!(
-            stats.result,
-            crate::core::operations::InsertionResult::Inserted
-        ));
+        assert!(matches!(stats.result, InsertionResult::Inserted));
     }
 
     #[test]
@@ -7361,12 +7400,12 @@ mod tests {
         let skipped_duplicate = InsertionStatistics {
             attempts: 1,
             cells_removed_during_repair: 0,
-            result: crate::core::operations::InsertionResult::SkippedDuplicate,
+            result: InsertionResult::SkippedDuplicate,
         };
         let skipped_degeneracy = InsertionStatistics {
             attempts: 2,
             cells_removed_during_repair: 5,
-            result: crate::core::operations::InsertionResult::SkippedDegeneracy,
+            result: InsertionResult::SkippedDegeneracy,
         };
 
         summary.record_insertion(&skipped_duplicate);
@@ -7438,11 +7477,7 @@ mod tests {
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
-            Vertex::new_with_uuid(
-                crate::geometry::point::Point::new([f64::NAN, 0.0, 0.0]),
-                Uuid::new_v4(),
-                None,
-            ),
+            Vertex::new_with_uuid(Point::new([f64::NAN, 0.0, 0.0]), Uuid::new_v4(), None),
         ];
 
         let result = select_balanced_simplex_indices(&vertices);
@@ -9474,16 +9509,72 @@ mod tests {
         };
         assert!(!TestDelaunay4::can_soft_fail(&topology_error));
 
-        let mapped = TestDelaunay4::map_hard_repair_error(23, &flip_error);
+        let verification_error = DelaunayRepairError::VerificationFailed {
+            context: "local k=3 postcondition verification",
+            source: FlipError::InvalidFlipContext {
+                message: "bad ridge frame".to_string(),
+            },
+        };
+        assert!(!TestDelaunay4::can_soft_fail(&verification_error));
+
+        let canonicalization_error = DelaunayRepairError::OrientationCanonicalizationFailed {
+            message: "after flip repair: broken orientation".to_string(),
+        };
+        assert!(!TestDelaunay4::can_soft_fail(&canonicalization_error));
+
+        let mapped_hard = TestDelaunay4::map_hard_repair_error(23, &flip_error);
         assert!(
             matches!(
-                mapped,
+                mapped_hard,
                 DelaunayTriangulationConstructionError::Triangulation(
-                    TriangulationConstructionError::GeometricDegeneracy { ref message }
+                    TriangulationConstructionError::InternalInconsistency { ref message }
                 ) if message.contains("per-insertion Delaunay repair failed at index 23")
                     && message.contains("Bistellar flip not supported for D=1")
             ),
-            "non-soft D>=4 repair failures should propagate as construction errors: {mapped:?}"
+            "deterministic hard D>=4 repair failures should stop shuffled retries: {mapped_hard:?}"
+        );
+
+        let geometric_error = DelaunayRepairError::Flip(FlipError::DegenerateCell);
+        let mapped_geometric = TestDelaunay4::map_hard_repair_error(24, &geometric_error);
+        assert!(
+            matches!(
+                mapped_geometric,
+                DelaunayTriangulationConstructionError::Triangulation(
+                    TriangulationConstructionError::GeometricDegeneracy { ref message }
+                ) if message.contains("per-insertion Delaunay repair failed at index 24")
+                    && message.contains("degenerate cell")
+            ),
+            "geometric hard D>=4 repair failures should remain retryable degeneracies: {mapped_geometric:?}"
+        );
+
+        let mapped_verification = TestDelaunay4::map_hard_repair_error(25, &verification_error);
+        assert!(
+            matches!(
+                mapped_verification,
+                DelaunayTriangulationConstructionError::Triangulation(
+                    TriangulationConstructionError::InternalInconsistency { ref message }
+                ) if message.contains("per-insertion Delaunay repair failed at index 25")
+                    && message.contains("bad ridge frame")
+            ),
+            "verification context failures should stop shuffled retries: {mapped_verification:?}"
+        );
+
+        let predicate_verification = DelaunayRepairError::VerificationFailed {
+            context: "strict validation",
+            source: FlipError::PredicateFailure {
+                message: "in_sphere failed".to_string(),
+            },
+        };
+        let mapped_predicate = TestDelaunay4::map_hard_repair_error(26, &predicate_verification);
+        assert!(
+            matches!(
+                mapped_predicate,
+                DelaunayTriangulationConstructionError::Triangulation(
+                    TriangulationConstructionError::GeometricDegeneracy { ref message }
+                ) if message.contains("per-insertion Delaunay repair failed at index 26")
+                    && message.contains("in_sphere failed")
+            ),
+            "verification predicate failures should remain geometric: {mapped_predicate:?}"
         );
     }
 
@@ -9837,6 +9928,30 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_map_orientation_canonicalization_error_hard_repair_is_internal() {
+        let error = InsertionError::DelaunayRepairFailed {
+            source: Box::new(DelaunayRepairError::VerificationFailed {
+                context: "local k=3 postcondition verification",
+                source: FlipError::InvalidFlipContext {
+                    message: "bad ridge frame".to_string(),
+                },
+            }),
+            context: "orientation canonicalization".to_string(),
+        };
+        let mapped =
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
+        assert!(
+            matches!(
+                mapped,
+                TriangulationConstructionError::InternalInconsistency { ref message }
+                    if message.contains("orientation canonicalization")
+                        && message.contains("bad ridge frame")
+            ),
+            "hard repair errors during orientation canonicalization should be internal: {mapped:?}"
+        );
+    }
+
     // ---- map_insertion_error tests ----
 
     #[test]
@@ -9979,6 +10094,27 @@ mod tests {
                 "{label} should map to GeometricDegeneracy, got: {mapped:?}"
             );
         }
+    }
+
+    #[test]
+    fn test_map_insertion_error_hard_repair_is_internal() {
+        let error = InsertionError::DelaunayRepairFailed {
+            source: Box::new(DelaunayRepairError::Flip(FlipError::UnsupportedDimension {
+                dimension: 1,
+            })),
+            context: "local repair".to_string(),
+        };
+        let mapped =
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_insertion_error(error);
+        assert!(
+            matches!(
+                mapped,
+                TriangulationConstructionError::InternalInconsistency { ref message }
+                    if message.contains("local repair")
+                        && message.contains("Bistellar flip not supported for D=1")
+            ),
+            "hard repair errors during insertion should be internal: {mapped:?}"
+        );
     }
 
     // ---- is_retryable refinement tests ----
@@ -10271,7 +10407,7 @@ mod tests {
         // builds it when all three stages fail.
         let primary_err = DelaunayRepairError::NonConvergent {
             max_flips: 1000,
-            diagnostics: Box::new(crate::core::algorithms::flips::DelaunayRepairDiagnostics {
+            diagnostics: Box::new(DelaunayRepairDiagnostics {
                 facets_checked: 50,
                 flips_performed: 1000,
                 max_queue_len: 42,
@@ -10281,7 +10417,7 @@ mod tests {
                 cycle_detections: 0,
                 cycle_signature_samples: Vec::new(),
                 attempt: 1,
-                queue_order: crate::core::algorithms::flips::RepairQueueOrder::Fifo,
+                queue_order: RepairQueueOrder::Fifo,
             }),
         };
         let robust_err = DelaunayRepairError::PostconditionFailed {

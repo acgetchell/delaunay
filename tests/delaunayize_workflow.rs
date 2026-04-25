@@ -8,10 +8,10 @@
 //! - Repeat-run determinism for outcome stats
 //! - Multi-dimensional coverage (2D–3D)
 
-use delaunay::core::algorithms::flips::DelaunayRepairError;
 use delaunay::core::triangulation::TriangulationConstructionError;
 use delaunay::prelude::triangulation::delaunayize::*;
 use delaunay::prelude::triangulation::flips::BistellarFlips;
+use delaunay::prelude::triangulation::repair::DelaunayRepairError;
 use delaunay::triangulation::delaunay::DelaunayTriangulationConstructionError;
 use delaunay::triangulation::flips::FacetHandle;
 use std::error::Error;

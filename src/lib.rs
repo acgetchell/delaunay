@@ -48,6 +48,7 @@
 //! | Read-only queries, traversal, convex hull | `use delaunay::prelude::query::*` |
 //! | Geometry helpers, predicates, points | `use delaunay::prelude::geometry::*` |
 //! | Bistellar flips (Pachner moves) | `use delaunay::prelude::triangulation::flips::*` |
+//! | Delaunay repair and flip-based Level 4 validation | `use delaunay::prelude::triangulation::repair::*` |
 //! | Delaunayize workflow (repair + flip) | `use delaunay::prelude::triangulation::delaunayize::*` |
 //! | Topology validation, Euler characteristic | `use delaunay::prelude::topology::validation::*` |
 //! | Collection types (`FastHashMap`, etc.) | `use delaunay::prelude::collections::*` |
@@ -921,6 +922,23 @@ pub mod prelude {
             pub use crate::vertex;
         }
 
+        /// Flip-based Delaunay repair, diagnostics, and Level 4 validation.
+        pub mod repair {
+            pub use crate::core::algorithms::flips::{
+                DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairStats, FlipError,
+                RepairQueueOrder, verify_delaunay_for_triangulation,
+                verify_delaunay_via_flip_predicates,
+            };
+            pub use crate::core::triangulation::{TopologyGuarantee, Triangulation};
+            pub use crate::triangulation::delaunay::{
+                DelaunayCheckPolicy, DelaunayRepairHeuristicConfig, DelaunayRepairHeuristicSeeds,
+                DelaunayRepairOutcome, DelaunayRepairPolicy, DelaunayTriangulation,
+            };
+
+            // Convenience macro (commonly used in docs/examples).
+            pub use crate::vertex;
+        }
+
         /// End-to-end "repair then delaunayize" workflow.
         ///
         /// Self-contained: a single `use delaunay::prelude::triangulation::delaunayize::*`
@@ -1054,8 +1072,16 @@ mod tests {
             adjacency::AdjacencyIndex, cell::Cell, edge::EdgeKey, tds::Tds,
             triangulation::Triangulation, vertex::Vertex,
         },
-        geometry::{Point, algorithms::convex_hull::ConvexHull, kernel::FastKernel},
+        geometry::{
+            Point, algorithms::convex_hull::ConvexHull, kernel::AdaptiveKernel, kernel::FastKernel,
+        },
         is_normal,
+        prelude::triangulation::repair::{
+            DelaunayCheckPolicy, DelaunayRepairError, DelaunayRepairOutcome, DelaunayRepairPolicy,
+            DelaunayRepairStats, DelaunayTriangulation as RepairDelaunayTriangulation, FlipError,
+            RepairQueueOrder, TopologyGuarantee, verify_delaunay_for_triangulation,
+            verify_delaunay_via_flip_predicates, vertex,
+        },
         triangulation::delaunay::DelaunayTriangulation,
     };
 
@@ -1105,6 +1131,40 @@ mod tests {
         let _facet_map: FacetToCellsMap = FacetToCellsMap::default();
         let _neighbors: CellNeighborsMap = CellNeighborsMap::default();
         let _vertex_cells: VertexToCellsMap = VertexToCellsMap::default();
+    }
+
+    #[test]
+    fn test_prelude_triangulation_repair_exports() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt: RepairDelaunayTriangulation<_, (), (), 2> =
+            RepairDelaunayTriangulation::new(&vertices).unwrap();
+        let kernel = AdaptiveKernel::<f64>::new();
+
+        assert!(verify_delaunay_for_triangulation(dt.as_triangulation()).is_ok());
+        assert!(verify_delaunay_via_flip_predicates(dt.tds(), &kernel).is_ok());
+
+        let stats = DelaunayRepairStats::default();
+        let outcome = DelaunayRepairOutcome {
+            stats: stats.clone(),
+            heuristic: None,
+        };
+        assert_eq!(outcome.stats.flips_performed, stats.flips_performed);
+        let order = RepairQueueOrder::Fifo;
+        assert!(matches!(order, RepairQueueOrder::Fifo));
+        assert_eq!(
+            DelaunayRepairPolicy::default(),
+            DelaunayRepairPolicy::EveryInsertion
+        );
+        assert_eq!(DelaunayCheckPolicy::default(), DelaunayCheckPolicy::EndOnly);
+
+        let err = DelaunayRepairError::Flip(FlipError::DegenerateCell);
+        assert!(matches!(err, DelaunayRepairError::Flip(_)));
+        let topo = TopologyGuarantee::PLManifold;
+        assert!(matches!(topo, TopologyGuarantee::PLManifold));
     }
 
     #[test]

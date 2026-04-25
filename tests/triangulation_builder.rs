@@ -8,12 +8,11 @@
 use std::collections::HashMap;
 use std::f64::consts::TAU;
 
-use delaunay::core::algorithms::flips::DelaunayRepairError;
-use delaunay::core::triangulation::TopologyGuarantee;
 use delaunay::core::vertex::{Vertex, VertexBuilder};
 use delaunay::geometry::kernel::RobustKernel;
 use delaunay::geometry::point::Point;
 use delaunay::geometry::traits::coordinate::Coordinate;
+use delaunay::prelude::triangulation::repair::{DelaunayRepairError, TopologyGuarantee};
 use delaunay::topology::characteristics::euler::{count_simplices, euler_characteristic};
 use delaunay::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
 use delaunay::triangulation::builder::{DelaunayTriangulationBuilder, ExplicitConstructionError};
