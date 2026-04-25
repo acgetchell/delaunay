@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.6] - 2026-04-25
 
 ### ⚠️ Breaking Changes
 
@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Merged Pull Requests
 
+- Preserve fallback rebuild cell data [#305](https://github.com/acgetchell/delaunay/pull/305) [#346](https://github.com/acgetchell/delaunay/pull/346)
+- Switch coverage reporting to cargo-llvm-cov [#345](https://github.com/acgetchell/delaunay/pull/345)
+- Clarify research scope and changelog hygiene [#344](https://github.com/acgetchell/delaunay/pull/344)
 - Instrument large-scale 4D debugging and widen local repair seeds [#339](https://github.com/acgetchell/delaunay/pull/339)
 - Orient Delaunay repair replacement cells [#307](https://github.com/acgetchell/delaunay/pull/307) [#336](https://github.com/acgetchell/delaunay/pull/336)
 - Use dedicated perf profile for consistent benchmark measurement [#334](https://github.com/acgetchell/delaunay/pull/334)
@@ -224,6 +227,8 @@ Perform a general dependency update, including a patch bump for `uuid`.
   ensures that identified issues are explicitly addressed during the
   review process rather than appearing as informational comments only.
 
+- Revise SECURITY.md for clarity and completeness [`bd041fa`](https://github.com/acgetchell/delaunay/commit/bd041fa18456abad59a11088ab8a14e7f399adbe)
+
 ### Documentation
 
 - Sync documentation with post-v0.7.5 changes [skip ci] [`5fa36aa`](https://github.com/acgetchell/delaunay/commit/5fa36aa67cb99bb3a5781e4c2733c2acec3adea8)
@@ -238,6 +243,21 @@ Perform a general dependency update, including a patch bump for `uuid`.
 
   - Update docs/TODO.md: mark completed items (#288, #302, #306/#307),
     refresh next-release candidates
+
+- Clarify research scope and changelog hygiene [#344](https://github.com/acgetchell/delaunay/pull/344)
+  [`f46b7ae`](https://github.com/acgetchell/delaunay/commit/f46b7ae1e64734e441854e9868fae73d5d503c68)
+
+- Refresh README research positioning with current scope, non-goals,
+    predicate limits, and documentation links.
+
+  - Add current limitations and roadmap docs, and archive stale 4D known
+    issues and TODO snapshots.
+
+  - Update stale module/workflow references across docs and regenerate the
+    active and archived changelogs.
+
+  - Teach changelog post-processing to render squash-body pseudo-headings as
+    prose, with tests covering the new normalization helpers.
 
 ### Fixed
 
@@ -321,6 +341,14 @@ Perform a general dependency update, including a patch bump for `uuid`.
   - Canonicalize bulk repair results before continuing construction.
   - Add a 4D regression test for the issue #307 bulk construction failure.
   - Document branch naming conventions for contributors and agents.
+- Preserve fallback rebuild cell data [#305](https://github.com/acgetchell/delaunay/pull/305) [#346](https://github.com/acgetchell/delaunay/pull/346)
+  [`7e42be8`](https://github.com/acgetchell/delaunay/commit/7e42be8fba9abe571d0137710fbd7ed0151ebc85)
+
+- Restore cell payloads during delaunayize fallback rebuilds when a rebuilt cell matches exactly one original vertex UUID signature.
+  - Treat duplicate original cell signatures as ambiguous, even when their payloads are identical.
+  - Preserve typed snapshot, rebuild, and restore errors for debuggable fallback failure paths.
+  - Expose delaunayize error payload types through the focused workflow prelude and add normal-type coverage.
+  - Document fallback cell-data preservation and refresh related test/docs utility updates.
 
 ### Maintenance
 
@@ -466,6 +494,14 @@ Bumps [actions/setup-node](https://github.com/actions/setup-node) from 6.3.0 to 
 
   - CITATION.cff caught up to 0.7.5.
   - la-stack bumped 0.4.0 -> 0.4.1 in Cargo.toml / Cargo.lock.
+- Switch coverage reporting to cargo-llvm-cov [#345](https://github.com/acgetchell/delaunay/pull/345)
+  [`b5fb221`](https://github.com/acgetchell/delaunay/commit/b5fb22134a07b28b40b45ef8484a4f0c79e4d61e)
+
+- Replace tarpaulin coverage commands with cargo-llvm-cov for local HTML and CI Cobertura reports.
+  - Update Codecov workflow setup, caching, validation, and coverage documentation for the new toolchain.
+  - Add GitHub issue templates and clarify private vulnerability reporting guidance.
+  - Tighten Python lint/typecheck settings and clean up benchmark/changelog utility diagnostics.
+  - Add changelog post-processing coverage for version-heading reset behavior.
 
 ## [0.7.5] - 2026-04-10
 
@@ -2830,7 +2866,7 @@ Older releases are archived by minor series:
 - [0.3.x](docs/archive/changelog/0.3.md)
 - [0.2.x](docs/archive/changelog/0.2.md)
 
-[unreleased]: https://github.com/acgetchell/delaunay/compare/v0.7.5..HEAD
+[0.7.6]: https://github.com/acgetchell/delaunay/compare/v0.7.5..v0.7.6
 [0.7.5]: https://github.com/acgetchell/delaunay/compare/v0.7.4..v0.7.5
 [0.7.4]: https://github.com/acgetchell/delaunay/compare/v0.7.3..v0.7.4
 [0.7.3]: https://github.com/acgetchell/delaunay/compare/v0.7.2..v0.7.3
