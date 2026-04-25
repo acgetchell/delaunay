@@ -1076,6 +1076,10 @@ mod tests {
             Point, algorithms::convex_hull::ConvexHull, kernel::AdaptiveKernel, kernel::FastKernel,
         },
         is_normal,
+        prelude::triangulation::delaunayize::{
+            CellValidationError, DelaunayTriangulationConstructionError, DelaunayizeConfig,
+            DelaunayizeError, DelaunayizeOutcome, PlManifoldRepairError, PlManifoldRepairStats,
+        },
         prelude::triangulation::repair::{
             DelaunayCheckPolicy, DelaunayRepairError, DelaunayRepairOutcome, DelaunayRepairPolicy,
             DelaunayRepairStats, DelaunayTriangulation as RepairDelaunayTriangulation, FlipError,
@@ -1101,6 +1105,15 @@ mod tests {
         assert!(is_normal::<ConvexHull<FastKernel<f64>, (), (), 3>>());
         assert!(is_normal::<EdgeKey>());
         assert!(is_normal::<AdjacencyIndex>());
+        assert!(is_normal::<DelaunayizeConfig>());
+        assert!(is_normal::<DelaunayizeOutcome<f64, (), (), 3>>());
+        assert!(is_normal::<DelaunayizeError>());
+        assert!(is_normal::<DelaunayRepairError>());
+        assert!(is_normal::<DelaunayRepairStats>());
+        assert!(is_normal::<PlManifoldRepairError>());
+        assert!(is_normal::<PlManifoldRepairStats<f64, (), (), 3>>());
+        assert!(is_normal::<CellValidationError>());
+        assert!(is_normal::<DelaunayTriangulationConstructionError>());
     }
 
     #[test]

@@ -3079,6 +3079,12 @@ def _add_performance_summary_subcommands(subparsers: "argparse._SubParsersAction
 def create_argument_parser() -> argparse.ArgumentParser:
     """Create and configure the argument parser."""
     parser = argparse.ArgumentParser(description="Benchmark utilities for baseline generation and comparison")
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Enable verbose logging",
+    )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     _add_benchmark_subcommands(subparsers)
@@ -3088,6 +3094,14 @@ def create_argument_parser() -> argparse.ArgumentParser:
     _add_performance_summary_subcommands(subparsers)
 
     return parser
+
+
+def configure_logging(*, verbose: bool) -> None:
+    """Configure CLI logging before command execution."""
+    logging.basicConfig(
+        level=logging.DEBUG if verbose else logging.INFO,
+        format="%(levelname)s: %(message)s",
+    )
 
 
 def execute_baseline_commands(args: argparse.Namespace, project_root: Path) -> None:
@@ -3338,6 +3352,7 @@ def main():
     """Command-line interface for benchmark utilities."""
     parser = create_argument_parser()
     args = parser.parse_args()
+    configure_logging(verbose=args.verbose)
 
     if not args.command:
         parser.print_help()

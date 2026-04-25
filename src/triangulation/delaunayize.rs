@@ -39,28 +39,29 @@
 //!
 //! - Dedicated targeted repair stages for boundary-ridge multiplicity,
 //!   ridge-link manifoldness, and vertex-link manifoldness (#304).
-//! - Stronger cell-payload preservation in the fallback rebuild path (#305).
 
 #![forbid(unsafe_code)]
 
-// Re-export outcome field types so users can name them without reaching into
-// internal modules.
-pub use crate::core::algorithms::flips::DelaunayRepairStats;
+// Re-export outcome/error field types so users can name the public contract
+// without reaching into lower-level modules.
+pub use crate::core::algorithms::flips::{DelaunayRepairError, DelaunayRepairStats};
 pub use crate::core::algorithms::pl_manifold_repair::{
     PlManifoldRepairError, PlManifoldRepairStats,
 };
+pub use crate::core::cell::CellValidationError;
+pub use crate::triangulation::delaunay::DelaunayTriangulationConstructionError;
 
-use crate::core::algorithms::flips::DelaunayRepairError;
 use crate::core::algorithms::pl_manifold_repair::{
     PlManifoldRepairConfig, repair_facet_oversharing,
 };
+use crate::core::cell::Cell;
+use crate::core::collections::{Entry, FastHashMap, Uuid};
+use crate::core::tds::{CellKey, Tds};
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{ExactPredicates, Kernel};
 use crate::geometry::traits::coordinate::CoordinateScalar;
-use crate::triangulation::delaunay::{
-    DelaunayRepairHeuristicConfig, DelaunayTriangulation, DelaunayTriangulationConstructionError,
-};
+use crate::triangulation::delaunay::{DelaunayRepairHeuristicConfig, DelaunayTriangulation};
 use thiserror::Error;
 
 // =============================================================================
@@ -95,7 +96,10 @@ pub struct DelaunayizeConfig {
     /// If `true`, rebuild the triangulation from the vertex set when both
     /// topology repair and flip-based Delaunay repair fail.
     ///
-    /// **Warning:** the fallback rebuild discards cell-level user data (`V`).
+    /// Cell-level user data (`V`) is restored for rebuilt cells whose sorted
+    /// vertex UUID set matches exactly one original cell. Cells that change
+    /// during rebuild, have no original payload, or have ambiguous duplicate
+    /// original signatures receive `None`.
     pub fallback_rebuild: bool,
     /// Optional per-attempt flip budget cap for Delaunay repair.
     ///
@@ -156,18 +160,24 @@ pub struct DelaunayizeOutcome<T, U, V, const D: usize> {
 
 /// Errors that can occur during the [`delaunayize_by_flips`] workflow.
 ///
-/// There are two orthogonal failure modes:
+/// There are three orthogonal failure modes:
 /// - **Topology repair** failed (step 1).
 /// - **Delaunay repair** failed (step 2), with optional context about a
 ///   fallback rebuild attempt.
+/// - **Fallback cell-data recovery** failed while snapshotting or restoring
+///   cell payloads by vertex UUID.
 ///
 /// # Orthogonality
 ///
-/// The four variants are mutually exclusive by failure mode:
+/// The variants are mutually exclusive by failure mode:
 /// - Topology repair, fallback not attempted -> [`TopologyRepairFailed`](Self::TopologyRepairFailed).
 /// - Topology repair, fallback also failed   -> [`TopologyRepairFailedWithRebuild`](Self::TopologyRepairFailedWithRebuild).
+/// - Topology repair, fallback rebuild succeeded but payload restore failed -> [`TopologyRepairFailedWithRebuildRestore`](Self::TopologyRepairFailedWithRebuildRestore).
 /// - Delaunay repair, fallback not attempted -> [`DelaunayRepairFailed`](Self::DelaunayRepairFailed).
+/// - Delaunay repair, fallback payload snapshot failed -> [`DelaunayRepairFailedWithCellDataSnapshot`](Self::DelaunayRepairFailedWithCellDataSnapshot).
 /// - Delaunay repair, fallback also failed   -> [`DelaunayRepairFailedWithRebuild`](Self::DelaunayRepairFailedWithRebuild).
+/// - Delaunay repair, fallback rebuild succeeded but payload restore failed -> [`DelaunayRepairFailedWithRebuildRestore`](Self::DelaunayRepairFailedWithRebuildRestore).
+/// - Fallback was enabled, but the pre-repair payload snapshot failed -> [`FallbackCellDataSnapshotFailed`](Self::FallbackCellDataSnapshotFailed).
 ///
 /// The `*WithRebuild` variants preserve **both** the primary repair error and
 /// the secondary construction error as typed values (no stringification),
@@ -177,14 +187,11 @@ pub struct DelaunayizeOutcome<T, U, V, const D: usize> {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::delaunayize::DelaunayizeError;
-/// use delaunay::prelude::triangulation::repair::{DelaunayRepairError, TopologyGuarantee};
+/// use delaunay::prelude::triangulation::delaunayize::*;
 ///
 /// let err = DelaunayizeError::DelaunayRepairFailed {
-///     source: DelaunayRepairError::InvalidTopology {
-///         required: TopologyGuarantee::PLManifold,
-///         found: TopologyGuarantee::Pseudomanifold,
-///         message: "requires manifold",
+///     source: DelaunayRepairError::PostconditionFailed {
+///         message: "still non-Delaunay after repair".to_string(),
 ///     },
 /// };
 /// assert!(err.to_string().contains("Delaunay repair failed"));
@@ -213,6 +220,19 @@ pub enum DelaunayizeError {
         rebuild_error: DelaunayTriangulationConstructionError,
     },
 
+    /// PL-manifold topology repair failed, the fallback vertex-set rebuild
+    /// succeeded, but cell-payload restoration from the rebuilt topology failed.
+    #[error(
+        "Topology repair failed ({source}); fallback rebuild succeeded but cell-data restore failed: {restore_error}"
+    )]
+    TopologyRepairFailedWithRebuildRestore {
+        /// The underlying topology-repair error that triggered the fallback.
+        #[source]
+        source: PlManifoldRepairError,
+        /// The cell-data restoration error from the rebuilt triangulation.
+        restore_error: CellValidationError,
+    },
+
     /// Delaunay flip repair failed; no fallback rebuild was attempted
     /// (fallback disabled, or the caller's config did not request one).
     #[error("Delaunay repair failed: {source}")]
@@ -221,6 +241,19 @@ pub enum DelaunayizeError {
         #[from]
         #[source]
         source: DelaunayRepairError,
+    },
+
+    /// Delaunay flip repair failed and the fallback payload snapshot could not
+    /// be collected from the current triangulation.
+    #[error(
+        "Delaunay repair failed ({source}); fallback cell-data snapshot failed: {snapshot_error}"
+    )]
+    DelaunayRepairFailedWithCellDataSnapshot {
+        /// The underlying flip-repair error that triggered the fallback.
+        #[source]
+        source: DelaunayRepairError,
+        /// The cell-data snapshot error from the current triangulation.
+        snapshot_error: CellValidationError,
     },
 
     /// Delaunay flip repair failed **and** the fallback vertex-set rebuild
@@ -233,6 +266,206 @@ pub enum DelaunayizeError {
         /// The construction error from the subsequent vertex-set rebuild attempt.
         rebuild_error: DelaunayTriangulationConstructionError,
     },
+
+    /// Delaunay flip repair failed, the fallback vertex-set rebuild succeeded,
+    /// but cell-payload restoration from the rebuilt topology failed.
+    #[error(
+        "Delaunay repair failed ({source}); fallback rebuild succeeded but cell-data restore failed: {restore_error}"
+    )]
+    DelaunayRepairFailedWithRebuildRestore {
+        /// The underlying flip-repair error that triggered the fallback.
+        #[source]
+        source: DelaunayRepairError,
+        /// The cell-data restoration error from the rebuilt triangulation.
+        restore_error: CellValidationError,
+    },
+
+    /// Fallback rebuild was enabled, but the pre-repair cell-payload snapshot
+    /// could not be collected from the input triangulation.
+    #[error("Fallback cell-data snapshot failed before repair: {source}")]
+    FallbackCellDataSnapshotFailed {
+        /// The cell-data snapshot error from the input triangulation.
+        #[from]
+        #[source]
+        source: CellValidationError,
+    },
+}
+
+// =============================================================================
+// HELPERS
+// =============================================================================
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum CellDataMatch<V> {
+    Unique(Option<V>),
+    Ambiguous,
+}
+
+type CellDataByVertexUuids<V> = FastHashMap<Vec<Uuid>, CellDataMatch<V>>;
+type FallbackRebuildState<T, U, V, const D: usize> =
+    (Vec<Vertex<T, U, D>>, CellDataByVertexUuids<V>);
+
+/// Captures the fallback rebuild inputs from the current TDS, including typed
+/// failure if any cell cannot resolve its vertex UUID identity.
+fn snapshot_rebuild_state<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+) -> Result<FallbackRebuildState<T, U, V, D>, CellValidationError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let vertices = tds
+        .vertices()
+        .map(|(_, v)| Vertex::new_with_uuid(*v.point(), v.uuid(), v.data))
+        .collect::<Vec<_>>();
+    let cell_data = collect_cell_data(tds)?;
+    Ok((vertices, cell_data))
+}
+
+/// Hashes cell payloads by sorted vertex UUIDs so fallback rebuilds can
+/// recover payloads for cells whose vertex set survives unchanged.
+fn collect_cell_data<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+) -> Result<CellDataByVertexUuids<V>, CellValidationError>
+where
+    U: DataType,
+    V: DataType,
+{
+    let mut cell_data = FastHashMap::default();
+    for (_, cell) in tds.cells() {
+        let vertex_uuids = cell_vertex_uuids(tds, cell)?;
+        match cell_data.entry(vertex_uuids) {
+            Entry::Vacant(entry) => {
+                entry.insert(CellDataMatch::Unique(cell.data().copied()));
+            }
+            Entry::Occupied(mut entry) => {
+                entry.insert(CellDataMatch::Ambiguous);
+            }
+        }
+    }
+    Ok(cell_data)
+}
+
+/// Builds the order-independent cell identity used to match original and
+/// rebuilt cells across fallback reconstruction.
+fn cell_vertex_uuids<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cell: &Cell<T, U, V, D>,
+) -> Result<Vec<Uuid>, CellValidationError>
+where
+    U: DataType,
+    V: DataType,
+{
+    let mut vertex_uuids = cell
+        .vertex_uuid_iter(tds)
+        .collect::<Result<Vec<_>, CellValidationError>>()?;
+    vertex_uuids.sort_unstable();
+    Ok(vertex_uuids)
+}
+
+/// Reattaches original cell payloads to rebuilt cells that retain the same
+/// vertex UUID set after fallback reconstruction.
+fn restore_cell_data<K, U, V, const D: usize>(
+    rebuilt: &mut DelaunayTriangulation<K, U, V, D>,
+    original_cell_data: &CellDataByVertexUuids<V>,
+) -> Result<(), CellValidationError>
+where
+    K: Kernel<D>,
+    U: DataType,
+    V: DataType,
+{
+    let mut assignments: Vec<(CellKey, V)> = Vec::new();
+    for (cell_key, cell) in rebuilt.cells() {
+        let vertex_uuids = cell_vertex_uuids(rebuilt.tds(), cell)?;
+        let Some(CellDataMatch::Unique(Some(data))) = original_cell_data.get(&vertex_uuids) else {
+            continue;
+        };
+        assignments.push((cell_key, *data));
+    }
+
+    for (cell_key, data) in assignments {
+        rebuilt.set_cell_data(cell_key, Some(data));
+    }
+
+    Ok(())
+}
+
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+enum FallbackRebuildError {
+    #[error("fallback rebuild failed: {source}")]
+    Construction {
+        #[from]
+        #[source]
+        source: DelaunayTriangulationConstructionError,
+    },
+    #[error("fallback cell-data restore failed: {source}")]
+    Restore {
+        #[from]
+        #[source]
+        source: CellValidationError,
+    },
+}
+
+/// Maps a fallback rebuild failure while handling a topology-repair failure
+/// without erasing either typed source.
+fn topology_rebuild_error(
+    source: PlManifoldRepairError,
+    fallback_error: FallbackRebuildError,
+) -> DelaunayizeError {
+    match fallback_error {
+        FallbackRebuildError::Construction {
+            source: rebuild_error,
+        } => DelaunayizeError::TopologyRepairFailedWithRebuild {
+            source,
+            rebuild_error,
+        },
+        FallbackRebuildError::Restore {
+            source: restore_error,
+        } => DelaunayizeError::TopologyRepairFailedWithRebuildRestore {
+            source,
+            restore_error,
+        },
+    }
+}
+
+/// Maps a fallback rebuild failure while handling a Delaunay-repair failure
+/// without erasing either typed source.
+fn delaunay_rebuild_error(
+    source: DelaunayRepairError,
+    fallback_error: FallbackRebuildError,
+) -> DelaunayizeError {
+    match fallback_error {
+        FallbackRebuildError::Construction {
+            source: rebuild_error,
+        } => DelaunayizeError::DelaunayRepairFailedWithRebuild {
+            source,
+            rebuild_error,
+        },
+        FallbackRebuildError::Restore {
+            source: restore_error,
+        } => DelaunayizeError::DelaunayRepairFailedWithRebuildRestore {
+            source,
+            restore_error,
+        },
+    }
+}
+
+/// Rebuilds a triangulation from preserved vertices while restoring any
+/// cell payloads whose vertex UUID signatures survive the rebuild unchanged.
+fn rebuild_preserving_data<K, U, V, const D: usize>(
+    kernel: &K,
+    vertices: &[Vertex<K::Scalar, U, D>],
+    original_cell_data: &CellDataByVertexUuids<V>,
+) -> Result<DelaunayTriangulation<K, U, V, D>, FallbackRebuildError>
+where
+    K: Kernel<D> + ExactPredicates,
+    U: DataType,
+    V: DataType,
+{
+    let mut rebuilt = DelaunayTriangulation::with_kernel(kernel, vertices)?;
+    restore_cell_data(&mut rebuilt, original_cell_data)?;
+    Ok(rebuilt)
 }
 
 // =============================================================================
@@ -295,22 +528,17 @@ pub fn delaunayize_by_flips<K, U, V, const D: usize>(
 ) -> Result<DelaunayizeOutcome<K::Scalar, U, V, D>, DelaunayizeError>
 where
     K: Kernel<D> + ExactPredicates,
-    K::Scalar: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    // Snapshot vertex set before repair so fallback rebuild can use it.
-    let fallback_vertices: Option<Vec<Vertex<K::Scalar, U, D>>> = if config.fallback_rebuild {
-        Some(
-            dt.as_triangulation()
-                .tds
-                .vertices()
-                .map(|(_, v)| Vertex::new_with_uuid(*v.point(), v.uuid(), v.data))
-                .collect(),
-        )
-    } else {
-        None
-    };
+    // Snapshot vertex and cell data before repair so fallback rebuild can use it.
+    let fallback_state: Option<FallbackRebuildState<K::Scalar, U, V, D>> =
+        if config.fallback_rebuild {
+            let tds = &dt.as_triangulation().tds;
+            Some(snapshot_rebuild_state(tds)?)
+        } else {
+            None
+        };
 
     // Step 1: PL-manifold topology repair (facet over-sharing).
     let pl_config = PlManifoldRepairConfig {
@@ -321,8 +549,8 @@ where
         match repair_facet_oversharing(&mut dt.as_triangulation_mut().tds, &pl_config) {
             Ok(stats) => stats,
             // Topology repair failed but fallback is enabled — try rebuilding.
-            Err(topo_err) if let Some(ref verts) = fallback_vertices => {
-                match DelaunayTriangulation::with_kernel(&dt.as_triangulation().kernel, verts) {
+            Err(topo_err) if let Some((ref verts, ref cell_data)) = fallback_state => {
+                match rebuild_preserving_data(&dt.as_triangulation().kernel, verts, cell_data) {
                     Ok(rebuilt) => {
                         *dt = rebuilt;
                         return Ok(DelaunayizeOutcome {
@@ -331,11 +559,8 @@ where
                             used_fallback_rebuild: true,
                         });
                     }
-                    Err(rebuild_err) => {
-                        return Err(DelaunayizeError::TopologyRepairFailedWithRebuild {
-                            source: topo_err,
-                            rebuild_error: rebuild_err,
-                        });
+                    Err(fallback_error) => {
+                        return Err(topology_rebuild_error(topo_err, fallback_error));
                     }
                 }
             }
@@ -362,14 +587,19 @@ where
         Err(repair_err) => {
             if config.fallback_rebuild {
                 // Step 3 (optional): rebuild from vertex set.
-                let vertices: Vec<Vertex<K::Scalar, U, D>> = dt
-                    .as_triangulation()
-                    .tds
-                    .vertices()
-                    .map(|(_, v)| Vertex::new_with_uuid(*v.point(), v.uuid(), v.data))
-                    .collect();
+                let tds = &dt.as_triangulation().tds;
+                let (vertices, cell_data) = match snapshot_rebuild_state(tds) {
+                    Ok(state) => state,
+                    Err(snapshot_error) => {
+                        return Err(DelaunayizeError::DelaunayRepairFailedWithCellDataSnapshot {
+                            source: repair_err,
+                            snapshot_error,
+                        });
+                    }
+                };
 
-                match DelaunayTriangulation::with_kernel(&dt.as_triangulation().kernel, &vertices) {
+                match rebuild_preserving_data(&dt.as_triangulation().kernel, &vertices, &cell_data)
+                {
                     Ok(rebuilt) => {
                         *dt = rebuilt;
                         // The rebuild succeeded — return stats reflecting the fallback.
@@ -379,10 +609,7 @@ where
                             used_fallback_rebuild: true,
                         })
                     }
-                    Err(rebuild_err) => Err(DelaunayizeError::DelaunayRepairFailedWithRebuild {
-                        source: repair_err,
-                        rebuild_error: rebuild_err,
-                    }),
+                    Err(fallback_error) => Err(delaunay_rebuild_error(repair_err, fallback_error)),
                 }
             } else {
                 Err(DelaunayizeError::from(repair_err))
@@ -398,7 +625,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::tds::VertexKey;
+    use crate::geometry::kernel::AdaptiveKernel;
+    use crate::triangulation::builder::DelaunayTriangulationBuilder;
     use crate::vertex;
+    use slotmap::KeyData;
+    use std::error::Error as StdError;
 
     // =============================================================================
     // HELPER FUNCTIONS
@@ -485,6 +717,125 @@ mod tests {
     }
 
     // =============================================================================
+    // ERROR PATH TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_collect_cell_data_missing_vertex() {
+        let mut tds: Tds<f64, (), i32, 2> = Tds::empty();
+        let vertex_keys: Vec<_> = [
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ]
+        .iter()
+        .map(|vertex| tds.insert_vertex_with_mapping(*vertex).unwrap())
+        .collect();
+        let missing = vertex_keys[0];
+        let cell = Cell::new(vertex_keys, Some(7)).unwrap();
+        tds.insert_cell_with_mapping(cell).unwrap();
+        tds.remove_isolated_vertex(missing);
+
+        let err = collect_cell_data(&tds).unwrap_err();
+
+        assert_eq!(err, CellValidationError::VertexKeyNotFound { key: missing });
+    }
+
+    #[test]
+    fn test_snapshot_error_source() {
+        let source = CellValidationError::VertexKeyNotFound {
+            key: VertexKey::from(KeyData::from_ffi(0xBAD)),
+        };
+        let err = DelaunayizeError::FallbackCellDataSnapshotFailed {
+            source: source.clone(),
+        };
+
+        assert_eq!(
+            err,
+            DelaunayizeError::FallbackCellDataSnapshotFailed {
+                source: source.clone()
+            }
+        );
+        assert!(
+            err.to_string()
+                .contains("Fallback cell-data snapshot failed")
+        );
+        let error_source = StdError::source(&err).unwrap();
+        assert_eq!(error_source.to_string(), source.to_string());
+    }
+
+    #[test]
+    fn test_repair_snapshot_error_source() {
+        let source = DelaunayRepairError::PostconditionFailed {
+            message: "synthetic postcondition".to_string(),
+        };
+        let snapshot_error = CellValidationError::VertexKeyNotFound {
+            key: VertexKey::from(KeyData::from_ffi(0xBAD)),
+        };
+        let err = DelaunayizeError::DelaunayRepairFailedWithCellDataSnapshot {
+            source: source.clone(),
+            snapshot_error: snapshot_error.clone(),
+        };
+
+        assert_eq!(
+            err,
+            DelaunayizeError::DelaunayRepairFailedWithCellDataSnapshot {
+                source: source.clone(),
+                snapshot_error,
+            }
+        );
+        assert!(
+            err.to_string()
+                .contains("fallback cell-data snapshot failed")
+        );
+        let error_source = StdError::source(&err).unwrap();
+        assert_eq!(error_source.to_string(), source.to_string());
+    }
+
+    #[test]
+    fn test_restore_error_sources() {
+        let topology_source = PlManifoldRepairError::NoProgress {
+            over_shared_facets: 2,
+            iterations: 3,
+            cells_removed: 4,
+        };
+        let delaunay_source = DelaunayRepairError::PostconditionFailed {
+            message: "synthetic postcondition".to_string(),
+        };
+        let restore_error = CellValidationError::VertexKeyNotFound {
+            key: VertexKey::from(KeyData::from_ffi(0xBAD)),
+        };
+
+        let topology_err = DelaunayizeError::TopologyRepairFailedWithRebuildRestore {
+            source: topology_source.clone(),
+            restore_error: restore_error.clone(),
+        };
+        let delaunay_err = DelaunayizeError::DelaunayRepairFailedWithRebuildRestore {
+            source: delaunay_source.clone(),
+            restore_error,
+        };
+
+        assert!(
+            topology_err
+                .to_string()
+                .contains("cell-data restore failed")
+        );
+        assert_eq!(
+            StdError::source(&topology_err).unwrap().to_string(),
+            topology_source.to_string()
+        );
+        assert!(
+            delaunay_err
+                .to_string()
+                .contains("cell-data restore failed")
+        );
+        assert_eq!(
+            StdError::source(&delaunay_err).unwrap().to_string(),
+            delaunay_source.to_string()
+        );
+    }
+
+    // =============================================================================
     // FALLBACK BEHAVIOR TESTS
     // =============================================================================
 
@@ -514,6 +865,70 @@ mod tests {
         };
         let outcome = delaunayize_by_flips(&mut dt, config).unwrap();
         assert!(!outcome.used_fallback_rebuild);
+    }
+
+    #[test]
+    fn test_rebuild_restores_cell_data() {
+        init_tracing();
+        let vertices = [
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+            .build::<i32>()
+            .unwrap();
+        let original_cell_key = dt.cells().next().unwrap().0;
+        dt.set_cell_data(original_cell_key, Some(42));
+
+        let tds = &dt.as_triangulation().tds;
+        let vertices: Vec<_> = tds
+            .vertices()
+            .map(|(_, v)| Vertex::new_with_uuid(*v.point(), v.uuid(), v.data))
+            .collect();
+        let cell_data = collect_cell_data(tds).unwrap();
+
+        let rebuilt =
+            rebuild_preserving_data(&dt.as_triangulation().kernel, &vertices, &cell_data).unwrap();
+
+        let (_, rebuilt_cell) = rebuilt.cells().next().unwrap();
+        assert_eq!(rebuilt_cell.data(), Some(&42));
+        assert!(rebuilt.validate().is_ok());
+    }
+
+    #[test]
+    fn test_rebuild_drops_ambiguous_data() {
+        init_tracing();
+        let vertices = [
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut tds: Tds<f64, (), i32, 2> = Tds::empty();
+        let vertex_keys: Vec<_> = vertices
+            .iter()
+            .map(|vertex| tds.insert_vertex_with_mapping(*vertex).unwrap())
+            .collect();
+
+        let duplicate_a = Cell::new(vertex_keys.clone(), Some(42)).unwrap();
+        let duplicate_b = Cell::new(vertex_keys, Some(42)).unwrap();
+        tds.insert_cell_with_mapping(duplicate_a).unwrap();
+        tds.insert_cell_with_mapping(duplicate_b).unwrap();
+
+        let rebuild_vertices: Vec<_> = tds
+            .vertices()
+            .map(|(_, v)| Vertex::new_with_uuid(*v.point(), v.uuid(), v.data))
+            .collect();
+        let cell_data = collect_cell_data(&tds).unwrap();
+        let kernel = AdaptiveKernel::new();
+        let mut rebuilt: DelaunayTriangulation<_, (), i32, 2> =
+            DelaunayTriangulation::with_kernel(&kernel, &rebuild_vertices).unwrap();
+
+        restore_cell_data(&mut rebuilt, &cell_data).unwrap();
+
+        let (_, rebuilt_cell) = rebuilt.cells().next().unwrap();
+        assert_eq!(rebuilt_cell.data(), None);
+        assert!(rebuilt.validate().is_ok());
     }
 
     // =============================================================================

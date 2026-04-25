@@ -377,20 +377,23 @@ assert!(outcome.topology_repair.succeeded);
 
 - `topology_max_iterations` (default 64): max repair iterations.
 - `topology_max_cells_removed` (default 10,000): max cells removed.
-- `fallback_rebuild` (default false): rebuild from vertices on failure.
+- `fallback_rebuild` (default false): rebuild from vertices on failure,
+  restoring cell data for rebuilt cells whose sorted vertex UUID set still
+  matches exactly one original cell.
 - `delaunay_max_flips` (default `None`): optional per-attempt flip budget.
 
 ### Data Preservation
 
 `PlManifoldRepairStats` carries `removed_cells` and `removed_vertices`
 (identified by UUID) so callers can recover user data from entities removed
-during topology repair.
+during topology repair. The fallback rebuild path also preserves cell payloads
+when a rebuilt cell has the same vertex UUID set as exactly one original cell;
+changed or ambiguous cells receive no payload.
 
 ### Explicitly Deferred
 
 - Dedicated targeted repair stages for boundary-ridge multiplicity,
   ridge-link manifoldness, and vertex-link manifoldness (#304).
-- Stronger cell-payload preservation in the fallback rebuild path (#305).
 
 ## Further Reading
 
