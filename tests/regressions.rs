@@ -194,3 +194,66 @@ fn regression_issue_307_4d_bulk_repair_keeps_positive_orientation() {
         "bulk repair must leave the triangulation structurally and topologically valid",
     );
 }
+
+/// The 4D 500-point seed `0xD225B8A07E274AE6` (ball radius 100) exhausted all
+/// shuffled retries before #204: every attempt finished with skip-heavy output
+/// (`inserted≈266–300`, `skipped≈200–234`) and the construction ultimately
+/// failed with `Cell violates Delaunay property: cell contains vertex that is
+/// inside circumsphere`. The dominant failure mode was a cascade of
+/// `Ridge fan detected: 4 facets share ridge with 3 vertices` skips driven by
+/// a per-insertion local-repair flip budget that was too tight for D≥4
+/// (50-flip ceiling vs. observed `max_queue` p95 = 312).
+///
+/// Fix 2 of the #204 plan (see `docs/archive/issue_204_investigation.md`)
+/// raised the D≥4 budget factor/floor (`LOCAL_REPAIR_FLIP_BUDGET_FACTOR_D_GE_4`
+/// = 12, `LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_GE_4` = 96) and added one
+/// escalation pass with a 4× budget and the full TDS as seed set before the
+/// soft-fail path accepts a non-convergent repair. Post-fix, the same seed
+/// inserts 500/500 vertices with zero skips and passes full Level 1–4
+/// validation.
+///
+/// Gated behind `slow-tests` because batch insertion currently takes ~4 min
+/// wall time in release mode (still well below the previous ~10 min retry
+/// exhaustion); run with:
+///
+/// ```bash
+/// cargo test --release --test regressions --features slow-tests \
+///     regression_issue_204_4d_500_local_repair_budget -- --nocapture
+/// ```
+#[cfg(feature = "slow-tests")]
+#[test]
+fn regression_issue_204_4d_500_local_repair_budget() {
+    let seed: u64 = 0xD225_B8A0_7E27_4AE6;
+    let ball_radius = 100.0;
+    let n_points: usize = 500;
+
+    let points = generate_random_points_in_ball_seeded::<f64, 4>(n_points, ball_radius, seed)
+        .expect("point generation should succeed");
+    let vertices: Vec<Vertex<f64, (), 4>> = points.into_iter().map(|p| vertex!(p)).collect();
+
+    let (dt, stats) =
+        DelaunayTriangulation::<_, (), (), 4>::new_with_construction_statistics(&vertices)
+            .unwrap_or_else(|e| {
+                panic!(
+                    "#204 regression: 4D {n_points}-point construction with seed 0x{seed:X} \
+             (ball radius {ball_radius}) must succeed after Fix 2; got: {}",
+                    e.error
+                )
+            });
+
+    assert_eq!(
+        stats.inserted, n_points,
+        "#204 regression: all {n_points} vertices should insert with the raised \
+         D≥4 local-repair budget (seed 0x{seed:X})",
+    );
+    assert_eq!(
+        stats.total_skipped(),
+        0,
+        "#204 regression: no vertex should be skipped (seed 0x{seed:X})",
+    );
+    assert!(
+        dt.as_triangulation().validate().is_ok(),
+        "#204 regression: triangulation must pass Levels 1–4 validation \
+         (seed 0x{seed:X})",
+    );
+}

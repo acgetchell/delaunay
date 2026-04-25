@@ -1,9 +1,14 @@
 # Debug Environment Variables
 
 Comprehensive reference for all `DELAUNAY_*` environment variables used for
-runtime diagnostics and debugging. All variables are **debug-only** unless
-noted — they are gated behind `#[cfg(debug_assertions)]` and have no effect
-in release builds.
+runtime diagnostics and debugging.
+
+**Build mode**: most variables are **debug-only** — gated behind
+`#[cfg(debug_assertions)]` and have no effect in release builds. Variables
+marked `[release]` in the tables below are also active in release builds
+(read via plain `env::var_os` / `env::var` without a debug-assertions gate).
+This matters for large-scale investigations that need to run under
+`cargo test --release` or `cargo bench`.
 
 **Activation**: most variables are presence-activated (any value works, e.g.
 `DELAUNAY_DEBUG_CAVITY=1`). Variables that read a **value** are marked below.
@@ -35,9 +40,12 @@ in release builds.
 
 | Variable | Activation | Module | Description |
 |---|---|---|---|
-| `DELAUNAY_INSERT_TRACE` | presence | `triangulation.rs` | Per-insertion summary (vertex index, location, conflict size, suspicion flags) |
+| `DELAUNAY_INSERT_TRACE` | presence | `triangulation.rs` | `[release]` Per-insertion summary (vertex index, location, conflict size, suspicion flags) |
+| `DELAUNAY_BULK_PROGRESS_EVERY` | **value** (integer) | `triangulation/delaunay.rs` | `[release]` Periodic batch progress plus retry-boundary output. |
+| `DELAUNAY_DEBUG_CAVITY_REDUCTION_ONCE` | presence | `triangulation.rs` | `[release]` One-shot trace of first cavity reduction chain + re-extractions. |
+| `DELAUNAY_DEBUG_RETRYABLE_SKIP` | presence | `triangulation.rs` | `[release]` Retryable conflict skip trace with attempt and rollback context. |
 | `DELAUNAY_DEBUG_SHUFFLE` | presence | `triangulation.rs` | Logs vertex shuffle order during batch construction |
-| `DELAUNAY_DUPLICATE_METRICS` | presence | `triangulation/delaunay.rs` | Duplicate-detection metrics (spatial hash grid stats) |
+| `DELAUNAY_DUPLICATE_METRICS` | presence | `triangulation/delaunay.rs` | `[release]` Duplicate-detection metrics (spatial hash grid stats) |
 
 ## Point Location
 
@@ -54,6 +62,7 @@ in release builds.
 | `DELAUNAY_DEBUG_CONFLICT_PROGRESS` | presence | `locate.rs` | Periodic progress during large BFS traversals |
 | `DELAUNAY_DEBUG_CONFLICT_PROGRESS_EVERY` | **value** (integer) | `locate.rs` | Interval for progress logging (default: dimension-dependent) |
 | `DELAUNAY_DEBUG_CONFLICT_VERIFY` | presence | `triangulation.rs` | Brute-force verification of BFS conflict-region completeness with reachability analysis |
+| `DELAUNAY_DEBUG_RIDGE_FAN_ONCE` | presence | `locate.rs` | `[release]` One-shot dump of first detected ridge fan (ridge verts, boundary facets, extras). |
 
 ## Cavity & Hull
 
@@ -82,9 +91,11 @@ in release builds.
 |---|---|---|---|
 | `DELAUNAY_REPAIR_TRACE` | presence | `flips.rs` | Per-flip trace: enqueue, skip, apply, context details |
 | `DELAUNAY_REPAIR_DEBUG_FACETS` | presence | `flips.rs` | Facet-level flip skip reasons (degenerate, duplicate, non-manifold, existing simplex) |
+| `DELAUNAY_REPAIR_DEBUG_POSTCONDITION_FACET` | presence | `flips.rs` | `[release]` One-shot snapshot of the first unresolved k=2 facet with last-flip overlap |
 | `DELAUNAY_REPAIR_DEBUG_PREDICATES` | presence | `flips.rs` | Insphere classification details for k=2 and k=3 violation checks |
 | `DELAUNAY_REPAIR_DEBUG_RIDGE` | presence | `flips.rs` | Ridge context snapshots during k=3 repair |
 | `DELAUNAY_REPAIR_DEBUG_RIDGE_LIMIT` | **value** (integer) | `flips.rs` | Maximum ridge debug snapshots (default: 64) |
+| `DELAUNAY_REPAIR_DEBUG_RIDGE_MIN_MULTIPLICITY` | **value** (integer) | `flips.rs` | `[release]` Skip low-mult; emit when `found >= N` (default: 0). |
 | `DELAUNAY_REPAIR_DEBUG_SUMMARY` | presence | `flips.rs` | Per-attempt repair summary (flips, checks, cycles, ambiguous, skips) |
 
 ## Predicates & Validation

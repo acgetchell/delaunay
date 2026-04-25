@@ -8,7 +8,8 @@ Tera templates:
   2. Reflow long lines at word boundaries, preserving markdown links
      and code spans as atomic tokens (MD013).
   3. Tag bare fenced code blocks with a language (MD040).
-  4. Strip trailing blank lines (MD012).
+  4. Normalize indented commit-body headings (MD023).
+  5. Strip trailing blank lines (MD012).
 
 Usage:
     postprocess-changelog                     # default: CHANGELOG.md
@@ -29,6 +30,7 @@ MAX_LINE_WIDTH = 160
 # Keys are whole-word patterns; values are their replacements.
 # Applied as word-boundary replacements so partial matches are avoided.
 _TYPO_MAP: dict[str, str] = {
+    "deniest": "denies",
     "varous": "various",
     "runtim": "runtime",
 }
@@ -59,6 +61,9 @@ _STAR_LIST_RE = re.compile(r"^(\s*)\* ")
 
 # Extra spaces after list marker: ``-   `` → ``- `` (MD030).
 _LIST_MARKER_SPACE_RE = re.compile(r"^(\s*-)\s{2,}")
+
+# Indented ATX headings from commit bodies: ``  ## Title`` → ``  **Title**``.
+_INDENTED_ATX_HEADING_RE = re.compile(r"^(?P<indent>\s+)#{1,6}\s+(?P<title>.*?)(?:\s+#+\s*)?$")
 
 
 def _max_pr_number(entry: str) -> int:
@@ -308,6 +313,28 @@ def _fix_typos(text: str) -> str:
     return text
 
 
+def _normalize_indented_heading(line: str) -> str:
+    """
+    Convert indented commit-body headings into bold prose.
+
+    git-cliff indents commit bodies under each changelog entry. If a historical
+    commit body contains an ATX heading such as ``## Correctness Fixes``, the
+    rendered changelog contains ``  ## Correctness Fixes``. Markdownlint still
+    treats that as a heading, but MD023 requires headings to start at column 0.
+    Keeping the text as bold prose preserves readability without changing the
+    generated changelog hierarchy.
+    """
+    match = _INDENTED_ATX_HEADING_RE.match(line)
+    if match is None:
+        return line
+
+    title = match.group("title").strip()
+    if not title:
+        return line
+
+    return f"{match.group('indent')}**{title}**"
+
+
 def postprocess(path: Path) -> None:
     """Read *path*, apply hygiene fixes, and write it back."""
     text = path.read_text(encoding="utf-8")
@@ -353,6 +380,10 @@ def postprocess(path: Path) -> None:
 
         # --- MD007: de-indent orphaned body list items ---
         line = _deindent_orphan(line, lines, idx)
+        stripped = line.lstrip()
+
+        # --- MD023: headings must start at the beginning of the line ---
+        line = _normalize_indented_heading(line)
         stripped = line.lstrip()
 
         # --- MD032: blank line before a list item that follows prose ---

@@ -10,7 +10,7 @@
 //!
 //! Run one dimension with full output:
 //! ```bash
-//! cargo test --test large_scale_debug debug_large_scale_3d -- --ignored --nocapture
+//! cargo test --release --test large_scale_debug debug_large_scale_3d -- --ignored --nocapture
 //! ```
 //!
 //! Override defaults via environment variables:
@@ -47,14 +47,27 @@
 //! DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=128 \
 //! # Hard wall-clock cap in seconds before the harness aborts (0 = no cap; default: 600)
 //! DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=600 \
-//! cargo test --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
+//! # Optional: emit periodic batch-construction summaries for new()/Hilbert runs
+//! DELAUNAY_BULK_PROGRESS_EVERY=100 \
+//! # Optional: dump the first cavity reduction chain once per run
+//! DELAUNAY_DEBUG_CAVITY_REDUCTION_ONCE=1 \
+//! # Optional: trace retryable conflict-region skips with attempt/rollback details
+//! DELAUNAY_DEBUG_RETRYABLE_SKIP=1 \
+//! # Optional: dump the first detected ridge-fan cavity snapshot once per run
+//! DELAUNAY_DEBUG_RIDGE_FAN_ONCE=1 \
+//! # Optional: dump the first unresolved repair postcondition facet once per run
+//! DELAUNAY_REPAIR_DEBUG_POSTCONDITION_FACET=1 \
+//! # Optional: only emit ridge repair debug when multiplicity is at least N
+//! DELAUNAY_REPAIR_DEBUG_RIDGE_MIN_MULTIPLICITY=4 \
+//! cargo test --release --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
 //! ```
 
 #![forbid(unsafe_code)]
 
+use delaunay::core::triangulation::TopologyGuarantee;
 use delaunay::geometry::kernel::RobustKernel;
 use delaunay::geometry::util::{
-    generate_random_points_in_ball_seeded, generate_random_points_seeded,
+    generate_random_points_in_ball_seeded, generate_random_points_seeded, safe_usize_to_scalar,
 };
 use delaunay::prelude::triangulation::*;
 use delaunay::triangulation::delaunay::{
@@ -62,26 +75,46 @@ use delaunay::triangulation::delaunay::{
     DelaunayTriangulationConstructionErrorWithStatistics,
 };
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
+use std::env;
+use std::fmt;
+use std::io::{self, Write};
 use std::num::NonZeroUsize;
+use std::process;
+use std::sync::{
+    Once,
+    mpsc::{self, RecvTimeoutError, SyncSender},
+};
+use std::thread;
 use std::time::{Duration, Instant};
+
+/// Writes the timeout diagnostic synchronously so it survives the watchdog abort.
+fn write_timeout_abort_message<W: Write>(mut writer: W, max_secs: u64) -> io::Result<()> {
+    writeln!(
+        writer,
+        "=== TIMEOUT: wall time exceeded {max_secs} seconds — aborting ==="
+    )?;
+    writer.flush()
+}
 
 /// Installs a per-test wall-clock cap.
 ///
-/// Spawns a watchdog thread that calls [`std::process::abort`] if `max_secs` elapses.
-/// Returns a [`std::sync::mpsc::SyncSender`] whose **drop** cancels the watchdog: when
+/// Spawns a watchdog thread that calls [`process::abort`] if `max_secs` elapses.
+/// Returns a [`SyncSender`] whose **drop** cancels the watchdog: when
 /// the sender is dropped (i.e. the test completes normally), the channel disconnects and
 /// the watchdog thread exits without aborting.  This prevents a stale watchdog installed
 /// for one test from firing during a subsequent test.
-fn install_runtime_cap(max_secs: u64) -> std::sync::mpsc::SyncSender<()> {
-    let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
-    std::thread::spawn(move || {
+fn install_runtime_cap(max_secs: u64) -> SyncSender<()> {
+    let (tx, rx) = mpsc::sync_channel::<()>(0);
+    thread::spawn(move || {
         match rx.recv_timeout(Duration::from_secs(max_secs)) {
             // Sender dropped (test finished) or explicit send — exit cleanly.
-            Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {}
+            Ok(()) | Err(RecvTimeoutError::Disconnected) => {}
             // Deadline exceeded — hard abort.
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                eprintln!("=== TIMEOUT: wall time exceeded {max_secs} seconds — aborting ===");
-                std::process::abort();
+            Err(RecvTimeoutError::Timeout) => {
+                if let Err(err) = write_timeout_abort_message(io::stderr().lock(), max_secs) {
+                    tracing::warn!(?err, "failed to flush timeout message before abort");
+                }
+                process::abort();
             }
         }
     });
@@ -92,7 +125,7 @@ fn install_runtime_cap(max_secs: u64) -> std::sync::mpsc::SyncSender<()> {
 struct SkipSample<const D: usize> {
     index: usize,
     uuid: uuid::Uuid,
-    coords: [f64; D],
+    coords: Option<[f64; D]>,
     attempts: usize,
     error: String,
 }
@@ -168,26 +201,31 @@ impl<const D: usize> From<ConstructionStatistics> for InsertionSummary<D> {
         let skip_samples: Vec<SkipSample<D>> = stats
             .skip_samples
             .iter()
-            .filter_map(|s| {
-                let coords: [f64; D] = if let Ok(coords) = s.coords.as_slice().try_into() {
-                    coords
+            .map(|s| {
+                let coords = if s.coords_available {
+                    s.coords.as_slice().try_into().map_or_else(
+                        |_| {
+                            tracing::warn!(
+                                index = s.index,
+                                uuid = %s.uuid,
+                                coords_len = s.coords.len(),
+                                expected_dim = D,
+                                "preserving skip sample without coordinates due to coordinate dimension mismatch"
+                            );
+                            None
+                        },
+                        Some,
+                    )
                 } else {
-                    tracing::warn!(
-                        index = s.index,
-                        uuid = %s.uuid,
-                        coords_len = s.coords.len(),
-                        expected_dim = D,
-                        "dropping skip sample due to coordinate dimension mismatch"
-                    );
-                    return None;
+                    None
                 };
-                Some(SkipSample {
+                SkipSample {
                     index: s.index,
                     uuid: s.uuid,
                     coords,
                     attempts: s.attempts,
                     error: s.error.clone(),
-                })
+                }
             })
             .collect();
 
@@ -214,11 +252,11 @@ fn parse_u64(s: &str) -> Option<u64> {
 }
 
 fn env_u64(name: &str) -> Option<u64> {
-    std::env::var(name).ok().and_then(|v| parse_u64(&v))
+    env::var(name).ok().and_then(|v| parse_u64(&v))
 }
 
 fn env_usize(name: &str) -> Option<usize> {
-    std::env::var(name).ok().and_then(|v| {
+    env::var(name).ok().and_then(|v| {
         let trimmed = v.trim();
         trimmed.parse().ok().or_else(|| {
             trimmed
@@ -229,17 +267,38 @@ fn env_usize(name: &str) -> Option<usize> {
 }
 
 fn env_flag(name: &str) -> bool {
-    std::env::var(name).ok().is_some_and(|v| {
+    env::var(name).ok().is_some_and(|v| {
         let v = v.trim();
         !v.is_empty() && v != "0" && v != "false"
     })
 }
 
 fn init_tracing() {
-    static INIT: std::sync::Once = std::sync::Once::new();
+    static INIT: Once = Once::new();
     INIT.call_once(|| {
+        // Debug-level tracing is needed to surface the release-visible diagnostic hooks
+        // (retryable-skip, cavity-reduction, ridge/postcondition repair debug,
+        // bulk-progress, bulk-retry) emitted through `tracing::debug!` inside the library.
+        let debug_env_vars = [
+            "DELAUNAY_INSERT_TRACE",
+            "DELAUNAY_DEBUG_RETRYABLE_SKIP",
+            "DELAUNAY_DEBUG_CAVITY_REDUCTION_ONCE",
+            "DELAUNAY_DEBUG_RIDGE_FAN_ONCE",
+            "DELAUNAY_REPAIR_DEBUG_POSTCONDITION_FACET",
+            "DELAUNAY_REPAIR_DEBUG_RIDGE_MIN_MULTIPLICITY",
+            "DELAUNAY_BULK_PROGRESS_EVERY",
+            "DELAUNAY_DEBUG_SHUFFLE",
+        ];
+        let default_filter = if debug_env_vars
+            .iter()
+            .any(|name| env::var_os(name).is_some())
+        {
+            "debug"
+        } else {
+            "warn"
+        };
         let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_filter));
         let _ = tracing_subscriber::fmt()
             .with_env_filter(filter)
             .with_test_writer()
@@ -297,7 +356,7 @@ impl PointDistribution {
 }
 
 fn env_f64(name: &str) -> Option<f64> {
-    let Ok(raw) = std::env::var(name) else {
+    let Ok(raw) = env::var(name) else {
         return None;
     };
 
@@ -313,7 +372,7 @@ fn env_f64(name: &str) -> Option<f64> {
 }
 
 fn point_distribution_from_env() -> PointDistribution {
-    let Ok(raw) = std::env::var("DELAUNAY_LARGE_DEBUG_DISTRIBUTION") else {
+    let Ok(raw) = env::var("DELAUNAY_LARGE_DEBUG_DISTRIBUTION") else {
         return PointDistribution::Ball;
     };
 
@@ -330,7 +389,7 @@ fn point_distribution_from_env() -> PointDistribution {
 }
 
 fn construction_mode_from_env() -> ConstructionMode {
-    let Ok(raw) = std::env::var("DELAUNAY_LARGE_DEBUG_CONSTRUCTION_MODE") else {
+    let Ok(raw) = env::var("DELAUNAY_LARGE_DEBUG_CONSTRUCTION_MODE") else {
         return ConstructionMode::New;
     };
 
@@ -349,7 +408,7 @@ fn construction_mode_from_env() -> ConstructionMode {
 }
 
 fn debug_mode_from_env() -> DebugMode {
-    let Ok(raw) = std::env::var("DELAUNAY_LARGE_DEBUG_DEBUG_MODE") else {
+    let Ok(raw) = env::var("DELAUNAY_LARGE_DEBUG_DEBUG_MODE") else {
         return DebugMode::Cadenced;
     };
 
@@ -394,8 +453,8 @@ enum DebugOutcome {
     },
 }
 
-impl std::fmt::Display for DebugOutcome {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for DebugOutcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Success => write!(f, "Success"),
             Self::ConstructionFailure { error } => {
@@ -483,9 +542,13 @@ fn print_insertion_summary<const D: usize>(summary: &InsertionSummary<D>, elapse
         println!();
         println!("  skip_samples (first {}):", summary.skip_samples.len());
         for s in &summary.skip_samples {
+            let coords = s.coords.as_ref().map_or_else(
+                || "<unavailable>".to_string(),
+                |coords| format!("{coords:?}"),
+            );
             println!(
-                "    idx={} uuid={} attempts={} coords={:?} error={}",
-                s.index, s.uuid, s.attempts, s.coords, s.error
+                "    idx={} uuid={} attempts={} coords={} error={}",
+                s.index, s.uuid, s.attempts, coords, s.error
             );
         }
     }
@@ -711,7 +774,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
                         let sample = SkipSample {
                             index: idx,
                             uuid,
-                            coords,
+                            coords: Some(coords),
                             attempts: stats.attempts,
                             error: error.to_string(),
                         };
@@ -764,8 +827,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
                 if (idx + 1) % progress_every == 0 {
                     let chunk_elapsed = t_last_progress.elapsed();
                     let progress_f64: f64 =
-                        delaunay::geometry::util::safe_usize_to_scalar(progress_every)
-                            .unwrap_or(f64::NAN);
+                        safe_usize_to_scalar(progress_every).unwrap_or(f64::NAN);
                     let rate = progress_f64 / chunk_elapsed.as_secs_f64().max(1e-9);
                     println!(
                         "progress: {}/{} inserted={} skipped={} cells={} elapsed={:?} ({:.1} pts/s last {})",
@@ -867,257 +929,62 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
     DebugOutcome::Success
 }
 
-#[derive(Debug, Clone)]
-struct IncrementalFailure3d {
-    prefix_len: usize,
-    index: usize,
-    uuid: uuid::Uuid,
-    coords: [f64; 3],
-    error: String,
+#[derive(Clone, Copy)]
+enum FailingWriterMode {
+    Write,
+    Flush,
 }
 
-fn run_incremental_prefix_3d(
-    vertices: &[Vertex<f64, (), 3>],
-    prefix_len: usize,
-    _repair_every: usize,
-) -> Result<(), IncrementalFailure3d> {
-    let kernel = RobustKernel::<f64>::new();
-    let prefix = &vertices[..prefix_len];
-    let mut dt = match DelaunayTriangulation::<RobustKernel<f64>, (), (), 3>::with_topology_guarantee_and_options_with_construction_statistics(
-        &kernel,
-        prefix,
-        TopologyGuarantee::PLManifoldStrict,
-        ConstructionOptions::default(),
-    ) {
-        Ok((dt, _stats)) => dt,
-        Err(err) => {
-            let DelaunayTriangulationConstructionErrorWithStatistics {
-                error, statistics, ..
-            } = err;
-            let idx = statistics
-                .inserted
-                .saturating_sub(1)
-                .min(prefix_len.saturating_sub(1));
-            let (uuid, coords) = prefix.get(idx).copied().map_or_else(
-                || (uuid::Uuid::nil(), [0.0; 3]),
-                |vertex| (vertex.uuid(), *vertex.point().coords()),
-            );
-            return Err(IncrementalFailure3d {
-                prefix_len,
-                index: idx,
-                uuid,
-                coords,
-                error: format!(
-                    "{} [inserted={} skipped_duplicate={} skipped_degeneracy={}]",
-                    error,
-                    statistics.inserted,
-                    statistics.skipped_duplicate,
-                    statistics.skipped_degeneracy
-                ),
-            })
+struct FailingWriter {
+    mode: FailingWriterMode,
+    kind: io::ErrorKind,
+}
+
+impl Write for FailingWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if matches!(self.mode, FailingWriterMode::Write) {
+            return Err(io::Error::new(self.kind, "synthetic write failure"));
         }
-    };
 
-    let skipped_total = prefix_len.saturating_sub(dt.number_of_vertices());
-    if !env_flag("DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS") && skipped_total > 0 {
-        let idx = prefix_len.saturating_sub(1);
-        let (uuid, coords) = prefix.get(idx).copied().map_or_else(
-            || (uuid::Uuid::nil(), [0.0; 3]),
-            |vertex| (vertex.uuid(), *vertex.point().coords()),
-        );
-        return Err(IncrementalFailure3d {
-            prefix_len,
-            index: idx,
-            uuid,
-            coords,
-            error: format!(
-                "{skipped_total} vertices were skipped (set DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 to allow)"
-            ),
-        });
+        Ok(buf.len())
     }
 
-    if !env_flag("DELAUNAY_LARGE_DEBUG_SKIP_FINAL_REPAIR") && dt.number_of_cells() > 0 {
-        let _ = dt.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default());
-    }
+    fn flush(&mut self) -> io::Result<()> {
+        if matches!(self.mode, FailingWriterMode::Flush) {
+            return Err(io::Error::new(self.kind, "synthetic flush failure"));
+        }
 
-    if let Err(report) = dt.validation_report() {
-        let idx = prefix_len.saturating_sub(1);
-        let (uuid, coords) = prefix.get(idx).copied().map_or_else(
-            || (uuid::Uuid::nil(), [0.0; 3]),
-            |vertex| (vertex.uuid(), *vertex.point().coords()),
-        );
-        let detail = report.violations.first().map_or_else(
-            || "no violations captured".to_string(),
-            |violation| format!("{:?}: {}", violation.kind, violation.error),
-        );
-        return Err(IncrementalFailure3d {
-            prefix_len,
-            index: idx,
-            uuid,
-            coords,
-            error: format!("validation_report failed: {detail}"),
-        });
+        Ok(())
     }
-
-    Ok(())
 }
 
 #[test]
-#[ignore = "large-scale debug harness (manual run)"]
-#[expect(
-    clippy::too_many_lines,
-    reason = "Debug harness intentionally verbose for reproducibility and operator guidance"
-)]
-fn debug_large_scale_3d_incremental_prefix_bisect() {
-    init_tracing();
+fn test_write_timeout_abort_message_flushes_message() {
+    let mut output = Vec::new();
 
-    let total_n = env_usize("DELAUNAY_LARGE_DEBUG_PREFIX_TOTAL")
-        .unwrap_or(1000)
-        .max(4);
-    let base_seed = env_u64("DELAUNAY_LARGE_DEBUG_SEED").unwrap_or(42);
-    let case_seed = env_u64("DELAUNAY_LARGE_DEBUG_CASE_SEED_3D")
-        .or_else(|| env_u64("DELAUNAY_LARGE_DEBUG_CASE_SEED"))
-        .unwrap_or_else(|| seed_for_case::<3>(base_seed, total_n));
-    let ball_radius = env_f64("DELAUNAY_LARGE_DEBUG_BALL_RADIUS").unwrap_or(100.0);
-    let repair_every = env_usize("DELAUNAY_LARGE_DEBUG_REPAIR_EVERY").unwrap_or(128);
-    let max_probes = env_usize("DELAUNAY_LARGE_DEBUG_PREFIX_MAX_PROBES");
-    let max_runtime_secs = env_usize("DELAUNAY_LARGE_DEBUG_PREFIX_MAX_RUNTIME_SECS").unwrap_or(0);
+    write_timeout_abort_message(&mut output, 17).expect("timeout diagnostic write should succeed");
 
-    println!("=============================================");
-    println!("3D incremental prefix bisect");
-    println!("=============================================");
-    println!("Config:");
-    println!("  total_n:        {total_n}");
-    println!("  base_seed:      0x{base_seed:X} ({base_seed})");
-    println!("  case_seed:      0x{case_seed:X} ({case_seed})");
-    println!("  ball_radius:    {ball_radius}");
-    println!("  repair_every:   {repair_every}");
-    println!("  probe_mode:     new (batch, matches debug_large_scale_3d default)");
-    println!("  max_probes:     {max_probes:?}");
-    println!("  max_runtime_secs:{max_runtime_secs}");
-    println!();
-
-    let points = generate_random_points_in_ball_seeded::<f64, 3>(total_n, ball_radius, case_seed)
-        .unwrap_or_else(|e| {
-            panic!("failed to generate deterministic 3D ball points for bisect: {e}")
-        });
-    let vertices: Vec<Vertex<f64, (), 3>> = points.into_iter().map(|p| vertex!(p)).collect();
-
-    let t_bisect = Instant::now();
-    let mut probe_count = 0usize;
-
-    let mut run_probe = |prefix_len: usize| -> Option<Result<(), IncrementalFailure3d>> {
-        if let Some(limit) = max_probes
-            && probe_count >= limit
-        {
-            println!(
-                "Stopping early: reached DELAUNAY_LARGE_DEBUG_PREFIX_MAX_PROBES={limit} (elapsed {:?})",
-                t_bisect.elapsed()
-            );
-            return None;
-        }
-
-        if max_runtime_secs > 0 && t_bisect.elapsed().as_secs() >= max_runtime_secs as u64 {
-            println!(
-                "Stopping early: reached DELAUNAY_LARGE_DEBUG_PREFIX_MAX_RUNTIME_SECS={} (probes={probe_count}, elapsed {:?})",
-                max_runtime_secs,
-                t_bisect.elapsed()
-            );
-            return None;
-        }
-
-        probe_count = probe_count.saturating_add(1);
-        let t_probe = Instant::now();
-        let result = run_incremental_prefix_3d(&vertices, prefix_len, repair_every);
-        println!(
-            "  probe #{probe_count}: prefix_len={prefix_len} -> {} ({:?})",
-            if result.is_err() { "FAIL" } else { "PASS" },
-            t_probe.elapsed()
-        );
-        Some(result)
-    };
-
-    let first_failure = match run_probe(total_n) {
-        None => return,
-        Some(Ok(())) => {
-            if let Err(mismatch) = run_incremental_prefix_3d(&vertices, total_n, repair_every) {
-                println!(
-                    "HARNESS MISMATCH: bisect full-prefix probe passed but canonical full-prefix recheck failed."
-                );
-                println!(
-                    "  mismatch details: idx={} uuid={} coords={:?} error={}",
-                    mismatch.index, mismatch.uuid, mismatch.coords, mismatch.error
-                );
-                panic!("aborting: harness mismatch (bisect PASS vs canonical FAIL)");
-            }
-            println!("Canonical full-prefix recheck: PASS");
-            println!(
-                "No failure observed for full prefix total_n={total_n}; bisect skipped (likely fixed or total too small)."
-            );
-            println!(
-                "Config recap: base_seed=0x{base_seed:X} case_seed=0x{case_seed:X} ball_radius={ball_radius} repair_every={repair_every} mode=new"
-            );
-            println!(
-                "To force a failure, increase DELAUNAY_LARGE_DEBUG_PREFIX_TOTAL or adjust DELAUNAY_LARGE_DEBUG_CASE_SEED_3D."
-            );
-            return;
-        }
-        Some(Err(err)) => err,
-    };
-
-    let mut lo = 4;
-    let mut hi = first_failure.prefix_len.max(lo);
-    println!(
-        "Full-run first failure: idx={} (prefix_len={})",
-        first_failure.index, first_failure.prefix_len
+    let message = String::from_utf8(output).expect("timeout diagnostic should be UTF-8");
+    assert_eq!(
+        message,
+        "=== TIMEOUT: wall time exceeded 17 seconds — aborting ===\n"
     );
-    println!("Initial binary-search range: [{lo}, {hi}]");
+}
 
-    while lo < hi {
-        let mid = lo + (hi - lo) / 2;
-        let Some(result) = run_probe(mid) else {
-            return;
-        };
-        let failed = result.is_err();
+#[test]
+fn test_write_timeout_abort_message_propagates_error() {
+    // `install_runtime_cap` aborts immediately after this helper returns, so the
+    // caller must be able to observe write or flush failures before aborting.
+    let cases = [
+        (FailingWriterMode::Write, io::ErrorKind::BrokenPipe),
+        (FailingWriterMode::Flush, io::ErrorKind::WriteZero),
+    ];
 
-        if failed {
-            hi = mid;
-        } else {
-            lo = mid + 1;
-        }
+    for (mode, kind) in cases {
+        let err = write_timeout_abort_message(FailingWriter { mode, kind }, 17)
+            .expect_err("timeout diagnostic should propagate writer failures");
+        assert_eq!(err.kind(), kind);
     }
-
-    let minimal_prefix = lo;
-    let minimal_failure = match run_probe(minimal_prefix) {
-        None => return,
-        Some(Ok(())) => {
-            panic!(
-                "internal bisect inconsistency: expected failure at minimal_prefix={minimal_prefix}"
-            )
-        }
-        Some(Err(err)) => err,
-    };
-
-    if minimal_prefix > 4 {
-        assert!(
-            run_probe(minimal_prefix - 1).is_some_and(|result| result.is_ok()),
-            "internal bisect inconsistency: prefix {} should pass",
-            minimal_prefix - 1
-        );
-    }
-
-    println!();
-    println!("Minimal failing prefix: {minimal_prefix}");
-    println!(
-        "Failure details: idx={} uuid={} coords={:?}",
-        minimal_failure.index, minimal_failure.uuid, minimal_failure.coords
-    );
-    println!("Error: {}", minimal_failure.error);
-    println!();
-    println!("Replay command:");
-    println!(
-        "  DELAUNAY_LARGE_DEBUG_CONSTRUCTION_MODE=new DELAUNAY_LARGE_DEBUG_N_3D={minimal_prefix} DELAUNAY_LARGE_DEBUG_CASE_SEED_3D=0x{case_seed:X} DELAUNAY_REPAIR_DEBUG_FACETS=1 cargo test --test large_scale_debug debug_large_scale_3d -- --ignored --nocapture"
-    );
 }
 
 /// Regression test for issue #228: 3D 1000-point flip-repair non-convergence.
@@ -1144,8 +1011,6 @@ fn debug_large_scale_3d_incremental_prefix_bisect() {
 #[test]
 #[ignore = "1000-point 3D construction exceeds CI timeout (~30min debug)"]
 fn regression_issue_228_3d_1000_flip_repair_convergence() {
-    use delaunay::core::triangulation::TopologyGuarantee;
-
     let seed = seed_for_case::<3>(42, 1000);
     let points = generate_random_points_in_ball_seeded::<f64, 3>(1000, 100.0, seed)
         .expect("point generation should succeed");
@@ -1187,8 +1052,6 @@ fn regression_issue_228_3d_1000_flip_repair_convergence() {
 #[test]
 #[ignore = "4D 100-point construction can take minutes in debug mode"]
 fn regression_issue_230_4d_100_orientation() {
-    use delaunay::core::triangulation::TopologyGuarantee;
-
     let seed = seed_for_case::<4>(42, 100);
     let points = generate_random_points_in_ball_seeded::<f64, 4>(100, 100.0, seed)
         .expect("point generation should succeed");
@@ -1215,13 +1078,6 @@ fn regression_issue_230_4d_100_orientation() {
         dt.as_triangulation().validate().is_ok(),
         "Topology validation (L1-L3) must pass (#230 regression, seed=0x{seed:X})"
     );
-}
-
-#[test]
-#[ignore = "large-scale debug harness (manual run)"]
-fn debug_large_scale_2d() {
-    let outcome = debug_large_case::<2>("2D", 10_000);
-    assert!(matches!(outcome, DebugOutcome::Success), "{outcome}");
 }
 
 #[test]

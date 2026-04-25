@@ -55,10 +55,13 @@ use crate::topology::traits::topological_space::GlobalTopology;
 use slotmap::Key;
 use std::borrow::Cow;
 use std::collections::VecDeque;
+use std::env;
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use thiserror::Error;
+
+type VertexKeyList = SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>;
+type RemovedCellVertexSnapshot = SmallBuffer<VertexKeyList, MAX_PRACTICAL_DIMENSION_SIZE>;
 
 /// Bistellar flip kind descriptor.
 ///
@@ -91,7 +94,7 @@ fn repair_delaunay_with_flips_k2_k3_attempt<K, U, V, const D: usize>(
     kernel: &K,
     seed_cells: Option<&[CellKey]>,
     config: &RepairAttemptConfig,
-) -> Result<DelaunayRepairStats, DelaunayRepairError>
+) -> Result<RepairAttemptOutcome, DelaunayRepairError>
 where
     K: Kernel<D>,
     U: DataType,
@@ -112,7 +115,9 @@ where
     let mut diagnostics = RepairDiagnostics::default();
     let mut queues = RepairQueues::new();
     let mut last_applied_flip: Option<LastAppliedFlip> = None;
-    seed_repair_queues(tds, seed_cells, &mut queues, &mut stats)?;
+    let used_full_reseed = seed_repair_queues(tds, seed_cells, &mut queues, &mut stats)?;
+    let mut touched_cells = CellKeyBuffer::new();
+    let mut touched_cell_set = FastHashSet::<CellKey>::default();
 
     let mut prefer_secondary = false;
 
@@ -127,6 +132,8 @@ where
                 config,
                 &mut diagnostics,
                 &mut last_applied_flip,
+                &mut touched_cells,
+                &mut touched_cell_set,
             )? || process_edge_queue_step(
                 tds,
                 kernel,
@@ -136,6 +143,8 @@ where
                 config,
                 &mut diagnostics,
                 &mut last_applied_flip,
+                &mut touched_cells,
+                &mut touched_cell_set,
             )? || process_triangle_queue_step(
                 tds,
                 kernel,
@@ -145,6 +154,8 @@ where
                 config,
                 &mut diagnostics,
                 &mut last_applied_flip,
+                &mut touched_cells,
+                &mut touched_cell_set,
             )?)
         {
             prefer_secondary = false;
@@ -160,6 +171,8 @@ where
             config,
             &mut diagnostics,
             &mut last_applied_flip,
+            &mut touched_cells,
+            &mut touched_cell_set,
         )? {
             prefer_secondary = true;
             continue;
@@ -174,6 +187,8 @@ where
             config,
             &mut diagnostics,
             &mut last_applied_flip,
+            &mut touched_cells,
+            &mut touched_cell_set,
         )? || process_edge_queue_step(
             tds,
             kernel,
@@ -183,6 +198,8 @@ where
             config,
             &mut diagnostics,
             &mut last_applied_flip,
+            &mut touched_cells,
+            &mut touched_cell_set,
         )? || process_triangle_queue_step(
             tds,
             kernel,
@@ -192,6 +209,8 @@ where
             config,
             &mut diagnostics,
             &mut last_applied_flip,
+            &mut touched_cells,
+            &mut touched_cell_set,
         )? {
             prefer_secondary = false;
         }
@@ -210,7 +229,37 @@ where
     }
     emit_repair_debug_summary("attempt_done", &stats, &diagnostics, config, max_flips);
 
-    Ok(stats)
+    Ok(RepairAttemptOutcome {
+        stats,
+        last_applied_flip,
+        touched_cells,
+        used_full_reseed,
+    })
+}
+
+/// Captures each removed cell's vertex list before a flip deletes the cells.
+///
+/// The snapshot lets later diagnostics describe removed simplices even after
+/// their `CellKey`s no longer resolve in the TDS.
+fn snapshot_removed_cell_vertices<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    removed_cells: &CellKeyBuffer,
+) -> Result<RemovedCellVertexSnapshot, FlipError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    removed_cells
+        .iter()
+        .copied()
+        .map(|cell_key| {
+            let cell = tds
+                .get_cell(cell_key)
+                .ok_or(FlipError::MissingCell { cell_key })?;
+            Ok(cell.vertices().iter().copied().collect())
+        })
+        .collect()
 }
 
 /// Apply a bistellar flip using explicit k and vertex/cell slices.
@@ -226,7 +275,7 @@ fn apply_bistellar_flip_with_k<T, U, V, const D: usize>(
     removed_cells: &CellKeyBuffer,
     direction: FlipDirection,
     orientation_policy: ReplacementOrientationPolicy,
-) -> Result<FlipInfo<D>, FlipError>
+) -> Result<AppliedFlip<D>, FlipError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -288,7 +337,7 @@ where
         && let Some(existing_cell) =
             find_cell_containing_simplex(tds, inserted_face_vertices, removed_cells)
     {
-        if repair_trace_enabled() || std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+        if repair_trace_enabled() || env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
             tracing::debug!(
                 "[repair] skip flip: inserted simplex already exists (k={k_move}, inserted_face={inserted_face_vertices:?}, existing_cell={existing_cell:?})"
             );
@@ -357,7 +406,7 @@ where
                 });
             }
             Ok(Orientation::DEGENERATE) => {
-                if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+                if env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
                     tracing::debug!(
                         k_move,
                         direction = ?direction,
@@ -384,6 +433,13 @@ where
     ) {
         validate_replacement_orientation(tds, &new_cell_vertices)?;
     }
+
+    // Snapshot the removed cells' vertex lists before any TDS mutation so an
+    // unexpected missing cell aborts without leaving replacement cells behind.
+    // After `tds.remove_cells_by_keys` runs, `tds.get_cell(removed_key)` returns
+    // `None`, which would strip the most useful context from predecessor-flip
+    // traces (see #204 investigation).
+    let removed_cell_vertices = snapshot_removed_cell_vertices(tds, removed_cells)?;
 
     for vertices in new_cell_vertices {
         let cell = Cell::new(vertices, None)?;
@@ -412,13 +468,16 @@ where
         "TDS coherent orientation invariant violated after bistellar flip (k={k_move}, direction={direction:?})",
     );
 
-    Ok(FlipInfo {
-        kind: BistellarFlipKind { k: k_move, d: D },
-        direction,
-        removed_cells: removed_cells.iter().copied().collect(),
-        new_cells,
-        removed_face_vertices: removed_face_vertices.iter().copied().collect(),
-        inserted_face_vertices: inserted_face_vertices.iter().copied().collect(),
+    Ok(AppliedFlip {
+        info: FlipInfo {
+            kind: BistellarFlipKind { k: k_move, d: D },
+            direction,
+            removed_cells: removed_cells.iter().copied().collect(),
+            new_cells,
+            removed_face_vertices: removed_face_vertices.iter().copied().collect(),
+            inserted_face_vertices: inserted_face_vertices.iter().copied().collect(),
+        },
+        removed_cell_vertices,
     })
 }
 
@@ -800,22 +859,27 @@ where
 
 /// Emits a bounded ridge snapshot so repair failures can distinguish bad local
 /// handles from genuinely inconsistent global incidence.
+///
+/// The local neighbor walk and the global cell scan are logged side by side
+/// because #204 currently fails in cases where those two views disagree.
 fn debug_ridge_context<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     ridge: RidgeHandle,
-    neighbor_walk_count: Option<usize>,
+    reported_multiplicity: Option<usize>,
+    diagnostics: &mut RepairDiagnostics,
+    last_applied_flip: Option<&LastAppliedFlip>,
 ) where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    if !should_emit_ridge_debug() {
+    if !should_emit_ridge_debug(diagnostics, reported_multiplicity) {
         return;
     }
     let Some(cell) = tds.get_cell(ridge.cell_key()) else {
         tracing::debug!(
             ridge = ?ridge,
-            neighbor_walk_count,
+            reported_multiplicity,
             "repair: ridge debug skipped (cell missing)"
         );
         return;
@@ -831,26 +895,273 @@ fn debug_ridge_context<T, U, V, const D: usize>(
             omit_a,
             omit_b,
             vertex_count = cell.number_of_vertices(),
-            neighbor_walk_count,
+            reported_multiplicity,
             "repair: ridge debug skipped (invalid indices)"
         );
         return;
     }
 
     let ridge_vertices = ridge_vertices_from_cell(cell, omit_a, omit_b);
+    let neighbor_walk = collect_cells_around_ridge(tds, ridge.cell_key(), &ridge_vertices)
+        .map(|cells| cells.into_iter().collect::<Vec<_>>());
     let global_cells = cells_containing_vertices(tds, &ridge_vertices);
     let neighbor_snapshot: Option<SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>> =
         cell.neighbors().map(|ns| ns.iter().copied().collect());
+    let global_cell_details: Vec<String> = global_cells
+        .iter()
+        .copied()
+        .map(|cell_key| ridge_incident_cell_summary(tds, cell_key, &ridge_vertices))
+        .collect();
+    // Attach the immediately preceding flip so the snapshot can say whether repair
+    // just created this ridge instead of forcing us to correlate separate log lines.
+    let predecessor_summary =
+        last_applied_flip.map(|last| predecessor_flip_summary(tds, ridge, &global_cells, last));
 
     tracing::debug!(
         ridge = ?ridge,
         ridge_vertices = ?ridge_vertices,
-        neighbor_walk_count,
+        reported_multiplicity,
+        neighbor_walk = ?neighbor_walk,
         global_count = global_cells.len(),
         global_cells = ?global_cells,
+        global_cell_details = ?global_cell_details,
+        predecessor = ?predecessor_summary,
         cell_neighbors = ?neighbor_snapshot,
         "repair: ridge adjacency debug snapshot"
     );
+}
+
+/// Formats one incident cell around a ridge so debug output can distinguish
+/// oversharing from bad local neighbor traversal.
+fn ridge_incident_cell_summary<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cell_key: CellKey,
+    ridge_vertices: &SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+) -> String
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let Some(cell) = tds.get_cell(cell_key) else {
+        return format!("{cell_key:?}: missing");
+    };
+
+    let extras = match cell_extras_for_ridge(cell_key, cell, ridge_vertices) {
+        Ok(extras) => extras,
+        Err(err) => return format!("{cell_key:?}: extras_error={err}"),
+    };
+    let ridge_neighbors = ridge_neighbor_cells_for_cell(cell, ridge_vertices);
+    format!("{cell_key:?}: extras={extras:?} ridge_neighbors={ridge_neighbors:?}")
+}
+
+/// Extracts the neighbors reached by omitting the two vertices opposite the
+/// ridge, which is exactly the adjacency walk used by k=3 context recovery.
+fn ridge_neighbor_cells_for_cell<T, U, V, const D: usize>(
+    cell: &Cell<T, U, V, D>,
+    ridge_vertices: &SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+) -> SmallBuffer<CellKey, 2>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let mut ridge_neighbors: SmallBuffer<CellKey, 2> = SmallBuffer::new();
+    let Some(neighbors) = cell.neighbors() else {
+        return ridge_neighbors;
+    };
+
+    for (idx, &vertex_key) in cell.vertices().iter().enumerate() {
+        if ridge_vertices.contains(&vertex_key) {
+            continue;
+        }
+        if let Some(neighbor_key) = neighbors.get(idx).copied().flatten() {
+            ridge_neighbors.push(neighbor_key);
+        }
+    }
+
+    ridge_neighbors
+}
+
+/// Relates the current bad ridge to the immediately preceding flip so #204
+/// traces can confirm whether repair just created the inconsistent local star.
+fn predecessor_flip_summary<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    ridge: RidgeHandle,
+    global_cells: &[CellKey],
+    last_applied_flip: &LastAppliedFlip,
+) -> String
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let global_cells_in_new: Vec<CellKey> = global_cells
+        .iter()
+        .copied()
+        .filter(|cell_key| last_applied_flip.new_cells.contains(cell_key))
+        .collect();
+    // Show the predecessor's concrete simplices because cell ids alone become hard to
+    // interpret once slot reuse and additional flips start churning the local region.
+    let predecessor_new_cell_vertices: Vec<String> = last_applied_flip
+        .new_cells
+        .iter()
+        .copied()
+        .map(|cell_key| cell_vertex_summary(tds, cell_key))
+        .collect();
+
+    format!(
+        "k={} removed_face={:?} inserted_face={:?} removed_cells={:?} new_cells={:?} ridge_cell_is_new={} global_cells_in_new={global_cells_in_new:?} predecessor_new_cell_vertices={predecessor_new_cell_vertices:?}",
+        last_applied_flip.k_move,
+        last_applied_flip.removed_face_vertices,
+        last_applied_flip.inserted_face_vertices,
+        last_applied_flip.removed_cells,
+        last_applied_flip.new_cells,
+        last_applied_flip.new_cells.contains(&ridge.cell_key()),
+    )
+}
+
+/// Formats one cell's current vertex set so predecessor-flip traces can show
+/// the exact simplices that were introduced before a bad ridge appeared.
+fn cell_vertex_summary<T, U, V, const D: usize>(tds: &Tds<T, U, V, D>, cell_key: CellKey) -> String
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let Some(cell) = tds.get_cell(cell_key) else {
+        return format!("{cell_key:?}: missing");
+    };
+    format!("{cell_key:?}: vertices={:?}", cell.vertices())
+}
+
+/// Captures the first unresolved k=2 postcondition site so #204 debugging can
+/// compare the violating facet directly against the last applied repair flip.
+fn debug_postcondition_facet_context<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    facet: FacetHandle,
+    context: &FlipContext<D, 2>,
+    diagnostics: &mut RepairDiagnostics,
+    last_applied_flip: Option<&LastAppliedFlip>,
+) where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    if !should_emit_postcondition_facet_debug(diagnostics) {
+        return;
+    }
+
+    let removed_face_details: Vec<_> = context
+        .removed_face_vertices
+        .iter()
+        .filter_map(|&vkey| {
+            tds.get_vertex_by_key(vkey)
+                .map(|vertex| (vkey, *vertex.point()))
+        })
+        .collect();
+    let inserted_face_details: Vec<_> = context
+        .inserted_face_vertices
+        .iter()
+        .filter_map(|&vkey| {
+            tds.get_vertex_by_key(vkey)
+                .map(|vertex| (vkey, *vertex.point()))
+        })
+        .collect();
+    let incident_cell_details: Vec<String> = context
+        .removed_cells
+        .iter()
+        .copied()
+        .map(|cell_key| facet_incident_cell_summary(tds, cell_key, &context.removed_face_vertices))
+        .collect();
+    let predecessor_summary = last_applied_flip
+        .map(|last| postcondition_facet_predecessor_summary(tds, &context.removed_cells, last));
+
+    tracing::debug!(
+        facet = ?facet,
+        removed_face = ?removed_face_details,
+        inserted_face = ?inserted_face_details,
+        incident_cells = ?context.removed_cells,
+        incident_cell_details = ?incident_cell_details,
+        predecessor = ?predecessor_summary,
+        "repair: postcondition facet debug snapshot"
+    );
+}
+
+/// Formats the two cells incident to a violating facet so postcondition traces
+/// can see both their full simplex vertices and their opposite vertices.
+fn facet_incident_cell_summary<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cell_key: CellKey,
+    facet_vertices: &[VertexKey],
+) -> String
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let Some(cell) = tds.get_cell(cell_key) else {
+        return format!("{cell_key:?}: missing");
+    };
+
+    let opposite_vertices: Vec<VertexKey> = cell
+        .vertices()
+        .iter()
+        .copied()
+        .filter(|vkey| !facet_vertices.contains(vkey))
+        .collect();
+    let neighbor_snapshot: Option<SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>> =
+        cell.neighbors().map(|ns| ns.iter().copied().collect());
+
+    format!(
+        "{cell_key:?}: vertices={:?} opposite_vertices={opposite_vertices:?} neighbors={neighbor_snapshot:?}",
+        cell.vertices()
+    )
+}
+
+/// Relates the first unresolved postcondition facet to the immediately
+/// preceding repair flip so we can tell whether that last move touched the bad
+/// local neighborhood or whether the violation was already present.
+fn postcondition_facet_predecessor_summary<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    incident_cells: &[CellKey],
+    last_applied_flip: &LastAppliedFlip,
+) -> String
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let incident_cells_in_new: Vec<CellKey> = incident_cells
+        .iter()
+        .copied()
+        .filter(|cell_key| last_applied_flip.new_cells.contains(cell_key))
+        .collect();
+    let incident_cells_in_removed: Vec<CellKey> = incident_cells
+        .iter()
+        .copied()
+        .filter(|cell_key| last_applied_flip.removed_cells.contains(cell_key))
+        .collect();
+    let predecessor_new_cell_vertices: Vec<String> = last_applied_flip
+        .new_cells
+        .iter()
+        .copied()
+        .map(|cell_key| cell_vertex_summary(tds, cell_key))
+        .collect();
+    // Removed cells are already deleted from the TDS by the time this summary
+    // runs, so reach for the pre-flip snapshot in `LastAppliedFlip` to avoid
+    // emitting "CellKey(N): missing" for every entry.
+    let predecessor_removed_cell_vertices: Vec<String> =
+        last_applied_flip.removed_cell_vertex_lines();
+
+    format!(
+        "k={} removed_face={:?} inserted_face={:?} removed_cells={:?} new_cells={:?} incident_cells_in_new={incident_cells_in_new:?} incident_cells_in_removed={incident_cells_in_removed:?} predecessor_new_cell_vertices={predecessor_new_cell_vertices:?} predecessor_removed_cell_vertices={predecessor_removed_cell_vertices:?}",
+        last_applied_flip.k_move,
+        last_applied_flip.removed_face_vertices,
+        last_applied_flip.inserted_face_vertices,
+        last_applied_flip.removed_cells,
+        last_applied_flip.new_cells,
+    )
 }
 
 /// Check whether a k=3 ridge violates the local Delaunay condition.
@@ -901,7 +1212,7 @@ where
     U: DataType,
     V: DataType,
 {
-    apply_bistellar_flip_with_k(
+    Ok(apply_bistellar_flip_with_k(
         tds,
         K_MOVE,
         &context.removed_face_vertices,
@@ -909,7 +1220,8 @@ where
         &context.removed_cells,
         context.direction,
         ReplacementOrientationPolicy::AllowSigned,
-    )
+    )?
+    .info)
 }
 
 /// Apply a generic k-move with runtime k (no Delaunay check).
@@ -929,7 +1241,7 @@ where
     U: DataType,
     V: DataType,
 {
-    apply_bistellar_flip_with_k(
+    Ok(apply_bistellar_flip_with_k(
         tds,
         k_move,
         &context.removed_face_vertices,
@@ -937,14 +1249,15 @@ where
         &context.removed_cells,
         context.direction,
         ReplacementOrientationPolicy::AllowSigned,
-    )
+    )?
+    .info)
 }
 
 /// Apply a k=2 Delaunay-repair move with positive replacement geometry.
 fn apply_delaunay_flip_k2<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
     context: &FlipContext<D, 2>,
-) -> Result<FlipInfo<D>, FlipError>
+) -> Result<AppliedFlip<D>, FlipError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -965,7 +1278,7 @@ where
 fn apply_delaunay_flip_k3<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
     context: &FlipContext<D, 3>,
-) -> Result<FlipInfo<D>, FlipError>
+) -> Result<AppliedFlip<D>, FlipError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -987,7 +1300,7 @@ fn apply_delaunay_flip_dynamic<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
     k_move: usize,
     context: &FlipContextDyn<D>,
-) -> Result<FlipInfo<D>, FlipError>
+) -> Result<AppliedFlip<D>, FlipError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -1513,6 +1826,12 @@ pub struct FlipInfo<const D: usize> {
     pub inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
 }
 
+#[derive(Debug, Clone)]
+struct AppliedFlip<const D: usize> {
+    info: FlipInfo<D>,
+    removed_cell_vertices: RemovedCellVertexSnapshot,
+}
+
 /// Const-generic flip context for a k-move (forward or inverse).
 #[derive(Debug, Clone)]
 pub(crate) struct FlipContext<const D: usize, const K: usize> {
@@ -1661,7 +1980,7 @@ impl RidgeHandle {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::flips::DelaunayRepairStats;
+/// use delaunay::prelude::triangulation::repair::DelaunayRepairStats;
 ///
 /// let stats = DelaunayRepairStats::default();
 /// assert_eq!(stats.flips_performed, 0);
@@ -1675,12 +1994,77 @@ pub struct DelaunayRepairStats {
     /// Maximum queue length observed.
     pub max_queue_len: usize,
 }
+
+/// Crate-private repair result with the validation frontier for callers that
+/// need post-repair topology checks without scanning the whole TDS.
+#[derive(Debug, Clone)]
+pub(crate) struct DelaunayRepairRun {
+    /// Public aggregate repair statistics.
+    pub stats: DelaunayRepairStats,
+    /// Cells to validate after the final repair attempt.
+    ///
+    /// Local attempts contain cells created by successful flips. Full-reseed
+    /// attempts contain every current cell because the repair frontier was the
+    /// whole triangulation.
+    pub touched_cells: CellKeyBuffer,
+    /// Whether the final attempt used full-TDS queue seeding.
+    pub used_full_reseed: bool,
+}
+
+/// Carries both aggregate attempt stats and the final flip context so
+/// postcondition diagnostics can relate the first unresolved local violation to
+/// the last repair move that modified the TDS.
+#[derive(Debug)]
+struct RepairAttemptOutcome {
+    stats: DelaunayRepairStats,
+    last_applied_flip: Option<LastAppliedFlip>,
+    touched_cells: CellKeyBuffer,
+    used_full_reseed: bool,
+}
+
+/// Adds newly-created cells to the repair mutation frontier without duplicates.
+fn record_touched_cells(
+    touched_cells: &mut CellKeyBuffer,
+    touched_cell_set: &mut FastHashSet<CellKey>,
+    new_cells: &[CellKey],
+) {
+    for &cell_key in new_cells {
+        if touched_cell_set.insert(cell_key) {
+            touched_cells.push(cell_key);
+        }
+    }
+}
+
+/// Converts an attempt outcome into the crate-private repair run result.
+fn repair_run_from_attempt(
+    outcome: RepairAttemptOutcome,
+    current_cells: impl IntoIterator<Item = CellKey>,
+) -> DelaunayRepairRun {
+    let RepairAttemptOutcome {
+        stats,
+        touched_cells,
+        used_full_reseed,
+        ..
+    } = outcome;
+    let touched_cells = if used_full_reseed {
+        current_cells.into_iter().collect()
+    } else {
+        touched_cells
+    };
+
+    DelaunayRepairRun {
+        stats,
+        touched_cells,
+        used_full_reseed,
+    }
+}
+
 /// Queue ordering policy for flip repair attempts.
 ///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::flips::RepairQueueOrder;
+/// use delaunay::prelude::triangulation::repair::RepairQueueOrder;
 ///
 /// let order = RepairQueueOrder::Fifo;
 /// assert_eq!(order, RepairQueueOrder::Fifo);
@@ -1698,7 +2082,9 @@ pub enum RepairQueueOrder {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::flips::{DelaunayRepairDiagnostics, RepairQueueOrder};
+/// use delaunay::prelude::triangulation::repair::{
+///     DelaunayRepairDiagnostics, RepairQueueOrder,
+/// };
 ///
 /// let diagnostics = DelaunayRepairDiagnostics {
 ///     facets_checked: 0,
@@ -1762,8 +2148,7 @@ impl fmt::Display for DelaunayRepairDiagnostics {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::flips::DelaunayRepairError;
-/// use delaunay::core::triangulation::TopologyGuarantee;
+/// use delaunay::prelude::triangulation::repair::{DelaunayRepairError, TopologyGuarantee};
 ///
 /// let err = DelaunayRepairError::InvalidTopology {
 ///     required: TopologyGuarantee::PLManifold,
@@ -1784,10 +2169,25 @@ pub enum DelaunayRepairError {
         /// error enum small on the stack).
         diagnostics: Box<DelaunayRepairDiagnostics>,
     },
-    /// Repair completed but left a Delaunay violation or otherwise could not be verified.
+    /// Repair completed but left a Delaunay violation.
     #[error("Delaunay repair postcondition failed: {message}")]
     PostconditionFailed {
         /// Additional context describing the postcondition failure.
+        message: String,
+    },
+    /// Post-repair verification could not evaluate a local flip predicate.
+    #[error("Delaunay repair verification failed during {context}: {source}")]
+    VerificationFailed {
+        /// Verification phase that failed.
+        context: &'static str,
+        /// Underlying flip or predicate error.
+        #[source]
+        source: FlipError,
+    },
+    /// Repair completed but orientation canonicalization failed.
+    #[error("Delaunay repair orientation canonicalization failed: {message}")]
+    OrientationCanonicalizationFailed {
+        /// Additional context describing the canonicalization failure.
         message: String,
     },
     /// Flip-based repair is not admissible under the current topology guarantee.
@@ -2232,7 +2632,7 @@ where
     }
 
     let violates = in_a > 0 || in_b > 0;
-    if std::env::var_os("DELAUNAY_REPAIR_DEBUG_PREDICATES").is_some()
+    if env::var_os("DELAUNAY_REPAIR_DEBUG_PREDICATES").is_some()
         && (violates || in_a == 0 || in_b == 0)
     {
         tracing::debug!(
@@ -2768,7 +3168,7 @@ fn repair_delaunay_with_flips_k2_attempt<K, U, V, const D: usize>(
     kernel: &K,
     seed_cells: Option<&[CellKey]>,
     config: &RepairAttemptConfig,
-) -> Result<DelaunayRepairStats, DelaunayRepairError>
+) -> Result<RepairAttemptOutcome, DelaunayRepairError>
 where
     K: Kernel<D>,
     U: DataType,
@@ -2787,6 +3187,10 @@ where
     let mut queue: VecDeque<(FacetHandle, u64)> = VecDeque::new();
     let mut queued: FastHashSet<u64> = FastHashSet::default();
     let mut facet_handles: FastHashMap<u64, FacetHandle> = FastHashMap::default();
+    let mut last_applied_flip: Option<LastAppliedFlip> = None;
+    let mut touched_cells = CellKeyBuffer::new();
+    let mut touched_cell_set = FastHashSet::<CellKey>::default();
+    let used_full_reseed = seed_cells.is_none();
     let topology_model = GlobalTopology::DEFAULT.model();
 
     if let Some(seeds) = seed_cells {
@@ -2898,8 +3302,8 @@ where
             ));
         }
 
-        let info = match apply_delaunay_flip_k2(tds, &context) {
-            Ok(info) => info,
+        let applied = match apply_delaunay_flip_k2(tds, &context) {
+            Ok(applied) => applied,
             Err(
                 err @ (FlipError::DegenerateCell
                 | FlipError::NegativeOrientation { .. }
@@ -2908,7 +3312,7 @@ where
                 | FlipError::InsertedSimplexAlreadyExists { .. }
                 | FlipError::CellCreation(_)),
             ) => {
-                if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+                if env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
                     tracing::debug!(
                         "k=2 flip skipped in repair_delaunay_with_flips_k2_attempt (facet={facet:?}): {err}"
                     );
@@ -2928,6 +3332,9 @@ where
         };
         stats.flips_performed += 1;
         diagnostics.record_flip_signature(signature);
+        last_applied_flip = Some(LastAppliedFlip::from_applied_flip(&applied));
+        let info = applied.info;
+        record_touched_cells(&mut touched_cells, &mut touched_cell_set, &info.new_cells);
 
         for &cell_key in &info.new_cells {
             enqueue_cell_facets(
@@ -2954,7 +3361,12 @@ where
     }
     emit_repair_debug_summary("attempt_done", &stats, &diagnostics, config, max_flips);
 
-    Ok(stats)
+    Ok(RepairAttemptOutcome {
+        stats,
+        last_applied_flip,
+        touched_cells,
+        used_full_reseed,
+    })
 }
 
 /// Repair Delaunay violations using k=2 queues, k=3 queues in 3D,
@@ -2971,6 +3383,67 @@ pub(crate) fn repair_delaunay_with_flips_k2_k3<K, U, V, const D: usize>(
     topology: TopologyGuarantee,
     max_flips_override: Option<usize>,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
+where
+    K: Kernel<D>,
+    U: DataType,
+    V: DataType,
+{
+    repair_delaunay_with_flips_k2_k3_run(tds, kernel, seed_cells, topology, max_flips_override)
+        .map(|run| run.stats)
+}
+
+fn run_full_reseed_retry<K, U, V, const D: usize>(
+    tds: &mut Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    config: &RepairAttemptConfig,
+    snapshot: Tds<K::Scalar, U, V, D>,
+) -> Result<DelaunayRepairRun, DelaunayRepairError>
+where
+    K: Kernel<D>,
+    U: DataType,
+    V: DataType,
+{
+    *tds = snapshot.clone();
+    let retry_seed_cells = None;
+    let attempt_result = if D == 2 {
+        repair_delaunay_with_flips_k2_attempt(tds, kernel, retry_seed_cells, config)
+    } else {
+        repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, retry_seed_cells, config)
+    };
+
+    match attempt_result {
+        Ok(outcome) => match verify_repair_postcondition(
+            tds,
+            kernel,
+            retry_seed_cells,
+            outcome.last_applied_flip.as_ref(),
+        ) {
+            Ok(()) => Ok(repair_run_from_attempt(outcome, tds.cell_keys())),
+            Err(err) => {
+                *tds = snapshot;
+                Err(err)
+            }
+        },
+        Err(err) => {
+            *tds = snapshot;
+            Err(err)
+        }
+    }
+}
+
+/// Repair Delaunay violations and return the final validation frontier.
+///
+/// # Errors
+///
+/// Returns a [`DelaunayRepairError`] if the repair fails to converge or an underlying
+/// flip operation encounters an unrecoverable error.
+pub(crate) fn repair_delaunay_with_flips_k2_k3_run<K, U, V, const D: usize>(
+    tds: &mut Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    seed_cells: Option<&[CellKey]>,
+    topology: TopologyGuarantee,
+    max_flips_override: Option<usize>,
+) -> Result<DelaunayRepairRun, DelaunayRepairError>
 where
     K: Kernel<D>,
     U: DataType,
@@ -3015,9 +3488,16 @@ where
     };
 
     match attempt1_result {
-        Ok(stats) => {
-            if verify_repair_postcondition(tds, kernel, seed_cells).is_ok() {
-                return Ok(stats);
+        Ok(outcome) => {
+            if verify_repair_postcondition(
+                tds,
+                kernel,
+                seed_cells,
+                outcome.last_applied_flip.as_ref(),
+            )
+            .is_ok()
+            {
+                return Ok(repair_run_from_attempt(outcome, tds.cell_keys()));
             }
             if repair_trace_enabled() {
                 tracing::debug!(
@@ -3026,16 +3506,7 @@ where
             }
 
             // Postcondition verification failed: rerun with LIFO + full reseed.
-            *tds = tds_snapshot;
-            let retry_seed_cells = None;
-            let stats2 = if D == 2 {
-                repair_delaunay_with_flips_k2_attempt(tds, kernel, retry_seed_cells, &attempt2)
-            } else {
-                repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, retry_seed_cells, &attempt2)
-            }?;
-
-            verify_repair_postcondition(tds, kernel, retry_seed_cells)?;
-            Ok(stats2)
+            run_full_reseed_retry(tds, kernel, &attempt2, tds_snapshot)
         }
         Err(DelaunayRepairError::NonConvergent { .. }) => {
             if repair_trace_enabled() {
@@ -3044,28 +3515,23 @@ where
                 );
             }
             // Retry with LIFO + full reseed.
-            *tds = tds_snapshot;
-            let retry_seed_cells = None;
-            let stats2 = if D == 2 {
-                repair_delaunay_with_flips_k2_attempt(tds, kernel, retry_seed_cells, &attempt2)
-            } else {
-                repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, retry_seed_cells, &attempt2)
-            }?;
-
-            verify_repair_postcondition(tds, kernel, retry_seed_cells)?;
-            Ok(stats2)
+            run_full_reseed_retry(tds, kernel, &attempt2, tds_snapshot)
         }
-        Err(err) => Err(err),
+        Err(err) => {
+            *tds = tds_snapshot;
+            Err(err)
+        }
     }
 }
 
 /// Run a seeded, bounded Delaunay repair capped to a specific set of cells.
 ///
-/// Unlike [`repair_delaunay_with_flips_k2_k3`], this function **always reseeds from the
-/// provided `seed_cells`** (never from `None` / all cells).  This keeps the queue size
+/// Unlike [`repair_delaunay_with_flips_k2_k3`], this function normally reseeds from the
+/// provided `seed_cells` rather than `None` / all cells. This keeps the queue size
 /// bounded to `O(seed_cells × queues_per_cell)` regardless of the total triangulation size,
 /// which is critical for D≥4 where a full-triangulation seed would generate O(cells×30)
-/// items (prohibitively expensive with robust predicates).
+/// items (prohibitively expensive with robust predicates). An explicit empty seed slice
+/// is a bounded no-op seed set; callers that want a whole-TDS repair pass `None`.
 ///
 /// Two attempts are made with alternating queue orders (FIFO → LIFO) to escape
 /// flip cycles — the same strategy as [`repair_delaunay_with_flips_k2_k3`], but without the
@@ -3117,9 +3583,16 @@ where
         repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, Some(seed_cells), &attempt1)
     };
     match attempt1_result {
-        Ok(stats) => {
-            if verify_repair_postcondition(tds, kernel, Some(seed_cells)).is_ok() {
-                return Ok(stats);
+        Ok(outcome) => {
+            if verify_repair_postcondition(
+                tds,
+                kernel,
+                Some(seed_cells),
+                outcome.last_applied_flip.as_ref(),
+            )
+            .is_ok()
+            {
+                return Ok(outcome.stats);
             }
             if repair_trace_enabled() {
                 tracing::debug!("[repair] local attempt 1 postcondition failed; retrying LIFO");
@@ -3130,7 +3603,10 @@ where
                 tracing::debug!("[repair] local attempt 1 non-convergent; retrying LIFO");
             }
         }
-        Err(err) => return Err(err),
+        Err(err) => {
+            *tds = tds_snapshot;
+            return Err(err);
+        }
     }
     *tds = tds_snapshot.clone();
     let attempt2_result = if D == 2 {
@@ -3139,8 +3615,13 @@ where
         repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, Some(seed_cells), &attempt2)
     };
     match attempt2_result {
-        Ok(stats) => match verify_repair_postcondition(tds, kernel, Some(seed_cells)) {
-            Ok(()) => Ok(stats),
+        Ok(outcome) => match verify_repair_postcondition(
+            tds,
+            kernel,
+            Some(seed_cells),
+            outcome.last_applied_flip.as_ref(),
+        ) {
+            Ok(()) => Ok(outcome.stats),
             Err(verifier_err) => {
                 // Postcondition failed: restore the TDS so callers that
                 // soft-fail receive a structurally valid triangulation.
@@ -3176,13 +3657,14 @@ where
 /// # Errors
 ///
 /// Returns [`DelaunayRepairError::PostconditionFailed`] if any flip predicate detects
-/// a Delaunay violation.
+/// a Delaunay violation, or [`DelaunayRepairError::VerificationFailed`] if a
+/// local predicate cannot be evaluated.
 ///
 /// # Examples
 ///
 /// ```
 /// use delaunay::prelude::triangulation::*;
-/// use delaunay::core::algorithms::flips::verify_delaunay_via_flip_predicates;
+/// use delaunay::prelude::triangulation::repair::verify_delaunay_via_flip_predicates;
 /// use delaunay::geometry::kernel::AdaptiveKernel;
 ///
 /// let vertices = vec![
@@ -3220,14 +3702,14 @@ where
 /// # Errors
 ///
 /// Returns [`DelaunayRepairError::PostconditionFailed`] if any flip predicate detects
-/// a Delaunay violation, or another [`DelaunayRepairError`] if verification cannot
-/// evaluate the local predicates.
+/// a Delaunay violation, or [`DelaunayRepairError::VerificationFailed`] if
+/// verification cannot evaluate the local predicates.
 ///
 /// # Examples
 ///
 /// ```
 /// use delaunay::prelude::triangulation::*;
-/// use delaunay::core::algorithms::flips::verify_delaunay_for_triangulation;
+/// use delaunay::prelude::triangulation::repair::verify_delaunay_for_triangulation;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -3276,6 +3758,7 @@ where
         None,
         global_topology,
         PostconditionMode::Strict,
+        None,
     )
 }
 
@@ -3285,6 +3768,7 @@ fn verify_repair_postcondition<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
     seed_cells: Option<&[CellKey]>,
+    last_applied_flip: Option<&LastAppliedFlip>,
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -3297,6 +3781,7 @@ where
         seed_cells,
         GlobalTopology::DEFAULT,
         PostconditionMode::Repair,
+        last_applied_flip,
     )
 }
 
@@ -3304,6 +3789,11 @@ where
 enum PostconditionMode {
     Repair,
     Strict,
+}
+
+/// Builds a verification failure that preserves the structured flip error.
+const fn verification_failed(context: &'static str, source: FlipError) -> DelaunayRepairError {
+    DelaunayRepairError::VerificationFailed { context, source }
 }
 
 /// Adapts the public topology enum into the model used for lifted predicate
@@ -3314,6 +3804,7 @@ fn verify_repair_postcondition_with_topology<K, U, V, const D: usize>(
     seed_cells: Option<&[CellKey]>,
     global_topology: GlobalTopology<D>,
     mode: PostconditionMode,
+    last_applied_flip: Option<&LastAppliedFlip>,
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -3321,7 +3812,14 @@ where
     V: DataType,
 {
     let topology_model = global_topology.model();
-    verify_repair_postcondition_locally(tds, kernel, seed_cells, &topology_model, mode)
+    verify_repair_postcondition_locally(
+        tds,
+        kernel,
+        seed_cells,
+        &topology_model,
+        mode,
+        last_applied_flip,
+    )
 }
 
 /// Replays the repair queues without mutating the TDS so postconditions cover
@@ -3332,6 +3830,7 @@ fn verify_repair_postcondition_locally<K, U, V, const D: usize>(
     seed_cells: Option<&[CellKey]>,
     topology_model: &GlobalTopologyModelAdapter<D>,
     mode: PostconditionMode,
+    last_applied_flip: Option<&LastAppliedFlip>,
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -3347,7 +3846,7 @@ where
     let mut stats = DelaunayRepairStats::default();
     let mut diagnostics = RepairDiagnostics::default();
     let mut queues = RepairQueues::new();
-    seed_repair_queues(tds, seed_cells, &mut queues, &mut stats)?;
+    let _ = seed_repair_queues(tds, seed_cells, &mut queues, &mut stats)?;
     if repair_trace_enabled() {
         let seed_count = seed_cells.map_or(0, <[CellKey]>::len);
         tracing::debug!(
@@ -3371,6 +3870,7 @@ where
         &config,
         &mut diagnostics,
         mode,
+        last_applied_flip,
     )?;
     verify_postcondition_k3_ridges(
         tds,
@@ -3380,6 +3880,7 @@ where
         &config,
         &mut diagnostics,
         mode,
+        last_applied_flip,
     )?;
     verify_postcondition_inverse_k2_edges(
         tds,
@@ -3422,19 +3923,21 @@ where
 /// while remaining skippable during best-effort repair passes.
 fn handle_postcondition_predicate_failure(
     mode: PostconditionMode,
-    context: &str,
+    context: &'static str,
     error: &FlipError,
 ) -> Result<(), DelaunayRepairError> {
     match mode {
         PostconditionMode::Repair => Ok(()),
-        PostconditionMode::Strict => Err(DelaunayRepairError::PostconditionFailed {
-            message: format!("{context} predicate failed in strict mode: {error}"),
-        }),
+        PostconditionMode::Strict => Err(verification_failed(context, error.clone())),
     }
 }
 
 /// Rechecks queued facets after repair so unresolved k=2 violations surface as
 /// postcondition failures instead of latent invalid triangulations.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Postcondition replay threads topology, diagnostics, and predecessor context explicitly"
+)]
 fn verify_postcondition_k2_facets<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -3443,6 +3946,7 @@ fn verify_postcondition_k2_facets<K, U, V, const D: usize>(
     config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
     mode: PostconditionMode,
+    last_applied_flip: Option<&LastAppliedFlip>,
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -3477,9 +3981,7 @@ where
                         continue;
                     }
                     Err(e) => {
-                        return Err(DelaunayRepairError::PostconditionFailed {
-                            message: format!("local k=2 verification failed after repair: {e}"),
-                        });
+                        return Err(verification_failed("local k=2 degeneracy verification", e));
                     }
                 };
 
@@ -3496,9 +3998,16 @@ where
                         "[repair] postcondition k=2 violation remains (facet={facet:?})"
                     );
                 }
+                debug_postcondition_facet_context(
+                    tds,
+                    facet,
+                    &context,
+                    diagnostics,
+                    last_applied_flip,
+                );
                 let mut message =
                     format!("local k=2 violation remains after repair (facet={facet:?})");
-                if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+                if env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
                     let removed_details: Vec<_> = context
                         .removed_face_vertices
                         .iter()
@@ -3532,9 +4041,10 @@ where
                 )?;
             }
             Err(e) => {
-                return Err(DelaunayRepairError::PostconditionFailed {
-                    message: format!("local k=2 verification failed after repair: {e}"),
-                });
+                return Err(verification_failed(
+                    "local k=2 postcondition verification",
+                    e,
+                ));
             }
         }
     }
@@ -3544,6 +4054,10 @@ where
 
 /// Rechecks queued ridges after repair so higher-dimensional k=3 violations get
 /// the same explicit postcondition treatment as facets.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Postcondition replay threads topology, diagnostics, and predecessor context explicitly (matches k=2 signature)"
+)]
 fn verify_postcondition_k3_ridges<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -3552,6 +4066,7 @@ fn verify_postcondition_k3_ridges<K, U, V, const D: usize>(
     config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
     mode: PostconditionMode,
+    last_applied_flip: Option<&LastAppliedFlip>,
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -3589,9 +4104,7 @@ where
                         continue;
                     }
                     Err(e) => {
-                        return Err(DelaunayRepairError::PostconditionFailed {
-                            message: format!("local k=3 verification failed after repair: {e}"),
-                        });
+                        return Err(verification_failed("local k=3 degeneracy verification", e));
                     }
                 };
 
@@ -3608,6 +4121,11 @@ where
                         "[repair] postcondition k=3 violation remains (ridge={ridge:?})"
                     );
                 }
+                // Emit the ridge adjacency snapshot only under the opt-in ridge
+                // debug flag; the helper performs global incidence scans.
+                if repair_ridge_debug_enabled() {
+                    debug_ridge_context(tds, ridge, None, diagnostics, last_applied_flip);
+                }
                 return Err(DelaunayRepairError::PostconditionFailed {
                     message: format!("local k=3 violation remains after repair (ridge={ridge:?})"),
                 });
@@ -3623,9 +4141,10 @@ where
                 )?;
             }
             Err(e) => {
-                return Err(DelaunayRepairError::PostconditionFailed {
-                    message: format!("local k=3 verification failed after repair: {e}"),
-                });
+                return Err(verification_failed(
+                    "local k=3 postcondition verification",
+                    e,
+                ));
             }
         }
     }
@@ -3692,9 +4211,10 @@ where
                 continue;
             }
             Err(e) => {
-                return Err(DelaunayRepairError::PostconditionFailed {
-                    message: format!("local inverse k=2 verification failed after repair: {e}"),
-                });
+                return Err(verification_failed(
+                    "local inverse k=2 postcondition verification",
+                    e,
+                ));
             }
         };
 
@@ -3775,9 +4295,10 @@ where
                 continue;
             }
             Err(e) => {
-                return Err(DelaunayRepairError::PostconditionFailed {
-                    message: format!("local inverse k=3 verification failed after repair: {e}"),
-                });
+                return Err(verification_failed(
+                    "local inverse k=3 postcondition verification",
+                    e,
+                ));
             }
         };
 
@@ -3830,6 +4351,8 @@ struct RepairDiagnostics {
     missing_cell_sample: Option<String>,
     flip_signature_window: VecDeque<u64>,
     flip_signature_counts: FastHashMap<u64, usize>,
+    ridge_debug_emitted: usize,
+    postcondition_facet_debug_emitted: usize,
 }
 
 impl RepairDiagnostics {
@@ -3961,11 +4484,11 @@ fn emit_repair_debug_summary(
     config: &RepairAttemptConfig,
     max_flips: usize,
 ) {
-    if std::env::var_os("DELAUNAY_REPAIR_DEBUG_SUMMARY").is_none() {
+    if env::var_os("DELAUNAY_REPAIR_DEBUG_SUMMARY").is_none() {
         return;
     }
 
-    tracing::trace!(
+    tracing::debug!(
         label = %label,
         attempt = config.attempt,
         order = ?config.queue_order,
@@ -4047,11 +4570,18 @@ struct LastAppliedFlip {
     k_move: usize,
     removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
     inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+    removed_cells: CellKeyBuffer,
+    new_cells: CellKeyBuffer,
+    /// Snapshot of each removed cell's vertex list captured before the flip's
+    /// `remove_cells_by_keys` call; pairs 1:1 with `removed_cells`. Empty
+    /// inner buffers only appear in placeholder instances built via `Self::new`.
+    removed_cell_vertices: RemovedCellVertexSnapshot,
 }
 
 impl LastAppliedFlip {
     /// Sorts faces so immediate-reversal detection is independent of local cell
-    /// vertex order.
+    /// vertex order. Cell lists stay empty here because this constructor is also
+    /// used for temporary reversal checks.
     fn new(k_move: usize, removed: &[VertexKey], inserted: &[VertexKey]) -> Self {
         let mut removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
             removed.iter().copied().collect();
@@ -4065,7 +4595,45 @@ impl LastAppliedFlip {
             k_move,
             removed_face_vertices,
             inserted_face_vertices,
+            removed_cells: CellKeyBuffer::new(),
+            new_cells: CellKeyBuffer::new(),
+            removed_cell_vertices: SmallBuffer::new(),
         }
+    }
+
+    /// Preserves the concrete flip footprint so a later ridge snapshot can tell
+    /// whether the immediately preceding move created the bad local star.
+    fn from_applied_flip<const D: usize>(applied: &AppliedFlip<D>) -> Self {
+        let info = &applied.info;
+        let mut last = Self::new(
+            info.kind.k(),
+            &info.removed_face_vertices,
+            &info.inserted_face_vertices,
+        );
+        last.removed_cells.clone_from(&info.removed_cells);
+        last.new_cells.clone_from(&info.new_cells);
+        last.removed_cell_vertices
+            .clone_from(&applied.removed_cell_vertices);
+        last
+    }
+
+    /// Formats each removed cell as `CellKey(N): vertices=[...]` using the
+    /// snapshot captured before the flip's cell removal. Falls back to
+    /// `missing-snapshot` only for placeholder rows created by `Self::new`.
+    fn removed_cell_vertex_lines(&self) -> Vec<String> {
+        self.removed_cells
+            .iter()
+            .copied()
+            .enumerate()
+            .map(
+                |(idx, cell_key)| match self.removed_cell_vertices.get(idx) {
+                    Some(verts) if !verts.is_empty() => {
+                        format!("{cell_key:?}: vertices={verts:?}")
+                    }
+                    _ => format!("{cell_key:?}: missing-snapshot"),
+                },
+            )
+            .collect()
     }
 }
 
@@ -4094,42 +4662,86 @@ fn would_immediately_reverse_last_flip<const D: usize>(
 /// frequently.
 #[inline]
 fn repair_trace_enabled() -> bool {
-    std::env::var_os("DELAUNAY_REPAIR_TRACE").is_some()
+    env::var_os("DELAUNAY_REPAIR_TRACE").is_some()
 }
 
 /// Treats full repair tracing as enabling ridge snapshots so one debug switch
 /// gives enough topology context.
 #[inline]
 fn repair_ridge_debug_enabled() -> bool {
-    std::env::var_os("DELAUNAY_REPAIR_DEBUG_RIDGE").is_some() || repair_trace_enabled()
+    env::var_os("DELAUNAY_REPAIR_DEBUG_RIDGE").is_some() || repair_trace_enabled()
 }
 
 const RIDGE_DEBUG_LIMIT_DEFAULT: usize = 64;
-static RIDGE_DEBUG_EMITTED: AtomicUsize = AtomicUsize::new(0);
+const RIDGE_DEBUG_MIN_MULTIPLICITY_DEFAULT: usize = 0;
 
 /// Rate-limits ridge snapshots to keep pathological repair runs from flooding
 /// logs.
 fn ridge_debug_limit() -> usize {
-    std::env::var("DELAUNAY_REPAIR_DEBUG_RIDGE_LIMIT")
+    env::var("DELAUNAY_REPAIR_DEBUG_RIDGE_LIMIT")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(RIDGE_DEBUG_LIMIT_DEFAULT)
 }
 
-/// Applies the ridge debug limit atomically so concurrent tests still share a
-/// bounded diagnostic budget.
-fn should_emit_ridge_debug() -> bool {
+/// Lets callers skip the common multiplicity-1/2 boundary cases and capture
+/// the first genuinely overshared ridge instead.
+fn ridge_debug_min_multiplicity() -> usize {
+    env::var("DELAUNAY_REPAIR_DEBUG_RIDGE_MIN_MULTIPLICITY")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(RIDGE_DEBUG_MIN_MULTIPLICITY_DEFAULT)
+}
+
+/// Applies the ridge debug limit per repair attempt so independent repairs do
+/// not consume each other's diagnostic budget.
+fn should_emit_ridge_debug(
+    diagnostics: &mut RepairDiagnostics,
+    reported_multiplicity: Option<usize>,
+) -> bool {
+    let min_multiplicity = ridge_debug_min_multiplicity();
+    match reported_multiplicity {
+        // Multiplicity-based skips dominate large 4D traces, so let callers suppress
+        // the expected 1/2 boundary cases and wait for the first real fan.
+        Some(found) if found < min_multiplicity => return false,
+        // If the caller asked for a multiplicity threshold, suppress adjacency-only
+        // snapshots too so they do not consume the one-shot debug budget first.
+        None if min_multiplicity > 0 => return false,
+        _ => {}
+    }
+
     let limit = ridge_debug_limit();
     if limit == 0 {
         return false;
     }
-    let current = RIDGE_DEBUG_EMITTED.fetch_add(1, Ordering::Relaxed);
+    let current = diagnostics.ridge_debug_emitted;
+    diagnostics.ridge_debug_emitted = diagnostics.ridge_debug_emitted.saturating_add(1);
     if current == limit {
         tracing::debug!(
             "repair: ridge debug output limit reached; suppressing further ridge snapshots"
         );
     }
     current < limit
+}
+
+/// Keeps the first unresolved postcondition-facet snapshot opt-in because the
+/// local verifier can traverse many queued facets in one pass.
+#[inline]
+fn postcondition_facet_debug_enabled() -> bool {
+    env::var_os("DELAUNAY_REPAIR_DEBUG_POSTCONDITION_FACET").is_some()
+}
+
+/// Emits at most one postcondition facet snapshot per repair attempt so the
+/// focused #204 debug path stays readable.
+fn should_emit_postcondition_facet_debug(diagnostics: &mut RepairDiagnostics) -> bool {
+    if !postcondition_facet_debug_enabled() {
+        return false;
+    }
+    let current = diagnostics.postcondition_facet_debug_emitted;
+    diagnostics.postcondition_facet_debug_emitted = diagnostics
+        .postcondition_facet_debug_emitted
+        .saturating_add(1);
+    current == 0
 }
 
 /// Computes a dimension-sensitive flip budget so non-convergent repair fails
@@ -4227,7 +4839,7 @@ fn seed_repair_queues<T, U, V, const D: usize>(
     seed_cells: Option<&[CellKey]>,
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
-) -> Result<(), FlipError>
+) -> Result<bool, FlipError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -4297,6 +4909,7 @@ where
                 );
             }
             seed_repair_queues(tds, None, queues, stats)?;
+            return Ok(true);
         }
     } else {
         for facet in AllFacetsIter::new(tds) {
@@ -4335,8 +4948,9 @@ where
             );
         }
         stats.max_queue_len = stats.max_queue_len.max(queues.total_len());
+        return Ok(true);
     }
-    Ok(())
+    Ok(false)
 }
 
 /// Requeues the local neighborhood created by a flip so the repair loop follows
@@ -4407,6 +5021,8 @@ fn process_ridge_queue_step<K, U, V, const D: usize>(
     config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
     last_applied_flip: &mut Option<LastAppliedFlip>,
+    touched_cells: &mut CellKeyBuffer,
+    touched_cell_set: &mut FastHashSet<CellKey>,
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -4436,12 +5052,21 @@ where
                     diagnostics.record_invalid_ridge_multiplicity_skip(|| {
                         format!("ridge={ridge:?} multiplicity={found}")
                     });
+                    // This is the main #204 failure mode: capture both the local ridge walk
+                    // and the full global incidence so we can see whether repair is skipping
+                    // a stale handle or a genuinely overshared ridge.
                     if repair_ridge_debug_enabled() {
-                        debug_ridge_context(tds, ridge, Some(*found));
+                        debug_ridge_context(
+                            tds,
+                            ridge,
+                            Some(*found),
+                            diagnostics,
+                            last_applied_flip.as_ref(),
+                        );
                     }
                 }
                 FlipError::InvalidRidgeAdjacency { .. } if repair_ridge_debug_enabled() => {
-                    debug_ridge_context(tds, ridge, None);
+                    debug_ridge_context(tds, ridge, None, diagnostics, last_applied_flip.as_ref());
                 }
                 FlipError::MissingCell { cell_key } => {
                     diagnostics.record_missing_cell_skip(|| {
@@ -4525,8 +5150,8 @@ where
             );
         }
     };
-    let info = match apply_delaunay_flip_k3(tds, &context) {
-        Ok(info) => info,
+    let applied = match apply_delaunay_flip_k3(tds, &context) {
+        Ok(applied) => applied,
         Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
             diagnostics.record_inserted_simplex_skip(|| {
                 format!(
@@ -4549,6 +5174,8 @@ where
         }
         Err(e) => return Err(e.into()),
     };
+    *last_applied_flip = Some(LastAppliedFlip::from_applied_flip(&applied));
+    let info = applied.info;
     if repair_trace_enabled() {
         tracing::debug!(
             "[repair] apply k=3 flip: kind={:?} direction={:?} removed_face={:?} inserted_face={:?} removed_cells={:?} new_cells={:?}",
@@ -4562,11 +5189,7 @@ where
     }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
-    *last_applied_flip = Some(LastAppliedFlip::new(
-        3,
-        &context.removed_face_vertices,
-        &context.inserted_face_vertices,
-    ));
+    record_touched_cells(touched_cells, touched_cell_set, &info.new_cells);
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
@@ -4592,6 +5215,8 @@ fn process_edge_queue_step<K, U, V, const D: usize>(
     config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
     last_applied_flip: &mut Option<LastAppliedFlip>,
+    touched_cells: &mut CellKeyBuffer,
+    touched_cell_set: &mut FastHashSet<CellKey>,
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -4715,8 +5340,8 @@ where
             );
         }
     };
-    let info = match apply_delaunay_flip_dynamic(tds, D, &context) {
-        Ok(info) => info,
+    let applied = match apply_delaunay_flip_dynamic(tds, D, &context) {
+        Ok(applied) => applied,
         Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
             diagnostics.record_inserted_simplex_skip(|| {
                 format!(
@@ -4739,6 +5364,8 @@ where
         }
         Err(e) => return Err(e.into()),
     };
+    *last_applied_flip = Some(LastAppliedFlip::from_applied_flip(&applied));
+    let info = applied.info;
     if repair_trace_enabled() {
         tracing::debug!(
             "[repair] apply inverse k=2 flip: kind={:?} direction={:?} removed_face={:?} inserted_face={:?} removed_cells={:?} new_cells={:?}",
@@ -4752,11 +5379,7 @@ where
     }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
-    *last_applied_flip = Some(LastAppliedFlip::new(
-        D,
-        &context.removed_face_vertices,
-        &context.inserted_face_vertices,
-    ));
+    record_touched_cells(touched_cells, touched_cell_set, &info.new_cells);
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
@@ -4782,6 +5405,8 @@ fn process_triangle_queue_step<K, U, V, const D: usize>(
     config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
     last_applied_flip: &mut Option<LastAppliedFlip>,
+    touched_cells: &mut CellKeyBuffer,
+    touched_cell_set: &mut FastHashSet<CellKey>,
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -4897,8 +5522,8 @@ where
             );
         }
     };
-    let info = match apply_delaunay_flip_dynamic(tds, D - 1, &context) {
-        Ok(info) => info,
+    let applied = match apply_delaunay_flip_dynamic(tds, D - 1, &context) {
+        Ok(applied) => applied,
         Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
             diagnostics.record_inserted_simplex_skip(|| {
                 format!(
@@ -4921,6 +5546,8 @@ where
         }
         Err(e) => return Err(e.into()),
     };
+    *last_applied_flip = Some(LastAppliedFlip::from_applied_flip(&applied));
+    let info = applied.info;
     if repair_trace_enabled() {
         tracing::debug!(
             "[repair] apply inverse k=3 flip: kind={:?} direction={:?} removed_face={:?} inserted_face={:?} removed_cells={:?} new_cells={:?}",
@@ -4934,11 +5561,7 @@ where
     }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
-    *last_applied_flip = Some(LastAppliedFlip::new(
-        D - 1,
-        &context.removed_face_vertices,
-        &context.inserted_face_vertices,
-    ));
+    record_touched_cells(touched_cells, touched_cell_set, &info.new_cells);
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
@@ -4964,6 +5587,8 @@ fn process_facet_queue_step<K, U, V, const D: usize>(
     config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
     last_applied_flip: &mut Option<LastAppliedFlip>,
+    touched_cells: &mut CellKeyBuffer,
+    touched_cell_set: &mut FastHashSet<CellKey>,
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -5063,7 +5688,7 @@ where
 
     // Shared trace tail for apply-k=2-facet skip arms below.
     let log_apply_skip = |err: &FlipError| {
-        if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+        if env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
             tracing::debug!(
                 facet = ?facet,
                 reason = %err,
@@ -5083,8 +5708,8 @@ where
             );
         }
     };
-    let info = match apply_delaunay_flip_k2(tds, &context) {
-        Ok(info) => info,
+    let applied = match apply_delaunay_flip_k2(tds, &context) {
+        Ok(applied) => applied,
         Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
             diagnostics.record_inserted_simplex_skip(|| {
                 format!(
@@ -5107,6 +5732,8 @@ where
         }
         Err(e) => return Err(e.into()),
     };
+    *last_applied_flip = Some(LastAppliedFlip::from_applied_flip(&applied));
+    let info = applied.info;
     if repair_trace_enabled() {
         tracing::debug!(
             "[repair] apply k=2 flip: kind={:?} direction={:?} removed_face={:?} inserted_face={:?} removed_cells={:?} new_cells={:?}",
@@ -5120,11 +5747,7 @@ where
     }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
-    *last_applied_flip = Some(LastAppliedFlip::new(
-        2,
-        &context.removed_face_vertices,
-        &context.inserted_face_vertices,
-    ));
+    record_touched_cells(touched_cells, touched_cell_set, &info.new_cells);
 
     enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
 
@@ -5808,7 +6431,7 @@ where
         return false;
     };
 
-    if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() || repair_trace_enabled() {
+    if env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() || repair_trace_enabled() {
         let mut target: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
             vertices.iter().copied().collect();
         target.sort_unstable();
@@ -5820,7 +6443,7 @@ where
             v
         });
 
-        if std::env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+        if env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
             tracing::debug!(
                 "k=2 flip would duplicate existing cell {cell_key:?}; target={target:?}; existing={existing_sorted:?}"
             );
@@ -6149,16 +6772,21 @@ mod tests {
     use super::*;
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
     use crate::core::collections::Uuid;
+    use crate::core::triangulation::TopologyGuarantee;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
     use crate::triangulation::delaunay::DelaunayTriangulation;
     use crate::vertex;
     use approx::assert_relative_eq;
     use rand::{RngExt, SeedableRng, rngs::StdRng};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use slotmap::KeyData;
+    use std::sync::{
+        Once,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     fn init_tracing() {
-        static INIT: std::sync::Once = std::sync::Once::new();
+        static INIT: Once = Once::new();
         INIT.call_once(|| {
             let filter = tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
@@ -6221,6 +6849,392 @@ mod tests {
             removed_cells: context.removed_cells,
             direction: context.direction,
         }
+    }
+
+    macro_rules! gen_removed_cell_snapshot_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_snapshot_removed_cell_vertices_captures_vertices_and_reports_missing_cell_ $dim d>]() {
+                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let vertices = insert_standard_simplex_vertices::<$dim>(&mut tds);
+                    let cell_key = tds
+                        .insert_cell_with_mapping(Cell::new(vertices.clone(), None).unwrap())
+                        .unwrap();
+
+                    let removed_cells: CellKeyBuffer = std::iter::once(cell_key).collect();
+                    let snapshot = snapshot_removed_cell_vertices(&tds, &removed_cells).unwrap();
+                    assert_eq!(snapshot.len(), 1);
+                    assert_eq!(snapshot[0].iter().copied().collect::<Vec<_>>(), vertices);
+
+                    let missing_cell = CellKey::from(KeyData::from_ffi(999_999 + $dim));
+                    let missing_cells: CellKeyBuffer = std::iter::once(missing_cell).collect();
+                    let err = snapshot_removed_cell_vertices(&tds, &missing_cells).unwrap_err();
+                    assert!(matches!(
+                        err,
+                        FlipError::MissingCell { cell_key } if cell_key == missing_cell
+                    ));
+                }
+
+                #[test]
+                fn [<test_last_applied_flip_preserves_removed_cell_vertex_snapshots_ $dim d>]() {
+                    let removed_cell = CellKey::from(KeyData::from_ffi(101 + $dim));
+                    let new_cell = CellKey::from(KeyData::from_ffi(102 + $dim));
+                    let v1 = VertexKey::from(KeyData::from_ffi(201 + $dim));
+                    let v2 = VertexKey::from(KeyData::from_ffi(202 + $dim));
+                    let v3 = VertexKey::from(KeyData::from_ffi(203 + $dim));
+                    let v4 = VertexKey::from(KeyData::from_ffi(204 + $dim));
+
+                    let mut removed_cell_vertices = RemovedCellVertexSnapshot::new();
+                    removed_cell_vertices.push([v1, v2, v3].into_iter().collect::<VertexKeyList>());
+
+                    let applied = AppliedFlip::<$dim> {
+                        info: FlipInfo {
+                            kind: BistellarFlipKind::k2($dim),
+                            direction: FlipDirection::Forward,
+                            removed_cells: std::iter::once(removed_cell).collect(),
+                            new_cells: std::iter::once(new_cell).collect(),
+                            removed_face_vertices: [v3, v1].into_iter().collect(),
+                            inserted_face_vertices: [v4, v2].into_iter().collect(),
+                        },
+                        removed_cell_vertices,
+                    };
+
+                    let last = LastAppliedFlip::from_applied_flip(&applied);
+                    assert_eq!(last.k_move, 2);
+                    assert_eq!(
+                        last.removed_face_vertices
+                            .iter()
+                            .copied()
+                            .collect::<Vec<_>>(),
+                        vec![v1, v3]
+                    );
+                    assert_eq!(
+                        last.inserted_face_vertices
+                            .iter()
+                            .copied()
+                            .collect::<Vec<_>>(),
+                        vec![v2, v4]
+                    );
+                    assert_eq!(
+                        last.removed_cells.iter().copied().collect::<Vec<_>>(),
+                        vec![removed_cell]
+                    );
+                    assert_eq!(
+                        last.new_cells.iter().copied().collect::<Vec<_>>(),
+                        vec![new_cell]
+                    );
+
+                    let lines = last.removed_cell_vertex_lines();
+                    assert_eq!(lines.len(), 1);
+                    assert!(lines[0].contains(&format!("{removed_cell:?}: vertices=")));
+                    assert!(!lines[0].contains("missing-snapshot"));
+
+                    let mut placeholder = LastAppliedFlip::new(1, &[v1], &[v2]);
+                    placeholder.removed_cells.push(removed_cell);
+                    assert_eq!(
+                        placeholder.removed_cell_vertex_lines(),
+                        vec![format!("{removed_cell:?}: missing-snapshot")]
+                    );
+                }
+            }
+        };
+    }
+
+    gen_removed_cell_snapshot_tests!(2);
+    gen_removed_cell_snapshot_tests!(3);
+    gen_removed_cell_snapshot_tests!(4);
+    gen_removed_cell_snapshot_tests!(5);
+
+    struct RidgeDiagnosticFixture3d {
+        tds: Tds<f64, (), (), 3>,
+        origin_vertex: VertexKey,
+        x_axis_vertex: VertexKey,
+        y_axis_vertex: VertexKey,
+        upper_apex_vertex: VertexKey,
+        lower_apex_vertex: VertexKey,
+        upper_tetrahedron: CellKey,
+        lower_neighbor: CellKey,
+    }
+
+    impl RidgeDiagnosticFixture3d {
+        fn new() -> Self {
+            let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+            let origin_vertex = tds
+                .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+                .unwrap();
+            let x_axis_vertex = tds
+                .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+                .unwrap();
+            let y_axis_vertex = tds
+                .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+                .unwrap();
+            let upper_apex_vertex = tds
+                .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+                .unwrap();
+            let lower_apex_vertex = tds
+                .insert_vertex_with_mapping(vertex!([0.0, 0.0, -1.0]))
+                .unwrap();
+
+            let upper_tetrahedron = tds
+                .insert_cell_with_mapping(
+                    Cell::new(
+                        vec![
+                            origin_vertex,
+                            x_axis_vertex,
+                            y_axis_vertex,
+                            upper_apex_vertex,
+                        ],
+                        None,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            let lower_neighbor = tds
+                .insert_cell_with_mapping(
+                    Cell::new(
+                        vec![
+                            origin_vertex,
+                            x_axis_vertex,
+                            y_axis_vertex,
+                            lower_apex_vertex,
+                        ],
+                        None,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            repair_neighbor_pointers(&mut tds).unwrap();
+
+            Self {
+                tds,
+                origin_vertex,
+                x_axis_vertex,
+                y_axis_vertex,
+                upper_apex_vertex,
+                lower_apex_vertex,
+                upper_tetrahedron,
+                lower_neighbor,
+            }
+        }
+
+        fn ridge_ab(&self) -> SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> {
+            [self.origin_vertex, self.x_axis_vertex]
+                .into_iter()
+                .collect()
+        }
+
+        fn ridge_handle_abcd(&self) -> RidgeHandle {
+            RidgeHandle::new(self.upper_tetrahedron, 2, 3)
+        }
+
+        fn last_applied_flip(&self) -> LastAppliedFlip {
+            let mut removed_cell_vertices = RemovedCellVertexSnapshot::new();
+            removed_cell_vertices.push(
+                [
+                    self.origin_vertex,
+                    self.x_axis_vertex,
+                    self.y_axis_vertex,
+                    self.upper_apex_vertex,
+                ]
+                .into_iter()
+                .collect::<VertexKeyList>(),
+            );
+
+            let applied = AppliedFlip::<3> {
+                info: FlipInfo {
+                    kind: BistellarFlipKind::k2(3),
+                    direction: FlipDirection::Forward,
+                    removed_cells: std::iter::once(self.upper_tetrahedron).collect(),
+                    new_cells: std::iter::once(self.lower_neighbor).collect(),
+                    removed_face_vertices: [
+                        self.origin_vertex,
+                        self.x_axis_vertex,
+                        self.y_axis_vertex,
+                    ]
+                    .into_iter()
+                    .collect(),
+                    inserted_face_vertices: [self.upper_apex_vertex, self.lower_apex_vertex]
+                        .into_iter()
+                        .collect(),
+                },
+                removed_cell_vertices,
+            };
+
+            LastAppliedFlip::from_applied_flip(&applied)
+        }
+    }
+
+    #[test]
+    fn test_ridge_diagnostic_helpers_format_valid_missing_and_invalid_cells() {
+        init_tracing();
+        let fixture = RidgeDiagnosticFixture3d::new();
+        let ridge = fixture.ridge_ab();
+        let cell = fixture.tds.get_cell(fixture.upper_tetrahedron).unwrap();
+
+        let ridge_neighbors = ridge_neighbor_cells_for_cell(cell, &ridge);
+        assert!(
+            ridge_neighbors.contains(&fixture.lower_neighbor),
+            "shared-face neighbor should be visible from the ridge diagnostics"
+        );
+
+        let incident = ridge_incident_cell_summary(&fixture.tds, fixture.upper_tetrahedron, &ridge);
+        assert!(incident.contains(&format!("{:?}: extras=", fixture.upper_tetrahedron)));
+        assert!(incident.contains("ridge_neighbors="));
+        assert!(incident.contains(&format!("{:?}", fixture.lower_neighbor)));
+
+        let cell_summary = cell_vertex_summary(&fixture.tds, fixture.upper_tetrahedron);
+        assert!(cell_summary.contains("vertices="));
+
+        let facet_summary = facet_incident_cell_summary(
+            &fixture.tds,
+            fixture.upper_tetrahedron,
+            &[
+                fixture.origin_vertex,
+                fixture.x_axis_vertex,
+                fixture.y_axis_vertex,
+            ],
+        );
+        assert!(facet_summary.contains("opposite_vertices="));
+        assert!(facet_summary.contains("neighbors="));
+
+        let missing_cell = CellKey::from(KeyData::from_ffi(999_901));
+        assert_eq!(
+            ridge_incident_cell_summary(&fixture.tds, missing_cell, &ridge),
+            format!("{missing_cell:?}: missing")
+        );
+        assert_eq!(
+            cell_vertex_summary(&fixture.tds, missing_cell),
+            format!("{missing_cell:?}: missing")
+        );
+        assert_eq!(
+            facet_incident_cell_summary(
+                &fixture.tds,
+                missing_cell,
+                &[fixture.origin_vertex, fixture.x_axis_vertex],
+            ),
+            format!("{missing_cell:?}: missing")
+        );
+
+        let missing_vertex = VertexKey::from(KeyData::from_ffi(999_902));
+        let invalid_ridge: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            [fixture.origin_vertex, missing_vertex]
+                .into_iter()
+                .collect();
+        let invalid_summary =
+            ridge_incident_cell_summary(&fixture.tds, fixture.upper_tetrahedron, &invalid_ridge);
+        assert!(invalid_summary.contains("extras_error="));
+    }
+
+    #[test]
+    fn test_predecessor_diagnostic_summaries_include_flip_overlap() {
+        init_tracing();
+        let fixture = RidgeDiagnosticFixture3d::new();
+        let last = fixture.last_applied_flip();
+
+        let ridge_summary = predecessor_flip_summary(
+            &fixture.tds,
+            RidgeHandle::new(fixture.lower_neighbor, 2, 3),
+            &[fixture.lower_neighbor],
+            &last,
+        );
+        assert!(ridge_summary.contains("ridge_cell_is_new=true"));
+        assert!(ridge_summary.contains("global_cells_in_new"));
+        assert!(ridge_summary.contains("predecessor_new_cell_vertices"));
+
+        let postcondition_summary = postcondition_facet_predecessor_summary(
+            &fixture.tds,
+            &[fixture.upper_tetrahedron, fixture.lower_neighbor],
+            &last,
+        );
+        assert!(postcondition_summary.contains("incident_cells_in_new"));
+        assert!(postcondition_summary.contains("incident_cells_in_removed"));
+        assert!(postcondition_summary.contains("predecessor_removed_cell_vertices"));
+        assert!(!postcondition_summary.contains("missing-snapshot"));
+    }
+
+    #[test]
+    fn test_debug_ridge_context_exercises_valid_missing_and_invalid_paths() {
+        init_tracing();
+        let fixture = RidgeDiagnosticFixture3d::new();
+        let last = fixture.last_applied_flip();
+        let mut diagnostics = RepairDiagnostics::default();
+
+        debug_ridge_context(
+            &fixture.tds,
+            fixture.ridge_handle_abcd(),
+            Some(2),
+            &mut diagnostics,
+            Some(&last),
+        );
+        assert_eq!(diagnostics.ridge_debug_emitted, 1);
+
+        let missing_cell = CellKey::from(KeyData::from_ffi(999_903));
+        debug_ridge_context(
+            &fixture.tds,
+            RidgeHandle::new(missing_cell, 0, 1),
+            None,
+            &mut diagnostics,
+            None,
+        );
+        assert_eq!(diagnostics.ridge_debug_emitted, 2);
+
+        debug_ridge_context(
+            &fixture.tds,
+            RidgeHandle::new(fixture.upper_tetrahedron, 0, 0),
+            None,
+            &mut diagnostics,
+            None,
+        );
+        assert_eq!(diagnostics.ridge_debug_emitted, 3);
+    }
+
+    #[test]
+    fn test_ridge_debug_limit_suppresses_after_attempt_budget() {
+        let mut diagnostics = RepairDiagnostics {
+            ridge_debug_emitted: RIDGE_DEBUG_LIMIT_DEFAULT,
+            ..RepairDiagnostics::default()
+        };
+
+        assert!(!should_emit_ridge_debug(&mut diagnostics, Some(99)));
+        assert_eq!(
+            diagnostics.ridge_debug_emitted,
+            RIDGE_DEBUG_LIMIT_DEFAULT + 1
+        );
+    }
+
+    #[test]
+    fn test_postcondition_facet_debug_context_is_noop_without_env_flag() {
+        init_tracing();
+        let fixture = RidgeDiagnosticFixture3d::new();
+        let last = fixture.last_applied_flip();
+        let context = FlipContext::<3, 2> {
+            removed_face_vertices: [
+                fixture.origin_vertex,
+                fixture.x_axis_vertex,
+                fixture.y_axis_vertex,
+            ]
+            .into_iter()
+            .collect(),
+            inserted_face_vertices: [fixture.upper_apex_vertex, fixture.lower_apex_vertex]
+                .into_iter()
+                .collect(),
+            removed_cells: [fixture.upper_tetrahedron, fixture.lower_neighbor]
+                .into_iter()
+                .collect(),
+            direction: FlipDirection::Forward,
+        };
+        let mut diagnostics = RepairDiagnostics::default();
+
+        debug_postcondition_facet_context(
+            &fixture.tds,
+            FacetHandle::new(fixture.upper_tetrahedron, 3),
+            &context,
+            &mut diagnostics,
+            Some(&last),
+        );
+
+        assert_eq!(diagnostics.postcondition_facet_debug_emitted, 0);
     }
 
     fn facet_index_for_edge_2d(
@@ -8514,8 +9528,6 @@ mod tests {
 
     #[test]
     fn test_delaunay_repair_error_partial_eq() {
-        use crate::core::triangulation::TopologyGuarantee;
-
         let post_test = DelaunayRepairError::PostconditionFailed {
             message: "test".to_string(),
         };
@@ -8527,6 +9539,33 @@ mod tests {
         };
         assert_eq!(post_test, post_test_copy);
         assert_ne!(post_test, post_other);
+
+        let verification_err = DelaunayRepairError::VerificationFailed {
+            context: "strict validation",
+            source: FlipError::DegenerateCell,
+        };
+        let verification_err_copy = DelaunayRepairError::VerificationFailed {
+            context: "strict validation",
+            source: FlipError::DegenerateCell,
+        };
+        let verification_other = DelaunayRepairError::VerificationFailed {
+            context: "strict validation",
+            source: FlipError::DuplicateCell,
+        };
+        assert_eq!(verification_err, verification_err_copy);
+        assert_ne!(verification_err, verification_other);
+
+        let canonicalization_err = DelaunayRepairError::OrientationCanonicalizationFailed {
+            message: "test".to_string(),
+        };
+        let canonicalization_err_copy = DelaunayRepairError::OrientationCanonicalizationFailed {
+            message: "test".to_string(),
+        };
+        let canonicalization_other = DelaunayRepairError::OrientationCanonicalizationFailed {
+            message: "other".to_string(),
+        };
+        assert_eq!(canonicalization_err, canonicalization_err_copy);
+        assert_ne!(canonicalization_err, canonicalization_other);
 
         let topo_err = DelaunayRepairError::InvalidTopology {
             required: TopologyGuarantee::PLManifold,
@@ -8542,6 +9581,8 @@ mod tests {
 
         // Different variants are never equal.
         assert_ne!(post_test, topo_err);
+        assert_ne!(post_test, verification_err);
+        assert_ne!(post_test, canonicalization_err);
     }
 
     macro_rules! gen_align_periodic_offset_tests {
@@ -9120,6 +10161,73 @@ mod tests {
             result.is_err(),
             "periodic inverse predicate should not fall back to bare coordinates"
         );
+    }
+
+    #[test]
+    fn test_repair_run_full_reseed_frontier_covers_all_cells() {
+        init_tracing();
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 0.2]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let tds = dt.tds();
+        let local_cell = tds.cell_keys().next().unwrap();
+        let outcome = RepairAttemptOutcome {
+            stats: DelaunayRepairStats::default(),
+            last_applied_flip: None,
+            touched_cells: std::iter::once(local_cell).collect(),
+            used_full_reseed: true,
+        };
+
+        let run = repair_run_from_attempt(outcome, tds.cell_keys());
+        let expected_cells: Vec<CellKey> = tds.cell_keys().collect();
+
+        assert!(run.used_full_reseed);
+        assert!(
+            expected_cells.len() > 1,
+            "fixture should distinguish local and full frontiers"
+        );
+        assert_eq!(run.touched_cells.len(), expected_cells.len());
+        assert!(
+            expected_cells
+                .iter()
+                .all(|expected| { run.touched_cells.iter().any(|touched| touched == expected) })
+        );
+    }
+
+    #[test]
+    fn test_repair_k2_empty_seed_does_not_full_reseed() {
+        init_tracing();
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 0.2]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let mut tds = dt.tds().clone();
+        let before = snapshot_topology(&tds);
+        let kernel = AdaptiveKernel::<f64>::new();
+        let config = RepairAttemptConfig {
+            attempt: 1,
+            queue_order: RepairQueueOrder::Fifo,
+            max_flips_override: None,
+        };
+        let empty_seeds: &[CellKey] = &[];
+
+        let outcome =
+            repair_delaunay_with_flips_k2_attempt(&mut tds, &kernel, Some(empty_seeds), &config)
+                .unwrap();
+
+        assert!(!outcome.used_full_reseed);
+        assert_eq!(outcome.stats.facets_checked, 0);
+        assert!(outcome.touched_cells.is_empty());
+        assert_eq!(snapshot_topology(&tds), before);
     }
 
     #[test]

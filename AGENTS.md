@@ -319,8 +319,25 @@ degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
   `Vertex`, `Cell`, `Facet`, `Ridge`, `InSphere`, `Orientation`,
   `insphere`, `circumcenter`, `circumradius`.  Avoid Rust‑ecosystem
   abstractions that obscure the math.
-- Use `tracing::{debug,info,warn,error}!` for all runtime diagnostics.
-  Never `eprintln!` / `println!` outside examples and benches.
+- Use `tracing::{debug,info,warn,error}!` for committed diagnostics
+  across production code, tests, and benchmarks, especially for
+  library/runtime code, non-trivial test diagnostics, and debugging of
+  numerical or topological invariants.
+- `eprintln!` is acceptable only for short-lived local debugging while
+  investigating a problem; remove it before landing changes.
+- Never log inside hot benchmark loops or Criterion-measured closures.
+  Emit setup/summary diagnostics outside the measured path instead.
+- Gate non-essential test/benchmark diagnostics behind feature flags.
+  In this repository use `test-debug` for test diagnostics and
+  `bench-logging` for benchmark diagnostics, e.g.:
+
+  ```rust
+  #[cfg(feature = "test-debug")]
+  tracing::debug!("test diagnostic");
+
+  #[cfg(feature = "bench-logging")]
+  tracing::debug!("diagnostic message");
+  ```
 
 ### Scientific notation in docs
 

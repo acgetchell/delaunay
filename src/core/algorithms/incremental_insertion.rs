@@ -279,8 +279,12 @@ impl InsertionError {
             // TDS-level topology errors: only geometry/FP-related sub-variants are retryable.
             // Structural errors (missing cells, broken invariants) won't be fixed by perturbation.
             Self::TopologyValidation(tds_err) => Self::is_tds_error_retryable(tds_err),
-            // Conflict region errors: non-manifold facets, ridge fans, or disconnected/open cavity
-            // boundaries indicate degeneracy.
+            // Conflict region errors: only geometry-degeneracy variants are retryable.
+            // Structural variants (InvalidStartCell, PredicateError, CellDataAccessFailed,
+            // InternalInconsistency — regardless of which typed
+            // `InternalInconsistencySite` carries the failure context) represent caller
+            // or implementation errors that perturbation cannot fix, and so fall
+            // through to non-retryable by omission.
             Self::ConflictRegion(ce) => {
                 matches!(
                     ce,
@@ -2349,6 +2353,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::algorithms::locate::InternalInconsistencySite;
     use crate::core::collections::CellKeyBuffer;
     use crate::core::tds::GeometricError;
     use crate::geometry::kernel::FastKernel;
@@ -2892,6 +2897,39 @@ mod tests {
             !InsertionError::ConflictRegion(ConflictError::CellDataAccessFailed {
                 cell_key: CellKey::from(KeyData::from_ffi(1)),
                 message: "test".to_string(),
+            })
+            .is_retryable()
+        );
+        // InternalInconsistency is not retryable regardless of the typed site:
+        // perturbation cannot fix logic errors.
+        assert!(
+            !InsertionError::ConflictRegion(ConflictError::InternalInconsistency {
+                site: InternalInconsistencySite::RidgeFanExtraFacetOutOfBounds {
+                    index: 7,
+                    boundary_facets_len: 5,
+                    extra_facets_len: 3,
+                },
+            })
+            .is_retryable()
+        );
+        assert!(
+            !InsertionError::ConflictRegion(ConflictError::InternalInconsistency {
+                site: InternalInconsistencySite::OpenBoundaryMissingFirstFacet {
+                    first_facet: 4,
+                    boundary_facets_len: 2,
+                    facet_count: 1,
+                    ridge_vertex_count: 2,
+                },
+            })
+            .is_retryable()
+        );
+        assert!(
+            !InsertionError::ConflictRegion(ConflictError::InternalInconsistency {
+                site: InternalInconsistencySite::RidgeInfoMissingSecondFacet {
+                    first_facet: 0,
+                    boundary_facets_len: 2,
+                    ridge_vertex_count: 2,
+                },
             })
             .is_retryable()
         );

@@ -16,13 +16,46 @@ use rand::seq::SliceRandom;
 fn init_tracing() {
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| {
+        let default_filter = if cfg!(feature = "test-debug") {
+            "info"
+        } else {
+            "warn"
+        };
         let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_filter));
         let _ = tracing_subscriber::fmt()
             .with_env_filter(filter)
             .with_test_writer()
             .try_init();
     });
+}
+
+macro_rules! test_debug_info {
+    ($($arg:tt)*) => {{
+        #[cfg(feature = "test-debug")]
+        {
+            init_tracing();
+            tracing::info!($($arg)*);
+        }
+        #[cfg(not(feature = "test-debug"))]
+        {
+            let _ = format_args!($($arg)*);
+        }
+    }};
+}
+
+macro_rules! test_debug_warn {
+    ($($arg:tt)*) => {{
+        #[cfg(feature = "test-debug")]
+        {
+            init_tracing();
+            tracing::warn!($($arg)*);
+        }
+        #[cfg(not(feature = "test-debug"))]
+        {
+            let _ = format_args!($($arg)*);
+        }
+    }};
 }
 
 // =========================================================================
@@ -163,13 +196,15 @@ fn debug_issue_120_empty_circumsphere_5d() {
         .unwrap_or_else(|err| panic!("5D debug configuration failed to construct: {err}"));
     match dt.repair_delaunay_with_flips() {
         Ok(stats) => {
-            eprintln!(
+            test_debug_info!(
                 "[Issue #120 debug] repair_delaunay_with_flips stats: checked={}, flips={}, max_queue={}",
-                stats.facets_checked, stats.flips_performed, stats.max_queue_len
+                stats.facets_checked,
+                stats.flips_performed,
+                stats.max_queue_len
             );
         }
         Err(err) => {
-            eprintln!("[Issue #120 debug] repair_delaunay_with_flips error: {err}");
+            test_debug_warn!("[Issue #120 debug] repair_delaunay_with_flips error: {err}");
         }
     }
     let mut dt_robust: DelaunayTriangulation<RobustKernel<f64>, (), (), 5> =
@@ -180,17 +215,19 @@ fn debug_issue_120_empty_circumsphere_5d() {
         );
     match dt_robust.repair_delaunay_with_flips() {
         Ok(stats) => {
-            eprintln!(
+            test_debug_info!(
                 "[Issue #120 debug] robust repair stats: checked={}, flips={}, max_queue={}",
-                stats.facets_checked, stats.flips_performed, stats.max_queue_len
+                stats.facets_checked,
+                stats.flips_performed,
+                stats.max_queue_len
             );
         }
         Err(err) => {
-            eprintln!("[Issue #120 debug] robust repair error: {err}");
+            test_debug_warn!("[Issue #120 debug] robust repair error: {err}");
         }
     }
     if let Err(err) = dt_robust.is_valid() {
-        eprintln!("[Issue #120 debug] robust triangulation still invalid: {err:?}");
+        test_debug_warn!("[Issue #120 debug] robust triangulation still invalid: {err:?}");
     }
     let mut rng = rand::rngs::StdRng::seed_from_u64(0x1200_5eed);
     for attempt in 0..20 {
@@ -201,7 +238,7 @@ fn debug_issue_120_empty_circumsphere_5d() {
             TopologyGuarantee::PLManifold,
         ) {
             if dt_alt.is_valid().is_ok() {
-                eprintln!(
+                test_debug_info!(
                     "[Issue #120 debug] found valid triangulation after shuffle attempt {}",
                     attempt + 1
                 );
@@ -209,17 +246,17 @@ fn debug_issue_120_empty_circumsphere_5d() {
             }
         }
         if attempt == 19 {
-            eprintln!("[Issue #120 debug] no valid triangulation found in 20 shuffles");
+            test_debug_warn!("[Issue #120 debug] no valid triangulation found in 20 shuffles");
         }
     }
     for (cell_key, cell) in dt.cells() {
-        eprintln!("[Issue #120 debug] cell {cell_key:?}:");
+        test_debug_info!("[Issue #120 debug] cell {cell_key:?}:");
         for &vkey in cell.vertices() {
             let vertex = dt
                 .tds()
                 .get_vertex_by_key(vkey)
                 .expect("vertex key should exist");
-            eprintln!(
+            test_debug_info!(
                 "  vkey={vkey:?}, uuid={}, point={:?}",
                 vertex.uuid(),
                 vertex.point()

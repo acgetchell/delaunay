@@ -6,6 +6,36 @@
 
 use delaunay::prelude::triangulation::*;
 
+#[cfg(feature = "test-debug")]
+fn init_tracing() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_test_writer()
+            .try_init();
+    });
+}
+
+#[cfg(not(feature = "test-debug"))]
+const fn init_tracing() {}
+
+macro_rules! test_debug_info {
+    ($($arg:tt)*) => {{
+        #[cfg(feature = "test-debug")]
+        {
+            init_tracing();
+            tracing::info!($($arg)*);
+        }
+        #[cfg(not(feature = "test-debug"))]
+        {
+            let _ = format_args!($($arg)*);
+        }
+    }};
+}
+
 /// Test that construction succeeds even when flip-based repair might struggle.
 ///
 /// This test uses a configuration that historically triggered repair challenges,
@@ -71,6 +101,7 @@ fn repair_fallback_produces_valid_triangulation() {
 /// the fallback mechanism maintains validity throughout.
 #[test]
 fn incremental_insertion_with_repair_fallback() {
+    init_tracing();
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
         DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
@@ -107,7 +138,7 @@ fn incremental_insertion_with_repair_fallback() {
             }
             Err(e) => {
                 // Some insertions may be skipped (duplicates, degeneracies), which is fine
-                eprintln!("Vertex {} skipped: {}", i + 1, e);
+                test_debug_info!("Vertex {} skipped: {}", i + 1, e);
             }
         }
     }
@@ -154,6 +185,7 @@ fn repair_fallback_2d() {
 /// Test that explicit repair call works and validates properly.
 #[test]
 fn explicit_repair_call_validates_result() {
+    init_tracing();
     // Build a triangulation
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
@@ -175,7 +207,10 @@ fn explicit_repair_call_validates_result() {
         .repair_delaunay_with_flips()
         .expect("Explicit repair should succeed");
 
-    eprintln!("Explicit repair stats: {stats:?}");
+    #[cfg(feature = "test-debug")]
+    test_debug_info!("Explicit repair stats: {stats:?}");
+    #[cfg(not(feature = "test-debug"))]
+    let _ = &stats;
 
     // Verify triangulation is valid after explicit repair
     dt.validate()

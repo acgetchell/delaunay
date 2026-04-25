@@ -156,10 +156,11 @@ use core::ops::Div;
 use num_traits::{NumCast, One, Zero};
 use std::borrow::Cow;
 use std::cmp::Ordering as CmpOrdering;
+use std::env;
 use std::hash::{Hash, Hasher};
 use std::sync::{
     OnceLock,
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -189,21 +190,248 @@ static DUPLICATE_DETECTION_GRID_USED: AtomicU64 = AtomicU64::new(0);
 static DUPLICATE_DETECTION_GRID_FALLBACKS: AtomicU64 = AtomicU64::new(0);
 static DUPLICATE_DETECTION_GRID_CANDIDATES: AtomicU64 = AtomicU64::new(0);
 static DUPLICATE_DETECTION_ENABLED: OnceLock<bool> = OnceLock::new();
+static RETRYABLE_SKIP_TRACE_ENABLED: OnceLock<bool> = OnceLock::new();
+static CAVITY_REDUCTION_TRACE_ENABLED: OnceLock<bool> = OnceLock::new();
+static CAVITY_REDUCTION_TRACE_EMITTED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(test)]
-static DUPLICATE_DETECTION_FORCE_ENABLED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static DUPLICATE_DETECTION_FORCE_ENABLED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(debug_assertions)]
 static VERTEX_TO_CELLS_SPILL_EVENTS: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(test)]
+mod test_hooks {
+    use std::cell::Cell;
+
+    thread_local! {
+        static FORCE_NEXT_INSERTION_RETRYABLE_FAILURE: Cell<bool> = const { Cell::new(false) };
+    }
+
+    pub(super) fn take_force_next_insertion_retryable_failure() -> bool {
+        FORCE_NEXT_INSERTION_RETRYABLE_FAILURE.replace(false)
+    }
+
+    pub(super) fn set_force_next_insertion_retryable_failure(enabled: bool) -> bool {
+        FORCE_NEXT_INSERTION_RETRYABLE_FAILURE.replace(enabled)
+    }
+
+    pub(super) fn restore_force_next_insertion_retryable_failure(prior: bool) {
+        FORCE_NEXT_INSERTION_RETRYABLE_FAILURE.set(prior);
+    }
+}
 
 fn duplicate_detection_metrics_enabled() -> bool {
     #[cfg(test)]
     if DUPLICATE_DETECTION_FORCE_ENABLED.load(Ordering::Relaxed) {
         return true;
     }
-    *DUPLICATE_DETECTION_ENABLED
-        .get_or_init(|| std::env::var_os("DELAUNAY_DUPLICATE_METRICS").is_some())
+    *DUPLICATE_DETECTION_ENABLED.get_or_init(|| env::var_os("DELAUNAY_DUPLICATE_METRICS").is_some())
+}
+
+/// Caches whether retryable conflict-region skips should emit release-visible traces.
+fn retryable_skip_trace_enabled() -> bool {
+    *RETRYABLE_SKIP_TRACE_ENABLED
+        .get_or_init(|| env::var_os("DELAUNAY_DEBUG_RETRYABLE_SKIP").is_some())
+}
+
+/// Returns whether the first cavity-reduction chain should emit release-visible tracing.
+fn cavity_reduction_trace_enabled() -> bool {
+    *CAVITY_REDUCTION_TRACE_ENABLED
+        .get_or_init(|| env::var_os("DELAUNAY_DEBUG_CAVITY_REDUCTION_ONCE").is_some())
+}
+
+/// Extracts a compact one-line summary for retryable conflict-region failures.
+///
+/// These summaries are designed for the large-scale debug harness logs, where we want
+/// enough structure to correlate repeated ridge-fan failures without dumping the entire
+/// conflict region.
+fn retryable_conflict_trace_detail(error: &InsertionError) -> Option<String> {
+    match error {
+        InsertionError::ConflictRegion(ConflictError::NonManifoldFacet {
+            facet_hash,
+            cell_count,
+        }) => Some(format!(
+            "kind=non_manifold_facet facet_hash={facet_hash:#x} cell_count={cell_count}"
+        )),
+        InsertionError::ConflictRegion(ConflictError::RidgeFan {
+            facet_count,
+            ridge_vertex_count,
+            extra_cells,
+        }) => Some(format!(
+            "kind=ridge_fan facet_count={facet_count} ridge_vertex_count={ridge_vertex_count} \
+             extra_cells={}",
+            extra_cells.len()
+        )),
+        InsertionError::ConflictRegion(ConflictError::DisconnectedBoundary {
+            visited,
+            total,
+            disconnected_cells,
+        }) => Some(format!(
+            "kind=disconnected_boundary visited={visited} total={total} disconnected_cells={}",
+            disconnected_cells.len()
+        )),
+        InsertionError::ConflictRegion(ConflictError::OpenBoundary {
+            facet_count,
+            ridge_vertex_count,
+            ..
+        }) => Some(format!(
+            "kind=open_boundary facet_count={facet_count} ridge_vertex_count={ridge_vertex_count}"
+        )),
+        _ => None,
+    }
+}
+
+/// Formats a compact summary for cavity-boundary extraction failures.
+fn cavity_conflict_error_summary(error: &ConflictError) -> String {
+    match error {
+        ConflictError::NonManifoldFacet {
+            facet_hash,
+            cell_count,
+        } => format!("non_manifold_facet facet_hash={facet_hash:#x} cell_count={cell_count}"),
+        ConflictError::RidgeFan {
+            facet_count,
+            ridge_vertex_count,
+            extra_cells,
+        } => format!(
+            "ridge_fan facet_count={facet_count} ridge_vertex_count={ridge_vertex_count} \
+             extra_cells={}",
+            extra_cells.len()
+        ),
+        ConflictError::DisconnectedBoundary {
+            visited,
+            total,
+            disconnected_cells,
+        } => format!(
+            "disconnected_boundary visited={visited} total={total} disconnected_cells={}",
+            disconnected_cells.len()
+        ),
+        ConflictError::OpenBoundary {
+            facet_count,
+            ridge_vertex_count,
+            open_cell,
+        } => format!(
+            "open_boundary facet_count={facet_count} ridge_vertex_count={ridge_vertex_count} \
+             open_cell={open_cell:?}"
+        ),
+        ConflictError::InvalidStartCell { cell_key } => {
+            format!("invalid_start_cell cell_key={cell_key:?}")
+        }
+        ConflictError::PredicateError { source } => {
+            format!("predicate_error source={source}")
+        }
+        ConflictError::CellDataAccessFailed { cell_key, message } => {
+            format!("cell_data_access_failed cell_key={cell_key:?} message={message}")
+        }
+        ConflictError::InternalInconsistency { site } => {
+            format!("internal_inconsistency site={site}")
+        }
+    }
+}
+
+/// Emits one-shot tracing for the first cavity-reduction chain in a run.
+///
+/// Routed through `tracing::debug!`; enable with `RUST_LOG=debug` (the
+/// large-scale debug harness wires this up automatically when
+/// `DELAUNAY_DEBUG_CAVITY_REDUCTION_ONCE` is set).
+fn log_cavity_reduction_event<F>(
+    enabled: bool,
+    iteration: usize,
+    conflict_cells: &CellKeyBuffer,
+    event: F,
+) where
+    F: FnOnce() -> String,
+{
+    if !enabled {
+        return;
+    }
+
+    let conflict_preview: Vec<CellKey> = conflict_cells.iter().copied().take(12).collect();
+    let event = event();
+    tracing::debug!(
+        target: "delaunay::cavity_reduction",
+        iteration,
+        conflict_cells = conflict_cells.len(),
+        event,
+        conflict_preview = ?conflict_preview,
+        "cavity-reduction event"
+    );
+}
+
+fn retain_conflict_cells_and_record_removed(
+    conflict_cells: &mut CellKeyBuffer,
+    repair_seed_cells: &mut CellKeyBuffer,
+    mut keep_cell: impl FnMut(CellKey) -> bool,
+) {
+    conflict_cells.retain(|cell_key| {
+        let keep = keep_cell(*cell_key);
+        if !keep {
+            repair_seed_cells.push(*cell_key);
+        }
+        keep
+    });
+}
+
+fn replace_conflict_cells_and_record_removed(
+    conflict_cells: &mut CellKeyBuffer,
+    repair_seed_cells: &mut CellKeyBuffer,
+    replacement: CellKeyBuffer,
+) {
+    let replacement_set: FastHashSet<CellKey> = replacement.iter().copied().collect();
+    for &cell_key in conflict_cells.iter() {
+        if !replacement_set.contains(&cell_key) {
+            repair_seed_cells.push(cell_key);
+        }
+    }
+    *conflict_cells = replacement;
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Diagnostic helper keeps retryable skip instrumentation centralized"
+)]
+/// Emits a single structured line for a retryable conflict-region skip after rollback.
+///
+/// Logging after rollback lets the trace report both the state we tried to modify and
+/// the restored cell/vertex counts that future attempts will see. Routed through
+/// `tracing::debug!` so callers can filter it via `RUST_LOG`; enabled for release-mode
+/// runs by `DELAUNAY_DEBUG_RETRYABLE_SKIP`.
+fn log_retryable_conflict_skip(
+    bulk_index: Option<usize>,
+    uuid: Uuid,
+    attempt: usize,
+    max_attempts: usize,
+    used_perturbation: bool,
+    will_retry: bool,
+    cells_before_attempt: usize,
+    vertices_before_attempt: usize,
+    cells_after_rollback: usize,
+    vertices_after_rollback: usize,
+    detail: &str,
+    error: &InsertionError,
+) {
+    if !retryable_skip_trace_enabled() {
+        return;
+    }
+
+    let bulk_index_display = bulk_index.map_or_else(|| String::from("n/a"), |idx| idx.to_string());
+    tracing::debug!(
+        target: "delaunay::retryable_skip",
+        bulk_index = %bulk_index_display,
+        uuid = %uuid,
+        attempt,
+        max_attempts,
+        used_perturbation,
+        rolled_back = true,
+        will_retry,
+        cells_before_attempt,
+        vertices_before_attempt,
+        cells_after_rollback,
+        vertices_after_rollback,
+        conflict = %detail,
+        error = %error,
+        "retryable conflict-region skip after rollback"
+    );
 }
 
 /// Telemetry counters for duplicate-coordinate detection.
@@ -528,7 +756,30 @@ impl From<ManifoldError> for InvariantError {
     }
 }
 
-type TryInsertImplOk = ((VertexKey, Option<CellKey>), usize, SuspicionFlags);
+struct TryInsertImplOk {
+    /// Inserted vertex key plus an optional locate hint for the caller.
+    inserted: (VertexKey, Option<CellKey>),
+    /// Number of cells removed during local non-manifold repair.
+    cells_removed: usize,
+    /// Suspicion flags observed during the insertion attempt.
+    suspicion: SuspicionFlags,
+    /// Cells touched while shaping the cavity that should seed follow-up local repair.
+    ///
+    /// This retains cells that were shrunk out of the final conflict region so higher
+    /// layers can still revisit them if the insertion leaves a nearby Delaunay violation.
+    repair_seed_cells: CellKeyBuffer,
+}
+
+/// Internal insertion result that preserves the user-facing outcome plus
+/// hidden repair seeding used by batch/debug construction paths.
+pub(crate) struct DetailedInsertionResult {
+    /// Public insertion outcome returned to higher layers.
+    pub outcome: InsertionOutcome,
+    /// Telemetry collected while attempting the insertion.
+    pub stats: InsertionStatistics,
+    /// Extra cells that should widen the caller's local repair seed set.
+    pub repair_seed_cells: CellKeyBuffer,
+}
 
 /// Policy controlling when the triangulation runs global validation passes.
 ///
@@ -3125,6 +3376,7 @@ where
             DEFAULT_PERTURBATION_RETRIES,
             0,
             None,
+            None,
         )?;
         match outcome {
             InsertionOutcome::Inserted { vertex_key, hint } => Ok((vertex_key, hint)),
@@ -3161,29 +3413,33 @@ where
             DEFAULT_PERTURBATION_RETRIES,
             0,
             None,
+            None,
         )
     }
 
     /// Insert a vertex with statistics, using a custom perturbation seed and an optional
-    /// spatial hash-grid index.
+    /// spatial hash-grid index, and also return the cells that cavity reduction touched
+    /// and left in place.
     ///
-    /// This is intended for bulk-construction paths that maintain a local index to
-    /// accelerate duplicate detection and locate-hint selection.
-    pub(crate) fn insert_with_statistics_seeded_indexed(
+    /// The extra seed set stays internal so bulk construction and debug rebuilds can widen
+    /// their local repair frontier without changing the public insertion API.
+    pub(crate) fn insert_with_statistics_seeded_indexed_detailed(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
         conflict_cells: Option<&CellKeyBuffer>,
         hint: Option<CellKey>,
         perturbation_seed: u64,
         index: Option<&mut HashGridIndex<K::Scalar, D>>,
-    ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError> {
-        self.insert_transactional(
+        bulk_index: Option<usize>,
+    ) -> Result<DetailedInsertionResult, InsertionError> {
+        self.insert_transactional_detailed(
             vertex,
             conflict_cells,
             hint,
             DEFAULT_PERTURBATION_RETRIES,
             perturbation_seed,
             index,
+            bulk_index,
         )
     }
 
@@ -3199,9 +3455,10 @@ where
     /// 6. If the error is non-retryable: return `Err(InsertionError)`
     ///
     /// This guarantees we transition from one valid manifold to another.
+    #[cfg(test)]
     #[expect(
-        clippy::too_many_lines,
-        reason = "Complex insertion logic; splitting further would harm readability"
+        clippy::too_many_arguments,
+        reason = "Test helpers mirror the detailed transactional insertion signature"
     )]
     fn insert_transactional(
         &mut self,
@@ -3210,14 +3467,52 @@ where
         hint: Option<CellKey>,
         max_perturbation_attempts: usize,
         perturbation_seed: u64,
-        mut index: Option<&mut HashGridIndex<K::Scalar, D>>,
+        index: Option<&mut HashGridIndex<K::Scalar, D>>,
+        bulk_index: Option<usize>,
     ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError> {
+        let detail = self.insert_transactional_detailed(
+            vertex,
+            conflict_cells,
+            hint,
+            max_perturbation_attempts,
+            perturbation_seed,
+            index,
+            bulk_index,
+        )?;
+        Ok((detail.outcome, detail.stats))
+    }
+
+    /// Transactional insertion with automatic rollback and perturbation retry, plus
+    /// the local-repair seed cells discovered while shaping the cavity.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Complex insertion logic; splitting further would harm readability"
+    )]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Transactional insertion needs the bulk-index diagnostic context for #204 tracing"
+    )]
+    fn insert_transactional_detailed(
+        &mut self,
+        vertex: Vertex<K::Scalar, U, D>,
+        conflict_cells: Option<&CellKeyBuffer>,
+        hint: Option<CellKey>,
+        max_perturbation_attempts: usize,
+        perturbation_seed: u64,
+        mut index: Option<&mut HashGridIndex<K::Scalar, D>>,
+        bulk_index: Option<usize>,
+    ) -> Result<DetailedInsertionResult, InsertionError> {
         let mut stats = InsertionStatistics::default();
         let original_coords = *vertex.point().coords();
         let original_uuid = vertex.uuid();
         let mut current_vertex = vertex;
+        // Preserve the last retryable failure so an exhausted perturbation loop can
+        // explain why the vertex was skipped instead of reporting a generic error.
         let mut last_retryable_error: Option<InsertionError> = None;
 
+        // Reuse the caller's spatial index as a locate-hint source when batch insertion did
+        // not already provide a better hint. This keeps retries and bulk runs on the same
+        // point-location path.
         let mut hint = hint;
         if hint.is_none()
             && let Some(index_ref) = index.as_deref()
@@ -3225,6 +3520,8 @@ where
             hint = self.select_locate_hint_from_hash_grid(&original_coords, index_ref);
         }
 
+        // Scale perturbations against the local neighborhood so retries stay small relative
+        // to the nearby geometry instead of using a single global epsilon.
         let local_scale = self.estimate_local_perturbation_scale(&original_coords, hint);
 
         let duplicate_tolerance: K::Scalar =
@@ -3241,7 +3538,8 @@ where
         for attempt in 0..=max_perturbation_attempts {
             stats.attempts = attempt + 1;
 
-            // Apply perturbation for retry attempts
+            // Attempt 0 uses the caller's coordinates verbatim; later attempts apply a
+            // deterministic signed perturbation so the same seed reproduces the same path.
             if attempt > 0 {
                 let mut perturbed_coords = original_coords;
                 // Progressive local-scale perturbation: magnitude grows ×10 per attempt.
@@ -3267,7 +3565,11 @@ where
                             "Failed to convert perturbation scale {epsilon_value} into scalar type"
                         ),
                     });
-                    return Ok((InsertionOutcome::Skipped { error }, stats));
+                    return Ok(DetailedInsertionResult {
+                        outcome: InsertionOutcome::Skipped { error },
+                        stats,
+                        repair_seed_cells: CellKeyBuffer::new(),
+                    });
                 };
 
                 let perturbation_scale = epsilon * local_scale;
@@ -3310,8 +3612,15 @@ where
                 stats.result = InsertionResult::SkippedDuplicate;
                 #[cfg(debug_assertions)]
                 tracing::debug!("SKIPPED: {error}");
-                return Ok((InsertionOutcome::Skipped { error }, stats));
+                return Ok(DetailedInsertionResult {
+                    outcome: InsertionOutcome::Skipped { error },
+                    stats,
+                    repair_seed_cells: CellKeyBuffer::new(),
+                });
             }
+
+            let cells_before_attempt = self.tds.number_of_cells();
+            let vertices_before_attempt = self.tds.number_of_vertices();
 
             // Clone TDS for rollback (transactional semantics)
             let tds_snapshot = self.tds.clone();
@@ -3321,6 +3630,24 @@ where
             // Topology safety net: ensure we don't commit an insertion that breaks Level 3 topology.
             // If the cavity-based insertion produces an Euler/topology mismatch, roll back and retry a
             // conservative fallback (star-split of the containing cell) within the same transactional attempt.
+            #[cfg(test)]
+            // Test-only hook for deterministic coverage of the rollback + perturbation retry
+            // success path, which is otherwise rare under the adaptive SoS predicates.
+            let result = if test_hooks::take_force_next_insertion_retryable_failure() {
+                Err(InsertionError::NonManifoldTopology {
+                    facet_hash: 0x000F_0CED,
+                    cell_count: 3,
+                })
+            } else {
+                self.try_insert_with_topology_safety_net(
+                    current_vertex,
+                    conflict_cells,
+                    hint,
+                    attempt,
+                    &tds_snapshot,
+                )
+            };
+            #[cfg(not(test))]
             let result = self.try_insert_with_topology_safety_net(
                 current_vertex,
                 conflict_cells,
@@ -3330,7 +3657,12 @@ where
             );
 
             match result {
-                Ok((result, cells_removed, _suspicion)) => {
+                Ok(TryInsertImplOk {
+                    inserted,
+                    cells_removed,
+                    repair_seed_cells,
+                    ..
+                }) => {
                     stats.cells_removed_during_repair = cells_removed;
                     stats.result = InsertionResult::Inserted;
                     #[cfg(debug_assertions)]
@@ -3340,14 +3672,20 @@ where
                         );
                     }
 
-                    let (vertex_key, hint) = result;
+                    let (vertex_key, hint) = inserted;
+                    // Only the committed attempt updates the duplicate index. Earlier
+                    // retries all rolled back to the pre-attempt triangulation state.
                     if let Some(index) = index.as_deref_mut()
                         && let Some(vertex) = self.tds.get_vertex_by_key(vertex_key)
                     {
                         index.insert_vertex(vertex_key, vertex.point().coords());
                     }
 
-                    return Ok((InsertionOutcome::Inserted { vertex_key, hint }, stats));
+                    return Ok(DetailedInsertionResult {
+                        outcome: InsertionOutcome::Inserted { vertex_key, hint },
+                        stats,
+                        repair_seed_cells,
+                    });
                 }
                 Err(e) => {
                     // Any error - rollback to snapshot
@@ -3358,11 +3696,36 @@ where
                         stats.result = InsertionResult::SkippedDuplicate;
                         #[cfg(debug_assertions)]
                         tracing::debug!("SKIPPED: {e}");
-                        return Ok((InsertionOutcome::Skipped { error: e }, stats));
+                        return Ok(DetailedInsertionResult {
+                            outcome: InsertionOutcome::Skipped { error: e },
+                            stats,
+                            repair_seed_cells: CellKeyBuffer::new(),
+                        });
                     }
 
                     // Check if this is a retryable error (geometric degeneracy)
                     let is_retryable = e.is_retryable();
+
+                    // Emit the conflict summary after rollback so the trace captures the
+                    // restored manifold state that the next retry will start from.
+                    if retryable_skip_trace_enabled()
+                        && let Some(detail) = retryable_conflict_trace_detail(&e)
+                    {
+                        log_retryable_conflict_skip(
+                            bulk_index,
+                            original_uuid,
+                            attempt + 1,
+                            max_perturbation_attempts + 1,
+                            attempt > 0,
+                            is_retryable && attempt < max_perturbation_attempts,
+                            cells_before_attempt,
+                            vertices_before_attempt,
+                            self.tds.number_of_cells(),
+                            self.tds.number_of_vertices(),
+                            &detail,
+                            &e,
+                        );
+                    }
 
                     if is_retryable && attempt < max_perturbation_attempts {
                         last_retryable_error = Some(e.clone());
@@ -3389,7 +3752,13 @@ where
                                     }
                                 ),
                         );
-                        return Ok((InsertionOutcome::Skipped { error: e }, stats));
+                        return Ok(DetailedInsertionResult {
+                            outcome: InsertionOutcome::Skipped { error: e },
+                            stats,
+                            // Skipped insertions do not mutate the triangulation, so any
+                            // intermediate cavity-seed hints are irrelevant to callers.
+                            repair_seed_cells: CellKeyBuffer::new(),
+                        });
                     } else {
                         // Non-retryable structural error (e.g., duplicate UUID)
                         return Err(e);
@@ -3682,19 +4051,18 @@ where
         attempt: usize,
         tds_snapshot: &Tds<K::Scalar, U, V, D>,
     ) -> Result<TryInsertImplOk, InsertionError> {
-        let (ok, cells_removed, mut suspicion) =
-            self.try_insert_impl(vertex, conflict_cells, hint)?;
+        let mut insert_ok = self.try_insert_impl(vertex, conflict_cells, hint)?;
 
         if attempt > 0 {
-            suspicion.perturbation_used = true;
+            insert_ok.suspicion.perturbation_used = true;
         }
 
         // Skip Level 3 validation during bootstrap (vertices but no cells yet).
         if self.tds.number_of_cells() == 0 {
-            return Ok((ok, cells_removed, suspicion));
+            return Ok(insert_ok);
         }
 
-        if let Err(validation_err) = self.validate_after_insertion(suspicion) {
+        if let Err(validation_err) = self.validate_after_insertion(insert_ok.suspicion) {
             // Roll back to snapshot and attempt a star-split fallback for interior points.
             self.tds = tds_snapshot.clone();
             return self.try_star_split_fallback_after_topology_failure(
@@ -3705,7 +4073,7 @@ where
             );
         }
 
-        Ok((ok, cells_removed, suspicion))
+        Ok(insert_ok)
     }
 
     /// After a Level 3 topology validation failure, try to recover by performing a star-split
@@ -3732,14 +4100,14 @@ where
         star_conflict.push(start_cell);
 
         match self.try_insert_impl(vertex, Some(&star_conflict), Some(start_cell)) {
-            Ok((fallback_ok, fallback_removed, mut fallback_suspicion)) => {
-                fallback_suspicion.fallback_star_split = true;
+            Ok(mut fallback_ok) => {
+                fallback_ok.suspicion.fallback_star_split = true;
                 if attempt > 0 {
-                    fallback_suspicion.perturbation_used = true;
+                    fallback_ok.suspicion.perturbation_used = true;
                 }
 
                 if let Err(fallback_validation_err) =
-                    self.validate_after_insertion(fallback_suspicion)
+                    self.validate_after_insertion(fallback_ok.suspicion)
                 {
                     return Err(Self::invariant_error_to_insertion_error(
                         fallback_validation_err,
@@ -3755,7 +4123,7 @@ where
                     "Topology safety-net: star-split fallback succeeded (start_cell={start_cell:?})"
                 );
 
-                Ok((fallback_ok, fallback_removed, fallback_suspicion))
+                Ok(fallback_ok)
             }
             Err(fallback_err) => Err(fallback_err),
         }
@@ -4042,7 +4410,7 @@ where
         mut conflict_cells: CellKeyBuffer,
         fallback_cell: Option<CellKey>,
         suspicion: &mut SuspicionFlags,
-    ) -> Result<(Option<CellKey>, usize), InsertionError> {
+    ) -> Result<(Option<CellKey>, usize, CellKeyBuffer), InsertionError> {
         #[cfg(not(debug_assertions))]
         let _ = point;
 
@@ -4056,6 +4424,11 @@ where
             suspicion.fallback_star_split = true;
             conflict_cells.push(start_cell);
         }
+
+        // Preserve every cell that participates in cavity shaping and is later
+        // removed from the final cavity so callers can seed local Delaunay
+        // repair from the surviving fringe.
+        let mut repair_seed_cells = CellKeyBuffer::new();
 
         // Extract cavity boundary.
         //
@@ -4083,9 +4456,39 @@ where
             {
                 const MAX_CAVITY_ITERATIONS: usize = 32;
                 let mut iterations: usize = 0;
+                let trace_enabled = cavity_reduction_trace_enabled();
+                let mut trace_cavity_reduction = false;
+                let mut saw_ridge_fan_shrink = false;
+
+                match &extraction_result {
+                    Ok(boundary) => {
+                        log_cavity_reduction_event(
+                            trace_cavity_reduction,
+                            iterations,
+                            &conflict_cells,
+                            || format!("initial_ok boundary_facets={}", boundary.len()),
+                        );
+                    }
+                    Err(err) => {
+                        trace_cavity_reduction = trace_enabled
+                            && !CAVITY_REDUCTION_TRACE_EMITTED.swap(true, Ordering::Relaxed);
+                        log_cavity_reduction_event(
+                            trace_cavity_reduction,
+                            iterations,
+                            &conflict_cells,
+                            || format!("initial_err {}", cavity_conflict_error_summary(err)),
+                        );
+                    }
+                }
 
                 loop {
                     if iterations >= MAX_CAVITY_ITERATIONS {
+                        log_cavity_reduction_event(
+                            trace_cavity_reduction,
+                            iterations,
+                            &conflict_cells,
+                            || "budget_exhausted".to_string(),
+                        );
                         break;
                     }
                     iterations += 1;
@@ -4101,9 +4504,20 @@ where
                                 conflict_cells_before = conflict_cells.len(),
                                 "D={D}: cavity reduction (RidgeFan shrink)"
                             );
+                            log_cavity_reduction_event(
+                                trace_cavity_reduction,
+                                iterations,
+                                &conflict_cells,
+                                || format!("ridge_fan_shrink remove_cells={extra_cells:?}"),
+                            );
+                            saw_ridge_fan_shrink = true;
                             let remove_set: FastHashSet<CellKey> =
                                 extra_cells.iter().copied().collect();
-                            conflict_cells.retain(|k| !remove_set.contains(k));
+                            retain_conflict_cells_and_record_removed(
+                                &mut conflict_cells,
+                                &mut repair_seed_cells,
+                                |cell_key| !remove_set.contains(&cell_key),
+                            );
                         }
 
                         // DisconnectedBoundary: EXPAND – add non-conflict neighbors of the
@@ -4117,15 +4531,17 @@ where
                             let conflict_set: FastHashSet<CellKey> =
                                 conflict_cells.iter().copied().collect();
                             let mut cells_to_add: FastHashSet<CellKey> = FastHashSet::default();
-                            for &dc in disconnected_cells {
-                                if let Some(cell) = self.tds.get_cell(dc)
-                                    && let Some(neighbors) = cell.neighbors()
-                                {
-                                    for &neighbor_opt in neighbors {
-                                        if let Some(nk) = neighbor_opt
-                                            && !conflict_set.contains(&nk)
-                                        {
-                                            cells_to_add.insert(nk);
+                            if !saw_ridge_fan_shrink {
+                                for &dc in disconnected_cells {
+                                    if let Some(cell) = self.tds.get_cell(dc)
+                                        && let Some(neighbors) = cell.neighbors()
+                                    {
+                                        for &neighbor_opt in neighbors {
+                                            if let Some(nk) = neighbor_opt
+                                                && !conflict_set.contains(&nk)
+                                            {
+                                                cells_to_add.insert(nk);
+                                            }
                                         }
                                     }
                                 }
@@ -4139,6 +4555,16 @@ where
                                     conflict_cells_before = conflict_cells.len(),
                                     "D={D}: cavity expansion (DisconnectedBoundary hole-fill)"
                                 );
+                                log_cavity_reduction_event(
+                                    trace_cavity_reduction,
+                                    iterations,
+                                    &conflict_cells,
+                                    || {
+                                        let added: Vec<CellKey> =
+                                            cells_to_add.iter().copied().collect();
+                                        format!("disconnected_boundary_expand add_cells={added:?}")
+                                    },
+                                );
                                 for k in cells_to_add {
                                     conflict_cells.push(k);
                                 }
@@ -4150,10 +4576,30 @@ where
                                     conflict_cells_before = conflict_cells.len(),
                                     "D={D}: cavity reduction (DisconnectedBoundary shrink fallback)"
                                 );
+                                log_cavity_reduction_event(
+                                    trace_cavity_reduction,
+                                    iterations,
+                                    &conflict_cells,
+                                    || {
+                                        format!(
+                                            "disconnected_boundary_shrink remove_cells={disconnected_cells:?}"
+                                        )
+                                    },
+                                );
                                 let remove_set: FastHashSet<CellKey> =
                                     disconnected_cells.iter().copied().collect();
-                                conflict_cells.retain(|k| !remove_set.contains(k));
+                                retain_conflict_cells_and_record_removed(
+                                    &mut conflict_cells,
+                                    &mut repair_seed_cells,
+                                    |cell_key| !remove_set.contains(&cell_key),
+                                );
                             } else {
+                                log_cavity_reduction_event(
+                                    trace_cavity_reduction,
+                                    iterations,
+                                    &conflict_cells,
+                                    || "disconnected_boundary_no_progress".to_string(),
+                                );
                                 break;
                             }
                         }
@@ -4168,14 +4614,50 @@ where
                                 conflict_cells_before = conflict_cells.len(),
                                 "D={D}: cavity reduction (OpenBoundary shrink)"
                             );
+                            log_cavity_reduction_event(
+                                trace_cavity_reduction,
+                                iterations,
+                                &conflict_cells,
+                                || format!("open_boundary_shrink open_cell={open_cell:?}"),
+                            );
                             let open = *open_cell;
-                            conflict_cells.retain(|k| *k != open);
+                            retain_conflict_cells_and_record_removed(
+                                &mut conflict_cells,
+                                &mut repair_seed_cells,
+                                |cell_key| cell_key != open,
+                            );
                         }
 
-                        _ => break,
+                        _ => {
+                            log_cavity_reduction_event(
+                                trace_cavity_reduction,
+                                iterations,
+                                &conflict_cells,
+                                || "no_reduction_rule_matched".to_string(),
+                            );
+                            break;
+                        }
                     }
 
                     extraction_result = extract_cavity_boundary(&self.tds, &conflict_cells);
+                    match &extraction_result {
+                        Ok(boundary) => {
+                            log_cavity_reduction_event(
+                                trace_cavity_reduction,
+                                iterations,
+                                &conflict_cells,
+                                || format!("reextract_ok boundary_facets={}", boundary.len()),
+                            );
+                        }
+                        Err(err) => {
+                            log_cavity_reduction_event(
+                                trace_cavity_reduction,
+                                iterations,
+                                &conflict_cells,
+                                || format!("reextract_err {}", cavity_conflict_error_summary(err)),
+                            );
+                        }
+                    }
                 }
             }
 
@@ -4218,11 +4700,13 @@ where
                             "Conflict region degeneracy ({err}); falling back to star-split of cell {start_cell:?}"
                         );
 
-                        conflict_cells = {
-                            let mut owned = CellKeyBuffer::new();
-                            owned.push(start_cell);
-                            owned
-                        };
+                        let mut replacement = CellKeyBuffer::new();
+                        replacement.push(start_cell);
+                        replace_conflict_cells_and_record_removed(
+                            &mut conflict_cells,
+                            &mut repair_seed_cells,
+                            replacement,
+                        );
 
                         Self::star_split_boundary_facets(start_cell)
                     } else {
@@ -4252,11 +4736,13 @@ where
                 "Empty cavity boundary; falling back to splitting containing cell {start_cell:?}"
             );
 
-            conflict_cells = {
-                let mut owned = CellKeyBuffer::new();
-                owned.push(start_cell);
-                owned
-            };
+            let mut replacement = CellKeyBuffer::new();
+            replacement.push(start_cell);
+            replace_conflict_cells_and_record_removed(
+                &mut conflict_cells,
+                &mut repair_seed_cells,
+                replacement,
+            );
             boundary_facets = Self::star_split_boundary_facets(start_cell);
         }
 
@@ -4322,6 +4808,14 @@ where
             external_facets.iter().copied(),
             Some(&conflict_cells),
         )?;
+
+        // Drop any repair-seed entries that were removed earlier but later got
+        // reintroduced into the final conflict region. Those keys will be
+        // deleted by `remove_cells_by_keys` below, so they cannot seed repair.
+        let dead_conflict_cells: FastHashSet<CellKey> = conflict_cells.iter().copied().collect();
+        repair_seed_cells.retain(|ck| !dead_conflict_cells.contains(ck));
+        let mut seen_repair_seed_cells = FastHashSet::default();
+        repair_seed_cells.retain(|ck| seen_repair_seed_cells.insert(*ck));
 
         // Remove conflict cells (now that new cells are wired up)
         let _removed_count = self.tds.remove_cells_by_keys(&conflict_cells);
@@ -4474,7 +4968,7 @@ where
         self.validate_connectedness(&new_cells)?;
 
         // Return hint for next insertion
-        Ok((hint, total_removed))
+        Ok((hint, total_removed, repair_seed_cells))
     }
 
     /// Repair stale incident-cell pointers and detect truly isolated vertices.
@@ -4567,7 +5061,12 @@ where
 
         if num_vertices < D + 1 {
             // Bootstrap phase: just accumulate vertices, no cells yet
-            return Ok(((v_key, None), 0, suspicion));
+            return Ok(TryInsertImplOk {
+                inserted: (v_key, None),
+                cells_removed: 0,
+                suspicion,
+                repair_seed_cells: CellKeyBuffer::new(),
+            });
         } else if num_vertices == D + 1 {
             // Build initial simplex from all D+1 vertices
             let all_vertices: Vec<_> = self.tds.vertices().map(|(_, v)| *v).collect();
@@ -4590,7 +5089,12 @@ where
 
             // Return first cell key for hint caching
             let first_cell = self.tds.cell_keys().next();
-            return Ok(((v_key, first_cell), 0, suspicion));
+            return Ok(TryInsertImplOk {
+                inserted: (v_key, first_cell),
+                cells_removed: 0,
+                suspicion,
+                repair_seed_cells: CellKeyBuffer::new(),
+            });
         }
 
         // 3. Locate containing cell (for vertex D+2 and beyond)
@@ -4781,14 +5285,19 @@ where
                 let conflict_cells = conflict_cells
                     .expect("conflict_cells should be computed above")
                     .into_owned();
-                let (hint, total_removed) = self.insert_with_conflict_region(
+                let (hint, total_removed, repair_seed_cells) = self.insert_with_conflict_region(
                     v_key,
                     &point,
                     conflict_cells,
                     Some(start_cell),
                     &mut suspicion,
                 )?;
-                Ok(((v_key, hint), total_removed, suspicion))
+                Ok(TryInsertImplOk {
+                    inserted: (v_key, hint),
+                    cells_removed: total_removed,
+                    suspicion,
+                    repair_seed_cells,
+                })
             }
             LocateResult::Outside => {
                 if let Some(conflict_cells) = conflict_cells {
@@ -4807,8 +5316,13 @@ where
                         &mut suspicion,
                     );
                     match result {
-                        Ok((hint, total_removed)) => {
-                            return Ok(((v_key, hint), total_removed, suspicion));
+                        Ok((hint, total_removed, repair_seed_cells)) => {
+                            return Ok(TryInsertImplOk {
+                                inserted: (v_key, hint),
+                                cells_removed: total_removed,
+                                suspicion,
+                                repair_seed_cells,
+                            });
                         }
                         Err(err) => {
                             // For exterior points, a "global" conflict region can intersect the hull,
@@ -4882,14 +5396,20 @@ where
                                 suspicion.fallback_star_split = true;
                                 let mut star_conflict = CellKeyBuffer::new();
                                 star_conflict.push(start_cell);
-                                let (hint, total_removed) = self.insert_with_conflict_region(
-                                    v_key,
-                                    &point,
-                                    star_conflict,
-                                    Some(start_cell),
-                                    &mut suspicion,
-                                )?;
-                                return Ok(((v_key, hint), total_removed, suspicion));
+                                let (hint, total_removed, repair_seed_cells) = self
+                                    .insert_with_conflict_region(
+                                        v_key,
+                                        &point,
+                                        star_conflict,
+                                        Some(start_cell),
+                                        &mut suspicion,
+                                    )?;
+                                return Ok(TryInsertImplOk {
+                                    inserted: (v_key, hint),
+                                    cells_removed: total_removed,
+                                    suspicion,
+                                    repair_seed_cells,
+                                });
                             }
                         }
                         #[cfg(debug_assertions)]
@@ -5096,7 +5616,12 @@ where
                 self.validate_connectedness(&new_cells)?;
 
                 // Return vertex key and hint for next insertion
-                Ok(((v_key, hint), total_removed, suspicion))
+                Ok(TryInsertImplOk {
+                    inserted: (v_key, hint),
+                    cells_removed: total_removed,
+                    suspicion,
+                    repair_seed_cells: CellKeyBuffer::new(),
+                })
             }
             LocateResult::OnFacet(_, _) | LocateResult::OnEdge(_) | LocateResult::OnVertex(_) => {
                 // These degenerate cases are already handled at lines 772-779 above,
@@ -5584,12 +6109,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::algorithms::locate::InternalInconsistencySite;
     use crate::core::collections::NeighborBuffer;
     use crate::core::collections::spatial_hash_grid::HashGridIndex;
     use crate::core::vertex::VertexBuilder;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::geometry::point::Point;
-    use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
+    use crate::geometry::traits::coordinate::{
+        Coordinate, CoordinateConversionError, CoordinateScalar,
+    };
     use crate::topology::characteristics::validation::validate_triangulation_euler;
     use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
     use crate::triangulation::delaunay::DelaunayTriangulation;
@@ -5634,6 +6162,23 @@ mod tests {
         }
 
         (tri, [v0, v1, v2, v3], ck)
+    }
+
+    struct ForceNextRetryableInsertionFailureGuard {
+        prior: bool,
+    }
+
+    impl ForceNextRetryableInsertionFailureGuard {
+        fn enable() -> Self {
+            let prior = test_hooks::set_force_next_insertion_retryable_failure(true);
+            Self { prior }
+        }
+    }
+
+    impl Drop for ForceNextRetryableInsertionFailureGuard {
+        fn drop(&mut self) {
+            test_hooks::restore_force_next_insertion_retryable_failure(self.prior);
+        }
     }
 
     #[test]
@@ -5721,6 +6266,191 @@ mod tests {
             err.to_string(),
             "Internal inconsistency during construction: missing vertex in lookup table"
         );
+    }
+
+    #[test]
+    fn test_retryable_conflict_trace_detail_formats_retryable_variants() {
+        let extra_cell = CellKey::from(KeyData::from_ffi(10));
+        let disconnected_cell = CellKey::from(KeyData::from_ffi(11));
+        let open_cell = CellKey::from(KeyData::from_ffi(12));
+
+        let non_manifold = InsertionError::ConflictRegion(ConflictError::NonManifoldFacet {
+            facet_hash: 0xABCD,
+            cell_count: 3,
+        });
+        assert_eq!(
+            retryable_conflict_trace_detail(&non_manifold).as_deref(),
+            Some("kind=non_manifold_facet facet_hash=0xabcd cell_count=3")
+        );
+
+        let ridge_fan = InsertionError::ConflictRegion(ConflictError::RidgeFan {
+            facet_count: 4,
+            ridge_vertex_count: 2,
+            extra_cells: vec![extra_cell],
+        });
+        assert_eq!(
+            retryable_conflict_trace_detail(&ridge_fan).as_deref(),
+            Some("kind=ridge_fan facet_count=4 ridge_vertex_count=2 extra_cells=1")
+        );
+
+        let disconnected = InsertionError::ConflictRegion(ConflictError::DisconnectedBoundary {
+            visited: 2,
+            total: 5,
+            disconnected_cells: vec![disconnected_cell],
+        });
+        assert_eq!(
+            retryable_conflict_trace_detail(&disconnected).as_deref(),
+            Some("kind=disconnected_boundary visited=2 total=5 disconnected_cells=1")
+        );
+
+        let open = InsertionError::ConflictRegion(ConflictError::OpenBoundary {
+            facet_count: 1,
+            ridge_vertex_count: 2,
+            open_cell,
+        });
+        assert_eq!(
+            retryable_conflict_trace_detail(&open).as_deref(),
+            Some("kind=open_boundary facet_count=1 ridge_vertex_count=2")
+        );
+
+        let not_retryable = InsertionError::CavityFilling {
+            message: "plain insertion failure".to_string(),
+        };
+        assert!(retryable_conflict_trace_detail(&not_retryable).is_none());
+    }
+
+    #[test]
+    fn test_cavity_conflict_error_summary_formats_all_variants() {
+        let cell_key = CellKey::from(KeyData::from_ffi(21));
+
+        let cases = vec![
+            (
+                ConflictError::NonManifoldFacet {
+                    facet_hash: 0xCAFE,
+                    cell_count: 4,
+                },
+                "non_manifold_facet facet_hash=0xcafe cell_count=4".to_string(),
+            ),
+            (
+                ConflictError::RidgeFan {
+                    facet_count: 5,
+                    ridge_vertex_count: 3,
+                    extra_cells: vec![cell_key],
+                },
+                "ridge_fan facet_count=5 ridge_vertex_count=3 extra_cells=1".to_string(),
+            ),
+            (
+                ConflictError::DisconnectedBoundary {
+                    visited: 1,
+                    total: 3,
+                    disconnected_cells: vec![cell_key],
+                },
+                "disconnected_boundary visited=1 total=3 disconnected_cells=1".to_string(),
+            ),
+            (
+                ConflictError::OpenBoundary {
+                    facet_count: 1,
+                    ridge_vertex_count: 2,
+                    open_cell: cell_key,
+                },
+                format!("open_boundary facet_count=1 ridge_vertex_count=2 open_cell={cell_key:?}"),
+            ),
+            (
+                ConflictError::InvalidStartCell { cell_key },
+                format!("invalid_start_cell cell_key={cell_key:?}"),
+            ),
+            (
+                ConflictError::CellDataAccessFailed {
+                    cell_key,
+                    message: "missing vertices".to_string(),
+                },
+                format!("cell_data_access_failed cell_key={cell_key:?} message=missing vertices"),
+            ),
+        ];
+
+        for (error, expected) in cases {
+            assert_eq!(cavity_conflict_error_summary(&error), expected);
+        }
+
+        let predicate = ConflictError::PredicateError {
+            source: CoordinateConversionError::ConversionFailed {
+                coordinate_index: 2,
+                coordinate_value: "NaN".to_string(),
+                from_type: "f64",
+                to_type: "f32",
+            },
+        };
+        assert!(
+            cavity_conflict_error_summary(&predicate)
+                .starts_with("predicate_error source=Failed to convert coordinate")
+        );
+
+        let internal = ConflictError::InternalInconsistency {
+            site: InternalInconsistencySite::RidgeInfoMissingSecondFacet {
+                first_facet: 4,
+                boundary_facets_len: 6,
+                ridge_vertex_count: 2,
+            },
+        };
+        assert!(cavity_conflict_error_summary(&internal).contains("internal_inconsistency site="));
+    }
+
+    #[test]
+    fn test_cavity_reduction_cell_bookkeeping_records_removed_cells() {
+        let a = CellKey::from(KeyData::from_ffi(31));
+        let b = CellKey::from(KeyData::from_ffi(32));
+        let c = CellKey::from(KeyData::from_ffi(33));
+        let d = CellKey::from(KeyData::from_ffi(34));
+
+        let mut conflict_cells: CellKeyBuffer = [a, b, c].into_iter().collect();
+        let mut repair_seed_cells = CellKeyBuffer::new();
+        retain_conflict_cells_and_record_removed(
+            &mut conflict_cells,
+            &mut repair_seed_cells,
+            |ck| ck != b,
+        );
+        assert_eq!(
+            conflict_cells.iter().copied().collect::<Vec<_>>(),
+            vec![a, c]
+        );
+        assert_eq!(
+            repair_seed_cells.iter().copied().collect::<Vec<_>>(),
+            vec![b]
+        );
+
+        let replacement: CellKeyBuffer = [c, d].into_iter().collect();
+        replace_conflict_cells_and_record_removed(
+            &mut conflict_cells,
+            &mut repair_seed_cells,
+            replacement,
+        );
+        assert_eq!(
+            conflict_cells.iter().copied().collect::<Vec<_>>(),
+            vec![c, d]
+        );
+        assert_eq!(
+            repair_seed_cells.iter().copied().collect::<Vec<_>>(),
+            vec![b, a]
+        );
+    }
+
+    #[test]
+    fn test_log_cavity_reduction_event_only_evaluates_when_enabled() {
+        let mut conflict_cells = CellKeyBuffer::new();
+        conflict_cells.push(CellKey::from(KeyData::from_ffi(41)));
+
+        let mut called = false;
+        log_cavity_reduction_event(false, 0, &conflict_cells, || {
+            called = true;
+            "should not run".to_string()
+        });
+        assert!(!called);
+
+        log_cavity_reduction_event(true, 1, &conflict_cells, || {
+            called = true;
+            "ran".to_string()
+        });
+        assert!(called);
     }
 
     #[test]
@@ -10037,41 +10767,196 @@ mod tests {
     // PROGRESSIVE PERTURBATION: RETRY PATH COVERAGE
     // =========================================================================
 
-    /// Exercise the perturbation retry loop (`attempt > 0`) and exhaustion
-    /// path (`SkippedDegeneracy`) using 4D random points where orientation
-    /// degeneracies are common.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Literal 4D repro point set keeps retry-path coverage deterministic"
+    )]
+    fn perturbation_retry_repro_points_4d() -> [Point<f64, 4>; 20] {
+        // Fixed adversarial insertion sequence captured from the former
+        // randomized sweep (seed 4, index 19). The final insertion exhausts
+        // perturbation retries in the current 4D path, so this keeps retry
+        // coverage deterministic without looping over random seeds.
+        [
+            Point::new([
+                0.660_063_804_566_304_3,
+                3.139_352_812_821_116,
+                1.460_437_437_858_557_2,
+                1.683_976_950_416_514_7,
+            ]),
+            Point::new([
+                2.451_966_162_957_145,
+                9.547_229_335_697_903,
+                3.306_128_696_560_687_5,
+                -3.722_166_730_957_705_6,
+            ]),
+            Point::new([
+                -2.344_360_378_074_79,
+                -2.755_831_029_562_339,
+                -1.275_699_073_649_171_6,
+                7.667_812_493_160_508,
+            ]),
+            Point::new([
+                -8.633_692_230_033_44,
+                1.995_093_685_275_964_6,
+                7.993_316_108_703_105,
+                -3.310_780_098_197_376_7,
+            ]),
+            Point::new([
+                9.710_410_828_147_591,
+                -9.675_293_457_452_888,
+                -7.169_080_272_753_141,
+                5.405_946_111_675_925_5,
+            ]),
+            Point::new([
+                2.266_246_031_487_613,
+                2.481_673_939_102_995,
+                3.039_413_140_674_462,
+                4.441_464_307_622_285,
+            ]),
+            Point::new([
+                2.565_731_492_709_954,
+                8.916_218_617_699_3,
+                -3.878_340_784_199_263_4,
+                -9.518_720_806_139_726,
+            ]),
+            Point::new([
+                -2.067_801_258_479_087_2,
+                -5.739_002_626_992_522,
+                7.554_154_642_458_165,
+                -2.983_334_995_469_171_2,
+            ]),
+            Point::new([
+                7.592_645_474_686_005,
+                -3.326_646_745_715_216,
+                -3.259_537_116_123_248,
+                -4.935_000_398_073_641,
+            ]),
+            Point::new([
+                -5.931_807_896_262_18,
+                8.897_268_005_841_394,
+                0.324_049_126_782_281_15,
+                -8.328_532_028_712_647,
+            ]),
+            Point::new([
+                -8.182_644_118_410_867,
+                5.373_925_359_941_506,
+                -9.015_837_749_827_128,
+                -1.703_973_344_007_208,
+            ]),
+            Point::new([
+                1.455_467_619_488_706_2,
+                9.869_985_381_801_74,
+                8.605_618_759_378_327,
+                -1.050_236_122_559_873_3,
+            ]),
+            Point::new([
+                -5.687_160_826_499_058,
+                6.504_655_423_433_022,
+                8.941_590_411_569_816,
+                9.543_547_641_077_382,
+            ]),
+            Point::new([
+                8.975_549_245_653_312,
+                -8.089_655_037_805_944,
+                9.936_284_142_216_682,
+                -7.816_992_427_475_977,
+            ]),
+            Point::new([
+                5.825_845_324_524_742,
+                -7.639_141_597_632_388,
+                1.549_524_653_880_336_4,
+                4.563_088_344_949_309,
+            ]),
+            Point::new([
+                7.387_141_055_690_918,
+                6.194_972_387_680_284,
+                -5.764_015_058_796_046,
+                9.298_338_336_238_999,
+            ]),
+            Point::new([
+                -1.597_916_740_077_209_9,
+                -4.938_008_036_006_716,
+                7.414_979_546_687_874,
+                -7.718_146_418_588_452,
+            ]),
+            Point::new([
+                -2.414_045_007_912_424_3,
+                8.888_648_260_600_007,
+                -5.859_329_894_512_815,
+                3.268_096_825_406_147,
+            ]),
+            Point::new([
+                -8.294_250_893_230_837,
+                3.083_275_278_154_95,
+                8.020_989_920_767_69,
+                8.155_291_219_012_977,
+            ]),
+            Point::new([
+                6.718_748_825_685_814_6,
+                -4.640_634_945_941_695,
+                2.283_644_483_657_752_7,
+                0.837_537_687_473_188_8,
+            ]),
+        ]
+    }
+
+    /// Exercise both successful perturbation retry (`attempt > 0`) and
+    /// exhaustion (`SkippedDegeneracy`) paths with deterministic 4D fixtures.
     ///
     /// Covers: progressive scale factor, perturbation coordinate generation
-    /// with `perturbation_seed == 0`, retry decision, and retry exhaustion.
+    /// with `perturbation_seed == 0`, retry decision, retry success, and
+    /// retry exhaustion.
     #[test]
     fn test_perturbation_retry_and_exhaustion_4d() {
-        let points =
-            crate::geometry::util::generate_random_points_seeded::<f64, 4>(20, (-10.0, 10.0), 123)
+        let initial_vertices: Vec<Vertex<f64, (), 4>> = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+        ];
+        let tds = Triangulation::<AdaptiveKernel<f64>, (), (), 4>::build_initial_simplex(
+            &initial_vertices,
+        )
+        .unwrap();
+        let mut retry_success_tri = Triangulation::<AdaptiveKernel<f64>, (), (), 4>::new_with_tds(
+            AdaptiveKernel::new(),
+            tds,
+        );
+
+        let _guard = ForceNextRetryableInsertionFailureGuard::enable();
+        let retry_success_vertex = VertexBuilder::default()
+            .point(Point::new([0.2, 0.2, 0.2, 0.2]))
+            .build()
+            .unwrap();
+        let (_outcome, retry_success_stats) = retry_success_tri
+            .insert_with_statistics(retry_success_vertex, None, None)
+            .unwrap();
+        let saw_retry = retry_success_stats.used_perturbation() && retry_success_stats.success();
+
+        let mut exhaustion_tri: Triangulation<AdaptiveKernel<f64>, (), (), 4> =
+            Triangulation::new_empty(AdaptiveKernel::new());
+        let mut saw_exhausted_skip = false;
+
+        for point in perturbation_retry_repro_points_4d() {
+            let v = VertexBuilder::default().point(point).build().unwrap();
+            let (outcome, stats) = exhaustion_tri
+                .insert_with_statistics(v, None, None)
                 .unwrap();
 
-        let mut tri: Triangulation<AdaptiveKernel<f64>, (), (), 4> =
-            Triangulation::new_empty(AdaptiveKernel::new());
-
-        let mut any_retried = false;
-        let mut any_exhausted = false;
-
-        for point in points {
-            let v = VertexBuilder::default().point(point).build().unwrap();
-            let (_outcome, stats) = tri.insert_with_statistics(v, None, None).unwrap();
-
-            if stats.used_perturbation() && stats.success() {
-                any_retried = true;
-            }
-            if stats.skipped() && stats.attempts > 1 {
-                any_exhausted = true;
-            }
+            saw_exhausted_skip |= stats.skipped()
+                && stats.attempts == DEFAULT_PERTURBATION_RETRIES + 1
+                && matches!(stats.result, InsertionResult::SkippedDegeneracy)
+                && matches!(outcome, InsertionOutcome::Skipped { error } if error.is_retryable());
         }
 
-        // In 4D, orientation degeneracies trigger retries frequently.
         assert!(
-            any_retried || any_exhausted,
-            "4D insertion with 20 random points (seed 123) should trigger \
-             at least one perturbation retry or exhaustion"
+            saw_retry,
+            "deterministic 4D fixture did not trigger a successful perturbation retry"
+        );
+        assert!(
+            saw_exhausted_skip,
+            "deterministic 4D adversarial repro did not trigger retry exhaustion"
         );
     }
 
@@ -10080,18 +10965,15 @@ mod tests {
     ///
     /// Covers: the `mix` computation and sign selection in the seeded path
     /// (lines using `perturbation_seed ^ ...`).
+    ///
+    /// Uses the same deterministic 4D repro as
+    /// [`test_perturbation_retry_and_exhaustion_4d`].
     #[test]
     fn test_perturbation_retry_seeded_branch_4d() {
-        let points =
-            crate::geometry::util::generate_random_points_seeded::<f64, 4>(20, (-10.0, 10.0), 123)
-                .unwrap();
-
         let mut tri: Triangulation<AdaptiveKernel<f64>, (), (), 4> =
             Triangulation::new_empty(AdaptiveKernel::new());
 
-        let mut any_retried = false;
-
-        for point in points {
+        for point in perturbation_retry_repro_points_4d() {
             let v = VertexBuilder::default().point(point).build().unwrap();
             let (_outcome, stats) = tri
                 .insert_transactional(
@@ -10101,19 +10983,15 @@ mod tests {
                     DEFAULT_PERTURBATION_RETRIES,
                     0xDEAD_BEEF,
                     None,
+                    None,
                 )
                 .unwrap();
 
-            if stats.used_perturbation() {
-                any_retried = true;
+            if stats.used_perturbation() && (stats.success() || stats.skipped()) {
+                return;
             }
         }
 
-        // Exercises the perturbation_seed != 0 branch in the retry loop.
-        assert!(
-            any_retried,
-            "4D seeded insertion with 20 points (seed 123) should trigger \
-             at least one perturbation retry"
-        );
+        panic!("deterministic 4D adversarial repro did not trigger the seeded perturbation branch");
     }
 }

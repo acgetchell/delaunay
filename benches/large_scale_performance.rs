@@ -88,7 +88,37 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 
+#[cfg(feature = "bench-logging")]
+fn init_tracing() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+        let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+    });
+}
+
+#[cfg(not(feature = "bench-logging"))]
+const fn init_tracing() {}
+
+macro_rules! bench_info {
+    ($($arg:tt)*) => {{
+        #[cfg(feature = "bench-logging")]
+        {
+            init_tracing();
+            tracing::info!($($arg)*);
+        }
+    }};
+}
+
 /// Memory usage information for benchmarking (in KiB)
+#[cfg_attr(
+    not(feature = "bench-logging"),
+    expect(
+        dead_code,
+        reason = "Memory fields are unpacked by optional bench diagnostics"
+    )
+)]
 #[derive(Debug, Clone)]
 struct MemoryInfo {
     before: u64,
@@ -104,7 +134,7 @@ fn get_memory_usage() -> u64 {
 
     // Log memory unit on first call for clarity in all benchmark runs
     UNIT_LOGGED.call_once(|| {
-        eprintln!("[INFO] Memory measurements in KiB (sysinfo::Process::memory() / 1024)");
+        bench_info!("Memory measurements in KiB (sysinfo::Process::memory() / 1024)");
     });
 
     let pid = sysinfo::get_current_pid().expect("Failed to get current PID");
@@ -126,7 +156,8 @@ fn get_memory_usage() -> u64 {
 
 /// Get the deterministic base seed for random point generation.
 /// Reads `DELAUNAY_BENCH_SEED` (decimal or 0x-hex). Defaults to 42.
-/// Prints the resolved seed once on first use if `PRINT_BENCH_SEED` is set.
+/// Logs the resolved seed once on first use if `PRINT_BENCH_SEED` is set and
+/// the `bench-logging` feature is enabled.
 fn get_benchmark_seed() -> u64 {
     static SEED: OnceLock<u64> = OnceLock::new();
     *SEED.get_or_init(|| {
@@ -141,7 +172,7 @@ fn get_benchmark_seed() -> u64 {
             .unwrap_or(42);
 
         if std::env::var("PRINT_BENCH_SEED").is_ok() {
-            eprintln!("Benchmark seed: 0x{seed:X} ({seed})");
+            bench_info!("Benchmark seed: 0x{seed:X} ({seed})");
         }
 
         seed
@@ -281,16 +312,24 @@ fn bench_memory_usage<const D: usize>(c: &mut Criterion, dimension_name: &str, n
     // Single measurement for memory delta - reduce sample size
     group.sample_size(10);
 
+    #[cfg(feature = "bench-logging")]
+    if std::env::var_os("BENCH_PRINT_MEM").is_some() {
+        let mem_info = measure_construction_with_memory::<D>(n_points, seed);
+        bench_info!(
+            "Memory sample: before={} KiB, after={} KiB, delta={} KiB (TDS-only: {} KiB)",
+            mem_info.before,
+            mem_info.after,
+            mem_info.delta,
+            mem_info.tds_delta
+        );
+    }
+
+    // Prime the one-time memory-unit log outside Criterion's measured closure.
+    let _ = get_memory_usage();
+
     group.bench_function("construction_memory_delta", |b| {
         b.iter(|| {
             let mem_info = measure_construction_with_memory::<D>(n_points, seed);
-            // Report memory usage to stderr (won't interfere with benchmark timing)
-            if std::env::var_os("BENCH_PRINT_MEM").is_some() {
-                eprintln!(
-                    "Memory: before={} KiB, after={} KiB, delta={} KiB (TDS-only: {} KiB)",
-                    mem_info.before, mem_info.after, mem_info.delta, mem_info.tds_delta
-                );
-            }
             black_box(mem_info)
         });
     });
@@ -527,6 +566,7 @@ fn bench_5d_suite(c: &mut Criterion) {
 criterion_group!(
     name = large_scale_benches;
     config = {
+        init_tracing();
         let sample_size = std::env::var("BENCH_SAMPLE_SIZE")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())

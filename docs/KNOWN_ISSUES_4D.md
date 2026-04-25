@@ -2,38 +2,97 @@
 
 ## Status (v0.7.5)
 
+### Re-verified on 2026-04-23 (release mode)
+
+These release-mode reruns supersede the old 35-point 3D, 100-point 4D, and
+500-point 4D correctness failures described below:
+
+- 3D seed `0xE30C78582376677C` now passes at 35 vertices and at 1000 vertices.
+- The 3D 1000-prefix bisect reports no failing prefix for that seed.
+- 4D seed `0x9B7786C999C56A16` now completes the 100-point batch: attempt 0
+  finishes with `inserted=86`, `skipped=14`, and the shuffled retry 1
+  (`perturbation_seed=0x34D84963BCC98F21`) inserts 100/100 vertices with zero
+  skips and passes validation in about 15.4s total wall time.
+- 4D seed `0xD225B8A07E274AE6` now inserts **500/500** vertices with zero
+  skips on the first attempt (no perturbation retries triggered) and passes
+  Level 1–4 validation in ~233s total wall time. See the
+  "Historical 4D 500-point retry-collapse reproducer (now fixed)" section
+  below and `docs/archive/issue_204_investigation.md` for the Fix 2 details.
+- The remaining open part of #204 is the default 4D 3000-point batch run,
+  which now has progress instrumentation and is clearly a scale/observability
+  problem rather than the earlier correctness repros.
+
 ### Current issues
 
-#### 4D+ bulk construction failures
+#### 4D+ bulk construction at very large scale
 
-Large-scale 4D bulk construction can produce Delaunay-validation failures on
-adversarial/degenerate point sets, even when local repair steps appear to succeed.
+The historical correctness failures at 35–100 vertices in 3D and 100–500
+vertices in 4D are now fixed. What remains is a scale/runtime concern: the
+default 3000-point 4D large-scale debug harness is expensive to investigate
+and may still degrade at very large input counts without a bounded test fixture.
 
-**Severity:** High (correctness)
-**Affects:** primarily large 4D bulk runs (typically 100+ vertices)
-**Recommended workaround:** prefer incremental insertion for production 4D workloads
+**Severity:** Medium (4D batch-construction runtime / observability)
+**Affects:** the default 3000-point large-scale debug harness and any
+similarly large seeded 4D batch inputs.
+**Recommended workaround:** use release-mode runs and smaller seeded probes
+when you need quick iteration; prefer incremental insertion for production
+4D workloads if large batch runtimes are unacceptable.
 
-**#204 findings (v0.7.4):** 4D 100-point batch construction (release mode,
-seed `0x9B7786C999C56A16`, ball radius=100) inserts only **12 of 100 vertices**;
-88 are skipped as degeneracies.  All 88 skips hit the same cell
-(`CellKey(29v7)`, vertices `[6v1, 2v1, 9v1, 11v1, 7v1]`) which has negative
-geometric orientation.  In debug mode, per-insertion PLManifoldStrict validation
-of this cell produces repeated warnings that cause extreme slowness (appears as
-a hang but is not an algorithmic deadlock).  The resulting 12-vertex
-triangulation passes L1–L4 validation.
+#### Historical 4D 500-point retry-collapse reproducer (now fixed)
 
-#### 3D large-scale flip convergence
+Before Fix 2 of the #204 plan, 4D seed `0xD225B8A07E274AE6` (ball radius 100,
+allow skips) exhausted all 7 shuffled retries. Each attempt finished with
+`inserted≈266–300`, `skipped≈200–234`, and the same final error:
+`Cell violates Delaunay property: cell contains vertex that is inside
+circumsphere`. Representative skip samples were dominated by
+`Conflict region error: Ridge fan detected: 4 facets share ridge with 3
+vertices`.
 
-Flip-based Delaunay repair can enter cycles (oscillating flip sequences that
-never converge).  The triangulation is topologically valid but may have local
-Delaunay violations that flips cannot resolve.
+**Root cause:** the D≥4 per-insertion local-repair flip budget was too tight
+(50-flip ceiling vs. observed `max_queue` p95 = 312), so repair never drained
+its backlog. The D≥4 soft-fail arm then silently continued after each failed
+local repair, accumulating unresolved k=2 postcondition violations and
+negative-orientation cells into the next insertion's conflict BFS. See
+`docs/archive/issue_204_investigation.md` for the full measurement and
+root-cause analysis.
 
-**Severity:** High (correctness)
-**Affects:** 3D bulk construction at moderate scale (35+ vertices with default seed)
-**Root cause (updated):** predicate degeneracies have been ruled out — the #204
-debug runs show `ambiguous=0, predicate_failures=0` in every cycle report.  SoS
-is working correctly.  The remaining cycles are caused by **cavity/topology
-interactions** where a sequence of locally legal flips forms a cycle.
+**Fix (2026-04-23):** Fix 2 of the #204 plan raised the D≥4 flip budget
+(`LOCAL_REPAIR_FLIP_BUDGET_FACTOR_D_GE_4 = 12`,
+`LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_GE_4 = 96`) and added one escalation pass
+(`LOCAL_REPAIR_ESCALATION_BUDGET_FACTOR_D_GE_4 = 4`, rate-limited by
+`LOCAL_REPAIR_ESCALATION_MIN_GAP = 8`) with the full TDS as seed set before
+the soft-fail arm accepts a non-convergent repair. The #307 orientation
+relaxation stays in place so flip repair still has its chance at eventual
+consistency; the budget bump is what lets that chance materialize. Regression
+coverage lives in
+`tests/regressions.rs::regression_issue_204_4d_500_local_repair_budget`
+(gated behind `slow-tests`).
+
+**Current recheck (2026-04-23):**
+
+- 4D 500-point batch construction (release mode, seed `0xD225B8A07E274AE6`,
+  ball radius=100) inserts **500 of 500** vertices, skips **0**, and passes
+  `validation_report` (Levels 1–4) in ~233.4s total wall time.
+- Only 2 local-repair budget hits were observed, both resolved by the new
+  escalation path. No `DisconnectedBoundary`, `RidgeFan`, or
+  `postcondition k=2` retryable-skip traces fired (down from 501 / 31 / 711
+  respectively on the pre-fix run).
+- 4D 3000-point batch construction (release mode, seed `0xE7E6701F918B07FA`,
+  ball radius=100) still emits periodic batch-progress summaries. Large-scale
+  runtime characterisation at 3000+ points remains open under the
+  "4D+ bulk construction at very large scale" item above.
+
+#### Historical 3D flip-cycle reproducer (now fixed)
+
+The historical 3D flip-cycle seed used by #204/#306 no longer reproduces on
+the current branch in release mode.
+
+**Current recheck (2026-04-23):**
+
+- 35-point release run: passes with 35/35 inserted and validation OK
+- 1000-point release run: passes with 1000/1000 inserted and validation OK in
+  ~69.6s total wall time
+- 1000-prefix bisect: reports no failing prefix for the same seed
 
 **#204 findings (v0.7.4):** the incremental-prefix bisect found a **minimal
 failing prefix of 35 vertices** (seed `0xE30C78582376677C`, ball radius=100).
@@ -106,38 +165,39 @@ Use the debug large-scale test to verify current behavior on a given branch.
 makes larger runs appear to hang.
 
 ```bash
-# 3D minimal reproducer (35 vertices, fails at insertion 22)
-DELAUNAY_LARGE_DEBUG_CONSTRUCTION_MODE=new \
-  DELAUNAY_LARGE_DEBUG_N_3D=35 \
-  DELAUNAY_LARGE_DEBUG_CASE_SEED_3D=0xE30C78582376677C \
-  cargo test --release --test large_scale_debug debug_large_scale_3d \
-  -- --ignored --nocapture
+# 3D historical 35-point seed check (now passes)
+DELAUNAY_LARGE_DEBUG_CASE_SEED_3D=0xE30C78582376677C just debug-large-scale-3d 35
 
-# 3D incremental-prefix bisect (finds minimal failing prefix)
-DELAUNAY_LARGE_DEBUG_PREFIX_TOTAL=1000 \
-  cargo test --release --test large_scale_debug \
-  debug_large_scale_3d_incremental_prefix_bisect -- --ignored --nocapture
+# 3D 10000-point scalability investigation (#341)
+just debug-large-scale-3d
 
 # 4D 100-point — permissive (allows skips)
-DELAUNAY_LARGE_DEBUG_N_4D=100 DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 \
-  cargo test --release --test large_scale_debug debug_large_scale_4d \
-  -- --ignored --nocapture
+DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 just debug-large-scale-4d 100
 
 # 4D 100-point — strict (no skips)
-DELAUNAY_LARGE_DEBUG_N_4D=100 DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=0 \
-  cargo test --release --test large_scale_debug debug_large_scale_4d \
-  -- --ignored --nocapture
+DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=0 just debug-large-scale-4d 100
+
+# 4D 500-point seeded case — now passes (verified 2026-04-23)
+# First attempt inserts 500/500 with zero skips and no RidgeFan /
+# DisconnectedBoundary / postcondition k=2 retryable-skip traces.
+DELAUNAY_LARGE_DEBUG_CASE_SEED_4D=0xD225B8A07E274AE6 \
+  DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 \
+  just debug-large-scale-4d 500
+
 ```
 
 ### Recommendations
 
 - **2D:** robust at all tested sizes.
-- **3D:** flip-cycle failures start at 35+ vertices with the default seed.
-  SoS eliminates predicate degeneracies but cavity/topology flip cycles persist.
-  This is the primary open correctness issue.
-- **4D:** batch construction produces a negative-orientation cell early, causing
-  most subsequent insertions to be skipped.  Use incremental insertion for
-  critical correctness paths.
+- **3D:** the historical #306/#204 seed now passes in release mode; continue to
+  use the large-scale harness as a monitoring tool rather than assuming a 35-point
+  correctness failure still exists.
+- **4D:** the historical 100-point and 500-point seeded repros are fixed. Seed
+  `0xD225B8A07E274AE6` now inserts **500/500** on the first attempt with no
+  `RidgeFan`, `DisconnectedBoundary`, or local `k=2` retryable-skip traces.
+  The remaining concern is the 3000-point scale/observability path; use release
+  mode to investigate it, and prefer incremental insertion when you need more
+  predictable large-N progress.
 - **5D:** experimental; incremental insertion strongly recommended. Exact insphere
   predicates are available (5D uses a 7×7 matrix, within the stack limit).
 - **6D+:** exact insphere is not available (matrix exceeds stack limit); falls back

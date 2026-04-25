@@ -53,6 +53,55 @@ use delaunay::core::util::extract_edge_set;
 use delaunay::geometry::kernel::AdaptiveKernel;
 use delaunay::prelude::triangulation::*;
 
+#[cfg(feature = "test-debug")]
+fn init_tracing() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_test_writer()
+            .try_init();
+    });
+}
+
+#[cfg(not(feature = "test-debug"))]
+const fn init_tracing() {}
+
+macro_rules! test_debug_info {
+    ($($arg:tt)*) => {{
+        #[cfg(feature = "test-debug")]
+        {
+            init_tracing();
+            tracing::info!($($arg)*);
+        }
+        #[cfg(not(feature = "test-debug"))]
+        {
+            let _ = format_args!($($arg)*);
+        }
+    }};
+}
+
+macro_rules! test_debug_warn {
+    ($($arg:tt)*) => {{
+        #[cfg(feature = "test-debug")]
+        {
+            init_tracing();
+            tracing::warn!($($arg)*);
+        }
+        #[cfg(not(feature = "test-debug"))]
+        {
+            let _ = format_args!($($arg)*);
+        }
+    }};
+}
+
+fn log_large_scale_skip(expected: &str) {
+    test_debug_warn!("Large-scale test skipped (set RUN_LARGE_SCALE_TESTS=1 to enable)");
+    test_debug_info!("Expected: {expected}");
+}
+
 // =============================================================================
 // TEST GENERATION MACROS (reduces duplication across 2D-5D)
 // =============================================================================
@@ -422,8 +471,7 @@ test_neighbor_access!(
 fn test_storage_backend_large_scale_2d() {
     // Check environment gate (optional, for extra safety)
     if std::env::var("RUN_LARGE_SCALE_TESTS").ok().as_deref() != Some("1") {
-        eprintln!("⚠️  Large-scale test skipped (set RUN_LARGE_SCALE_TESTS=1 to enable)");
-        eprintln!("   Expected: ~900 vertices, <1s runtime, ~10MB memory");
+        log_large_scale_skip("~900 vertices, <1s runtime, ~10MB memory");
         return;
     }
 
@@ -453,8 +501,7 @@ fn test_storage_backend_large_scale_2d() {
 fn test_storage_backend_large_scale_3d() {
     // Check environment gate (optional, for extra safety)
     if std::env::var("RUN_LARGE_SCALE_TESTS").ok().as_deref() != Some("1") {
-        eprintln!("⚠️  Large-scale test skipped (set RUN_LARGE_SCALE_TESTS=1 to enable)");
-        eprintln!("   Expected: ~900 vertices, ~2s runtime, ~50MB memory");
+        log_large_scale_skip("~900 vertices, ~2s runtime, ~50MB memory");
         return;
     }
 
@@ -490,8 +537,7 @@ fn test_storage_backend_large_scale_3d() {
 fn test_storage_backend_large_scale_4d() {
     // Check environment gate (optional, for extra safety)
     if std::env::var("RUN_LARGE_SCALE_TESTS").ok().as_deref() != Some("1") {
-        eprintln!("⚠️  Large-scale test skipped (set RUN_LARGE_SCALE_TESTS=1 to enable)");
-        eprintln!("   Expected: ~500 vertices, ~5s runtime, ~100MB memory");
+        log_large_scale_skip("~500 vertices, ~5s runtime, ~100MB memory");
         return;
     }
 
@@ -528,8 +574,7 @@ fn test_storage_backend_large_scale_4d() {
 fn test_storage_backend_large_scale_5d() {
     // Check environment gate (optional, for extra safety)
     if std::env::var("RUN_LARGE_SCALE_TESTS").ok().as_deref() != Some("1") {
-        eprintln!("⚠️  Large-scale test skipped (set RUN_LARGE_SCALE_TESTS=1 to enable)");
-        eprintln!("   Expected: ~256 vertices, ~10s runtime, ~150MB memory");
+        log_large_scale_skip("~256 vertices, ~10s runtime, ~150MB memory");
         return;
     }
 
@@ -716,6 +761,7 @@ test_cell_data!(
 #[test]
 #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_dense_slotmap_backend_active() {
+    init_tracing();
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0]),
         vertex!([1.0, 0.0, 0.0, 0.0]),
@@ -734,13 +780,14 @@ fn test_dense_slotmap_backend_active() {
     assert_eq!(tds.number_of_vertices(), 5);
     assert_eq!(tds.number_of_cells(), 1);
 
-    eprintln!("✓ DenseSlotMap backend test passed (4D)");
+    test_debug_info!("DenseSlotMap backend test passed (4D)");
 }
 
 #[cfg(not(feature = "dense-slotmap"))]
 #[test]
 #[ignore = "Phase 4 storage backend evaluation test - run with: cargo test --test storage_backend_compatibility -- --ignored"]
 fn test_slotmap_backend_active() {
+    init_tracing();
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0]),
         vertex!([1.0, 0.0, 0.0, 0.0]),
@@ -759,5 +806,5 @@ fn test_slotmap_backend_active() {
     assert_eq!(tds.number_of_vertices(), 5);
     assert_eq!(tds.number_of_cells(), 1);
 
-    eprintln!("✓ SlotMap backend test passed (4D)");
+    test_debug_info!("SlotMap backend test passed (4D)");
 }

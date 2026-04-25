@@ -177,9 +177,8 @@ pub struct DelaunayizeOutcome<T, U, V, const D: usize> {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::triangulation::delaunayize::DelaunayizeError;
-/// use delaunay::core::algorithms::flips::DelaunayRepairError;
-/// use delaunay::core::triangulation::TopologyGuarantee;
+/// use delaunay::prelude::triangulation::delaunayize::DelaunayizeError;
+/// use delaunay::prelude::triangulation::repair::{DelaunayRepairError, TopologyGuarantee};
 ///
 /// let err = DelaunayizeError::DelaunayRepairFailed {
 ///     source: DelaunayRepairError::InvalidTopology {

@@ -1,6 +1,6 @@
 # TODO — Weaknesses & Risks
 
-**As of:** 2026-04-12 · post-v0.7.5 (main, unreleased)
+**As of:** 2026-04-23 · post-v0.7.5 (main, unreleased)
 
 Identified during a full codebase evaluation. Items are grouped by category
 and prioritized by severity. Scoping notes reference the *next release*
@@ -12,24 +12,26 @@ Legend: **🔴 High** · **🟡 Medium** · **🟢 Low**
 
 ## 1 · Correctness
 
-### 🔴 3D flip-cycle non-convergence (#306, #204)
+### ✅ ~~3D flip-cycle non-convergence (#306, #204)~~ — FIXED
 
-Flip-based Delaunay repair enters cycles at ≥35 vertices (seed-dependent).
-SoS eliminates predicate ambiguity; root cause is cavity/topology
-interactions. This is the primary open correctness issue.
+The historical 35-vertex and 1000-vertex release-mode repros no longer fail on
+the current branch. The original seed `0xE30C78582376677C` now passes at 35
+vertices, at 1000 vertices, and the 1000-prefix bisect reports no failing
+prefix.
 
-**Status:** Diagnostic infrastructure (conflict-region verification,
-orientation audits) shipped in #309 and #319. Repair constants unified
-across build profiles in #319. Root cause narrowed but not yet fixed.
+**Status:** release-mode recheck completed on 2026-04-23; keep #204 focused on
+larger-scale monitoring and regression detection rather than the old #306
+correctness repro.
 
-### 🔴 4D bulk construction vertex skipping (#307, #204)
+### ✅ ~~4D bulk construction vertex skipping (#307, #204)~~ — FIXED
 
-Batch 4D construction (100 points, specific seed) produces a
-negative-orientation cell early, causing 88% of subsequent insertions to be
-skipped as degeneracies. Incremental insertion is a viable workaround.
+The historical 100-point 4D release-mode repro no longer skips vertices on the
+current branch. The original seed `0x9B7786C999C56A16` now inserts all 100
+vertices with zero skips and passes validation.
 
-**Status:** Same diagnostic infrastructure as above. Orientation-audit
-improvements shipped. Root cause not yet fixed.
+**Status:** release-mode recheck completed on 2026-04-23; keep #204 focused on
+larger 4D batch-runtime/observability work rather than the old #307
+orientation-skip repro.
 
 ---
 
@@ -52,6 +54,34 @@ optimization needed.
 
 **Status:** profiling can begin; targeted fixes possible if
 bottlenecks are clear.
+
+### ✅ ~~4D 500-point local-repair retry collapse (#204)~~ — FIXED
+
+The 4D 500-point seed `0xD225B8A07E274AE6` (ball radius 100) used to exhaust
+all 7 shuffled retries with `inserted≈266–300`, `skipped≈200–234`, and a final
+`Cell violates Delaunay property: cell contains vertex that is inside
+circumsphere` error. Fix 2 of the #204 plan (budget raise + one escalation
+pass; see `docs/archive/issue_204_investigation.md`) resolved it: the same
+seed now inserts 500/500 vertices with zero skips and passes Level 1–4
+validation in ~233s.
+
+**Status:** release-mode recheck completed on 2026-04-23; regression coverage
+lives in `tests/regressions.rs::regression_issue_204_4d_500_local_repair_budget`
+(gated behind `slow-tests`). Continue #204 on the remaining 3000-point
+scale/observability work item below.
+
+### 🟡 4D large-scale batch runtime / observability (#204)
+
+The default 4D 3000-point large-scale debug harness still exercises a
+batch-construction path that is expensive to investigate and has no bounded
+test fixture. With the 100-point and 500-point correctness repros closed,
+what's left is a runtime/observability concern at very large input counts.
+
+**Status:** PR #339 added batch-progress, retry-boundary, and retryable-skip
+instrumentation that make 3000-point runs tractable to monitor. Future #204
+work should (a) characterise the 3000-point run's steady-state runtime in
+release mode and (b) decide whether to add a bounded 3000-point regression
+fixture or keep large-scale coverage as a manual debug harness only.
 
 ---
 
