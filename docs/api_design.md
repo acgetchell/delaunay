@@ -318,7 +318,8 @@ let report = dt.validation_report();
 
 ### Internal Organization
 
-- **Builder API**: Implemented in `core::delaunay_triangulation` and `core::algorithms::incremental_insertion`
+- **Builder API**: Implemented in `triangulation::delaunay`, `triangulation::builder`,
+  and `core::algorithms::incremental_insertion`
 - **Edit API**: Implemented in `triangulation::flips` (public trait) and `core::algorithms::flips` (internal implementation)
 - **Low-level primitives**: Context builders and flip application functions are `pub(crate)` in `core::algorithms::flips`
 

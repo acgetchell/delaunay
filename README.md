@@ -12,16 +12,30 @@
 [![Audit dependencies](https://github.com/acgetchell/delaunay/actions/workflows/audit.yml/badge.svg)](https://github.com/acgetchell/delaunay/actions/workflows/audit.yml)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/3cad94f994f5434d877ae77f0daee692)](https://app.codacy.com/gh/acgetchell/delaunay/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 
-D-dimensional Delaunay triangulations and convex hulls in [Rust], with exact predicates,
+D-dimensional Delaunay triangulations and convex hulls in [Rust] for finite
+point sets in Euclidean and periodic domains, with exact predicates,
 multi-level validation, and bistellar flips inspired by [CGAL].
 
 ## 📐 Introduction
 
-This library implements d-dimensional Delaunay triangulations in [Rust] for computational geometry and scientific workflows.
-It is inspired by [CGAL], which is a [C++] library for computational geometry, and [Spade], a [Rust] library that
-implements 2D [Delaunay triangulations], [Constrained Delaunay triangulations], and [Voronoi diagrams].
-The goal is to provide a lightweight but rigorous alternative to [CGAL] in the [Rust] ecosystem, with explicit
-topology settings, validation levels, and repair behavior.
+This library implements dimension-generic [Delaunay triangulations] in [Rust]
+for computational geometry and scientific workflows. It is inspired by [CGAL],
+which is a [C++] library for computational geometry, and [Spade], a [Rust]
+library focused on 2D triangulations. The goal is to provide a lightweight but
+rigorous Rust-native option for workflows that need explicit topology settings,
+validation levels, deterministic construction controls, and repair behavior.
+
+Use this crate when you want:
+
+- Delaunay triangulations or convex hulls in 2D through 5D.
+- Exact predicates and deterministic handling of degenerate inputs.
+- Validation reports that separate element, structure, topology, and Delaunay
+  failures.
+- PL-manifold-aware editing via bistellar flips.
+
+This is not a replacement for full meshing packages such as CGAL, TetGen, or
+Gmsh when you need constrained Delaunay triangulations, out-of-core meshing,
+GPU/parallel meshing, or production-scale dynamic remeshing.
 
 ## 🧪 Scientific Basis
 
@@ -46,7 +60,8 @@ combinatorial and geometric checks.
 - [x]  Serialization/deserialization of all data structures to/from [JSON]
 - [x]  Tested for 2-, 3-, 4-, and 5-dimensional triangulations
 - [x]  Configurable predicate kernels: `AdaptiveKernel` (default; exact arithmetic + SoS),
-  `RobustKernel` (exact, preserves degeneracy signals), `FastKernel` (raw f64, 2D only)
+  `RobustKernel` (exact, preserves degeneracy signals), `FastKernel` (raw f64 for
+  well-conditioned exploratory work; not accepted by explicit repair APIs)
 - [x]  Bulk insertion ordering (`InsertionOrderStrategy`): [Hilbert curve] (default) or input order
 - [x]  Batch construction options (`ConstructionOptions`): optional deduplication and deterministic retries
 - [x]  Incremental construction APIs: insertion plus vertex removal (`remove_vertex`)
@@ -187,15 +202,19 @@ For reproducible checks in CI/local runs, use `just check`, `just test`, `just d
 ## ⚠️ Limitations
 
 - **Dimension coverage:** CI and property-test coverage targets 2D–5D.
-- **Exact predicates (D ≤ 5):** orientation and insphere predicates use provably correct
-  exact arithmetic (`det_sign_exact`) for D ≤ 5. For D ≥ 6, insphere falls back to
-  symbolic perturbation (the (D+2)×(D+2) matrix exceeds the stack-allocation limit).
-- **Flip convergence:** at larger scales (~130+ points in 3D, ~40+ in 4D), flip-based
-  Delaunay repair can encounter cycles. Since v0.7.3, Simulation of Simplicity (SoS) via
-  `AdaptiveKernel` breaks predicate-degeneracy ties deterministically; remaining convergence
-  issues at scale are typically cavity/topology interactions rather than predicate ambiguity.
-- **4D+ bulk construction:** see [Known Issues](docs/KNOWN_ISSUES_4D.md) for details.
+- **Exact predicate limits:** exact orientation is available through D=6; exact
+  insphere is available through D=5. For D≥6, insphere classification relies on
+  symbolic perturbation and deterministic tie-breaking because the `(D+2)×(D+2)`
+  determinant exceeds the stack matrix limit.
+- **Large 4D+ batches:** thousands of 4D points can be expensive to investigate.
+  Use release mode and the large-scale debug harness for characterization.
+- **Feature gaps:** [Constrained Delaunay triangulations], [Voronoi diagrams],
+  built-in visualization, GPU/parallel meshing, and out-of-core construction are
+  out of scope today.
 - **Validation/repair guarantees** assume the library-managed construction/editing pipeline.
+
+See [Limitations and Scope](docs/limitations.md) for details and
+[Roadmap](docs/roadmap.md) for active follow-up work.
 
 ## 🚧 Project History
 
@@ -278,8 +297,9 @@ This includes information about:
 - **[Invariants](docs/invariants.md)** - Theoretical background and rationale for the topological and geometric invariants
 - **[Numerical Robustness Guide](docs/numerical_robustness_guide.md)** - Robustness strategies, kernels, and retry/repair behavior
 - **[Property Testing Summary](docs/property_testing_summary.md)** - Property-based testing with proptest (where tests live, how to run)
-- **[Known Issues](docs/KNOWN_ISSUES_4D.md)** - Dimensional and large-scale limitations (exact predicate bounds, flip convergence, 4D+)
+- **[Limitations and Scope](docs/limitations.md)** - Supported dimensions, predicate limits, and feature gaps
 - **[Releasing](docs/RELEASING.md)** - Release workflow (changelog + benchmarks + publish)
+- **[Roadmap](docs/roadmap.md)** - Current follow-up work and deferred features
 - **[Topology](docs/topology.md)** - Level 3 topology validation (manifoldness + Euler characteristic) and module overview
 - **[Validation Guide](docs/validation.md)** - Comprehensive 4-level validation hierarchy guide (element → structural → manifold → Delaunay)
 - **[Workflows](docs/workflows.md)** - Happy-path construction plus practical Builder/Edit recipes (stats, repairs, and minimal flips)
@@ -331,11 +351,11 @@ Portions of this library were developed with the assistance of these AI tools:
 [C++]: https://isocpp.org
 [Spade]: https://crates.io/crates/spade
 [JSON]: https://www.json.org/json-en.html
-[Delaunay triangulations]: https://grokipedia.com/page/Delaunay_triangulation
-[Constrained Delaunay triangulations]: https://grokipedia.com/page/Constrained_Delaunay_triangulation
-[Voronoi diagrams]: https://grokipedia.com/page/Voronoi_diagram
-[Convex hulls]: https://grokipedia.com/page/Convex_hull
-[Hilbert curve]: https://grokipedia.com/page/Hilbert_curve
+[Delaunay triangulations]: https://en.wikipedia.org/wiki/Delaunay_triangulation
+[Constrained Delaunay triangulations]: https://en.wikipedia.org/wiki/Constrained_Delaunay_triangulation
+[Voronoi diagrams]: https://en.wikipedia.org/wiki/Voronoi_diagram
+[Convex hulls]: https://en.wikipedia.org/wiki/Convex_hull
+[Hilbert curve]: https://en.wikipedia.org/wiki/Hilbert_curve
 [ChatGPT]: https://openai.com/chatgpt
 [Claude]: https://www.anthropic.com/claude
 [CodeRabbit]: https://coderabbit.ai/
@@ -345,5 +365,5 @@ Portions of this library were developed with the assistance of these AI tools:
 [Pseudomanifold]: https://en.wikipedia.org/wiki/Pseudomanifold
 [PL-manifold]: https://en.wikipedia.org/wiki/Piecewise_linear_manifold
 [Delaunay repair]: https://link.springer.com/article/10.1007/BF01975867
-[Pachner moves]: https://grokipedia.com/page/pachner_moves
+[Pachner moves]: https://en.wikipedia.org/wiki/Pachner_move
 [`DelaunayTriangulationBuilder`]: https://docs.rs/delaunay/latest/delaunay/triangulation/builder/struct.DelaunayTriangulationBuilder.html

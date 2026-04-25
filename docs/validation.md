@@ -552,9 +552,9 @@ converge, consider the opt-in heuristic rebuild fallback via
 | 2 | `Tds::validate()` | `core::tds` | O(N×D²) |
 | 3 | `Triangulation::is_valid()` | `core::triangulation` | O(N×D²) |
 | 3 | `Triangulation::validate()` | `core::triangulation` | O(N×D²) |
-| 4 | `DelaunayTriangulation::is_valid()` | `core::delaunay_triangulation` | O(cells) |
-| 4 | `DelaunayTriangulation::validate()` | `core::delaunay_triangulation` | O(cells × D²) + O(cells) |
-| — | `DelaunayTriangulation::validation_report()` | `core::delaunay_triangulation` | O(cells × D²) + O(cells) |
+| 4 | `DelaunayTriangulation::is_valid()` | `triangulation::delaunay` | O(cells) |
+| 4 | `DelaunayTriangulation::validate()` | `triangulation::delaunay` | O(cells × D²) + O(cells) |
+| — | `DelaunayTriangulation::validation_report()` | `triangulation::delaunay` | O(cells × D²) + O(cells) |
 
 ---
 

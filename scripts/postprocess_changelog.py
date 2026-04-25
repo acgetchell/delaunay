@@ -65,6 +65,99 @@ _LIST_MARKER_SPACE_RE = re.compile(r"^(\s*-)\s{2,}")
 # Indented ATX headings from commit bodies: ``  ## Title`` → ``  **Title**``.
 _INDENTED_ATX_HEADING_RE = re.compile(r"^(?P<indent>\s+)#{1,6}\s+(?P<title>.*?)(?:\s+#+\s*)?$")
 
+# Squash-merge commit bodies often contain inner conventional-commit
+# headings from the PR branch: ``* fix: thing``. After MD004 normalization
+# those become ordinary list items, which makes them look like separate
+# generated commits. Treat them as prose headings inside the parent entry.
+_SQUASH_HEADING_RE = re.compile(r"^(?P<indent>\s*)-\s+(?P<prefix>[A-Za-z]+(?:\([^)]+\))?!?):\s+(?P<title>.+?)\s*$")
+
+_SQUASH_HEADING_LABELS: dict[str, str] = {
+    "feat": "Added",
+    "fix": "Fixed",
+    "perf": "Performance",
+    "refactor": "Changed",
+    "test": "Changed",
+    "style": "Changed",
+    "build": "Maintenance",
+    "chore": "Maintenance",
+    "ci": "Maintenance",
+    "doc": "Documentation",
+    "docs": "Documentation",
+    "added": "Added",
+    "fixed": "Fixed",
+    "changed": "Changed",
+    "performance": "Performance",
+    "documentation": "Documentation",
+    "maintenance": "Maintenance",
+    "deprecated": "Deprecated",
+    "removed": "Removed",
+}
+
+
+def _plain_summary(text: str) -> str:
+    """Return a normalized comparison key for changelog entry text."""
+    text = _COMMIT_LINK_RE.sub("", text)
+    text = _PR_LINK_RE.sub("", text)
+    text = re.sub(r"^\s*[-*]\s+", "", text)
+    text = re.sub(r"^[A-Za-z]+(?:\([^)]+\))?!?:\s+", "", text)
+    return re.sub(r"\s+", " ", text).strip().casefold()
+
+
+def _squash_heading_parts(line: str) -> tuple[str, str, str] | None:
+    """Return ``(indent, label, title)`` for a squash-body pseudo-heading."""
+    if _COMMIT_LINK_RE.search(line):
+        return None
+
+    match = _SQUASH_HEADING_RE.match(line)
+    if match is None:
+        return None
+
+    raw_prefix = match.group("prefix")
+    kind = re.sub(r"\([^)]+\)", "", raw_prefix).rstrip("!").casefold()
+    label = _SQUASH_HEADING_LABELS.get(kind)
+    if label is None:
+        return None
+
+    title = match.group("title").strip()
+    if not title:
+        return None
+
+    return match.group("indent"), label, title[0].upper() + title[1:]
+
+
+def _normalize_squash_heading(line: str, *, nested: bool = False) -> str:
+    """
+    Convert squash-merge pseudo-commit bullets into bold prose headings.
+
+    This keeps release-note subsections from PR squash bodies readable while
+    avoiding fake top-level changelog entries.
+    """
+    parts = _squash_heading_parts(line)
+    if parts is None:
+        return line
+
+    indent, label, title = parts
+    if nested and not indent:
+        indent = "  "
+    return f"{indent}**{label}: {title}**"
+
+
+def _is_duplicate_squash_heading(line: str, parent_summary: str | None) -> bool:
+    """Return true when a squash-body heading repeats its parent entry."""
+    parts = _squash_heading_parts(line)
+    if parts is None or parent_summary is None:
+        return False
+
+    _, _, title = parts
+    return _plain_summary(title) == parent_summary
+
+
+def _is_isolated_body_heading(lines: list[str], idx: int) -> bool:
+    """Return true when a body line is separated like a squash heading."""
+    prev_is_blank = idx > 0 and not lines[idx - 1].strip()
+    next_is_blank = idx + 1 < len(lines) and not lines[idx + 1].strip()
+    return prev_is_blank and next_is_blank
+
 
 def _max_pr_number(entry: str) -> int:
     """
@@ -335,6 +428,27 @@ def _normalize_indented_heading(line: str) -> str:
     return f"{match.group('indent')}**{title}**"
 
 
+def _process_code_fence(line: str, result: list[str], in_code_block: bool) -> tuple[bool, bool]:
+    """Handle fenced-code transitions and append the line when consumed."""
+    stripped = line.lstrip()
+    if not stripped.startswith("```"):
+        return False, in_code_block
+
+    if not in_code_block:
+        in_code_block = True
+        # MD031: blank line before fenced code block.
+        if result and result[-1].strip():
+            result.append("")
+        # MD040: add language tag if missing.
+        if stripped == "```":
+            line = line.replace("```", "```text", 1)
+    else:
+        in_code_block = False
+
+    result.append(line)
+    return True, in_code_block
+
+
 def postprocess(path: Path) -> None:
     """Read *path*, apply hygiene fixes, and write it back."""
     text = path.read_text(encoding="utf-8")
@@ -348,23 +462,13 @@ def postprocess(path: Path) -> None:
     lines = text.split("\n")
     result: list[str] = []
     in_code_block = False
+    current_entry_summary: str | None = None
+    drop_next_blank = False
 
     for idx, line in enumerate(lines):
-        stripped = line.lstrip()
-
         # --- fenced code-block tracking ---
-        if stripped.startswith("```"):
-            if not in_code_block:
-                in_code_block = True
-                # MD031: blank line before fenced code block.
-                if result and result[-1].strip():
-                    result.append("")
-                # MD040: add language tag if missing.
-                if stripped == "```":
-                    line = line.replace("```", "```text", 1)
-            else:
-                in_code_block = False
-            result.append(line)
+        handled, in_code_block = _process_code_fence(line, result, in_code_block)
+        if handled:
             continue
 
         # Never reflow inside code blocks.
@@ -378,12 +482,33 @@ def postprocess(path: Path) -> None:
         # --- MD030: normalise spaces after list marker ---
         line = _LIST_MARKER_SPACE_RE.sub(r"\1 ", line)
 
+        if line.startswith("- ") and _COMMIT_LINK_RE.search(line):
+            current_entry_summary = _plain_summary(line)
+        elif line.startswith("### "):
+            current_entry_summary = None
+
+        is_isolated_body_heading = _is_isolated_body_heading(lines, idx)
+
+        # --- GitHub squash bodies: collapse duplicate pseudo-headings ---
+        if is_isolated_body_heading and _is_duplicate_squash_heading(line, current_entry_summary):
+            drop_next_blank = bool(result and not result[-1].strip())
+            continue
+        if drop_next_blank and not line.strip():
+            drop_next_blank = False
+            continue
+        drop_next_blank = False
+
         # --- MD007: de-indent orphaned body list items ---
         line = _deindent_orphan(line, lines, idx)
         stripped = line.lstrip()
 
         # --- MD023: headings must start at the beginning of the line ---
         line = _normalize_indented_heading(line)
+        stripped = line.lstrip()
+
+        # --- GitHub squash bodies: render pseudo-headings as prose ---
+        if is_isolated_body_heading:
+            line = _normalize_squash_heading(line, nested=current_entry_summary is not None)
         stripped = line.lstrip()
 
         # --- MD032: blank line before a list item that follows prose ---

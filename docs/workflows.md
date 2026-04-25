@@ -116,17 +116,20 @@ methods are not available.
 
 ### Repair attempts and diagnostics
 
-Internally, flip-based repair performs multiple attempts using different queue-ordering and
-robustness settings. **Currently, this is up to three attempts**:
+Internally, standard flip-based repair uses two bounded attempts:
 
-1. Attempt 1: FIFO queue order (fast path; uses the triangulation's kernel predicates).
-2. Attempt 2: LIFO queue order, with robust predicates enabled for ambiguous boundary
-   classifications (and a full re-seed of the repair queue).
-3. Attempt 3: FIFO queue order again (alternate ordering), still with robust predicates enabled
-   for ambiguous boundary classifications.
+1. Attempt 1: FIFO queue order seeded from the requested local frontier, or from
+   all cells when the caller explicitly requests a global repair.
+2. Attempt 2: LIFO queue order with a full re-seed of the repair queue. This
+   runs only after attempt 1 fails to converge or fails its postcondition.
 
-After an attempt completes
-predicates. A postcondition failure is treated similarly to non-convergence and triggers retries.
+After an attempt completes, repair verifies the Delaunay postcondition with the
+same flip predicates used by the repair loop. A postcondition failure is treated
+similarly to non-convergence and triggers the second attempt or a caller-level
+fallback.
+
+The public advanced repair path can then try a robust-kernel pass and, if that
+still fails, a deterministic heuristic rebuild.
 
 If repair fails to converge within the flip budget, you get
 `DelaunayRepairError::NonConvergent { .. }`, which contains a `DelaunayRepairDiagnostics` payload
@@ -175,8 +178,8 @@ You can provide explicit seeds for reproducibility; otherwise deterministic defa
 from the current vertex set.
 
 ```rust
-use delaunay::core::delaunay_triangulation::DelaunayRepairHeuristicConfig;
 use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::repair::DelaunayRepairHeuristicConfig;
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),

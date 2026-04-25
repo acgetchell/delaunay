@@ -77,7 +77,9 @@ delaunay/
 │   │   ├── fix-delaunay.md
 │   │   ├── invariant_validation_plan.md
 │   │   ├── issue_120_investigation.md
+│   │   ├── issue_204_investigation.md
 │   │   ├── jaccard.md
+│   │   ├── known_issues_4d_2026-04-23.md
 │   │   ├── optimization_recommendations_historical.md
 │   │   ├── phase2_bowyer_watson_optimization.md
 │   │   ├── phase2_uuid_iter_optimization.md
@@ -85,6 +87,7 @@ delaunay/
 │   │   ├── phase_3a_implementation_guide.md
 │   │   ├── phase_3c_action_plan.md
 │   │   ├── testing.md
+│   │   ├── todo_2026-04-23.md
 │   │   └── topology_integration_design_historical.md
 │   ├── dev/
 │   │   ├── commands.md
@@ -93,16 +96,16 @@ delaunay/
 │   │   └── testing.md
 │   ├── templates/
 │   │   └── README.md
-│   ├── KNOWN_ISSUES_4D.md
 │   ├── ORIENTATION_SPEC.md
 │   ├── README.md
 │   ├── RELEASING.md
-│   ├── TODO.md
 │   ├── api_design.md
 │   ├── code_organization.md
 │   ├── invariants.md
+│   ├── limitations.md
 │   ├── numerical_robustness_guide.md
 │   ├── property_testing_summary.md
+│   ├── roadmap.md
 │   ├── topology.md
 │   ├── validation.md
 │   └── workflows.md

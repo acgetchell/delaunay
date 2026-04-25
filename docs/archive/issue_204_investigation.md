@@ -8,8 +8,10 @@
 ## Scope
 
 Capture the structure of the 500-point 4D ridge-fan retry collapse described in
-`docs/KNOWN_ISSUES_4D.md` and `docs/TODO.md §2` so we can pick the smallest fix
-that actually closes it, rather than one that only addresses the visible symptom.
+the former `docs/KNOWN_ISSUES_4D.md` and `docs/TODO.md §2` snapshots (now
+archived as `docs/archive/known_issues_4d_2026-04-23.md` and
+`docs/archive/todo_2026-04-23.md`) so we can pick the smallest fix that
+actually closes it, rather than one that only addresses the visible symptom.
 
 ## What the instrumentation said
 
@@ -151,7 +153,7 @@ target the wrong layer (A, B) or are a no-op on the observed data (C).
 - `bulk-progress` traces show the first attempt reaches
   `processed=150 total_vertices=500 inserted=149 skipped=1 cells=2282` in
   about 11.8s. The timeout hit mid-attempt, not during shuffled retries, so
-  the "all 7 shuffled retries fail" summary in the old KNOWN_ISSUES_4D note
+  the "all 7 shuffled retries fail" summary in the archived known-issues note
   is still unverified on this branch at 240s; longer runs are needed to
   confirm, though the per-attempt shape clearly degrades.
 - No `non_manifold_facet` / `open_boundary` retryable skips fired. The
