@@ -127,13 +127,6 @@ bench-compare: _ensure-uv
 bench-compile:
     cargo bench --workspace --no-run
 
-# Compile benchmarks and integration tests without running. This catches
-# release-profile-only warnings (e.g. cfg-gated unused-mut) that debug-mode
-# clippy/test won't see.
-bench-test-compile:
-    cargo bench --workspace --no-run
-    cargo test --tests --release --no-run
-
 # Development benchmark comparison: perf profile with reduced sample sizes.
 bench-dev: _ensure-uv
     CRIT_SAMPLE_SIZE=10 CRIT_MEASUREMENT_MS=1000 CRIT_WARMUP_MS=500 uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt --dev
@@ -146,6 +139,13 @@ bench-perf-summary: _ensure-uv
 # Criterion requires sample_size >= 10; use the minimum with short measurement/warm-up windows.
 bench-smoke:
     CRIT_SAMPLE_SIZE=10 CRIT_MEASUREMENT_MS=500 CRIT_WARMUP_MS=200 cargo bench --workspace --profile perf
+
+# Compile benchmarks and integration tests without running. This catches
+# release-profile-only warnings (e.g. cfg-gated unused-mut) that debug-mode
+# clippy/test won't see.
+bench-test-compile:
+    cargo bench --workspace --no-run
+    cargo test --tests --release --no-run
 
 # Build commands
 build:
@@ -277,7 +277,7 @@ help-workflows:
     @echo "  just debug-large-scale-3d [n] # Issue #341: 3D scalability (default n=10000)"
     @echo "  just debug-large-scale-5d [n] # Issue #342: 5D feasibility (default n=1000)"
     @echo ""
-    @echo "Benchmark workflows (explicit perf-profile runs):"
+    @echo "Benchmark workflows:"
     @echo "  just bench-smoke        # Smoke-test benchmark harnesses (minimal samples)"
     @echo "  just bench              # Run all benchmarks with perf profile (ThinLTO)"
     @echo "  just bench-baseline     # Generate perf-profile performance baseline"
@@ -285,6 +285,7 @@ help-workflows:
     @echo "  just bench-compare      # Compare against baseline with perf profile"
     @echo "  just bench-dev          # Reduced-sample perf-profile comparison (~1-2 min)"
     @echo "  just bench-perf-summary # Generate perf-profile release summary (~30-45 min)"
+    @echo "  just profile [toolchain] [code_ref] # Run ci_performance_suite for a compiler/code pair"
     @echo ""
     @echo "Larger/optional workflows:"
     @echo "  just ci-slow             # CI + slow tests (100+ vertices)"
@@ -371,9 +372,11 @@ perf-help:
     @echo "  just bench-smoke           # Smoke-test benchmark harnesses"
     @echo ""
     @echo "Profiling Commands:"
-    @echo "  just profile               # Profile full triangulation_scaling benchmark"
-    @echo "  just profile-dev           # Profile 3D dev mode (faster iteration)"
-    @echo "  just profile-mem           # Profile memory allocations (with count-allocations feature)"
+    @echo "  just profile               # Run ci_performance_suite for the current tree/toolchain"
+    @echo "  just profile [toolchain] [code_ref]"
+    @echo "                              # Run ci_performance_suite for a compiler/code pair"
+    @echo "  just profile-dev           # Samply profile 3D dev mode (faster iteration)"
+    @echo "  just profile-mem           # Samply profile memory allocations (with count-allocations feature)"
     @echo ""
     @echo "Benchmark System (Delaunay-specific):"
     @echo "  just bench-baseline        # Generate baseline via benchmark-utils"
@@ -395,10 +398,97 @@ perf-help:
     @echo "  just bench-dev             # Reduced-sample benchmark iteration"
     @echo "  CRIT_SAMPLE_SIZE=100 just bench  # Custom sample size"
     @echo "  just bench-ci              # Final optimized CI-suite benchmark run"
+    @echo "  just profile v0.7.5        # v0.7.5 code on its declared Rust toolchain"
+    @echo "  just profile 1.95          # Current tree on Rust 1.95"
+    @echo "  just profile 1.95 v0.7.5   # v0.7.5 code on Rust 1.95"
 
-# Profiling
-profile:
-    samply record cargo bench --profile perf --bench profiling_suite -- triangulation_scaling
+# Run the selected CI benchmark suite for one compiler/code pair.
+profile toolchain="" code_ref="current":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    command -v rustup >/dev/null || { echo "❌ 'rustup' not found. Install Rust via https://rustup.rs"; exit 1; }
+
+    repo_root="$(pwd)"
+    requested_toolchain="{{toolchain}}"
+    requested_ref="{{code_ref}}"
+    workdir="$repo_root"
+    cleanup_worktree=0
+
+    if [[ "$requested_ref" == "current" && -n "$requested_toolchain" ]]; then
+        if [[ ! "$requested_toolchain" =~ ^([0-9]+(\.[0-9]+){0,2}|stable|beta|nightly)([-+].*)?$ ]]; then
+            requested_ref="$requested_toolchain"
+            requested_toolchain=""
+        fi
+    fi
+
+    if [[ "$requested_ref" != "current" && "$requested_ref" != "." ]]; then
+        tmp_parent="$(mktemp -d "${TMPDIR:-/tmp}/delaunay-profile.XXXXXX")"
+        workdir="$tmp_parent/worktree"
+        cleanup_worktree=1
+        git worktree add --detach "$workdir" "$requested_ref"
+    fi
+
+    cleanup() {
+        if [[ "$cleanup_worktree" -eq 1 ]]; then
+            git worktree remove --force "$workdir" >/dev/null 2>&1 || true
+            rm -rf "$(dirname "$workdir")"
+        fi
+    }
+    trap cleanup EXIT
+
+    if [[ -z "$requested_toolchain" ]]; then
+        requested_toolchain="$(
+            grep -E '^[[:space:]]*channel[[:space:]]*=' "$workdir/rust-toolchain.toml" \
+                | head -n 1 \
+                | cut -d '=' -f 2 \
+                | tr -d ' "'
+        )"
+    fi
+
+    if [[ -z "$requested_toolchain" ]]; then
+        echo "❌ No toolchain argument provided and no rust-toolchain.toml channel found."
+        exit 1
+    fi
+
+    safe_ref="$(
+        if [[ "$requested_ref" == "current" || "$requested_ref" == "." ]]; then
+            printf 'current'
+        else
+            printf '%s' "$requested_ref"
+        fi | tr -c 'A-Za-z0-9._-' '_'
+    )"
+    safe_toolchain="$(printf '%s' "$requested_toolchain" | tr -c 'A-Za-z0-9._-' '_')"
+    run_dir="$repo_root/target/profile-runs/${safe_ref}-${safe_toolchain}"
+    mkdir -p "$run_dir"
+
+    echo "📌 Code ref: $requested_ref"
+    echo "🦀 Rust toolchain: $requested_toolchain"
+    echo "📊 Benchmark: ci_performance_suite"
+    echo "📁 Results: $run_dir"
+
+    rustup toolchain install "$requested_toolchain" --profile minimal
+
+    {
+        echo "# Profile Run"
+        echo
+        echo "- Code ref: $requested_ref"
+        echo "- Workdir: $workdir"
+        echo "- Commit: $(git -C "$workdir" rev-parse HEAD)"
+        echo "- Dirty tree: $(if [[ "$workdir" == "$repo_root" && -n "$(git status --short)" ]]; then echo yes; else echo no; fi)"
+        echo "- Requested toolchain: $requested_toolchain"
+        echo "- rustc: $(rustup run "$requested_toolchain" rustc --version)"
+        echo "- cargo: $(rustup run "$requested_toolchain" cargo --version)"
+        echo "- Cargo profile: cargo bench default"
+        echo "- Benchmark harness: ci_performance_suite"
+    } > "$run_dir/profile_metadata.md"
+
+    (
+        cd "$workdir"
+        CARGO_TARGET_DIR="$run_dir/target" \
+            rustup run "$requested_toolchain" cargo bench --bench ci_performance_suite \
+            2>&1 | tee "$run_dir/ci_performance_suite.log"
+    )
 
 profile-dev:
     PROFILING_DEV_MODE=1 samply record cargo bench --profile perf --bench profiling_suite -- "triangulation_scaling_3d/tds_new/random_3d"
@@ -715,11 +805,6 @@ tag-force version: python-sync
 test: bench-test-compile test-all
     @echo "✅ Test workflow passed!"
 
-# test-unit: runs lib and doc tests.
-test-unit:
-    cargo test --lib --verbose
-    cargo test --doc --verbose
-
 # test-all: runs lib, doc, integration, and Python tests (comprehensive)
 test-all: test-unit test-integration test-python
     @echo "✅ All tests passed!"
@@ -758,6 +843,11 @@ test-slow:
 
 test-slow-release:
     cargo test --release --features slow-tests
+
+# test-unit: runs lib and doc tests.
+test-unit:
+    cargo test --lib --verbose
+    cargo test --doc --verbose
 
 toml-fmt: _ensure-taplo
     #!/usr/bin/env bash

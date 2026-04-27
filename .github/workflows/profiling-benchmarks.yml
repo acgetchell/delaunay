@@ -41,7 +41,6 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  RUST_TOOLCHAIN: 1.92.0
 
 jobs:
   comprehensive-profiling:
@@ -56,7 +55,6 @@ jobs:
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7 # v1.16.0
         with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
           cache: false
           rustflags: ""
 
@@ -111,6 +109,46 @@ jobs:
               echo "BENCH_LARGE_SCALE=1"  # enable 4D @ 10K
             } >> "$GITHUB_ENV"
           fi
+
+      - name: Capture profiling environment metadata
+        env:
+          BENCH_FILTER_VALUE: ${{ github.event.inputs.benchmark_filter || '' }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p profiling-results
+
+          declared_toolchain="$(
+            grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
+              | head -n 1 \
+              | cut -d '=' -f 2 \
+              | tr -d ' "'
+          )"
+          rust_version="$(
+            grep -E '^rust-version[[:space:]]*=' Cargo.toml \
+              | head -n 1 \
+              | cut -d '=' -f 2 \
+              | tr -d ' "'
+          )"
+          profiling_mode="production"
+          if [[ "${PROFILING_DEV_MODE:-}" == "1" ]]; then
+            profiling_mode="development"
+          fi
+
+          {
+            echo "# Profiling Environment"
+            echo
+            echo "- Code ref: ${GITHUB_REF_NAME}"
+            echo "- Commit: $(git rev-parse HEAD)"
+            echo "- Declared rust-toolchain.toml channel: ${declared_toolchain}"
+            echo "- Cargo.toml rust-version: ${rust_version}"
+            echo "- rustc: $(rustc --version)"
+            echo "- cargo: $(cargo --version)"
+            echo "- Cargo profile: perf"
+            echo "- Benchmark filter: ${BENCH_FILTER_VALUE:-All benchmarks}"
+            echo "- Profiling mode: ${profiling_mode}"
+            echo "- Runner: ${RUNNER_OS}"
+          } > profiling-results/environment_metadata.md
 
       - name: Build profiling suite
         run: |
@@ -197,6 +235,7 @@ jobs:
 
           - \`profiling_output.log\`: Complete benchmark output
           - \`memory_profiling_detailed.log\`: Detailed memory allocation analysis
+          - \`environment_metadata.md\`: Code ref, compiler, profile, and filter metadata
           - \`criterion/\`: HTML reports and detailed timing data
 
           EOF
@@ -253,7 +292,6 @@ jobs:
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7 # v1.16.0
         with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
           cache: false
           rustflags: ""
 
@@ -272,6 +310,40 @@ jobs:
         run: |
           echo "Running allocation API tests..."
           cargo test --test allocation_api --features count-allocations --verbose
+
+      - name: Capture memory profiling environment metadata
+        run: |
+          set -euo pipefail
+
+          mkdir -p profiling-results
+
+          declared_toolchain="$(
+            grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
+              | head -n 1 \
+              | cut -d '=' -f 2 \
+              | tr -d ' "'
+          )"
+          rust_version="$(
+            grep -E '^rust-version[[:space:]]*=' Cargo.toml \
+              | head -n 1 \
+              | cut -d '=' -f 2 \
+              | tr -d ' "'
+          )"
+
+          {
+            echo "# Memory Profiling Environment"
+            echo
+            echo "- Code ref: ${GITHUB_REF_NAME}"
+            echo "- Commit: $(git rev-parse HEAD)"
+            echo "- Declared rust-toolchain.toml channel: ${declared_toolchain}"
+            echo "- Cargo.toml rust-version: ${rust_version}"
+            echo "- rustc: $(rustc --version)"
+            echo "- cargo: $(cargo --version)"
+            echo "- Cargo profile: perf"
+            echo "- Benchmark filter: memory_profiling"
+            echo "- Profiling mode: development"
+            echo "- Runner: ${RUNNER_OS}"
+          } > profiling-results/environment_metadata.md
 
       - name: Run memory scaling benchmarks
         env:
@@ -292,5 +364,6 @@ jobs:
         with:
           name: memory-stress-results-${{ github.run_number }}
           path: |
+            profiling-results/
             target/criterion/
           retention-days: 14
