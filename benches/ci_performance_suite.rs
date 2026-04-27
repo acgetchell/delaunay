@@ -8,7 +8,8 @@
 //! 2. Convex hull extraction from completed triangulations
 //! 3. Boundary facet traversal
 //! 4. Full validation (Levels 1-4)
-//! 5. Explicit bistellar flip roundtrips on a stable 4D PL-manifold case
+//! 5. Incremental vertex insertion
+//! 6. Explicit bistellar flip roundtrips on a stable 4D PL-manifold case
 //!
 //! Predicate microbenchmarks, allocation-focused measurements, and large-scale
 //! stress tests live in the dedicated benchmark targets under `benches/`.
@@ -26,22 +27,21 @@
 //! - 2D: Fundamental triangulation case
 //! - 3D-5D: Higher-dimensional triangulations as documented in README.md
 
-use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use delaunay::core::vertex::Vertex;
-use delaunay::geometry::algorithms::convex_hull::ConvexHull;
-use delaunay::geometry::kernel::{AdaptiveKernel, RobustKernel};
-use delaunay::geometry::point::Point;
-use delaunay::geometry::util::generate_random_points_seeded;
+use criterion::measurement::WallTime;
+use criterion::{
+    BatchSize, BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
+};
+use delaunay::prelude::generators::generate_random_points_seeded;
+use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, Point, RobustKernel};
+use delaunay::prelude::query::ConvexHull;
 use delaunay::prelude::triangulation::flips::{
     BistellarFlips, CellKey, EdgeKey, FacetHandle, RidgeHandle, TopologyGuarantee, TriangleHandle,
 };
-use delaunay::prelude::{
-    ConstructionOptions, DelaunayTriangulation, InsertionOrderStrategy, RetryPolicy,
+use delaunay::prelude::triangulation::{
+    ConstructionOptions, DelaunayTriangulation, InsertionOrderStrategy, RetryPolicy, Vertex,
 };
 use delaunay::vertex;
-use std::hint::black_box;
-use std::num::NonZeroUsize;
-use std::sync::Once;
+use std::{env, hint::black_box, num::NonZeroUsize, sync::Once};
 use tracing::{error, warn};
 
 /// Default point counts for 2D–4D benchmarks.
@@ -52,9 +52,30 @@ const COUNTS_5D: &[usize] = &[10, 25];
 const OPERATION_COUNT: usize = 50;
 /// Representative operation count for 5D non-construction workflows.
 const OPERATION_COUNT_5D: usize = 25;
+/// Small insert batch for 2D-3D incremental insertion benchmarks.
+const INSERT_COUNT: usize = 10;
+/// Reduced insert batch for 4D incremental insertion benchmarks.
+const INSERT_COUNT_4D: usize = 6;
+/// Reduced insert batch for 5D incremental insertion benchmarks.
+const INSERT_COUNT_5D: usize = 4;
 type SeedSearchResult<const D: usize> = Option<(u64, Vec<Point<f64, D>>, Vec<Vertex<f64, (), D>>)>;
 type BenchTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
 type FlipTriangulation4 = DelaunayTriangulation<RobustKernel<f64>, (), (), 4>;
+
+#[derive(Clone, Copy)]
+enum Dataset {
+    WellConditioned,
+    Adversarial,
+}
+
+impl Dataset {
+    const fn suffix(self) -> &'static str {
+        match self {
+            Self::WellConditioned => "",
+            Self::Adversarial => "_adversarial",
+        }
+    }
+}
 
 struct ApiBenchmarkEntry {
     group: &'static str,
@@ -71,29 +92,36 @@ const API_BENCHMARK_ENTRIES: &[ApiBenchmarkEntry] = &[
         group: "construction",
         public_api: "DelaunayTriangulation::new_with_options",
         dimensions: "2,3,4,5",
-        benchmark_ids: "tds_new_2d/tds_new/{10,25,50};tds_new_3d/tds_new/{10,25,50};tds_new_4d/tds_new/{10,25,50};tds_new_5d/tds_new/{10,25}",
-        note: "construct_from_seeded_vertices",
+        benchmark_ids: "tds_new_2d/{tds_new,tds_new_adversarial}/{10,25,50};tds_new_3d/{tds_new,tds_new_adversarial}/{10,25,50};tds_new_4d/{tds_new,tds_new_adversarial}/{10,25,50};tds_new_5d/{tds_new,tds_new_adversarial}/{10,25}",
+        note: "construct_from_seeded_vertices_and_adversarial_large_coordinate_inputs",
     },
     ApiBenchmarkEntry {
         group: "boundary_facets",
         public_api: "DelaunayTriangulation::boundary_facets",
         dimensions: "2,3,4,5",
-        benchmark_ids: "boundary_facets/boundary_facets_2d/50;boundary_facets/boundary_facets_3d/50;boundary_facets/boundary_facets_4d/50;boundary_facets/boundary_facets_5d/25",
-        note: "iterate_boundary_facets",
+        benchmark_ids: "boundary_facets/{boundary_facets_2d,boundary_facets_2d_adversarial}/50;boundary_facets/{boundary_facets_3d,boundary_facets_3d_adversarial}/50;boundary_facets/{boundary_facets_4d,boundary_facets_4d_adversarial}/50;boundary_facets/{boundary_facets_5d,boundary_facets_5d_adversarial}/25",
+        note: "iterate_boundary_facets_on_well_conditioned_and_adversarial_inputs",
     },
     ApiBenchmarkEntry {
         group: "convex_hull",
         public_api: "ConvexHull::from_triangulation",
         dimensions: "2,3,4,5",
-        benchmark_ids: "convex_hull/from_triangulation_2d/50;convex_hull/from_triangulation_3d/50;convex_hull/from_triangulation_4d/50;convex_hull/from_triangulation_5d/25",
-        note: "extract_hull_from_completed_triangulation",
+        benchmark_ids: "convex_hull/{from_triangulation_2d,from_triangulation_2d_adversarial}/50;convex_hull/{from_triangulation_3d,from_triangulation_3d_adversarial}/50;convex_hull/{from_triangulation_4d,from_triangulation_4d_adversarial}/50;convex_hull/{from_triangulation_5d,from_triangulation_5d_adversarial}/25",
+        note: "extract_hull_from_well_conditioned_and_adversarial_triangulations",
     },
     ApiBenchmarkEntry {
         group: "validation",
         public_api: "DelaunayTriangulation::validate",
         dimensions: "3,4,5",
-        benchmark_ids: "validation/validate_3d/50;validation/validate_4d/50;validation/validate_5d/25",
-        note: "levels_1_through_4",
+        benchmark_ids: "validation/{validate_3d,validate_3d_adversarial}/50;validation/{validate_4d,validate_4d_adversarial}/50;validation/{validate_5d,validate_5d_adversarial}/25",
+        note: "levels_1_through_4_on_well_conditioned_and_adversarial_inputs",
+    },
+    ApiBenchmarkEntry {
+        group: "incremental_insert",
+        public_api: "DelaunayTriangulation::insert",
+        dimensions: "2,3,4,5",
+        benchmark_ids: "incremental_insert/{insert_2d,insert_2d_adversarial}/10;incremental_insert/{insert_3d,insert_3d_adversarial}/10;incremental_insert/{insert_4d,insert_4d_adversarial}/6;incremental_insert/{insert_5d,insert_5d_adversarial}/4",
+        note: "insert_batches_into_prebuilt_well_conditioned_and_adversarial_triangulations",
     },
     ApiBenchmarkEntry {
         group: "bistellar_flips",
@@ -158,7 +186,7 @@ fn known_seed(dim: usize, count: usize) -> Option<u64> {
         .map(|&(_, _, seed)| seed)
 }
 
-fn print_api_benchmark_manifest_once() {
+fn print_manifest_once() {
     API_BENCHMARK_MANIFEST.call_once(|| {
         println!(
             "api_benchmark_manifest crate=delaunay version={} benchmark=ci_performance_suite schema=1",
@@ -175,7 +203,7 @@ fn print_api_benchmark_manifest_once() {
 
 /// Prepare benchmark inputs by looking up a pre-computed seed, falling back
 /// to a runtime search only if the known seed is missing or invalid.
-fn prepare_benchmark_data<const D: usize>(
+fn prepare_data<const D: usize>(
     dim_seed: u64,
     count: usize,
     bounds: (f64, f64),
@@ -183,7 +211,7 @@ fn prepare_benchmark_data<const D: usize>(
 ) -> (u64, Vec<Point<f64, D>>, Vec<Vertex<f64, (), D>>) {
     // Fast path: use the pre-computed seed (single verification construction)
     if let Some(seed) = known_seed(D, count) {
-        if let Some(result) = find_seed_and_vertices::<D>(seed, count, bounds, 1, attempts) {
+        if let Some(result) = find_seed_vertices::<D>(seed, count, bounds, 1, attempts) {
             return result;
         }
         warn!(
@@ -196,21 +224,19 @@ fn prepare_benchmark_data<const D: usize>(
 
     // Slow fallback: runtime search from the base seed
     let base_seed = dim_seed.wrapping_add(count as u64);
-    let search_limit = bench_seed_search_limit();
-    find_seed_and_vertices::<D>(base_seed, count, bounds, search_limit, attempts).unwrap_or_else(
-        || {
-            panic!(
-                "No stable benchmark seed found for {D}D/{count}: \
+    let search_limit = seed_search_limit();
+    find_seed_vertices::<D>(base_seed, count, bounds, search_limit, attempts).unwrap_or_else(|| {
+        panic!(
+            "No stable benchmark seed found for {D}D/{count}: \
                  start_seed={base_seed}; search_limit={search_limit}; bounds={bounds:?}"
-            )
-        },
-    )
+        )
+    })
 }
 
-fn prepare_triangulation<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangulation<D> {
+fn prepare_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangulation<D> {
     let bounds = (-100.0, 100.0);
     let attempts = NonZeroUsize::new(6).expect("retry attempts must be non-zero");
-    let (seed, _, vertices) = prepare_benchmark_data::<D>(dim_seed, count, bounds, attempts);
+    let (seed, _, vertices) = prepare_data::<D>(dim_seed, count, bounds, attempts);
     let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
         attempts,
         base_seed: Some(seed),
@@ -221,7 +247,38 @@ fn prepare_triangulation<const D: usize>(dim_seed: u64, count: usize) -> BenchTr
     })
 }
 
-fn find_seed_and_vertices<const D: usize>(
+fn prepare_adv_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangulation<D> {
+    let attempts = NonZeroUsize::new(8).expect("retry attempts must be non-zero");
+    let (seed, _, vertices) = prepare_adv_data::<D>(dim_seed, count, attempts);
+    let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
+        attempts,
+        base_seed: Some(seed),
+    });
+
+    BenchTriangulation::<D>::new_with_options(&vertices, options).unwrap_or_else(|err| {
+        panic!(
+            "failed to prepare adversarial {D}D benchmark triangulation with {count} vertices: {err}"
+        );
+    })
+}
+
+fn prepare_inserts<const D: usize>(
+    dim_seed: u64,
+    count: usize,
+    dataset: Dataset,
+) -> Vec<Vertex<f64, (), D>> {
+    let seed = dim_seed.wrapping_add(0x5151_5151);
+    let points = match dataset {
+        Dataset::WellConditioned => {
+            generate_random_points_seeded::<f64, D>(count, (-50.0, 50.0), seed)
+                .unwrap_or_else(|error| panic!("insert point generation failed for {D}D: {error}"))
+        }
+        Dataset::Adversarial => generate_adv_points::<D>(count, seed),
+    };
+    points.iter().map(|point| vertex!(*point)).collect()
+}
+
+fn find_seed_vertices<const D: usize>(
     start_seed: u64,
     count: usize,
     bounds: (f64, f64),
@@ -249,6 +306,62 @@ fn find_seed_and_vertices<const D: usize>(
     None
 }
 
+fn prepare_adv_data<const D: usize>(
+    dim_seed: u64,
+    count: usize,
+    attempts: NonZeroUsize,
+) -> (u64, Vec<Point<f64, D>>, Vec<Vertex<f64, (), D>>) {
+    let start_seed = dim_seed
+        .wrapping_mul(17)
+        .wrapping_add(count as u64)
+        .wrapping_add(0xA5A5_A5A5);
+    let search_limit = seed_search_limit();
+
+    for offset in 0..search_limit {
+        let candidate_seed = start_seed.wrapping_add(offset as u64);
+        let points = generate_adv_points::<D>(count, candidate_seed);
+        let vertices = points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>();
+        let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
+            attempts,
+            base_seed: Some(candidate_seed),
+        });
+
+        if BenchTriangulation::<D>::new_with_options(&vertices, options).is_ok() {
+            return (candidate_seed, points, vertices);
+        }
+    }
+
+    panic!(
+        "No stable adversarial benchmark seed found for {D}D/{count}: \
+         start_seed={start_seed}; search_limit={search_limit}"
+    );
+}
+
+fn generate_adv_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<f64, D>> {
+    let base_points = generate_random_points_seeded::<f64, D>(count, (-1.0, 1.0), seed)
+        .unwrap_or_else(|error| {
+            panic!("generate_random_points_seeded failed for adversarial {D}D: {error}");
+        });
+
+    base_points
+        .iter()
+        .enumerate()
+        .map(|(index, point)| {
+            let index = u32::try_from(index).expect("benchmark point index should fit in u32");
+            let mut coords = [0.0_f64; D];
+            for (axis, coord) in coords.iter_mut().enumerate() {
+                let axis_number = u32::try_from(axis + 1).expect("axis should fit in u32");
+                let base = point.coords()[axis];
+                let cluster_offset = f64::from(index % 7) * 1.0e-3;
+                let axis_offset = f64::from(axis_number) * 0.25;
+                let perturbation = f64::from((index + axis_number) % 11) * 1.0e-6;
+                *coord = base.mul_add(1.0e3, 1.0e9 + axis_offset + cluster_offset + perturbation);
+            }
+            Point::new(coords)
+        })
+        .collect()
+}
+
 fn stable_vertices_4d() -> Vec<Vertex<f64, (), 4>> {
     STABLE_POINTS_4D
         .iter()
@@ -256,7 +369,7 @@ fn stable_vertices_4d() -> Vec<Vertex<f64, (), 4>> {
         .collect()
 }
 
-fn build_flip_triangulation_4d() -> FlipTriangulation4 {
+fn build_flip_dt_4d() -> FlipTriangulation4 {
     let vertices = stable_vertices_4d();
     let options =
         ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
@@ -318,7 +431,7 @@ fn roundtrip_k1_4d(dt: &mut FlipTriangulation4) {
         .expect("k=1 remove should invert k=1 insert");
 }
 
-fn collect_interior_facets_4d(dt: &FlipTriangulation4) -> Vec<FacetHandle> {
+fn interior_facets_4d(dt: &FlipTriangulation4) -> Vec<FacetHandle> {
     let mut facets = Vec::new();
     for (cell_key, cell) in dt.cells() {
         if let Some(neighbors) = cell.neighbors() {
@@ -333,10 +446,11 @@ fn collect_interior_facets_4d(dt: &FlipTriangulation4) -> Vec<FacetHandle> {
     facets
 }
 
-fn roundtrip_k2_4d(dt: &mut FlipTriangulation4) {
+fn flippable_k2_facet_4d(dt: &FlipTriangulation4) -> FacetHandle {
     let mut last_error = None;
-    for facet in collect_interior_facets_4d(dt) {
-        match dt.flip_k2(facet) {
+    for facet in interior_facets_4d(dt) {
+        let mut trial = dt.clone();
+        match trial.flip_k2(facet) {
             Ok(info) => {
                 assert_eq!(
                     info.inserted_face_vertices.len(),
@@ -347,9 +461,10 @@ fn roundtrip_k2_4d(dt: &mut FlipTriangulation4) {
                     info.inserted_face_vertices[0],
                     info.inserted_face_vertices[1],
                 );
-                dt.flip_k2_inverse_from_edge(edge)
+                trial
+                    .flip_k2_inverse_from_edge(edge)
                     .expect("k=2 inverse should succeed after k=2 flip");
-                return;
+                return facet;
             }
             Err(err) => last_error = Some(format!("{err}")),
         }
@@ -361,7 +476,24 @@ fn roundtrip_k2_4d(dt: &mut FlipTriangulation4) {
     );
 }
 
-fn collect_ridges_4d(dt: &FlipTriangulation4) -> Vec<RidgeHandle> {
+fn roundtrip_k2_4d(dt: &mut FlipTriangulation4, facet: FacetHandle) {
+    let info = dt
+        .flip_k2(facet)
+        .expect("k=2 flip should succeed for preselected 4D benchmark facet");
+    assert_eq!(
+        info.inserted_face_vertices.len(),
+        2,
+        "k=2 flip should insert an edge"
+    );
+    let edge = EdgeKey::new(
+        info.inserted_face_vertices[0],
+        info.inserted_face_vertices[1],
+    );
+    dt.flip_k2_inverse_from_edge(edge)
+        .expect("k=2 inverse should succeed after k=2 flip");
+}
+
+fn ridges_4d(dt: &FlipTriangulation4) -> Vec<RidgeHandle> {
     let mut ridges = Vec::new();
     for (cell_key, cell) in dt.cells() {
         let vertex_count = cell.number_of_vertices();
@@ -376,10 +508,11 @@ fn collect_ridges_4d(dt: &FlipTriangulation4) -> Vec<RidgeHandle> {
     ridges
 }
 
-fn roundtrip_k3_4d(dt: &mut FlipTriangulation4) {
+fn flippable_k3_ridge_4d(dt: &FlipTriangulation4) -> RidgeHandle {
     let mut last_error = None;
-    for ridge in collect_ridges_4d(dt) {
-        match dt.flip_k3(ridge) {
+    for ridge in ridges_4d(dt) {
+        let mut trial = dt.clone();
+        match trial.flip_k3(ridge) {
             Ok(info) => {
                 assert_eq!(
                     info.inserted_face_vertices.len(),
@@ -391,9 +524,10 @@ fn roundtrip_k3_4d(dt: &mut FlipTriangulation4) {
                     info.inserted_face_vertices[1],
                     info.inserted_face_vertices[2],
                 );
-                dt.flip_k3_inverse_from_triangle(triangle)
+                trial
+                    .flip_k3_inverse_from_triangle(triangle)
                     .expect("k=3 inverse should succeed after k=3 flip");
-                return;
+                return ridge;
             }
             Err(err) => last_error = Some(format!("{err}")),
         }
@@ -405,16 +539,34 @@ fn roundtrip_k3_4d(dt: &mut FlipTriangulation4) {
     );
 }
 
+fn roundtrip_k3_4d(dt: &mut FlipTriangulation4, ridge: RidgeHandle) {
+    let info = dt
+        .flip_k3(ridge)
+        .expect("k=3 flip should succeed for preselected 4D benchmark ridge");
+    assert_eq!(
+        info.inserted_face_vertices.len(),
+        3,
+        "k=3 flip should insert a triangle"
+    );
+    let triangle = TriangleHandle::new(
+        info.inserted_face_vertices[0],
+        info.inserted_face_vertices[1],
+        info.inserted_face_vertices[2],
+    );
+    dt.flip_k3_inverse_from_triangle(triangle)
+        .expect("k=3 inverse should succeed after k=3 flip");
+}
+
 fn bench_logging_enabled() -> bool {
-    std::env::var("DELAUNAY_BENCH_LOG").is_ok_and(|value| value != "0")
+    env::var("DELAUNAY_BENCH_LOG").is_ok_and(|value| value != "0")
 }
 
-fn bench_discover_seeds_enabled() -> bool {
-    std::env::var("DELAUNAY_BENCH_DISCOVER_SEEDS").is_ok_and(|value| value != "0")
+fn discover_seeds_enabled() -> bool {
+    env::var("DELAUNAY_BENCH_DISCOVER_SEEDS").is_ok_and(|value| value != "0")
 }
 
-fn bench_seed_search_limit() -> usize {
-    std::env::var("DELAUNAY_BENCH_DISCOVER_SEEDS_LIMIT")
+fn seed_search_limit() -> usize {
+    env::var("DELAUNAY_BENCH_DISCOVER_SEEDS_LIMIT")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(2000)
@@ -429,8 +581,9 @@ fn bench_seed_search_limit() -> usize {
 macro_rules! benchmark_tds_new_dimension {
     ($dim:literal, $func_name:ident, $seed:literal, $counts:expr) => {
         /// Benchmark triangulation creation for D-dimensional triangulations
+        #[allow(clippy::too_many_lines)]
         fn $func_name(c: &mut Criterion) {
-            print_api_benchmark_manifest_once();
+            print_manifest_once();
             let counts = $counts;
 
             // Opt-in helper for discovering stable seeds without paying Criterion warmup/
@@ -448,9 +601,9 @@ macro_rules! benchmark_tds_new_dimension {
             //
             // We avoid `std::process::exit` here so that destructors run and Criterion
             // can clean up state on both success and failure.
-            if bench_discover_seeds_enabled() {
+            if discover_seeds_enabled() {
                 let bounds = (-100.0, 100.0);
-                let filters: Vec<String> = std::env::args()
+                let filters: Vec<String> = env::args()
                     .skip(1)
                     .filter(|arg| !arg.starts_with('-'))
                     .collect();
@@ -464,12 +617,12 @@ macro_rules! benchmark_tds_new_dimension {
                     }
 
                     let seed = ($seed as u64).wrapping_add(count as u64);
-                    let limit = bench_seed_search_limit();
+                    let limit = seed_search_limit();
                     let attempts =
                         NonZeroUsize::new(6).expect("retry attempts must be non-zero");
 
                     if let Some((candidate_seed, _, _)) =
-                        find_seed_and_vertices::<$dim>(seed, count, bounds, limit, attempts)
+                        find_seed_vertices::<$dim>(seed, count, bounds, limit, attempts)
                     {
                         println!(
                             "seed_search_found dim={} count={} seed={}",
@@ -510,7 +663,7 @@ macro_rules! benchmark_tds_new_dimension {
                     let attempts =
                         NonZeroUsize::new(6).expect("retry attempts must be non-zero");
                     let (seed, points, vertices) =
-                        prepare_benchmark_data::<$dim>($seed, count, bounds, attempts);
+                        prepare_data::<$dim>($seed, count, bounds, attempts);
                     let sample_points = points.iter().take(5).collect::<Vec<_>>();
 
                     // In benchmarks we compile in release mode, where the default retry policy is
@@ -555,6 +708,55 @@ macro_rules! benchmark_tds_new_dimension {
                         }
                     });
                 });
+
+                group.bench_with_input(
+                    BenchmarkId::new("tds_new_adversarial", count),
+                    &count,
+                    |b, &count| {
+                        let attempts =
+                            NonZeroUsize::new(8).expect("retry attempts must be non-zero");
+                        let (seed, points, vertices) =
+                            prepare_adv_data::<$dim>($seed, count, attempts);
+                        let sample_points = points.iter().take(5).collect::<Vec<_>>();
+                        let options = ConstructionOptions::default().with_retry_policy(
+                            RetryPolicy::Shuffled {
+                                attempts,
+                                base_seed: Some(seed),
+                            },
+                        );
+
+                        b.iter(|| {
+                            match DelaunayTriangulation::<_, (), (), $dim>::new_with_options(
+                                &vertices,
+                                options,
+                            ) {
+                                Ok(dt) => {
+                                    black_box(dt);
+                                }
+                                Err(err) => {
+                                    let error = format!("{err:?}");
+                                    if bench_logging_enabled() {
+                                        error!(
+                                            dim = $dim,
+                                            count,
+                                            seed,
+                                            sample_points = ?sample_points,
+                                            error = %error,
+                                            "adversarial DelaunayTriangulation::new failed"
+                                        );
+                                    }
+                                    panic!(
+                                        "adversarial DelaunayTriangulation::new failed for {}D: {error}; dim={}; count={}; seed={}; sample_points={sample_points:?}",
+                                        $dim,
+                                        $dim,
+                                        count,
+                                        seed
+                                    );
+                                }
+                            }
+                        });
+                    },
+                );
             }
 
             group.finish();
@@ -568,151 +770,406 @@ benchmark_tds_new_dimension!(3, benchmark_tds_new_3d, 123, COUNTS);
 benchmark_tds_new_dimension!(4, benchmark_tds_new_4d, 456, COUNTS);
 benchmark_tds_new_dimension!(5, benchmark_tds_new_5d, 789, COUNTS_5D);
 
+fn bench_boundary_case<const D: usize>(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    dimension: usize,
+    dataset: Dataset,
+    count: usize,
+    dt: &BenchTriangulation<D>,
+) {
+    group.throughput(Throughput::Elements(count as u64));
+    group.bench_function(
+        BenchmarkId::new(
+            format!("boundary_facets_{dimension}d{}", dataset.suffix()),
+            count,
+        ),
+        |b| {
+            b.iter(|| black_box(dt.boundary_facets().count()));
+        },
+    );
+}
+
+fn bench_hull_case<const D: usize>(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    dimension: usize,
+    dataset: Dataset,
+    count: usize,
+    dt: &BenchTriangulation<D>,
+) {
+    group.throughput(Throughput::Elements(count as u64));
+    group.bench_function(
+        BenchmarkId::new(
+            format!("from_triangulation_{dimension}d{}", dataset.suffix()),
+            count,
+        ),
+        |b| {
+            b.iter(|| {
+                black_box(
+                    ConvexHull::from_triangulation(dt.as_triangulation()).unwrap_or_else(|err| {
+                        panic!("{dimension}D convex hull extraction should succeed: {err}")
+                    }),
+                );
+            });
+        },
+    );
+}
+
+fn bench_validate_case<const D: usize>(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    dimension: usize,
+    dataset: Dataset,
+    count: usize,
+    dt: &BenchTriangulation<D>,
+) {
+    group.throughput(Throughput::Elements(count as u64));
+    group.bench_function(
+        BenchmarkId::new(format!("validate_{dimension}d{}", dataset.suffix()), count),
+        |b| {
+            b.iter(|| {
+                black_box(dt.validate()).unwrap_or_else(|err| {
+                    panic!("{dimension}D benchmark triangulation should validate: {err}");
+                });
+            });
+        },
+    );
+}
+
+fn bench_insert_case<const D: usize>(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    dimension: usize,
+    dataset: Dataset,
+    count: usize,
+    base_dt: &BenchTriangulation<D>,
+    insert_vertices: &[Vertex<f64, (), D>],
+) {
+    group.throughput(Throughput::Elements(count as u64));
+    group.bench_function(
+        BenchmarkId::new(format!("insert_{dimension}d{}", dataset.suffix()), count),
+        |b| {
+            b.iter_batched(
+                || (base_dt.clone(), insert_vertices.to_vec()),
+                |(mut dt, vertices)| {
+                    for vertex in vertices {
+                        black_box(dt.insert(vertex)).unwrap_or_else(|err| {
+                            panic!("{dimension}D incremental insert should succeed: {err}");
+                        });
+                    }
+                    black_box(dt);
+                },
+                BatchSize::LargeInput,
+            );
+        },
+    );
+}
+
 fn benchmark_boundary_facets(c: &mut Criterion) {
-    print_api_benchmark_manifest_once();
+    print_manifest_once();
     let mut group = c.benchmark_group("boundary_facets");
     group.sample_size(25);
 
-    let dt_2d = prepare_triangulation::<2>(42, OPERATION_COUNT);
-    group.throughput(Throughput::Elements(OPERATION_COUNT as u64));
-    group.bench_function(
-        BenchmarkId::new("boundary_facets_2d", OPERATION_COUNT),
-        |b| {
-            b.iter(|| black_box(dt_2d.boundary_facets().count()));
-        },
+    let dt_2d = prepare_dt::<2>(42, OPERATION_COUNT);
+    bench_boundary_case(
+        &mut group,
+        2,
+        Dataset::WellConditioned,
+        OPERATION_COUNT,
+        &dt_2d,
+    );
+    let dt_2d_adversarial = prepare_adv_dt::<2>(42, OPERATION_COUNT);
+    bench_boundary_case(
+        &mut group,
+        2,
+        Dataset::Adversarial,
+        OPERATION_COUNT,
+        &dt_2d_adversarial,
     );
 
-    let dt_3d = prepare_triangulation::<3>(123, OPERATION_COUNT);
-    group.throughput(Throughput::Elements(OPERATION_COUNT as u64));
-    group.bench_function(
-        BenchmarkId::new("boundary_facets_3d", OPERATION_COUNT),
-        |b| {
-            b.iter(|| black_box(dt_3d.boundary_facets().count()));
-        },
+    let dt_3d = prepare_dt::<3>(123, OPERATION_COUNT);
+    bench_boundary_case(
+        &mut group,
+        3,
+        Dataset::WellConditioned,
+        OPERATION_COUNT,
+        &dt_3d,
+    );
+    let dt_3d_adversarial = prepare_adv_dt::<3>(123, OPERATION_COUNT);
+    bench_boundary_case(
+        &mut group,
+        3,
+        Dataset::Adversarial,
+        OPERATION_COUNT,
+        &dt_3d_adversarial,
     );
 
-    let dt_4d = prepare_triangulation::<4>(456, OPERATION_COUNT);
-    group.throughput(Throughput::Elements(OPERATION_COUNT as u64));
-    group.bench_function(
-        BenchmarkId::new("boundary_facets_4d", OPERATION_COUNT),
-        |b| {
-            b.iter(|| black_box(dt_4d.boundary_facets().count()));
-        },
+    let dt_4d = prepare_dt::<4>(456, OPERATION_COUNT);
+    bench_boundary_case(
+        &mut group,
+        4,
+        Dataset::WellConditioned,
+        OPERATION_COUNT,
+        &dt_4d,
+    );
+    let dt_4d_adversarial = prepare_adv_dt::<4>(456, OPERATION_COUNT);
+    bench_boundary_case(
+        &mut group,
+        4,
+        Dataset::Adversarial,
+        OPERATION_COUNT,
+        &dt_4d_adversarial,
     );
 
-    let dt_5d = prepare_triangulation::<5>(789, OPERATION_COUNT_5D);
-    group.throughput(Throughput::Elements(OPERATION_COUNT_5D as u64));
-    group.bench_function(
-        BenchmarkId::new("boundary_facets_5d", OPERATION_COUNT_5D),
-        |b| {
-            b.iter(|| black_box(dt_5d.boundary_facets().count()));
-        },
+    let dt_5d = prepare_dt::<5>(789, OPERATION_COUNT_5D);
+    bench_boundary_case(
+        &mut group,
+        5,
+        Dataset::WellConditioned,
+        OPERATION_COUNT_5D,
+        &dt_5d,
+    );
+    let dt_5d_adversarial = prepare_adv_dt::<5>(789, OPERATION_COUNT_5D);
+    bench_boundary_case(
+        &mut group,
+        5,
+        Dataset::Adversarial,
+        OPERATION_COUNT_5D,
+        &dt_5d_adversarial,
     );
 
     group.finish();
 }
 
 fn benchmark_convex_hull(c: &mut Criterion) {
-    print_api_benchmark_manifest_once();
+    print_manifest_once();
     let mut group = c.benchmark_group("convex_hull");
     group.sample_size(20);
 
-    let dt_2d = prepare_triangulation::<2>(42, OPERATION_COUNT);
-    group.throughput(Throughput::Elements(OPERATION_COUNT as u64));
-    group.bench_function(
-        BenchmarkId::new("from_triangulation_2d", OPERATION_COUNT),
-        |b| {
-            b.iter(|| {
-                black_box(
-                    ConvexHull::from_triangulation(dt_2d.as_triangulation())
-                        .expect("2D convex hull extraction should succeed"),
-                );
-            });
-        },
+    let dt_2d = prepare_dt::<2>(42, OPERATION_COUNT);
+    bench_hull_case(
+        &mut group,
+        2,
+        Dataset::WellConditioned,
+        OPERATION_COUNT,
+        &dt_2d,
+    );
+    let dt_2d_adversarial = prepare_adv_dt::<2>(42, OPERATION_COUNT);
+    bench_hull_case(
+        &mut group,
+        2,
+        Dataset::Adversarial,
+        OPERATION_COUNT,
+        &dt_2d_adversarial,
     );
 
-    let dt_3d = prepare_triangulation::<3>(123, OPERATION_COUNT);
-    group.throughput(Throughput::Elements(OPERATION_COUNT as u64));
-    group.bench_function(
-        BenchmarkId::new("from_triangulation_3d", OPERATION_COUNT),
-        |b| {
-            b.iter(|| {
-                black_box(
-                    ConvexHull::from_triangulation(dt_3d.as_triangulation())
-                        .expect("3D convex hull extraction should succeed"),
-                );
-            });
-        },
+    let dt_3d = prepare_dt::<3>(123, OPERATION_COUNT);
+    bench_hull_case(
+        &mut group,
+        3,
+        Dataset::WellConditioned,
+        OPERATION_COUNT,
+        &dt_3d,
+    );
+    let dt_3d_adversarial = prepare_adv_dt::<3>(123, OPERATION_COUNT);
+    bench_hull_case(
+        &mut group,
+        3,
+        Dataset::Adversarial,
+        OPERATION_COUNT,
+        &dt_3d_adversarial,
     );
 
-    let dt_4d = prepare_triangulation::<4>(456, OPERATION_COUNT);
-    group.throughput(Throughput::Elements(OPERATION_COUNT as u64));
-    group.bench_function(
-        BenchmarkId::new("from_triangulation_4d", OPERATION_COUNT),
-        |b| {
-            b.iter(|| {
-                black_box(
-                    ConvexHull::from_triangulation(dt_4d.as_triangulation())
-                        .expect("4D convex hull extraction should succeed"),
-                );
-            });
-        },
+    let dt_4d = prepare_dt::<4>(456, OPERATION_COUNT);
+    bench_hull_case(
+        &mut group,
+        4,
+        Dataset::WellConditioned,
+        OPERATION_COUNT,
+        &dt_4d,
+    );
+    let dt_4d_adversarial = prepare_adv_dt::<4>(456, OPERATION_COUNT);
+    bench_hull_case(
+        &mut group,
+        4,
+        Dataset::Adversarial,
+        OPERATION_COUNT,
+        &dt_4d_adversarial,
     );
 
-    let dt_5d = prepare_triangulation::<5>(789, OPERATION_COUNT_5D);
-    group.throughput(Throughput::Elements(OPERATION_COUNT_5D as u64));
-    group.bench_function(
-        BenchmarkId::new("from_triangulation_5d", OPERATION_COUNT_5D),
-        |b| {
-            b.iter(|| {
-                black_box(
-                    ConvexHull::from_triangulation(dt_5d.as_triangulation())
-                        .expect("5D convex hull extraction should succeed"),
-                );
-            });
-        },
+    let dt_5d = prepare_dt::<5>(789, OPERATION_COUNT_5D);
+    bench_hull_case(
+        &mut group,
+        5,
+        Dataset::WellConditioned,
+        OPERATION_COUNT_5D,
+        &dt_5d,
+    );
+    let dt_5d_adversarial = prepare_adv_dt::<5>(789, OPERATION_COUNT_5D);
+    bench_hull_case(
+        &mut group,
+        5,
+        Dataset::Adversarial,
+        OPERATION_COUNT_5D,
+        &dt_5d_adversarial,
     );
 
     group.finish();
 }
 
 fn benchmark_validation(c: &mut Criterion) {
-    print_api_benchmark_manifest_once();
+    print_manifest_once();
     let mut group = c.benchmark_group("validation");
     group.sample_size(15);
 
-    let dt_3d = prepare_triangulation::<3>(123, OPERATION_COUNT);
-    group.throughput(Throughput::Elements(OPERATION_COUNT as u64));
-    group.bench_function(BenchmarkId::new("validate_3d", OPERATION_COUNT), |b| {
-        b.iter(|| {
-            black_box(dt_3d.validate()).expect("3D benchmark triangulation should validate");
-        });
-    });
+    let dt_3d = prepare_dt::<3>(123, OPERATION_COUNT);
+    bench_validate_case(
+        &mut group,
+        3,
+        Dataset::WellConditioned,
+        OPERATION_COUNT,
+        &dt_3d,
+    );
+    let dt_3d_adversarial = prepare_adv_dt::<3>(123, OPERATION_COUNT);
+    bench_validate_case(
+        &mut group,
+        3,
+        Dataset::Adversarial,
+        OPERATION_COUNT,
+        &dt_3d_adversarial,
+    );
 
-    let dt_4d = prepare_triangulation::<4>(456, OPERATION_COUNT);
-    group.throughput(Throughput::Elements(OPERATION_COUNT as u64));
-    group.bench_function(BenchmarkId::new("validate_4d", OPERATION_COUNT), |b| {
-        b.iter(|| {
-            black_box(dt_4d.validate()).expect("4D benchmark triangulation should validate");
-        });
-    });
+    let dt_4d = prepare_dt::<4>(456, OPERATION_COUNT);
+    bench_validate_case(
+        &mut group,
+        4,
+        Dataset::WellConditioned,
+        OPERATION_COUNT,
+        &dt_4d,
+    );
+    let dt_4d_adversarial = prepare_adv_dt::<4>(456, OPERATION_COUNT);
+    bench_validate_case(
+        &mut group,
+        4,
+        Dataset::Adversarial,
+        OPERATION_COUNT,
+        &dt_4d_adversarial,
+    );
 
-    let dt_5d = prepare_triangulation::<5>(789, OPERATION_COUNT_5D);
-    group.throughput(Throughput::Elements(OPERATION_COUNT_5D as u64));
-    group.bench_function(BenchmarkId::new("validate_5d", OPERATION_COUNT_5D), |b| {
-        b.iter(|| {
-            black_box(dt_5d.validate()).expect("5D benchmark triangulation should validate");
-        });
-    });
+    let dt_5d = prepare_dt::<5>(789, OPERATION_COUNT_5D);
+    bench_validate_case(
+        &mut group,
+        5,
+        Dataset::WellConditioned,
+        OPERATION_COUNT_5D,
+        &dt_5d,
+    );
+    let dt_5d_adversarial = prepare_adv_dt::<5>(789, OPERATION_COUNT_5D);
+    bench_validate_case(
+        &mut group,
+        5,
+        Dataset::Adversarial,
+        OPERATION_COUNT_5D,
+        &dt_5d_adversarial,
+    );
+
+    group.finish();
+}
+
+fn benchmark_insert(c: &mut Criterion) {
+    print_manifest_once();
+    let mut group = c.benchmark_group("incremental_insert");
+    group.sample_size(15);
+
+    let dt_2d = prepare_dt::<2>(42, OPERATION_COUNT);
+    let insert_2d = prepare_inserts::<2>(42, INSERT_COUNT, Dataset::WellConditioned);
+    bench_insert_case(
+        &mut group,
+        2,
+        Dataset::WellConditioned,
+        INSERT_COUNT,
+        &dt_2d,
+        &insert_2d,
+    );
+    let dt_2d_adversarial = prepare_adv_dt::<2>(42, OPERATION_COUNT);
+    let insert_2d_adversarial = prepare_inserts::<2>(42, INSERT_COUNT, Dataset::Adversarial);
+    bench_insert_case(
+        &mut group,
+        2,
+        Dataset::Adversarial,
+        INSERT_COUNT,
+        &dt_2d_adversarial,
+        &insert_2d_adversarial,
+    );
+
+    let dt_3d = prepare_dt::<3>(123, OPERATION_COUNT);
+    let insert_3d = prepare_inserts::<3>(123, INSERT_COUNT, Dataset::WellConditioned);
+    bench_insert_case(
+        &mut group,
+        3,
+        Dataset::WellConditioned,
+        INSERT_COUNT,
+        &dt_3d,
+        &insert_3d,
+    );
+    let dt_3d_adversarial = prepare_adv_dt::<3>(123, OPERATION_COUNT);
+    let insert_3d_adversarial = prepare_inserts::<3>(123, INSERT_COUNT, Dataset::Adversarial);
+    bench_insert_case(
+        &mut group,
+        3,
+        Dataset::Adversarial,
+        INSERT_COUNT,
+        &dt_3d_adversarial,
+        &insert_3d_adversarial,
+    );
+
+    let dt_4d = prepare_dt::<4>(456, OPERATION_COUNT);
+    let insert_4d = prepare_inserts::<4>(456, INSERT_COUNT_4D, Dataset::WellConditioned);
+    bench_insert_case(
+        &mut group,
+        4,
+        Dataset::WellConditioned,
+        INSERT_COUNT_4D,
+        &dt_4d,
+        &insert_4d,
+    );
+    let dt_4d_adversarial = prepare_adv_dt::<4>(456, OPERATION_COUNT);
+    let insert_4d_adversarial = prepare_inserts::<4>(456, INSERT_COUNT_4D, Dataset::Adversarial);
+    bench_insert_case(
+        &mut group,
+        4,
+        Dataset::Adversarial,
+        INSERT_COUNT_4D,
+        &dt_4d_adversarial,
+        &insert_4d_adversarial,
+    );
+
+    let dt_5d = prepare_dt::<5>(789, OPERATION_COUNT_5D);
+    let insert_5d = prepare_inserts::<5>(789, INSERT_COUNT_5D, Dataset::WellConditioned);
+    bench_insert_case(
+        &mut group,
+        5,
+        Dataset::WellConditioned,
+        INSERT_COUNT_5D,
+        &dt_5d,
+        &insert_5d,
+    );
+    let dt_5d_adversarial = prepare_adv_dt::<5>(789, OPERATION_COUNT_5D);
+    let insert_5d_adversarial = prepare_inserts::<5>(789, INSERT_COUNT_5D, Dataset::Adversarial);
+    bench_insert_case(
+        &mut group,
+        5,
+        Dataset::Adversarial,
+        INSERT_COUNT_5D,
+        &dt_5d_adversarial,
+        &insert_5d_adversarial,
+    );
 
     group.finish();
 }
 
 fn benchmark_bistellar_flips(c: &mut Criterion) {
-    print_api_benchmark_manifest_once();
+    print_manifest_once();
     let mut group = c.benchmark_group("bistellar_flips_4d");
     group.sample_size(10);
-    let base_dt = build_flip_triangulation_4d();
+    let base_dt = build_flip_dt_4d();
 
     group.bench_function("k1_roundtrip", |b| {
         b.iter_batched(
@@ -727,9 +1184,13 @@ fn benchmark_bistellar_flips(c: &mut Criterion) {
 
     group.bench_function("k2_roundtrip", |b| {
         b.iter_batched(
-            || base_dt.clone(),
-            |mut dt| {
-                roundtrip_k2_4d(&mut dt);
+            || {
+                let dt = base_dt.clone();
+                let facet = flippable_k2_facet_4d(&dt);
+                (dt, facet)
+            },
+            |(mut dt, facet)| {
+                roundtrip_k2_4d(&mut dt, facet);
                 black_box(dt);
             },
             BatchSize::LargeInput,
@@ -738,9 +1199,13 @@ fn benchmark_bistellar_flips(c: &mut Criterion) {
 
     group.bench_function("k3_roundtrip", |b| {
         b.iter_batched(
-            || base_dt.clone(),
-            |mut dt| {
-                roundtrip_k3_4d(&mut dt);
+            || {
+                let dt = base_dt.clone();
+                let ridge = flippable_k3_ridge_4d(&dt);
+                (dt, ridge)
+            },
+            |(mut dt, ridge)| {
+                roundtrip_k3_4d(&mut dt, ridge);
                 black_box(dt);
             },
             BatchSize::LargeInput,
@@ -761,6 +1226,7 @@ criterion_group!(
         benchmark_boundary_facets,
         benchmark_convex_hull,
         benchmark_validation,
+        benchmark_insert,
         benchmark_bistellar_flips
 );
 criterion_main!(benches);

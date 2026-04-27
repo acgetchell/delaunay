@@ -28,10 +28,14 @@
 //! - Validation results
 //! - Performance metrics
 
-use delaunay::geometry::util::generate_random_triangulation;
+use delaunay::prelude::generators::generate_random_triangulation;
 use delaunay::prelude::query::*;
+use delaunay::prelude::triangulation::flips::CellKey;
 use num_traits::cast::cast;
-use std::time::Instant;
+use std::cmp;
+use std::env;
+use std::mem;
+use std::time::{Duration, Instant};
 
 const SEED_CANDIDATES: &[u64] = &[1, 7, 11, 42, 99, 123, 666];
 
@@ -44,15 +48,12 @@ fn main() {
     // Use a fixed seed + bounds so that `just examples` is reproducible and robust.
     let n_points = 100;
     let bounds = (-3.0, 3.0);
-    let seed_override: Option<u64> =
-        std::env::var("DELAUNAY_EXAMPLE_SEED")
-            .ok()
-            .and_then(|value| {
-                value.parse().ok().or_else(|| {
-                    eprintln!("Invalid DELAUNAY_EXAMPLE_SEED={value:?}; using default seed list.");
-                    None
-                })
-            });
+    let seed_override: Option<u64> = env::var("DELAUNAY_EXAMPLE_SEED").ok().and_then(|value| {
+        value.parse().ok().or_else(|| {
+            eprintln!("Invalid DELAUNAY_EXAMPLE_SEED={value:?}; using default seed list.");
+            None
+        })
+    });
     let seed_candidates: Vec<u64> =
         seed_override.map_or_else(|| SEED_CANDIDATES.to_vec(), |seed| vec![seed]);
 
@@ -116,7 +117,7 @@ fn main() {
     analyze_triangulation(&dt);
 
     // Extract and analyze convex hull
-    extract_and_analyze_convex_hull(&dt);
+    analyze_hull(&dt);
 
     // Test point containment
     test_point_containment(&dt);
@@ -158,7 +159,7 @@ fn analyze_triangulation(dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (),
 }
 
 /// Extract and analyze the convex hull from the triangulation
-fn extract_and_analyze_convex_hull(dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>) {
+fn analyze_hull(dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>) {
     println!("Convex Hull Extraction:");
     println!("=======================");
 
@@ -200,7 +201,7 @@ fn extract_and_analyze_convex_hull(dt: &DelaunayTriangulation<AdaptiveKernel<f64
     if hull.number_of_facets() > 0 {
         println!("\n  Facet Analysis:");
         let facets: Vec<_> = hull.facets().collect();
-        let sample_size = std::cmp::min(5, facets.len());
+        let sample_size = cmp::min(5, facets.len());
 
         for (i, facet_handle) in facets.iter().take(sample_size).enumerate() {
             // Create FacetView to access facet properties
@@ -260,30 +261,30 @@ fn test_point_containment(dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), ()
     }
 
     let centroid_point = Point::new(centroid);
-    test_point_containment_single(&hull, &centroid_point, "Centroid", dt);
+    test_contains_point(&hull, &centroid_point, "Centroid", dt);
 
     // Test slightly offset from centroid (should still be inside)
     let near_centroid = Point::new([centroid[0] + 0.1, centroid[1] + 0.1, centroid[2] + 0.1]);
-    test_point_containment_single(&hull, &near_centroid, "Near centroid", dt);
+    test_contains_point(&hull, &near_centroid, "Near centroid", dt);
 
     // Test 2: Points clearly outside the convex hull
     println!("\n  Testing exterior points:");
 
     let far_point = Point::new([50.0, 50.0, 50.0]);
-    test_point_containment_single(&hull, &far_point, "Far exterior", dt);
+    test_contains_point(&hull, &far_point, "Far exterior", dt);
 
     let axis_point = Point::new([20.0, 0.0, 0.0]);
-    test_point_containment_single(&hull, &axis_point, "X-axis exterior", dt);
+    test_contains_point(&hull, &axis_point, "X-axis exterior", dt);
 
     let negative_point = Point::new([-20.0, -20.0, -20.0]);
-    test_point_containment_single(&hull, &negative_point, "Negative exterior", dt);
+    test_contains_point(&hull, &negative_point, "Negative exterior", dt);
 
     // Test 3: Sample triangulation vertices (should be on boundary or inside)
     println!("\n  Testing triangulation vertices:");
-    let sample_vertices = std::cmp::min(3, vertex_count);
+    let sample_vertices = cmp::min(3, vertex_count);
     for (i, (_, vertex)) in dt.tds().vertices().enumerate().take(sample_vertices) {
         let point: Point<f64, 3> = vertex.into();
-        test_point_containment_single(
+        test_contains_point(
             &hull,
             &point,
             &format!("Triangulation vertex {}", i + 1),
@@ -295,7 +296,7 @@ fn test_point_containment(dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), ()
 }
 
 /// Test containment for a single point and display results
-fn test_point_containment_single(
+fn test_contains_point(
     hull: &ConvexHull<AdaptiveKernel<f64>, (), (), 3>,
     point: &Point<f64, 3>,
     description: &str,
@@ -443,8 +444,7 @@ fn performance_analysis(dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 
         .collect();
 
     let len_u32 = u32::try_from(extraction_times.len()).unwrap_or(1u32);
-    let avg_extraction_time: std::time::Duration =
-        extraction_times.iter().sum::<std::time::Duration>() / len_u32;
+    let avg_extraction_time: Duration = extraction_times.iter().sum::<Duration>() / len_u32;
     let min_extraction_time = *extraction_times.iter().min().unwrap();
     let max_extraction_time = *extraction_times.iter().max().unwrap();
 
@@ -465,8 +465,7 @@ fn performance_analysis(dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 
         .collect();
 
     let len_u32 = u32::try_from(containment_times.len()).unwrap_or(1u32);
-    let avg_containment_time: std::time::Duration =
-        containment_times.iter().sum::<std::time::Duration>() / len_u32;
+    let avg_containment_time: Duration = containment_times.iter().sum::<Duration>() / len_u32;
 
     println!("\n  Point Containment Queries (10 runs):");
     println!("    • Average time: {avg_containment_time:?}");
@@ -483,8 +482,7 @@ fn performance_analysis(dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 
         .collect();
 
     let len_u32 = u32::try_from(visibility_times.len()).unwrap_or(1u32);
-    let avg_visibility_time: std::time::Duration =
-        visibility_times.iter().sum::<std::time::Duration>() / len_u32;
+    let avg_visibility_time: Duration = visibility_times.iter().sum::<Duration>() / len_u32;
 
     println!("\n  Visible Facet Queries (5 runs):");
     println!("    • Average time: {avg_visibility_time:?}");
@@ -507,9 +505,9 @@ fn performance_analysis(dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 
     }
 
     // Memory usage estimation
-    let hull_size = std::mem::size_of::<ConvexHull<AdaptiveKernel<f64>, (), (), 3>>();
+    let hull_size = mem::size_of::<ConvexHull<AdaptiveKernel<f64>, (), (), 3>>();
     // Phase 3C: Facets are now lightweight (CellKey, u8) tuples
-    let facet_handle_size = std::mem::size_of::<(delaunay::core::CellKey, u8)>();
+    let facet_handle_size = mem::size_of::<(CellKey, u8)>();
     let estimated_hull_memory = hull_size + (facet_count * facet_handle_size);
 
     println!("\n  Memory Usage Estimation:");

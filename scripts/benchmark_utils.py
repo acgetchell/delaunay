@@ -101,11 +101,40 @@ else:
 # numbers are generated with the same ThinLTO/codegen-units settings.
 TRUSTED_BENCH_PROFILE = "perf"
 
+CI_PERFORMANCE_SUITE_GROUPS = {
+    "construction": (
+        "Construction",
+        "DelaunayTriangulation::new_with_options",
+    ),
+    "boundary_facets": (
+        "Boundary facets",
+        "DelaunayTriangulation::boundary_facets",
+    ),
+    "convex_hull": (
+        "Convex hull",
+        "ConvexHull::from_triangulation",
+    ),
+    "validation": (
+        "Validation",
+        "DelaunayTriangulation::validate",
+    ),
+    "incremental_insert": (
+        "Incremental insert",
+        "DelaunayTriangulation::insert",
+    ),
+    "bistellar_flips": (
+        "Bistellar flips",
+        "BistellarFlips",
+    ),
+}
+
+CI_PERFORMANCE_SUITE_GROUP_ORDER = tuple(CI_PERFORMANCE_SUITE_GROUPS)
+
 # Development mode arguments - centralized to keep baseline generation and comparison in sync
 # Reduces samples for faster iteration during development (10x faster than full benchmarks)
 #
-# Note: These are Criterion CLI arguments. Alternatively, benchmarks can be configured via
-# environment variables (see benches/microbenchmarks.rs bench_config()):
+# Note: These are Criterion CLI arguments. Some benchmarks can also be configured via
+# environment variables documented in benches/README.md:
 #   CRIT_SAMPLE_SIZE=10 CRIT_MEASUREMENT_MS=2000 CRIT_WARMUP_MS=1000
 # The CLI arguments take precedence over env vars when both are present.
 DEV_MODE_BENCH_ARGS = [
@@ -117,6 +146,26 @@ DEV_MODE_BENCH_ARGS = [
     "1",
     "--noplot",
 ]
+
+
+@dataclass(frozen=True)
+class CiPerformanceResult:
+    """Parsed Criterion result for one ci_performance_suite benchmark ID."""
+
+    group_key: str
+    benchmark_id: str
+    dimension: str
+    input_size: str
+    mean_ns: float
+    low_ns: float
+    high_ns: float
+
+    @property
+    def variant(self) -> str:
+        """Return the geometry/input variant label for this benchmark."""
+        if "adversarial" in self.benchmark_id:
+            return "adversarial"
+        return "well-conditioned"
 
 
 def _criterion_arg_value(args: list[str], flag: str) -> str:
@@ -174,7 +223,7 @@ class PerformanceSummaryGenerator:
         self._baseline_fallback = project_root / "benches" / "baseline_results.txt"
         self.comparison_file = project_root / "benches" / "compare_results.txt"
 
-        # Path for storing circumsphere benchmark results
+        # Path for storing Criterion benchmark results
         self.circumsphere_results_dir = project_root / "target" / "criterion"
 
         # Storage for numerical accuracy data from benchmarks
@@ -196,7 +245,7 @@ class PerformanceSummaryGenerator:
 
         Args:
             output_path: Output file path (defaults to benches/PERFORMANCE_RESULTS.md)
-            run_benchmarks: Whether to run fresh circumsphere benchmarks
+            run_benchmarks: Whether to run fresh public API and circumsphere benchmarks
             generator_name: Name of the tool generating the summary (for attribution)
             cargo_profile: Optional Cargo profile for fresh benchmark runs.  When
                 ``run_benchmarks`` is True and no profile is specified, defaults
@@ -219,10 +268,11 @@ class PerformanceSummaryGenerator:
                 # comparable with baseline/compare output.
                 if cargo_profile is None:
                     cargo_profile = TRUSTED_BENCH_PROFILE
-                success, accuracy_data = self._run_circumsphere_benchmarks(cargo_profile=cargo_profile)
-                if success:
+                ci_success = self._run_ci_performance_suite(cargo_profile=cargo_profile)
+                circumsphere_success, accuracy_data = self._run_circumsphere_benchmarks(cargo_profile=cargo_profile)
+                if circumsphere_success:
                     self.numerical_accuracy_data = accuracy_data
-                else:
+                if not ci_success or not circumsphere_success:
                     print("⚠️ Benchmark run failed, using existing/fallback data")
 
             # Generate markdown content
@@ -295,7 +345,12 @@ class PerformanceSummaryGenerator:
             ],
         )
 
-        # Add circumsphere performance results from actual benchmark data
+        # Add public API performance results from the CI suite first. This is
+        # the versioned benchmark contract used by baseline/comparison tooling.
+        lines.extend(self._get_ci_performance_suite_results())
+
+        # Add circumsphere predicate results as a focused subsection. These
+        # remain important because they exercise la-stack-backed predicates.
         lines.extend(self._get_circumsphere_performance_results())
 
         # Add baseline results if available
@@ -405,6 +460,38 @@ class PerformanceSummaryGenerator:
         except Exception as e:
             print(f"❌ Error running circumsphere benchmarks: {e}")
             return False, None
+
+    def _run_ci_performance_suite(self, cargo_profile: str | None = None) -> bool:
+        """
+        Run the public API CI performance suite to generate fresh Criterion data.
+
+        Args:
+            cargo_profile: Cargo profile for the fresh run. Defaults to
+                :data:`TRUSTED_BENCH_PROFILE` so summary, baseline, and
+                comparison measurements use the same optimized profile.
+
+        Returns:
+            True if the benchmark completed successfully, False otherwise.
+        """
+        try:
+            print("🔄 Running ci_performance_suite benchmarks...")
+
+            profile = cargo_profile if cargo_profile is not None else TRUSTED_BENCH_PROFILE
+            cargo_args = ["bench", "--profile", profile, "--bench", "ci_performance_suite", "--", *DEV_MODE_BENCH_ARGS]
+
+            run_cargo_command(
+                cargo_args,
+                cwd=self.project_root,
+                timeout=900,
+                capture_output=True,
+            )
+
+            print("✅ ci_performance_suite benchmarks completed successfully")
+            return True
+
+        except Exception as e:
+            print(f"❌ Error running ci_performance_suite benchmarks: {e}")
+            return False
 
     def _parse_numerical_accuracy_output(self, stdout: str) -> dict[str, str] | None:
         """
@@ -787,6 +874,191 @@ class PerformanceSummaryGenerator:
             ),
         ]
 
+    @staticmethod
+    def _format_duration_ns(time_ns: float) -> str:
+        """Format nanosecond Criterion timings with readable units."""
+        if time_ns >= 1_000_000_000:
+            return f"{time_ns / 1_000_000_000:.3f} s"
+        if time_ns >= 1_000_000:
+            return f"{time_ns / 1_000_000:.3f} ms"
+        if time_ns >= 1_000:
+            return f"{time_ns / 1_000:.1f} µs"
+        return f"{time_ns:.0f} ns"
+
+    @staticmethod
+    def _ci_suite_group_key(first_path_part: str) -> str | None:
+        """Map a Criterion path prefix to a ci_performance_suite group key."""
+        if first_path_part.startswith("tds_new_"):
+            return "construction"
+        if first_path_part == "bistellar_flips_4d":
+            return "bistellar_flips"
+        if first_path_part in CI_PERFORMANCE_SUITE_GROUPS:
+            return first_path_part
+        return None
+
+    @staticmethod
+    def _ci_suite_dimension(benchmark_id: str) -> str:
+        """Extract the dimension label from a ci_performance_suite benchmark ID."""
+        match = re.search(r"(?:^|_)(\d+)d(?:_|/|$)", benchmark_id)
+        if match:
+            return f"{match.group(1)}D"
+        return "n/a"
+
+    @staticmethod
+    def _ci_suite_input_size(path_parts: tuple[str, ...]) -> str:
+        """Extract a human-readable input size from Criterion benchmark path parts."""
+        if path_parts and path_parts[-1].isdigit():
+            return path_parts[-1]
+        return "roundtrip"
+
+    @staticmethod
+    def _load_criterion_estimate(estimates_path: Path) -> tuple[float, float, float] | None:
+        """Load mean and confidence interval values from a Criterion estimates file."""
+        try:
+            with estimates_path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            mean_data = data.get("mean", {})
+            mean_ns = float(mean_data["point_estimate"])
+            confidence_interval = mean_data.get("confidence_interval", {})
+            low_ns = float(confidence_interval.get("lower_bound", mean_ns))
+            high_ns = float(confidence_interval.get("upper_bound", mean_ns))
+            if mean_ns <= 0:
+                return None
+            return mean_ns, low_ns, high_ns
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return None
+
+    def _parse_ci_performance_suite_results(self) -> list[CiPerformanceResult]:
+        """
+        Parse Criterion data for the versioned ci_performance_suite benchmark IDs.
+
+        Criterion stores each benchmark under a path derived from its group and
+        benchmark ID. This parser keeps those IDs intact so the generated
+        summary can compare API surfaces side-by-side as the suite grows.
+        """
+        criterion_dir = self.circumsphere_results_dir
+        if not criterion_dir.exists():
+            return []
+
+        estimates_by_id: dict[tuple[str, ...], tuple[str, Path]] = {}
+        for estimates_path in sorted(criterion_dir.glob("**/estimates.json")):
+            if estimates_path.parent.name not in {"base", "new"}:
+                continue
+
+            try:
+                path_parts = estimates_path.relative_to(criterion_dir).parts[:-2]
+            except ValueError:
+                continue
+
+            if not path_parts:
+                continue
+
+            group_key = self._ci_suite_group_key(path_parts[0])
+            if group_key is None:
+                continue
+
+            existing = estimates_by_id.get(path_parts)
+            if existing is None or (existing[0] == "base" and estimates_path.parent.name == "new"):
+                estimates_by_id[path_parts] = (estimates_path.parent.name, estimates_path)
+
+        results = []
+        for path_parts, (_, estimates_path) in estimates_by_id.items():
+            estimates = self._load_criterion_estimate(estimates_path)
+            if estimates is None:
+                continue
+
+            benchmark_id = "/".join(path_parts)
+            group_key = self._ci_suite_group_key(path_parts[0])
+            if group_key is None:
+                continue
+
+            mean_ns, low_ns, high_ns = estimates
+            results.append(
+                CiPerformanceResult(
+                    group_key=group_key,
+                    benchmark_id=benchmark_id,
+                    dimension=self._ci_suite_dimension(benchmark_id),
+                    input_size=self._ci_suite_input_size(path_parts),
+                    mean_ns=mean_ns,
+                    low_ns=low_ns,
+                    high_ns=high_ns,
+                ),
+            )
+
+        group_order = {group: index for index, group in enumerate(CI_PERFORMANCE_SUITE_GROUP_ORDER)}
+        results.sort(
+            key=lambda result: (
+                group_order.get(result.group_key, sys.maxsize),
+                int(result.dimension.removesuffix("D")) if result.dimension.removesuffix("D").isdigit() else sys.maxsize,
+                int(result.input_size) if result.input_size.isdigit() else sys.maxsize,
+                result.benchmark_id,
+            ),
+        )
+        return results
+
+    def _get_ci_performance_suite_results(self) -> list[str]:
+        """
+        Generate the public API performance summary from ci_performance_suite data.
+
+        Returns:
+            List of markdown lines with ci_performance_suite benchmark data.
+        """
+        results = self._parse_ci_performance_suite_results()
+
+        lines = [
+            "### Public API Performance Contract (`ci_performance_suite`)",
+            "",
+            "This suite is the versioned benchmark contract for public Delaunay workflows.",
+            "It covers construction, hull extraction, validation, incremental insertion,",
+            "boundary traversal, and explicit bistellar flip roundtrips.",
+            "",
+        ]
+
+        if not results:
+            lines.extend(
+                [
+                    "⚠️ No `ci_performance_suite` Criterion results available. Run:",
+                    "```bash",
+                    f"cargo bench --profile {TRUSTED_BENCH_PROFILE} --bench ci_performance_suite",
+                    "```",
+                    "",
+                ],
+            )
+            return lines
+
+        results_by_group: dict[str, list[CiPerformanceResult]] = {}
+        for result in results:
+            results_by_group.setdefault(result.group_key, []).append(result)
+
+        for group_key in CI_PERFORMANCE_SUITE_GROUP_ORDER:
+            group_results = results_by_group.get(group_key)
+            if not group_results:
+                continue
+
+            group_label, public_api = CI_PERFORMANCE_SUITE_GROUPS[group_key]
+            lines.extend(
+                [
+                    f"#### {group_label}",
+                    "",
+                    f"Public API: `{public_api}`",
+                    "",
+                    "| Benchmark ID | Dimension | Input | Variant | Mean | 95% CI |",
+                    "|--------------|-----------|-------|---------|------|--------|",
+                ],
+            )
+
+            for result in group_results:
+                confidence_interval = f"{self._format_duration_ns(result.low_ns)} - {self._format_duration_ns(result.high_ns)}"
+                lines.append(
+                    f"| `{result.benchmark_id}` | {result.dimension} | {result.input_size} | {result.variant} | "
+                    f"{self._format_duration_ns(result.mean_ns)} | {confidence_interval} |",
+                )
+
+            lines.append("")
+
+        return lines
+
     def _get_circumsphere_performance_results(self) -> list[str]:
         """
         Generate circumsphere containment performance results section with dynamic data.
@@ -799,7 +1071,7 @@ class PerformanceSummaryGenerator:
 
         if not test_cases:
             return [
-                "### Circumsphere Performance Results",
+                "### Circumsphere Predicate Performance",
                 "",
                 f"#### Version {self.current_version} Results ({self.current_date})",
                 "",
@@ -811,7 +1083,10 @@ class PerformanceSummaryGenerator:
             ]
 
         lines = [
-            "### Circumsphere Performance Results",
+            "### Circumsphere Predicate Performance",
+            "",
+            "This focused predicate suite tracks `la-stack`-backed circumsphere and",
+            "insphere query performance independently from full triangulation workflows.",
             "",
             f"#### Version {self.current_version} Results ({self.current_date})",
             "",
@@ -981,7 +1256,7 @@ class PerformanceSummaryGenerator:
         performance_ranking = self._analyze_performance_ranking(test_data)
 
         lines = [
-            "## Key Findings",
+            "## Circumsphere Predicate Analysis",
             "",
             "### Performance Ranking",
             "",
@@ -996,7 +1271,7 @@ class PerformanceSummaryGenerator:
 
         lines.extend(
             [
-                "## Recommendations",
+                "### Recommendations",
                 "",
             ],
         )
@@ -1009,7 +1284,7 @@ class PerformanceSummaryGenerator:
             lines.extend(
                 [
                     "",
-                    "## Conclusion",
+                    "### Conclusion",
                     "",
                     "All three methods are mathematically correct and produce valid results. Performance characteristics vary by dimension:",
                     "",
@@ -1117,7 +1392,7 @@ class PerformanceSummaryGenerator:
             return []
 
         lines = [
-            "### Method Selection Guide",
+            "#### Method Selection Guide",
             "",
             "**All three methods are mathematically correct** (they produce valid insphere test results).",
             "Choose based on your specific requirements:",
@@ -1125,7 +1400,7 @@ class PerformanceSummaryGenerator:
         ]
 
         # Add dimension-specific performance recommendations
-        lines.append("#### Performance Optimization by Dimension")
+        lines.append("##### Performance Optimization by Dimension")
         lines.append("")
 
         for method, _avg_time, desc in performance_ranking:
@@ -1136,7 +1411,7 @@ class PerformanceSummaryGenerator:
         lines.extend(
             [
                 "",
-                "#### General Recommendations",
+                "##### General Recommendations",
                 "",
                 "**For maximum performance**: Choose the method that performs best in your target dimension (see above)",
                 "",
@@ -1146,7 +1421,7 @@ class PerformanceSummaryGenerator:
                 "**For algorithm transparency**: `insphere_distance` explicitly calculates the circumcenter,",
                 "making it excellent for educational purposes, debugging, and algorithm validation",
                 "",
-                "#### Performance Comparison",
+                "##### Performance Comparison",
                 "",
                 "Average performance across all non-boundary test cases:",
                 "",
@@ -1235,6 +1510,11 @@ class PerformanceSummaryGenerator:
             "",
             "## Benchmark Structure",
             "",
+            "The `ci_performance_suite.rs` benchmark is the primary regression and",
+            "release-summary suite. It emits a versioned `api_benchmark_manifest` and",
+            "covers public construction, hull, validation, insertion, boundary, and",
+            "bistellar-flip workflows across supported dimensions.",
+            "",
             "The `circumsphere_containment.rs` benchmark includes:",
             "",
             "- **Random queries**: Batch processing performance with 1000 random test points",
@@ -1260,7 +1540,7 @@ class PerformanceSummaryGenerator:
             "# Generate performance summary with current data",
             "uv run benchmark-utils generate-summary",
             "",
-            "# Run fresh perf-profile benchmarks and generate summary (includes numerical accuracy)",
+            "# Run fresh perf-profile public API and circumsphere benchmarks",
             f"uv run benchmark-utils generate-summary --run-benchmarks --profile {TRUSTED_BENCH_PROFILE}",
             "",
             "# Generate baseline results for regression testing",
@@ -3068,7 +3348,11 @@ def _add_performance_summary_subcommands(subparsers: "argparse._SubParsersAction
     """Add performance summary generation subcommands."""
     perf_summary_parser = subparsers.add_parser("generate-summary", help="Generate performance summary markdown")
     perf_summary_parser.add_argument("--output", type=Path, help="Output file path (defaults to benches/PERFORMANCE_RESULTS.md)")
-    perf_summary_parser.add_argument("--run-benchmarks", action="store_true", help="Run fresh circumsphere benchmarks before generating summary")
+    perf_summary_parser.add_argument(
+        "--run-benchmarks",
+        action="store_true",
+        help="Run fresh ci_performance_suite and circumsphere benchmarks before generating summary",
+    )
     perf_summary_parser.add_argument(
         "--profile",
         default=TRUSTED_BENCH_PROFILE,

@@ -442,7 +442,8 @@ profile toolchain="" code_ref="current":
             grep -E '^[[:space:]]*channel[[:space:]]*=' "$workdir/rust-toolchain.toml" \
                 | head -n 1 \
                 | cut -d '=' -f 2 \
-                | tr -d ' "'
+                | tr -d ' "' \
+                || true
         )"
     fi
 
@@ -479,14 +480,14 @@ profile toolchain="" code_ref="current":
         echo "- Requested toolchain: $requested_toolchain"
         echo "- rustc: $(rustup run "$requested_toolchain" rustc --version)"
         echo "- cargo: $(rustup run "$requested_toolchain" cargo --version)"
-        echo "- Cargo profile: cargo bench default"
+        echo "- Cargo profile: cargo bench --profile perf"
         echo "- Benchmark harness: ci_performance_suite"
     } > "$run_dir/profile_metadata.md"
 
     (
         cd "$workdir"
         CARGO_TARGET_DIR="$run_dir/target" \
-            rustup run "$requested_toolchain" cargo bench --bench ci_performance_suite \
+            rustup run "$requested_toolchain" cargo bench --profile perf --bench ci_performance_suite \
             2>&1 | tee "$run_dir/ci_performance_suite.log"
     )
 

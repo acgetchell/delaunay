@@ -2161,10 +2161,49 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             assert "## Performance Results Summary" in content
 
             # Check static content sections
-            assert "## Key Findings" in content
+            assert "### Public API Performance Contract (`ci_performance_suite`)" in content
+            assert "## Circumsphere Predicate Analysis" in content
             assert "### Performance Ranking" in content
-            assert "## Recommendations" in content
+            assert "### Recommendations" in content
             assert "## Performance Data Updates" in content
+
+    def test_get_ci_performance_suite_results(self):
+        """Test public API summary generation from ci_performance_suite Criterion data."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+
+            def write_estimate(path_parts, mean_ns):
+                estimates_dir = project_root / "target" / "criterion" / Path(*path_parts) / "base"
+                estimates_dir.mkdir(parents=True)
+                estimates = {
+                    "mean": {
+                        "point_estimate": mean_ns,
+                        "confidence_interval": {
+                            "lower_bound": mean_ns * 0.9,
+                            "upper_bound": mean_ns * 1.1,
+                        },
+                    },
+                }
+                (estimates_dir / "estimates.json").write_text(json.dumps(estimates), encoding="utf-8")
+
+            write_estimate(("tds_new_2d", "tds_new", "10"), 120_000.0)
+            write_estimate(("boundary_facets", "boundary_facets_3d_adversarial", "50"), 7_500.0)
+            write_estimate(("bistellar_flips_4d", "k2_roundtrip"), 950.0)
+
+            generator = PerformanceSummaryGenerator(project_root)
+            lines = generator._get_ci_performance_suite_results()
+            content = "\n".join(lines)
+
+            assert "### Public API Performance Contract (`ci_performance_suite`)" in content
+            assert "#### Construction" in content
+            assert "Public API: `DelaunayTriangulation::new_with_options`" in content
+            assert "`tds_new_2d/tds_new/10`" in content
+            assert "well-conditioned" in content
+            assert "#### Boundary facets" in content
+            assert "`boundary_facets/boundary_facets_3d_adversarial/50`" in content
+            assert "adversarial" in content
+            assert "#### Bistellar flips" in content
+            assert "`bistellar_flips_4d/k2_roundtrip`" in content
 
     def test_get_circumsphere_performance_results(self):
         """Test getting circumsphere performance results."""
@@ -2175,7 +2214,7 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             lines = generator._get_circumsphere_performance_results()
             content = "\n".join(lines)
 
-            assert "### Circumsphere Performance Results" in content
+            assert "### Circumsphere Predicate Performance" in content
             # Should contain fallback performance data when no criterion results exist
             assert "Basic 3D" in content or "Version unknown" in content
 
@@ -2345,6 +2384,60 @@ Benchmark completed."""
             captured = capsys.readouterr()
             assert "Error running circumsphere benchmarks" in captured.out
 
+    @patch("benchmark_utils.run_cargo_command")
+    def test_run_ci_performance_suite_success(self, mock_cargo):
+        """Test running the public API CI performance suite successfully."""
+        mock_cargo.return_value = Mock(stdout="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            success = generator._run_ci_performance_suite()
+
+            assert success is True
+            mock_cargo.assert_called_once()
+            args = mock_cargo.call_args.args[0]
+            assert args[:5] == [
+                "bench",
+                "--profile",
+                TRUSTED_BENCH_PROFILE,
+                "--bench",
+                "ci_performance_suite",
+            ]
+
+    @patch("benchmark_utils.run_cargo_command")
+    def test_run_ci_performance_suite_uses_requested_cargo_profile(self, mock_cargo):
+        """Test running the public API CI performance suite with an explicit profile."""
+        mock_cargo.return_value = Mock(stdout="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            requested_profile = "release"
+            success = generator._run_ci_performance_suite(cargo_profile=requested_profile)
+
+            assert success is True
+            mock_cargo.assert_called_once()
+            args = mock_cargo.call_args.args[0]
+            assert args[:5] == ["bench", "--profile", requested_profile, "--bench", "ci_performance_suite"]
+
+    @patch("benchmark_utils.run_cargo_command")
+    def test_run_ci_performance_suite_failure(self, mock_cargo, capsys):
+        """Test handling ci_performance_suite benchmark failures."""
+        mock_cargo.side_effect = Exception("Benchmark failed")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            success = generator._run_ci_performance_suite()
+
+            assert success is False
+            captured = capsys.readouterr()
+            assert "Error running ci_performance_suite benchmarks" in captured.out
+
     @patch("benchmark_utils.run_git_command")
     def test_generate_summary_success(self, mock_git, capsys):
         """Test successful generation of performance summary."""
@@ -2370,8 +2463,10 @@ Benchmark completed."""
             assert "Generated performance summary" in captured.out
 
     @patch("benchmark_utils.PerformanceSummaryGenerator._run_circumsphere_benchmarks")
-    def test_generate_summary_with_benchmarks(self, mock_run_benchmarks):
+    @patch("benchmark_utils.PerformanceSummaryGenerator._run_ci_performance_suite")
+    def test_generate_summary_with_benchmarks(self, mock_run_ci_suite, mock_run_benchmarks):
         """Test generating summary with fresh benchmark run."""
+        mock_run_ci_suite.return_value = True
         mock_run_benchmarks.return_value = (True, None)
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2385,12 +2480,15 @@ Benchmark completed."""
             assert success is True
             # When run_benchmarks=True without an explicit profile, generate_summary
             # must default to TRUSTED_BENCH_PROFILE.
+            mock_run_ci_suite.assert_called_once_with(cargo_profile=TRUSTED_BENCH_PROFILE)
             mock_run_benchmarks.assert_called_once_with(cargo_profile=TRUSTED_BENCH_PROFILE)
             assert output_file.exists()
 
     @patch("benchmark_utils.PerformanceSummaryGenerator._run_circumsphere_benchmarks")
-    def test_generate_summary_passes_cargo_profile_to_benchmarks(self, mock_run_benchmarks):
+    @patch("benchmark_utils.PerformanceSummaryGenerator._run_ci_performance_suite")
+    def test_generate_summary_passes_cargo_profile_to_benchmarks(self, mock_run_ci_suite, mock_run_benchmarks):
         """Test generating a summary with fresh benchmarks under a specific Cargo profile."""
+        mock_run_ci_suite.return_value = True
         mock_run_benchmarks.return_value = (True, None)
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2403,12 +2501,15 @@ Benchmark completed."""
             success = generator.generate_summary(output_path=output_file, run_benchmarks=True, cargo_profile=requested_profile)
 
             assert success is True
+            mock_run_ci_suite.assert_called_once_with(cargo_profile=requested_profile)
             mock_run_benchmarks.assert_called_once_with(cargo_profile=requested_profile)
             assert output_file.exists()
 
     @patch("benchmark_utils.PerformanceSummaryGenerator._run_circumsphere_benchmarks")
-    def test_generate_summary_benchmark_failure_continues(self, mock_run_benchmarks, capsys):
+    @patch("benchmark_utils.PerformanceSummaryGenerator._run_ci_performance_suite")
+    def test_generate_summary_benchmark_failure_continues(self, mock_run_ci_suite, mock_run_benchmarks, capsys):
         """Test that summary generation continues even if benchmark run fails."""
+        mock_run_ci_suite.return_value = False
         mock_run_benchmarks.return_value = (False, None)
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2592,7 +2693,8 @@ Benchmark completed."""
                 assert "Single Query Performance (3D)" in content
                 assert "Triangulation Data Structure Performance" in content
                 assert "Performance Status: Good" in content
-                assert "Key Findings" in content
+                assert "Public API Performance Contract" in content
+                assert "Circumsphere Predicate Analysis" in content
                 assert "Performance Ranking" in content
                 assert "Recommendations" in content
                 assert "Performance Data Updates" in content

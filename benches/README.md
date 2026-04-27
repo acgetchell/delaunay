@@ -12,10 +12,9 @@ This directory contains performance benchmarks for the delaunay library, organiz
 
 | Benchmark | Purpose | Scale | Runtime | Used By |
 |-----------|---------|-------|---------|----------|
-| `ci_performance_suite.rs` | **CI regression detection** | 10–50 vertices | ~5-10 min | CI workflows, baseline generation |
-| `circumsphere_containment.rs` | Algorithm comparison | Random queries | ~5 min | Performance summary generation |
+| `ci_performance_suite.rs` | **CI regression detection** | 10–50 vertices | ~5-10 min | CI workflows, baseline generation, performance summary |
+| `circumsphere_containment.rs` | Predicate algorithm comparison | Random queries | ~5 min | Performance summary predicate subsection |
 | `large_scale_performance.rs` | **Phase 4 SlotMap evaluation** | 1k–10k vertices | ~10-30 min (default); ~2-3 hours (BENCH_LARGE_SCALE=1) | Manual |
-| `microbenchmarks.rs` | Core operations | Various | ~10 min | Manual |
 | `profiling_suite.rs` | Comprehensive profiling | 10³–10⁶ vertices | 1-2 hours | Monthly profiling, manual |
 | `topology_guarantee_construction.rs` | Topology guarantee construction overhead | 2D–5D (small/medium point counts) | ~5–15 min | Manual |
 | ~~`triangulation_creation.rs`~~ | ~~Simple construction~~ | ~~1000 vertices~~ | ~~N/A~~ | **DEPRECATED / REMOVED** |
@@ -25,11 +24,12 @@ This directory contains performance benchmarks for the delaunay library, organiz
 | Use Case | Benchmark | Command |
 |----------|-----------|----------|
 | CI regression check | `ci_performance_suite.rs` | `just bench-ci` or `cargo bench --profile perf --bench ci_performance_suite` |
-| Release performance summary | `circumsphere_containment.rs` | `just bench-perf-summary` |
+| Release performance summary | `ci_performance_suite.rs` + `circumsphere_containment.rs` | `just bench-perf-summary` |
 | Smoke-test benchmark harnesses | Workspace benches | `just bench-smoke` |
 | Phase 4 SlotMap evaluation | `large_scale_performance.rs` | `cargo bench --profile perf --bench large_scale_performance` |
 | Deep profiling (1-2 hours) | `profiling_suite.rs` | `cargo bench --profile perf --bench profiling_suite` |
 | Memory analysis | `profiling_suite.rs` (memory groups) | `cargo bench --profile perf --bench profiling_suite -- memory_profiling` |
+| Validation layer diagnostics | `profiling_suite.rs` (validation components) | `cargo bench --profile perf --bench profiling_suite -- validation_components` |
 | Algorithm comparison | `circumsphere_containment.rs` | `cargo bench --profile perf --bench circumsphere_containment` |
 | Topology guarantee overhead | `topology_guarantee_construction.rs` | See section below |
 
@@ -73,7 +73,7 @@ numbers. Do not treat `bench-smoke` output as performance data.
 cargo bench --profile perf --bench ci_performance_suite
 ```
 
-The CI Performance Suite is the primary benchmarking suite used for automated performance-regression testing:
+The CI Performance Suite is the primary benchmarking suite used for automated performance-regression testing and generated performance summaries:
 
 - **Purpose**: Fast performance regression detection for regular CI/CD
 - **Dimensions**: 2D–5D triangulations
@@ -102,7 +102,9 @@ cargo bench --bench circumsphere_containment -- --test
 
 📊 **[View Detailed Performance Results](PERFORMANCE_RESULTS.md)**
 
-Comprehensive performance benchmarks, analysis, and recommendations have been moved to a dedicated file for easier maintenance and automated updates.
+Comprehensive performance benchmarks, analysis, and recommendations have been moved to a dedicated file for easier
+maintenance and automated updates. Circumsphere performance remains a dedicated subsection because these predicates
+exercise `la-stack` code paths that are important to tune independently.
 
 ##### Quick Summary
 
@@ -190,14 +192,6 @@ just compare-storage-large # Large scale comparison (~8-12 hours, compute cluste
 It measures iteration speed, memory usage, query performance, and validation - all critical
 for SlotMap comparison.
 
-### Microbenchmarks (`microbenchmarks.rs`)
-
-A collection of smaller benchmarks for core operations (varies by module).
-
-```bash
-cargo bench --profile perf --bench microbenchmarks
-```
-
 ### Profiling Suite (`profiling_suite.rs`) (comprehensive)
 
 ```bash
@@ -215,6 +209,7 @@ cargo bench --profile perf --bench profiling_suite --features count-allocations 
 cargo bench --profile perf --bench profiling_suite --features count-allocations -- memory_profiling
 cargo bench --profile perf --bench profiling_suite --features count-allocations -- query_latency
 cargo bench --profile perf --bench profiling_suite --features count-allocations -- algorithmic_bottlenecks
+cargo bench --profile perf --bench profiling_suite --features count-allocations -- validation_components
 
 # Run only memory profiling group (useful for focused analysis)
 cargo bench --profile perf --bench profiling_suite --features count-allocations -- "memory_profiling"

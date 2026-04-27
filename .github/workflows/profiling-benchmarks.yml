@@ -119,16 +119,18 @@ jobs:
           mkdir -p profiling-results
 
           declared_toolchain="$(
-            grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
+            grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml 2>/dev/null \
               | head -n 1 \
               | cut -d '=' -f 2 \
-              | tr -d ' "'
+              | tr -d ' "' \
+              || true
           )"
           rust_version="$(
-            grep -E '^rust-version[[:space:]]*=' Cargo.toml \
+            grep -E '^rust-version[[:space:]]*=' Cargo.toml 2>/dev/null \
               | head -n 1 \
               | cut -d '=' -f 2 \
-              | tr -d ' "'
+              | tr -d ' "' \
+              || true
           )"
           profiling_mode="production"
           if [[ "${PROFILING_DEV_MODE:-}" == "1" ]]; then
@@ -318,16 +320,18 @@ jobs:
           mkdir -p profiling-results
 
           declared_toolchain="$(
-            grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
+            grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml 2>/dev/null \
               | head -n 1 \
               | cut -d '=' -f 2 \
-              | tr -d ' "'
+              | tr -d ' "' \
+              || true
           )"
           rust_version="$(
-            grep -E '^rust-version[[:space:]]*=' Cargo.toml \
+            grep -E '^rust-version[[:space:]]*=' Cargo.toml 2>/dev/null \
               | head -n 1 \
               | cut -d '=' -f 2 \
-              | tr -d ' "'
+              | tr -d ' "' \
+              || true
           )"
 
           {
