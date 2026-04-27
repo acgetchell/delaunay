@@ -103,6 +103,14 @@ just check
 `just check` is the non-mutating lint/validator bundle. It does not run tests,
 examples, or benchmarks.
 
+`just check` validates the default DenseSlotMap backend plus all feature
+combinations. The legacy SlotMap backend is kept as an optional compatibility
+canary; run it explicitly with:
+
+```bash
+just check-storage-backends
+```
+
 ---
 
 ## Documentation Validation
@@ -301,7 +309,8 @@ CI enforces:
 - tests
 
 Rust warnings are denied by the manifest lint policy and Clippy warnings are
-denied by the `just clippy` invocations. Keep any intentional warning-level
+denied by the `just clippy` invocations. `just check-storage-backends` separately
+checks the SlotMap backend with `--no-default-features`. Keep any intentional warning-level
 exceptions explicit in `Cargo.toml`.
 
 Agents must ensure changes pass CI locally before proposing patches.

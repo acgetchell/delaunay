@@ -174,6 +174,11 @@ changelog-update: changelog
 check: lint
     @echo "✅ Checks complete!"
 
+# Optional SlotMap compatibility canary. DenseSlotMap is the default production
+# backend; run this when changing storage abstractions or before releases.
+check-storage-backends:
+    cargo clippy --workspace --all-targets --no-default-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+
 # CI simulation: comprehensive validation (matches .github/workflows/ci.yml)
 # Runs: checks + test workflow + examples
 ci: check test examples
@@ -197,9 +202,6 @@ clean:
 
 # Code quality and formatting
 clippy:
-    # SlotMap backend (disabled default DenseSlotMap)
-    cargo clippy --workspace --all-targets --no-default-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
-
     # DenseSlotMap backend (default)
     cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
@@ -290,6 +292,7 @@ help-workflows:
     @echo "Larger/optional workflows:"
     @echo "  just ci-slow             # CI + slow tests (100+ vertices)"
     @echo "  just ci-baseline         # CI + save performance baseline"
+    @echo "  just check-storage-backends # Optional SlotMap compatibility canary"
     @echo "  just coverage            # Generate coverage report (HTML)"
     @echo "  just semgrep             # Run repository-owned Semgrep rules"
     @echo "  just compare-storage       # Compare SlotMap vs DenseSlotMap (~4-6 hours)"
@@ -415,6 +418,13 @@ profile toolchain="" code_ref="current":
     workdir="$repo_root"
     cleanup_worktree=0
 
+    cleanup() {
+        if [[ "$cleanup_worktree" -eq 1 ]]; then
+            git worktree remove --force "$workdir" >/dev/null 2>&1 || true
+            rm -rf "$(dirname "$workdir")"
+        fi
+    }
+
     if [[ "$requested_ref" == "current" && -n "$requested_toolchain" ]]; then
         if [[ ! "$requested_toolchain" =~ ^([0-9]+(\.[0-9]+){0,2}|stable|beta|nightly)([-+].*)?$ ]]; then
             requested_ref="$requested_toolchain"
@@ -426,16 +436,9 @@ profile toolchain="" code_ref="current":
         tmp_parent="$(mktemp -d "${TMPDIR:-/tmp}/delaunay-profile.XXXXXX")"
         workdir="$tmp_parent/worktree"
         cleanup_worktree=1
+        trap cleanup EXIT
         git worktree add --detach "$workdir" "$requested_ref"
     fi
-
-    cleanup() {
-        if [[ "$cleanup_worktree" -eq 1 ]]; then
-            git worktree remove --force "$workdir" >/dev/null 2>&1 || true
-            rm -rf "$(dirname "$workdir")"
-        fi
-    }
-    trap cleanup EXIT
 
     if [[ -z "$requested_toolchain" ]]; then
         requested_toolchain="$(

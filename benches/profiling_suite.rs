@@ -58,16 +58,20 @@ use criterion::{
     BatchSize, BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
 use delaunay::core::collections::SmallBuffer;
+use delaunay::geometry::traits::coordinate::Coordinate;
 use delaunay::geometry::util::{
     generate_grid_points, generate_poisson_points, generate_random_points_seeded,
     safe_usize_to_scalar,
 };
 use delaunay::prelude::query::*;
-use delaunay::prelude::triangulation::DelaunayTriangulationBuilder;
+use delaunay::prelude::triangulation::{
+    ConstructionOptions, DelaunayTriangulationBuilder, RetryPolicy,
+};
 use delaunay::vertex;
 use num_traits::cast;
 use std::env;
 use std::hint::black_box;
+use std::num::NonZeroUsize;
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
@@ -104,6 +108,7 @@ const QUERY_RESULTS_BUFFER_SIZE: usize = 1024; // For bounded query result colle
 const DEFAULT_SEED: u64 = 42;
 const QUERY_SEED: u64 = 123;
 const MAX_QUERY_RESULTS: usize = 1_000;
+const VALIDATION_SEED_SEARCH_LIMIT: u64 = 64;
 
 // Memory allocation counting support
 #[cfg(feature = "count-allocations")]
@@ -191,6 +196,7 @@ enum PointDistribution {
     Random,
     Grid,
     PoissonDisk,
+    Adversarial,
 }
 
 impl PointDistribution {
@@ -199,6 +205,7 @@ impl PointDistribution {
             Self::Random => "random",
             Self::Grid => "grid",
             Self::PoissonDisk => "poisson",
+            Self::Adversarial => "adversarial",
         }
     }
 }
@@ -212,6 +219,28 @@ fn gen_points<const D: usize>(
     match distribution {
         PointDistribution::Random => generate_random_points_seeded(count, (-100.0, 100.0), seed)
             .expect("random point generation failed"),
+        PointDistribution::Adversarial => generate_random_points_seeded::<f64, D>(
+            count,
+            (-1.0, 1.0),
+            seed ^ 0xA5A5_A5A5_A5A5_A5A5,
+        )
+        .expect("adversarial base point generation failed")
+        .iter()
+        .enumerate()
+        .map(|(index, point)| {
+            let index = u32::try_from(index).expect("benchmark point index should fit in u32");
+            let mut coords = [0.0_f64; D];
+            for (axis, coord) in coords.iter_mut().enumerate() {
+                let axis_number = u32::try_from(axis + 1).expect("axis should fit in u32");
+                let base: f64 = point.coords()[axis];
+                let cluster_offset = f64::from(index % 7) * 1.0e-3;
+                let axis_offset = f64::from(axis_number) * 0.25;
+                let perturbation = f64::from((index + axis_number) % 11) * 1.0e-6;
+                *coord = base.mul_add(1.0e3, 1.0e9 + axis_offset + cluster_offset + perturbation);
+            }
+            Point::new(coords)
+        })
+        .collect(),
         PointDistribution::Grid => {
             // Calculate points per dimension to get approximately `count` points total
             let count_f64 = safe_usize_to_scalar::<f64>(count).unwrap_or(2.0);
@@ -528,13 +557,12 @@ fn bench_memory_usage<const D: usize>(
                     SmallBuffer::new();
 
                 for _ in 0..iters {
+                    let points = gen_points::<D>(count, PointDistribution::Random, DEFAULT_SEED);
+                    let pts_len = points.len();
+                    let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                     let start_time = Instant::now();
 
                     let alloc_info = measure(|| {
-                        let points =
-                            gen_points::<D>(count, PointDistribution::Random, DEFAULT_SEED);
-                        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                        actual_point_counts.push(points.len()); // Track actual count
                         if let Ok(dt) = DelaunayTriangulationBuilder::new(&vertices).build::<()>() {
                             black_box(dt);
                         }
@@ -542,6 +570,7 @@ fn bench_memory_usage<const D: usize>(
 
                     total_time += start_time.elapsed();
                     allocation_infos.push(alloc_info);
+                    actual_point_counts.push(pts_len);
                 }
 
                 // Report memory usage summary if available
@@ -743,18 +772,54 @@ fn benchmark_query_latency(c: &mut Criterion) {
 macro_rules! benchmark_validation_components_dimension {
     ($dim:literal, $func_name:ident, $count:expr) => {
         fn $func_name(c: &mut Criterion) {
-            let points = gen_points::<$dim>($count, PointDistribution::Random, DEFAULT_SEED);
-            let vertices: Vec<_> = points.iter().map(|point| vertex!(*point)).collect();
-            let dt = DelaunayTriangulationBuilder::new(&vertices)
-                .build::<()>()
-                .unwrap_or_else(|err| {
+            let is_adversarial = stringify!($func_name).ends_with("_adversarial");
+            let distribution = if is_adversarial {
+                PointDistribution::Adversarial
+            } else {
+                PointDistribution::Random
+            };
+            let suffix = if is_adversarial { "_adversarial" } else { "" };
+            let mut last_error = None;
+            let dt = (0..VALIDATION_SEED_SEARCH_LIMIT)
+                .find_map(|offset| {
+                    let seed = DEFAULT_SEED.wrapping_add(offset);
+                    let points = gen_points::<$dim>($count, distribution, seed);
+                    let vertices: Vec<_> = points.iter().map(|point| vertex!(*point)).collect();
+                    let builder = DelaunayTriangulationBuilder::new(&vertices);
+                    let builder = if is_adversarial {
+                        let attempts =
+                            NonZeroUsize::new(8).expect("retry attempts must be non-zero");
+                        builder.construction_options(
+                            ConstructionOptions::default().with_retry_policy(
+                                RetryPolicy::Shuffled {
+                                    attempts,
+                                    base_seed: Some(seed),
+                                },
+                            ),
+                        )
+                    } else {
+                        builder
+                    };
+
+                    match builder.build::<()>() {
+                        Ok(dt) => Some(dt),
+                        Err(err) => {
+                            last_error = Some(format!("{err}"));
+                            None
+                        }
+                    }
+                })
+                .unwrap_or_else(|| {
                     panic!(
-                        "failed to build {}D validation component benchmark triangulation: {err}",
-                        $dim
+                        "failed to build {}D validation component benchmark triangulation \
+                         after {} seeds (last error: {})",
+                        $dim,
+                        VALIDATION_SEED_SEARCH_LIMIT,
+                        last_error.unwrap_or_else(|| "none".to_string())
                     );
                 });
 
-            let mut group = c.benchmark_group(format!("validation_components_{}d", $dim));
+            let mut group = c.benchmark_group(format!("validation_components_{}d{}", $dim, suffix));
             group.measurement_time(bench_time(15));
             group.throughput(Throughput::Elements($count as u64));
 
@@ -795,6 +860,10 @@ benchmark_validation_components_dimension!(2, benchmark_validation_components_2d
 benchmark_validation_components_dimension!(3, benchmark_validation_components_3d, 50);
 benchmark_validation_components_dimension!(4, benchmark_validation_components_4d, 25);
 benchmark_validation_components_dimension!(5, benchmark_validation_components_5d, 25);
+benchmark_validation_components_dimension!(2, benchmark_validation_components_2d_adversarial, 50);
+benchmark_validation_components_dimension!(3, benchmark_validation_components_3d_adversarial, 50);
+benchmark_validation_components_dimension!(4, benchmark_validation_components_4d_adversarial, 25);
+benchmark_validation_components_dimension!(5, benchmark_validation_components_5d_adversarial, 25);
 
 // ============================================================================
 // Algorithmic Bottleneck Identification
@@ -899,6 +968,10 @@ criterion_group!(
         benchmark_validation_components_3d,
         benchmark_validation_components_4d,
         benchmark_validation_components_5d,
+        benchmark_validation_components_2d_adversarial,
+        benchmark_validation_components_3d_adversarial,
+        benchmark_validation_components_4d_adversarial,
+        benchmark_validation_components_5d_adversarial,
         bench_bottlenecks
 );
 

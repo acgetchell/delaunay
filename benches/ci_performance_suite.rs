@@ -31,6 +31,7 @@ use criterion::measurement::WallTime;
 use criterion::{
     BatchSize, BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
+use delaunay::geometry::util::simplex_volume;
 use delaunay::prelude::generators::generate_random_points_seeded;
 use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, Point, RobustKernel};
 use delaunay::prelude::query::ConvexHull;
@@ -81,56 +82,117 @@ struct ApiBenchmarkEntry {
     group: &'static str,
     public_api: &'static str,
     dimensions: &'static str,
-    benchmark_ids: &'static str,
+    benchmark_ids: String,
     note: &'static str,
 }
 
 static API_BENCHMARK_MANIFEST: Once = Once::new();
 
-const API_BENCHMARK_ENTRIES: &[ApiBenchmarkEntry] = &[
-    ApiBenchmarkEntry {
-        group: "construction",
-        public_api: "DelaunayTriangulation::new_with_options",
-        dimensions: "2,3,4,5",
-        benchmark_ids: "tds_new_2d/{tds_new,tds_new_adversarial}/{10,25,50};tds_new_3d/{tds_new,tds_new_adversarial}/{10,25,50};tds_new_4d/{tds_new,tds_new_adversarial}/{10,25,50};tds_new_5d/{tds_new,tds_new_adversarial}/{10,25}",
-        note: "construct_from_seeded_vertices_and_adversarial_large_coordinate_inputs",
-    },
-    ApiBenchmarkEntry {
-        group: "boundary_facets",
-        public_api: "DelaunayTriangulation::boundary_facets",
-        dimensions: "2,3,4,5",
-        benchmark_ids: "boundary_facets/{boundary_facets_2d,boundary_facets_2d_adversarial}/50;boundary_facets/{boundary_facets_3d,boundary_facets_3d_adversarial}/50;boundary_facets/{boundary_facets_4d,boundary_facets_4d_adversarial}/50;boundary_facets/{boundary_facets_5d,boundary_facets_5d_adversarial}/25",
-        note: "iterate_boundary_facets_on_well_conditioned_and_adversarial_inputs",
-    },
-    ApiBenchmarkEntry {
-        group: "convex_hull",
-        public_api: "ConvexHull::from_triangulation",
-        dimensions: "2,3,4,5",
-        benchmark_ids: "convex_hull/{from_triangulation_2d,from_triangulation_2d_adversarial}/50;convex_hull/{from_triangulation_3d,from_triangulation_3d_adversarial}/50;convex_hull/{from_triangulation_4d,from_triangulation_4d_adversarial}/50;convex_hull/{from_triangulation_5d,from_triangulation_5d_adversarial}/25",
-        note: "extract_hull_from_well_conditioned_and_adversarial_triangulations",
-    },
-    ApiBenchmarkEntry {
-        group: "validation",
-        public_api: "DelaunayTriangulation::validate",
-        dimensions: "3,4,5",
-        benchmark_ids: "validation/{validate_3d,validate_3d_adversarial}/50;validation/{validate_4d,validate_4d_adversarial}/50;validation/{validate_5d,validate_5d_adversarial}/25",
-        note: "levels_1_through_4_on_well_conditioned_and_adversarial_inputs",
-    },
-    ApiBenchmarkEntry {
-        group: "incremental_insert",
-        public_api: "DelaunayTriangulation::insert",
-        dimensions: "2,3,4,5",
-        benchmark_ids: "incremental_insert/{insert_2d,insert_2d_adversarial}/10;incremental_insert/{insert_3d,insert_3d_adversarial}/10;incremental_insert/{insert_4d,insert_4d_adversarial}/6;incremental_insert/{insert_5d,insert_5d_adversarial}/4",
-        note: "insert_batches_into_prebuilt_well_conditioned_and_adversarial_triangulations",
-    },
-    ApiBenchmarkEntry {
-        group: "bistellar_flips",
-        public_api: "BistellarFlips::{flip_k1_insert,flip_k1_remove,flip_k2,flip_k2_inverse_from_edge,flip_k3,flip_k3_inverse_from_triangle}",
-        dimensions: "4",
-        benchmark_ids: "bistellar_flips_4d/k1_roundtrip;bistellar_flips_4d/k2_roundtrip;bistellar_flips_4d/k3_roundtrip",
-        note: "stable_pl_manifold_roundtrips",
-    },
-];
+fn count_list(counts: &[usize]) -> String {
+    counts
+        .iter()
+        .map(usize::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn construction_benchmark_ids() -> String {
+    [
+        format!(
+            "tds_new_2d/{{tds_new,tds_new_adversarial}}/{{{}}}",
+            count_list(COUNTS)
+        ),
+        format!(
+            "tds_new_3d/{{tds_new,tds_new_adversarial}}/{{{}}}",
+            count_list(COUNTS)
+        ),
+        format!(
+            "tds_new_4d/{{tds_new,tds_new_adversarial}}/{{{}}}",
+            count_list(COUNTS)
+        ),
+        format!(
+            "tds_new_5d/{{tds_new,tds_new_adversarial}}/{{{}}}",
+            count_list(COUNTS_5D)
+        ),
+    ]
+    .join(";")
+}
+
+fn operation_benchmark_ids(group: &str, prefix: &str) -> String {
+    [
+        format!("{group}/{{{prefix}_2d,{prefix}_2d_adversarial}}/{OPERATION_COUNT}"),
+        format!("{group}/{{{prefix}_3d,{prefix}_3d_adversarial}}/{OPERATION_COUNT}"),
+        format!("{group}/{{{prefix}_4d,{prefix}_4d_adversarial}}/{OPERATION_COUNT}"),
+        format!("{group}/{{{prefix}_5d,{prefix}_5d_adversarial}}/{OPERATION_COUNT_5D}"),
+    ]
+    .join(";")
+}
+
+fn validation_benchmark_ids() -> String {
+    [
+        format!("validation/{{validate_3d,validate_3d_adversarial}}/{OPERATION_COUNT}"),
+        format!("validation/{{validate_4d,validate_4d_adversarial}}/{OPERATION_COUNT}"),
+        format!("validation/{{validate_5d,validate_5d_adversarial}}/{OPERATION_COUNT_5D}"),
+    ]
+    .join(";")
+}
+
+fn insert_benchmark_ids() -> String {
+    [
+        format!("incremental_insert/{{insert_2d,insert_2d_adversarial}}/{INSERT_COUNT}"),
+        format!("incremental_insert/{{insert_3d,insert_3d_adversarial}}/{INSERT_COUNT}"),
+        format!("incremental_insert/{{insert_4d,insert_4d_adversarial}}/{INSERT_COUNT_4D}"),
+        format!("incremental_insert/{{insert_5d,insert_5d_adversarial}}/{INSERT_COUNT_5D}"),
+    ]
+    .join(";")
+}
+
+fn api_benchmark_entries() -> Vec<ApiBenchmarkEntry> {
+    vec![
+        ApiBenchmarkEntry {
+            group: "construction",
+            public_api: "DelaunayTriangulation::new_with_options",
+            dimensions: "2,3,4,5",
+            benchmark_ids: construction_benchmark_ids(),
+            note: "construct_from_seeded_vertices_and_adversarial_large_coordinate_inputs",
+        },
+        ApiBenchmarkEntry {
+            group: "boundary_facets",
+            public_api: "DelaunayTriangulation::boundary_facets",
+            dimensions: "2,3,4,5",
+            benchmark_ids: operation_benchmark_ids("boundary_facets", "boundary_facets"),
+            note: "iterate_boundary_facets_on_well_conditioned_and_adversarial_inputs",
+        },
+        ApiBenchmarkEntry {
+            group: "convex_hull",
+            public_api: "ConvexHull::from_triangulation",
+            dimensions: "2,3,4,5",
+            benchmark_ids: operation_benchmark_ids("convex_hull", "from_triangulation"),
+            note: "extract_hull_from_well_conditioned_and_adversarial_triangulations",
+        },
+        ApiBenchmarkEntry {
+            group: "validation",
+            public_api: "DelaunayTriangulation::validate",
+            dimensions: "3,4,5",
+            benchmark_ids: validation_benchmark_ids(),
+            note: "levels_1_through_4_on_well_conditioned_and_adversarial_inputs",
+        },
+        ApiBenchmarkEntry {
+            group: "incremental_insert",
+            public_api: "DelaunayTriangulation::insert",
+            dimensions: "2,3,4,5",
+            benchmark_ids: insert_benchmark_ids(),
+            note: "insert_batches_into_prebuilt_well_conditioned_and_adversarial_triangulations",
+        },
+        ApiBenchmarkEntry {
+            group: "bistellar_flips",
+            public_api: "BistellarFlips::{flip_k1_insert,flip_k1_remove,flip_k2,flip_k2_inverse_from_edge,flip_k3,flip_k3_inverse_from_triangle}",
+            dimensions: "4",
+            benchmark_ids: "bistellar_flips_4d/k1_roundtrip;bistellar_flips_4d/k2_roundtrip;bistellar_flips_4d/k3_roundtrip".to_string(),
+            note: "stable_pl_manifold_roundtrips",
+        },
+    ]
+}
 
 /// Stable 4D PL-manifold configuration used for explicit bistellar flips.
 const STABLE_POINTS_4D: &[[f64; 4]] = &[
@@ -179,8 +241,33 @@ const KNOWN_SEEDS: &[(usize, usize, u64)] = &[
     (5, 25, 816),
 ];
 
+const KNOWN_ADV_SEEDS: &[(usize, usize, u64)] = &[
+    // 2D
+    (2, 10, 2_779_097_209),
+    (2, 25, 2_779_097_224),
+    (2, 50, 2_779_097_249),
+    // 3D
+    (3, 10, 2_779_098_586),
+    (3, 25, 2_779_098_601),
+    (3, 50, 2_779_098_627),
+    // 4D
+    (4, 10, 2_779_104_247),
+    (4, 25, 2_779_104_262),
+    (4, 50, 2_779_104_287),
+    // 5D
+    (5, 10, 2_779_109_908),
+    (5, 25, 2_779_109_924),
+];
+
 fn known_seed(dim: usize, count: usize) -> Option<u64> {
     KNOWN_SEEDS
+        .iter()
+        .find(|&&(d, c, _)| d == dim && c == count)
+        .map(|&(_, _, seed)| seed)
+}
+
+fn known_adv_seed(dim: usize, count: usize) -> Option<u64> {
+    KNOWN_ADV_SEEDS
         .iter()
         .find(|&&(d, c, _)| d == dim && c == count)
         .map(|&(_, _, seed)| seed)
@@ -192,7 +279,7 @@ fn print_manifest_once() {
             "api_benchmark_manifest crate=delaunay version={} benchmark=ci_performance_suite schema=1",
             env!("CARGO_PKG_VERSION")
         );
-        for entry in API_BENCHMARK_ENTRIES {
+        for entry in api_benchmark_entries() {
             println!(
                 "api_benchmark group={} public_api={} dimensions={} benchmark_ids={} note={}",
                 entry.group, entry.public_api, entry.dimensions, entry.benchmark_ids, entry.note
@@ -267,7 +354,10 @@ fn prepare_inserts<const D: usize>(
     count: usize,
     dataset: Dataset,
 ) -> Vec<Vertex<f64, (), D>> {
-    let seed = dim_seed.wrapping_add(0x5151_5151);
+    let mut seed = dim_seed.wrapping_add(0x5151_5151);
+    if matches!(dataset, Dataset::Adversarial) {
+        seed ^= 0xA5A5_A5A5;
+    }
     let points = match dataset {
         Dataset::WellConditioned => {
             generate_random_points_seeded::<f64, D>(count, (-50.0, 50.0), seed)
@@ -306,11 +396,42 @@ fn find_seed_vertices<const D: usize>(
     None
 }
 
+fn stable_adv_points<const D: usize>(
+    seed: u64,
+    count: usize,
+    attempts: NonZeroUsize,
+) -> SeedSearchResult<D> {
+    let points = generate_adv_points::<D>(count, seed);
+    let vertices = points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>();
+    let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
+        attempts,
+        base_seed: Some(seed),
+    });
+
+    BenchTriangulation::<D>::new_with_options(&vertices, options)
+        .is_ok()
+        .then_some((seed, points, vertices))
+}
+
 fn prepare_adv_data<const D: usize>(
     dim_seed: u64,
     count: usize,
     attempts: NonZeroUsize,
 ) -> (u64, Vec<Point<f64, D>>, Vec<Vertex<f64, (), D>>) {
+    if !discover_seeds_enabled()
+        && let Some(seed) = known_adv_seed(D, count)
+    {
+        if let Some(result) = stable_adv_points::<D>(seed, count, attempts) {
+            return result;
+        }
+        warn!(
+            known_seed = seed,
+            dim = D,
+            count,
+            "known adversarial seed failed, falling back to runtime search"
+        );
+    }
+
     let start_seed = dim_seed
         .wrapping_mul(17)
         .wrapping_add(count as u64)
@@ -319,15 +440,11 @@ fn prepare_adv_data<const D: usize>(
 
     for offset in 0..search_limit {
         let candidate_seed = start_seed.wrapping_add(offset as u64);
-        let points = generate_adv_points::<D>(count, candidate_seed);
-        let vertices = points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>();
-        let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
-            attempts,
-            base_seed: Some(candidate_seed),
-        });
-
-        if BenchTriangulation::<D>::new_with_options(&vertices, options).is_ok() {
-            return (candidate_seed, points, vertices);
+        if let Some(result) = stable_adv_points::<D>(candidate_seed, count, attempts) {
+            if discover_seeds_enabled() {
+                println!("ADV_SEED {D} {count} {candidate_seed}");
+            }
+            return result;
         }
     }
 
@@ -409,12 +526,36 @@ fn cell_centroid_4d(dt: &FlipTriangulation4, cell_key: CellKey) -> [f64; 4] {
     coords
 }
 
-fn roundtrip_k1_4d(dt: &mut FlipTriangulation4) {
-    let cell_key = dt
-        .cells()
-        .next()
+fn cell_points_4d(dt: &FlipTriangulation4, cell_key: CellKey) -> Vec<Point<f64, 4>> {
+    let cell = dt
+        .tds()
+        .get_cell(cell_key)
+        .expect("cell key should exist in benchmark triangulation");
+
+    cell.vertices()
+        .iter()
+        .map(|vertex_key| {
+            *dt.tds()
+                .get_vertex_by_key(*vertex_key)
+                .expect("vertex key should exist in benchmark triangulation")
+                .point()
+        })
+        .collect()
+}
+
+fn largest_volume_cell_4d(dt: &FlipTriangulation4) -> CellKey {
+    dt.cells()
+        .filter_map(|(cell_key, _)| {
+            simplex_volume(&cell_points_4d(dt, cell_key))
+                .ok()
+                .map(|volume| (cell_key, volume))
+        })
+        .max_by(|(_, left), (_, right)| left.total_cmp(right))
         .map(|(cell_key, _)| cell_key)
-        .expect("benchmark triangulation should have cells");
+        .expect("stable 4D benchmark triangulation should have a non-degenerate cell")
+}
+
+fn roundtrip_k1_4d(dt: &mut FlipTriangulation4, cell_key: CellKey) {
     let centroid = cell_centroid_4d(dt, cell_key);
     let new_vertex = vertex!(centroid);
     let new_uuid = new_vertex.uuid();
@@ -609,35 +750,45 @@ macro_rules! benchmark_tds_new_dimension {
                     .collect();
 
                 for &count in counts {
-                    let bench_id =
-                        format!("tds_new_{}d/tds_new/{}", stringify!($dim), count);
+                    let bench_id = format!("tds_new_{}d/tds_new/{}", stringify!($dim), count);
+                    let adv_bench_id =
+                        format!("tds_new_{}d/tds_new_adversarial/{}", stringify!($dim), count);
 
-                    if !filters.is_empty() && !filters.iter().any(|filter| bench_id.contains(filter)) {
-                        continue;
-                    }
-
-                    let seed = ($seed as u64).wrapping_add(count as u64);
-                    let limit = seed_search_limit();
-                    let attempts =
-                        NonZeroUsize::new(6).expect("retry attempts must be non-zero");
-
-                    if let Some((candidate_seed, _, _)) =
-                        find_seed_vertices::<$dim>(seed, count, bounds, limit, attempts)
+                    if !filters.is_empty()
+                        && filters.iter().any(|filter| adv_bench_id.contains(filter))
                     {
-                        println!(
-                            "seed_search_found dim={} count={} seed={}",
-                            $dim, count, candidate_seed
-                        );
+                        let attempts =
+                            NonZeroUsize::new(8).expect("retry attempts must be non-zero");
+                        let _ = prepare_adv_data::<$dim>($seed, count, attempts);
                         return;
                     }
 
-                    panic!(
-                        "seed_search_failed dim={} count={} start_seed={} limit={}",
-                        $dim,
-                        count,
-                        seed,
-                        limit
-                    );
+                    if filters.is_empty()
+                        || filters.iter().any(|filter| bench_id.contains(filter))
+                    {
+                        let seed = ($seed as u64).wrapping_add(count as u64);
+                        let limit = seed_search_limit();
+                        let attempts =
+                            NonZeroUsize::new(6).expect("retry attempts must be non-zero");
+
+                        if let Some((candidate_seed, _, _)) =
+                            find_seed_vertices::<$dim>(seed, count, bounds, limit, attempts)
+                        {
+                            println!(
+                                "seed_search_found dim={} count={} seed={}",
+                                $dim, count, candidate_seed
+                            );
+                            return;
+                        }
+
+                        panic!(
+                            "seed_search_failed dim={} count={} start_seed={} limit={}",
+                            $dim,
+                            count,
+                            seed,
+                            limit
+                        );
+                    }
                 }
 
                 // No filter matched this benchmark function; do nothing.
@@ -864,6 +1015,9 @@ fn bench_insert_case<const D: usize>(
 
 fn benchmark_boundary_facets(c: &mut Criterion) {
     print_manifest_once();
+    if discover_seeds_enabled() {
+        return;
+    }
     let mut group = c.benchmark_group("boundary_facets");
     group.sample_size(25);
 
@@ -940,6 +1094,9 @@ fn benchmark_boundary_facets(c: &mut Criterion) {
 
 fn benchmark_convex_hull(c: &mut Criterion) {
     print_manifest_once();
+    if discover_seeds_enabled() {
+        return;
+    }
     let mut group = c.benchmark_group("convex_hull");
     group.sample_size(20);
 
@@ -1016,6 +1173,9 @@ fn benchmark_convex_hull(c: &mut Criterion) {
 
 fn benchmark_validation(c: &mut Criterion) {
     print_manifest_once();
+    if discover_seeds_enabled() {
+        return;
+    }
     let mut group = c.benchmark_group("validation");
     group.sample_size(15);
 
@@ -1075,6 +1235,9 @@ fn benchmark_validation(c: &mut Criterion) {
 
 fn benchmark_insert(c: &mut Criterion) {
     print_manifest_once();
+    if discover_seeds_enabled() {
+        return;
+    }
     let mut group = c.benchmark_group("incremental_insert");
     group.sample_size(15);
 
@@ -1167,15 +1330,21 @@ fn benchmark_insert(c: &mut Criterion) {
 
 fn benchmark_bistellar_flips(c: &mut Criterion) {
     print_manifest_once();
+    if discover_seeds_enabled() {
+        return;
+    }
     let mut group = c.benchmark_group("bistellar_flips_4d");
     group.sample_size(10);
     let base_dt = build_flip_dt_4d();
+    let k1_cell = largest_volume_cell_4d(&base_dt);
+    let k2_facet = flippable_k2_facet_4d(&base_dt);
+    let k3_ridge = flippable_k3_ridge_4d(&base_dt);
 
     group.bench_function("k1_roundtrip", |b| {
         b.iter_batched(
             || base_dt.clone(),
             |mut dt| {
-                roundtrip_k1_4d(&mut dt);
+                roundtrip_k1_4d(&mut dt, k1_cell);
                 black_box(dt);
             },
             BatchSize::LargeInput,
@@ -1184,13 +1353,9 @@ fn benchmark_bistellar_flips(c: &mut Criterion) {
 
     group.bench_function("k2_roundtrip", |b| {
         b.iter_batched(
-            || {
-                let dt = base_dt.clone();
-                let facet = flippable_k2_facet_4d(&dt);
-                (dt, facet)
-            },
-            |(mut dt, facet)| {
-                roundtrip_k2_4d(&mut dt, facet);
+            || base_dt.clone(),
+            |mut dt| {
+                roundtrip_k2_4d(&mut dt, k2_facet);
                 black_box(dt);
             },
             BatchSize::LargeInput,
@@ -1199,13 +1364,9 @@ fn benchmark_bistellar_flips(c: &mut Criterion) {
 
     group.bench_function("k3_roundtrip", |b| {
         b.iter_batched(
-            || {
-                let dt = base_dt.clone();
-                let ridge = flippable_k3_ridge_4d(&dt);
-                (dt, ridge)
-            },
-            |(mut dt, ridge)| {
-                roundtrip_k3_4d(&mut dt, ridge);
+            || base_dt.clone(),
+            |mut dt| {
+                roundtrip_k3_4d(&mut dt, k3_ridge);
                 black_box(dt);
             },
             BatchSize::LargeInput,

@@ -890,7 +890,7 @@ class PerformanceSummaryGenerator:
         """Map a Criterion path prefix to a ci_performance_suite group key."""
         if first_path_part.startswith("tds_new_"):
             return "construction"
-        if first_path_part == "bistellar_flips_4d":
+        if first_path_part.startswith("bistellar_flips"):
             return "bistellar_flips"
         if first_path_part in CI_PERFORMANCE_SUITE_GROUPS:
             return first_path_part

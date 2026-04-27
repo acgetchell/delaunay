@@ -113,44 +113,7 @@ jobs:
       - name: Capture profiling environment metadata
         env:
           BENCH_FILTER_VALUE: ${{ github.event.inputs.benchmark_filter || '' }}
-        run: |
-          set -euo pipefail
-
-          mkdir -p profiling-results
-
-          declared_toolchain="$(
-            grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml 2>/dev/null \
-              | head -n 1 \
-              | cut -d '=' -f 2 \
-              | tr -d ' "' \
-              || true
-          )"
-          rust_version="$(
-            grep -E '^rust-version[[:space:]]*=' Cargo.toml 2>/dev/null \
-              | head -n 1 \
-              | cut -d '=' -f 2 \
-              | tr -d ' "' \
-              || true
-          )"
-          profiling_mode="production"
-          if [[ "${PROFILING_DEV_MODE:-}" == "1" ]]; then
-            profiling_mode="development"
-          fi
-
-          {
-            echo "# Profiling Environment"
-            echo
-            echo "- Code ref: ${GITHUB_REF_NAME}"
-            echo "- Commit: $(git rev-parse HEAD)"
-            echo "- Declared rust-toolchain.toml channel: ${declared_toolchain}"
-            echo "- Cargo.toml rust-version: ${rust_version}"
-            echo "- rustc: $(rustc --version)"
-            echo "- cargo: $(cargo --version)"
-            echo "- Cargo profile: perf"
-            echo "- Benchmark filter: ${BENCH_FILTER_VALUE:-All benchmarks}"
-            echo "- Profiling mode: ${profiling_mode}"
-            echo "- Runner: ${RUNNER_OS}"
-          } > profiling-results/environment_metadata.md
+        run: ./scripts/ci/capture_profiling_metadata.sh
 
       - name: Build profiling suite
         run: |
@@ -314,40 +277,11 @@ jobs:
           cargo test --test allocation_api --features count-allocations --verbose
 
       - name: Capture memory profiling environment metadata
-        run: |
-          set -euo pipefail
-
-          mkdir -p profiling-results
-
-          declared_toolchain="$(
-            grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml 2>/dev/null \
-              | head -n 1 \
-              | cut -d '=' -f 2 \
-              | tr -d ' "' \
-              || true
-          )"
-          rust_version="$(
-            grep -E '^rust-version[[:space:]]*=' Cargo.toml 2>/dev/null \
-              | head -n 1 \
-              | cut -d '=' -f 2 \
-              | tr -d ' "' \
-              || true
-          )"
-
-          {
-            echo "# Memory Profiling Environment"
-            echo
-            echo "- Code ref: ${GITHUB_REF_NAME}"
-            echo "- Commit: $(git rev-parse HEAD)"
-            echo "- Declared rust-toolchain.toml channel: ${declared_toolchain}"
-            echo "- Cargo.toml rust-version: ${rust_version}"
-            echo "- rustc: $(rustc --version)"
-            echo "- cargo: $(cargo --version)"
-            echo "- Cargo profile: perf"
-            echo "- Benchmark filter: memory_profiling"
-            echo "- Profiling mode: development"
-            echo "- Runner: ${RUNNER_OS}"
-          } > profiling-results/environment_metadata.md
+        env:
+          PROFILE_METADATA_TITLE: Memory Profiling Environment
+          PROFILE_METADATA_FILTER: memory_profiling
+          PROFILE_METADATA_MODE: development
+        run: ./scripts/ci/capture_profiling_metadata.sh
 
       - name: Run memory scaling benchmarks
         env:
