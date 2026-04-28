@@ -477,18 +477,33 @@ fn bench_scaling(c: &mut Criterion) {
 // Memory Usage Profiling
 // ============================================================================
 
-/// Calculate percentile from a slice of values using nearest-rank method
-/// Supports configurable percentile via environment variable `BENCH_PERCENTILE` (default: 95)
-fn calculate_percentile(values: &mut [u64]) -> u64 {
+/// Read the memory summary percentile from `BENCH_PERCENTILE` (default: 95).
+fn configured_percentile() -> usize {
+    env::var("BENCH_PERCENTILE")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .map_or(95, |p| p.clamp(1, 100))
+}
+
+/// Format a percentile as an ordinal label for the memory summary.
+fn percentile_label(percentile: usize) -> String {
+    let suffix = match percentile % 100 {
+        11..=13 => "th",
+        _ => match percentile % 10 {
+            1 => "st",
+            2 => "nd",
+            3 => "rd",
+            _ => "th",
+        },
+    };
+    format!("{percentile}{suffix}")
+}
+
+/// Calculate percentile from a slice of values using nearest-rank method.
+fn calculate_percentile(values: &mut [u64], percentile: usize) -> u64 {
     if values.is_empty() {
         return 0;
     }
-
-    // Parse percentile from environment, defaulting to 95
-    let percentile = env::var("BENCH_PERCENTILE")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .map_or(95, |p| p.clamp(1, 100)); // Clamp to valid percentile range
 
     values.sort_unstable();
     let n = values.len();
@@ -506,7 +521,8 @@ fn print_alloc_summary(
     info: &AllocationInfo,
     description: &str,
     actual_point_count: usize,
-    percentile_95: u64,
+    percentile: usize,
+    percentile_value: u64,
 ) {
     println!("\n=== Memory Allocation Summary for {description} ({actual_point_count} points) ===");
     println!("Total allocations: {}", info.count_total);
@@ -520,9 +536,10 @@ fn print_alloc_summary(
         info.bytes_max as f64 / (1024.0 * 1024.0)
     );
     println!(
-        "95th percentile bytes: {} ({:.2} MB)",
-        percentile_95,
-        percentile_95 as f64 / (1024.0 * 1024.0)
+        "{} percentile bytes: {} ({:.2} MB)",
+        percentile_label(percentile),
+        percentile_value,
+        percentile_value as f64 / (1024.0 * 1024.0)
     );
     if actual_point_count > 0 {
         println!(
@@ -613,12 +630,14 @@ fn bench_memory_usage<const D: usize>(
                     // Calculate percentile of bytes_max (configurable via BENCH_PERCENTILE, default 95th)
                     let mut bytes_max_values: Vec<u64> =
                         allocation_infos.iter().map(|i| i.bytes_max).collect();
-                    let percentile_value = calculate_percentile(&mut bytes_max_values);
+                    let percentile = configured_percentile();
+                    let percentile_value = calculate_percentile(&mut bytes_max_values, percentile);
 
                     print_alloc_summary(
                         &avg_info,
                         &format!("{D}D Triangulation"),
                         avg_actual_count,
+                        percentile,
                         percentile_value,
                     );
                 }

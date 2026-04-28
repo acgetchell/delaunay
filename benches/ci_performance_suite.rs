@@ -43,7 +43,8 @@ use delaunay::prelude::triangulation::{
 };
 use delaunay::vertex;
 use std::{env, hint::black_box, num::NonZeroUsize, sync::Once};
-use tracing::{error, warn};
+#[cfg(feature = "bench-logging")]
+use tracing::warn;
 
 /// Default point counts for 2D–4D benchmarks.
 const COUNTS: &[usize] = &[10, 25, 50];
@@ -297,16 +298,27 @@ fn prepare_data<const D: usize>(
     attempts: NonZeroUsize,
 ) -> (u64, Vec<Point<f64, D>>, Vec<Vertex<f64, (), D>>) {
     // Fast path: use the pre-computed seed (single verification construction)
-    if let Some(seed) = known_seed(D, count) {
-        if let Some(result) = find_seed_vertices::<D>(seed, count, bounds, 1, attempts) {
-            return result;
+    match known_seed(D, count).map(|seed| {
+        (
+            seed,
+            find_seed_vertices::<D>(seed, count, bounds, 1, attempts),
+        )
+    }) {
+        Some((_seed, Some(result))) => return result,
+        Some((seed, None)) => {
+            #[cfg(not(feature = "bench-logging"))]
+            let _ = seed;
+            #[cfg(feature = "bench-logging")]
+            {
+                warn!(
+                    known_seed = seed,
+                    dim = D,
+                    count,
+                    "known seed failed, falling back to runtime search"
+                );
+            }
         }
-        warn!(
-            known_seed = seed,
-            dim = D,
-            count,
-            "known seed failed, falling back to runtime search"
-        );
+        None => {}
     }
 
     // Slow fallback: runtime search from the base seed
@@ -418,18 +430,26 @@ fn prepare_adv_data<const D: usize>(
     count: usize,
     attempts: NonZeroUsize,
 ) -> (u64, Vec<Point<f64, D>>, Vec<Vertex<f64, (), D>>) {
-    if !discover_seeds_enabled()
-        && let Some(seed) = known_adv_seed(D, count)
-    {
-        if let Some(result) = stable_adv_points::<D>(seed, count, attempts) {
-            return result;
+    if !discover_seeds_enabled() {
+        match known_adv_seed(D, count)
+            .map(|seed| (seed, stable_adv_points::<D>(seed, count, attempts)))
+        {
+            Some((_seed, Some(result))) => return result,
+            Some((seed, None)) => {
+                #[cfg(not(feature = "bench-logging"))]
+                let _ = seed;
+                #[cfg(feature = "bench-logging")]
+                {
+                    warn!(
+                        known_seed = seed,
+                        dim = D,
+                        count,
+                        "known adversarial seed failed, falling back to runtime search"
+                    );
+                }
+            }
+            None => {}
         }
-        warn!(
-            known_seed = seed,
-            dim = D,
-            count,
-            "known adversarial seed failed, falling back to runtime search"
-        );
     }
 
     let start_seed = dim_seed
@@ -698,10 +718,6 @@ fn roundtrip_k3_4d(dt: &mut FlipTriangulation4, ridge: RidgeHandle) {
         .expect("k=3 inverse should succeed after k=3 flip");
 }
 
-fn bench_logging_enabled() -> bool {
-    env::var("DELAUNAY_BENCH_LOG").is_ok_and(|value| value != "0")
-}
-
 fn discover_seeds_enabled() -> bool {
     env::var("DELAUNAY_BENCH_DISCOVER_SEEDS").is_ok_and(|value| value != "0")
 }
@@ -836,17 +852,6 @@ macro_rules! benchmark_tds_new_dimension {
                             }
                             Err(err) => {
                                 let error = format!("{err:?}");
-                                if bench_logging_enabled() {
-                                    error!(
-                                        dim = $dim,
-                                        count,
-                                        seed,
-                                        bounds = ?bounds,
-                                        sample_points = ?sample_points,
-                                        error = %error,
-                                        "DelaunayTriangulation::new failed"
-                                    );
-                                }
                                 panic!(
                                     "DelaunayTriangulation::new failed for {}D: {error}; dim={}; count={}; seed={}; bounds={:?}; sample_points={sample_points:?}",
                                     $dim,
@@ -886,16 +891,6 @@ macro_rules! benchmark_tds_new_dimension {
                                 }
                                 Err(err) => {
                                     let error = format!("{err:?}");
-                                    if bench_logging_enabled() {
-                                        error!(
-                                            dim = $dim,
-                                            count,
-                                            seed,
-                                            sample_points = ?sample_points,
-                                            error = %error,
-                                            "adversarial DelaunayTriangulation::new failed"
-                                        );
-                                    }
                                     panic!(
                                         "adversarial DelaunayTriangulation::new failed for {}D: {error}; dim={}; count={}; seed={}; sample_points={sample_points:?}",
                                         $dim,

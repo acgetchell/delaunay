@@ -479,17 +479,26 @@ class PerformanceSummaryGenerator:
             profile = cargo_profile if cargo_profile is not None else TRUSTED_BENCH_PROFILE
             cargo_args = ["bench", "--profile", profile, "--bench", "ci_performance_suite", "--", *DEV_MODE_BENCH_ARGS]
 
-            run_cargo_command(
+            result = run_cargo_command(
                 cargo_args,
                 cwd=self.project_root,
                 timeout=900,
                 capture_output=True,
             )
+            if result.returncode != 0:
+                print(f"❌ Error running ci_performance_suite benchmarks: cargo exited with status {result.returncode}")
+                return False
 
             print("✅ ci_performance_suite benchmarks completed successfully")
             return True
 
-        except Exception as e:
+        except ExecutableNotFoundError as e:
+            print(f"❌ Error running ci_performance_suite benchmarks: {e}")
+            return False
+        except subprocess.TimeoutExpired as e:
+            print(f"❌ Error running ci_performance_suite benchmarks: {e}")
+            return False
+        except OSError as e:
             print(f"❌ Error running ci_performance_suite benchmarks: {e}")
             return False
 
@@ -899,7 +908,7 @@ class PerformanceSummaryGenerator:
     @staticmethod
     def _ci_suite_dimension(benchmark_id: str) -> str:
         """Extract the dimension label from a ci_performance_suite benchmark ID."""
-        match = re.search(r"(?:^|_)(\d+)d(?:_|/|$)", benchmark_id)
+        match = re.search(r"(?:^|_|/)(\d+)d(?:_|/|$)", benchmark_id)
         if match:
             return f"{match.group(1)}D"
         return "n/a"

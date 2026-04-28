@@ -2201,6 +2201,7 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             assert "well-conditioned" in content
             assert "#### Boundary facets" in content
             assert "`boundary_facets/boundary_facets_3d_adversarial/50`" in content
+            assert "| `boundary_facets/boundary_facets_3d_adversarial/50` | 3D | 50 | adversarial |" in content
             assert "adversarial" in content
             assert "#### Bistellar flips" in content
             assert "`bistellar_flips_4d/k2_roundtrip`" in content
@@ -2387,7 +2388,7 @@ Benchmark completed."""
     @patch("benchmark_utils.run_cargo_command")
     def test_run_ci_performance_suite_success(self, mock_cargo):
         """Test running the public API CI performance suite successfully."""
-        mock_cargo.return_value = Mock(stdout="")
+        mock_cargo.return_value = Mock(returncode=0, stdout="")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2409,7 +2410,7 @@ Benchmark completed."""
     @patch("benchmark_utils.run_cargo_command")
     def test_run_ci_performance_suite_uses_requested_cargo_profile(self, mock_cargo):
         """Test running the public API CI performance suite with an explicit profile."""
-        mock_cargo.return_value = Mock(stdout="")
+        mock_cargo.return_value = Mock(returncode=0, stdout="")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2424,9 +2425,24 @@ Benchmark completed."""
             assert args[:5] == ["bench", "--profile", requested_profile, "--bench", "ci_performance_suite"]
 
     @patch("benchmark_utils.run_cargo_command")
+    def test_run_ci_performance_suite_nonzero_exit(self, mock_cargo, capsys):
+        """Test handling ci_performance_suite nonzero process exits."""
+        mock_cargo.return_value = Mock(returncode=101, stdout="", stderr="benchmark failed")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            success = generator._run_ci_performance_suite()
+
+            assert success is False
+            captured = capsys.readouterr()
+            assert "cargo exited with status 101" in captured.out
+
+    @patch("benchmark_utils.run_cargo_command")
     def test_run_ci_performance_suite_failure(self, mock_cargo, capsys):
         """Test handling ci_performance_suite benchmark failures."""
-        mock_cargo.side_effect = Exception("Benchmark failed")
+        mock_cargo.side_effect = OSError("Benchmark failed")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
