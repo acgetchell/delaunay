@@ -879,10 +879,21 @@ class PerformanceSummaryGenerator:
         if estimates_file.exists():
             try:
                 with estimates_file.open(encoding="utf-8") as f:
-                    estimates = json.load(f)
+                    data = json.load(f)
 
-                # Extract mean time in nanoseconds
-                mean_ns = estimates["mean"]["point_estimate"]
+                if not isinstance(data, dict):
+                    return None
+                mean_data = data.get("mean", {})
+                if not isinstance(mean_data, dict):
+                    return None
+                mean_ns = float(mean_data["point_estimate"])
+                confidence_interval = mean_data.get("confidence_interval", {})
+                if not isinstance(confidence_interval, dict):
+                    return None
+                low_ns = float(confidence_interval.get("lower_bound", mean_ns))
+                high_ns = float(confidence_interval.get("upper_bound", mean_ns))
+                if not is_valid_criterion_estimate(mean_ns, low_ns, high_ns):
+                    return None
                 return CircumspherePerformanceData(method=method_name, time_ns=mean_ns)
 
             except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as e:

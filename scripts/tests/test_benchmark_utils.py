@@ -2303,6 +2303,53 @@ class TestPerformanceSummaryGenerator:
             assert isinstance(generator.current_version, str)
             assert isinstance(generator.current_date, str)
 
+    def test_parse_single_method_result_accepts_valid_estimate(self, tmp_path) -> None:
+        """Test circumsphere method parsing accepts finite ordered Criterion estimates."""
+        criterion_path = tmp_path / "target" / "criterion" / "basic_2d_insphere"
+        estimates_dir = criterion_path / "base"
+        estimates_dir.mkdir(parents=True)
+        (estimates_dir / "estimates.json").write_text(
+            json.dumps(
+                {
+                    "mean": {
+                        "point_estimate": 100000.0,
+                        "confidence_interval": {
+                            "lower_bound": 90000.0,
+                            "upper_bound": 110000.0,
+                        },
+                    },
+                },
+            ),
+            encoding="utf-8",
+        )
+        generator = PerformanceSummaryGenerator(tmp_path)
+
+        result = generator._parse_single_method_result(criterion_path, "insphere")
+
+        assert result is not None
+        assert result.method == "insphere"
+        assert result.time_ns == pytest.approx(100000.0)
+
+    @pytest.mark.parametrize(
+        "estimates_data",
+        [
+            [],
+            {"mean": []},
+            {"mean": {"point_estimate": 100000.0, "confidence_interval": []}},
+            {"mean": {"point_estimate": float("nan"), "confidence_interval": {"lower_bound": 90000.0, "upper_bound": 110000.0}}},
+            {"mean": {"point_estimate": 100000.0, "confidence_interval": {"lower_bound": 110000.0, "upper_bound": 120000.0}}},
+        ],
+    )
+    def test_parse_single_method_result_rejects_invalid_estimates(self, tmp_path, estimates_data) -> None:
+        """Test circumsphere method parsing rejects malformed or invalid Criterion estimates."""
+        criterion_path = tmp_path / "target" / "criterion" / "basic_2d_insphere"
+        estimates_dir = criterion_path / "base"
+        estimates_dir.mkdir(parents=True)
+        (estimates_dir / "estimates.json").write_text(json.dumps(estimates_data), encoding="utf-8")
+        generator = PerformanceSummaryGenerator(tmp_path)
+
+        assert generator._parse_single_method_result(criterion_path, "insphere") is None
+
     def test_generate_summary_parser_defaults_to_trusted_profile(self) -> None:
         """Test that fresh summary benchmarks default to the trusted Cargo profile."""
         parser = create_argument_parser()
