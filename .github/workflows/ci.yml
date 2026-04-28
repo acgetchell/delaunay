@@ -25,7 +25,7 @@ env:
   MARKDOWNLINT_VERSION: "0.47.0"
   SHFMT_VERSION: "3.12.0"
   TYPOS_VERSION: "1.43.4"
-  UV_VERSION: "0.9.21"
+  UV_VERSION: "0.11.8"
 
 jobs:
   build:

@@ -9,6 +9,7 @@
 //! 4. **Query latency analysis** (circumsphere tests, neighbor queries)
 //! 5. **Multi-dimensional scaling** (2D through 5D)
 //! 6. **Algorithmic bottleneck identification** (specific operation profiling)
+//! 7. **Validation layer diagnostics** (Level 1-3 vs Level 4 cost separation)
 //!
 //! ## Usage
 //!
@@ -44,31 +45,40 @@
 //! - `PROFILING_DEV_MODE`: Set to "1", "true", "yes", or "on" for reduced scale (faster iteration)
 //! - `BENCH_MEASUREMENT_TIME`: Override measurement time in seconds (minimum: 1, guards against invalid values)
 //! - `BENCH_PERCENTILE`: Configure percentile for memory analysis (1-100, default: 95)
-//! - `BENCH_SAMPLE_SIZE`: Override Criterion sample size (default: 10)
+//! - `BENCH_SAMPLE_SIZE`: Override Criterion sample size (default: 10; values below 10 are clamped to 10, so
+//!   `BENCH_SAMPLE_SIZE=5` still runs 10 samples)
 //! - `BENCH_WARMUP_SECS`: Override Criterion warm-up time in seconds (default: 10)
 //!
 //! Example with custom configuration:
 //! ```bash
-//! BENCH_SAMPLE_SIZE=5 BENCH_WARMUP_SECS=5 BENCH_PERCENTILE=90 cargo bench --profile perf --bench profiling_suite
+//! BENCH_SAMPLE_SIZE=10 BENCH_WARMUP_SECS=5 BENCH_PERCENTILE=90 cargo bench --profile perf --bench profiling_suite
 //! ```
 
-use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::measurement::WallTime;
+use criterion::{
+    BatchSize, BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
+};
 use delaunay::core::collections::SmallBuffer;
+use delaunay::geometry::traits::coordinate::Coordinate;
 use delaunay::geometry::util::{
     generate_grid_points, generate_poisson_points, generate_random_points_seeded,
     safe_usize_to_scalar,
 };
 use delaunay::prelude::query::*;
-use delaunay::prelude::triangulation::DelaunayTriangulationBuilder;
+use delaunay::prelude::triangulation::{
+    ConstructionOptions, DelaunayTriangulationBuilder, RetryPolicy,
+};
 use delaunay::vertex;
 use num_traits::cast;
-use serde::{Serialize, de::DeserializeOwned};
+use std::env;
 use std::hint::black_box;
+use std::num::NonZeroUsize;
+use std::sync::Once;
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "bench-logging")]
 fn init_tracing() {
-    static INIT: std::sync::Once = std::sync::Once::new();
+    static INIT: Once = Once::new();
     INIT.call_once(|| {
         let filter = tracing_subscriber::EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
@@ -79,18 +89,8 @@ fn init_tracing() {
 #[cfg(not(feature = "bench-logging"))]
 const fn init_tracing() {}
 
-#[cfg(not(feature = "count-allocations"))]
-macro_rules! bench_warn {
-    ($($arg:tt)*) => {{
-        #[cfg(feature = "bench-logging")]
-        {
-            init_tracing();
-            tracing::warn!($($arg)*);
-        }
-    }};
-}
-
 // SmallBuffer size constants for different use cases
+#[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
 const BENCHMARK_ITERATION_BUFFER_SIZE: usize = 8; // For tracking allocation info across benchmark iterations
 const SIMPLEX_VERTICES_BUFFER_SIZE: usize = 4; // 3D simplex = 4 vertices
 const QUERY_RESULTS_BUFFER_SIZE: usize = 1024; // For bounded query result collections (max 1000 in code)
@@ -99,6 +99,7 @@ const QUERY_RESULTS_BUFFER_SIZE: usize = 1024; // For bounded query result colle
 const DEFAULT_SEED: u64 = 42;
 const QUERY_SEED: u64 = 123;
 const MAX_QUERY_RESULTS: usize = 1_000;
+const VALIDATION_SEED_SEARCH_LIMIT: u64 = 64;
 
 // Memory allocation counting support
 #[cfg(feature = "count-allocations")]
@@ -106,27 +107,20 @@ use allocation_counter::{AllocationInfo, measure};
 
 #[cfg(not(feature = "count-allocations"))]
 #[derive(Debug, Default)]
-struct AllocationInfo {
-    count_total: u64,
-    count_current: i64,
-    count_max: u64,
-    bytes_total: u64,
-    bytes_current: i64,
-    bytes_max: u64,
-}
+struct AllocationInfo;
 
 #[cfg(not(feature = "count-allocations"))]
-fn measure<F: FnOnce()>(f: F) -> AllocationInfo {
+fn measure(f: impl FnOnce()) -> AllocationInfo {
     f();
-    AllocationInfo::default()
+    AllocationInfo
 }
 
 #[cfg(not(feature = "count-allocations"))]
-fn print_count_allocations_banner_once() {
-    use std::sync::Once;
+fn print_alloc_banner_once() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        bench_warn!("count-allocations feature not enabled; memory stats are placeholders.");
+        #[cfg(feature = "bench-logging")]
+        println!("allocation stats unavailable: count-allocations feature disabled");
     });
 }
 
@@ -153,7 +147,7 @@ const PROFILING_COUNTS_DEVELOPMENT: &[usize] = &[
 /// Returns true for: "1", "true", "TRUE", "yes", "on" (case-insensitive)
 /// Returns false for anything else (including "0", "false", empty, or unset)
 fn is_dev_mode() -> bool {
-    let dev = std::env::var("PROFILING_DEV_MODE").ok();
+    let dev = env::var("PROFILING_DEV_MODE").ok();
     dev.as_deref().is_some_and(|s| {
         s == "1"
             || s.eq_ignore_ascii_case("true")
@@ -174,7 +168,7 @@ fn get_profiling_counts() -> &'static [usize] {
 /// Helper function to parse benchmark measurement time from environment
 /// Guards against zero/invalid values by ensuring minimum of 1 second
 fn bench_time(default_secs: u64) -> Duration {
-    let secs = std::env::var("BENCH_MEASUREMENT_TIME")
+    let secs = env::var("BENCH_MEASUREMENT_TIME")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .map_or_else(|| default_secs.max(1), |parsed| parsed.max(1));
@@ -187,6 +181,7 @@ enum PointDistribution {
     Random,
     Grid,
     PoissonDisk,
+    Adversarial,
 }
 
 impl PointDistribution {
@@ -195,12 +190,13 @@ impl PointDistribution {
             Self::Random => "random",
             Self::Grid => "grid",
             Self::PoissonDisk => "poisson",
+            Self::Adversarial => "adversarial",
         }
     }
 }
 
 /// Generate points according to the specified distribution
-fn generate_points_by_distribution<const D: usize>(
+fn gen_points<const D: usize>(
     count: usize,
     distribution: PointDistribution,
     seed: u64,
@@ -208,6 +204,28 @@ fn generate_points_by_distribution<const D: usize>(
     match distribution {
         PointDistribution::Random => generate_random_points_seeded(count, (-100.0, 100.0), seed)
             .expect("random point generation failed"),
+        PointDistribution::Adversarial => generate_random_points_seeded::<f64, D>(
+            count,
+            (-1.0, 1.0),
+            seed ^ 0xA5A5_A5A5_A5A5_A5A5,
+        )
+        .expect("adversarial base point generation failed")
+        .iter()
+        .enumerate()
+        .map(|(index, point)| {
+            let index = u32::try_from(index).expect("benchmark point index should fit in u32");
+            let mut coords = [0.0_f64; D];
+            for (axis, coord) in coords.iter_mut().enumerate() {
+                let axis_number = u32::try_from(axis + 1).expect("axis should fit in u32");
+                let base: f64 = point.coords()[axis];
+                let cluster_offset = f64::from(index % 7) * 1.0e-3;
+                let axis_offset = f64::from(axis_number) * 0.25;
+                let perturbation = f64::from((index + axis_number) % 11) * 1.0e-6;
+                *coord = base.mul_add(1.0e3, 1.0e9 + axis_offset + cluster_offset + perturbation);
+            }
+            Point::new(coords)
+        })
+        .collect(),
         PointDistribution::Grid => {
             // Calculate points per dimension to get approximately `count` points total
             let count_f64 = safe_usize_to_scalar::<f64>(count).unwrap_or(2.0);
@@ -253,7 +271,7 @@ fn generate_points_by_distribution<const D: usize>(
 
 /// Comprehensive triangulation scaling analysis across dimensions and distributions
 #[expect(clippy::significant_drop_tightening, clippy::too_many_lines)]
-fn benchmark_triangulation_scaling(c: &mut Criterion) {
+fn bench_scaling(c: &mut Criterion) {
     let counts = get_profiling_counts();
     let distributions = [
         PointDistribution::Random,
@@ -268,8 +286,7 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
     for &count in counts {
         for &distribution in &distributions {
             // Pre-generate sample points to calculate actual count and avoid double-generation
-            let sample_points =
-                generate_points_by_distribution::<2>(count, distribution, DEFAULT_SEED);
+            let sample_points = gen_points::<2>(count, distribution, DEFAULT_SEED);
             let actual_count = sample_points.len();
             group.throughput(Throughput::Elements(actual_count as u64));
 
@@ -281,11 +298,7 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
                     b.iter_batched(
                         || {
                             // Reuse same generation logic to ensure consistent point count
-                            let points = generate_points_by_distribution::<2>(
-                                count,
-                                distribution,
-                                DEFAULT_SEED,
-                            );
+                            let points = gen_points::<2>(count, distribution, DEFAULT_SEED);
                             points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                         },
                         |vertices| {
@@ -320,8 +333,7 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
             }
 
             // Pre-generate sample points to calculate actual count and avoid double-generation
-            let sample_points =
-                generate_points_by_distribution::<3>(count, distribution, DEFAULT_SEED);
+            let sample_points = gen_points::<3>(count, distribution, DEFAULT_SEED);
             let actual_count = sample_points.len();
             group.throughput(Throughput::Elements(actual_count as u64));
 
@@ -332,11 +344,7 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
                 |b, &(count, distribution, _actual_count)| {
                     b.iter_batched(
                         || {
-                            let points = generate_points_by_distribution::<3>(
-                                count,
-                                distribution,
-                                DEFAULT_SEED,
-                            );
+                            let points = gen_points::<3>(count, distribution, DEFAULT_SEED);
                             points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                         },
                         |vertices| {
@@ -373,8 +381,7 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
     {
         for &distribution in &distributions {
             // Pre-generate sample points to calculate actual count and avoid double-generation
-            let sample_points =
-                generate_points_by_distribution::<4>(count, distribution, DEFAULT_SEED);
+            let sample_points = gen_points::<4>(count, distribution, DEFAULT_SEED);
             let actual_count = sample_points.len();
             group.throughput(Throughput::Elements(actual_count as u64));
 
@@ -385,11 +392,7 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
                 |b, &(count, distribution, _actual_count)| {
                     b.iter_batched(
                         || {
-                            let points = generate_points_by_distribution::<4>(
-                                count,
-                                distribution,
-                                DEFAULT_SEED,
-                            );
+                            let points = gen_points::<4>(count, distribution, DEFAULT_SEED);
                             points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                         },
                         |vertices| {
@@ -425,8 +428,7 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
     {
         for &distribution in &distributions {
             // Pre-generate sample points to calculate actual count and avoid double-generation
-            let sample_points =
-                generate_points_by_distribution::<5>(count, distribution, DEFAULT_SEED);
+            let sample_points = gen_points::<5>(count, distribution, DEFAULT_SEED);
             let actual_count = sample_points.len();
             group.throughput(Throughput::Elements(actual_count as u64));
 
@@ -437,11 +439,7 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
                 |b, &(count, distribution, _actual_count)| {
                     b.iter_batched(
                         || {
-                            let points = generate_points_by_distribution::<5>(
-                                count,
-                                distribution,
-                                DEFAULT_SEED,
-                            );
+                            let points = gen_points::<5>(count, distribution, DEFAULT_SEED);
                             points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
                         },
                         |vertices| {
@@ -464,18 +462,36 @@ fn benchmark_triangulation_scaling(c: &mut Criterion) {
 // Memory Usage Profiling
 // ============================================================================
 
-/// Calculate percentile from a slice of values using nearest-rank method
-/// Supports configurable percentile via environment variable `BENCH_PERCENTILE` (default: 95)
-fn calculate_percentile(values: &mut [u64]) -> u64 {
+/// Read the memory summary percentile from `BENCH_PERCENTILE` (default: 95).
+#[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
+fn configured_percentile() -> usize {
+    env::var("BENCH_PERCENTILE")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .map_or(95, |p| p.clamp(1, 100))
+}
+
+/// Format a percentile as an ordinal label for the memory summary.
+#[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
+fn percentile_label(percentile: usize) -> String {
+    let suffix = match percentile % 100 {
+        11..=13 => "th",
+        _ => match percentile % 10 {
+            1 => "st",
+            2 => "nd",
+            3 => "rd",
+            _ => "th",
+        },
+    };
+    format!("{percentile}{suffix}")
+}
+
+/// Calculate percentile from a slice of values using nearest-rank method.
+#[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
+fn calculate_percentile(values: &mut [u64], percentile: usize) -> u64 {
     if values.is_empty() {
         return 0;
     }
-
-    // Parse percentile from environment, defaulting to 95
-    let percentile = std::env::var("BENCH_PERCENTILE")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .map_or(95, |p| p.clamp(1, 100)); // Clamp to valid percentile range
 
     values.sort_unstable();
     let n = values.len();
@@ -488,12 +504,14 @@ fn calculate_percentile(values: &mut [u64]) -> u64 {
 }
 
 /// Print memory allocation summary
+#[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
 #[expect(clippy::cast_precision_loss)]
 fn print_alloc_summary(
     info: &AllocationInfo,
     description: &str,
     actual_point_count: usize,
-    percentile_95: u64,
+    percentile: usize,
+    percentile_value: u64,
 ) {
     println!("\n=== Memory Allocation Summary for {description} ({actual_point_count} points) ===");
     println!("Total allocations: {}", info.count_total);
@@ -507,9 +525,10 @@ fn print_alloc_summary(
         info.bytes_max as f64 / (1024.0 * 1024.0)
     );
     println!(
-        "95th percentile bytes: {} ({:.2} MB)",
-        percentile_95,
-        percentile_95 as f64 / (1024.0 * 1024.0)
+        "{} percentile bytes: {} ({:.2} MB)",
+        percentile_label(percentile),
+        percentile_value,
+        percentile_value as f64 / (1024.0 * 1024.0)
     );
     if actual_point_count > 0 {
         println!(
@@ -522,109 +541,121 @@ fn print_alloc_summary(
     println!("=====================================\n");
 }
 
-/// Generic helper to benchmark memory usage for a specific dimension D
+#[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
 #[expect(clippy::cast_possible_wrap)]
+fn print_alloc_summary_from_samples<const D: usize>(
+    allocation_infos: &SmallBuffer<AllocationInfo, BENCHMARK_ITERATION_BUFFER_SIZE>,
+    actual_point_counts: &SmallBuffer<usize, BENCHMARK_ITERATION_BUFFER_SIZE>,
+) {
+    if allocation_infos.is_empty() {
+        return;
+    }
+
+    // Safe cast for division: Criterion sample buffers here are small and non-empty.
+    let divisor_unsigned = allocation_infos.len() as u64;
+    let divisor_signed = allocation_infos.len() as i64;
+    let avg_info = AllocationInfo {
+        count_total: allocation_infos.iter().map(|i| i.count_total).sum::<u64>() / divisor_unsigned,
+        count_current: allocation_infos
+            .iter()
+            .map(|i| i.count_current)
+            .sum::<i64>()
+            / divisor_signed,
+        count_max: allocation_infos
+            .iter()
+            .map(|i| i.count_max)
+            .max()
+            .unwrap_or(0),
+        bytes_total: allocation_infos.iter().map(|i| i.bytes_total).sum::<u64>() / divisor_unsigned,
+        bytes_current: allocation_infos
+            .iter()
+            .map(|i| i.bytes_current)
+            .sum::<i64>()
+            / divisor_signed,
+        bytes_max: allocation_infos
+            .iter()
+            .map(|i| i.bytes_max)
+            .max()
+            .unwrap_or(0),
+    };
+    let avg_actual_count = if actual_point_counts.is_empty() {
+        0
+    } else {
+        actual_point_counts.iter().sum::<usize>() / actual_point_counts.len()
+    };
+
+    let mut bytes_max_values: Vec<u64> = allocation_infos.iter().map(|i| i.bytes_max).collect();
+    let percentile = configured_percentile();
+    let percentile_value = calculate_percentile(&mut bytes_max_values, percentile);
+
+    print_alloc_summary(
+        &avg_info,
+        &format!("{D}D Triangulation"),
+        avg_actual_count,
+        percentile,
+        percentile_value,
+    );
+}
+
+/// Generic helper to benchmark memory usage for a specific dimension D
 fn bench_memory_usage<const D: usize>(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    group: &mut BenchmarkGroup<'_, WallTime>,
     bench_id_prefix: &str,
     count: usize,
-) where
-    [f64; D]: Copy + DeserializeOwned + Serialize + Sized,
-{
+) {
+    #[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
+    let mut allocation_infos: SmallBuffer<AllocationInfo, BENCHMARK_ITERATION_BUFFER_SIZE> =
+        SmallBuffer::new();
+
+    #[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
+    let mut actual_point_counts: SmallBuffer<usize, BENCHMARK_ITERATION_BUFFER_SIZE> =
+        SmallBuffer::new();
+
     group.bench_with_input(
         BenchmarkId::new(bench_id_prefix, count),
         &count,
         |b, &count| {
             b.iter_custom(|iters| {
                 let mut total_time = Duration::new(0, 0);
-                let mut allocation_infos: SmallBuffer<
-                    AllocationInfo,
-                    BENCHMARK_ITERATION_BUFFER_SIZE,
-                > = SmallBuffer::new();
-
-                let mut actual_point_counts: SmallBuffer<usize, BENCHMARK_ITERATION_BUFFER_SIZE> =
-                    SmallBuffer::new();
 
                 for _ in 0..iters {
+                    let points = gen_points::<D>(count, PointDistribution::Random, DEFAULT_SEED);
+                    #[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
+                    let pts_len = points.len();
+                    let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                     let start_time = Instant::now();
 
                     let alloc_info = measure(|| {
-                        let points = generate_points_by_distribution::<D>(
-                            count,
-                            PointDistribution::Random,
-                            DEFAULT_SEED,
-                        );
-                        let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                        actual_point_counts.push(points.len()); // Track actual count
                         if let Ok(dt) = DelaunayTriangulationBuilder::new(&vertices).build::<()>() {
                             black_box(dt);
                         }
                     });
 
                     total_time += start_time.elapsed();
-                    allocation_infos.push(alloc_info);
-                }
 
-                // Report memory usage summary if available
-                if !allocation_infos.is_empty() {
-                    // Safe cast for division - allocation_infos.len() is guaranteed to be small and non-zero
-                    let divisor_unsigned = allocation_infos.len() as u64;
-                    let divisor_signed = allocation_infos.len() as i64;
-                    let avg_info = AllocationInfo {
-                        count_total: allocation_infos.iter().map(|i| i.count_total).sum::<u64>()
-                            / divisor_unsigned,
-                        count_current: allocation_infos
-                            .iter()
-                            .map(|i| i.count_current)
-                            .sum::<i64>()
-                            / divisor_signed,
-                        count_max: allocation_infos
-                            .iter()
-                            .map(|i| i.count_max)
-                            .max()
-                            .unwrap_or(0),
-                        bytes_total: allocation_infos.iter().map(|i| i.bytes_total).sum::<u64>()
-                            / divisor_unsigned,
-                        bytes_current: allocation_infos
-                            .iter()
-                            .map(|i| i.bytes_current)
-                            .sum::<i64>()
-                            / divisor_signed,
-                        bytes_max: allocation_infos
-                            .iter()
-                            .map(|i| i.bytes_max)
-                            .max()
-                            .unwrap_or(0),
-                    };
-                    let avg_actual_count = if actual_point_counts.is_empty() {
-                        0
-                    } else {
-                        actual_point_counts.iter().sum::<usize>() / actual_point_counts.len()
-                    };
+                    #[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
+                    {
+                        allocation_infos.push(alloc_info);
+                        actual_point_counts.push(pts_len);
+                    }
 
-                    // Calculate percentile of bytes_max (configurable via BENCH_PERCENTILE, default 95th)
-                    let mut bytes_max_values: Vec<u64> =
-                        allocation_infos.iter().map(|i| i.bytes_max).collect();
-                    let percentile_value = calculate_percentile(&mut bytes_max_values);
-
-                    print_alloc_summary(
-                        &avg_info,
-                        &format!("{D}D Triangulation"),
-                        avg_actual_count,
-                        percentile_value,
-                    );
+                    #[cfg(not(all(feature = "count-allocations", feature = "bench-logging")))]
+                    let _ = alloc_info;
                 }
 
                 total_time
             });
         },
     );
+
+    #[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
+    print_alloc_summary_from_samples::<D>(&allocation_infos, &actual_point_counts);
 }
 
 /// Memory usage profiling across different scales and dimensions using allocation counter
 fn benchmark_memory_profiling(c: &mut Criterion) {
     #[cfg(not(feature = "count-allocations"))]
-    print_count_allocations_banner_once();
+    print_alloc_banner_once();
 
     let counts = if is_dev_mode() {
         &[1_000, 10_000][..]
@@ -682,11 +713,7 @@ fn benchmark_query_latency(c: &mut Criterion) {
             &count,
             |b, &count| {
                 // Setup: Create triangulation and query points
-                let points = generate_points_by_distribution::<3>(
-                    count,
-                    PointDistribution::Random,
-                    DEFAULT_SEED,
-                );
+                let points = gen_points::<3>(count, PointDistribution::Random, DEFAULT_SEED);
                 let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                 let Ok(dt) = DelaunayTriangulationBuilder::new(&vertices).build::<()>() else {
                     // Construction hit a geometric degeneracy; skip this benchmark entry
@@ -696,11 +723,7 @@ fn benchmark_query_latency(c: &mut Criterion) {
                 let tds = dt.tds();
 
                 // Generate query points
-                let query_points = generate_points_by_distribution::<3>(
-                    100,
-                    PointDistribution::Random,
-                    QUERY_SEED,
-                );
+                let query_points = gen_points::<3>(100, PointDistribution::Random, QUERY_SEED);
 
                 // Precompute all valid simplex vertices outside the benchmark loop
                 let mut precomputed_simplices: Vec<
@@ -742,11 +765,8 @@ fn benchmark_query_latency(c: &mut Criterion) {
                             let query_point_obj = *query_point;
 
                             // Use the fastest circumsphere method (based on benchmark results)
-                            {
-                                use delaunay::geometry::predicates::insphere_lifted;
-                                let result = insphere_lifted(points_for_test, query_point_obj);
-                                query_results.push(result);
-                            }
+                            let result = insphere_lifted(points_for_test, query_point_obj);
+                            query_results.push(result);
 
                             // Limit total queries to prevent extremely long benchmarks
                             if query_results.len() >= MAX_QUERY_RESULTS {
@@ -769,11 +789,111 @@ fn benchmark_query_latency(c: &mut Criterion) {
 }
 
 // ============================================================================
+// Validation Layer Diagnostics
+// ============================================================================
+
+macro_rules! benchmark_validation_components_dimension {
+    ($dim:literal, $func_name:ident, $count:expr) => {
+        fn $func_name(c: &mut Criterion) {
+            let is_adversarial = stringify!($func_name).ends_with("_adversarial");
+            let distribution = if is_adversarial {
+                PointDistribution::Adversarial
+            } else {
+                PointDistribution::Random
+            };
+            let suffix = if is_adversarial { "_adversarial" } else { "" };
+            let mut last_error = None;
+            let dt = (0..VALIDATION_SEED_SEARCH_LIMIT)
+                .find_map(|offset| {
+                    let seed = DEFAULT_SEED.wrapping_add(offset);
+                    let points = gen_points::<$dim>($count, distribution, seed);
+                    let vertices: Vec<_> = points.iter().map(|point| vertex!(*point)).collect();
+                    let builder = DelaunayTriangulationBuilder::new(&vertices);
+                    let builder = if is_adversarial {
+                        let attempts =
+                            NonZeroUsize::new(8).expect("retry attempts must be non-zero");
+                        builder.construction_options(
+                            ConstructionOptions::default().with_retry_policy(
+                                RetryPolicy::Shuffled {
+                                    attempts,
+                                    base_seed: Some(seed),
+                                },
+                            ),
+                        )
+                    } else {
+                        builder
+                    };
+
+                    match builder.build::<()>() {
+                        Ok(dt) => Some(dt),
+                        Err(err) => {
+                            last_error = Some(format!("{err}"));
+                            None
+                        }
+                    }
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "failed to build {}D validation component benchmark triangulation \
+                         after {} seeds (last error: {})",
+                        $dim,
+                        VALIDATION_SEED_SEARCH_LIMIT,
+                        last_error.unwrap_or_else(|| "none".to_string())
+                    );
+                });
+
+            let mut group = c.benchmark_group(format!("validation_components_{}d{}", $dim, suffix));
+            group.measurement_time(bench_time(15));
+            group.throughput(Throughput::Elements($count as u64));
+
+            group.bench_function("tds_is_valid", |b| {
+                b.iter(|| {
+                    black_box(dt.tds().is_valid())
+                        .expect("TDS validation should pass for benchmark triangulation");
+                });
+            });
+
+            group.bench_function("tri_is_valid", |b| {
+                b.iter(|| {
+                    black_box(dt.as_triangulation().is_valid())
+                        .expect("triangulation validation should pass for benchmark triangulation");
+                });
+            });
+
+            group.bench_function("is_valid_delaunay", |b| {
+                b.iter(|| {
+                    black_box(dt.is_valid())
+                        .expect("Delaunay validation should pass for benchmark triangulation");
+                });
+            });
+
+            group.bench_function("validate", |b| {
+                b.iter(|| {
+                    black_box(dt.validate())
+                        .expect("full validation should pass for benchmark triangulation");
+                });
+            });
+
+            group.finish();
+        }
+    };
+}
+
+benchmark_validation_components_dimension!(2, benchmark_validation_components_2d, 50);
+benchmark_validation_components_dimension!(3, benchmark_validation_components_3d, 50);
+benchmark_validation_components_dimension!(4, benchmark_validation_components_4d, 25);
+benchmark_validation_components_dimension!(5, benchmark_validation_components_5d, 25);
+benchmark_validation_components_dimension!(2, benchmark_validation_components_2d_adversarial, 50);
+benchmark_validation_components_dimension!(3, benchmark_validation_components_3d_adversarial, 50);
+benchmark_validation_components_dimension!(4, benchmark_validation_components_4d_adversarial, 25);
+benchmark_validation_components_dimension!(5, benchmark_validation_components_5d_adversarial, 25);
+
+// ============================================================================
 // Algorithmic Bottleneck Identification
 // ============================================================================
 
 /// Profile specific algorithmic components to identify bottlenecks
-fn benchmark_algorithmic_bottlenecks(c: &mut Criterion) {
+fn bench_bottlenecks(c: &mut Criterion) {
     let counts = if is_dev_mode() {
         &[3_000][..]
     } else {
@@ -791,11 +911,8 @@ fn benchmark_algorithmic_bottlenecks(c: &mut Criterion) {
             |b, &count| {
                 b.iter_batched(
                     || {
-                        let points = generate_points_by_distribution::<3>(
-                            count,
-                            PointDistribution::Random,
-                            DEFAULT_SEED,
-                        );
+                        let points =
+                            gen_points::<3>(count, PointDistribution::Random, DEFAULT_SEED);
                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
                         DelaunayTriangulationBuilder::new(&vertices)
                             .build::<()>()
@@ -820,17 +937,17 @@ fn benchmark_algorithmic_bottlenecks(c: &mut Criterion) {
             |b, &count| {
                 b.iter_batched(
                     || {
-                        let points = generate_points_by_distribution::<3>(
-                            count,
-                            PointDistribution::Random,
-                            DEFAULT_SEED,
-                        );
+                        let points =
+                            gen_points::<3>(count, PointDistribution::Random, DEFAULT_SEED);
                         let vertices: Vec<_> = points.iter().map(|p| vertex!(*p)).collect();
-                        DelaunayTriangulationBuilder::new(&vertices).build::<()>().ok()
+                        DelaunayTriangulationBuilder::new(&vertices)
+                            .build::<()>()
+                            .ok()
                     },
                     |dt| {
                         if let Some(dt) = dt {
-                            let hull = delaunay::geometry::algorithms::convex_hull::ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+                            let hull =
+                                ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
                             black_box(hull);
                         }
                     },
@@ -852,11 +969,11 @@ criterion_group!(
     config = {
         init_tracing();
         // Allow configuration via environment variables for CI stability
-        let sample_size = std::env::var("BENCH_SAMPLE_SIZE")
+        let sample_size = env::var("BENCH_SAMPLE_SIZE")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(10);
-        let warm_up_secs = std::env::var("BENCH_WARMUP_SECS")
+            .map_or(10, |size: usize| size.max(10));
+        let warm_up_secs = env::var("BENCH_WARMUP_SECS")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(10);
@@ -867,10 +984,18 @@ criterion_group!(
             .measurement_time(bench_time(60))
     };
     targets =
-        benchmark_triangulation_scaling,
+        bench_scaling,
         benchmark_memory_profiling,
         benchmark_query_latency,
-        benchmark_algorithmic_bottlenecks
+        benchmark_validation_components_2d,
+        benchmark_validation_components_3d,
+        benchmark_validation_components_4d,
+        benchmark_validation_components_5d,
+        benchmark_validation_components_2d_adversarial,
+        benchmark_validation_components_3d_adversarial,
+        benchmark_validation_components_4d_adversarial,
+        benchmark_validation_components_5d_adversarial,
+        bench_bottlenecks
 );
 
 criterion_main!(profiling_benches);

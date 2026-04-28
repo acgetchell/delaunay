@@ -27,7 +27,7 @@ from benchmark_models import (
 class TestBenchmarkData:
     """Test cases for BenchmarkData class."""
 
-    def test_init(self):
+    def test_init(self) -> None:
         """Test BenchmarkData initialization."""
         data = BenchmarkData(points=1000, dimension="2D")
         assert data.points == 1000
@@ -35,7 +35,7 @@ class TestBenchmarkData:
         assert data.time_mean == 0.0
         assert data.throughput_mean is None
 
-    def test_with_timing_fluent_interface(self):
+    def test_with_timing_fluent_interface(self) -> None:
         """Test fluent interface for setting timing data."""
         data = BenchmarkData(1000, "3D").with_timing(100.0, 110.0, 120.0, "µs")
 
@@ -44,7 +44,7 @@ class TestBenchmarkData:
         assert data.time_high == 120.0
         assert data.time_unit == "µs"
 
-    def test_with_throughput_fluent_interface(self):
+    def test_with_throughput_fluent_interface(self) -> None:
         """Test fluent interface for setting throughput data."""
         data = BenchmarkData(1000, "2D").with_throughput(800.0, 900.0, 1000.0, "Kelem/s")
 
@@ -53,7 +53,7 @@ class TestBenchmarkData:
         assert data.throughput_high == 1000.0
         assert data.throughput_unit == "Kelem/s"
 
-    def test_to_baseline_format_with_timing_only(self):
+    def test_to_baseline_format_with_timing_only(self) -> None:
         """Test baseline format output with timing data only."""
         data = BenchmarkData(1000, "2D").with_timing(100.0, 110.0, 120.0, "µs")
 
@@ -63,7 +63,7 @@ Time: [100.0, 110.0, 120.0] µs
 """
         assert result == expected
 
-    def test_to_baseline_format_with_timing_and_throughput(self):
+    def test_to_baseline_format_with_timing_and_throughput(self) -> None:
         """Test baseline format output with both timing and throughput data."""
         data = BenchmarkData(1000, "3D").with_timing(100.0, 110.0, 120.0, "µs").with_throughput(800.0, 900.0, 1000.0, "Kelem/s")
 
@@ -74,11 +74,28 @@ Throughput: [800.0, 900.0, 1000.0] Kelem/s
 """
         assert result == expected
 
+    def test_to_baseline_format_with_unsized_workload(self) -> None:
+        """Test baseline format output for workloads without numeric input size."""
+        data = BenchmarkData(None, "4D", benchmark_id="bistellar_flips_4d/k2_roundtrip").with_timing(0.8, 0.95, 1.1, "µs")
+
+        result = data.to_baseline_format()
+
+        assert "=== Unsized Workload (4D) ===" in result
+        assert "Benchmark ID: bistellar_flips_4d/k2_roundtrip" in result
+        assert "0 Points" not in result
+
+    def test_unsized_comparison_key_requires_benchmark_id(self) -> None:
+        """Test unsized workloads cannot silently collide on comparison keys."""
+        data = BenchmarkData(None, "4D")
+
+        with pytest.raises(ValueError, match="Unsized benchmarks require benchmark_id"):
+            _ = data.comparison_key
+
 
 class TestCircumspherePerformanceData:
     """Test cases for CircumspherePerformanceData class."""
 
-    def test_init(self):
+    def test_init(self) -> None:
         """Test CircumspherePerformanceData initialization."""
         data = CircumspherePerformanceData(method="insphere", time_ns=1000.0)
         assert data.method == "insphere"
@@ -90,7 +107,7 @@ class TestCircumspherePerformanceData:
 class TestCircumsphereTestCase:
     """Test cases for CircumsphereTestCase class."""
 
-    def test_init_and_get_winner(self):
+    def test_init_and_get_winner(self) -> None:
         """Test CircumsphereTestCase initialization and winner detection."""
         methods = {
             "insphere": CircumspherePerformanceData("insphere", 1000.0),
@@ -103,7 +120,7 @@ class TestCircumsphereTestCase:
         assert test_case.dimension == "3D"
         assert test_case.get_winner() == "insphere_lifted"  # Lowest time
 
-    def test_get_relative_performance(self):
+    def test_get_relative_performance(self) -> None:
         """Test relative performance calculation."""
         methods = {
             "insphere": CircumspherePerformanceData("insphere", 1000.0),
@@ -117,12 +134,12 @@ class TestCircumsphereTestCase:
         assert test_case.get_relative_performance("insphere") == pytest.approx(1.25)  # 1000/800
         assert test_case.get_relative_performance("insphere_distance") == pytest.approx(1.5)  # 1200/800
 
-    def test_get_winner_empty_methods(self):
+    def test_get_winner_empty_methods(self) -> None:
         """Test get_winner with empty methods dict."""
         test_case = CircumsphereTestCase("test_empty", "3D", {})
         assert test_case.get_winner() is None
 
-    def test_get_relative_performance_nonexistent_method(self):
+    def test_get_relative_performance_nonexistent_method(self) -> None:
         """Test get_relative_performance with non-existent method returns 0.0."""
         methods = {
             "insphere": CircumspherePerformanceData("insphere", 1000.0),
@@ -132,7 +149,7 @@ class TestCircumsphereTestCase:
         # Should return 0.0 for non-existent method
         assert test_case.get_relative_performance("nonexistent_method") == pytest.approx(0.0)
 
-    def test_version_comparison_data_division_by_zero_edge_case(self):
+    def test_version_comparison_data_division_by_zero_edge_case(self) -> None:
         """Test VersionComparisonData handles edge case gracefully."""
         # This doesn't raise an exception but demonstrates pytest usage for edge case testing
         comparison = VersionComparisonData(
@@ -152,7 +169,7 @@ class TestCircumsphereTestCase:
 class TestVersionComparisonData:
     """Test cases for VersionComparisonData class."""
 
-    def test_improvement_calculation(self):
+    def test_improvement_calculation(self) -> None:
         """Test improvement percentage calculation."""
         comparison = VersionComparisonData(
             test_case="Basic 3D",
@@ -167,7 +184,7 @@ class TestVersionComparisonData:
         expected_improvement = ((808.0 - 805.0) / 808.0) * 100
         assert comparison.improvement_pct == pytest.approx(expected_improvement, abs=0.001)
 
-    def test_zero_old_value(self):
+    def test_zero_old_value(self) -> None:
         """Test improvement calculation with zero old value."""
         comparison = VersionComparisonData(
             test_case="Basic 3D",
@@ -185,7 +202,7 @@ class TestVersionComparisonData:
 class TestParsingFunctions:
     """Test cases for parsing functions."""
 
-    def test_extract_benchmark_data(self):
+    def test_extract_benchmark_data(self) -> None:
         """Test extracting benchmark data from baseline content."""
         baseline_content = """Date: 2024-01-15 10:30:00 UTC
 Git commit: abc123def456
@@ -217,7 +234,7 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
         assert second.dimension == "3D"
         assert second.time_mean == 550.0
 
-    def test_parse_benchmark_header(self):
+    def test_parse_benchmark_header(self) -> None:
         """Test parsing benchmark header lines."""
         # Valid header
         result = parse_benchmark_header("=== 1000 Points (2D) ===")
@@ -225,11 +242,16 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
         assert result.points == 1000
         assert result.dimension == "2D"
 
+        result = parse_benchmark_header("=== Unsized Workload (4D) ===")
+        assert result is not None
+        assert result.points is None
+        assert result.dimension == "4D"
+
         # Invalid header
         result = parse_benchmark_header("Invalid header")
         assert result is None
 
-    def test_parse_time_data(self):
+    def test_parse_time_data(self) -> None:
         """Test parsing time data lines."""
         benchmark = BenchmarkData(1000, "2D")
 
@@ -244,7 +266,7 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
         success = parse_time_data(benchmark2, "Invalid time data")
         assert success is False
 
-    def test_parse_throughput_data(self):
+    def test_parse_throughput_data(self) -> None:
         """Test parsing throughput data lines."""
         benchmark = BenchmarkData(1000, "2D")
 
@@ -263,7 +285,7 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
 class TestFormattingFunctions:
     """Test cases for formatting functions."""
 
-    def test_format_benchmark_tables(self):
+    def test_format_benchmark_tables(self) -> None:
         """Test formatting benchmark data as markdown tables."""
         # Create test benchmarks
         benchmarks = [
@@ -288,7 +310,45 @@ class TestFormattingFunctions:
         assert "| 5000 |" in markdown_content  # Should contain the 5000 point row
         assert "4.5x" in markdown_content  # Scaling: 500/110 ≈ 4.5
 
-    def test_format_time_value(self):
+    def test_format_benchmark_tables_includes_benchmark_ids(self) -> None:
+        """Test expanded benchmark IDs are shown in baseline summary tables."""
+        benchmarks = [
+            BenchmarkData(50, "3D", benchmark_id="boundary_facets/boundary_facets_3d/50")
+            .with_timing(9.0, 10.0, 11.0, "µs")
+            .with_throughput(4.545, 5.0, 5.556, "Kelem/s"),
+            BenchmarkData(50, "3D", benchmark_id="validation/validate_3d/50").with_timing(
+                19.0,
+                20.0,
+                21.0,
+                "µs",
+            ),
+        ]
+
+        lines = format_benchmark_tables(benchmarks)
+        markdown_content = "\n".join(lines)
+
+        assert "| Benchmark ID | Points | Time (mean) | Throughput (mean) | Scaling |" in markdown_content
+        assert "| `boundary_facets/boundary_facets_3d/50` | 50 | 10.00 µs | 5.00 Kelem/s | N/A |" in markdown_content
+        assert "| `validation/validate_3d/50` | 50 | 20.00 µs | N/A | N/A |" in markdown_content
+
+    def test_format_benchmark_tables_renders_unsized_points(self) -> None:
+        """Test unsized workloads render without fake numeric point counts."""
+        benchmarks = [
+            BenchmarkData(None, "4D", benchmark_id="bistellar_flips_4d/k2_roundtrip").with_timing(
+                0.8,
+                0.95,
+                1.1,
+                "µs",
+            ),
+        ]
+
+        lines = format_benchmark_tables(benchmarks)
+        markdown_content = "\n".join(lines)
+
+        assert "| `bistellar_flips_4d/k2_roundtrip` | n/a | 0.950 µs | N/A | N/A |" in markdown_content
+        assert "0 Points" not in markdown_content
+
+    def test_format_time_value(self) -> None:
         """Test formatting time values with appropriate precision."""
         # Test zero and negative values (should return N/A)
         assert format_time_value(0.0, "µs") == "N/A"
@@ -301,7 +361,7 @@ class TestFormattingFunctions:
         assert format_time_value(2500.0, "ms") == "2.5000 s"  # Converts to s
         assert format_time_value(50000.0, "ms") == "50.0000 s"  # Large values convert to s
 
-    def test_format_throughput_value(self):
+    def test_format_throughput_value(self) -> None:
         """Test formatting throughput values with appropriate precision."""
         # Test different value ranges
         assert format_throughput_value(0.5, "Kelem/s") == "0.500 Kelem/s"
@@ -312,7 +372,7 @@ class TestFormattingFunctions:
         assert format_throughput_value(None, "Kelem/s") == "N/A"
         assert format_throughput_value(110.0, None) == "N/A"
 
-    def test_format_time_value_with_unit_aliases(self):
+    def test_format_time_value_with_unit_aliases(self) -> None:
         """Test time value formatting with microsecond unit aliases."""
         # Test microsecond alias normalization
         assert format_time_value(500.0, "us") == "500.00 µs"  # us -> µs
@@ -323,7 +383,7 @@ class TestFormattingFunctions:
         assert format_time_value(1500.0, "us") == "1.500 ms"  # us -> µs -> ms conversion
         assert format_time_value(2500.0, "μs") == "2.500 ms"  # μs -> µs -> ms conversion
 
-    def test_parse_time_data_with_scientific_notation(self):
+    def test_parse_time_data_with_scientific_notation(self) -> None:
         """Test parsing time data with scientific notation and flexible formatting."""
         benchmark = BenchmarkData(1000, "3D")
 
@@ -346,7 +406,7 @@ class TestFormattingFunctions:
         assert benchmark3.time_mean == 110.0
         assert benchmark3.time_unit == "µs"
 
-    def test_parse_throughput_data_with_scientific_notation(self):
+    def test_parse_throughput_data_with_scientific_notation(self) -> None:
         """Test parsing throughput data with scientific notation and flexible formatting."""
         benchmark = BenchmarkData(1000, "2D")
 
@@ -363,7 +423,7 @@ class TestFormattingFunctions:
         assert benchmark2.throughput_mean == 9090.9
         assert benchmark2.throughput_unit == "Kelem/s"
 
-    def test_format_benchmark_tables_dimension_sorting(self):
+    def test_format_benchmark_tables_dimension_sorting(self) -> None:
         """Test that dimensions are sorted numerically rather than lexically."""
         # Create benchmarks with dimensions that would sort incorrectly lexically
         benchmarks = [
@@ -385,7 +445,7 @@ class TestFormattingFunctions:
         # Verify they appear in numeric order: 1D < 2D < 3D < 10D
         assert pos_1d < pos_2d < pos_3d < pos_10d
 
-    def test_format_benchmark_tables_mixed_dimension_formats(self):
+    def test_format_benchmark_tables_mixed_dimension_formats(self) -> None:
         """Test dimension sorting with mixed formats and edge cases."""
         benchmarks = [
             BenchmarkData(1000, "2D").with_timing(50.0, 55.0, 60.0, "µs"),
@@ -406,7 +466,7 @@ class TestFormattingFunctions:
         # Numeric dimensions should come first (1d, 2D, 3D), then non-numeric (custom_format)
         assert pos_1d < pos_2d < pos_3d < pos_custom
 
-    def test_format_benchmark_tables_scaling_baseline_with_zero_first_entry(self):
+    def test_format_benchmark_tables_scaling_baseline_with_zero_first_entry(self) -> None:
         """Test scaling baseline calculation when first entry has zero/empty time.
 
         This tests the fix for the issue where using 1.0 as fallback when the
@@ -433,7 +493,7 @@ class TestFormattingFunctions:
         # Should not contain inflated scaling that would result from 1.0 fallback
         assert "500.0x" not in markdown_content  # This would be 500/1.0 if bug existed
 
-    def test_format_benchmark_tables_scaling_baseline_all_zero_times(self):
+    def test_format_benchmark_tables_scaling_baseline_all_zero_times(self) -> None:
         """Test scaling baseline calculation when all entries have zero/empty time."""
         benchmarks = [
             BenchmarkData(1000, "2D").with_timing(0.0, 0.0, 0.0, "µs"),

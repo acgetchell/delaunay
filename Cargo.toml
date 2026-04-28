@@ -68,11 +68,6 @@ path = "benches/circumsphere_containment.rs"
 harness = false
 
 [[bench]]
-name = "microbenchmarks"
-path = "benches/microbenchmarks.rs"
-harness = false
-
-[[bench]]
 name = "topology_guarantee_construction"
 path = "benches/topology_guarantee_construction.rs"
 harness = false

@@ -65,7 +65,6 @@ delaunay/
 │   ├── ci_performance_suite.rs
 │   ├── circumsphere_containment.rs
 │   ├── large_scale_performance.rs
-│   ├── microbenchmarks.rs
 │   ├── profiling_suite.rs
 │   └── topology_guarantee_construction.rs
 ├── docs/
