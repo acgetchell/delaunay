@@ -453,6 +453,42 @@ def _process_code_fence(line: str, result: list[str], in_code_block: bool) -> tu
     return True, in_code_block
 
 
+def _update_entry_summary(line: str, current_entry_summary: str | None) -> str | None:
+    """Track the active changelog entry summary for squash-body cleanup."""
+    if line.startswith("- ") and _COMMIT_LINK_RE.search(line):
+        return _plain_summary(line)
+    if line.startswith(("### ", "## ", "# ")):
+        return None
+    return current_entry_summary
+
+
+def _should_skip_duplicate_heading(
+    line: str,
+    result: list[str],
+    current_entry_summary: str | None,
+    is_isolated_body_heading: bool,
+) -> tuple[bool, bool]:
+    """Return whether to skip a duplicate squash heading and the following blank."""
+    if is_isolated_body_heading and _is_duplicate_squash_heading(line, current_entry_summary):
+        return True, bool(result and not result[-1].strip())
+    return False, False
+
+
+def _normalize_body_line(line: str, lines: list[str], idx: int, result: list[str], current_entry_summary: str | None) -> str:
+    """Apply markdown hygiene transforms to a non-code line."""
+    is_isolated_body_heading = _is_isolated_body_heading(lines, idx)
+    line = _deindent_orphan(line, lines, idx)
+    line = _normalize_indented_heading(line)
+
+    if is_isolated_body_heading:
+        line = _normalize_squash_heading(line, nested=current_entry_summary is not None)
+
+    if _needs_blank_before(line.lstrip(), result):
+        result.append("")
+
+    return _reflow_line(line) if len(line) > MAX_LINE_WIDTH else line
+
+
 def postprocess(path: Path) -> None:
     """Read *path*, apply hygiene fixes, and write it back."""
     text = path.read_text(encoding="utf-8")
@@ -486,44 +522,25 @@ def postprocess(path: Path) -> None:
         # --- MD030: normalise spaces after list marker ---
         line = _LIST_MARKER_SPACE_RE.sub(r"\1 ", line)
 
-        if line.startswith("- ") and _COMMIT_LINK_RE.search(line):
-            current_entry_summary = _plain_summary(line)
-        elif line.startswith(("### ", "## ", "# ")):
-            current_entry_summary = None
-
+        current_entry_summary = _update_entry_summary(line, current_entry_summary)
         is_isolated_body_heading = _is_isolated_body_heading(lines, idx)
 
         # --- GitHub squash bodies: collapse duplicate pseudo-headings ---
-        if is_isolated_body_heading and _is_duplicate_squash_heading(line, current_entry_summary):
-            drop_next_blank = bool(result and not result[-1].strip())
+        should_skip, next_drop_blank = _should_skip_duplicate_heading(
+            line,
+            result,
+            current_entry_summary,
+            is_isolated_body_heading,
+        )
+        if should_skip:
+            drop_next_blank = next_drop_blank
             continue
         if drop_next_blank and not line.strip():
             drop_next_blank = False
             continue
         drop_next_blank = False
 
-        # --- MD007: de-indent orphaned body list items ---
-        line = _deindent_orphan(line, lines, idx)
-        stripped = line.lstrip()
-
-        # --- MD023: headings must start at the beginning of the line ---
-        line = _normalize_indented_heading(line)
-        stripped = line.lstrip()
-
-        # --- GitHub squash bodies: render pseudo-headings as prose ---
-        if is_isolated_body_heading:
-            line = _normalize_squash_heading(line, nested=current_entry_summary is not None)
-        stripped = line.lstrip()
-
-        # --- MD032: blank line before a list item that follows prose ---
-        if _needs_blank_before(stripped, result):
-            result.append("")
-
-        # --- reflow long lines ---
-        if len(line) > MAX_LINE_WIDTH:
-            result.append(_reflow_line(line))
-        else:
-            result.append(line)
+        result.append(_normalize_body_line(line, lines, idx, result, current_entry_summary))
 
     # 1. Reassemble and strip trailing blank lines.
     text = "\n".join(result)

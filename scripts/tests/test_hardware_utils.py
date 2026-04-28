@@ -8,7 +8,7 @@ across different platforms with proper mocking.
 
 import platform
 import subprocess
-from unittest.mock import Mock, mock_open, patch
+from unittest.mock import mock_open, patch
 
 import pytest
 
@@ -16,7 +16,7 @@ from hardware_utils import HardwareComparator, HardwareInfo
 
 
 @pytest.fixture
-def hardware():
+def hardware() -> HardwareInfo:
     """Fixture for HardwareInfo instance."""
     return HardwareInfo()
 
@@ -24,29 +24,32 @@ def hardware():
 class TestHardwareInfo:
     """Test cases for HardwareInfo class."""
 
-    def test_init(self, hardware):
+    def test_init(self, hardware) -> None:
         """Test HardwareInfo initialization."""
         assert hardware.os_type == platform.system()
         assert hardware.machine == platform.machine()
 
     @patch("hardware_utils.platform.system")
-    def test_init_with_different_os(self, mock_system):
+    def test_init_with_different_os(self, mock_system) -> None:
         """Test initialization with different OS types."""
         mock_system.return_value = "Linux"
         hardware = HardwareInfo()
         assert hardware.os_type == "Linux"
 
-    def test_run_command_empty_cmd(self, hardware):
+    def test_run_command_empty_cmd(self, hardware) -> None:
         """Test _run_command with empty command list."""
         with pytest.raises(ValueError, match="Command list cannot be empty"):
             hardware._run_command([])
 
     @patch("hardware_utils.run_safe_command")
-    def test_run_command_success(self, mock_run_safe, hardware):
+    def test_run_command_success(self, mock_run_safe, hardware) -> None:
         """Test successful command execution."""
-        mock_result = Mock()
-        mock_result.stdout = "test output\n"
-        mock_run_safe.return_value = mock_result
+        mock_run_safe.return_value = subprocess.CompletedProcess(
+            args=["echo", "test"],
+            returncode=0,
+            stdout="test output\n",
+            stderr="",
+        )
 
         result = hardware._run_command(["echo", "test"])
 
@@ -61,7 +64,7 @@ class TestHardwareInfo:
         )
 
     @patch("hardware_utils.run_safe_command")
-    def test_run_command_failure(self, mock_run_safe, hardware):
+    def test_run_command_failure(self, mock_run_safe, hardware) -> None:
         """Test command execution failure."""
         mock_run_safe.side_effect = subprocess.CalledProcessError(1, "cmd")
 
@@ -70,7 +73,7 @@ class TestHardwareInfo:
 
     @patch("hardware_utils.platform.system")
     @patch.object(HardwareInfo, "_run_command")
-    def test_get_cpu_info_darwin(self, mock_run_command, mock_system):
+    def test_get_cpu_info_darwin(self, mock_run_command, mock_system) -> None:
         """Test CPU info detection on macOS."""
         mock_system.return_value = "Darwin"
         mock_run_command.side_effect = ["Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz", "6", "12"]
@@ -85,7 +88,7 @@ class TestHardwareInfo:
     @patch("hardware_utils.platform.system")
     @patch("hardware_utils.shutil.which")
     @patch.object(HardwareInfo, "_run_command")
-    def test_get_cpu_info_linux_with_lscpu(self, mock_run_command, mock_which, mock_system):
+    def test_get_cpu_info_linux_with_lscpu(self, mock_run_command, mock_which, mock_system) -> None:
         """Test CPU info detection on Linux with lscpu available."""
         mock_system.return_value = "Linux"
         mock_which.side_effect = lambda cmd: cmd in ["lscpu", "nproc"]
@@ -113,7 +116,7 @@ Thread(s) per core:  2"""
     @patch("hardware_utils.platform.system")
     @patch("hardware_utils.shutil.which")
     @patch("builtins.open", new_callable=mock_open, read_data="processor\t: 0\nmodel name\t: AMD Ryzen 5 3600\nprocessor\t: 1\n")
-    def test_get_cpu_info_linux_fallback_cpuinfo(self, _mock_file, mock_which, mock_system):  # noqa: PT019
+    def test_get_cpu_info_linux_fallback_cpuinfo(self, _mock_file, mock_which, mock_system) -> None:  # noqa: PT019
         """Test CPU info detection on Linux using /proc/cpuinfo fallback."""
         mock_system.return_value = "Linux"
         mock_which.return_value = None  # No commands available
@@ -128,7 +131,7 @@ Thread(s) per core:  2"""
     @patch("hardware_utils.platform.system")
     @patch("hardware_utils.shutil.which")
     @patch.object(HardwareInfo, "_run_command")
-    def test_get_cpu_info_windows(self, mock_run_command, mock_which, mock_system):
+    def test_get_cpu_info_windows(self, mock_run_command, mock_which, mock_system) -> None:
         """Test CPU info detection on Windows."""
         mock_system.return_value = "Windows"
         mock_which.side_effect = lambda cmd: cmd == "powershell"
@@ -143,7 +146,7 @@ Thread(s) per core:  2"""
         assert cpu_threads == "16"
 
     @patch("hardware_utils.platform.system")
-    def test_get_cpu_info_unknown_os(self, mock_system):
+    def test_get_cpu_info_unknown_os(self, mock_system) -> None:
         """Test CPU info detection on unknown OS."""
         mock_system.return_value = "UnknownOS"
 
@@ -156,7 +159,7 @@ Thread(s) per core:  2"""
 
     @patch("hardware_utils.platform.system")
     @patch.object(HardwareInfo, "_run_command")
-    def test_get_cpu_info_command_failure(self, mock_run_command, mock_system):
+    def test_get_cpu_info_command_failure(self, mock_run_command, mock_system) -> None:
         """Test CPU info detection when commands fail."""
         mock_system.return_value = "Darwin"
         mock_run_command.side_effect = subprocess.CalledProcessError(1, "cmd")
@@ -170,7 +173,7 @@ Thread(s) per core:  2"""
 
     @patch("hardware_utils.platform.system")
     @patch.object(HardwareInfo, "_run_command")
-    def test_get_memory_info_darwin(self, mock_run_command, mock_system):
+    def test_get_memory_info_darwin(self, mock_run_command, mock_system) -> None:
         """Test memory info detection on macOS."""
         mock_system.return_value = "Darwin"
         mock_run_command.return_value = "17179869184"  # 16 GB in bytes
@@ -182,7 +185,7 @@ Thread(s) per core:  2"""
 
     @patch("hardware_utils.platform.system")
     @patch("builtins.open", new_callable=mock_open, read_data="MemTotal:       16384000 kB\n")
-    def test_get_memory_info_linux(self, _mock_file, mock_system):  # noqa: PT019
+    def test_get_memory_info_linux(self, _mock_file, mock_system) -> None:  # noqa: PT019
         """Test memory info detection on Linux."""
         mock_system.return_value = "Linux"
 
@@ -194,7 +197,7 @@ Thread(s) per core:  2"""
     @patch("hardware_utils.platform.system")
     @patch("hardware_utils.shutil.which")
     @patch.object(HardwareInfo, "_run_command")
-    def test_get_memory_info_windows(self, mock_run_command, mock_which, mock_system):
+    def test_get_memory_info_windows(self, mock_run_command, mock_which, mock_system) -> None:
         """Test memory info detection on Windows."""
         mock_system.return_value = "Windows"
         mock_which.side_effect = lambda cmd: cmd == "powershell"
@@ -206,7 +209,7 @@ Thread(s) per core:  2"""
         assert memory == "32.0 GB"
 
     @patch("hardware_utils.platform.system")
-    def test_get_memory_info_unknown_os(self, mock_system):
+    def test_get_memory_info_unknown_os(self, mock_system) -> None:
         """Test memory info detection on unknown OS."""
         mock_system.return_value = "UnknownOS"
 
@@ -217,7 +220,7 @@ Thread(s) per core:  2"""
 
     @patch("hardware_utils.shutil.which")
     @patch.object(HardwareInfo, "_run_command")
-    def test_get_rust_info_success(self, mock_run_command, mock_which, hardware):
+    def test_get_rust_info_success(self, mock_run_command, mock_which, hardware) -> None:
         """Test Rust info detection when rustc is available."""
         mock_which.return_value = "/usr/bin/rustc"
         mock_run_command.side_effect = ["rustc 1.70.0 (90c541806 2023-05-31)", "rustc 1.70.0 (90c541806 2023-05-31)\nhost: x86_64-apple-darwin\n"]
@@ -228,7 +231,7 @@ Thread(s) per core:  2"""
         assert rust_target == "x86_64-apple-darwin"
 
     @patch("hardware_utils.shutil.which")
-    def test_get_rust_info_no_rustc(self, mock_which, hardware):
+    def test_get_rust_info_no_rustc(self, mock_which, hardware) -> None:
         """Test Rust info detection when rustc is not available."""
         mock_which.return_value = None
 
@@ -239,7 +242,7 @@ Thread(s) per core:  2"""
 
     @patch("hardware_utils.shutil.which")
     @patch.object(HardwareInfo, "_run_command")
-    def test_get_rust_info_command_failure(self, mock_run_command, mock_which, hardware):
+    def test_get_rust_info_command_failure(self, mock_run_command, mock_which, hardware) -> None:
         """Test Rust info detection when rustc commands fail."""
         mock_which.return_value = "/usr/bin/rustc"
         mock_run_command.side_effect = subprocess.CalledProcessError(1, "cmd")
@@ -249,7 +252,7 @@ Thread(s) per core:  2"""
         assert rust_version == "Unknown"
         assert rust_target == "Unknown"
 
-    def test_get_hardware_info(self, hardware):
+    def test_get_hardware_info(self, hardware) -> None:
         """Test comprehensive hardware info collection."""
         with (
             patch.object(hardware, "get_cpu_info") as mock_cpu,
@@ -275,7 +278,7 @@ Thread(s) per core:  2"""
         ("system_name", "expected_os"), [("Darwin", "macOS"), ("Linux", "Linux"), ("Windows", "Windows"), ("FreeBSD", "Unknown (FreeBSD)")]
     )
     @patch("hardware_utils.platform.system")
-    def test_get_hardware_info_os_mapping(self, mock_system, system_name, expected_os):
+    def test_get_hardware_info_os_mapping(self, mock_system, system_name, expected_os) -> None:
         """Test OS name mapping in hardware info."""
         mock_system.return_value = system_name
         hardware = HardwareInfo()
@@ -292,7 +295,7 @@ Thread(s) per core:  2"""
             info = hardware.get_hardware_info()
             assert info["OS"] == expected_os
 
-    def test_format_hardware_info(self, hardware):
+    def test_format_hardware_info(self, hardware) -> None:
         """Test hardware info formatting."""
         test_info = {
             "OS": "macOS",
@@ -315,7 +318,7 @@ Thread(s) per core:  2"""
         assert "Rust: rustc 1.70.0" in formatted
         assert "Target: x86_64-apple-darwin" in formatted
 
-    def test_format_hardware_info_none(self, hardware):
+    def test_format_hardware_info_none(self, hardware) -> None:
         """Test hardware info formatting with None input."""
         with patch.object(hardware, "get_hardware_info") as mock_get_info:
             mock_get_info.return_value = {
@@ -335,7 +338,7 @@ Thread(s) per core:  2"""
 class TestHardwareComparator:
     """Test cases for HardwareComparator class."""
 
-    def test_parse_baseline_hardware_complete(self):
+    def test_parse_baseline_hardware_complete(self) -> None:
         """Test parsing complete baseline hardware info."""
         baseline_content = """Benchmark Results
 Generated on: 2023-06-15 10:30:00
@@ -367,7 +370,7 @@ test_benchmark ... 1.234 ms
 
         assert info == expected
 
-    def test_parse_baseline_hardware_partial(self):
+    def test_parse_baseline_hardware_partial(self) -> None:
         """Test parsing partial baseline hardware info."""
         baseline_content = """Hardware Information:
   OS: Linux
@@ -385,7 +388,7 @@ Other content here...
         assert info["CPU_CORES"] == "Unknown"  # Not specified
         assert info["RUST"] == "Unknown"  # Not specified
 
-    def test_parse_baseline_hardware_empty(self):
+    def test_parse_baseline_hardware_empty(self) -> None:
         """Test parsing baseline with no hardware info."""
         baseline_content = "No hardware information found"
 
@@ -395,7 +398,7 @@ Other content here...
         for value in info.values():
             assert value == "Unknown"
 
-    def test_compare_hardware_identical(self):
+    def test_compare_hardware_identical(self) -> None:
         """Test hardware comparison with identical configurations."""
         current_info = {
             "OS": "macOS",
@@ -414,7 +417,7 @@ Other content here...
         assert not has_warnings
         assert "Hardware configurations are compatible" in report
 
-    def test_compare_hardware_different_os(self):
+    def test_compare_hardware_different_os(self) -> None:
         """Test hardware comparison with different OS."""
         current_info = {
             "OS": "Linux",
@@ -434,7 +437,7 @@ Other content here...
         assert has_warnings
         assert "OS differs: Linux vs macOS" in report
 
-    def test_compare_hardware_different_cpu(self):
+    def test_compare_hardware_different_cpu(self) -> None:
         """Test hardware comparison with different CPU."""
         current_info = {
             "OS": "Linux",
@@ -455,7 +458,7 @@ Other content here...
         assert "CPU differs:" in report
         assert "results may not be directly comparable" in report
 
-    def test_compare_hardware_different_cores(self):
+    def test_compare_hardware_different_cores(self) -> None:
         """Test hardware comparison with different core counts."""
         current_info = {
             "OS": "Linux",
@@ -475,7 +478,7 @@ Other content here...
         assert has_warnings
         assert "CPU core count differs: 8 vs 6 cores" in report
 
-    def test_compare_hardware_memory_tolerance(self):
+    def test_compare_hardware_memory_tolerance(self) -> None:
         """Test memory comparison with numeric (percentage-based) tolerance."""
         current_info = {
             "OS": "Linux",
@@ -501,7 +504,7 @@ Other content here...
         assert has_warnings
         assert "Memory differs:" in report
 
-    def test_compare_hardware_unknown_baseline(self):
+    def test_compare_hardware_unknown_baseline(self) -> None:
         """Test hardware comparison with unknown baseline values."""
         current_info = {
             "OS": "Linux",
@@ -543,7 +546,7 @@ Other content here...
             ("", None),
         ],
     )
-    def test_extract_memory_value(self, memory_str, expected):
+    def test_extract_memory_value(self, memory_str, expected) -> None:
         """Test memory value extraction from strings."""
         result = HardwareComparator._extract_memory_value(memory_str)
         if expected is None:
@@ -555,7 +558,7 @@ Other content here...
 class TestHardwareUtilsIntegration:
     """Integration tests for hardware_utils functionality."""
 
-    def test_real_hardware_info_structure(self):
+    def test_real_hardware_info_structure(self) -> None:
         """Test that real hardware info returns expected structure."""
         hardware = HardwareInfo()
         info = hardware.get_hardware_info()
@@ -567,7 +570,7 @@ class TestHardwareUtilsIntegration:
         for key, value in info.items():
             assert isinstance(value, str), f"Key {key} should have string value"
 
-    def test_cpu_info_returns_tuples(self):
+    def test_cpu_info_returns_tuples(self) -> None:
         """Test that CPU info methods return proper tuple structure."""
         hardware = HardwareInfo()
 
@@ -580,14 +583,14 @@ class TestHardwareUtilsIntegration:
         assert isinstance(rust_version, str)
         assert isinstance(rust_target, str)
 
-    def test_memory_info_returns_string(self):
+    def test_memory_info_returns_string(self) -> None:
         """Test that memory info returns a string."""
         hardware = HardwareInfo()
         memory = hardware.get_memory_info()
 
         assert isinstance(memory, str)
 
-    def test_formatted_output_structure(self):
+    def test_formatted_output_structure(self) -> None:
         """Test that formatted output has expected structure."""
         hardware = HardwareInfo()
         formatted = hardware.format_hardware_info()

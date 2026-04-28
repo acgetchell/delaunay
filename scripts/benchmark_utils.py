@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, TextIO
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from packaging.version import Version
+from packaging.version import InvalidVersion, Version
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +97,17 @@ else:
             run_git_command,
             run_safe_command,
         )
+
+_RECOVERABLE_CLI_ERRORS: tuple[type[BaseException], ...] = (
+    ExecutableNotFoundError,
+    ProjectRootNotFoundError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    KeyError,
+    subprocess.SubprocessError,
+)
 
 # Trusted benchmark commands use this Cargo profile so local, CI, and release
 # numbers are generated with the same ThinLTO/codegen-units settings.
@@ -185,13 +196,14 @@ def _ci_performance_manifest_ids_path(criterion_dir: Path) -> Path:
 def _write_ci_performance_manifest_ids(project_root: Path, stdout: str) -> None:
     """Persist the runtime ci_performance_suite manifest beside Criterion results."""
     if not isinstance(stdout, str):
-        return
+        msg = "ci_performance_suite completed but stdout was not text; cannot extract api_benchmark manifest"
+        raise TypeError(msg)
     criterion_dir = project_root / "target" / "criterion"
     manifest_path = _ci_performance_manifest_ids_path(criterion_dir)
     manifest_ids = _parse_ci_performance_manifest_ids(stdout)
     if not manifest_ids:
-        manifest_path.unlink(missing_ok=True)
-        return
+        msg = f"ci_performance_suite completed but emitted no api_benchmark manifest in stdout: {stdout!r}"
+        raise RuntimeError(msg)
     criterion_dir.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(
         "\n".join(sorted(manifest_ids)) + "\n",
@@ -209,6 +221,34 @@ def _load_ci_performance_manifest_ids(criterion_dir: Path) -> set[str] | None:
     except OSError:
         return None
     return manifest_ids or None
+
+
+def _collect_ci_suite_estimates(criterion_dir: Path) -> list[tuple[tuple[str, ...], Path]]:
+    """Collect deduplicated ci_performance_suite estimates, preferring new over base."""
+    manifest_ids = _load_ci_performance_manifest_ids(criterion_dir)
+    estimates_by_id: dict[tuple[str, ...], tuple[str, Path]] = {}
+
+    for estimates_path in sorted(criterion_dir.glob("**/estimates.json")):
+        if estimates_path.parent.name not in {"base", "new"}:
+            continue
+
+        try:
+            path_parts = estimates_path.relative_to(criterion_dir).parts[:-2]
+        except ValueError:
+            continue
+
+        if not path_parts or ci_suite_group_key(path_parts[0]) is None:
+            continue
+
+        benchmark_id = "/".join(path_parts)
+        if manifest_ids is not None and benchmark_id not in manifest_ids:
+            continue
+
+        existing = estimates_by_id.get(path_parts)
+        if existing is None or (existing[0] == "base" and estimates_path.parent.name == "new"):
+            estimates_by_id[path_parts] = (estimates_path.parent.name, estimates_path)
+
+    return [(path_parts, estimates_path) for path_parts, (_, estimates_path) in estimates_by_id.items()]
 
 
 # Development mode arguments - centralized to keep baseline generation and comparison in sync
@@ -296,7 +336,7 @@ def _sampling_metadata(dev_mode: bool) -> dict[str, str]:
 class PerformanceSummaryGenerator:
     """Generate performance summary markdown from benchmark results."""
 
-    def __init__(self, project_root: Path):
+    def __init__(self, project_root: Path) -> None:
         """Initialize with project root directory."""
         self.project_root = project_root
         # Prefer CI artifact location; fall back to benches/ for local runs
@@ -366,7 +406,7 @@ class PerformanceSummaryGenerator:
             print(f"📊 Generated performance summary: {output_path}")
             return True
 
-        except Exception as e:
+        except _RECOVERABLE_CLI_ERRORS as e:
             print(f"❌ Failed to generate performance summary: {e}", file=sys.stderr)
             return False
 
@@ -399,7 +439,7 @@ class PerformanceSummaryGenerator:
             commit_hash = get_git_commit_hash(cwd=self.project_root)
             if commit_hash and commit_hash != "unknown":
                 lines.append(f"**Git Commit**: {commit_hash}")
-        except Exception as e:
+        except _RECOVERABLE_CLI_ERRORS as e:
             logger.debug("Could not get git commit hash: %s", e)
 
         # Add hardware information
@@ -414,7 +454,7 @@ class PerformanceSummaryGenerator:
                     f"**Rust**: {hw_info['RUST']}",
                 ],
             )
-        except Exception as e:
+        except _RECOVERABLE_CLI_ERRORS as e:
             logger.debug("Could not get hardware info: %s", e)
             lines.append("**Hardware**: Unknown")
 
@@ -470,7 +510,7 @@ class PerformanceSummaryGenerator:
             if result.startswith("v"):
                 return result[1:]  # Remove 'v' prefix
             return "unknown"
-        except Exception:
+        except _RECOVERABLE_CLI_ERRORS:
             # Fallback: try to get any recent tag
             try:
                 cp = run_git_command(["tag", "-l", "--sort=-version:refname"], cwd=self.project_root)
@@ -481,7 +521,7 @@ class PerformanceSummaryGenerator:
                         if tag.startswith("v") and len(tag) > 1:
                             return tag[1:]
                 return "unknown"
-            except Exception:
+            except _RECOVERABLE_CLI_ERRORS:
                 return "unknown"
 
     def _get_version_date(self) -> str:
@@ -502,7 +542,7 @@ class PerformanceSummaryGenerator:
 
             # Fallback to current date
             return datetime.now(UTC).strftime("%Y-%m-%d")
-        except Exception:
+        except _RECOVERABLE_CLI_ERRORS:
             return datetime.now(UTC).strftime("%Y-%m-%d")
 
     def _run_circumsphere_benchmarks(self, cargo_profile: str | None = None) -> tuple[bool, dict[str, str] | None]:
@@ -538,11 +578,11 @@ class PerformanceSummaryGenerator:
             print("✅ Circumsphere benchmarks completed successfully")
             return True, numerical_accuracy_data
 
-        except Exception as e:
+        except _RECOVERABLE_CLI_ERRORS as e:
             print(f"❌ Error running circumsphere benchmarks: {e}")
             return False, None
 
-    def _run_ci_performance_suite(self, cargo_profile: str | None = None) -> bool:
+    def _run_ci_performance_suite(self, cargo_profile: str | None = None, *, use_dev_mode: bool = False) -> bool:
         """
         Run the public API CI performance suite to generate fresh Criterion data.
 
@@ -550,6 +590,9 @@ class PerformanceSummaryGenerator:
             cargo_profile: Cargo profile for the fresh run. Defaults to
                 :data:`TRUSTED_BENCH_PROFILE` so summary, baseline, and
                 comparison measurements use the same optimized profile.
+            use_dev_mode: When true, pass reduced Criterion sampling arguments
+                for local development feedback. Full sampling is used by
+                default.
 
         Returns:
             True if the benchmark completed successfully, False otherwise.
@@ -558,7 +601,9 @@ class PerformanceSummaryGenerator:
             print("🔄 Running ci_performance_suite benchmarks...")
 
             profile = cargo_profile if cargo_profile is not None else TRUSTED_BENCH_PROFILE
-            cargo_args = ["bench", "--profile", profile, "--bench", "ci_performance_suite", "--", *DEV_MODE_BENCH_ARGS]
+            cargo_args = ["bench", "--profile", profile, "--bench", "ci_performance_suite"]
+            if use_dev_mode:
+                cargo_args.extend(["--", *DEV_MODE_BENCH_ARGS])
 
             result = run_cargo_command(
                 cargo_args,
@@ -623,7 +668,7 @@ class PerformanceSummaryGenerator:
 
             return accuracy_data or None
 
-        except Exception:
+        except (IndexError, TypeError, ValueError):
             return None
 
     def _get_numerical_accuracy_analysis(self) -> list[str]:
@@ -835,7 +880,7 @@ class PerformanceSummaryGenerator:
                 mean_ns = estimates["mean"]["point_estimate"]
                 return CircumspherePerformanceData(method=method_name, time_ns=mean_ns)
 
-            except Exception as e:
+            except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as e:
                 print(f"⚠️ Could not parse {estimates_file}: {e}")
 
         return None
@@ -1014,34 +1059,8 @@ class PerformanceSummaryGenerator:
         if not criterion_dir.exists():
             return []
 
-        manifest_ids = _load_ci_performance_manifest_ids(criterion_dir)
-        estimates_by_id: dict[tuple[str, ...], tuple[str, Path]] = {}
-        for estimates_path in sorted(criterion_dir.glob("**/estimates.json")):
-            if estimates_path.parent.name not in {"base", "new"}:
-                continue
-
-            try:
-                path_parts = estimates_path.relative_to(criterion_dir).parts[:-2]
-            except ValueError:
-                continue
-
-            if not path_parts:
-                continue
-
-            benchmark_id = "/".join(path_parts)
-            if manifest_ids is not None and benchmark_id not in manifest_ids:
-                continue
-
-            group_key = ci_suite_group_key(path_parts[0])
-            if group_key is None:
-                continue
-
-            existing = estimates_by_id.get(path_parts)
-            if existing is None or (existing[0] == "base" and estimates_path.parent.name == "new"):
-                estimates_by_id[path_parts] = (estimates_path.parent.name, estimates_path)
-
         results = []
-        for path_parts, (_, estimates_path) in estimates_by_id.items():
+        for path_parts, estimates_path in _collect_ci_suite_estimates(criterion_dir):
             estimates = self._load_criterion_estimate(estimates_path)
             if estimates is None:
                 continue
@@ -1264,7 +1283,7 @@ class PerformanceSummaryGenerator:
             if benchmarks:
                 lines.extend(format_benchmark_tables(benchmarks))
 
-        except Exception as e:
+        except (OSError, TypeError, ValueError, KeyError) as e:
             lines.extend(
                 [
                     "### Baseline Results",
@@ -1311,7 +1330,7 @@ class PerformanceSummaryGenerator:
                     ],
                 )
 
-        except Exception:
+        except OSError:
             lines.extend(
                 [
                     "### Comparison Results",
@@ -1388,6 +1407,41 @@ class PerformanceSummaryGenerator:
 
         return lines
 
+    @staticmethod
+    def _collect_method_performance(test_data: list[CircumsphereTestCase]) -> tuple[dict[str, list[float]], dict[str, list[str]]]:
+        """Collect per-method timings and dimension wins, excluding trivial boundary cases."""
+        method_totals: dict[str, list[float]] = {"insphere": [], "insphere_distance": [], "insphere_lifted": []}
+        method_wins: dict[str, list[str]] = {"insphere": [], "insphere_distance": [], "insphere_lifted": []}
+
+        for test_case in test_data:
+            if test_case.is_boundary_case:
+                continue
+
+            winner = test_case.get_winner()
+            if winner:
+                method_wins[winner].append(test_case.dimension)
+
+            for method_name, perf_data in test_case.methods.items():
+                method_totals[method_name].append(perf_data.time_ns)
+
+        return method_totals, method_wins
+
+    @staticmethod
+    def _ranking_description(method: str, avg_time: float, fastest_time: float, method_wins: dict[str, list[str]]) -> str:
+        """Describe relative method performance for the dynamic ranking table."""
+        if avg_time == float("inf"):
+            return "No benchmark data available"
+
+        slowdown = (avg_time / fastest_time) if fastest_time > 0 and fastest_time != float("inf") else 1
+        wins = method_wins.get(method, [])
+        if not wins:
+            return f"~{slowdown:.1f}x slower than fastest on average"
+
+        dims_text = ", ".join(sorted(set(wins)))
+        if slowdown > 1.01:
+            return f"(best in {dims_text}) - ~{slowdown:.1f}x average vs fastest"
+        return f"(best in {dims_text}) - Best average performance"
+
     def _analyze_performance_ranking(self, test_data: list[CircumsphereTestCase]) -> list[tuple[str, float, str]]:
         """
         Analyze performance data to generate dynamic rankings.
@@ -1398,22 +1452,7 @@ class PerformanceSummaryGenerator:
         Returns:
             List of tuples (method_name, average_performance, description)
         """
-        method_totals: dict[str, list[float]] = {"insphere": [], "insphere_distance": [], "insphere_lifted": []}
-        method_wins: dict[str, list[str]] = {"insphere": [], "insphere_distance": [], "insphere_lifted": []}
-
-        # Collect performance data from non-boundary test cases only
-        # Boundary cases are trivial outliers with early-exit optimizations
-        for test_case in test_data:
-            # Skip boundary vertex cases as they're trivial outliers (3-4ns)
-            if test_case.is_boundary_case:
-                continue
-
-            winner = test_case.get_winner()
-            if winner:
-                method_wins[winner].append(test_case.dimension)
-
-            for method_name, perf_data in test_case.methods.items():
-                method_totals[method_name].append(perf_data.time_ns)
+        method_totals, method_wins = self._collect_method_performance(test_data)
 
         # Calculate averages and determine ranking
         method_averages = {}
@@ -1426,33 +1465,12 @@ class PerformanceSummaryGenerator:
         # Sort by performance (lowest time first)
         sorted_methods = sorted(method_averages.items(), key=lambda x: x[1])
 
-        # Generate descriptions with relative performance and dimension wins
         rankings = []
         if sorted_methods:
             fastest_time = sorted_methods[0][1]
 
             for method, avg_time in sorted_methods:
-                # Handle missing data (float("inf") from no samples)
-                if avg_time == float("inf"):
-                    desc = "No benchmark data available"
-                    rankings.append((method, avg_time, desc))
-                    continue
-
-                slowdown = (avg_time / fastest_time) if fastest_time > 0 and fastest_time != float("inf") else 1
-
-                # Generate description based on actual wins by dimension
-                wins = method_wins.get(method, [])
-                if wins:
-                    dims_text = ", ".join(sorted(set(wins)))
-                    desc = (
-                        f"(best in {dims_text}) - ~{slowdown:.1f}x average vs fastest"
-                        if slowdown > 1.01
-                        else f"(best in {dims_text}) - Best average performance"
-                    )
-                else:
-                    desc = f"~{slowdown:.1f}x slower than fastest on average"
-
-                rankings.append((method, avg_time, desc))
+                rankings.append((method, avg_time, self._ranking_description(method, avg_time, fastest_time, method_wins)))
 
         return rankings
 
@@ -1697,31 +1715,8 @@ class CriterionParser:
     @staticmethod
     def _process_ci_performance_suite_results(criterion_dir: Path) -> list[BenchmarkData]:
         """Discover ci_performance_suite Criterion results with expanded benchmark IDs."""
-        manifest_ids = _load_ci_performance_manifest_ids(criterion_dir)
-        estimates_by_id: dict[tuple[str, ...], tuple[str, Path]] = {}
-
-        for estimates_path in sorted(criterion_dir.glob("**/estimates.json")):
-            if estimates_path.parent.name not in {"base", "new"}:
-                continue
-
-            try:
-                path_parts = estimates_path.relative_to(criterion_dir).parts[:-2]
-            except ValueError:
-                continue
-
-            if not path_parts or ci_suite_group_key(path_parts[0]) is None:
-                continue
-
-            benchmark_id = "/".join(path_parts)
-            if manifest_ids is not None and benchmark_id not in manifest_ids:
-                continue
-
-            existing = estimates_by_id.get(path_parts)
-            if existing is None or (existing[0] == "base" and estimates_path.parent.name == "new"):
-                estimates_by_id[path_parts] = (estimates_path.parent.name, estimates_path)
-
         results: list[BenchmarkData] = []
-        for path_parts, (_, estimates_path) in estimates_by_id.items():
+        for path_parts, estimates_path in _collect_ci_suite_estimates(criterion_dir):
             benchmark_id = "/".join(path_parts)
             dimension = ci_suite_dimension(benchmark_id)
             if dimension == "n/a":
@@ -1867,7 +1862,7 @@ class CriterionParser:
 class BaselineGenerator:
     """Generate performance baselines from benchmark data."""
 
-    def __init__(self, project_root: Path, tag: str | None = None):
+    def __init__(self, project_root: Path, tag: str | None = None) -> None:
         """Initialize baseline generation for a project root and optional tag."""
         self.project_root = project_root
         self.hardware = HardwareInfo()
@@ -1948,7 +1943,7 @@ class BaselineGenerator:
                 print("=== end stdout ===\n", file=sys.stderr)
             logger.exception("Error in generate_baseline")
             return False
-        except Exception:
+        except _RECOVERABLE_CLI_ERRORS:
             logger.exception("Error in generate_baseline")
             return False
 
@@ -1962,7 +1957,7 @@ class BaselineGenerator:
         try:
             # Use secure subprocess wrapper for git command
             git_commit = get_git_commit_hash(cwd=self.project_root)
-        except Exception:
+        except _RECOVERABLE_CLI_ERRORS:
             git_commit = "unknown"
 
         hardware_info = self.hardware.format_hardware_info(cwd=self.project_root)
@@ -1990,7 +1985,7 @@ class BaselineGenerator:
 class PerformanceComparator:
     """Compare current performance against baseline."""
 
-    def __init__(self, project_root: Path):
+    def __init__(self, project_root: Path) -> None:
         """Initialize comparison state for benchmark results under a project root."""
         self.project_root = project_root
         self.hardware = HardwareInfo()
@@ -2090,7 +2085,7 @@ class PerformanceComparator:
             self._write_error_file(output_file, "Benchmark execution error", str(e))
             logger.exception("Error in compare_with_baseline")
             return False, False
-        except Exception as e:
+        except _RECOVERABLE_CLI_ERRORS as e:
             self._write_error_file(output_file, "Benchmark execution error", str(e))
             logger.exception("Error in compare_with_baseline")
             return False, False
@@ -2213,7 +2208,7 @@ class PerformanceComparator:
 
         try:
             git_commit = get_git_commit_hash(cwd=self.project_root)
-        except Exception:
+        except _RECOVERABLE_CLI_ERRORS:
             git_commit = "unknown"
 
         # Parse baseline metadata
@@ -2513,7 +2508,7 @@ class PerformanceComparator:
                 f.write(f"Details: {error_detail}\n\n")
                 f.write("This error prevented the benchmark comparison from completing successfully.\n")
                 f.write("Please check the CI logs for more information.\n")
-        except Exception:
+        except OSError:
             logger.exception("Failed to write error file")
 
 
@@ -2592,7 +2587,7 @@ class WorkflowHelper:
             print(f"📦 Created metadata file: {metadata_file}")
             return True
 
-        except Exception as e:
+        except (OSError, TypeError, ValueError) as e:
             print(f"❌ Failed to create metadata: {e}", file=sys.stderr)
             return False
 
@@ -2628,7 +2623,7 @@ class WorkflowHelper:
 
             return True
 
-        except Exception as e:
+        except OSError as e:
             print(f"❌ Failed to display baseline summary: {e}", file=sys.stderr)
             return False
 
@@ -2798,7 +2793,7 @@ class BenchmarkRegressionHelper:
                     version = Version(version_str)
                     # Valid version: priority 1 (sorts first when reversed)
                     return (1, version, p.name)
-                except Exception as e:
+                except InvalidVersion as e:
                     # Invalid version format, treat as non-semver
                     logger.debug("Invalid version format in %s: %s", p.name, e)
             # Fallback: put non-matching names last (priority 0, sorts after valid versions when reversed)
@@ -2934,7 +2929,7 @@ class BenchmarkRegressionHelper:
 
         except subprocess.CalledProcessError:
             return False, "baseline_commit_not_found"
-        except Exception:
+        except _RECOVERABLE_CLI_ERRORS:
             return False, "error_checking_changes"
 
     @staticmethod
@@ -3001,7 +2996,7 @@ class BenchmarkRegressionHelper:
             print("✅ No significant performance regressions detected")
             return True
 
-        except Exception as e:
+        except _RECOVERABLE_CLI_ERRORS as e:
             print(f"❌ Error running regression test: {e}", file=sys.stderr)
             return False
 
@@ -3793,7 +3788,7 @@ def execute_command(args: argparse.Namespace, project_root: Path) -> None:
         return
 
 
-def main():
+def main() -> None:
     """Command-line interface for benchmark utilities."""
     parser = create_argument_parser()
     args = parser.parse_args()

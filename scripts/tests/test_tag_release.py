@@ -14,7 +14,7 @@ from tag_release import _get_repo_url, validate_semver
 # ---------------------------------------------------------------------------
 
 
-def _fake_remote(url: str):
+def _fake_remote(url: str) -> subprocess.CompletedProcess[str]:
     """Return a mock CompletedProcess whose stdout is *url*."""
     return subprocess.CompletedProcess(args=[], returncode=0, stdout=url + "\n")
 

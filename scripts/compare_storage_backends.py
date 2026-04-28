@@ -29,6 +29,7 @@ import argparse
 import logging
 import re
 import shutil
+import subprocess
 import sys
 from datetime import UTC, datetime
 from json import loads
@@ -36,18 +37,28 @@ from pathlib import Path
 
 try:
     from benchmark_utils import TRUSTED_BENCH_PROFILE  # type: ignore[import-not-found]
-    from subprocess_utils import find_project_root, run_cargo_command  # type: ignore[import-not-found]
+    from subprocess_utils import ExecutableNotFoundError, find_project_root, run_cargo_command  # type: ignore[import-not-found]
 except ModuleNotFoundError:
     from scripts.benchmark_utils import TRUSTED_BENCH_PROFILE  # type: ignore[no-redef,import-not-found]
-    from scripts.subprocess_utils import find_project_root, run_cargo_command  # type: ignore[no-redef,import-not-found]
+    from scripts.subprocess_utils import ExecutableNotFoundError, find_project_root, run_cargo_command  # type: ignore[no-redef,import-not-found]
 
 logger = logging.getLogger(__name__)
+
+_RECOVERABLE_COMPARISON_ERRORS: tuple[type[BaseException], ...] = (
+    ExecutableNotFoundError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    KeyError,
+    subprocess.SubprocessError,
+)
 
 
 class StorageBackendComparator:
     """Compare performance between SlotMap and DenseSlotMap storage backends."""
 
-    def __init__(self, project_root: Path):
+    def __init__(self, project_root: Path) -> None:
         """Initialize with project root directory."""
         self.project_root = project_root
         self.criterion_dir = project_root / "target" / "criterion"
@@ -117,7 +128,7 @@ class StorageBackendComparator:
             print(f"\n✅ Comparison report saved: {output_path}")
             return True
 
-        except Exception as e:
+        except _RECOVERABLE_COMPARISON_ERRORS as e:
             print(f"❌ Comparison failed: {e}", file=sys.stderr)
             logger.exception("Comparison failed")
             return False
@@ -199,7 +210,7 @@ class StorageBackendComparator:
 
             return results
 
-        except Exception:
+        except _RECOVERABLE_COMPARISON_ERRORS:
             logger.exception("Benchmark execution failed")
             return None
 
@@ -247,10 +258,10 @@ class StorageBackendComparator:
                         )
                         json_found = True
                         logger.debug("Parsed JSON for benchmark: %s", name)
-                    except Exception as e:
+                    except (OSError, KeyError, TypeError, ValueError) as e:
                         logger.debug("Failed to parse JSON from %s: %s", path, e)
                         continue
-        except Exception:
+        except OSError:
             logger.debug("JSON parsing failed, falling back to regex")
 
         # Fallback to stdout regex parsing if no JSON found
@@ -446,7 +457,7 @@ class StorageBackendComparator:
         return "\n".join(lines)
 
 
-def main():
+def main() -> None:
     """Main entry point for storage backend comparison."""
     parser = argparse.ArgumentParser(
         description="Compare SlotMap vs DenseSlotMap storage backend performance",
@@ -510,7 +521,7 @@ def main():
 
         sys.exit(0 if success else 1)
 
-    except Exception as e:
+    except _RECOVERABLE_COMPARISON_ERRORS as e:
         print(f"❌ Error: {e}", file=sys.stderr)
         logger.exception("Fatal error")
         sys.exit(1)

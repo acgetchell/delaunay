@@ -45,7 +45,8 @@
 //! - `PROFILING_DEV_MODE`: Set to "1", "true", "yes", or "on" for reduced scale (faster iteration)
 //! - `BENCH_MEASUREMENT_TIME`: Override measurement time in seconds (minimum: 1, guards against invalid values)
 //! - `BENCH_PERCENTILE`: Configure percentile for memory analysis (1-100, default: 95)
-//! - `BENCH_SAMPLE_SIZE`: Override Criterion sample size (default: 10)
+//! - `BENCH_SAMPLE_SIZE`: Override Criterion sample size (default: 10; values below 10 are clamped to 10, so
+//!   `BENCH_SAMPLE_SIZE=5` still runs 10 samples)
 //! - `BENCH_WARMUP_SECS`: Override Criterion warm-up time in seconds (default: 10)
 //!
 //! Example with custom configuration:

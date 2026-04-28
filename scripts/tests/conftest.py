@@ -5,10 +5,11 @@ Provides common testing utilities that can be reused across multiple test files.
 """
 
 import os
+import subprocess
 import sys
-from contextlib import contextmanager
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
-from unittest.mock import Mock
 
 import pytest
 
@@ -20,7 +21,7 @@ if str(_scripts) not in sys.path:
 
 
 @pytest.fixture
-def temp_chdir():
+def temp_chdir() -> Callable[[os.PathLike | str], AbstractContextManager[None]]:
     """
     Pytest fixture for temporarily changing working directory.
 
@@ -36,7 +37,7 @@ def temp_chdir():
     """
 
     @contextmanager
-    def _temp_chdir_context(path: os.PathLike | str):
+    def _temp_chdir_context(path: os.PathLike | str) -> Iterator[None]:
         """Context manager for temporarily changing working directory."""
         original_cwd = Path.cwd()
         target = Path(path)
@@ -52,11 +53,11 @@ def temp_chdir():
 
 
 @pytest.fixture
-def mock_git_command_result():
+def mock_git_command_result() -> Callable[[str], subprocess.CompletedProcess[str]]:
     """
     Pytest fixture for creating mock CompletedProcess objects for git commands.
 
-    Returns a function that creates a mock object with the specified stdout output.
+    Returns a function that creates a CompletedProcess with the specified stdout output.
     This standardizes git command mocking across all test files.
 
     Usage:
@@ -65,12 +66,8 @@ def mock_git_command_result():
             # mock_result.stdout.strip() will return "v0.4.2"
     """
 
-    def _create_mock_result(output: str) -> Mock:
-        """Create a mock CompletedProcess object for git commands."""
-        mock_result = Mock()
-        mock_result.stdout = output  # mimic CompletedProcess.stdout (str)
-        mock_result.returncode = 0
-        mock_result.args = ["git"]
-        return mock_result
+    def _create_mock_result(output: str) -> subprocess.CompletedProcess[str]:
+        """Create a typed CompletedProcess object for git commands."""
+        return subprocess.CompletedProcess(args=["git"], returncode=0, stdout=output, stderr="")
 
     return _create_mock_result
