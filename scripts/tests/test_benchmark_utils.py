@@ -249,6 +249,26 @@ class TestCriterionParser:
         finally:
             estimates_path.unlink()
 
+    @pytest.mark.parametrize(
+        "estimates_data",
+        [
+            [],
+            {"mean": []},
+            {"mean": {"point_estimate": 100000.0, "confidence_interval": []}},
+        ],
+    )
+    def test_summary_estimate_loader_rejects_structurally_invalid_mean_data(self, estimates_data) -> None:
+        """Test performance summary loader rejects structurally malformed Criterion estimates."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(estimates_data, f)
+            f.flush()
+            estimates_path = Path(f.name)
+
+        try:
+            assert PerformanceSummaryGenerator._load_criterion_estimate(estimates_path) is None
+        finally:
+            estimates_path.unlink()
+
     def test_parse_estimates_json_very_fast_benchmark_division_by_zero_protection(self) -> None:
         """Test division by zero protection for very fast benchmarks with near-zero confidence intervals."""
         estimates_data = {

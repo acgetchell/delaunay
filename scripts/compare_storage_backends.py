@@ -37,10 +37,10 @@ from json import loads
 from pathlib import Path
 
 try:
-    from benchmark_utils import TRUSTED_BENCH_PROFILE  # type: ignore[import-not-found]
+    from benchmark_utils import TRUSTED_BENCH_PROFILE, is_valid_criterion_estimate  # type: ignore[import-not-found]
     from subprocess_utils import ExecutableNotFoundError, find_project_root, run_cargo_command  # type: ignore[import-not-found]
 except ModuleNotFoundError:
-    from scripts.benchmark_utils import TRUSTED_BENCH_PROFILE  # type: ignore[no-redef,import-not-found]
+    from scripts.benchmark_utils import TRUSTED_BENCH_PROFILE, is_valid_criterion_estimate  # type: ignore[no-redef,import-not-found]
     from scripts.subprocess_utils import ExecutableNotFoundError, find_project_root, run_cargo_command  # type: ignore[no-redef,import-not-found]
 
 logger = logging.getLogger(__name__)
@@ -268,9 +268,7 @@ class StorageBackendComparator:
                         name = "/".join(path.relative_to(criterion_path).parts[:-2])
                         lower_bound = float(data["mean"]["confidence_interval"]["lower_bound"])
                         upper_bound = float(data["mean"]["confidence_interval"]["upper_bound"])
-                        if not (math.isfinite(estimate) and math.isfinite(lower_bound) and math.isfinite(upper_bound)):
-                            continue
-                        if estimate <= 0 or not (0 <= lower_bound <= estimate <= upper_bound):
+                        if not is_valid_criterion_estimate(estimate, lower_bound, upper_bound):
                             continue
 
                         benchmarks_list.append(

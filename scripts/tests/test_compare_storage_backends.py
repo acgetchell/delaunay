@@ -143,6 +143,18 @@ class TestStorageBackendComparator:
 
         assert results["benchmarks"] == []
 
+    @patch("compare_storage_backends.is_valid_criterion_estimate", return_value=False)
+    def test_parse_criterion_output_json_uses_shared_estimate_validator(self, mock_validator, comparator, sample_criterion_json) -> None:
+        """Test JSON parsing delegates Criterion estimate validation to the shared helper."""
+        estimates_file = comparator.criterion_dir / "construction" / "2D" / "1000v" / "new" / "estimates.json"
+        estimates_file.parent.mkdir(parents=True)
+        estimates_file.write_text(json.dumps(sample_criterion_json), encoding="utf-8")
+
+        results = comparator._parse_criterion_output("")
+
+        assert results["benchmarks"] == []
+        mock_validator.assert_called_once_with(150000000.0, 145000000.0, 155000000.0)
+
     def test_parse_criterion_output_regex_fallback(self, comparator, sample_criterion_stdout) -> None:
         """Test parsing Criterion output using regex fallback when JSON unavailable."""
         results = comparator._parse_criterion_output(sample_criterion_stdout)

@@ -223,7 +223,7 @@ def _load_ci_performance_manifest_ids(criterion_dir: Path) -> set[str] | None:
     return manifest_ids or None
 
 
-def _is_valid_criterion_estimate(mean_ns: float, low_ns: float, high_ns: float) -> bool:
+def is_valid_criterion_estimate(mean_ns: float, low_ns: float, high_ns: float) -> bool:
     """Return whether Criterion estimate values are finite and ordered."""
     return all(math.isfinite(value) for value in (mean_ns, low_ns, high_ns)) and mean_ns > 0 and 0 <= low_ns <= mean_ns <= high_ns
 
@@ -1041,12 +1041,18 @@ class PerformanceSummaryGenerator:
             with estimates_path.open("r", encoding="utf-8") as f:
                 data = json.load(f)
 
+            if not isinstance(data, dict):
+                return None
             mean_data = data.get("mean", {})
+            if not isinstance(mean_data, dict):
+                return None
             mean_ns = float(mean_data["point_estimate"])
             confidence_interval = mean_data.get("confidence_interval", {})
+            if not isinstance(confidence_interval, dict):
+                return None
             low_ns = float(confidence_interval.get("lower_bound", mean_ns))
             high_ns = float(confidence_interval.get("upper_bound", mean_ns))
-            if not _is_valid_criterion_estimate(mean_ns, low_ns, high_ns):
+            if not is_valid_criterion_estimate(mean_ns, low_ns, high_ns):
                 return None
             return mean_ns, low_ns, high_ns
         except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
@@ -1683,7 +1689,7 @@ class CriterionParser:
             low_ns = float(data["mean"]["confidence_interval"]["lower_bound"])
             high_ns = float(data["mean"]["confidence_interval"]["upper_bound"])
 
-            if not _is_valid_criterion_estimate(mean_ns, low_ns, high_ns):
+            if not is_valid_criterion_estimate(mean_ns, low_ns, high_ns):
                 return None
 
             # Convert nanoseconds to microseconds
