@@ -74,6 +74,16 @@ Throughput: [800.0, 900.0, 1000.0] Kelem/s
 """
         assert result == expected
 
+    def test_to_baseline_format_with_unsized_workload(self):
+        """Test baseline format output for workloads without numeric input size."""
+        data = BenchmarkData(None, "4D", benchmark_id="bistellar_flips_4d/k2_roundtrip").with_timing(0.8, 0.95, 1.1, "µs")
+
+        result = data.to_baseline_format()
+
+        assert "=== Unsized Workload (4D) ===" in result
+        assert "Benchmark ID: bistellar_flips_4d/k2_roundtrip" in result
+        assert "0 Points" not in result
+
 
 class TestCircumspherePerformanceData:
     """Test cases for CircumspherePerformanceData class."""
@@ -225,6 +235,11 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
         assert result.points == 1000
         assert result.dimension == "2D"
 
+        result = parse_benchmark_header("=== Unsized Workload (4D) ===")
+        assert result is not None
+        assert result.points is None
+        assert result.dimension == "4D"
+
         # Invalid header
         result = parse_benchmark_header("Invalid header")
         assert result is None
@@ -306,8 +321,25 @@ class TestFormattingFunctions:
         markdown_content = "\n".join(lines)
 
         assert "| Benchmark ID | Points | Time (mean) | Throughput (mean) | Scaling |" in markdown_content
-        assert "| `boundary_facets/boundary_facets_3d/50` | 50 | 10.00 µs | 5.00 Kelem/s | 1.0x |" in markdown_content
-        assert "| `validation/validate_3d/50` | 50 | 20.00 µs | N/A | 2.0x |" in markdown_content
+        assert "| `boundary_facets/boundary_facets_3d/50` | 50 | 10.00 µs | 5.00 Kelem/s | N/A |" in markdown_content
+        assert "| `validation/validate_3d/50` | 50 | 20.00 µs | N/A | N/A |" in markdown_content
+
+    def test_format_benchmark_tables_renders_unsized_points(self):
+        """Test unsized workloads render without fake numeric point counts."""
+        benchmarks = [
+            BenchmarkData(None, "4D", benchmark_id="bistellar_flips_4d/k2_roundtrip").with_timing(
+                0.8,
+                0.95,
+                1.1,
+                "µs",
+            ),
+        ]
+
+        lines = format_benchmark_tables(benchmarks)
+        markdown_content = "\n".join(lines)
+
+        assert "| `bistellar_flips_4d/k2_roundtrip` | n/a | 0.950 µs | N/A | N/A |" in markdown_content
+        assert "0 Points" not in markdown_content
 
     def test_format_time_value(self):
         """Test formatting time values with appropriate precision."""

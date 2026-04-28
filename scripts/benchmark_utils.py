@@ -130,6 +130,26 @@ CI_PERFORMANCE_SUITE_GROUPS = {
 
 CI_PERFORMANCE_SUITE_GROUP_ORDER = tuple(CI_PERFORMANCE_SUITE_GROUPS)
 
+
+def ci_suite_group_key(first_path_part: str) -> str | None:
+    """Map a Criterion path prefix to a ci_performance_suite group key."""
+    if first_path_part.startswith("tds_new_"):
+        return "construction"
+    if first_path_part.startswith("bistellar_flips"):
+        return "bistellar_flips"
+    if first_path_part in CI_PERFORMANCE_SUITE_GROUPS:
+        return first_path_part
+    return None
+
+
+def ci_suite_dimension(benchmark_id: str) -> str:
+    """Extract the dimension label from a ci_performance_suite benchmark ID."""
+    match = re.search(r"(?:^|_|/)(\d+)d(?:_|/|$)", benchmark_id)
+    if match:
+        return f"{match.group(1)}D"
+    return "n/a"
+
+
 # Development mode arguments - centralized to keep baseline generation and comparison in sync
 # Reduces samples for faster iteration during development (10x faster than full benchmarks)
 #
@@ -895,25 +915,6 @@ class PerformanceSummaryGenerator:
         return f"{time_ns:.0f} ns"
 
     @staticmethod
-    def _ci_suite_group_key(first_path_part: str) -> str | None:
-        """Map a Criterion path prefix to a ci_performance_suite group key."""
-        if first_path_part.startswith("tds_new_"):
-            return "construction"
-        if first_path_part.startswith("bistellar_flips"):
-            return "bistellar_flips"
-        if first_path_part in CI_PERFORMANCE_SUITE_GROUPS:
-            return first_path_part
-        return None
-
-    @staticmethod
-    def _ci_suite_dimension(benchmark_id: str) -> str:
-        """Extract the dimension label from a ci_performance_suite benchmark ID."""
-        match = re.search(r"(?:^|_|/)(\d+)d(?:_|/|$)", benchmark_id)
-        if match:
-            return f"{match.group(1)}D"
-        return "n/a"
-
-    @staticmethod
     def _ci_suite_input_size(path_parts: tuple[str, ...]) -> str:
         """Extract a human-readable input size from Criterion benchmark path parts."""
         if path_parts and path_parts[-1].isdigit():
@@ -963,7 +964,7 @@ class PerformanceSummaryGenerator:
             if not path_parts:
                 continue
 
-            group_key = self._ci_suite_group_key(path_parts[0])
+            group_key = ci_suite_group_key(path_parts[0])
             if group_key is None:
                 continue
 
@@ -978,7 +979,7 @@ class PerformanceSummaryGenerator:
                 continue
 
             benchmark_id = "/".join(path_parts)
-            group_key = self._ci_suite_group_key(path_parts[0])
+            group_key = ci_suite_group_key(path_parts[0])
             if group_key is None:
                 continue
 
@@ -987,7 +988,7 @@ class PerformanceSummaryGenerator:
                 CiPerformanceResult(
                     group_key=group_key,
                     benchmark_id=benchmark_id,
-                    dimension=self._ci_suite_dimension(benchmark_id),
+                    dimension=ci_suite_dimension(benchmark_id),
                     input_size=self._ci_suite_input_size(path_parts),
                     mean_ns=mean_ns,
                     low_ns=low_ns,
@@ -1599,7 +1600,7 @@ class CriterionParser:
             low_us = low_ns / 1000
             high_us = high_ns / 1000
 
-            benchmark = BenchmarkData(points or 0, dimension).with_timing(round(low_us, 2), round(mean_us, 2), round(high_us, 2), "µs")
+            benchmark = BenchmarkData(points, dimension).with_timing(round(low_us, 2), round(mean_us, 2), round(high_us, 2), "µs")
 
             if points is not None:
                 # Calculate throughput in Kelem/s
@@ -1617,25 +1618,6 @@ class CriterionParser:
 
         except (FileNotFoundError, json.JSONDecodeError, KeyError, ZeroDivisionError, ValueError):
             return None
-
-    @staticmethod
-    def _ci_suite_group_key(first_path_part: str) -> str | None:
-        """Map a Criterion path prefix to a ci_performance_suite group key."""
-        if first_path_part.startswith("tds_new_"):
-            return "construction"
-        if first_path_part.startswith("bistellar_flips"):
-            return "bistellar_flips"
-        if first_path_part in CI_PERFORMANCE_SUITE_GROUPS:
-            return first_path_part
-        return None
-
-    @staticmethod
-    def _ci_suite_dimension(benchmark_id: str) -> str:
-        """Extract the dimension label from a ci_performance_suite benchmark ID."""
-        match = re.search(r"(?:^|_|/)(\d+)d(?:_|/|$)", benchmark_id)
-        if match:
-            return f"{match.group(1)}D"
-        return "n/a"
 
     @staticmethod
     def _ci_suite_input_points(path_parts: tuple[str, ...]) -> int | None:
@@ -1658,7 +1640,7 @@ class CriterionParser:
             except ValueError:
                 continue
 
-            if not path_parts or CriterionParser._ci_suite_group_key(path_parts[0]) is None:
+            if not path_parts or ci_suite_group_key(path_parts[0]) is None:
                 continue
 
             existing = estimates_by_id.get(path_parts)
@@ -1668,7 +1650,7 @@ class CriterionParser:
         results: list[BenchmarkData] = []
         for path_parts, (_, estimates_path) in estimates_by_id.items():
             benchmark_id = "/".join(path_parts)
-            dimension = CriterionParser._ci_suite_dimension(benchmark_id)
+            dimension = ci_suite_dimension(benchmark_id)
             if dimension == "n/a":
                 continue
 
@@ -1683,9 +1665,10 @@ class CriterionParser:
         group_order = {group: index for index, group in enumerate(CI_PERFORMANCE_SUITE_GROUP_ORDER)}
         results.sort(
             key=lambda result: (
-                group_order.get(CriterionParser._ci_suite_group_key(result.benchmark_id.split("/", 1)[0]) or "", sys.maxsize),
+                group_order.get(ci_suite_group_key(result.benchmark_id.split("/", 1)[0]) or "", sys.maxsize),
                 int(result.dimension.removesuffix("D")) if result.dimension.removesuffix("D").isdigit() else sys.maxsize,
-                result.points,
+                result.points is None,
+                result.points or 0,
                 result.benchmark_id,
             ),
         )
@@ -1802,8 +1785,9 @@ class CriterionParser:
         if not results:
             results = CriterionParser._process_fallback_discovery(criterion_dir)
 
-        # Sort by dimension, then by point count
-        results.sort(key=lambda x: (int(x.dimension.rstrip("D")), x.points))
+        # Sort by dimension, then by point count. Unsized benchmarks sort after
+        # numeric workloads within the same dimension.
+        results.sort(key=lambda x: (int(x.dimension.rstrip("D")), x.points is None, x.points or 0))
         return results
 
 
@@ -2046,9 +2030,9 @@ class PerformanceComparator:
             line = lines[i].strip()
 
             # Look for benchmark sections
-            match = re.match(r"=== (\d+) Points \((\d+)D\) ===", line)
+            match = re.match(r"=== (?:(\d+) Points|Unsized Workload) \((\d+)D\) ===", line)
             if match:
-                points = int(match.group(1))
+                points = int(match.group(1)) if match.group(1) is not None else None
                 dimension = f"{match.group(2)}D"
                 benchmark_id = ""
                 next_line_index = i + 1
@@ -2248,6 +2232,8 @@ class PerformanceComparator:
         baseline_benchmark = baseline_results.get(current.comparison_key)
         if baseline_benchmark is not None or current.benchmark_id:
             return baseline_benchmark
+        if current.points is None:
+            return None
         return baseline_results.get(f"{current.points}_{current.dimension}")
 
     def _write_performance_comparison(self, f: TextIO, current_results: list[BenchmarkData], baseline_results: dict[str, BenchmarkData]) -> bool:
@@ -2346,7 +2332,7 @@ class PerformanceComparator:
 
     def _write_benchmark_header(self, f, benchmark: BenchmarkData) -> None:
         """Write benchmark section header."""
-        f.write(f"=== {benchmark.points} Points ({benchmark.dimension}) ===\n")
+        f.write(f"{benchmark.header_line()}\n")
         if benchmark.benchmark_id:
             f.write(f"Benchmark ID: {benchmark.benchmark_id}\n")
 
@@ -3115,7 +3101,7 @@ def _parse_baseline_metadata(baseline_content: str) -> dict[str, str]:
 
 def _sorted_benchmark_list(results: Mapping[str, "BenchmarkData"]) -> list["BenchmarkData"]:
     """Return benchmarks sorted by (dimension, point count) for stable output."""
-    return sorted(results.values(), key=lambda b: (int(b.dimension.rstrip("D")), b.points))
+    return sorted(results.values(), key=lambda b: (int(b.dimension.rstrip("D")), b.points is None, b.points or 0))
 
 
 def _find_downloaded_baseline_file(download_dir: Path) -> Path:

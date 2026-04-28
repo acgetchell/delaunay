@@ -47,6 +47,27 @@ from benchmark_utils import (
 )
 
 THRESHOLD_PERCENT = f"{DEFAULT_REGRESSION_THRESHOLD:.1f}%"
+PUBLIC_API_TITLE = "### Public API Performance Contract (`ci_performance_suite`)"
+CIRCUMSPHERE_TITLE = "## Circumsphere Predicate Analysis"
+PERFORMANCE_RANKING_TITLE = "### Performance Ranking"
+RECOMMENDATIONS_TITLE = "### Recommendations"
+PERFORMANCE_UPDATES_TITLE = "## Performance Data Updates"
+
+
+def write_estimate(target_dir: Path, path_parts, mean_ns):
+    """Write a minimal Criterion estimates.json fixture."""
+    estimates_dir = target_dir / "criterion" / Path(*path_parts) / "base"
+    estimates_dir.mkdir(parents=True)
+    estimates = {
+        "mean": {
+            "point_estimate": mean_ns,
+            "confidence_interval": {
+                "lower_bound": mean_ns * 0.9,
+                "upper_bound": mean_ns * 1.1,
+            },
+        },
+    }
+    (estimates_dir / "estimates.json").write_text(json.dumps(estimates), encoding="utf-8")
 
 
 def compute_average_time_change(current_results, baseline_results):
@@ -127,6 +148,24 @@ class TestCriterionParser:
         assert benchmark.time_high == 3.0
         assert benchmark.time_unit == "µs"
         assert benchmark.benchmark_id == ""
+
+    def test_parse_estimates_json_preserves_unsized_workload(self, sample_estimates_data):
+        """Test Criterion estimates without numeric input size do not get fake throughput."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(sample_estimates_data, f)
+            f.flush()
+            estimates_path = Path(f.name)
+
+        try:
+            result = CriterionParser.parse_estimates_json(estimates_path, None, "4D")
+
+            assert result is not None
+            assert result.points is None
+            assert result.dimension == "4D"
+            assert result.throughput_mean is None
+            assert "0 Points" not in result.to_baseline_format()
+        finally:
+            estimates_path.unlink()
 
     def test_parse_estimates_json_zero_mean(self):
         """Test parsing estimates.json with zero mean time."""
@@ -263,24 +302,10 @@ class TestCriterionParser:
         with tempfile.TemporaryDirectory() as temp_dir:
             target_dir = Path(temp_dir) / "target"
 
-            def write_estimate(path_parts, mean_ns):
-                estimates_dir = target_dir / "criterion" / Path(*path_parts) / "base"
-                estimates_dir.mkdir(parents=True)
-                estimates = {
-                    "mean": {
-                        "point_estimate": mean_ns,
-                        "confidence_interval": {
-                            "lower_bound": mean_ns * 0.9,
-                            "upper_bound": mean_ns * 1.1,
-                        },
-                    },
-                }
-                (estimates_dir / "estimates.json").write_text(json.dumps(estimates), encoding="utf-8")
-
-            write_estimate(("boundary_facets", "boundary_facets_3d", "50"), 10_000.0)
-            write_estimate(("validation", "validate_3d", "50"), 20_000.0)
-            write_estimate(("boundary_facets", "boundary_facets_3d_adversarial", "50"), 30_000.0)
-            write_estimate(("bistellar_flips_4d", "k2_roundtrip"), 40_000.0)
+            write_estimate(target_dir, ("boundary_facets", "boundary_facets_3d", "50"), 10_000.0)
+            write_estimate(target_dir, ("validation", "validate_3d", "50"), 20_000.0)
+            write_estimate(target_dir, ("boundary_facets", "boundary_facets_3d_adversarial", "50"), 30_000.0)
+            write_estimate(target_dir, ("bistellar_flips_4d", "k2_roundtrip"), 40_000.0)
 
             results = CriterionParser.find_criterion_results(target_dir)
 
@@ -294,7 +319,7 @@ class TestCriterionParser:
             assert {(result.points, result.dimension) for result in sized_results} == {(50, "3D")}
 
             roundtrip = next(result for result in results if result.comparison_key == "bistellar_flips_4d/k2_roundtrip")
-            assert roundtrip.points == 0
+            assert roundtrip.points is None
             assert roundtrip.dimension == "4D"
             assert roundtrip.throughput_mean is None
 
@@ -375,6 +400,23 @@ Throughput: [2.381, 2.5, 2.632] Kelem/s
         }
         assert results["boundary_facets/boundary_facets_3d/50"].time_mean == 10.0
         assert results["validation/validate_3d/50"].time_mean == 20.0
+
+    def test_parse_baseline_file_with_unsized_benchmark_id(self, comparator):
+        """Test parsing expanded CI benchmarks without numeric input sizes."""
+        baseline_content = """Date: 2023-06-15 10:30:00 PDT
+Git commit: abc123def456
+
+=== Unsized Workload (4D) ===
+Benchmark ID: bistellar_flips_4d/k2_roundtrip
+Time: [0.8, 0.95, 1.1] µs
+"""
+
+        results = comparator._parse_baseline_file(baseline_content)
+
+        benchmark = results["bistellar_flips_4d/k2_roundtrip"]
+        assert benchmark.points is None
+        assert benchmark.dimension == "4D"
+        assert benchmark.throughput_mean is None
 
     def test_write_performance_comparison_matches_benchmark_ids(self, comparator):
         """Test comparison uses expanded benchmark IDs instead of point/dimension collisions."""
@@ -2285,40 +2327,26 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             assert "## Performance Results Summary" in content
 
             # Check static content sections
-            assert "### Public API Performance Contract (`ci_performance_suite`)" in content
-            assert "## Circumsphere Predicate Analysis" in content
-            assert "### Performance Ranking" in content
-            assert "### Recommendations" in content
-            assert "## Performance Data Updates" in content
+            assert PUBLIC_API_TITLE in content
+            assert CIRCUMSPHERE_TITLE in content
+            assert PERFORMANCE_RANKING_TITLE in content
+            assert RECOMMENDATIONS_TITLE in content
+            assert PERFORMANCE_UPDATES_TITLE in content
 
     def test_get_ci_performance_suite_results(self):
         """Test public API summary generation from ci_performance_suite Criterion data."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
 
-            def write_estimate(path_parts, mean_ns):
-                estimates_dir = project_root / "target" / "criterion" / Path(*path_parts) / "base"
-                estimates_dir.mkdir(parents=True)
-                estimates = {
-                    "mean": {
-                        "point_estimate": mean_ns,
-                        "confidence_interval": {
-                            "lower_bound": mean_ns * 0.9,
-                            "upper_bound": mean_ns * 1.1,
-                        },
-                    },
-                }
-                (estimates_dir / "estimates.json").write_text(json.dumps(estimates), encoding="utf-8")
-
-            write_estimate(("tds_new_2d", "tds_new", "10"), 120_000.0)
-            write_estimate(("boundary_facets", "boundary_facets_3d_adversarial", "50"), 7_500.0)
-            write_estimate(("bistellar_flips_4d", "k2_roundtrip"), 950.0)
+            write_estimate(project_root / "target", ("tds_new_2d", "tds_new", "10"), 120_000.0)
+            write_estimate(project_root / "target", ("boundary_facets", "boundary_facets_3d_adversarial", "50"), 7_500.0)
+            write_estimate(project_root / "target", ("bistellar_flips_4d", "k2_roundtrip"), 950.0)
 
             generator = PerformanceSummaryGenerator(project_root)
             lines = generator._get_ci_performance_suite_results()
             content = "\n".join(lines)
 
-            assert "### Public API Performance Contract (`ci_performance_suite`)" in content
+            assert PUBLIC_API_TITLE in content
             assert "#### Construction" in content
             assert "Public API: `DelaunayTriangulation::new_with_options`" in content
             assert "`tds_new_2d/tds_new/10`" in content
@@ -2352,7 +2380,7 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             lines = generator._get_update_instructions()
             content = "\n".join(lines)
 
-            assert "## Performance Data Updates" in content
+            assert PERFORMANCE_UPDATES_TITLE in content
             assert "uv run benchmark-utils generate-baseline" in content
             assert "uv run benchmark-utils generate-summary" in content
             assert "PerformanceSummaryGenerator" in content
@@ -2833,11 +2861,11 @@ Benchmark completed."""
                 assert "Single Query Performance (3D)" in content
                 assert "Triangulation Data Structure Performance" in content
                 assert "Performance Status: Good" in content
-                assert "Public API Performance Contract" in content
-                assert "Circumsphere Predicate Analysis" in content
-                assert "Performance Ranking" in content
-                assert "Recommendations" in content
-                assert "Performance Data Updates" in content
+                assert PUBLIC_API_TITLE.removeprefix("### ") in content
+                assert CIRCUMSPHERE_TITLE.removeprefix("## ") in content
+                assert PERFORMANCE_RANKING_TITLE.removeprefix("### ") in content
+                assert RECOMMENDATIONS_TITLE.removeprefix("### ") in content
+                assert PERFORMANCE_UPDATES_TITLE.removeprefix("## ") in content
 
     def test_dimension_sorting_numeric_order(self):
         """Test that dimensions are sorted numerically, not lexically."""
