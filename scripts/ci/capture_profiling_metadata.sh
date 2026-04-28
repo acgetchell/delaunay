@@ -32,7 +32,7 @@ metadata_title="${PROFILE_METADATA_TITLE:-Profiling Environment}"
 {
 	echo "# ${metadata_title}"
 	echo
-	echo "- Code ref: ${GITHUB_REF_NAME}"
+	echo "- Code ref: ${GITHUB_REF_NAME:-local}"
 	echo "- Commit: $(git rev-parse HEAD)"
 	echo "- Declared rust-toolchain.toml channel: ${declared_toolchain}"
 	echo "- Cargo.toml rust-version: ${rust_version}"
@@ -41,5 +41,5 @@ metadata_title="${PROFILE_METADATA_TITLE:-Profiling Environment}"
 	echo "- Cargo profile: perf"
 	echo "- Benchmark filter: ${benchmark_filter}"
 	echo "- Profiling mode: ${profiling_mode}"
-	echo "- Runner: ${RUNNER_OS}"
+	echo "- Runner: ${RUNNER_OS:-$(uname -s)}"
 } >profiling-results/environment_metadata.md

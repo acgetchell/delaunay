@@ -84,6 +84,13 @@ Throughput: [800.0, 900.0, 1000.0] Kelem/s
         assert "Benchmark ID: bistellar_flips_4d/k2_roundtrip" in result
         assert "0 Points" not in result
 
+    def test_unsized_comparison_key_requires_benchmark_id(self):
+        """Test unsized workloads cannot silently collide on comparison keys."""
+        data = BenchmarkData(None, "4D")
+
+        with pytest.raises(ValueError, match="Unsized benchmarks require benchmark_id"):
+            _ = data.comparison_key
+
 
 class TestCircumspherePerformanceData:
     """Test cases for CircumspherePerformanceData class."""

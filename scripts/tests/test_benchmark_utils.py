@@ -30,6 +30,7 @@ from benchmark_models import (
     CircumsphereTestCase,
 )
 from benchmark_utils import (
+    _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE,
     DEFAULT_REGRESSION_THRESHOLD,
     DEV_MODE_BENCH_ARGS,
     TRUSTED_BENCH_PROFILE,
@@ -40,6 +41,7 @@ from benchmark_utils import (
     PerformanceSummaryGenerator,
     ProjectRootNotFoundError,
     WorkflowHelper,
+    _expand_ci_benchmark_id_pattern,
     configure_logging,
     create_argument_parser,
     find_project_root,
@@ -68,6 +70,16 @@ def write_estimate(target_dir: Path, path_parts, mean_ns):
         },
     }
     (estimates_dir / "estimates.json").write_text(json.dumps(estimates), encoding="utf-8")
+
+
+def write_ci_performance_manifest(target_dir: Path, benchmark_ids: list[str]):
+    """Write the ci_performance_suite runtime manifest sidecar."""
+    criterion_dir = target_dir / "criterion"
+    criterion_dir.mkdir(parents=True, exist_ok=True)
+    (criterion_dir / _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE).write_text(
+        "\n".join(benchmark_ids) + "\n",
+        encoding="utf-8",
+    )
 
 
 def compute_average_time_change(current_results, baseline_results):
@@ -297,6 +309,17 @@ class TestCriterionParser:
         actual_order = [(b.dimension, b.points) for b in ci_suite_results]
         assert actual_order == expected_order
 
+    def test_ci_benchmark_id_pattern_expands_braced_segments(self):
+        """Test ci_performance_suite manifest brace patterns expand to concrete IDs."""
+        result = _expand_ci_benchmark_id_pattern("tds_new_2d/{tds_new,tds_new_adversarial}/{10,25}")
+
+        assert result == {
+            "tds_new_2d/tds_new/10",
+            "tds_new_2d/tds_new/25",
+            "tds_new_2d/tds_new_adversarial/10",
+            "tds_new_2d/tds_new_adversarial/25",
+        }
+
     def test_find_criterion_results_preserves_ci_suite_ids(self):
         """Test ci_performance_suite results keep expanded Criterion benchmark IDs."""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -322,6 +345,29 @@ class TestCriterionParser:
             assert roundtrip.points is None
             assert roundtrip.dimension == "4D"
             assert roundtrip.throughput_mean is None
+
+    def test_find_criterion_results_filters_stale_ci_suite_ids_with_manifest(self):
+        """Test ci_performance_suite parsing ignores stale Criterion files outside the manifest."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target_dir = Path(temp_dir) / "target"
+
+            write_estimate(target_dir, ("boundary_facets", "boundary_facets_3d", "50"), 10_000.0)
+            write_estimate(target_dir, ("validation", "validate_3d", "50"), 20_000.0)
+            write_estimate(target_dir, ("boundary_facets", "old_boundary_facets_3d", "50"), 30_000.0)
+            write_ci_performance_manifest(
+                target_dir,
+                [
+                    "boundary_facets/boundary_facets_3d/50",
+                    "validation/validate_3d/50",
+                ],
+            )
+
+            results = CriterionParser.find_criterion_results(target_dir)
+
+            assert [result.comparison_key for result in results] == [
+                "boundary_facets/boundary_facets_3d/50",
+                "validation/validate_3d/50",
+            ]
 
 
 class TestPerformanceComparator:
@@ -2540,7 +2586,13 @@ Benchmark completed."""
     @patch("benchmark_utils.run_cargo_command")
     def test_run_ci_performance_suite_success(self, mock_cargo):
         """Test running the public API CI performance suite successfully."""
-        mock_cargo.return_value = Mock(returncode=0, stdout="")
+        mock_cargo.return_value = Mock(
+            returncode=0,
+            stdout=(
+                "api_benchmark group=boundary_facets public_api=DelaunayTriangulation::boundary_facets "
+                "dimensions=3 benchmark_ids=boundary_facets/boundary_facets_3d/50 note=test\n"
+            ),
+        )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2558,6 +2610,8 @@ Benchmark completed."""
                 "--bench",
                 "ci_performance_suite",
             ]
+            manifest_path = project_root / "target" / "criterion" / _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE
+            assert manifest_path.read_text(encoding="utf-8") == "boundary_facets/boundary_facets_3d/50\n"
 
     @patch("benchmark_utils.run_cargo_command")
     def test_run_ci_performance_suite_uses_requested_cargo_profile(self, mock_cargo):
@@ -2566,6 +2620,9 @@ Benchmark completed."""
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
+            stale_manifest_path = project_root / "target" / "criterion" / _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE
+            stale_manifest_path.parent.mkdir(parents=True)
+            stale_manifest_path.write_text("stale/benchmark/id\n", encoding="utf-8")
             generator = PerformanceSummaryGenerator(project_root)
 
             requested_profile = "release"
@@ -2575,6 +2632,7 @@ Benchmark completed."""
             mock_cargo.assert_called_once()
             args = mock_cargo.call_args.args[0]
             assert args[:5] == ["bench", "--profile", requested_profile, "--bench", "ci_performance_suite"]
+            assert not stale_manifest_path.exists()
 
     @patch("benchmark_utils.run_cargo_command")
     def test_run_ci_performance_suite_nonzero_exit(self, mock_cargo, capsys):

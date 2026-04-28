@@ -29,8 +29,12 @@ class BenchmarkData:
     @property
     def comparison_key(self) -> str:
         """Return the stable key used for baseline/regression matching."""
-        points_key = self.points if self.points is not None else "unsized"
-        return self.benchmark_id or f"{points_key}_{self.dimension}"
+        if self.benchmark_id:
+            return self.benchmark_id
+        if self.points is None:
+            msg = "Unsized benchmarks require benchmark_id for comparison matching"
+            raise ValueError(msg)
+        return f"{self.points}_{self.dimension}"
 
     @property
     def points_label(self) -> str:

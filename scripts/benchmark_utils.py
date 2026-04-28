@@ -24,6 +24,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from itertools import product
 from pathlib import Path
 from shutil import copy2 as copyfile  # NOTE: Use copy2 (metadata-preserving) under the 'copyfile' alias for tests/patching convenience.
 from typing import TYPE_CHECKING, TextIO
@@ -129,6 +130,7 @@ CI_PERFORMANCE_SUITE_GROUPS = {
 }
 
 CI_PERFORMANCE_SUITE_GROUP_ORDER = tuple(CI_PERFORMANCE_SUITE_GROUPS)
+_CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE = "ci_performance_suite_manifest_ids.txt"
 
 
 def ci_suite_group_key(first_path_part: str) -> str | None:
@@ -148,6 +150,65 @@ def ci_suite_dimension(benchmark_id: str) -> str:
     if match:
         return f"{match.group(1)}D"
     return "n/a"
+
+
+def _expand_ci_benchmark_id_pattern(pattern: str) -> set[str]:
+    """Expand the simple brace patterns emitted by ci_performance_suite."""
+    segments = []
+    for segment in pattern.split("/"):
+        if segment.startswith("{") and segment.endswith("}"):
+            segments.append([option for option in segment[1:-1].split(",") if option])
+        else:
+            segments.append([segment])
+    return {"/".join(parts) for parts in product(*segments)}
+
+
+def _parse_ci_performance_manifest_ids(stdout: str) -> set[str]:
+    """Parse benchmark IDs from ci_performance_suite manifest stdout lines."""
+    manifest_ids: set[str] = set()
+    for line in stdout.splitlines():
+        if not line.startswith("api_benchmark "):
+            continue
+        fields = dict(token.split("=", 1) for token in line.split()[1:] if "=" in token)
+        benchmark_ids = fields.get("benchmark_ids", "")
+        for pattern in benchmark_ids.split(";"):
+            if pattern:
+                manifest_ids.update(_expand_ci_benchmark_id_pattern(pattern))
+    return manifest_ids
+
+
+def _ci_performance_manifest_ids_path(criterion_dir: Path) -> Path:
+    """Return the sidecar manifest path used to filter ci_performance_suite results."""
+    return criterion_dir / _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE
+
+
+def _write_ci_performance_manifest_ids(project_root: Path, stdout: str) -> None:
+    """Persist the runtime ci_performance_suite manifest beside Criterion results."""
+    if not isinstance(stdout, str):
+        return
+    criterion_dir = project_root / "target" / "criterion"
+    manifest_path = _ci_performance_manifest_ids_path(criterion_dir)
+    manifest_ids = _parse_ci_performance_manifest_ids(stdout)
+    if not manifest_ids:
+        manifest_path.unlink(missing_ok=True)
+        return
+    criterion_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        "\n".join(sorted(manifest_ids)) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _load_ci_performance_manifest_ids(criterion_dir: Path) -> set[str] | None:
+    """Load ci_performance_suite benchmark IDs when a runtime manifest exists."""
+    manifest_path = _ci_performance_manifest_ids_path(criterion_dir)
+    if not manifest_path.exists():
+        return None
+    try:
+        manifest_ids = {line.strip() for line in manifest_path.read_text(encoding="utf-8").splitlines() if line.strip()}
+    except OSError:
+        return None
+    return manifest_ids or None
 
 
 # Development mode arguments - centralized to keep baseline generation and comparison in sync
@@ -504,11 +565,13 @@ class PerformanceSummaryGenerator:
                 cwd=self.project_root,
                 timeout=900,
                 capture_output=True,
+                check=False,
             )
             if result.returncode != 0:
                 print(f"❌ Error running ci_performance_suite benchmarks: cargo exited with status {result.returncode}")
                 return False
 
+            _write_ci_performance_manifest_ids(self.project_root, result.stdout)
             print("✅ ci_performance_suite benchmarks completed successfully")
             return True
 
@@ -951,6 +1014,7 @@ class PerformanceSummaryGenerator:
         if not criterion_dir.exists():
             return []
 
+        manifest_ids = _load_ci_performance_manifest_ids(criterion_dir)
         estimates_by_id: dict[tuple[str, ...], tuple[str, Path]] = {}
         for estimates_path in sorted(criterion_dir.glob("**/estimates.json")):
             if estimates_path.parent.name not in {"base", "new"}:
@@ -962,6 +1026,10 @@ class PerformanceSummaryGenerator:
                 continue
 
             if not path_parts:
+                continue
+
+            benchmark_id = "/".join(path_parts)
+            if manifest_ids is not None and benchmark_id not in manifest_ids:
                 continue
 
             group_key = ci_suite_group_key(path_parts[0])
@@ -1629,6 +1697,7 @@ class CriterionParser:
     @staticmethod
     def _process_ci_performance_suite_results(criterion_dir: Path) -> list[BenchmarkData]:
         """Discover ci_performance_suite Criterion results with expanded benchmark IDs."""
+        manifest_ids = _load_ci_performance_manifest_ids(criterion_dir)
         estimates_by_id: dict[tuple[str, ...], tuple[str, Path]] = {}
 
         for estimates_path in sorted(criterion_dir.glob("**/estimates.json")):
@@ -1641,6 +1710,10 @@ class CriterionParser:
                 continue
 
             if not path_parts or ci_suite_group_key(path_parts[0]) is None:
+                continue
+
+            benchmark_id = "/".join(path_parts)
+            if manifest_ids is not None and benchmark_id not in manifest_ids:
                 continue
 
             existing = estimates_by_id.get(path_parts)
@@ -1822,7 +1895,7 @@ class BaselineGenerator:
 
             # Run fresh benchmark - using secure subprocess wrapper
             if dev_mode:
-                run_cargo_command(
+                result = run_cargo_command(
                     [
                         "bench",
                         "--profile",
@@ -1837,12 +1910,13 @@ class BaselineGenerator:
                     capture_output=True,
                 )
             else:
-                run_cargo_command(
+                result = run_cargo_command(
                     ["bench", "--profile", TRUSTED_BENCH_PROFILE, "--bench", "ci_performance_suite"],
                     cwd=self.project_root,
                     timeout=bench_timeout,
                     capture_output=True,
                 )
+            _write_ci_performance_manifest_ids(self.project_root, result.stdout)
 
             # Parse Criterion results
             target_dir = self.project_root / "target"
@@ -1956,7 +2030,7 @@ class PerformanceComparator:
         try:
             # Run fresh benchmark - using secure subprocess wrapper
             if dev_mode:
-                run_cargo_command(
+                result = run_cargo_command(
                     [
                         "bench",
                         "--profile",
@@ -1971,12 +2045,13 @@ class PerformanceComparator:
                     capture_output=True,
                 )
             else:
-                run_cargo_command(
+                result = run_cargo_command(
                     ["bench", "--profile", TRUSTED_BENCH_PROFILE, "--bench", "ci_performance_suite"],
                     cwd=self.project_root,
                     timeout=bench_timeout,
                     capture_output=True,
                 )
+            _write_ci_performance_manifest_ids(self.project_root, result.stdout)
 
             # Parse current results
             target_dir = self.project_root / "target"

@@ -118,6 +118,7 @@ fn measure(f: impl FnOnce()) -> AllocationInfo {
 fn print_alloc_banner_once() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
+        #[cfg(feature = "bench-logging")]
         println!("allocation stats unavailable: count-allocations feature disabled");
     });
 }

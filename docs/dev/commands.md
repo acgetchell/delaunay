@@ -103,9 +103,10 @@ just check
 `just check` is the non-mutating lint/validator bundle. It does not run tests,
 examples, or benchmarks.
 
-`just check` validates the default DenseSlotMap backend plus all feature
-combinations. The legacy SlotMap backend is kept as an optional compatibility
-canary; run it explicitly with:
+`just check` runs the default DenseSlotMap backend checks and an
+`--all-features` pass. The justfile runs Clippy for the default feature set and
+for `--all-features`; the legacy SlotMap backend is kept as an optional
+compatibility canary. Run it explicitly with:
 
 ```bash
 just check-storage-backends
